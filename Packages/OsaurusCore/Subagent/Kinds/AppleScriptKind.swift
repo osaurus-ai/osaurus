@@ -24,6 +24,7 @@
 //  permission is `.allow`.
 //
 
+import AppKit
 import Foundation
 
 final class AppleScriptKind: SubagentKind, @unchecked Sendable {
@@ -31,6 +32,13 @@ final class AppleScriptKind: SubagentKind, @unchecked Sendable {
 
     private let task: String
     private let limits: RunLimits
+    /// Read-only information `query` (`mac_query`) vs. state-changing `automate`
+    /// (`applescript`). Drives the loop's prompt + per-script gate.
+    private let mode: AppleScriptRunMode
+    /// Out-of-band verbatim content (the `content` string and/or `contents`
+    /// map tool args) the subagent can insert by `{{name}}` placeholder instead
+    /// of re-typing it. Empty when the caller passed none.
+    private let literals: AppleScriptLiterals
 
     /// Resolved in `resolveModel`, consumed by `run`. Captured once so a mid-run
     /// settings edit can't change the rules under the running loop.
@@ -44,9 +52,16 @@ final class AppleScriptKind: SubagentKind, @unchecked Sendable {
     /// is step-capped via `RunLimits`.
     private static let residencyIdleWaitSeconds = 120
 
-    init(task: String, limits: RunLimits) {
+    init(
+        task: String,
+        limits: RunLimits,
+        mode: AppleScriptRunMode = .automate,
+        literals: AppleScriptLiterals = AppleScriptLiterals()
+    ) {
         self.task = task
         self.limits = limits
+        self.mode = mode
+        self.literals = literals
     }
 
     var feedTitle: String { task }
@@ -132,6 +147,7 @@ final class AppleScriptKind: SubagentKind, @unchecked Sendable {
             }
         }
 
+        let environment = await Self.desktopContext()
         let result = await AppleScriptLoop.run(
             task: task,
             modelId: resolved.name,
@@ -145,35 +161,131 @@ final class AppleScriptKind: SubagentKind, @unchecked Sendable {
                 )
             },
             limits: limits,
-            sessionId: scope.sessionId
+            sessionId: scope.sessionId,
+            mode: mode,
+            environmentContext: environment,
+            literals: literals
         )
-        return try Self.mapOutcome(result, model: resolved.name)
+        return try Self.mapOutcome(result, model: resolved.name, mode: mode)
+    }
+
+    /// A compact snapshot of the desktop (frontmost + running apps) injected
+    /// into the subagent prompt so it scripts apps that are actually open
+    /// (cutting a class of "the app wasn't running" failures). Best-effort:
+    /// returns `nil` on any failure so the loop simply omits it.
+    private static func desktopContext() async -> String? {
+        await MainActor.run {
+            let workspace = NSWorkspace.shared
+            let running =
+                workspace.runningApplications
+                .filter { $0.activationPolicy == .regular }
+                .compactMap { $0.localizedName }
+            guard !running.isEmpty else { return nil }
+            let unique = NSOrderedSet(array: running).array.compactMap { $0 as? String }
+            var lines: [String] = []
+            if let frontmost = workspace.frontmostApplication?.localizedName {
+                lines.append("Frontmost app: \(frontmost)")
+            }
+            lines.append("Running apps: \(unique.prefix(40).joined(separator: ", "))")
+            return lines.joined(separator: "\n")
+        }
     }
 
     /// Map a finished `AppleScriptLoop` run onto the shared subagent result
-    /// contract: `done` → a compact success payload; `interrupted` → a
-    /// `user_denied` envelope; every other non-completion → a non-retryable
-    /// `execution_error` carrying the loop's own reason.
-    private static func mapOutcome(
+    /// contract. `done` → the rich success payload. `interrupted` → a
+    /// `user_denied` envelope. A `stepCapReached` / `failed` run that ACTUALLY
+    /// RAN scripts still returns the rich payload (with an honest
+    /// `failed`/`partial` status + the transcript) so the parent can
+    /// troubleshoot — only a run where nothing executed is a hard tool failure.
+    static func mapOutcome(
         _ result: AppleScriptRunResult,
-        model: String
+        model: String,
+        mode: AppleScriptRunMode
     ) throws -> SubagentResult {
         switch result.outcome {
         case .done(let summary):
-            var payload: [String: Any] = [
-                "kind": "applescript",
-                "model": model,
-                "summary": summary,
-                "scripts_run": result.scriptsExecuted,
-            ]
-            if let output = result.lastOutput, !output.isEmpty {
-                payload["output"] = output
-            }
-            return SubagentResult(payload: payload, summary: summary)
+            return successResult(result, model: model, mode: mode, summary: summary)
         case .interrupted:
             throw SubagentError.userDenied("AppleScript was stopped by the user.")
         case .stepCapReached, .failed:
-            throw SubagentError.executionFailed(message: result.outcome.summary, retryable: false)
+            guard result.scriptsExecuted > 0 else {
+                throw SubagentError.executionFailed(
+                    message: result.outcome.summary,
+                    retryable: false
+                )
+            }
+            return successResult(result, model: model, mode: mode, summary: result.outcome.summary)
         }
+    }
+
+    /// Assemble the parent-facing payload: the headline `values`, an honest
+    /// aggregate `status` (`succeeded` / `partial` / `failed`), and a capped
+    /// per-step transcript plus convenience `errors` / `permission_needed`. The
+    /// top-level envelope `ok` means "the tool ran"; the task outcome lives in
+    /// `status`, so the two never collide.
+    private static func successResult(
+        _ result: AppleScriptRunResult,
+        model: String,
+        mode: AppleScriptRunMode,
+        summary: String
+    ) -> SubagentResult {
+        var payload: [String: Any] = [
+            "kind": "applescript",
+            "mode": mode.rawValue,
+            "model": model,
+            "status": aggregateStatus(result),
+            "summary": summary,
+            "scripts_run": result.scriptsExecuted,
+            "succeeded": result.succeeded,
+            "failed": result.failed,
+        ]
+        if let values = result.lastOutput, !values.isEmpty {
+            payload["values"] = cap(values, 2_000)
+        }
+        if !result.steps.isEmpty {
+            payload["steps"] = result.steps.map(stepDict)
+        }
+        let errors = result.steps.filter { failureStatuses.contains($0.status) }
+        if !errors.isEmpty {
+            payload["errors"] = errors.map(stepDict)
+        }
+        let permissions =
+            result.steps
+            .filter { $0.status == "permission_required" }
+            .compactMap { $0.error }
+        if !permissions.isEmpty {
+            payload["permission_needed"] = Array(Set(permissions))
+        }
+        return SubagentResult(payload: payload, summary: summary)
+    }
+
+    private static let failureStatuses: Set<String> = [
+        "compile_error", "runtime_error", "permission_required", "timed_out",
+    ]
+
+    /// Honest task outcome: `failed` when every executed script errored,
+    /// `partial` when some did (or the run stopped early), else `succeeded`.
+    private static func aggregateStatus(_ result: AppleScriptRunResult) -> String {
+        if result.scriptsExecuted == 0 { return result.outcome.isSuccess ? "succeeded" : "failed" }
+        if result.failed == 0 { return result.outcome.isSuccess ? "succeeded" : "partial" }
+        if result.succeeded == 0 { return "failed" }
+        return "partial"
+    }
+
+    private static func stepDict(_ step: AppleScriptStepRecord) -> [String: Any] {
+        var dict: [String: Any] = [
+            "n": step.n,
+            "intent": step.intent,
+            "status": step.status,
+        ]
+        if let output = step.output, !output.isEmpty { dict["output"] = cap(output, 1_000) }
+        if let error = step.error, !error.isEmpty { dict["error"] = cap(error, 600) }
+        if let number = step.errorNumber { dict["error_number"] = number }
+        if let preview = step.scriptPreview, !preview.isEmpty { dict["script"] = preview }
+        return dict
+    }
+
+    private static func cap(_ text: String, _ maxChars: Int) -> String {
+        text.count > maxChars ? String(text.prefix(maxChars)) + "…" : text
     }
 }

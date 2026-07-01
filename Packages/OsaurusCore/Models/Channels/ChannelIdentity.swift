@@ -121,7 +121,8 @@ struct ChannelIdentity: Codable, Equatable, Sendable {
 
     static func normalizedIds(_ ids: [String]) -> [String] {
         var seen = Set<String>()
-        return ids
+        return
+            ids
             .map(normalizedRequiredId)
             .filter { !$0.isEmpty && seen.insert($0).inserted }
     }

@@ -166,8 +166,10 @@ struct EvidenceReportRegistryTests {
         #expect(first == second)
         #expect(body.hasPrefix("{\"artifact\""))
         #expect(body.contains("\"completedAt\":\"2025-06-15T15:06:40Z\""))
-        #expect(body.range(of: "\"a\":\"first\"")?.lowerBound ?? body.endIndex
-            < body.range(of: "\"z\":\"last\"")?.lowerBound ?? body.startIndex)
+        #expect(
+            body.range(of: "\"a\":\"first\"")?.lowerBound ?? body.endIndex
+                < body.range(of: "\"z\":\"last\"")?.lowerBound ?? body.startIndex
+        )
     }
 }
 

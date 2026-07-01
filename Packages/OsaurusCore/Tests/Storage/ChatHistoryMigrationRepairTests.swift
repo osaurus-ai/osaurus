@@ -347,7 +347,9 @@ struct ChatHistoryMigrationRepairTests {
     private func diskColumns(table: String) -> Set<String> {
         withDiskConnection([]) { conn in
             var stmt: OpaquePointer?
-            guard sqlite3_prepare_v2(conn, "PRAGMA table_info(\(table))", -1, &stmt, nil) == SQLITE_OK else { return [] }
+            guard sqlite3_prepare_v2(conn, "PRAGMA table_info(\(table))", -1, &stmt, nil) == SQLITE_OK else {
+                return []
+            }
             defer { sqlite3_finalize(stmt) }
             var columns: Set<String> = []
             while sqlite3_step(stmt) == SQLITE_ROW {

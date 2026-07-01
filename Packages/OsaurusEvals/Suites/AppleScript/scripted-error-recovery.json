@@ -1,0 +1,30 @@
+{
+  "id": "apple_script.scripted-error-recovery",
+  "domain": "apple_script",
+  "label": "AppleScript • scripted error recovery (runtime error then fix)",
+  "query": "Set the body of the note 'Draft' to 'Fixed'.",
+  "notes": "Model-free CI anchor for the real-error feedback loop. The mock returns a genuine runtime error for the first script and success for the corrected retry (per-step canned results, no coercion). Proves the loop feeds the real error back and continues; the aggregate is honestly 'partial' (one failed script, one succeeded). No tokens.",
+  "fixtures": {},
+  "expect": {
+    "appleScript": {
+      "lane": "scripted",
+      "mode": "automate",
+      "harness": { "verifyReadBack": false },
+      "executor": {
+        "kind": "mock",
+        "mockResults": [
+          { "status": "runtimeError", "errorNumber": -1728, "errorMessage": "Can’t get note \"Draft\"." },
+          { "status": "success" }
+        ]
+      },
+      "scriptedCalls": [
+        "{\"script\":\"set body of note \\\"Draft\\\" to \\\"Fixed\\\"\"}",
+        "{\"script\":\"tell application \\\"Notes\\\" to set body of note \\\"Draft\\\" to \\\"Fixed\\\"\"}"
+      ],
+      "expectStatus": "partial",
+      "expectOutcome": ["done"],
+      "expectEffects": ["edit"],
+      "scoredMaxSteps": 2
+    }
+  }
+}

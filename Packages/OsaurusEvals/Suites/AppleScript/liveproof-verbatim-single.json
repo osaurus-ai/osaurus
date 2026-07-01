@@ -1,0 +1,24 @@
+{
+  "id": "apple_script.liveproof-verbatim-single",
+  "domain": "apple_script",
+  "label": "AppleScript • liveProof verbatim note round-trip",
+  "query": "In Notes, create a note named 'Osaurus Eval Scratch' if it does not already exist, set its body to the provided content, then read the body back and report the exact text.",
+  "notes": "Ground-truth lane: the REAL model + the REAL AppleScriptExecutor against actual Notes. HAS REAL SIDE EFFECTS — it writes a dedicated scratch note — and needs Notes + Automation permission, so it is meant to be run locally, permission-gated. Proves verbatim fidelity end to end: the model's own read-back must return the provided content (a distinctive phrase is asserted in the captured value). Skips when no AppleScript model is installed.",
+  "fixtures": {},
+  "expect": {
+    "appleScript": {
+      "lane": "liveProof",
+      "mode": "automate",
+      "content": "Osaurus verbatim proof:\n- alpha bravo charlie\n- \"quoted\" — dashed\n- 100% done",
+      "executor": { "kind": "real" },
+      "expectOutcome": ["done"],
+      "mustUsePlaceholders": ["content"],
+      "valuesContain": ["alpha bravo charlie"],
+      "scoredMaxSteps": 5,
+      "rubric": [
+        "The AppleScript sets the body of the 'Osaurus Eval Scratch' note to the provided content and reads it back.",
+        "The reported text matches the provided content verbatim, including punctuation and line breaks."
+      ]
+    }
+  }
+}

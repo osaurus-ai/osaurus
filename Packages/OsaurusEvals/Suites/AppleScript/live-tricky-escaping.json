@@ -1,0 +1,25 @@
+{
+  "id": "apple_script.live-tricky-escaping",
+  "domain": "apple_script",
+  "label": "AppleScript • live tricky escaping via placeholder",
+  "query": "Set the body of the note 'Quotes' to the provided content.",
+  "notes": "Capability/edge lane: the content has embedded double quotes, an apostrophe, an em dash, and a newline — exactly the characters a small model tends to mis-escape when it re-types text. Because the harness inserts the content via {{content}}, the model only has to REFERENCE the slot; scores that it did (placeholder used) and that the body is set correctly (Grok rubric). Skips when no AppleScript model is installed.",
+  "fixtures": {},
+  "expect": {
+    "appleScript": {
+      "lane": "live",
+      "mode": "automate",
+      "content": "He said \"hello\" — it's fine.\nSecond line: 50% done.",
+      "executor": { "kind": "mock", "mockWorld": { "notes": { "Quotes": "" } } },
+      "expectStatus": "succeeded",
+      "expectOutcome": ["done"],
+      "expectEffects": ["edit"],
+      "mustUsePlaceholders": ["content"],
+      "scoredMaxSteps": 4,
+      "rubric": [
+        "The AppleScript sets the body of the note 'Quotes' to the provided content, with the quotes, apostrophe, em dash, and line break preserved.",
+        "The script references the provided content rather than re-typing an altered or truncated version of it."
+      ]
+    }
+  }
+}

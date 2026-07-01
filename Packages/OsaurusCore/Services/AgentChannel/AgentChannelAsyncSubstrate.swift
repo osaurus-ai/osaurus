@@ -34,19 +34,23 @@ final class AgentChannelAsyncSubstrate: @unchecked Sendable {
             return .rejected("bot_sender", message: "Automated channel sender is not allowed.")
         }
         if let senderId = sender.providerSenderId,
-           policy.blockedSenderIds.contains(senderId) {
+            policy.blockedSenderIds.contains(senderId)
+        {
             return .rejected("blocked_sender_id", message: "Channel sender is blocked.")
         }
         if let address = sender.normalizedAddress,
-           policy.blockedAddresses.contains(address) {
+            policy.blockedAddresses.contains(address)
+        {
             return .rejected("blocked_address", message: "Channel sender address is blocked.")
         }
         if let senderId = sender.providerSenderId,
-           policy.allowedSenderIds.contains(senderId) {
+            policy.allowedSenderIds.contains(senderId)
+        {
             return .allowed("allowed_sender_id")
         }
         if let address = sender.normalizedAddress,
-           policy.allowedAddresses.contains(address) {
+            policy.allowedAddresses.contains(address)
+        {
             return .allowed("allowed_address")
         }
         if policy.hasAllowlist {
@@ -106,7 +110,8 @@ final class AgentChannelAsyncSubstrate: @unchecked Sendable {
         request: AgentChannelWebhookVerificationRequest,
         policy: AgentChannelSourceVerificationPolicy
     ) -> AgentChannelSourceVerificationResult {
-        let headerName = policy.headerName?.isEmpty == false
+        let headerName =
+            policy.headerName?.isEmpty == false
             ? policy.headerName!
             : "X-Osaurus-Channel-Secret"
         guard let expected = policy.secret, !expected.isEmpty else {
@@ -117,7 +122,7 @@ final class AgentChannelAsyncSubstrate: @unchecked Sendable {
             )
         }
         guard let received = Self.headerValue(named: headerName, in: request.headers),
-              Self.constantTimeEqual(received, expected)
+            Self.constantTimeEqual(received, expected)
         else {
             return .failed(
                 method: .sharedSecretHeader,
@@ -132,7 +137,8 @@ final class AgentChannelAsyncSubstrate: @unchecked Sendable {
         request: AgentChannelWebhookVerificationRequest,
         policy: AgentChannelSourceVerificationPolicy
     ) -> AgentChannelSourceVerificationResult {
-        let headerName = policy.headerName?.isEmpty == false
+        let headerName =
+            policy.headerName?.isEmpty == false
             ? policy.headerName!
             : "X-Osaurus-Channel-Signature"
         guard let secret = policy.secret, !secret.isEmpty else {
@@ -151,8 +157,9 @@ final class AgentChannelAsyncSubstrate: @unchecked Sendable {
         }
         let expectedHex = Self.hmacSHA256Hex(body: request.body, secret: secret)
         let expected = (policy.signaturePrefix ?? "sha256=") + expectedHex
-        guard Self.constantTimeEqual(received.lowercased(), expected.lowercased())
-            || Self.constantTimeEqual(received.lowercased(), expectedHex.lowercased())
+        guard
+            Self.constantTimeEqual(received.lowercased(), expected.lowercased())
+                || Self.constantTimeEqual(received.lowercased(), expectedHex.lowercased())
         else {
             return .failed(
                 method: .hmacSHA256,
@@ -198,7 +205,7 @@ final class AgentChannelAsyncSubstrate: @unchecked Sendable {
         let right = Array(rhs.utf8)
         let count = max(left.count, right.count)
         var diff = left.count == right.count ? 0 : 1
-        for index in 0..<count {
+        for index in 0 ..< count {
             let l = index < left.count ? left[index] : 0
             let r = index < right.count ? right[index] : 0
             diff |= Int(l ^ r)
@@ -296,7 +303,7 @@ actor AgentChannelReplyTokenRegistry {
     }
 
     private func uniqueToken() throws -> AgentChannelReplyToken {
-        for _ in 0..<5 {
+        for _ in 0 ..< 5 {
             let token = AgentChannelReplyToken(rawValue: try tokenGenerator())
             if !token.rawValue.isEmpty, bindings[token] == nil {
                 return token

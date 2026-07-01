@@ -1,0 +1,30 @@
+{
+  "id": "apple_script.scripted-multi-literal-slots",
+  "domain": "apple_script",
+  "label": "AppleScript • scripted multi-literal slot mapping",
+  "query": "Create the note using the provided subject as its title and the provided body as its body.",
+  "notes": "Model-free CI anchor for the multi-literal `contents` map. One canned script maps {{subject}} into the note-name slot and {{body}} into the body slot; the mock records the write under the (expanded) subject key so the final state proves BOTH named literals landed in the RIGHT slots, verbatim. No tokens.",
+  "fixtures": {},
+  "expect": {
+    "appleScript": {
+      "lane": "scripted",
+      "mode": "automate",
+      "contents": {
+        "subject": "Weekly Status",
+        "body": "All systems nominal.\nNo blockers this week."
+      },
+      "harness": { "verifyReadBack": false },
+      "executor": { "kind": "mock", "mockWorld": { "notes": {} } },
+      "scriptedCalls": [
+        "{\"script\":\"set body of note \\\"{{subject}}\\\" to \\\"{{body}}\\\"\"}"
+      ],
+      "expectStatus": "succeeded",
+      "expectEffects": ["edit"],
+      "mustUsePlaceholders": ["subject", "body"],
+      "finalState": [
+        { "key": "note:Weekly Status", "equals": "All systems nominal.\nNo blockers this week." }
+      ],
+      "scoredMaxSteps": 1
+    }
+  }
+}

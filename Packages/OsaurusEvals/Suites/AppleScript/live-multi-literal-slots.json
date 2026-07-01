@@ -1,0 +1,28 @@
+{
+  "id": "apple_script.live-multi-literal-slots",
+  "domain": "apple_script",
+  "label": "AppleScript • live multi-literal slot mapping",
+  "query": "Create a note titled with the provided subject and set its body to the provided body.",
+  "notes": "Capability lane for the multi-literal contract: two named literals (subject + body) must go to the RIGHT slots. Scores that the model used BOTH {{subject}} and {{body}} placeholders (pre-expansion proof) and mapped them correctly (Grok rubric), against a side-effect-free mock. Skips when no AppleScript model is installed.",
+  "fixtures": {},
+  "expect": {
+    "appleScript": {
+      "lane": "live",
+      "mode": "automate",
+      "contents": {
+        "subject": "Launch checklist",
+        "body": "1. Freeze the build\n2. Sign + notarize\n3. Publish the release notes"
+      },
+      "executor": { "kind": "mock", "mockWorld": { "notes": {} } },
+      "expectStatus": "succeeded",
+      "expectOutcome": ["done"],
+      "expectEffects": ["edit"],
+      "mustUsePlaceholders": ["subject", "body"],
+      "scoredMaxSteps": 4,
+      "rubric": [
+        "The AppleScript uses the provided subject as the note's title/name and the provided body as the note's body — not swapped or concatenated into one slot.",
+        "The script targets the Notes application."
+      ]
+    }
+  }
+}

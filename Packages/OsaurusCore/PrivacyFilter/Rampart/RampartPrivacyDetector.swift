@@ -41,11 +41,17 @@ actor RampartPrivacyDetector {
             guard let category = Self.category(for: span.type) else { continue }
             guard
                 let lo = text.index(
-                    text.startIndex, offsetBy: span.range.lowerBound, limitedBy: text.endIndex),
+                    text.startIndex,
+                    offsetBy: span.range.lowerBound,
+                    limitedBy: text.endIndex
+                ),
                 let hi = text.index(
-                    text.startIndex, offsetBy: span.range.upperBound, limitedBy: text.endIndex)
+                    text.startIndex,
+                    offsetBy: span.range.upperBound,
+                    limitedBy: text.endIndex
+                )
             else { continue }
-            raw.append((category, lo..<hi))
+            raw.append((category, lo ..< hi))
         }
         return Self.coalesce(raw, in: text)
     }
@@ -68,10 +74,10 @@ actor RampartPrivacyDetector {
             if var last = out.last,
                 last.category == span.category,
                 last.range.upperBound <= span.range.lowerBound,
-                text[last.range.upperBound..<span.range.lowerBound]
+                text[last.range.upperBound ..< span.range.lowerBound]
                     .allSatisfy({ $0.isWhitespace || $0.isPunctuation })
             {
-                last.range = last.range.lowerBound..<span.range.upperBound
+                last.range = last.range.lowerBound ..< span.range.upperBound
                 out[out.count - 1] = last
             } else {
                 out.append(span)

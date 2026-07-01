@@ -214,7 +214,8 @@ public struct EvidenceReportFilter: Equatable, Sendable {
             return false
         }
         if !artifactAvailability.isEmpty,
-           !artifactAvailability.contains(summary.artifact.availability) {
+            !artifactAvailability.contains(summary.artifact.availability)
+        {
             return false
         }
         return true
@@ -240,7 +241,8 @@ public enum EvidenceReportMetadataRedactor {
     }
 
     private static func isSensitiveKey(_ key: String) -> Bool {
-        let normalized = key
+        let normalized =
+            key
             .lowercased()
             .replacingOccurrences(of: "_", with: "")
             .replacingOccurrences(of: "-", with: "")
@@ -273,7 +275,8 @@ public enum EvidenceReportMetadataRedactor {
             || lowercased.contains("api_key=")
             || lowercased.contains("apikey=")
             || lowercased.contains("password=")
-            || lowercased.contains("secret=") {
+            || lowercased.contains("secret=")
+        {
             return true
         }
 

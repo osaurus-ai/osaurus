@@ -496,6 +496,16 @@ public struct EvalCase: Sendable, Codable, Identifiable {
         /// scripted lane is CI-safe (no model); the spawn/image lanes skip
         /// gracefully when the host has no spawnable agent / image model.
         public let subagent: SubagentExpectations?
+        /// Capability expectation for `domain == "apple_script"` cases. Drives
+        /// the production `AppleScriptLoop` through `AppleScriptEvaluator` in one
+        /// of three lanes (`scripted` model-free, `live` real-model + mock
+        /// executor, `liveProof` real-model + real executor) and scores the run:
+        /// status / outcome, placeholder use, generated-script matchers, captured
+        /// values, blocked writes, effect classes, mock-world (or real) final
+        /// state, step / token ceilings, and an optional LLM-judge rubric. The
+        /// scripted lane is CI-safe (no model); the `live` / `liveProof` lanes
+        /// skip gracefully when no AppleScript model is installed.
+        public let appleScript: AppleScriptExpectations?
 
         public init(
             schema: SchemaExpectations? = nil,
@@ -512,7 +522,8 @@ public struct EvalCase: Sendable, Codable, Identifiable {
             computerUseLoop: ComputerUseLoopExpectations? = nil,
             defaultAgent: DefaultAgentExpectations? = nil,
             screenContext: ScreenContextExpectations? = nil,
-            subagent: SubagentExpectations? = nil
+            subagent: SubagentExpectations? = nil,
+            appleScript: AppleScriptExpectations? = nil
         ) {
             self.schema = schema
             self.toolEnvelope = toolEnvelope
@@ -529,6 +540,7 @@ public struct EvalCase: Sendable, Codable, Identifiable {
             self.defaultAgent = defaultAgent
             self.screenContext = screenContext
             self.subagent = subagent
+            self.appleScript = appleScript
         }
     }
 
@@ -1829,6 +1841,252 @@ public struct EvalCase: Sendable, Codable, Identifiable {
             self.expectNestedRefused = expectNestedRefused
             self.expectImageMode = expectImageMode
             self.minImages = minImages
+        }
+    }
+
+    /// Expectation for `domain == "apple_script"` cases. Selects a lane via
+    /// `lane` and scores the resulting `AppleScriptEvalTranscript`:
+    ///   - `scripted`  — model-free. A canned sequence of `run_applescript`
+    ///     arguments drives the REAL `AppleScriptLoop` (gate / literal
+    ///     expansion / effect classification / verification) against a mock
+    ///     executor, so the whole mechanic runs in CI with no tokens.
+    ///   - `live`      — the real on-device AppleScript model proposes scripts;
+    ///     a mock executor (canned results or a keyed "app world") answers, so
+    ///     there are NO OS side effects. The capability / edge lane.
+    ///   - `liveProof` — the real model + the REAL `AppleScriptExecutor` against
+    ///     actual app state (permission-gated, run locally) — verbatim ground
+    ///     truth.
+    /// The `live` / `liveProof` lanes SKIP (not fail) when no AppleScript model
+    /// is installed. Every present matcher must pass; an empty matcher set just
+    /// records the transcript.
+    public struct AppleScriptExpectations: Sendable, Codable {
+
+        // MARK: - Lane + run inputs
+
+        /// `"scripted"` (default) | `"live"` | `"liveProof"`.
+        public let lane: String?
+        /// `"automate"` (default) | `"query"` — the loop's run mode.
+        public let mode: String?
+        /// `AppleScriptExecutionMode` raw value: `"confirmEach"` |
+        /// `"autoRunWithWarning"` (the eval default). `confirmEach` also
+        /// exercises the confirm gate, auto-answered by `confirmApproves`.
+        public let executionMode: String?
+        /// A single verbatim literal, inserted via the `{{content}}` placeholder.
+        public let content: String?
+        /// Several named verbatim literals `{ name: text }`, each inserted via
+        /// its own `{{name}}` placeholder (the multi-literal contract). Wins over
+        /// `content` on a shared `content` key.
+        public let contents: [String: String]?
+        /// The confirm-each answer for `automate` runs. nil → approve.
+        public let confirmApproves: Bool?
+        /// Productive-step budget for the loop. nil → 12.
+        public let maxSteps: Int?
+        /// Scripted lane only: `run_applescript` arguments-JSON strings, one per
+        /// step, that drive the loop with no model call. Ignored on live lanes.
+        public let scriptedCalls: [String]?
+
+        // MARK: - Executor
+
+        /// How the loop's `execute:` seam is satisfied. nil → a mock that
+        /// returns success for every script (pure mechanics). `liveProof` always
+        /// forces the real executor regardless of this.
+        public let executor: ExecutorSpec?
+
+        // MARK: - Harness levers (the sweep variables)
+
+        public let harness: HarnessSpec?
+
+        // MARK: - Assertions (any subset; an empty set just records)
+
+        /// Aggregate task status that must be reached: `"succeeded"` |
+        /// `"partial"` | `"failed"`.
+        public let expectStatus: String?
+        /// Acceptable loop outcomes: `"done"` | `"stepCapReached"` |
+        /// `"interrupted"` | `"failed"`. nil → not scored.
+        public let expectOutcome: [String]?
+        /// Literal names that MUST appear as `{{name}}` in at least one script
+        /// the model emitted (proven from the pre-expansion proposal) — the
+        /// "insert verbatim, don't re-type" check.
+        public let mustUsePlaceholders: [String]?
+        /// Case-sensitive substrings at least one EXECUTED (expanded) script must
+        /// contain.
+        public let scriptMustContain: [String]?
+        /// Substrings NO executed script may contain (e.g. a destructive verb).
+        public let scriptMustNotContain: [String]?
+        /// Regexes at least one executed script must match.
+        public let scriptMustMatch: [String]?
+        /// Case-insensitive substrings the captured value (`lastOutput`) must
+        /// contain — the `mac_query` / read-back result check.
+        public let valuesContain: [String]?
+        /// Assert a write was blocked and never executed (query-mode safety).
+        public let expectBlockedWrite: Bool?
+        /// Effect classes that must appear across the model's proposals:
+        /// `"read"` | `"edit"` | `"consequential"`.
+        public let expectEffects: [String]?
+        /// Effect classes that must NOT appear (e.g. `"consequential"` when no
+        /// destructive verb was requested).
+        public let forbidEffects: [String]?
+        /// Final-state predicates against the mock world. Keys: `"note:<name>"`,
+        /// `"volume"`. Empty on the real / canned executors (records only).
+        public let finalState: [StatePredicate]?
+        /// Efficiency ceiling: scripts executed must be ≤ this. nil → reported
+        /// only.
+        public let scoredMaxSteps: Int?
+        /// Cost ceiling: total model tokens must be ≤ this. nil → reported only.
+        public let scoredMaxModelTokens: Int?
+        /// LLM-judge rubric — Grok grades whether the generated script correctly
+        /// accomplishes the task (robust to script variety, unlike string
+        /// matching). Only run on `live` / `liveProof`; skipped (recorded) when
+        /// the resolved judge would be the run model itself.
+        public let rubric: [String]?
+
+        /// How the loop's `execute:` seam is backed for a case.
+        public struct ExecutorSpec: Sendable, Codable {
+            /// `"mock"` (default) | `"real"`.
+            public let kind: String?
+            /// Mock: canned per-step results (repeats the last once exhausted).
+            /// Empty / nil → success for every script.
+            public let mockResults: [ResultSpec]?
+            /// Mock: seed a keyed "app world" (note bodies, volume) that records
+            /// writes and answers reads, for `finalState` assertions. Takes
+            /// precedence over `mockResults` when present.
+            public let mockWorld: WorldSeed?
+
+            public init(
+                kind: String? = nil,
+                mockResults: [ResultSpec]? = nil,
+                mockWorld: WorldSeed? = nil
+            ) {
+                self.kind = kind
+                self.mockResults = mockResults
+                self.mockWorld = mockWorld
+            }
+
+            /// One canned execution result the mock hands back.
+            public struct ResultSpec: Sendable, Codable {
+                /// `AppleScriptExecutionResult.Status` raw value: `"success"` |
+                /// `"compileError"` | `"runtimeError"` | `"permissionRequired"` |
+                /// `"timedOut"` (snake_case aliases accepted). nil → success.
+                public let status: String?
+                public let output: String?
+                public let errorNumber: Int?
+                public let errorMessage: String?
+
+                public init(
+                    status: String? = nil,
+                    output: String? = nil,
+                    errorNumber: Int? = nil,
+                    errorMessage: String? = nil
+                ) {
+                    self.status = status
+                    self.output = output
+                    self.errorNumber = errorNumber
+                    self.errorMessage = errorMessage
+                }
+            }
+
+            /// Seed state for the mock "app world".
+            public struct WorldSeed: Sendable, Codable {
+                /// Note name → seeded body.
+                public let notes: [String: String]?
+                /// Seeded system output volume (0–100).
+                public let volume: Int?
+
+                public init(notes: [String: String]? = nil, volume: Int? = nil) {
+                    self.notes = notes
+                    self.volume = volume
+                }
+            }
+        }
+
+        /// `AppleScriptHarnessOptions` toggles surfaced to the suite so a case /
+        /// sweep can A/B the harness against the fixed model. nil fields keep
+        /// today's shipped production behavior.
+        public struct HarnessSpec: Sendable, Codable {
+            public let verifyReadBack: Bool?
+            public let includeDesktopContext: Bool?
+            /// `"standard"` | `"concise"`.
+            public let promptVariant: String?
+            /// `"namePreview"` | `"nameOnly"` | `"minimal"`.
+            public let literalAnnouncementStyle: String?
+
+            public init(
+                verifyReadBack: Bool? = nil,
+                includeDesktopContext: Bool? = nil,
+                promptVariant: String? = nil,
+                literalAnnouncementStyle: String? = nil
+            ) {
+                self.verifyReadBack = verifyReadBack
+                self.includeDesktopContext = includeDesktopContext
+                self.promptVariant = promptVariant
+                self.literalAnnouncementStyle = literalAnnouncementStyle
+            }
+        }
+
+        /// A final-state assertion against one mock-world key.
+        public struct StatePredicate: Sendable, Codable {
+            /// `"note:<name>"` or `"volume"`.
+            public let key: String
+            public let equals: String?
+            public let contains: String?
+
+            public init(key: String, equals: String? = nil, contains: String? = nil) {
+                self.key = key
+                self.equals = equals
+                self.contains = contains
+            }
+        }
+
+        public init(
+            lane: String? = nil,
+            mode: String? = nil,
+            executionMode: String? = nil,
+            content: String? = nil,
+            contents: [String: String]? = nil,
+            confirmApproves: Bool? = nil,
+            maxSteps: Int? = nil,
+            scriptedCalls: [String]? = nil,
+            executor: ExecutorSpec? = nil,
+            harness: HarnessSpec? = nil,
+            expectStatus: String? = nil,
+            expectOutcome: [String]? = nil,
+            mustUsePlaceholders: [String]? = nil,
+            scriptMustContain: [String]? = nil,
+            scriptMustNotContain: [String]? = nil,
+            scriptMustMatch: [String]? = nil,
+            valuesContain: [String]? = nil,
+            expectBlockedWrite: Bool? = nil,
+            expectEffects: [String]? = nil,
+            forbidEffects: [String]? = nil,
+            finalState: [StatePredicate]? = nil,
+            scoredMaxSteps: Int? = nil,
+            scoredMaxModelTokens: Int? = nil,
+            rubric: [String]? = nil
+        ) {
+            self.lane = lane
+            self.mode = mode
+            self.executionMode = executionMode
+            self.content = content
+            self.contents = contents
+            self.confirmApproves = confirmApproves
+            self.maxSteps = maxSteps
+            self.scriptedCalls = scriptedCalls
+            self.executor = executor
+            self.harness = harness
+            self.expectStatus = expectStatus
+            self.expectOutcome = expectOutcome
+            self.mustUsePlaceholders = mustUsePlaceholders
+            self.scriptMustContain = scriptMustContain
+            self.scriptMustNotContain = scriptMustNotContain
+            self.scriptMustMatch = scriptMustMatch
+            self.valuesContain = valuesContain
+            self.expectBlockedWrite = expectBlockedWrite
+            self.expectEffects = expectEffects
+            self.forbidEffects = forbidEffects
+            self.finalState = finalState
+            self.scoredMaxSteps = scoredMaxSteps
+            self.scoredMaxModelTokens = scoredMaxModelTokens
+            self.rubric = rubric
         }
     }
 

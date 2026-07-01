@@ -1,0 +1,26 @@
+{
+  "id": "apple_script.scripted-json-literal-survives",
+  "domain": "apple_script",
+  "label": "AppleScript • scripted JSON-looking literal survives verbatim",
+  "query": "Set the body of the note 'Payload' to the provided content, exactly.",
+  "notes": "Model-free CI anchor for the fidelity edge: a literal whose VALUE looks like JSON (a brace object with a bare number) must be inserted character-for-character, never re-parsed into a native object. Proves the {{content}} path preserves JSON-looking content byte-for-byte through expansion + un-escape. No tokens.",
+  "fixtures": {},
+  "expect": {
+    "appleScript": {
+      "lane": "scripted",
+      "mode": "automate",
+      "content": "{\"level\":\"P0\",\"count\":42}",
+      "harness": { "verifyReadBack": false },
+      "executor": { "kind": "mock", "mockWorld": { "notes": { "Payload": "" } } },
+      "scriptedCalls": [
+        "{\"script\":\"set body of note \\\"Payload\\\" to \\\"{{content}}\\\"\"}"
+      ],
+      "expectStatus": "succeeded",
+      "mustUsePlaceholders": ["content"],
+      "finalState": [
+        { "key": "note:Payload", "equals": "{\"level\":\"P0\",\"count\":42}" }
+      ],
+      "scoredMaxSteps": 1
+    }
+  }
+}

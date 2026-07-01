@@ -64,14 +64,16 @@ enum ChannelSecurityDiagnostics {
         guard !text.isEmpty else { return text }
         var result = text
 
-        let exactCredentials = credentials
+        let exactCredentials =
+            credentials
             .filter { $0.count >= SecretScrubber.minimumValueLength }
             .sorted { $0.count > $1.count }
         for credential in exactCredentials where result.contains(credential) {
             result = result.replacingOccurrences(of: credential, with: credentialMarker)
         }
 
-        let exactTokens = tokens
+        let exactTokens =
+            tokens
             .filter { $0.count >= SecretScrubber.minimumValueLength }
             .sorted { $0.count > $1.count }
         for token in exactTokens where result.contains(token) {

@@ -394,7 +394,9 @@ private struct PrivacyModelSelector: View {
             } label: {
                 Text("Remove Model", bundle: .module)
             }
-            Button(role: .cancel) { pendingRemoval = nil } label: {
+            Button(role: .cancel) {
+                pendingRemoval = nil
+            } label: {
                 Text("Cancel", bundle: .module)
             }
         } message: {
@@ -468,7 +470,9 @@ private struct PrivacyModelSelector: View {
                 }
                 Spacer()
             }
-            HStack { Spacer(); controls(backend) }
+            HStack {
+                Spacer(); controls(backend)
+            }
         }
         .padding(12)
         .background(theme.cardBackground, in: RoundedRectangle(cornerRadius: 10))
@@ -512,7 +516,9 @@ private struct PrivacyModelSelector: View {
                     actionLabel("arrow.clockwise", L("Re-verify"))
                 }
                 .buttonStyle(SettingsButtonStyle())
-                Button(role: .destructive) { pendingRemoval = .openai } label: {
+                Button(role: .destructive) {
+                    pendingRemoval = .openai
+                } label: {
                     actionLabel("trash", L("Remove"))
                 }
                 .buttonStyle(SettingsButtonStyle(isDestructive: true))
@@ -549,7 +555,9 @@ private struct PrivacyModelSelector: View {
     private var rampartControls: some View {
         switch rampart.state {
         case .ready:
-            Button(role: .destructive) { pendingRemoval = .rampart } label: {
+            Button(role: .destructive) {
+                pendingRemoval = .rampart
+            } label: {
                 actionLabel("trash", L("Remove"))
             }
             .buttonStyle(SettingsButtonStyle(isDestructive: true))
@@ -569,7 +577,9 @@ private struct PrivacyModelSelector: View {
             .buttonStyle(SettingsButtonStyle())
         case .idle:
             if RampartModelManager.bundleExists() {
-                Button(role: .destructive) { pendingRemoval = .rampart } label: {
+                Button(role: .destructive) {
+                    pendingRemoval = .rampart
+                } label: {
                     actionLabel("trash", L("Remove"))
                 }
                 .buttonStyle(SettingsButtonStyle(isDestructive: true))

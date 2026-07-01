@@ -66,11 +66,13 @@ public final class EvidenceReportRegistryService {
             descriptorError: descriptor.artifactError
         )
         let status = status(for: descriptor.status, artifact: artifact)
-        let id = descriptor.id ?? stableID(
-            kind: descriptor.kind,
-            source: descriptor.source,
-            artifactPath: artifactPath
-        )
+        let id =
+            descriptor.id
+            ?? stableID(
+                kind: descriptor.kind,
+                source: descriptor.source,
+                artifactPath: artifactPath
+            )
 
         return EvidenceReportSummary(
             id: id,
@@ -90,7 +92,8 @@ public final class EvidenceReportRegistryService {
         guard let baseURL, !path.hasPrefix("/") else {
             return URL(fileURLWithPath: path).standardizedFileURL.path
         }
-        return baseURL
+        return
+            baseURL
             .appendingPathComponent(path)
             .standardizedFileURL
             .path

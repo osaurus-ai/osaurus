@@ -1,0 +1,23 @@
+{
+  "id": "apple_script.scripted-query-blocks-write",
+  "domain": "apple_script",
+  "label": "AppleScript • scripted query mode blocks a write",
+  "query": "How loud is the Mac right now?",
+  "notes": "Model-free CI anchor for the read-only safety gate. A canned script proposes a WRITE (set volume) under mac_query mode; the gate must BLOCK it — never hand it to the executor — so the seeded state is untouched. Proves the query-mode write block and that a blocked script is never executed. No tokens.",
+  "fixtures": {},
+  "expect": {
+    "appleScript": {
+      "lane": "scripted",
+      "mode": "query",
+      "executor": { "kind": "mock", "mockWorld": { "volume": 42 } },
+      "scriptedCalls": [
+        "{\"script\":\"set volume output volume 10\"}"
+      ],
+      "expectBlockedWrite": true,
+      "expectEffects": ["edit"],
+      "finalState": [
+        { "key": "volume", "equals": "42" }
+      ]
+    }
+  }
+}

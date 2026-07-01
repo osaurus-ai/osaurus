@@ -206,14 +206,16 @@ struct AgentChannelSenderPolicy: Codable, Equatable, Sendable {
 
     private static func normalizedIds(_ values: [String]) -> [String] {
         var seen = Set<String>()
-        return values
+        return
+            values
             .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
             .filter { !$0.isEmpty && seen.insert($0).inserted }
     }
 
     private static func normalizedAddresses(_ values: [String]) -> [String] {
         var seen = Set<String>()
-        return values
+        return
+            values
             .map { $0.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() }
             .filter { !$0.isEmpty && seen.insert($0).inserted }
     }

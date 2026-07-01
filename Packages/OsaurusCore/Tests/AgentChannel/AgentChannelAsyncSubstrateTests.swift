@@ -210,7 +210,8 @@ struct AgentChannelAsyncSubstrateTests {
             Issue.record("Expected reply token to resolve, got \(failure.code.rawValue)")
         }
 
-        switch await registry.resolve(token: binding.token, agentId: otherAgentId, at: issuedAt.addingTimeInterval(30)) {
+        switch await registry.resolve(token: binding.token, agentId: otherAgentId, at: issuedAt.addingTimeInterval(30))
+        {
         case .success:
             Issue.record("Reply token resolved for the wrong agent")
         case .failure(let failure):
@@ -371,21 +372,29 @@ struct AgentChannelAsyncSubstrateTests {
         ])
         #expect(report.status == .failed)
         #expect(AgentChannelArtifactForwardingReport(records: []).status == .notRequested)
-        #expect(AgentChannelArtifactForwardingReport(records: [
-            AgentChannelArtifactForwardingRecord(artifactId: "artifact-1", status: .skipped),
-        ]).status == .skipped)
-        #expect(AgentChannelArtifactForwardingReport(records: [
-            AgentChannelArtifactForwardingRecord(artifactId: "artifact-1", status: .forwarded),
-            AgentChannelArtifactForwardingRecord(artifactId: "artifact-2", status: .skipped),
-        ]).status == .forwarded)
-        #expect(AgentChannelArtifactForwardingReport(records: [
-            AgentChannelArtifactForwardingRecord(artifactId: "artifact-1", status: .queued),
-            AgentChannelArtifactForwardingRecord(artifactId: "artifact-2", status: .forwarded),
-        ]).status == .queued)
-        #expect(AgentChannelArtifactForwardingReport(records: [
-            AgentChannelArtifactForwardingRecord(artifactId: "artifact-1", status: .blocked),
-            AgentChannelArtifactForwardingRecord(artifactId: "artifact-2", status: .queued),
-        ]).status == .blocked)
+        #expect(
+            AgentChannelArtifactForwardingReport(records: [
+                AgentChannelArtifactForwardingRecord(artifactId: "artifact-1", status: .skipped)
+            ]).status == .skipped
+        )
+        #expect(
+            AgentChannelArtifactForwardingReport(records: [
+                AgentChannelArtifactForwardingRecord(artifactId: "artifact-1", status: .forwarded),
+                AgentChannelArtifactForwardingRecord(artifactId: "artifact-2", status: .skipped),
+            ]).status == .forwarded
+        )
+        #expect(
+            AgentChannelArtifactForwardingReport(records: [
+                AgentChannelArtifactForwardingRecord(artifactId: "artifact-1", status: .queued),
+                AgentChannelArtifactForwardingRecord(artifactId: "artifact-2", status: .forwarded),
+            ]).status == .queued
+        )
+        #expect(
+            AgentChannelArtifactForwardingReport(records: [
+                AgentChannelArtifactForwardingRecord(artifactId: "artifact-1", status: .blocked),
+                AgentChannelArtifactForwardingRecord(artifactId: "artifact-2", status: .queued),
+            ]).status == .blocked
+        )
 
         let audit = AgentChannelAuditLog()
         let event = AgentChannelAuditEvent(

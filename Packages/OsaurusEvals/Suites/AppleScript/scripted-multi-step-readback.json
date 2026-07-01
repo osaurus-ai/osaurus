@@ -1,0 +1,28 @@
+{
+  "id": "apple_script.scripted-multi-step-readback",
+  "domain": "apple_script",
+  "label": "AppleScript • scripted multi-step change then read back",
+  "query": "Set the body of the note 'Tasks' to the provided content, then read it back and report it.",
+  "notes": "Model-free CI anchor for the write-then-verify shape. Step 1 writes the note body via {{content}}; step 2 reads it back. The mock world records the write and answers the read with the exact stored value, so the captured value and the final state both prove the change landed. No tokens.",
+  "fixtures": {},
+  "expect": {
+    "appleScript": {
+      "lane": "scripted",
+      "mode": "automate",
+      "content": "Ship the release notes by Friday.",
+      "executor": { "kind": "mock", "mockWorld": { "notes": { "Tasks": "old" } } },
+      "scriptedCalls": [
+        "{\"script\":\"set body of note \\\"Tasks\\\" to \\\"{{content}}\\\"\"}",
+        "{\"script\":\"return body of note \\\"Tasks\\\"\"}"
+      ],
+      "expectStatus": "succeeded",
+      "expectEffects": ["edit", "read"],
+      "mustUsePlaceholders": ["content"],
+      "valuesContain": ["Ship the release notes by Friday."],
+      "finalState": [
+        { "key": "note:Tasks", "equals": "Ship the release notes by Friday." }
+      ],
+      "scoredMaxSteps": 2
+    }
+  }
+}

@@ -189,7 +189,7 @@ public enum EvalRunner {
     /// stay telemetry-free instead of carrying a noisy process footprint.
     private static let resourceSampledDomains: Set<String> = [
         "agent_loop", "capability_claims", "computer_use_loop", "capability_search",
-        "default_agent", "subagent",
+        "default_agent", "subagent", "apple_script",
     ]
 
     /// Wall-clock budget for any single tool execution in a
@@ -509,6 +509,8 @@ public enum EvalRunner {
             return await runComputerUseLoopCase(testCase, modelId: modelId)
         case "subagent":
             return await runSubagentCase(testCase, modelId: modelId)
+        case "apple_script":
+            return await runAppleScriptCase(testCase, modelId: modelId)
         case "screen_context":
             return await runScreenContextCase(
                 testCase,

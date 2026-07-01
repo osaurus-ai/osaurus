@@ -180,23 +180,74 @@ enum AppleScriptExecutor {
         return (number, (message?.isEmpty ?? true) ? nil : message)
     }
 
-    /// Best-effort textual rendering of the result descriptor. Scalars and
-    /// text return their `stringValue`; lists/records are joined element-wise.
-    /// `nil` when the script returned nothing representable as text.
+    /// Best-effort textual rendering of the result descriptor so the loop can
+    /// surface a REAL value for the payload, not just success/failure. Text
+    /// returns directly; scalars (integers, reals, booleans, dates) are coerced
+    /// to text; lists and records are rendered element-wise (recursively).
+    /// `nil` when the script returned nothing representable as text (e.g. an
+    /// action with no `return`). Trimmed; an all-whitespace result is `nil`.
     private static func coerceOutput(_ descriptor: NSAppleEventDescriptor?) -> String? {
         guard let descriptor else { return nil }
-        if let value = descriptor.stringValue, !value.isEmpty { return value }
-        let count = descriptor.numberOfItems
-        if count > 0 {
-            var parts: [String] = []
-            for index in 1 ... count {
-                if let item = descriptor.atIndex(index)?.stringValue, !item.isEmpty {
-                    parts.append(item)
-                }
+        let rendered = render(descriptor)?.trimmingCharacters(in: .whitespacesAndNewlines)
+        return (rendered?.isEmpty ?? true) ? nil : rendered
+    }
+
+    // Four-char AE type codes we special-case, computed at use site so this file
+    // stays Foundation-only (no Carbon / CoreServices import for the constants).
+    private static let aeListType: DescType = fourCharCode("list")
+    private static let aeRecordType: DescType = fourCharCode("reco")
+    private static let aeUnicodeType: DescType = fourCharCode("utxt")
+    private static let aeBooleanTypes: Set<DescType> = [
+        fourCharCode("bool"), fourCharCode("true"), fourCharCode("fals"),
+    ]
+
+    /// Pack a (≤4 char) ASCII tag into a `DescType` (FourCharCode) without
+    /// importing the Carbon headers that declare `typeAEList` & friends.
+    private static func fourCharCode(_ tag: String) -> DescType {
+        var code: DescType = 0
+        for byte in tag.utf8.prefix(4) { code = (code << 8) + DescType(byte) }
+        return code
+    }
+
+    /// Recursive descriptor → text. Handles booleans, lists, and records
+    /// structurally and falls back to a Unicode-text coercion for any other
+    /// scalar (integers, reals, dates) before giving up.
+    private static func render(_ descriptor: NSAppleEventDescriptor) -> String? {
+        let type = descriptor.descriptorType
+        if aeBooleanTypes.contains(type) { return descriptor.booleanValue ? "true" : "false" }
+        // A list (`{1, 2, 3}` / `{"a", "b"}`) renders element-wise. A record's
+        // keys are opaque four-char AE codes (or user-field blobs), so try a
+        // text coercion first and otherwise surface its VALUES joined — enough
+        // for the parent to read. (The system prompt steers the model to return
+        // strings/lists for clean multi-value output, avoiding records anyway.)
+        if type == aeListType { return joinItems(descriptor) }
+        if type == aeRecordType {
+            if let coerced = descriptor.coerce(toDescriptorType: aeUnicodeType)?.stringValue,
+                !coerced.isEmpty
+            {
+                return coerced
             }
-            if !parts.isEmpty { return parts.joined(separator: ", ") }
+            return joinItems(descriptor)
+        }
+        if let value = descriptor.stringValue, !value.isEmpty { return value }
+        if let coerced = descriptor.coerce(toDescriptorType: aeUnicodeType)?.stringValue,
+            !coerced.isEmpty
+        {
+            return coerced
         }
         return nil
+    }
+
+    /// Render each element of a list/record descriptor (recursing via `render`)
+    /// and comma-join them. `nil` when empty or nothing renders.
+    private static func joinItems(_ descriptor: NSAppleEventDescriptor) -> String? {
+        let count = descriptor.numberOfItems
+        guard count > 0 else { return nil }
+        var parts: [String] = []
+        for index in 1 ... count {
+            if let item = descriptor.atIndex(index), let text = render(item) { parts.append(text) }
+        }
+        return parts.isEmpty ? nil : parts.joined(separator: ", ")
     }
 }
 

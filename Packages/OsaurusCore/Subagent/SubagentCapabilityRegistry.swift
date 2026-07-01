@@ -236,15 +236,19 @@ public enum SubagentCapabilityRegistry {
         guidanceLabelKey: "Image Generation"
     )
 
-    /// The AppleScript family — one `applescript` tool driven by a dedicated
-    /// on-device AppleScript model (the curated `AppleScriptModelCatalog`).
+    /// The AppleScript family — two sibling tools, one shared capability + one
+    /// on-device model (the curated `AppleScriptModelCatalog`): `applescript`
+    /// (state-changing automation, the user's confirm gate) and `mac_query`
+    /// (read-only info retrieval, auto-run reads / block writes). `applescript`
+    /// is primary, so the guidance + gating key off it; both gate together (one
+    /// per-agent toggle + the installed-model check), like the spawn pair.
     /// `supportsModelOverride = false` like `image`: AppleScript owns its own
     /// model system (per-agent / global `appleScriptModelId` + first-installed
     /// fallback) and renders its own picker + execution-mode control instead of
-    /// the shared override row. The guidance renders when `applescript` resolves.
+    /// the shared override row.
     public static let appleScript = SubagentCapability(
         id: "applescript",
-        toolNames: [AppleScriptTool.toolName],
+        toolNames: [AppleScriptTool.toolName, MacQueryTool.toolName],
         gate: .delegation,
         perAgentFlag: .appleScript,
         modelSource: .dedicatedConfigured,

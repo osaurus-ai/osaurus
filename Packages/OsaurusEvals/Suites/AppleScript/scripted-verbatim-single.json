@@ -1,0 +1,27 @@
+{
+  "id": "apple_script.scripted-verbatim-single",
+  "domain": "apple_script",
+  "label": "AppleScript • scripted verbatim single literal",
+  "query": "Set the body of the note 'Draft' to the provided content, exactly.",
+  "notes": "Model-free CI anchor for the {{content}} verbatim path. A canned run_applescript sets the note body via the placeholder; the loop expands it and the mock 'app world' un-escapes it back to the exact bytes. Proves placeholder use, edit classification, and byte-for-byte fidelity through quotes / em dash / newline with no tokens.",
+  "fixtures": {},
+  "expect": {
+    "appleScript": {
+      "lane": "scripted",
+      "mode": "automate",
+      "content": "Line one\nLine two — \"quoted\"",
+      "harness": { "verifyReadBack": false },
+      "executor": { "kind": "mock", "mockWorld": { "notes": { "Draft": "old text" } } },
+      "scriptedCalls": [
+        "{\"script\":\"set body of note \\\"Draft\\\" to \\\"{{content}}\\\"\"}"
+      ],
+      "expectStatus": "succeeded",
+      "expectEffects": ["edit"],
+      "mustUsePlaceholders": ["content"],
+      "finalState": [
+        { "key": "note:Draft", "equals": "Line one\nLine two — \"quoted\"" }
+      ],
+      "scoredMaxSteps": 1
+    }
+  }
+}

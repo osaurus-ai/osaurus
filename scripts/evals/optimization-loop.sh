@@ -99,8 +99,12 @@ read -ra DET_SUITES <<< "${DET_SUITES:-ArgumentCoercion CapabilitySearch Compute
 # the run model, so it lands real `subagent` rows in the cross-model matrix.
 # Override with a space-separated LLM_SUITES env var to scope a run, e.g.
 # LLM_SUITES="Subagent ComputerUseLoop SandboxFrontier" for a subagent-focused matrix.
+# `AppleScript` runs all AppleScript flows through the one AppleScriptLoop: its
+# scripted cases are model-independent (identical per model) while the live lanes
+# (real-model + mock/real executor) vary with the run model, so it lands real
+# `apple_script` rows in the cross-model matrix (same rationale as `Subagent`).
 # `read -ra` splits the override/default into the array (SC2206-clean, bash 3.2-safe).
-read -ra LLM_SUITES <<< "${LLM_SUITES:-AgentLoop AgentLoopFrontier AgentDB CapabilityClaims ComputerUseLoop DefaultAgent SandboxFrontier Subagent}"
+read -ra LLM_SUITES <<< "${LLM_SUITES:-AgentLoop AgentLoopFrontier AgentDB AppleScript CapabilityClaims ComputerUseLoop DefaultAgent SandboxFrontier Subagent}"
 
 log() { printf '[opt-loop] %s\n' "$*"; }
 

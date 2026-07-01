@@ -1,0 +1,23 @@
+{
+  "id": "apple_script.scripted-value-query",
+  "domain": "apple_script",
+  "label": "AppleScript • scripted value query (mac_query)",
+  "query": "What is the current system output volume?",
+  "notes": "Model-free CI anchor for the mac_query read path. A canned read-only script returns the seeded volume; query mode auto-runs the read, the loop coerces the value, and the run reports it. Proves read classification + value capture with no tokens.",
+  "fixtures": {},
+  "expect": {
+    "appleScript": {
+      "lane": "scripted",
+      "mode": "query",
+      "executor": { "kind": "mock", "mockWorld": { "volume": 42 } },
+      "scriptedCalls": [
+        "{\"script\":\"return output volume of (get volume settings)\"}"
+      ],
+      "expectStatus": "succeeded",
+      "expectEffects": ["read"],
+      "valuesContain": ["42"],
+      "expectBlockedWrite": false,
+      "scoredMaxSteps": 1
+    }
+  }
+}

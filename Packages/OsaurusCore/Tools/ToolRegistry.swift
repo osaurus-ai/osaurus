@@ -264,8 +264,10 @@ public final class ToolRegistry: ObservableObject {
             // unless the agent has AppleScript enabled AND a model installed
             // (gated via `SubagentToolVisibility`). Its on-device AppleScript
             // model generates the script; macOS prompts for Automation consent
-            // at script-send time.
+            // at script-send time. `mac_query` is its read-only sibling (same
+            // capability + model + gating), so both register and gate together.
             AppleScriptTool(),
+            MacQueryTool(),
         ]
         var configChanged = false
         for tool in builtIns {

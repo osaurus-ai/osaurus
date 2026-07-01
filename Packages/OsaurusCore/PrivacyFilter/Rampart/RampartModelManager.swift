@@ -133,7 +133,7 @@ public final class RampartModelManager: ObservableObject {
                 throw RampartModelError.badURL(file)
             }
             let (tempURL, response) = try await session.download(from: url)
-            if let http = response as? HTTPURLResponse, !(200...299).contains(http.statusCode) {
+            if let http = response as? HTTPURLResponse, !(200 ... 299).contains(http.statusCode) {
                 throw RampartModelError.httpStatus(file, http.statusCode)
             }
             let dest = staging.appendingPathComponent(file)

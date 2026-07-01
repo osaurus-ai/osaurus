@@ -38,7 +38,9 @@ public enum AppleScriptAction {
                 "type": .string("string"),
                 "description": .string(
                     "The complete, executable AppleScript to run. Provide the entire script as one "
-                        + "string (use \\n for newlines). Do not wrap it in Markdown code fences."
+                        + "string (use \\n for newlines). Do not wrap it in Markdown code fences. If the "
+                        + "task provided content as a {{name}} placeholder, write that token where the "
+                        + "text value goes instead of re-typing it — it expands to the exact text."
                 ),
             ])
         ]),
@@ -54,9 +56,12 @@ public enum AppleScriptAction {
                 name: toolName,
                 description:
                     "Run a complete AppleScript on macOS to accomplish the task. Emit the entire script "
-                    + "in `script`. You will receive its output (or a compile/runtime error) and can "
-                    + "correct and call again. When the task is done, reply with a short plain-text summary "
-                    + "and no tool call.",
+                    + "in `script`. When the task asks for information, END the script with `return` of "
+                    + "the requested value(s) (build a string or list for several values). If the task "
+                    + "provided verbatim content as a {{name}} placeholder, insert that token where the "
+                    + "text goes rather than re-typing it. You will receive its return value (or a "
+                    + "compile/runtime error) and can correct and call again. When the task is done, "
+                    + "reply with a short plain-text summary that includes the value(s) and no tool call.",
                 parameters: schema
             )
         )

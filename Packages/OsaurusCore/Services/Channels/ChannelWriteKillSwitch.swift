@@ -34,7 +34,8 @@ final class ChannelWriteKillSwitch: @unchecked Sendable {
     private let queue = DispatchQueue(label: "ai.osaurus.channels.write-kill-switch")
 
     init(fileURL: URL? = nil) {
-        self.fileURL = fileURL
+        self.fileURL =
+            fileURL
             ?? OsaurusPaths.config().appendingPathComponent("channel-write-kill-switch.json")
     }
 

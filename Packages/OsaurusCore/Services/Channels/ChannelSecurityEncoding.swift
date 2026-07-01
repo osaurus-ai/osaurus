@@ -16,7 +16,8 @@ enum ChannelSecurityEncoding {
     }
 
     static func base64URLDecode(_ string: String) -> Data? {
-        var base64 = string
+        var base64 =
+            string
             .replacingOccurrences(of: "-", with: "+")
             .replacingOccurrences(of: "_", with: "/")
         let remainder = base64.count % 4

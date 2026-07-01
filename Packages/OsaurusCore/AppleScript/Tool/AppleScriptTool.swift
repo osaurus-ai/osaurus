@@ -31,7 +31,11 @@ final class AppleScriptTool: OsaurusTool, @unchecked Sendable {
         + "task in `task` as one instruction — this runs a self-contained subagent that writes an "
         + "AppleScript, runs it, reads the result, and iterates until done, then returns a summary. Use "
         + "it for AppleScript-style automation (controlling Mac apps like Finder, Safari, Mail, Notes, "
-        + "System Events; reading or setting app state; system actions). Depending on the user's setting, "
+        + "System Events; reading or setting app state; system actions). If the task must insert EXACT "
+        + "text (a verbatim transcription, quotes, code, or a long note body), pass that text in "
+        + "`content` and keep `task` as the instruction — it is then reproduced character-for-character "
+        + "instead of being re-typed. When the task needs several exact blocks (a subject AND a body, "
+        + "say), pass them in `contents` as a {name: text} map instead. Depending on the user's setting, "
         + "each script is shown for approval or auto-run with a warning. Do NOT use it for shell, files, "
         + "or web requests — those have dedicated tools."
 
@@ -46,6 +50,28 @@ final class AppleScriptTool: OsaurusTool, @unchecked Sendable {
                 "description": .string(
                     "The complete task to accomplish with AppleScript, in plain language, naming the app "
                         + "when it matters. Example: \"Get the URL of the front Safari tab.\""
+                ),
+            ]),
+            "content": .object([
+                "type": .string("string"),
+                "description": .string(
+                    "Optional. EXACT verbatim text the task must insert (a transcription, quote block, "
+                        + "code, or long note body). Pass it here instead of inside `task` so it is "
+                        + "reproduced character-for-character: the subagent inserts it via a `{{content}}` "
+                        + "placeholder and never re-types it. Keep `task` as the instruction, e.g. \"Set "
+                        + "the body of the note 'Quotes' to the provided content.\" For more than one "
+                        + "exact block, use `contents` instead."
+                ),
+            ]),
+            "contents": .object([
+                "type": .string("object"),
+                "additionalProperties": .object(["type": .string("string")]),
+                "description": .string(
+                    "Optional. Several EXACT verbatim texts as a { name: text } map, for a task that "
+                        + "must insert more than one exact block (e.g. a subject AND a body). Each is "
+                        + "inserted character-for-character via its own `{{name}}` placeholder — never "
+                        + "re-typed. Use short, semantic names. Example: {\"subject\": \"…\", "
+                        + "\"body\": \"…\"}. For a single block use `content`."
                 ),
             ]),
             "max_steps": .object([
@@ -67,49 +93,17 @@ final class AppleScriptTool: OsaurusTool, @unchecked Sendable {
 
     init() {}
 
+    // Default to a tighter step cap than Computer Use — an automation task
+    // typically converges in a couple of script attempts.
     func execute(argumentsJSON: String) async throws -> String {
-        let argsReq = requireArgumentsDictionary(argumentsJSON, tool: name)
-        guard case .value(let args) = argsReq else { return argsReq.failureEnvelope ?? "" }
-
-        let taskReq = requireString(
-            args,
-            "task",
+        await AppleScriptToolDispatch.run(
+            tool: self,
+            argumentsJSON: argumentsJSON,
+            field: "task",
             expected: "the complete task to accomplish, in plain language",
-            tool: name
-        )
-        guard case .value(let rawTask) = taskReq else { return taskReq.failureEnvelope ?? "" }
-        let task = rawTask.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !task.isEmpty else {
-            return ToolEnvelope.failure(
-                kind: .invalidArgs,
-                message: "`task` must be a non-empty instruction.",
-                field: "task",
-                expected: "non-empty task description",
-                tool: name
-            )
-        }
-
-        // Default to a tighter step cap than Computer Use — an AppleScript task
-        // typically converges in a couple of script attempts. Honour an explicit
-        // `max_steps`, clamped to a sane range.
-        var limits = RunLimits(maxSteps: 12)
-        if let raw = args["max_steps"], !(raw is NSNull) {
-            if let n = coerceInt(raw) {
-                limits = RunLimits(maxSteps: min(max(n, 1), 50))
-            } else {
-                return ToolEnvelope.failure(
-                    kind: .invalidArgs,
-                    message: "`max_steps` must be an integer.",
-                    field: "max_steps",
-                    expected: "integer step cap",
-                    tool: name
-                )
-            }
-        }
-
-        return await SubagentSession.run(
-            AppleScriptKind(task: task, limits: limits),
-            tool: name
+            emptyMessage: "`task` must be a non-empty instruction.",
+            defaultMaxSteps: 12,
+            mode: .automate
         )
     }
 }

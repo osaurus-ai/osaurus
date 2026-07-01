@@ -1,0 +1,25 @@
+{
+  "id": "apple_script.live-verbatim-single",
+  "domain": "apple_script",
+  "label": "AppleScript • live verbatim single literal",
+  "query": "Set the body of the note 'Draft' to the provided content.",
+  "notes": "Capability lane: the real 16B model proposes the script; a mock 'app world' answers so there are no OS side effects. Scores that the model USED the {{content}} placeholder (proven from the pre-expansion proposal, so it did not re-type the literal) and that the script correctly sets the note body (Grok rubric). Skips when no AppleScript model is installed.",
+  "fixtures": {},
+  "expect": {
+    "appleScript": {
+      "lane": "live",
+      "mode": "automate",
+      "content": "Q3 retro notes:\n- Shipped the on-device runtime\n- Cut cold-start by 40%\n- Next: streaming tools",
+      "executor": { "kind": "mock", "mockWorld": { "notes": { "Draft": "old draft" } } },
+      "expectStatus": "succeeded",
+      "expectOutcome": ["done"],
+      "expectEffects": ["edit"],
+      "mustUsePlaceholders": ["content"],
+      "scoredMaxSteps": 4,
+      "rubric": [
+        "The AppleScript sets the body of the note named 'Draft' to the provided content.",
+        "The script targets the Notes application and does not delete or create unrelated items."
+      ]
+    }
+  }
+}

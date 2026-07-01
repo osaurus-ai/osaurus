@@ -58,7 +58,8 @@ final class ChannelReplayNonceStore: ChannelReplyTokenNonceStore, @unchecked Sen
     private let queue = DispatchQueue(label: "ai.osaurus.channels.replay-nonces")
 
     init(fileURL: URL? = nil) {
-        self.fileURL = fileURL
+        self.fileURL =
+            fileURL
             ?? OsaurusPaths.agentChannels().appendingPathComponent("reply-token-nonces.json")
     }
 
