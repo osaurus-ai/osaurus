@@ -266,8 +266,10 @@ public struct Attachment: Codable, Sendable, Equatable, Identifiable {
     /// Sentinel stored in `lineCountCache` to distinguish "cached nil" from
     /// "not yet cached" (`NSCache` can't store `Optional` directly).
     private static let nilSentinel = NSNumber(value: -1)
-    private static let lineCountCache = NSCache<NSString, NSNumber>()
-    private static let tokenEstimateCache = NSCache<NSString, NSNumber>()
+    // NSCache is documented thread-safe for concurrent access from multiple
+    // threads; the compiler just can't see that through `Sendable`.
+    nonisolated(unsafe) private static let lineCountCache = NSCache<NSString, NSNumber>()
+    nonisolated(unsafe) private static let tokenEstimateCache = NSCache<NSString, NSNumber>()
 
     public var isVideo: Bool {
         switch kind {
