@@ -30,10 +30,10 @@ let package = Package(
         // MLXLMCommon, MLXLLM, MLXVLM, Tokenizers, Jinja, cache, parser,
         // MTP, and media-runtime surfaces Osaurus previously pulled from
         // separate MLX, inference, tokenizer, template, and transformer pins.
-        // Pinned to the merge of the Rampart PII PR on main.
+        // Pinned to the merge of the writePNG main-actor hang fix on main.
         .package(
             url: "https://github.com/osaurus-ai/vmlx-swift",
-            revision: "d103e0cc2d95d2aa3a984f93f61495ca0153107b"
+            revision: "5b8371b428f205bd7a4e91df901bfefefb71dfda"
         ),
         // FluidAudio 0.14.3 added a breaking `language:` parameter to TTS
         // calls that osaurus's `TTSService` doesn't pass. Pinning to the
