@@ -130,8 +130,14 @@ public final class EvidenceReportRegistryService {
         case .available:
             return descriptorStatus
         case .unavailable:
+            if descriptorStatus == .failed || descriptorStatus == .error {
+                return descriptorStatus
+            }
             return .unavailable
         case .error:
+            if descriptorStatus == .failed || descriptorStatus == .error {
+                return descriptorStatus
+            }
             return .error
         }
     }

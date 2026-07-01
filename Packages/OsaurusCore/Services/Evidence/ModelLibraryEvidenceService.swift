@@ -563,7 +563,12 @@ final class ModelLibraryEvidenceService {
             var validationMessages: [String] = []
 
             if artifactUnavailable {
-                status = descriptor.artifactError?.isEmpty == false ? .error : .unavailable
+                switch descriptor.status {
+                case .failed, .error:
+                    status = descriptor.status
+                default:
+                    status = descriptor.artifactError?.isEmpty == false ? .error : .unavailable
+                }
             } else if descriptor.status == .passed {
                 switch descriptor.kind {
                 case .runtime, .benchmark:

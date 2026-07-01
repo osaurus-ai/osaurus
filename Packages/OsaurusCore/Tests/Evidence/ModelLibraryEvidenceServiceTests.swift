@@ -234,6 +234,53 @@ struct ModelLibraryEvidenceServiceTests {
     }
 
     @Test
+    func missingFailedOrErroredProofArtifactStillMarksRowUnsupported() throws {
+        let fixture = try ModelEvidenceFixture()
+        let failed = try fixture.model(id: "org/missing-failed-proof", config: #"{"model_type":"qwen3"}"#)
+        let errored = try fixture.model(id: "org/missing-error-proof", config: #"{"model_type":"qwen3"}"#)
+
+        let service = ModelLibraryEvidenceService(
+            registry: EvidenceReportRegistryService(now: fixture.clock)
+        )
+        let snapshot = service.registerEvidence(
+            for: [failed, errored],
+            proofDescriptors: [
+                ModelEvidenceProofDescriptor(
+                    modelId: failed.id,
+                    kind: .runtime,
+                    artifactPath: fixture.root.appendingPathComponent("proof/missing-failed.json").path,
+                    status: .failed
+                ),
+                ModelEvidenceProofDescriptor(
+                    modelId: errored.id,
+                    kind: .runtime,
+                    artifactPath: fixture.root.appendingPathComponent("proof/missing-error.json").path,
+                    status: .error
+                ),
+            ]
+        )
+
+        #expect(snapshot.rows.first { $0.modelId == failed.id }?.supportState == .unsupported)
+        #expect(snapshot.rows.first { $0.modelId == errored.id }?.supportState == .unsupported)
+        #expect(
+            snapshot.reports
+                .first {
+                    $0.metadata["model_id"] == failed.id
+                        && $0.metadata["evidence_role"] == "runtime_proof"
+                }?
+                .status == .failed
+        )
+        #expect(
+            snapshot.reports
+                .first {
+                    $0.metadata["model_id"] == errored.id
+                        && $0.metadata["evidence_role"] == "runtime_proof"
+                }?
+                .status == .error
+        )
+    }
+
+    @Test
     func registryMetadataAndRowsDoNotExposeFullBundlePaths() throws {
         let fixture = try ModelEvidenceFixture()
         let model = try fixture.model(id: "org/redacted", config: #"{"model_type":"qwen3"}"#)

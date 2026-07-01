@@ -92,6 +92,34 @@ struct EvidenceReportRegistryTests {
     }
 
     @Test
+    func missingArtifactsPreserveExplicitFailureStatuses() throws {
+        let fixture = try RegistryFixture()
+        let service = EvidenceReportRegistryService(now: fixture.clock)
+
+        service.register([
+            EvidenceReportDescriptor(
+                kind: .runtime,
+                source: "runtime-live-proof",
+                artifactPath: fixture.root.appendingPathComponent("missing/failed.json").path,
+                status: .failed,
+                counts: EvidenceReportCounts(total: 1, failed: 1)
+            ),
+            EvidenceReportDescriptor(
+                kind: .runtime,
+                source: "runtime-live-proof",
+                artifactPath: fixture.root.appendingPathComponent("missing/error.json").path,
+                status: .error,
+                counts: EvidenceReportCounts(total: 1, errored: 1)
+            ),
+        ])
+
+        let reports = service.list()
+        #expect(reports.count == 2)
+        #expect(reports.allSatisfy { $0.artifact.availability == .unavailable })
+        #expect(Set(reports.map(\.status)) == [.failed, .error])
+    }
+
+    @Test
     func descriptorErrorsBecomeErrorRows() throws {
         let fixture = try RegistryFixture()
         let service = EvidenceReportRegistryService(now: fixture.clock)
