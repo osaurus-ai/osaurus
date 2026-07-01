@@ -6967,7 +6967,7 @@ private struct AgentEditorSheet: View {
                 } else {
                     HStack(spacing: 0) {
                         formColumn
-                            .frame(width: 440)
+                            .frame(width: 500)
                         Divider()
                         previewColumn
                             .frame(maxWidth: .infinity)
@@ -6986,7 +6986,7 @@ private struct AgentEditorSheet: View {
 
             footerView
         }
-        .frame(width: 820, height: 580)
+        .frame(width: 860, height: 580)
         .background(theme.primaryBackground)
         .clipShape(RoundedRectangle(cornerRadius: 16))
         .overlay(
