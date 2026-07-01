@@ -85,7 +85,8 @@ public final class RevocationStore: @unchecked Sendable {
             counterThresholds: counterThresholds
         )
         guard let data = try? JSONEncoder().encode(model) else { return }
-        Keychain.write(service: Self.keychainService, account: Self.keychainAccount, data: data)
+        Keychain.writeInBackground(
+            service: Self.keychainService, account: Self.keychainAccount, data: data)
     }
 
     private func load() {
