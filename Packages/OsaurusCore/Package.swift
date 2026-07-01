@@ -33,7 +33,7 @@ let package = Package(
         // Pinned to the merge of the writePNG main-actor hang fix on main.
         .package(
             url: "https://github.com/osaurus-ai/vmlx-swift",
-            revision: "c976fcbd96f270ac55b6d69fad33284f89936d86"
+            revision: "b6eda04f4e471271778c64af5166ad3d9298afcf"
         ),
         // FluidAudio 0.14.3 added a breaking `language:` parameter to TTS
         // calls that osaurus's `TTSService` doesn't pass. Pinning to the

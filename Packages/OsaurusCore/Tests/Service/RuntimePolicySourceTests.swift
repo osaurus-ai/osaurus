@@ -639,7 +639,7 @@ struct RuntimePolicySourceTests {
         // isolation, so the MLX eval() it triggers no longer blocks the main
         // thread during image generation (fixes the Sentry App Hanging report
         // in ZImage.performGenerate).
-        let expectedRuntimeHardenedRevision = "c976fcbd96f270ac55b6d69fad33284f89936d86"
+        let expectedRuntimeHardenedRevision = "b6eda04f4e471271778c64af5166ad3d9298afcf"
         let manifestRevision = try Self.vmlxPinRevision(in: manifest)
         let workspaceRevision = try Self.vmlxPinRevision(in: workspaceResolved)
         let appRevision = try Self.vmlxPinRevision(in: appResolved)
