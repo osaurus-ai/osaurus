@@ -93,3 +93,31 @@ Built the osaurus dev app on the fixed pin and drove its local API (port 1337):
   degeneration root cause, which needs a faithful 5+ step loop repro to trace.
 - **Issue 1 — JANGTQ crash fix is IN this dev build** (pin d103e0cc); MiniMax-M2.7-Small now
   loads (proven in RunBench). Live multiturn UI confirm pending computer-use.
+
+## VL wiring cross-check (vmlx-swift ↔ osaurus) — architecturally sound
+
+Systematic cross-check of the full VL matrix (per user request — "plenty of models have VL like qwen"):
+
+- **vmlx dispatch (VLMModelFactory):** 21 VL model_types — `qwen2_vl`, `qwen2_5_vl`,
+  `qwen3_vl`, `qwen3_5`, `qwen3_5_moe`, `mistral3`, `ministral3`, `pixtral`, `gemma3`,
+  `gemma4`, `gemma4_unified`, `diffusion_gemma`, `idefics3`, `smolvlm`, `llava_qwen2`,
+  `paligemma`, `fastvlm`, `glm_ocr`, `lfm2_vl`, `nemotron_h_omni`, `zaya1_vl`.
+- **Processors:** every dispatch type has a registered processor (Qwen2VL/Qwen2_5_VL/
+  Qwen3VL/Pixtral/Mistral3/Gemma3/Gemma4/Idefics3/SmolVLM/FastVLM/PaliGemma/Glm46V/
+  Lfm2Vl/NemotronHOmni/Zaya1VL). No missing processor.
+- **Detection:** `VLMTypeRegistry.supportedModelTypes = Set(_creators.keys)` — DERIVED
+  from the factory, so detection can never drift from dispatch. osaurus `VLMDetection.isVLM`
+  delegates to it. Complete for all 21.
+- **osaurus image gate:** `supportsVision = VLMDetection.isVLM(modelId)` (HTTPHandler
+  4293/4433) — uses the correct architecture-based detection; images forwarded via
+  `MLXBatchAdapter.processedImages` (587). Sound.
+- **Caveat (fragile parallel, UI-only):** `ModelMediaCapabilities` uses NAME-substring
+  matching (imageOnlyPatterns) and defaults unmatched names to `.textOnly` — BUT it's for
+  the composer/UI capability display and has an `fallbackSupportsImages` (isVLM) rescue in
+  `composerCapabilities`; it does NOT gate request-path image forwarding. Still, it's a
+  drift risk worth converting to architecture-based detection.
+- **Conclusion:** no whole-family VL wiring gap. "Some VL models not working" is therefore
+  **model-specific runtime** (e.g. the Mistral3/Pixtral image-token round-trip already fixed
+  in vmlx #101, or a specific processor/config), NOT a detection/dispatch/processor gap.
+  Zaya VL is proven working live through the dev app. **Need the specific failing VL model
+  named** (Qwen VL? Gemma-4 VLM? Mistral3?) to reproduce + fix the model-specific cause.
