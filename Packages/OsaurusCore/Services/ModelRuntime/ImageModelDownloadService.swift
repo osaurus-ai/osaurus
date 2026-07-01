@@ -42,12 +42,14 @@ final class ImageModelDownloadService: ObservableObject {
 
     @Published private(set) var states: [String: DownloadState] = [:]
     @Published private(set) var metrics: [String: ModelDownloadService.DownloadMetrics] = [:]
-    /// Image bundles published under the OsaurusAI HF org, fetched at runtime.
-    /// This is the sole source for the Available list — empty until
-    /// `refreshCatalog()` succeeds, and left untouched on a fetch failure so a
-    /// previously-loaded listing keeps showing. Users can still stage any other
-    /// mflux bundle by pasting its repo id via the UI's Import field.
-    @Published private(set) var fetchedCatalog: [ImageModelDownload] = []
+    /// Image bundles shown in the Available list: the curated set (see
+    /// `curatedCatalog`) merged with the OsaurusAI HF org listing fetched at
+    /// runtime. Seeded with `curatedCatalog` so those entries render
+    /// immediately and survive a failed/empty org fetch (which leaves the
+    /// previously-loaded listing intact). Users can still stage any other mflux
+    /// bundle by pasting its repo id via the UI's Import field.
+    @Published private(set) var fetchedCatalog: [ImageModelDownload] =
+        ImageModelDownloadService.curatedCatalog
     /// True while the OsaurusAI org listing fetch is in flight.
     @Published private(set) var isLoadingCatalog = false
 
@@ -56,6 +58,25 @@ final class ImageModelDownloadService: ObservableObject {
     /// HF `pipeline_tag` values that denote a runnable on-device image bundle
     /// (excludes `image-text-to-text` VLMs/LLMs published in the same org).
     private static let imagePipelineTags: Set<String> = ["text-to-image", "image-to-image"]
+
+    /// Curated image bundles that aren't published under the OsaurusAI org, so
+    /// they'd otherwise never appear in Available. These are mflux mirrors the
+    /// engine's family registry recognizes; users can still Import any other
+    /// repo. The official `ideogram-ai` fp8/nf4 repos are CUDA/PyTorch
+    /// checkpoints (no diffusers/MLX support) and are deliberately excluded
+    /// because they would not load in the MLX engine.
+    static let curatedCatalog: [ImageModelDownload] = [
+        ImageModelDownload(
+            repoId: "cocktailpeanut/ideogram-4-fp8",
+            displayName: "Ideogram 4 (fp8)",
+            note: "Text-to-image · mflux · strong typography"
+        ),
+        ImageModelDownload(
+            repoId: "cocktailpeanut/ideogram-4-nf4",
+            displayName: "Ideogram 4 (NF4)",
+            note: "Text-to-image · mflux · 4-bit"
+        ),
+    ]
 
     /// File patterns to stage. Matched against each file's name across all
     /// subdirectories, so nested `transformer/*.safetensors` etc. are included.
@@ -93,9 +114,9 @@ final class ImageModelDownloadService: ObservableObject {
     }
 
     /// Source HF repo a staged bundle was downloaded from. Reads the hidden
-    /// marker; falls back to a fetched-catalog entry with the same id. `nil`
-    /// when neither is known (e.g. an old imported bundle), in which case
-    /// re-download is unavailable and only delete is offered.
+    /// marker; falls back to a fetched- or curated-catalog entry with the same
+    /// id. `nil` when neither is known (e.g. an old imported bundle), in which
+    /// case re-download is unavailable and only delete is offered.
     func sourceRepoId(for id: String) -> String? {
         let marker = ImageGenerationService.imageModelsRoot()
             .appendingPathComponent(id, isDirectory: true)
@@ -104,7 +125,7 @@ final class ImageModelDownloadService: ObservableObject {
             let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
             if !trimmed.isEmpty { return trimmed }
         }
-        return fetchedCatalog.first { $0.id == id }?.repoId
+        return (fetchedCatalog + Self.curatedCatalog).first { $0.id == id }?.repoId
     }
 
     /// Best-effort total download size for a catalog repo, mirroring
@@ -195,20 +216,22 @@ final class ImageModelDownloadService: ObservableObject {
     }
 
     /// Fetch the OsaurusAI org listing from Hugging Face and refresh
-    /// `fetchedCatalog` with its image bundles (text-to-image / image-to-image
-    /// pipelines). Best-effort: a failed or empty fetch leaves any
-    /// previously-loaded listing intact rather than blanking the list.
+    /// `fetchedCatalog` with the curated set merged with the org's image
+    /// bundles (text-to-image / image-to-image pipelines). Best-effort: a
+    /// failed or empty fetch leaves the existing (curated + previously-loaded)
+    /// listing intact rather than blanking the list.
     func refreshCatalog() async {
         isLoadingCatalog = true
         defer { isLoadingCatalog = false }
         let rows = await HuggingFaceService.shared.fetchModels(author: Self.osaurusOrgAuthor)
         guard !rows.isEmpty else { return }
-        let entries =
+        let orgEntries =
             rows
             .filter { Self.imagePipelineTags.contains(($0.pipelineTag ?? "").lowercased()) }
             .map(Self.makeCatalogEntry(from:))
-        // Listing is already sorted by downloads (most popular first).
-        fetchedCatalog = entries
+        // Curated entries first, then the OsaurusAI org listing (already sorted
+        // by downloads, most popular first), deduped by id.
+        fetchedCatalog = Self.dedupedByID(Self.curatedCatalog + orgEntries)
     }
 
     /// Map an HF org listing row to a downloadable catalog entry. The display
@@ -224,6 +247,13 @@ final class ImageModelDownloadService: ObservableObject {
             displayName: tail,
             note: isEdit ? "Image edit · mflux" : "Text-to-image · mflux"
         )
+    }
+
+    /// Dedupe catalog entries by `id`, keeping the first occurrence (so curated
+    /// entries win over org rows sharing a directory name) and preserving order.
+    private static func dedupedByID(_ entries: [ImageModelDownload]) -> [ImageModelDownload] {
+        var seen = Set<String>()
+        return entries.filter { seen.insert($0.id).inserted }
     }
 
     /// Start downloading any HuggingFace mflux repo into the image models root.
