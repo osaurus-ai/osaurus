@@ -54,29 +54,14 @@ Legend: 🔴 not started · 🟡 investigating · 🟢 root-caused · ✅ fixed+
   plumbing bug + identify which VL model is actually broken.
 
 
-## Issue 3 — Zaya CCA cache incoherent + AppleScript model marker leak / `<pad>`  🟡
+## Issue 3 — Zaya/AppleScript: marker leak (engine gap) + tool-format-context degeneration  🟢 root-caused (leak) / 🟡 degeneration needs real osaurus loop
 
-- **Models:** `OsaurusAI/Osaurus-AppleScript-8B-JANG_4M` (Zaya-family — emits
-  `zyphra_tool_call`), Zaya-CCA (`OsaurusAI/ZAYA1-8B-JANGTQ2`). Downloading.
-- **Observed (from tpae):** the AppleScript summary was:
-  `"<pad>\nThe script launched Music. … If Music plays, you can clicking
-  everywhere.\n</parameter>\n</function>\n</zyphra_tool_call>"`
-  — i.e. (a) **`<pad>` leak** (numeric/long-context degeneration or a cache issue),
-  (b) **tool-call closing markers `</parameter></function></zyphra_tool_call>`
-  leaking into the visible summary** (the Zaya `zyphra_tool_call` strip isn't
-  removing the closing envelope), and (c) semantic **incoherence**.
-- **Hypotheses:**
-  1. **Marker leak** — the Zaya XML tool-call parser (`zyphra_tool_call`) isn't
-     stripping the closing tags from the assistant text on this model, OR the
-     summary is assembled from a raw buffer that still has them.
-  2. **`<pad>` / incoherence** — Zaya CCA (cross-context attention) cache behaving
-     wrong (the user's suspicion), OR fine-tune quality, OR a long-context numeric
-     issue like the Gemma `<pad>` class.
-- **Repro plan:** RunBench decode on the AppleScript model with a tool-bearing
-  prompt; inspect raw tokens vs decoded text; check the Zaya parser strip + the
-  CCA cache path. Separate "cache" from "fine-tune" by testing a short vs long
-  context and greedy vs sampled.
-- **Status:** models downloading; repro pending.
+- **Model:** `Osaurus-AppleScript-8B-JANG_4M` (`model_type zaya`, affine, tie_word_embeddings, eos `<|im_end|>`, `<zyphra_tool_call>`=101/`</zyphra_tool_call>`=102 special; `<function=`/`<parameter=` are plain BPE).
+- **Marker leak — PROVEN engine gap (fixable):** orphan closing tags (`</parameter></function></zyphra_tool_call>`) with no matching opener stream as literal text (the tool-call state machine only strips after matching an OPEN tag). Fix = register the Zaya closers as orphan strip-tokens. This is a genuine engine robustness fix (same class as the Gemma `<channel|>` leak).
+- **Degeneration (`<pad>`/empty) — LIVE isolation:** clean at short/medium context AND at a plain **2565-token** prompt (coherent, stop=stop). Degenerates (200 tokens -> textChars=2, empty) with a **~2943-token tool-format** prompt. So it is triggered by the **tool-format context, NOT context length**. BUT my synthetic prompt crammed 39 raw `<zyphra_tool_call>` blocks without the real osaurus turn structure, so it may be malformed — the true trigger + ML root cause (SDPA-in-model-dtype precision at Zaya.swift:586 = Gemma-`<pad>` fp32 class? CCA? quant? fine-tune?) must be confirmed against the **real osaurus agent-loop context**, not a synthetic crammed prompt.
+- **CCA cache: NOT the cause** (sound by construction; no trim/window; fp32 state carried atomically).
+- **Status:** marker-leak fix ready to implement; degeneration is a real tool-format-context lead that needs the live osaurus agent loop (or a faithful reconstruction) to nail the ML root cause — no overclaiming.
+
 
 ---
 
