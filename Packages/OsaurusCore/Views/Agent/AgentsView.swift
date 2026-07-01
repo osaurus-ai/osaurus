@@ -6986,7 +6986,7 @@ private struct AgentEditorSheet: View {
 
             footerView
         }
-        .frame(width: 760, height: 580)
+        .frame(width: 820, height: 580)
         .background(theme.primaryBackground)
         .clipShape(RoundedRectangle(cornerRadius: 16))
         .overlay(
@@ -7076,7 +7076,6 @@ private struct AgentEditorSheet: View {
                 Text(LocalizedStringKey(template.label), bundle: .module)
                     .font(.system(size: 10, weight: isSelected ? .semibold : .medium))
                     .lineLimit(1)
-                    .minimumScaleFactor(0.7)
             }
             .foregroundColor(isSelected ? theme.accentColor : theme.secondaryText)
             .frame(maxWidth: .infinity)
