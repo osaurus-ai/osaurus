@@ -744,11 +744,11 @@ private struct SkillRow: View {
         .offset(y: hasAppeared ? 0 : 10)
         .animation(.easeOut(duration: 0.25).delay(animationDelay), value: hasAppeared)
         .themedAlert(
-            "Delete Skill",
+            L("Delete Skill"),
             isPresented: $showDeleteConfirm,
-            message: "Are you sure you want to delete \"\(skill.name)\"? This action cannot be undone.",
-            primaryButton: .destructive("Delete", action: onDelete),
-            secondaryButton: .cancel("Cancel")
+            message: L("Are you sure you want to delete \"\(skill.name)\"? This action cannot be undone."),
+            primaryButton: .destructive(L("Delete"), action: onDelete),
+            secondaryButton: .cancel(L("Cancel"))
         )
     }
 
