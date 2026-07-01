@@ -35,18 +35,24 @@ Legend: 🔴 not started · 🟡 investigating · 🟢 root-caused · ✅ fixed+
 - **Status:** 🟢 engine-fixed + proven via RunBench. NOT yet "fixed" per acceptance rule — pending live dev-app UI multiturn (tools/reasoning on-off), which is TCC-blocked on Automation -> System Events.
 
 
-## Issue 2 — Some VL models not working in osaurus (send images live)  🟡
+## Issue 2 — VL models: engine vision path WORKS; bug (if any) is osaurus image-plumbing  🟢 partially root-caused
 
-- **Models:** Zaya VL (`OsaurusAI/ZAYA1-VL-8B-JANGTQ4`), plus Mistral3/Pixtral VL.
-- **Claim:** some VL models don't work; need to test VL + sending images live.
-- **Relevant recent change:** I just round-trip-guarded the Mistral3/Pixtral
-  **image-token** resolution (vmlx #101 F2) — if the image placeholder id was
-  wrong, image embeddings expand into the wrong positions → broken vision. Check
-  whether other VL families (Zaya, Gemma-4 VLM) have the same or related issues.
-- **Repro plan:** RunBench `BENCH_VL=1` / `BENCH_VL_BATCH_CHAT` (loads model +
-  synthesizes a 224×224 image + runs the vision path + multi-turn cache reuse) per
-  VL family. This is the engine-level equivalent of "sending an image".
-- **Status:** Zaya VL downloading; VL smoke pending.
+- **Model tested LIVE:** `ZAYA1-VL-8B-JANGTQ4` (`model_type zaya1_vl`, qwen2_5_vl vision tower).
+- **Engine vision path WORKS (BENCH_VL_BATCH_CHAT = osaurus's BatchEngine path):** Turn 1
+  correctly described the synthesized image — "a gradient square with a blue top-left corner,
+  a red bottom-left corner, and a red top-right corner" — stop=stop, 29 tokens; Turn 2 answered
+  "blue" correctly. The `EXIT=1` was only a bench MEMORY-gate assertion (footprint 118% of model
+  size), NOT a vision/coherence failure.
+- **So "VL broken in osaurus" is NOT the vision model.** Since the engine sees + describes images
+  and stops correctly on the osaurus path, the real suspect is the **osaurus-side image plumbing**
+  (UI/request -> `processedImages` -> `LMInput` at MLXBatchAdapter.swift:587) or a *specific* VL
+  family — pinned only by a LIVE image-send through osaurus (UI or the running dev app).
+- **Separate real bug found:** the **TokenIterator** VL path (BENCH_VL, NOT osaurus) does NOT stop
+  on EOS id 262143 (`<|im_end|>`) -> spams `<|im_end|>` / degenerates to token 262143. osaurus uses
+  BatchEngine (which stops correctly), so this is real but off the osaurus hot path. Worth fixing.
+- **Status:** 🟢 engine vision proven-good; needs live osaurus image-send to confirm/deny the
+  plumbing bug + identify which VL model is actually broken.
+
 
 ## Issue 3 — Zaya CCA cache incoherent + AppleScript model marker leak / `<pad>`  🟡
 
