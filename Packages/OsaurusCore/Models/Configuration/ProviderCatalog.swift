@@ -186,6 +186,7 @@ enum ProviderCatalog {
         ProviderCatalogEntry(.azureOpenAI, authMethods: [.apiKey], placement: .apiKey),
         ProviderCatalogEntry(.deepseek, authMethods: [.apiKey], placement: .apiKey),
         ProviderCatalogEntry(.google, authMethods: [.apiKey], placement: .apiKey),
+        ProviderCatalogEntry(.mistral, authMethods: [.apiKey], placement: .apiKey),
         ProviderCatalogEntry(.minimax, authMethods: [.apiKey], placement: .apiKey),
         ProviderCatalogEntry(.venice, authMethods: [.apiKey], placement: .apiKey),
         ProviderCatalogEntry(.ollama, authMethods: [.none], placement: .local),
