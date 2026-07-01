@@ -36967,6 +36967,28 @@
         }
       }
     },
+    "Go to the Mistral console API keys page" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Zur Mistral-Konsole-API-Schluesselseite gehen"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Mistral 콘솔 API 키 페이지로 이동"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "前往Mistral控制台API密钥页面"
+          }
+        }
+      }
+    },
     "Go to the OpenAI Platform API keys page" : {
       "localizations" : {
         "de" : {
@@ -48709,6 +48731,28 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "MiniMax M系列模型"
+          }
+        }
+      }
+    },
+    "Mistral Small/Medium models" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Mistral Small/Medium-Modelle"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Mistral Small/Medium 모델"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Mistral Small/Medium 模型"
           }
         }
       }
