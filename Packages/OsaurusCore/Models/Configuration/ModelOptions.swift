@@ -118,7 +118,21 @@ enum ModelProfileRegistry {
         guard let persisted else { return [:] }
 
         let allowedIds = Set(definitions.map(\.id))
-        return persisted.filter { allowedIds.contains($0.key) }
+        // Segment ids allowed per option. A persisted segment value that is no
+        // longer offered (e.g. an old Mistral `reasoningEffort: "medium"` after
+        // the option set was narrowed to none/high) must be dropped, not sent to
+        // the wire, where it would be rejected.
+        let allowedSegmentValues: [String: Set<String>] = definitions.reduce(into: [:]) { acc, def in
+            if case .segmented(let segments) = def.kind {
+                acc[def.id] = Set(segments.map(\.id))
+            }
+        }
+        return persisted.filter { key, value in
+            guard allowedIds.contains(key) else { return false }
+            guard let segments = allowedSegmentValues[key] else { return true }
+            guard let stringValue = value.stringValue else { return true }
+            return segments.contains(stringValue)
+        }
     }
 
     static func boolOptionValue(
@@ -237,6 +251,9 @@ struct MistralReasoningProfile: ModelProfile {
         return bare.hasPrefix("mistral-small") || bare.hasPrefix("mistral-medium")
     }
 
+    // Mistral's chat-completions `reasoning_effort` accepts only `none` and
+    // `high` on mistral-small-latest / mistral-medium-3.5; `low` and `medium`
+    // are rejected with HTTP 400 (`invalid_request_invalid_args`).
     static let options: [ModelOptionDefinition] = [
         ModelOptionDefinition(
             id: "reasoningEffort",
@@ -244,15 +261,13 @@ struct MistralReasoningProfile: ModelProfile {
             icon: "brain",
             kind: .segmented([
                 ModelOptionSegment(id: "none", label: L("None")),
-                ModelOptionSegment(id: "low", label: L("Low")),
-                ModelOptionSegment(id: "medium", label: L("Medium")),
                 ModelOptionSegment(id: "high", label: L("High")),
             ])
         )
     ]
 
     static let defaults: [String: ModelOptionValue] = [
-        "reasoningEffort": .string("medium")
+        "reasoningEffort": .string("high")
     ]
 }
 
