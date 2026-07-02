@@ -446,12 +446,14 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
         }
 
         // Incremental knowledge index pass so collection folder changes
-        // made while the app was closed are picked up. Waits for the
-        // embedder init to avoid competing for it; hash-incremental, so an
+        // made while the app was closed are picked up, then live folder
+        // watching for changes made while it runs. Waits for the embedder
+        // init to avoid competing with it; hash-incremental, so an
         // unchanged corpus costs one folder scan per collection.
         Task { @MainActor in
             await embeddingInitTask.value
             KnowledgeManager.shared.scheduleIndexAll()
+            KnowledgeFolderWatcher.shared.start()
         }
 
         // Setup global hotkey for Chat overlay (configured)
@@ -1095,6 +1097,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
             SystemMonitorService.shared.stopMonitoring()
             ScheduleManager.shared.stop()
             WatcherManager.shared.stop()
+            KnowledgeFolderWatcher.shared.stop()
             // MemoryConsolidator / StorageMaintenance are actors; their stop()
             // just cancels timers, so the actor hop is quick — bound it anyway
             // so a busy actor can't stall phase 0.
