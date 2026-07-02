@@ -21,6 +21,7 @@ public enum ManagementTab: String, CaseIterable, Identifiable, Sendable {
     case skills
     case commands
     case memory
+    case knowledge
     case schedules
     case watchers
     case voice
@@ -63,6 +64,7 @@ public enum ManagementTab: String, CaseIterable, Identifiable, Sendable {
         case .skills: "sparkles"
         case .commands: "command"
         case .memory: "brain.head.profile.fill"
+        case .knowledge: "books.vertical.fill"
         case .schedules: "calendar.badge.clock"
         case .watchers: "eye.fill"
         case .voice: "waveform"
@@ -93,6 +95,7 @@ public enum ManagementTab: String, CaseIterable, Identifiable, Sendable {
         case .skills: L("Skills")
         case .commands: L("Commands")
         case .memory: L("Memory")
+        case .knowledge: L("Knowledge")
         case .schedules: L("Schedules")
         case .watchers: L("Watchers")
         case .voice: L("Voice")
