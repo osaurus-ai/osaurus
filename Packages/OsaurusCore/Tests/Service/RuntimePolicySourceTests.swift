@@ -648,7 +648,7 @@ struct RuntimePolicySourceTests {
         // crushing images to 336px, and the stop-string fix (vmlx-swift#109)
         // that discards post-stop buffers at end-of-stream so text after a
         // matched stop string can no longer leak into responses.
-        let expectedRuntimeHardenedRevision = "6f154490e1dbaf0d10f396da77ca6a752d0f20a1"
+        let expectedRuntimeHardenedRevision = "5b4eb5bcbc099e73986f13cc4560e5c2f355d4e3"
         let manifestRevision = try Self.vmlxPinRevision(in: manifest)
         let workspaceRevision = try Self.vmlxPinRevision(in: workspaceResolved)
         let appRevision = try Self.vmlxPinRevision(in: appResolved)
