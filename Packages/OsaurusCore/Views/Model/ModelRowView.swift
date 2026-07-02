@@ -359,14 +359,21 @@ struct ModelRowView: View {
 
     /// Fixed three-column spec strip. Columns stay in the same order with
     /// a "—" placeholder for missing values so cards line up for
-    /// side-by-side comparison.
+    /// side-by-side comparison. Family cards replace the quant column (the
+    /// representative build's quant would be misleading for a multi-build
+    /// card) with the number of available versions; single-build cards keep
+    /// the quant label since it's what distinguishes them.
     private var statStrip: some View {
         HStack(spacing: 0) {
             StatSegment(label: L("Size"), value: content.size)
             statDivider
             StatSegment(label: L("Params"), value: content.params)
             statDivider
-            StatSegment(label: L("Quant"), value: content.quant)
+            if content.variantCount > 1 {
+                StatSegment(label: L("Versions"), value: "\(content.variantCount)")
+            } else {
+                StatSegment(label: L("Quant"), value: content.quant)
+            }
         }
         .padding(.vertical, 8)
         .frame(maxWidth: .infinity)
@@ -418,18 +425,38 @@ struct ModelRowView: View {
         }
     }
 
+    /// Plain-language fit verdict. When the RAM estimate is known it reads
+    /// as "Runs Well · needs ~10 GB" so new users get the "will this work on
+    /// my Mac" answer without decoding quant/param jargon.
     @ViewBuilder
     private var compatibilityBadge: some View {
         switch content.compatibility {
         case .compatible:
-            TintedPill(icon: "checkmark.shield", label: Text(L("Runs Well")), color: theme.successColor)
+            TintedPill(
+                icon: "checkmark.shield",
+                label: Text(fitText(verdict: L("Runs Well"))),
+                color: theme.successColor
+            )
         case .tight:
-            TintedPill(icon: "exclamationmark.triangle", label: Text(L("Tight Fit")), color: theme.warningColor)
+            TintedPill(
+                icon: "exclamationmark.triangle",
+                label: Text(fitText(verdict: L("Tight Fit"))),
+                color: theme.warningColor
+            )
         case .tooLarge:
-            TintedPill(icon: "xmark.circle", label: Text(L("Too Large")), color: theme.errorColor)
+            TintedPill(
+                icon: "xmark.circle",
+                label: Text(fitText(verdict: L("Too Large"))),
+                color: theme.errorColor
+            )
         case .unknown:
             EmptyView()
         }
+    }
+
+    private func fitText(verdict: String) -> String {
+        guard let memory = content.memoryNeeded else { return verdict }
+        return "\(verdict) · \(L("needs \(memory)"))"
     }
 
     /// Badge showing whether the model is an LLM, VLM, or image generator.
@@ -464,11 +491,19 @@ struct ModelCardContent {
     var isUnsupportedFormat: Bool = false
     let useCase: ModelUseCase?
     let compatibility: ModelCompatibility
+    /// Formatted RAM the model needs at runtime (e.g. "~10.2 GB"), rendered
+    /// inside the compatibility pill so the fit verdict reads in plain
+    /// language instead of leaning on quant jargon.
+    var memoryNeeded: String? = nil
     /// LLM / VLM / Image pill; `nil` to omit.
     let type: ModelCardType?
     let size: String?
     let params: String?
     let quant: String?
+    /// Number of precision/quant builds this card represents. Catalog cards
+    /// grouped by family carry the family's build count; ungrouped contexts
+    /// (On Device, image models) leave it at 1, which hides the indicator.
+    var variantCount: Int = 1
     /// Raw popularity / release strings; the footer applies its own wording.
     let downloadsText: String?
     let releaseText: String?
@@ -481,11 +516,15 @@ enum ModelCardType {
 }
 
 extension ModelCardContent {
-    /// LLM/VLM card content, preserving the exact values the catalog cards
-    /// rendered before the presentation-model refactor.
-    init(model: MLXModel, totalMemoryGB: Double) {
+    /// LLM/VLM card content. `variantCount > 1` marks a family card (one
+    /// card representing several precision/quant builds): the title becomes
+    /// the family name so a build suffix like "qat MXFP4" never leads, and
+    /// the quant column gives way to the version count.
+    init(model: MLXModel, totalMemoryGB: Double, variantCount: Int = 1) {
         self.init(
-            name: model.name,
+            name: variantCount > 1
+                ? ModelMetadataParser.familyDisplayName(from: model.id)
+                : model.name,
             description: model.description,
             gradientColors: ModelCardGradient.colors(for: model),
             isTopSuggestion: model.isTopSuggestion,
@@ -493,10 +532,12 @@ extension ModelCardContent {
             isUnsupportedFormat: model.isDownloaded && !model.isMLXFormat,
             useCase: model.useCase,
             compatibility: model.compatibility(totalMemoryGB: totalMemoryGB),
+            memoryNeeded: model.formattedEstimatedMemory,
             type: model.useCase == .vision ? nil : (model.isVLM ? .vlm : .llm),
             size: model.formattedDownloadSize,
             params: model.parameterCount,
             quant: model.quantization,
+            variantCount: variantCount,
             downloadsText: model.formattedDownloads,
             releaseText: model.formattedReleaseMonth
         )

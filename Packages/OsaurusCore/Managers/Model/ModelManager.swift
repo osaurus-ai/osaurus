@@ -23,19 +23,15 @@ enum ModelListTab: String, CaseIterable, AnimatedTabItem {
     case downloaded = "On Device"
 
     /// Full catalog rendered as a Recommended carousel + a newest-first grid.
+    /// Image models live in the dedicated Images pane; the catalog links to
+    /// it inline instead of carrying a fake hand-off tab.
     case all = "Catalog"
-
-    /// Not a content tab — selecting it hands off to the dedicated Image
-    /// Generation pane's Models sub-tab and the picker snaps back to the
-    /// previous tab. Kept in the enum so it renders in the shared tab selector.
-    case imageGeneration = "Images"
 
     /// Display name for the tab (required by AnimatedTabItem)
     var title: String {
         switch self {
         case .downloaded: return L("On Device")
         case .all: return L("Catalog")
-        case .imageGeneration: return L("Images")
         }
     }
 }
@@ -1234,6 +1230,41 @@ extension ModelManager {
         "osaurusai/gemma-4-26b-a4b-it-mxfp4",
         "osaurusai/diffusiongemma-26b-a4b-it-mxfp8",
     ]
+
+    /// HF `pipeline_tag` values that mark a repo as chat-capable (text or
+    /// multimodal generation). The org auto-fetch only admits repos whose
+    /// pipeline tag is in this set — guards (`token-classification`),
+    /// embeddings (`feature-extraction`/`sentence-similarity`), image
+    /// pipelines, and speech repos all belong to other Settings panels and
+    /// must not surface as chat cards in the Models catalog.
+    nonisolated static let chatCapablePipelineTags: Set<String> = [
+        "text-generation",
+        "text2text-generation",
+        "image-text-to-text",
+        "audio-text-to-text",
+        "video-text-to-text",
+        "any-to-any",
+    ]
+
+    /// OsaurusAI org repos owned by other Settings panels (Privacy, Voice,
+    /// Memory, Images) that must never appear as chat cards, even when the
+    /// repo has no `pipeline_tag` on HF. Belt-and-braces alongside the
+    /// pipeline-tag gate; lowercased for matching.
+    nonisolated static var panelOwnedOrgIds: Set<String> {
+        [
+            RampartModelManager.repoId.lowercased()
+        ]
+    }
+
+    /// True when an OsaurusAI org repo may appear in the LLM catalog.
+    /// Untagged repos pass (MLX conversions frequently omit `pipeline_tag`,
+    /// so `nil` is not evidence of a non-chat repo) unless they are owned by
+    /// another Settings panel.
+    nonisolated static func isChatCatalogEligible(id: String, pipelineTag: String?) -> Bool {
+        if panelOwnedOrgIds.contains(id.lowercased()) { return false }
+        guard let tag = pipelineTag?.lowercased(), !tag.isEmpty else { return true }
+        return chatCapablePipelineTags.contains(tag)
+    }
 }
 
 // MARK: - Installed models helpers for services
@@ -1294,6 +1325,7 @@ extension ModelManager {
     fileprivate struct HFModel: Decodable {
         let id: String
         let tags: [String]?
+        let pipeline_tag: String?
         let lastModified: String?
         let downloads: Int?
     }
@@ -1458,15 +1490,23 @@ extension ModelManager {
     }
 
     /// Builds an `MLXModel` for an HF repo that isn't in the curated list.
+    /// The use-case pill is inferred where the HF metadata supports it
+    /// (multimodal tags → Vision) so auto-fetched cards aren't all blank
+    /// next to curated ones.
     fileprivate static func makeAutoFetchedModel(from hf: HFModel) -> MLXModel {
-        MLXModel(
+        let modelType = inferModelType(from: hf.tags)
+        let isMultimodal =
+            modelType.map { VLMDetection.isVLM(modelType: $0) } ?? false
+            || (hf.pipeline_tag?.lowercased() == "image-text-to-text")
+        return MLXModel(
             id: hf.id,
             name: ModelMetadataParser.friendlyName(from: hf.id),
             description: "From OsaurusAI on Hugging Face.",
             downloadURL: "https://huggingface.co/\(hf.id)",
-            modelType: inferModelType(from: hf.tags),
+            modelType: modelType,
             releasedAt: parseHFTimestamp(hf.lastModified),
-            downloads: hf.downloads
+            downloads: hf.downloads,
+            useCase: isMultimodal ? .vision : nil
         )
     }
 
@@ -1482,7 +1522,16 @@ extension ModelManager {
             )
         else { return }
 
-        let raw = (try? await Self.requestHFModels(at: url)) ?? []
+        let fetched = (try? await Self.requestHFModels(at: url)) ?? []
+        guard !fetched.isEmpty else { return }
+
+        // Drop repos that other Settings panels own (rampart PII guard,
+        // embeddings, image/speech pipelines) before they can become chat
+        // cards. Curated entries never pass through this gate — they merge
+        // from `curatedSuggestedModels` directly.
+        let raw = fetched.filter {
+            Self.isChatCatalogEligible(id: $0.id, pipelineTag: $0.pipeline_tag)
+        }
         guard !raw.isEmpty else { return }
 
         let curatedIds = Self.curatedSuggestedIds
@@ -1564,6 +1613,7 @@ extension ModelManager {
         let enrichedAutoFetched =
             autoFetched
             .filter { !Self.retiredOsaurusOrgIds.contains($0.id.lowercased()) }
+            .filter { !Self.panelOwnedOrgIds.contains($0.id.lowercased()) }
             .map(enrich)
 
         // Drop previous OsaurusAI auto-fetched entries, keeping curated and

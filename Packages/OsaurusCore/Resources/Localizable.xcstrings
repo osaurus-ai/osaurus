@@ -1,7 +1,7 @@
 {
   "sourceLanguage" : "en",
   "strings" : {
-    "": {
+    "" : {
       "shouldTranslate" : false
     },
     " — %@" : {
@@ -3905,12 +3905,6 @@
         "ru" : {
           "variations" : {
             "plural" : {
-              "one" : {
-                "stringUnit" : {
-                  "state" : "translated",
-                  "value" : "%lld навык доступен"
-                }
-              },
               "few" : {
                 "stringUnit" : {
                   "state" : "translated",
@@ -3921,6 +3915,12 @@
                 "stringUnit" : {
                   "state" : "translated",
                   "value" : "%lld навыков доступны"
+                }
+              },
+              "one" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld навык доступен"
                 }
               },
               "other" : {
@@ -4155,12 +4155,6 @@
         "ru" : {
           "variations" : {
             "plural" : {
-              "one" : {
-                "stringUnit" : {
-                  "state" : "translated",
-                  "value" : "Отправлен %lld инструмент"
-                }
-              },
               "few" : {
                 "stringUnit" : {
                   "state" : "translated",
@@ -4171,6 +4165,12 @@
                 "stringUnit" : {
                   "state" : "translated",
                   "value" : "Отправлено %lld инструментов"
+                }
+              },
+              "one" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "Отправлен %lld инструмент"
                 }
               },
               "other" : {
@@ -12340,31 +12340,30 @@
       }
     },
     "AppleScript" : {
-      "extractionState" : "manual",
-      "localizations" : {}
+      "extractionState" : "manual"
     },
     "AppleScript automation" : {
       "extractionState" : "manual",
       "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Автоматизация AppleScript"
-          }
-        },
         "de" : {
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "AppleScript automation"
           }
         },
-        "zh-Hans" : {
+        "ko" : {
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "AppleScript automation"
           }
         },
-        "ko" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Автоматизация AppleScript"
+          }
+        },
+        "zh-Hans" : {
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "AppleScript automation"
@@ -12375,25 +12374,25 @@
     "AppleScript model" : {
       "extractionState" : "manual",
       "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Модель AppleScript"
-          }
-        },
         "de" : {
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "AppleScript model"
           }
         },
-        "zh-Hans" : {
+        "ko" : {
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "AppleScript model"
           }
         },
-        "ko" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Модель AppleScript"
+          }
+        },
+        "zh-Hans" : {
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "AppleScript model"
@@ -12404,25 +12403,25 @@
     "AppleScript runs on this Mac. The first time the agent controls an app, macOS asks you to allow Automation for Osaurus. Download AppleScript models in Settings → Computer Use → Models." : {
       "extractionState" : "manual",
       "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "AppleScript выполняется на этом Mac. Когда агент впервые управляет приложением, macOS попросит разрешить автоматизацию для Osaurus. Модели AppleScript можно загрузить в «Настройки» → «Использование компьютера» → «Модели»."
-          }
-        },
         "de" : {
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "AppleScript runs on this Mac. The first time the agent controls an app, macOS asks you to allow Automation for Osaurus. Download AppleScript models in Settings → Computer Use → Models."
           }
         },
-        "zh-Hans" : {
+        "ko" : {
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "AppleScript runs on this Mac. The first time the agent controls an app, macOS asks you to allow Automation for Osaurus. Download AppleScript models in Settings → Computer Use → Models."
           }
         },
-        "ko" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "AppleScript выполняется на этом Mac. Когда агент впервые управляет приложением, macOS попросит разрешить автоматизацию для Osaurus. Модели AppleScript можно загрузить в «Настройки» → «Использование компьютера» → «Модели»."
+          }
+        },
+        "zh-Hans" : {
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "AppleScript runs on this Mac. The first time the agent controls an app, macOS asks you to allow Automation for Osaurus. Download AppleScript models in Settings → Computer Use → Models."
@@ -14296,25 +14295,25 @@
     "Auto-run with warning" : {
       "extractionState" : "manual",
       "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Автозапуск с предупреждением"
-          }
-        },
         "de" : {
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "Auto-run with warning"
           }
         },
-        "zh-Hans" : {
+        "ko" : {
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "Auto-run with warning"
           }
         },
-        "ko" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Автозапуск с предупреждением"
+          }
+        },
+        "zh-Hans" : {
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "Auto-run with warning"
@@ -14863,12 +14862,10 @@
       }
     },
     "Automation allowed" : {
-      "extractionState" : "manual",
-      "localizations" : {}
+      "extractionState" : "manual"
     },
     "Automation permission" : {
-      "extractionState" : "manual",
-      "localizations" : {}
+      "extractionState" : "manual"
     },
     "Autonomous" : {
       "localizations" : {
@@ -16385,6 +16382,35 @@
         }
       }
     },
+    "Before a spawned image or text job, verify the helper model fits in memory once the chat model is freed. If it won't fit, refuse the job instead of unloading the chat model and failing to load the helper." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Before a spawned image or text job, verify the helper model fits in memory once the chat model is freed. If it won't fit, refuse the job instead of unloading the chat model and failing to load the helper."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Before a spawned image or text job, verify the helper model fits in memory once the chat model is freed. If it won't fit, refuse the job instead of unloading the chat model and failing to load the helper."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Перед запуском вспомогательной задачи с изображением или текстом проверяется, поместится ли модель помощника в память после выгрузки модели чата. Если памяти не хватает, задача отклоняется вместо выгрузки модели чата и последующей ошибки загрузки помощника."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Before a spawned image or text job, verify the helper model fits in memory once the chat model is freed. If it won't fit, refuse the job instead of unloading the chat model and failing to load the helper."
+          }
+        }
+      }
+    },
     "Behavior" : {
       "localizations" : {
         "de" : {
@@ -17440,6 +17466,93 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "保存在钥匙串中的机器人令牌"
+          }
+        }
+      }
+    },
+    "Bottom Center" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Bottom Center"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Bottom Center"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Снизу по центру"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Bottom Center"
+          }
+        }
+      }
+    },
+    "Bottom Left" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Bottom Left"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Bottom Left"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Снизу слева"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Bottom Left"
+          }
+        }
+      }
+    },
+    "Bottom Right" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Bottom Right"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Bottom Right"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Снизу справа"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Bottom Right"
           }
         }
       }
@@ -25447,25 +25560,25 @@
     "Confirm each script" : {
       "extractionState" : "manual",
       "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Подтверждать каждый сценарий"
-          }
-        },
         "de" : {
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "Confirm each script"
           }
         },
-        "zh-Hans" : {
+        "ko" : {
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "Confirm each script"
           }
         },
-        "ko" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Подтверждать каждый сценарий"
+          }
+        },
+        "zh-Hans" : {
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "Confirm each script"
@@ -27759,6 +27872,10 @@
         }
       },
       "shouldTranslate" : false
+    },
+    "Copy Redacted Export" : {
+      "comment" : "A button label that copies a redacted export of the audit log.",
+      "isCommentAutoGenerated" : true
     },
     "Copy relay URL" : {
       "localizations" : {
@@ -34985,6 +35102,10 @@
         }
       }
     },
+    "dispatch" : {
+      "comment" : "A label indicating that a decision should be dispatched.",
+      "isCommentAutoGenerated" : true
+    },
     "Dispatch a work or chat task to an agent" : {
       "localizations" : {
         "de" : {
@@ -35587,8 +35708,7 @@
       }
     },
     "Download a model below to choose one." : {
-      "extractionState" : "manual",
-      "localizations" : {}
+      "extractionState" : "manual"
     },
     "Download failed" : {
       "localizations" : {
@@ -35732,7 +35852,7 @@
       }
     },
     "Download or import the model before Osaurus can inspect or prove local tool use." : {
-      "localizations" : {}
+
     },
     "Download required" : {
       "localizations" : {
@@ -37166,25 +37286,25 @@
     "Each generated AppleScript is shown for your approval before it runs." : {
       "extractionState" : "manual",
       "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Каждый сгенерированный AppleScript показывается вам на подтверждение перед запуском."
-          }
-        },
         "de" : {
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "Each generated AppleScript is shown for your approval before it runs."
           }
         },
-        "zh-Hans" : {
+        "ko" : {
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "Each generated AppleScript is shown for your approval before it runs."
           }
         },
-        "ko" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Каждый сгенерированный AppleScript показывается вам на подтверждение перед запуском."
+          }
+        },
+        "zh-Hans" : {
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "Each generated AppleScript is shown for your approval before it runs."
@@ -46708,8 +46828,7 @@
       "shouldTranslate" : false
     },
     "Give agents a dedicated on-device model that writes and runs AppleScript to automate this Mac — controlling apps like Finder, Safari, Mail, Notes, and System Events. Turn it on per agent in the Agents tab; download a model below to make it available." : {
-      "extractionState" : "manual",
-      "localizations" : {}
+      "extractionState" : "manual"
     },
     "Give the agent a tool it can call to read a reply aloud when you ask. For always-speak, use Auto Speak Responses in the Voice section." : {
       "comment" : "A description of a feature toggle that lets an agent read its responses aloud.",
@@ -48819,6 +48938,10 @@
         }
       }
     },
+    "Highest precision" : {
+      "comment" : "Label for the \"Highest precision\" row in the model detail view's precision variants picker.",
+      "isCommentAutoGenerated" : true
+    },
     "History" : {
       "localizations" : {
         "de" : {
@@ -49310,8 +49433,7 @@
       }
     },
     "How each generated script is gated before it runs." : {
-      "extractionState" : "manual",
-      "localizations" : {}
+      "extractionState" : "manual"
     },
     "How image jobs ask for permission and manage GPU memory between runs." : {
       "comment" : "A description of how image jobs interact with the system's GPU resources.",
@@ -50400,6 +50522,10 @@
           }
         }
       }
+    },
+    "Image generation and editing models live in Images settings." : {
+      "comment" : "A description below the link to the Images tab, explaining that the models for image generation and editing are stored there.",
+      "isCommentAutoGenerated" : true
     },
     "Image generation cancelled." : {
       "localizations" : {
@@ -56061,25 +56187,25 @@
     "Let the agent automate this Mac by writing and running AppleScript with an on-device model. Each script is shown for your approval or auto-run with a warning, per the mode below." : {
       "extractionState" : "manual",
       "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Позвольте агенту автоматизировать этот Mac: писать и запускать AppleScript с помощью локальной модели. Каждый сценарий показывается для подтверждения или запускается автоматически с предупреждением — в зависимости от режима ниже."
-          }
-        },
         "de" : {
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "Let the agent automate this Mac by writing and running AppleScript with an on-device model. Each script is shown for your approval or auto-run with a warning, per the mode below."
           }
         },
-        "zh-Hans" : {
+        "ko" : {
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "Let the agent automate this Mac by writing and running AppleScript with an on-device model. Each script is shown for your approval or auto-run with a warning, per the mode below."
           }
         },
-        "ko" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Позвольте агенту автоматизировать этот Mac: писать и запускать AppleScript с помощью локальной модели. Каждый сценарий показывается для подтверждения или запускается автоматически с предупреждением — в зависимости от режима ниже."
+          }
+        },
+        "zh-Hans" : {
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "Let the agent automate this Mac by writing and running AppleScript with an on-device model. Each script is shown for your approval or auto-run with a warning, per the mode below."
@@ -58455,6 +58581,35 @@
         }
       }
     },
+    "Local Handoff & RAM Safety" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Local Handoff & RAM Safety"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Local Handoff & RAM Safety"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Локальная передача и проверка памяти"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Local Handoff & RAM Safety"
+          }
+        }
+      }
+    },
     "Local handoff and RAM-safety for spawn jobs are system settings in Settings → Subagents." : {
       "comment" : "A footnote explaining the local handoff and RAM-safety for spawn jobs.",
       "isCommentAutoGenerated" : true,
@@ -58594,6 +58749,35 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "本地 OpenAI 兼容的校验对于不支持的采样器字段（例如 n > 1 或 response_format=json_schema）会返回类型化的 400 错误。"
+          }
+        }
+      }
+    },
+    "Local Orchestrator Handoff" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Local Orchestrator Handoff"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Local Orchestrator Handoff"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Локальная передача выполнения"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Local Orchestrator Handoff"
           }
         }
       }
@@ -58941,6 +59125,9 @@
           }
         }
       }
+    },
+    "Looking for image models?" : {
+
     },
     "Low" : {
       "localizations" : {
@@ -62554,64 +62741,6 @@
         }
       }
     },
-    "Mistral" : {
-      "comment" : "Name of the credential prompt preset for Mistral.",
-      "isCommentAutoGenerated" : true,
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Mistral"
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Mistral"
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Мистраль"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Mistral"
-          }
-        }
-      }
-    },
-    "Mistral Small/Medium models" : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Mistral Small/Medium-Modelle"
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Mistral Small/Medium 모델"
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Модели Mistral Малый/Средний"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Mistral Small/Medium 模型"
-          }
-        }
-      }
-    },
     "Minimum top-up is $5.00" : {
       "comment" : "A tooltip explaining that the minimum amount to top up their credit is $5.00.",
       "isCommentAutoGenerated" : true,
@@ -62876,6 +63005,64 @@
         }
       }
     },
+    "Mistral" : {
+      "comment" : "Name of the credential prompt preset for Mistral.",
+      "isCommentAutoGenerated" : true,
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Mistral"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Mistral"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Мистраль"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Mistral"
+          }
+        }
+      }
+    },
+    "Mistral Small/Medium models" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Mistral Small/Medium-Modelle"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Mistral Small/Medium 모델"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Модели Mistral Малый/Средний"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Mistral Small/Medium 模型"
+          }
+        }
+      }
+    },
     "Mode" : {
       "localizations" : {
         "de" : {
@@ -63055,7 +63242,7 @@
       }
     },
     "Model capability detection reports local tool calling as unsupported for this bundle." : {
-      "localizations" : {}
+
     },
     "Model Card" : {
       "comment" : "The title of a section that displays detailed information about a machine learning model.",
@@ -64744,6 +64931,10 @@
         }
       }
     },
+    "needs %@" : {
+      "comment" : "A plain-language string that combines a",
+      "isCommentAutoGenerated" : true
+    },
     "Needs Accessibility permission" : {
       "comment" : "A description of the Accessibility permission needed to use Computer Use.",
       "isCommentAutoGenerated" : true,
@@ -66013,25 +66204,25 @@
     "No AppleScript models installed yet. Download one in Settings → Computer Use → Models." : {
       "extractionState" : "manual",
       "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Модели AppleScript ещё не установлены. Загрузите одну в «Настройки» → «Использование компьютера» → «Модели»."
-          }
-        },
         "de" : {
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "No AppleScript models installed yet. Download one in Settings → Computer Use → Models."
           }
         },
-        "zh-Hans" : {
+        "ko" : {
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "No AppleScript models installed yet. Download one in Settings → Computer Use → Models."
           }
         },
-        "ko" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Модели AppleScript ещё не установлены. Загрузите одну в «Настройки» → «Использование компьютера» → «Модели»."
+          }
+        },
+        "zh-Hans" : {
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "No AppleScript models installed yet. Download one in Settings → Computer Use → Models."
@@ -66701,6 +66892,9 @@
         }
       }
     },
+    "no dispatch" : {
+
+    },
     "No downloaded models" : {
       "localizations" : {
         "de" : {
@@ -66957,9 +67151,6 @@
           }
         }
       }
-    },
-    "No live tool-call proof is recorded for this exact bundle yet." : {
-      "localizations" : {}
     },
     "No folder selected" : {
       "localizations" : {
@@ -67358,6 +67549,9 @@
           }
         }
       }
+    },
+    "No live tool-call proof is recorded for this exact bundle yet." : {
+
     },
     "No local benchmark proof is recorded here yet. A passing row needs visible output, token/s, RAM status, cancellation, and cache evidence." : {
       "localizations" : {
@@ -68533,6 +68727,10 @@
         }
       }
     },
+    "No receive audit events have been recorded for this scope." : {
+      "comment" : "A message indicating that no receive audit events have been recorded for a specific scope.",
+      "isCommentAutoGenerated" : true
+    },
     "No Remote Providers" : {
       "localizations" : {
         "de" : {
@@ -69272,6 +69470,10 @@
           }
         }
       }
+    },
+    "No stored message snapshots have been recorded for this scope." : {
+      "comment" : "A message displayed when there are no stored message snapshots to display in the \"Recent Inbox\" section of the agent channel connection center view.",
+      "isCommentAutoGenerated" : true
     },
     "No system prompt" : {
       "localizations" : {
@@ -70750,8 +70952,7 @@
       }
     },
     "Not yet granted" : {
-      "extractionState" : "manual",
-      "localizations" : {}
+      "extractionState" : "manual"
     },
     "Note" : {
       "shouldTranslate" : false
@@ -72683,6 +72884,10 @@
         }
       }
     },
+    "Open Images" : {
+      "comment" : "A button label that opens the Images settings.",
+      "isCommentAutoGenerated" : true
+    },
     "Open in Finder" : {
       "localizations" : {
         "de" : {
@@ -73207,6 +73412,7 @@
     },
     "Open the Images pane in Settings" : {
       "comment" : "Description text in the EmptyStateView for the \"Images\" tab.",
+      "extractionState" : "stale",
       "isCommentAutoGenerated" : true,
       "localizations" : {
         "de" : {
@@ -74080,6 +74286,10 @@
           }
         }
       }
+    },
+    "Original" : {
+      "comment" : "Label for the original (quantized) model.",
+      "isCommentAutoGenerated" : true
     },
     "Osaurus" : {
       "localizations" : {
@@ -82051,12 +82261,6 @@
         "ru" : {
           "variations" : {
             "plural" : {
-              "one" : {
-                "stringUnit" : {
-                  "state" : "translated",
-                  "value" : "%lld номер счёта"
-                }
-              },
               "few" : {
                 "stringUnit" : {
                   "state" : "translated",
@@ -82067,6 +82271,12 @@
                 "stringUnit" : {
                   "state" : "translated",
                   "value" : "%lld номеров счёта"
+                }
+              },
+              "one" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld номер счёта"
                 }
               },
               "other" : {
@@ -82134,12 +82344,6 @@
         "ru" : {
           "variations" : {
             "plural" : {
-              "one" : {
-                "stringUnit" : {
-                  "state" : "translated",
-                  "value" : "%lld адрес"
-                }
-              },
               "few" : {
                 "stringUnit" : {
                   "state" : "translated",
@@ -82150,6 +82354,12 @@
                 "stringUnit" : {
                   "state" : "translated",
                   "value" : "%lld адресов"
+                }
+              },
+              "one" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld адрес"
                 }
               },
               "other" : {
@@ -82252,12 +82462,6 @@
         "ru" : {
           "variations" : {
             "plural" : {
-              "one" : {
-                "stringUnit" : {
-                  "state" : "translated",
-                  "value" : "%lld дата"
-                }
-              },
               "few" : {
                 "stringUnit" : {
                   "state" : "translated",
@@ -82268,6 +82472,12 @@
                 "stringUnit" : {
                   "state" : "translated",
                   "value" : "%lld дат"
+                }
+              },
+              "one" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld дата"
                 }
               },
               "other" : {
@@ -82335,12 +82545,6 @@
         "ru" : {
           "variations" : {
             "plural" : {
-              "one" : {
-                "stringUnit" : {
-                  "state" : "translated",
-                  "value" : "%lld email"
-                }
-              },
               "few" : {
                 "stringUnit" : {
                   "state" : "translated",
@@ -82348,6 +82552,12 @@
                 }
               },
               "many" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld email"
+                }
+              },
+              "one" : {
                 "stringUnit" : {
                   "state" : "translated",
                   "value" : "%lld email"
@@ -82418,12 +82628,6 @@
         "ru" : {
           "variations" : {
             "plural" : {
-              "one" : {
-                "stringUnit" : {
-                  "state" : "translated",
-                  "value" : "%lld имя"
-                }
-              },
               "few" : {
                 "stringUnit" : {
                   "state" : "translated",
@@ -82434,6 +82638,12 @@
                 "stringUnit" : {
                   "state" : "translated",
                   "value" : "%lld имён"
+                }
+              },
+              "one" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld имя"
                 }
               },
               "other" : {
@@ -82501,12 +82711,6 @@
         "ru" : {
           "variations" : {
             "plural" : {
-              "one" : {
-                "stringUnit" : {
-                  "state" : "translated",
-                  "value" : "%lld номер телефона"
-                }
-              },
               "few" : {
                 "stringUnit" : {
                   "state" : "translated",
@@ -82517,6 +82721,12 @@
                 "stringUnit" : {
                   "state" : "translated",
                   "value" : "%lld номеров телефона"
+                }
+              },
+              "one" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld номер телефона"
                 }
               },
               "other" : {
@@ -82619,12 +82829,6 @@
         "ru" : {
           "variations" : {
             "plural" : {
-              "one" : {
-                "stringUnit" : {
-                  "state" : "translated",
-                  "value" : "%lld секрет"
-                }
-              },
               "few" : {
                 "stringUnit" : {
                   "state" : "translated",
@@ -82635,6 +82839,12 @@
                 "stringUnit" : {
                   "state" : "translated",
                   "value" : "%lld секретов"
+                }
+              },
+              "one" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld секрет"
                 }
               },
               "other" : {
@@ -82737,12 +82947,6 @@
         "ru" : {
           "variations" : {
             "plural" : {
-              "one" : {
-                "stringUnit" : {
-                  "state" : "translated",
-                  "value" : "%lld URL"
-                }
-              },
               "few" : {
                 "stringUnit" : {
                   "state" : "translated",
@@ -82750,6 +82954,12 @@
                 }
               },
               "many" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld URL"
+                }
+              },
+              "one" : {
                 "stringUnit" : {
                   "state" : "translated",
                   "value" : "%lld URL"
@@ -85994,6 +86204,35 @@
         }
       }
     },
+    "RAM-Safety Preflight" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "RAM-Safety Preflight"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "RAM-Safety Preflight"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Предварительная проверка памяти"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "RAM-Safety Preflight"
+          }
+        }
+      }
+    },
     "Ran a command" : {
       "localizations" : {
         "de" : {
@@ -87634,6 +87873,14 @@
         }
       }
     },
+    "Recent Decisions" : {
+      "comment" : "A label describing the section that lists recent decisions made by the agent.",
+      "isCommentAutoGenerated" : true
+    },
+    "Recent Inbox" : {
+      "comment" : "A label displayed above a section of a view that lists recent messages in an agent communication channel.",
+      "isCommentAutoGenerated" : true
+    },
     "RECENT PROCESSING LOG" : {
       "extractionState" : "stale",
       "localizations" : {
@@ -88353,6 +88600,10 @@
           }
         }
       }
+    },
+    "Refresh Audit" : {
+      "comment" : "A button label that refreshes the audit workbench.",
+      "isCommentAutoGenerated" : true
     },
     "Refresh available devices" : {
       "localizations" : {
@@ -94721,25 +94972,25 @@
     },
     "Run AppleScript" : {
       "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Запустить AppleScript"
-          }
-        },
         "de" : {
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "Run AppleScript"
           }
         },
-        "zh-Hans" : {
+        "ko" : {
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "Run AppleScript"
           }
         },
-        "ko" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Запустить AppleScript"
+          }
+        },
+        "zh-Hans" : {
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "Run AppleScript"
@@ -95544,25 +95795,25 @@
     "Running AppleScript that controls another app needs macOS Automation permission. The first time an agent controls an app, macOS asks you to allow it for Osaurus. You can prime the System Events grant now." : {
       "extractionState" : "manual",
       "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Для AppleScript, который управляет другим приложением, требуется разрешение macOS «Автоматизация». Когда агент впервые управляет приложением, macOS попросит разрешить это для Osaurus. Сейчас можно заранее выдать доступ к System Events."
-          }
-        },
         "de" : {
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "Running AppleScript that controls another app needs macOS Automation permission. The first time an agent controls an app, macOS asks you to allow it for Osaurus. You can prime the System Events grant now."
           }
         },
-        "zh-Hans" : {
+        "ko" : {
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "Running AppleScript that controls another app needs macOS Automation permission. The first time an agent controls an app, macOS asks you to allow it for Osaurus. You can prime the System Events grant now."
           }
         },
-        "ko" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Для AppleScript, который управляет другим приложением, требуется разрешение macOS «Автоматизация». Когда агент впервые управляет приложением, macOS попросит разрешить это для Osaurus. Сейчас можно заранее выдать доступ к System Events."
+          }
+        },
+        "zh-Hans" : {
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "Running AppleScript that controls another app needs macOS Automation permission. The first time an agent controls an app, macOS asks you to allow it for Osaurus. You can prime the System Events grant now."
@@ -95974,11 +96225,9 @@
         }
       }
     },
-    "Runtime support is incomplete; a live tool-call proof is not meaningful until the runtime blocker is resolved." : {
-      "localizations" : {}
-    },
-    "Runtime preflight blocks this bundle, so Osaurus cannot run a tool-call proof." : {
-      "localizations" : {}
+    "Runs Well · needs %@" : {
+      "comment" : "Text that describes how well a model variant fits on a device based on its memory requirements. The argument is a string describing the memory requirement, or nil if the requirement is unknown.",
+      "isCommentAutoGenerated" : true
     },
     "Runtime" : {
       "localizations" : {
@@ -96008,6 +96257,9 @@
         }
       }
     },
+    "Runtime preflight blocks this bundle, so Osaurus cannot run a tool-call proof." : {
+
+    },
     "Runtime socket path exists." : {
       "localizations" : {
         "de" : {
@@ -96035,6 +96287,9 @@
           }
         }
       }
+    },
+    "Runtime support is incomplete; a live tool-call proof is not meaningful until the runtime blocker is resolved." : {
+
     },
     "Runtime Tools" : {
       "extractionState" : "manual",
@@ -98563,24 +98818,12 @@
       }
     },
     "Script" : {
-      "localizations" : {}
+
     },
     "Script execution" : {
       "extractionState" : "manual",
       "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Запуск сценариев"
-          }
-        },
         "de" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Script execution"
-          }
-        },
-        "zh-Hans" : {
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "Script execution"
@@ -98591,12 +98834,23 @@
             "state" : "needs_review",
             "value" : "Script execution"
           }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Запуск сценариев"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Script execution"
+          }
         }
       }
     },
     "Scripts run automatically. A warning showing the script appears in the chat each time." : {
-      "extractionState" : "manual",
-      "localizations" : {}
+      "extractionState" : "manual"
     },
     "Scroll" : {
       "shouldTranslate" : false
@@ -105327,6 +105581,10 @@
         }
       }
     },
+    "Smallest download" : {
+      "comment" : "Plain-language description of a model variant's position in a family: the smallest download.",
+      "isCommentAutoGenerated" : true
+    },
     "SMELT Mode" : {
       "localizations" : {
         "de" : {
@@ -110622,8 +110880,7 @@
       }
     },
     "Test automation" : {
-      "extractionState" : "manual",
-      "localizations" : {}
+      "extractionState" : "manual"
     },
     "Test buffer" : {
       "localizations" : {
@@ -110677,6 +110934,35 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "测试连接"
+          }
+        }
+      }
+    },
+    "Test Notification" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Test Notification"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Test Notification"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Тестовое уведомление"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Test Notification"
           }
         }
       }
@@ -111449,7 +111735,7 @@
       }
     },
     "The bundle declares a tool-call parser (%@), but Osaurus still needs a live tool-call proof before marking it proven." : {
-      "localizations" : {}
+
     },
     "The bundle has the required local files. Runtime quality still depends on model-family support and live generation proof." : {
       "localizations" : {
@@ -111480,10 +111766,10 @@
       }
     },
     "The bundle is incomplete, so Osaurus cannot run a tool-call proof." : {
-      "localizations" : {}
+
     },
     "The bundle still needs a live tool-call proof before Osaurus should call it tool-use capable." : {
-      "localizations" : {}
+
     },
     "The config file is invalid JSON or has an incompatible shape." : {
       "localizations" : {
@@ -113288,8 +113574,7 @@
       }
     },
     "These apply to the main chat and any agent set to choose automatically. Each agent can override them in its own Subagents settings." : {
-      "extractionState" : "manual",
-      "localizations" : {}
+      "extractionState" : "manual"
     },
     "These artifacts couldn't be installed:" : {
       "localizations" : {
@@ -115170,6 +115455,10 @@
         }
       }
     },
+    "Tight Fit · needs %@" : {
+      "comment" : "A description of a model's compatibility with the user's device, including the amount of memory it requires. The argument is the formatted memory requirement.",
+      "isCommentAutoGenerated" : true
+    },
     "Tighter cap for the unauthenticated /pair endpoint. Should stay small." : {
       "localizations" : {
         "de" : {
@@ -115511,6 +115800,35 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "发送"
+          }
+        }
+      }
+    },
+    "Toast notifications are working!" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Toast notifications are working!"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Toast notifications are working!"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Всплывающие уведомления работают!"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Toast notifications are working!"
           }
         }
       }
@@ -115985,6 +116303,10 @@
         }
       }
     },
+    "Too Large · needs %@" : {
+      "comment" : "A description of a model variant that is too large to run on the device. The argument is the formatted estimated memory of the variant.",
+      "isCommentAutoGenerated" : true
+    },
     "Too large for this Mac" : {
       "localizations" : {
         "de" : {
@@ -116279,21 +116601,6 @@
         }
       }
     },
-    "Tool use" : {
-      "localizations" : {}
-    },
-    "Tool use blocked" : {
-      "localizations" : {}
-    },
-    "Tool use proof required" : {
-      "localizations" : {}
-    },
-    "Tool use unproven" : {
-      "localizations" : {}
-    },
-    "Tool use unsupported" : {
-      "localizations" : {}
-    },
     "Tool Permissions" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -116322,6 +116629,21 @@
           }
         }
       }
+    },
+    "Tool use" : {
+
+    },
+    "Tool use blocked" : {
+
+    },
+    "Tool use proof required" : {
+
+    },
+    "Tool use unproven" : {
+
+    },
+    "Tool use unsupported" : {
+
     },
     "Tools" : {
       "localizations" : {
@@ -116494,6 +116816,64 @@
         }
       }
     },
+    "Top Center" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Top Center"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Top Center"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Сверху по центру"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Top Center"
+          }
+        }
+      }
+    },
+    "Top Left" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Top Left"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Top Left"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Сверху слева"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Top Left"
+          }
+        }
+      }
+    },
     "Top P Override" : {
       "localizations" : {
         "de" : {
@@ -116574,6 +116954,35 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "首选推荐"
+          }
+        }
+      }
+    },
+    "Top Right" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Top Right"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Top Right"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Сверху справа"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Top Right"
           }
         }
       }
@@ -121530,6 +121939,10 @@
         }
       }
     },
+    "Versions" : {
+      "comment" : "A label for the section that lists different versions of a model.",
+      "isCommentAutoGenerated" : true
+    },
     "Video file too large" : {
       "localizations" : {
         "de" : {
@@ -124097,6 +124510,35 @@
         }
       }
     },
+    "When the main chat model is itself local, unload it to run the helper, then reload it afterward. On by default so a local agent can run a local helper; turn off to keep local-to-local handoff disabled and avoid double residency. (Cloud orchestrators never need this.)" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "When the main chat model is itself local, unload it to run the helper, then reload it afterward. On by default so a local agent can run a local helper; turn off to keep local-to-local handoff disabled and avoid double residency. (Cloud orchestrators never need this.)"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "When the main chat model is itself local, unload it to run the helper, then reload it afterward. On by default so a local agent can run a local helper; turn off to keep local-to-local handoff disabled and avoid double residency. (Cloud orchestrators never need this.)"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Если основная модель чата локальная, Osaurus выгружает её, запускает вспомогательную задачу, затем загружает обратно. Включено по умолчанию, чтобы локальный агент мог запускать локального помощника; отключите, чтобы запретить локальную передачу и избежать одновременной загрузки двух моделей. Облачным оркестраторам это не требуется."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "When the main chat model is itself local, unload it to run the helper, then reload it afterward. On by default so a local agent can run a local helper; turn off to keep local-to-local handoff disabled and avoid double residency. (Cloud orchestrators never need this.)"
+          }
+        }
+      }
+    },
     "When to evict a loaded model from RAM, and how long to keep it warm after the last request." : {
       "localizations" : {
         "de" : {
@@ -124302,6 +124744,35 @@
       "comment" : "Subtitle for the Storage settings view.",
       "isCommentAutoGenerated" : true
     },
+    "Where toast notifications appear on screen" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Where toast notifications appear on screen"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Where toast notifications appear on screen"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Где на экране появляются всплывающие уведомления"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Where toast notifications appear on screen"
+          }
+        }
+      }
+    },
     "Where toasts appear on screen" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -124363,25 +124834,25 @@
     "Which AppleScript model the agent uses." : {
       "extractionState" : "manual",
       "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Какую модель AppleScript использует агент."
-          }
-        },
         "de" : {
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "Which AppleScript model the agent uses."
           }
         },
-        "zh-Hans" : {
+        "ko" : {
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "Which AppleScript model the agent uses."
           }
         },
-        "ko" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Какую модель AppleScript использует агент."
+          }
+        },
+        "zh-Hans" : {
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "Which AppleScript model the agent uses."
@@ -126701,412 +127172,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Zip 捆绑包"
-          }
-        }
-      }
-    },
-    "Local Handoff & RAM Safety" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Local Handoff & RAM Safety"
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Local Handoff & RAM Safety"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Local Handoff & RAM Safety"
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Локальная передача и проверка памяти"
-          }
-        }
-      }
-    },
-    "Local Orchestrator Handoff" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Local Orchestrator Handoff"
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Local Orchestrator Handoff"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Local Orchestrator Handoff"
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Локальная передача выполнения"
-          }
-        }
-      }
-    },
-    "RAM-Safety Preflight" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "RAM-Safety Preflight"
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "RAM-Safety Preflight"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "RAM-Safety Preflight"
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Предварительная проверка памяти"
-          }
-        }
-      }
-    },
-    "When the main chat model is itself local, unload it to run the helper, then reload it afterward. On by default so a local agent can run a local helper; turn off to keep local-to-local handoff disabled and avoid double residency. (Cloud orchestrators never need this.)" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "When the main chat model is itself local, unload it to run the helper, then reload it afterward. On by default so a local agent can run a local helper; turn off to keep local-to-local handoff disabled and avoid double residency. (Cloud orchestrators never need this.)"
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "When the main chat model is itself local, unload it to run the helper, then reload it afterward. On by default so a local agent can run a local helper; turn off to keep local-to-local handoff disabled and avoid double residency. (Cloud orchestrators never need this.)"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "When the main chat model is itself local, unload it to run the helper, then reload it afterward. On by default so a local agent can run a local helper; turn off to keep local-to-local handoff disabled and avoid double residency. (Cloud orchestrators never need this.)"
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Если основная модель чата локальная, Osaurus выгружает её, запускает вспомогательную задачу, затем загружает обратно. Включено по умолчанию, чтобы локальный агент мог запускать локального помощника; отключите, чтобы запретить локальную передачу и избежать одновременной загрузки двух моделей. Облачным оркестраторам это не требуется."
-          }
-        }
-      }
-    },
-    "Before a spawned image or text job, verify the helper model fits in memory once the chat model is freed. If it won't fit, refuse the job instead of unloading the chat model and failing to load the helper." : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Before a spawned image or text job, verify the helper model fits in memory once the chat model is freed. If it won't fit, refuse the job instead of unloading the chat model and failing to load the helper."
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Before a spawned image or text job, verify the helper model fits in memory once the chat model is freed. If it won't fit, refuse the job instead of unloading the chat model and failing to load the helper."
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Before a spawned image or text job, verify the helper model fits in memory once the chat model is freed. If it won't fit, refuse the job instead of unloading the chat model and failing to load the helper."
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Перед запуском вспомогательной задачи с изображением или текстом проверяется, поместится ли модель помощника в память после выгрузки модели чата. Если памяти не хватает, задача отклоняется вместо выгрузки модели чата и последующей ошибки загрузки помощника."
-          }
-        }
-      }
-    },
-    "Top Right" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Top Right"
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Top Right"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Top Right"
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Сверху справа"
-          }
-        }
-      }
-    },
-    "Top Left" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Top Left"
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Top Left"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Top Left"
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Сверху слева"
-          }
-        }
-      }
-    },
-    "Top Center" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Top Center"
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Top Center"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Top Center"
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Сверху по центру"
-          }
-        }
-      }
-    },
-    "Bottom Right" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Bottom Right"
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Bottom Right"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Bottom Right"
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Снизу справа"
-          }
-        }
-      }
-    },
-    "Bottom Left" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Bottom Left"
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Bottom Left"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Bottom Left"
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Снизу слева"
-          }
-        }
-      }
-    },
-    "Bottom Center" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Bottom Center"
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Bottom Center"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Bottom Center"
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Снизу по центру"
-          }
-        }
-      }
-    },
-    "Test Notification" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Test Notification"
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Test Notification"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Test Notification"
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Тестовое уведомление"
-          }
-        }
-      }
-    },
-    "Toast notifications are working!" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Toast notifications are working!"
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Toast notifications are working!"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Toast notifications are working!"
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Всплывающие уведомления работают!"
-          }
-        }
-      }
-    },
-    "Where toast notifications appear on screen" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Where toast notifications appear on screen"
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Where toast notifications appear on screen"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Where toast notifications appear on screen"
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Где на экране появляются всплывающие уведомления"
           }
         }
       }

@@ -312,6 +312,51 @@ struct ModelManagerSuggestedTests {
         }
     }
 
+    // MARK: - Non-chat repo gate (rampart, embeddings, image/speech pipelines)
+
+    @Test func chatCatalogEligibility_rejectsNonChatPipelinesAndPanelOwnedRepos() {
+        // Rampart is owned by Settings → Privacy; excluded even without a tag.
+        #expect(
+            !ModelManager.isChatCatalogEligible(id: "OsaurusAI/rampart-mlx", pipelineTag: nil)
+        )
+        // Non-chat pipeline tags never surface as chat cards.
+        for tag in [
+            "token-classification", "feature-extraction", "sentence-similarity",
+            "text-to-image", "image-to-image", "automatic-speech-recognition",
+            "text-to-speech",
+        ] {
+            #expect(
+                !ModelManager.isChatCatalogEligible(id: "OsaurusAI/some-utility", pipelineTag: tag),
+                "expected pipeline tag \(tag) to be rejected"
+            )
+        }
+        // Chat-capable pipelines pass.
+        for tag in ["text-generation", "image-text-to-text", "any-to-any"] {
+            #expect(
+                ModelManager.isChatCatalogEligible(id: "OsaurusAI/some-chat-model", pipelineTag: tag),
+                "expected pipeline tag \(tag) to be accepted"
+            )
+        }
+        // Untagged MLX conversions stay eligible (nil is not evidence of non-chat).
+        #expect(
+            ModelManager.isChatCatalogEligible(id: "OsaurusAI/Untagged-Chat-Model", pipelineTag: nil)
+        )
+    }
+
+    @Test @MainActor func panelOwnedRepos_droppedFromAutoFetchMerge() async {
+        await withIsolatedModelSizeCache {
+            let manager = ModelManager()
+            let rampart = MLXModel(
+                id: "OsaurusAI/rampart-mlx",
+                name: "rampart mlx",
+                description: "From OsaurusAI on Hugging Face.",
+                downloadURL: "https://huggingface.co/OsaurusAI/rampart-mlx"
+            )
+            manager.applyOsaurusOrgFetch(autoFetched: [rampart])
+            #expect(!manager.suggestedModels.contains { $0.id == rampart.id })
+        }
+    }
+
     // MARK: - Onboarding default scenario matrix (Phase 4c)
 
     @Test @MainActor func onboardingDefault_landsOnGemmaQATSpinePerRAMTier() async {
