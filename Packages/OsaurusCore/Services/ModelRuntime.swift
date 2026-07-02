@@ -442,11 +442,23 @@ public actor ModelRuntime {
     }
 
     /// Cancel the active decode for `name` without evicting the loaded
-    /// container. HTTP non-streaming callers use this when the client drops
-    /// before any response body can be written; otherwise the server can keep
-    /// decoding for a request nobody is still reading.
+    /// container OR its `BatchEngine`. Every disconnect hook (streaming and
+    /// non-streaming) routes here when the client drops; otherwise the server
+    /// can keep decoding for a request nobody is still reading.
+    ///
+    /// This must NOT call `Registry.shutdownEngine`: shutting the engine down
+    /// also removes it from the registry, so the next request builds a fresh
+    /// `BatchEngine` on the same `ModelContainer`. If the dropped request was
+    /// still prefilling, its producer keeps encoding until the next chunk
+    /// boundary (prefill cancellation is chunk-granular, vmlx #111) — and two
+    /// engines' producers on one container race on the shared GPU command
+    /// queue and abort the process ("A command encoder is already encoding to
+    /// this command buffer"; 100%-reproducible via disconnect during a
+    /// cold-load prefill + immediate retry). Cancelling the wrapper task is
+    /// sufficient: it terminates the vmlx stream, which cancels the producer,
+    /// while the engine's solo-path guard keeps follow-up requests queued on
+    /// the SAME engine until the producer has actually returned.
     func cancelGeneration(name: String) async {
-        await MLXBatchAdapter.Registry.shared.shutdownEngine(for: name)
         await cancelActiveGeneration(for: name)
     }
 
