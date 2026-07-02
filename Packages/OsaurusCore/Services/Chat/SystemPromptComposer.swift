@@ -1589,6 +1589,15 @@ public struct SystemPromptComposer: Sendable {
         "schedule_next_run", "cancel_next_run", "notify",
     ]
 
+    /// Knowledge retrieval tools. Registered as built-ins but gated on
+    /// `AgentConfigSnapshot.knowledgeEnabled` (per-agent opt-in, pre-folded
+    /// with "has at least one granted collection") in `resolveTools`.
+    /// Collection scoping is enforced again at execution time inside the
+    /// tools, so this strip is a token-cost optimization, not the boundary.
+    static let knowledgeToolNames: Set<String> = [
+        "search_knowledge", "read_knowledge", "list_knowledge",
+    ]
+
     /// Render the schema snapshot block injected after the onboarding
     /// prompt when `dbEnabled` is true. Best-effort: a failure to open
     /// the DB (e.g. the user just enabled the toggle and the first
@@ -2084,6 +2093,11 @@ public struct SystemPromptComposer: Sendable {
             }
             if !snapshot.selfSchedulingEnabled {
                 for name in schedulerToolNames where !keep.contains(name) {
+                    byName.removeValue(forKey: name)
+                }
+            }
+            if !snapshot.knowledgeEnabled {
+                for name in knowledgeToolNames where !keep.contains(name) {
                     byName.removeValue(forKey: name)
                 }
             }

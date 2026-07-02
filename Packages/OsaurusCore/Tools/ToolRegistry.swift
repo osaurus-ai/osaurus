@@ -200,6 +200,15 @@ public final class ToolRegistry: ObservableObject {
             CapabilitiesLoadTool(),
             // Persistent memory recall — one tool, dispatched by `scope`.
             SearchMemoryTool(),
+            // Knowledge collection retrieval (read-only). Registered as
+            // built-ins so the runtime can execute them; the system prompt
+            // composer strips them unless the agent opts in via
+            // `knowledgeEnabled` with at least one granted collection.
+            // Collection scoping is additionally enforced at execution
+            // time inside each tool.
+            SearchKnowledgeTool(),
+            ReadKnowledgeTool(),
+            ListKnowledgeTool(),
             // Inline data visualization rendered as a chart card.
             RenderChartTool(),
             // Text-delegation family: `spawn_agent` hands a task to a configured
