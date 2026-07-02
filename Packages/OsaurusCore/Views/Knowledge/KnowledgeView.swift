@@ -157,11 +157,14 @@ struct KnowledgeView: View {
                 collectionName: knowledgeManager.collection(
                     for: UUID(uuidString: proposal.collectionId) ?? UUID()
                 )?.name ?? proposal.collectionId,
-                onApprove: {
+                onApprove: { editedContent in
                     reviewingProposal = nil
                     Task.detached(priority: .userInitiated) {
                         do {
-                            try await KnowledgeCurationService.shared.approve(proposalId: proposal.id)
+                            try await KnowledgeCurationService.shared.approve(
+                                proposalId: proposal.id,
+                                overrideContent: editedContent
+                            )
                             await MainActor.run { showSuccess("Approved proposal #\(proposal.id)") }
                         } catch {
                             await MainActor.run { showSuccess("Approve failed: \(error.localizedDescription)") }
@@ -530,16 +533,31 @@ private struct KnowledgeProposalReviewSheet: View {
     @ObservedObject private var themeManager = ThemeManager.shared
     private var theme: ThemeProtocol { themeManager.currentTheme }
 
+    private enum ViewMode: String, CaseIterable {
+        case diff = "Changes"
+        case edit = "Edit"
+    }
+
     let proposal: KnowledgeProposal
     let collectionName: String
-    let onApprove: () -> Void
+    /// Receives the reviewer's edited content, or nil when unedited.
+    let onApprove: (String?) -> Void
     let onDismissProposal: () -> Void
     let onCancel: () -> Void
+
+    @State private var viewMode: ViewMode = .diff
+    /// Editable copy of the proposed content; the reviewer's version
+    /// wins on approve.
+    @State private var editedContent: String
+    /// Current on-disk document ("" for a new document); loaded off-main.
+    @State private var currentContent: String = ""
+    @State private var diffLoaded = false
+    @State private var diffLines: [KnowledgeDiff.Line] = []
 
     init(
         proposal: KnowledgeProposal,
         collectionName: String,
-        onApprove: @escaping () -> Void,
+        onApprove: @escaping (String?) -> Void,
         onDismissProposal: @escaping () -> Void,
         onCancel: @escaping () -> Void
     ) {
@@ -548,13 +566,25 @@ private struct KnowledgeProposalReviewSheet: View {
         self.onApprove = onApprove
         self.onDismissProposal = onDismissProposal
         self.onCancel = onCancel
+        _editedContent = State(initialValue: proposal.newContent)
     }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("Proposal #\(proposal.id)")
-                .font(.system(size: 15, weight: .semibold))
-                .foregroundColor(theme.primaryText)
+            HStack(alignment: .firstTextBaseline) {
+                Text("Proposal #\(proposal.id)")
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundColor(theme.primaryText)
+                Spacer()
+                Picker("", selection: $viewMode) {
+                    ForEach(ViewMode.allCases, id: \.self) { mode in
+                        Text(LocalizedStringKey(mode.rawValue)).tag(mode)
+                    }
+                }
+                .pickerStyle(.segmented)
+                .frame(width: 180)
+                .labelsHidden()
+            }
 
             VStack(alignment: .leading, spacing: 4) {
                 Text("[\(collectionName)] \(proposal.relPath)")
@@ -571,22 +601,15 @@ private struct KnowledgeProposalReviewSheet: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
 
-            Text("Proposed content", bundle: .module)
-                .font(.system(size: 11, weight: .medium))
-                .foregroundColor(theme.secondaryText)
-            ScrollView {
-                Text(proposal.newContent)
-                    .font(.system(size: 11, design: .monospaced))
-                    .foregroundColor(theme.primaryText)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(10)
-                    .textSelection(.enabled)
+            switch viewMode {
+            case .diff:
+                diffPane
+            case .edit:
+                editPane
             }
-            .frame(minHeight: 220, maxHeight: 360)
-            .background(RoundedRectangle(cornerRadius: 8).fill(theme.secondaryBackground))
 
             Text(
-                "Approving writes this content into the collection folder and re-indexes it. Dismissing reopens the linked ticket.",
+                "Approving writes this content into the collection folder and re-indexes it. Your edits in the Edit tab are what gets written. Dismissing reopens the linked ticket.",
                 bundle: .module
             )
             .font(.system(size: 10))
@@ -607,16 +630,118 @@ private struct KnowledgeProposalReviewSheet: View {
                 }
                 .keyboardShortcut(.cancelAction)
                 Button {
-                    onApprove()
+                    let edited = editedContent == proposal.newContent ? nil : editedContent
+                    onApprove(edited)
                 } label: {
-                    Text("Approve", bundle: .module)
+                    Text(editedContent == proposal.newContent ? "Approve" : "Approve Edited", bundle: .module)
                 }
                 .keyboardShortcut(.defaultAction)
+                .disabled(editedContent.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             }
         }
         .padding(20)
-        .frame(width: 620)
+        .frame(width: 680)
         .background(theme.primaryBackground)
         .environment(\.theme, themeManager.currentTheme)
+        .onAppear(perform: loadDiff)
+    }
+
+    // MARK: - Panes
+
+    @ViewBuilder
+    private var diffPane: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(currentContent.isEmpty ? "New document" : "Changes vs. current document", bundle: .module)
+                .font(.system(size: 11, weight: .medium))
+                .foregroundColor(theme.secondaryText)
+            ScrollView {
+                if !diffLoaded {
+                    Text("Loading…", bundle: .module)
+                        .font(.system(size: 11))
+                        .foregroundColor(theme.tertiaryText)
+                        .padding(10)
+                } else {
+                    LazyVStack(alignment: .leading, spacing: 0) {
+                        ForEach(diffLines) { line in
+                            diffRow(line)
+                        }
+                    }
+                    .padding(6)
+                }
+            }
+            .frame(minHeight: 240, maxHeight: 380)
+            .background(RoundedRectangle(cornerRadius: 8).fill(theme.secondaryBackground))
+        }
+    }
+
+    private func diffRow(_ line: KnowledgeDiff.Line) -> some View {
+        let (prefix, color, background): (String, Color, Color) = {
+            switch line.kind {
+            case .context: return (" ", theme.tertiaryText, .clear)
+            case .added: return ("+", Color.green, Color.green.opacity(0.08))
+            case .removed: return ("-", Color.red, Color.red.opacity(0.08))
+            }
+        }()
+        return HStack(alignment: .top, spacing: 6) {
+            Text(prefix)
+                .font(.system(size: 11, design: .monospaced))
+                .foregroundColor(color)
+            Text(line.text.isEmpty ? " " : line.text)
+                .font(.system(size: 11, design: .monospaced))
+                .foregroundColor(line.kind == .context ? theme.primaryText : color)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .textSelection(.enabled)
+        }
+        .padding(.horizontal, 4)
+        .padding(.vertical, 1)
+        .background(background)
+    }
+
+    @ViewBuilder
+    private var editPane: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("Edit before approving", bundle: .module)
+                .font(.system(size: 11, weight: .medium))
+                .foregroundColor(theme.secondaryText)
+            TextEditor(text: $editedContent)
+                .font(.system(size: 11, design: .monospaced))
+                .scrollContentBackground(.hidden)
+                .padding(6)
+                .frame(minHeight: 240, maxHeight: 380)
+                .background(RoundedRectangle(cornerRadius: 8).fill(theme.secondaryBackground))
+        }
+    }
+
+    // MARK: - Diff loading
+
+    /// Read the current document off-main and diff it against the
+    /// proposal. A missing file (new document) diffs against empty.
+    private func loadDiff() {
+        guard !diffLoaded else { return }
+        let relPath = proposal.relPath
+        let collectionId = proposal.collectionId
+        let newContent = proposal.newContent
+        Task.detached(priority: .userInitiated) {
+            var current = ""
+            if let uuid = UUID(uuidString: collectionId),
+                let collection = await MainActor.run(body: {
+                    KnowledgeManager.shared.collection(for: uuid)
+                })
+            {
+                let fileURL = collection.folderURL.standardizedFileURL
+                    .appendingPathComponent(relPath).standardizedFileURL
+                let folderPath = collection.folderURL.standardizedFileURL.path
+                let prefix = folderPath.hasSuffix("/") ? folderPath : folderPath + "/"
+                if fileURL.path.hasPrefix(prefix) {
+                    current = (try? String(contentsOf: fileURL, encoding: .utf8)) ?? ""
+                }
+            }
+            let lines = KnowledgeDiff.lines(old: current, new: newContent)
+            await MainActor.run {
+                currentContent = current
+                diffLines = lines
+                diffLoaded = true
+            }
+        }
     }
 }

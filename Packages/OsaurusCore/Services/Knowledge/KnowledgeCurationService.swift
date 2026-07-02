@@ -39,7 +39,9 @@ public actor KnowledgeCurationService {
     /// Approve a pending proposal: write the new content into the
     /// collection folder, re-index the collection incrementally, resolve
     /// the linked ticket, and mark the proposal approved.
-    public func approve(proposalId: Int) async throws {
+    /// `overrideContent` carries user edits made in the review sheet —
+    /// the reviewer's version wins over the curator's draft.
+    public func approve(proposalId: Int, overrideContent: String? = nil) async throws {
         guard let proposal = try KnowledgeDatabase.shared.getProposal(id: proposalId) else {
             throw KnowledgeCurationError.proposalNotFound(proposalId)
         }
@@ -71,12 +73,13 @@ public actor KnowledgeCurationService {
             throw KnowledgeCurationError.pathEscapesCollection(relPath)
         }
 
+        let content = overrideContent ?? proposal.newContent
         do {
             try FileManager.default.createDirectory(
                 at: fileURL.deletingLastPathComponent(),
                 withIntermediateDirectories: true
             )
-            try Data(proposal.newContent.utf8).write(to: fileURL, options: [.atomic])
+            try Data(content.utf8).write(to: fileURL, options: [.atomic])
         } catch {
             throw KnowledgeCurationError.writeFailed(error.localizedDescription)
         }
