@@ -1024,14 +1024,14 @@ struct MLXBatchAdapter {
         // shared generation owner, preserving same-model batching. Either
         // acquire is fully balanced before the generation gate below; the
         // brief window between them is eval-free.
-        let prepChat: PrepChatBox? = buildRawPrompt == nil ? PrepChatBox(buildChat()) : nil
-        let prepBuildChat: @Sendable () -> [MLXLMCommon.Chat.Message]
-        if let prepChat {
-            prepBuildChat = { prepChat.messages }
-        } else {
-            prepBuildChat = buildChat
-        }
-        let prepIsExclusive = prepChat?.hasMedia ?? false
+        // Snapshot the chat once up front (empty on the raw-prompt path,
+        // where `prepareInput` never invokes its chat builder). The box keeps
+        // the snapshot Sendable, and passing a box-backed closure below —
+        // rather than rebinding the non-escaping `buildChat` parameter —
+        // avoids both a second `buildChat()` call and an escaping-parameter
+        // diagnostic.
+        let prepChat = PrepChatBox(buildRawPrompt == nil ? buildChat() : [])
+        let prepIsExclusive = prepChat.hasMedia
         let prepared: PreparedInput
         if prepIsExclusive {
             await MetalGate.shared.enterMediaPrep(model: modelName)
@@ -1049,7 +1049,7 @@ struct MLXBatchAdapter {
             prepared = try await prepareInput(
                 modelName: modelName,
                 container: container,
-                buildChat: prepBuildChat,
+                buildChat: { prepChat.messages },
                 buildToolsSpec: buildToolsSpec,
                 buildRawPrompt: buildRawPrompt,
                 generation: generation,

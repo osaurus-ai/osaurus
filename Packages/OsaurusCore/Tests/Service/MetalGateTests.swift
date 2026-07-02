@@ -195,7 +195,7 @@ struct MetalGateTests {
         // The adapter branches on media and brackets prep with the right owner.
         #expect(adapter.contains("await MetalGate.shared.enterMediaPrep(model: modelName)"))
         #expect(adapter.contains("await MetalGate.shared.exitMediaPrep(model: modelName)"))
-        #expect(adapter.contains("let prepIsExclusive = prepChat?.hasMedia ?? false"))
+        #expect(adapter.contains("let prepIsExclusive = prepChat.hasMedia"))
     }
 
     // MARK: - PII detection (Rampart) owner — exclusive against every producer
