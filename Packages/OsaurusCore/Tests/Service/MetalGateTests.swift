@@ -280,6 +280,45 @@ struct MetalGateTests {
         )
     }
 
+    // MARK: - Source contract: gate-holding code never awaits the PII owner
+
+    @Test func gateHoldersDoNotInvokePrivacyFilter() throws {
+        // Deadlock invariant: `enterPIIDetection()` waits for every other
+        // owner, so code that HOLDS a MetalGate owner (the ModelRuntime
+        // generation/load/teardown paths) must never call into the privacy
+        // filter — a generation awaiting its own PII scan would wait on
+        // itself forever. Today the pipeline's only Services caller is
+        // `RemoteProviderService`, which holds no gate owner; pin that so a
+        // future "filter local output too" refactor trips this test instead
+        // of shipping a deadlock.
+        let coreRoot = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()  // Service/
+            .deletingLastPathComponent()  // Tests/
+            .deletingLastPathComponent()  // OsaurusCore/
+
+        let runtimeDir = coreRoot.appendingPathComponent("Services/ModelRuntime")
+        let files = try FileManager.default.contentsOfDirectory(
+            at: runtimeDir,
+            includingPropertiesForKeys: nil
+        )
+        .filter { $0.pathExtension == "swift" }
+        + [coreRoot.appendingPathComponent("Services/ModelRuntime.swift")]
+
+        #expect(!files.isEmpty)
+        for file in files {
+            let source = try String(contentsOf: file, encoding: .utf8)
+            let name = file.lastPathComponent
+            #expect(
+                !source.contains("PrivacyFilterPipeline"),
+                "\(name) references PrivacyFilterPipeline from gate-holding code"
+            )
+            #expect(
+                !source.contains("RampartModelManager"),
+                "\(name) references RampartModelManager from gate-holding code"
+            )
+        }
+    }
+
     // MARK: - Source contract: the unload teardown is actually gate-bracketed
 
     @Test func unloadTeardownIsGateBracketedInSource() throws {
