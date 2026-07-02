@@ -131,6 +131,10 @@ public struct AgentConfigSnapshot: Sendable, Equatable {
     /// `read_knowledge` / `list_knowledge` from the model-visible schema.
     /// Execution-time scoping happens in the tools themselves.
     public let knowledgeEnabled: Bool
+    /// Curator role, pre-folded like `knowledgeEnabled` — false strips
+    /// `propose_knowledge_update` from the model-visible schema. The tool
+    /// re-checks the role at execution time.
+    public let knowledgeCuratorEnabled: Bool
 
     public init(
         agentId: UUID,
@@ -154,7 +158,8 @@ public struct AgentConfigSnapshot: Sendable, Equatable {
         spawnableAgentNames: [String] = [],
         spawnableModelNames: [String] = [],
         spawnableModelNotes: [String: String] = [:],
-        knowledgeEnabled: Bool = false
+        knowledgeEnabled: Bool = false,
+        knowledgeCuratorEnabled: Bool = false
     ) {
         self.agentId = agentId
         self.toolsDisabled = toolsDisabled
@@ -178,6 +183,7 @@ public struct AgentConfigSnapshot: Sendable, Equatable {
         self.spawnableModelNames = spawnableModelNames
         self.spawnableModelNotes = spawnableModelNotes
         self.knowledgeEnabled = knowledgeEnabled
+        self.knowledgeCuratorEnabled = knowledgeCuratorEnabled
     }
 
     /// Read every `effective*` field in one MainActor batch.
@@ -224,7 +230,9 @@ public struct AgentConfigSnapshot: Sendable, Equatable {
             spawnableModelNotes: caps.spawnableModelNotes,
             // Pre-fold the "anything to search?" half of the gate, like the
             // spawn tools: enabled with zero grants keeps the tools hidden.
-            knowledgeEnabled: caps.knowledgeEnabled && !caps.knowledgeCollectionIds.isEmpty
+            knowledgeEnabled: caps.knowledgeEnabled && !caps.knowledgeCollectionIds.isEmpty,
+            knowledgeCuratorEnabled: caps.knowledgeCuratorEnabled
+                && !caps.knowledgeCollectionIds.isEmpty
         )
     }
 }

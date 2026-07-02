@@ -790,7 +790,10 @@ extension AgentManager {
             spawnableModelNames: agent.settings.spawnableModelNames,
             spawnableModelNotes: agent.settings.spawnableModelNotes,
             knowledgeEnabled: agent.settings.knowledgeEnabled,
-            knowledgeCollectionIds: agent.settings.knowledgeCollectionIds
+            knowledgeCollectionIds: agent.settings.knowledgeCollectionIds,
+            // Curator is a child of the knowledge opt-in.
+            knowledgeCuratorEnabled: agent.settings.knowledgeEnabled
+                && agent.settings.knowledgeCuratorEnabled
         )
     }
 

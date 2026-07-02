@@ -1599,6 +1599,14 @@ public struct SystemPromptComposer: Sendable {
         "flag_knowledge_stale", "list_knowledge_tickets",
     ]
 
+    /// Curator-only knowledge tools, gated on
+    /// `AgentConfigSnapshot.knowledgeCuratorEnabled` in `resolveTools`.
+    /// The tool re-checks the role at execution time, so this strip is a
+    /// token-cost optimization, not the boundary.
+    static let knowledgeCuratorToolNames: Set<String> = [
+        "propose_knowledge_update",
+    ]
+
     /// Render the schema snapshot block injected after the onboarding
     /// prompt when `dbEnabled` is true. Best-effort: a failure to open
     /// the DB (e.g. the user just enabled the toggle and the first
@@ -2099,6 +2107,11 @@ public struct SystemPromptComposer: Sendable {
             }
             if !snapshot.knowledgeEnabled {
                 for name in knowledgeToolNames where !keep.contains(name) {
+                    byName.removeValue(forKey: name)
+                }
+            }
+            if !snapshot.knowledgeCuratorEnabled {
+                for name in knowledgeCuratorToolNames where !keep.contains(name) {
                     byName.removeValue(forKey: name)
                 }
             }

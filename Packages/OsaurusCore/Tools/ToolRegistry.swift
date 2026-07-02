@@ -214,6 +214,10 @@ public final class ToolRegistry: ObservableObject {
             // written by a tool.
             FlagKnowledgeStaleTool(),
             ListKnowledgeTicketsTool(),
+            // Curator-only draft path (`.ask` policy, external-surface
+            // denied). Creates pending proposals; the user approves them
+            // in the Knowledge tab before anything lands in the corpus.
+            ProposeKnowledgeUpdateTool(),
             // Inline data visualization rendered as a chart card.
             RenderChartTool(),
             // Text-delegation family: `spawn_agent` hands a task to a configured
@@ -429,6 +433,7 @@ public final class ToolRegistry: ObservableObject {
     /// `/mcp/tools` listings.
     nonisolated public static let externallyDeniedToolNames: Set<String> = [
         "file_write", "file_edit", "shell_run", "git_commit", "file_undo",
+        "propose_knowledge_update",
         "agent_channel_list_connections", "agent_channel_diagnostics",
         "agent_channel_list_spaces", "agent_channel_list_rooms",
         "agent_channel_read_messages", "agent_channel_read_thread",
