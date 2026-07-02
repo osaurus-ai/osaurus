@@ -78,17 +78,17 @@ struct VoiceSetupTab: View {
                     // Requirements checklist (compact)
                     requirementsSection
                         .opacity(hasAppeared ? 1 : 0)
-                        .offset(y: hasAppeared ? 0 : 8)
-                        .animation(.spring(response: 0.5, dampingFraction: 0.85).delay(0.05), value: hasAppeared)
+                        .animation(.easeOut(duration: 0.25).delay(0.05), value: hasAppeared)
 
                     Spacer()
                         .frame(height: 24)
 
-                    // Central voice test area
+                    // Central voice test area — the hero beat of the two-beat
+                    // entrance (house spring; everything else fades in behind it)
                     voiceTestSection
                         .opacity(hasAppeared ? 1 : 0)
                         .scaleEffect(hasAppeared ? 1 : 0.95)
-                        .animation(.spring(response: 0.6, dampingFraction: 0.8).delay(0.15), value: hasAppeared)
+                        .animation(.spring(response: 0.4, dampingFraction: 0.8), value: hasAppeared)
 
                     Spacer()
                         .frame(height: 16)
@@ -96,7 +96,7 @@ struct VoiceSetupTab: View {
                     // Privacy footer
                     privacyFooter
                         .opacity(hasAppeared ? 1 : 0)
-                        .animation(.easeOut(duration: 0.4).delay(0.3), value: hasAppeared)
+                        .animation(.easeOut(duration: 0.25).delay(0.05), value: hasAppeared)
                 }
                 .padding(.horizontal, 24)
                 .frame(maxWidth: 520)
@@ -109,7 +109,7 @@ struct VoiceSetupTab: View {
                 // matching the other voice settings tabs.
                 audioSettingsSection
                     .opacity(hasAppeared ? 1 : 0)
-                    .animation(.easeOut(duration: 0.4).delay(0.35), value: hasAppeared)
+                    .animation(.easeOut(duration: 0.25).delay(0.05), value: hasAppeared)
                     .padding(.horizontal, 24)
 
                 Spacer()

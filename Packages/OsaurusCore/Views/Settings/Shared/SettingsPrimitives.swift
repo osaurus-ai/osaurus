@@ -80,6 +80,9 @@ private struct SettingsSearchHighlightModifier: ViewModifier {
     func body(content: Content) -> some View {
         let theme = themeManager.currentTheme
         content
+            // Rasterize the (possibly whole-card) content once per frame so the
+            // animated glow blurs a single flattened layer, not every subview.
+            .compositingGroup()
             // The glow follows the control's own (rounded) shape — no ring.
             .shadow(color: theme.accentColor.opacity(glowOpacity), radius: glowRadius)
             .animation(.easeOut(duration: 0.25), value: active)

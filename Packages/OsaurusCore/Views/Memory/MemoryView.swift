@@ -176,9 +176,7 @@ struct MemoryView: View {
         ZStack {
             VStack(spacing: 0) {
                 headerView
-                    .opacity(hasAppeared ? 1 : 0)
-                    .offset(y: hasAppeared ? 0 : -10)
-                    .animation(.spring(response: 0.4, dampingFraction: 0.8), value: hasAppeared)
+                    .managerHeaderEntrance(hasAppeared: hasAppeared)
 
                 Group {
                     if isLoading {
@@ -1118,11 +1116,13 @@ struct MemoryView: View {
     }
 
     func showToast(_ message: String, isError: Bool = false) {
-        withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
+        // Same rhythm as the General/Chat tabs' success toasts: theme spring
+        // in, quick ease out, 2.5 s hold.
+        withAnimation(theme.springAnimation()) {
             toastMessage = (message, isError)
         }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
-            withAnimation(.easeOut(duration: 0.3)) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) {
+            withAnimation(theme.animationQuick()) {
                 toastMessage = nil
             }
         }

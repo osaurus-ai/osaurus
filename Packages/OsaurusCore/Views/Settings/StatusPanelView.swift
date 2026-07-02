@@ -361,6 +361,7 @@ private struct BottomActionBar: View {
 // MARK: - VAD Toggle Button
 private struct VADToggleButton: View {
     @Environment(\.theme) private var theme
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @ObservedObject private var vadService = VADService.shared
     @ObservedObject private var speechModelManager = SpeechModelManager.shared
 
@@ -523,7 +524,8 @@ private struct VADToggleButton: View {
 
     private func startPulseIfNeeded(for state: VADServiceState? = nil) {
         let currentState = state ?? vadService.state
-        if currentState == .listening {
+        // Continuous decorative motion: keep the icon static under Reduce Motion.
+        if currentState == .listening, !reduceMotion {
             withAnimation(.easeInOut(duration: 1.0).repeatForever(autoreverses: true)) {
                 pulseAnimation = true
             }

@@ -605,6 +605,7 @@ private struct RequirementRowView: View {
 // MARK: - Pulsing Indicator Modifier
 
 private struct PulsingIndicatorModifier: ViewModifier {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var isPulsing = false
 
     func body(content: Content) -> some View {
@@ -615,7 +616,11 @@ private struct PulsingIndicatorModifier: ViewModifier {
                 value: isPulsing
             )
             .onAppear {
-                isPulsing = true
+                // Continuous decorative motion: hold the steady state under
+                // Reduce Motion.
+                if !reduceMotion {
+                    isPulsing = true
+                }
             }
     }
 }

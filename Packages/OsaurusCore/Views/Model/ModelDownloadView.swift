@@ -157,9 +157,7 @@ struct ModelDownloadView: View {
         let lists = gridListsSnapshot
         return VStack(spacing: 0) {
             headerView(lists: lists)
-                .opacity(hasAppeared ? 1 : 0)
-                .offset(y: hasAppeared ? 0 : -10)
-                .animation(.spring(response: 0.4, dampingFraction: 0.8), value: hasAppeared)
+                .managerHeaderEntrance(hasAppeared: hasAppeared)
 
             SystemStatusBar(
                 totalMemoryGB: systemMonitor.totalMemoryGB,

@@ -780,8 +780,10 @@ private struct TestButton: View {
             .background(buttonBackground)
             .overlay(buttonBorder)
             .shadow(
+                // Fixed radius: animating shadow radius re-renders the blur
+                // every frame; opacity alone reads the same on hover.
                 color: (isActive ? theme.errorColor : theme.accentColor).opacity(isHovered ? 0.4 : 0.25),
-                radius: isHovered ? 10 : 6,
+                radius: 8,
                 x: 0,
                 y: 2
             )

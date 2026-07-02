@@ -262,7 +262,7 @@ private extension SidebarNavigation {
         ZStack {
             content(selection)
                 .id(selection)
-                .transition(.opacity.animation(.easeOut(duration: 0.15)))
+                .transition(.opacity.animation(.easeOut(duration: 0.2)))
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .animation(.easeOut(duration: 0.2), value: selection)

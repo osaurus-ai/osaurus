@@ -318,9 +318,7 @@ struct ConfigurationView: View {
             VStack(spacing: 0) {
                 // Header
                 headerView
-                    .opacity(hasAppeared ? 1 : 0)
-                    .offset(y: hasAppeared ? 0 : -10)
-                    .animation(.spring(response: 0.4, dampingFraction: 0.8), value: hasAppeared)
+                    .managerHeaderEntrance(hasAppeared: hasAppeared)
 
                 // Scrollable content area
                 ScrollViewReader { proxy in
@@ -494,7 +492,7 @@ struct ConfigurationView: View {
                     .background(
                         RoundedRectangle(cornerRadius: 24)
                             .fill(theme.cardBackground)
-                            .shadow(color: Color.black.opacity(0.2), radius: 20, x: 0, y: 10)
+                            .shadow(color: theme.shadowColor.opacity(0.2), radius: 20, x: 0, y: 10)
                     )
                     .overlay(
                         RoundedRectangle(cornerRadius: 24)
@@ -710,7 +708,7 @@ struct ConfigurationView: View {
         let response = alert.runModal()
         if response == .alertFirstButtonReturn {
             Task { @MainActor in
-                withAnimation(.easeIn(duration: 0.3)) {
+                withAnimation(.easeOut(duration: 0.25)) {
                     isResetting = true
                 }
                 // Yield to allow UI to update before heavy deletion starts

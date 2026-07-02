@@ -48,9 +48,7 @@ public struct StorageSettingsView: View {
     public var body: some View {
         VStack(spacing: 0) {
             headerView
-                .opacity(hasAppeared ? 1 : 0)
-                .offset(y: hasAppeared ? 0 : -10)
-                .animation(.spring(response: 0.4, dampingFraction: 0.8), value: hasAppeared)
+                .managerHeaderEntrance(hasAppeared: hasAppeared)
 
             ScrollView {
                 VStack(alignment: .leading, spacing: 24) {
