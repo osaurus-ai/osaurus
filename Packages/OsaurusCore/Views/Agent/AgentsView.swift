@@ -1019,6 +1019,13 @@ struct AgentDetailView: View {
     @State private var speakEnabled: Bool = false
     @State private var searchMemoryEnabled: Bool = false
     @State private var selfSchedulingEnabled: Bool = false
+    /// Local mirrors of the knowledge feature (`AgentSettings.knowledgeEnabled`
+    /// + collection grants). The Features section binds these; `saveAgent`
+    /// folds them back into the persisted `AgentSettings` block.
+    @State private var knowledgeEnabled: Bool = false
+    @State private var knowledgeCollectionIds: [UUID] = []
+    /// Registry of knowledge collections for the grants checklist.
+    @ObservedObject private var knowledgeManager = KnowledgeManager.shared
     /// Per-agent subagent capability toggles, keyed by the capability
     /// registry's `PerAgentFlag` (computer_use, spawn, image). Hydrated in
     /// `loadAgent` by looping the registry and folded back into `AgentSettings`
@@ -2727,6 +2734,13 @@ struct AgentDetailView: View {
                     }
 
                     featureGroup(
+                        "Knowledge",
+                        description: "Curated reference material the agent can consult on demand."
+                    ) {
+                        knowledgeFeatureSection
+                    }
+
+                    featureGroup(
                         "Autonomy",
                         description: "Let the agent act between your messages."
                     ) {
@@ -2776,6 +2790,75 @@ struct AgentDetailView: View {
                 }
             }
         }
+    }
+
+    /// Knowledge feature rows: the on/off toggle plus per-collection
+    /// grant checkmarks. The tools stay hidden until the agent has BOTH
+    /// the toggle on and at least one enabled grant; the grant list is
+    /// also re-enforced at tool execution time, so this UI is the only
+    /// way to widen an agent's knowledge scope.
+    @ViewBuilder
+    private var knowledgeFeatureSection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            featureToggleRow(
+                title: "Knowledge",
+                subtitle:
+                    "Let the agent search and read the knowledge collections granted below — curated guides, templates, and standards. Separate from memory: knowledge is yours to edit, never written by the agent.",
+                isOn: $knowledgeEnabled
+            )
+            if knowledgeEnabled {
+                if knowledgeManager.collections.isEmpty {
+                    Text(
+                        "No knowledge collections yet. Add one in the Knowledge section of this window.",
+                        bundle: .module
+                    )
+                    .font(.system(size: 11))
+                    .foregroundColor(theme.tertiaryText)
+                } else {
+                    ForEach(knowledgeManager.collections) { collection in
+                        knowledgeGrantRow(collection)
+                    }
+                }
+            }
+        }
+    }
+
+    private func knowledgeGrantRow(_ collection: KnowledgeCollection) -> some View {
+        let granted = knowledgeCollectionIds.contains(collection.id)
+        return Button {
+            if granted {
+                knowledgeCollectionIds.removeAll { $0 == collection.id }
+            } else {
+                knowledgeCollectionIds.append(collection.id)
+            }
+            debouncedSave()
+        } label: {
+            HStack(spacing: 8) {
+                Image(systemName: granted ? "checkmark.circle.fill" : "circle")
+                    .font(.system(size: 14))
+                    .foregroundColor(granted ? theme.accentColor : theme.tertiaryText)
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(collection.name)
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundColor(theme.primaryText)
+                    if !collection.summary.isEmpty {
+                        Text(collection.summary)
+                            .font(.system(size: 11))
+                            .foregroundColor(theme.tertiaryText)
+                            .lineLimit(2)
+                    }
+                }
+                Spacer(minLength: 8)
+                if !collection.isEnabled {
+                    Text("Disabled", bundle: .module)
+                        .font(.system(size: 10))
+                        .foregroundColor(theme.tertiaryText)
+                }
+            }
+            .padding(8)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
     }
 
     /// Row for the Agent DB feature (spec §5.5). Houses the on/off
@@ -6047,6 +6130,8 @@ struct AgentDetailView: View {
         speakEnabled = agent.settings.speakEnabled
         searchMemoryEnabled = agent.settings.searchMemoryEnabled
         selfSchedulingEnabled = agent.settings.selfSchedulingEnabled
+        knowledgeEnabled = agent.settings.knowledgeEnabled
+        knowledgeCollectionIds = agent.settings.knowledgeCollectionIds
         subagentToggles = SubagentCapabilityRegistry.perAgentToggleFlags.reduce(into: [:]) {
             acc,
             flag in
@@ -6289,7 +6374,13 @@ struct AgentDetailView: View {
                 imageEditModelId: imageEditModelId,
                 subagentPermissions: subagentPermissions,
                 subagentBudgets: subagentBudgets,
-                subagentModelOverrides: subagentModelOverrides
+                subagentModelOverrides: subagentModelOverrides,
+                // Knowledge grants persist unconditionally (like the image
+                // model picks): a toggle round-trip keeps the user's
+                // selection, and the tools stay hidden while the feature is
+                // off regardless.
+                knowledgeEnabled: knowledgeEnabled,
+                knowledgeCollectionIds: knowledgeCollectionIds
             ),
             order: current.order
         )
