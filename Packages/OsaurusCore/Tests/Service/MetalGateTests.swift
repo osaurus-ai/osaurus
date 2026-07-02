@@ -120,6 +120,88 @@ struct MetalGateTests {
         #expect(events == ["teardown-released", "gen-acquired"])
     }
 
+    // MARK: - PII detection (Rampart) owner — exclusive against every producer
+
+    @Test func piiDetectionProceedsWhenIdle() async {
+        await MetalGate.shared.enterPIIDetection()
+        await MetalGate.shared.exitPIIDetection()
+    }
+
+    @Test func piiDetectionWaitsForGenerationToRelease() async {
+        // The 0.21.3 crash shape: an outbound privacy scan's Rampart forward
+        // pass must not encode while a local generation holds the device.
+        // Prove the PII owner cannot acquire until the generation releases.
+        let rec = GateOrderRecorder()
+        await MetalGate.shared.enterGeneration(model: "chat-model")
+        let waiter = Task {
+            await MetalGate.shared.enterPIIDetection()
+            await rec.record("pii-acquired")
+            await MetalGate.shared.exitPIIDetection()
+        }
+        try? await Task.sleep(for: .milliseconds(80))
+        await rec.record("gen-released")
+        await MetalGate.shared.exitGeneration(model: "chat-model")
+        _ = await waiter.value
+        let events = await rec.events
+        #expect(events == ["gen-released", "pii-acquired"])
+    }
+
+    @Test func generationWaitsForPIIDetectionToRelease() async {
+        // And the reverse: a generation admitted mid-scan would race the
+        // Rampart eval the same way.
+        let rec = GateOrderRecorder()
+        await MetalGate.shared.enterPIIDetection()
+        let waiter = Task {
+            await MetalGate.shared.enterGeneration(model: "chat-model")
+            await rec.record("gen-acquired")
+            await MetalGate.shared.exitGeneration(model: "chat-model")
+        }
+        try? await Task.sleep(for: .milliseconds(80))
+        await rec.record("pii-released")
+        await MetalGate.shared.exitPIIDetection()
+        _ = await waiter.value
+        let events = await rec.events
+        #expect(events == ["pii-released", "gen-acquired"])
+    }
+
+    // MARK: - Source contract: the Rampart detector is actually gate-bracketed
+
+    @Test func rampartDetectorIsGateBracketedInSource() throws {
+        // The Rampart forward pass itself can't be unit-run (no Metal in CI),
+        // so pin the wiring textually: the PII owner exists and is exclusive,
+        // and the detector brackets both its model load and its detect eval
+        // with it. Mirrors `unloadTeardownIsGateBracketedInSource`.
+        let coreRoot = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()  // Service/
+            .deletingLastPathComponent()  // Tests/
+            .deletingLastPathComponent()  // OsaurusCore/
+
+        let gate = try String(
+            contentsOf: coreRoot.appendingPathComponent("Services/ModelRuntime/MetalGate.swift"),
+            encoding: .utf8
+        )
+        let detector = try String(
+            contentsOf: coreRoot.appendingPathComponent(
+                "PrivacyFilter/Rampart/RampartPrivacyDetector.swift"
+            ),
+            encoding: .utf8
+        )
+
+        // Exclusive PII owner.
+        #expect(gate.contains("public func enterPIIDetection() async"))
+        #expect(gate.contains("public func exitPIIDetection()"))
+        #expect(gate.contains(#"acquire("pii", shared: false)"#))
+
+        // The detector holds the gate across the load eval and the forward pass.
+        #expect(detector.contains("await MetalGate.shared.enterPIIDetection()"))
+        #expect(detector.contains("await MetalGate.shared.exitPIIDetection()"))
+        #expect(
+            detector.contains(
+                "await MetalGate.shared.enterPIIDetection()\n        let detected = model.detect(text)"
+            )
+        )
+    }
+
     // MARK: - Source contract: the unload teardown is actually gate-bracketed
 
     @Test func unloadTeardownIsGateBracketedInSource() throws {
