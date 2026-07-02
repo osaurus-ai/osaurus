@@ -94,6 +94,39 @@ public actor KnowledgeCurationService {
         // it here makes the approval immediately searchable.
         await KnowledgeIndexService.shared.indexCollection(collection)
 
+        // Git-backed collections: record the approval as a commit and
+        // push best-effort. The approval itself already succeeded (file
+        // written + indexed), so git trouble is logged, never thrown —
+        // the user can run Sync later to reconcile.
+        if collection.isGitRepository {
+            let commitOutcome = await KnowledgeGitSyncService.shared.commitDocument(
+                in: collection,
+                relPath: relPath,
+                message: "update \(relPath) via knowledge curation"
+            )
+            switch commitOutcome {
+            case .updated:
+                let pushOutcome = await KnowledgeGitSyncService.shared.push(collection)
+                if case .updated = pushOutcome {
+                    KnowledgeLogger.index.info(
+                        "Pushed approved proposal #\(proposalId) for \(collection.name, privacy: .public)"
+                    )
+                } else if case .upToDate = pushOutcome {
+                    // No remote configured; local commit is enough.
+                } else {
+                    KnowledgeLogger.index.warning(
+                        "Approval committed but push needs attention: \(pushOutcome.message, privacy: .public)"
+                    )
+                }
+            case .upToDate:
+                break
+            case .needsAttention, .failed:
+                KnowledgeLogger.index.warning(
+                    "Approval applied but git commit failed: \(commitOutcome.message, privacy: .public)"
+                )
+            }
+        }
+
         KnowledgeLogger.index.info(
             "Approved knowledge proposal #\(proposalId) into \(collection.name, privacy: .public)/\(relPath, privacy: .public)"
         )
