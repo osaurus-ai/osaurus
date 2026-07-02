@@ -22,17 +22,24 @@ import Foundation
 // MARK: - Shared scope resolution
 
 enum KnowledgeToolScope {
+    /// Outcome of resolving the calling agent's grant scope: either the
+    /// granted collections or a ready-to-return failure envelope.
+    enum Resolution {
+        case granted([KnowledgeCollection])
+        case failure(envelope: String)
+    }
+
     /// Granted, enabled collections for the calling agent, optionally
-    /// narrowed to a named collection. Returns a failure envelope string
+    /// narrowed to a named collection. Returns a failure envelope
     /// when the call has no agent context, no grants, or names a
     /// collection outside its grant.
     static func resolve(
         tool: String,
         collectionName: String?
-    ) async -> Result<[KnowledgeCollection], String> {
+    ) async -> Resolution {
         guard let agentId = ChatExecutionContext.currentAgentId else {
             return .failure(
-                ToolEnvelope.failure(
+                envelope: ToolEnvelope.failure(
                     kind: .rejected,
                     message: "Knowledge tools require an active agent context.",
                     tool: tool
@@ -45,7 +52,7 @@ enum KnowledgeToolScope {
         }
         guard !granted.isEmpty else {
             return .failure(
-                ToolEnvelope.failure(
+                envelope: ToolEnvelope.failure(
                     kind: .rejected,
                     message: "This agent has no knowledge collections granted.",
                     tool: tool
@@ -54,16 +61,16 @@ enum KnowledgeToolScope {
         }
 
         guard let collectionName, !collectionName.trimmingCharacters(in: .whitespaces).isEmpty else {
-            return .success(granted)
+            return .granted(granted)
         }
 
         let trimmed = collectionName.trimmingCharacters(in: .whitespacesAndNewlines)
         if let match = granted.first(where: { $0.name.caseInsensitiveCompare(trimmed) == .orderedSame }) {
-            return .success([match])
+            return .granted([match])
         }
         let names = granted.map(\.name).joined(separator: ", ")
         return .failure(
-            ToolEnvelope.failure(
+            envelope: ToolEnvelope.failure(
                 kind: .invalidArgs,
                 message: "Unknown collection `\(trimmed)`. Granted collections: \(names).",
                 field: "collection",
@@ -71,6 +78,15 @@ enum KnowledgeToolScope {
                 tool: tool
             )
         )
+    }
+
+    /// Collection display names keyed by id string, for result formatting.
+    static func namesById(_ collections: [KnowledgeCollection]) -> [String: String] {
+        var names: [String: String] = [:]
+        for collection in collections {
+            names[collection.id.uuidString] = collection.name
+        }
+        return names
     }
 
     /// The knowledge index opens lazily; a tool call can arrive before
@@ -165,7 +181,7 @@ final class SearchKnowledgeTool: OsaurusTool, @unchecked Sendable {
             tool: name,
             collectionName: args["collection"] as? String
         )
-        guard case .success(let collections) = scope else {
+        guard case .granted(let collections) = scope else {
             if case .failure(let envelope) = scope { return envelope }
             return ""
         }
@@ -179,9 +195,7 @@ final class SearchKnowledgeTool: OsaurusTool, @unchecked Sendable {
         // Over-fetch when a tag filter will drop hits post-search.
         let fetchCount = tagFilter.isEmpty ? topK : topK * 3
         let collectionIds = collections.map { $0.id.uuidString }
-        let nameById = Dictionary(
-            uniqueKeysWithValues: collections.map { ($0.id.uuidString, $0.name) }
-        )
+        let nameById = KnowledgeToolScope.namesById(collections)
 
         var hits = await KnowledgeSearchService.shared.search(
             query: query,
@@ -277,7 +291,7 @@ final class ReadKnowledgeTool: OsaurusTool, @unchecked Sendable {
             tool: name,
             collectionName: args["collection"] as? String
         )
-        guard case .success(let collections) = scope else {
+        guard case .granted(let collections) = scope else {
             if case .failure(let envelope) = scope { return envelope }
             return ""
         }
@@ -415,7 +429,7 @@ final class ListKnowledgeTool: OsaurusTool, @unchecked Sendable {
             tool: name,
             collectionName: args["collection"] as? String
         )
-        guard case .success(let collections) = scope else {
+        guard case .granted(let collections) = scope else {
             if case .failure(let envelope) = scope { return envelope }
             return ""
         }
@@ -440,9 +454,7 @@ final class ListKnowledgeTool: OsaurusTool, @unchecked Sendable {
             )
         }
 
-        let nameById = Dictionary(
-            uniqueKeysWithValues: collections.map { ($0.id.uuidString, $0.name) }
-        )
+        let nameById = KnowledgeToolScope.namesById(collections)
         var out = "Found \(documents.count) knowledge document(s):\n\n"
         var currentCollection = ""
         for document in documents {
