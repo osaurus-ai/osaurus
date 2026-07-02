@@ -2803,7 +2803,7 @@ struct AgentDetailView: View {
             featureToggleRow(
                 title: "Knowledge",
                 subtitle:
-                    "Let the agent search and read the knowledge collections granted below — curated guides, templates, and standards. Separate from memory: knowledge is yours to edit, never written by the agent.",
+                    "Let the agent search and read the knowledge collections granted below: curated guides, templates, and standards. Separate from memory, knowledge is yours to edit and never written by the agent.",
                 isOn: $knowledgeEnabled
             )
             if knowledgeEnabled {

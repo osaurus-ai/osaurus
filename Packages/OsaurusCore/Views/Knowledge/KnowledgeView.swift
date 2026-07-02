@@ -36,7 +36,7 @@ struct KnowledgeView: View {
                         icon: "books.vertical.fill",
                         title: L("Add Your First Knowledge Collection"),
                         subtitle: L(
-                            "Point Osaurus at a folder of markdown — guides, templates, standards — and grant it to agents so they can consult it on demand."
+                            "Point Osaurus at a folder of markdown (guides, templates, standards) and grant it to agents so they can consult it on demand."
                         ),
                         examples: [
                             .init(
@@ -125,7 +125,7 @@ struct KnowledgeView: View {
                         folderPath: folderPath
                     )
                     isCreating = false
-                    showSuccess("Added \"\(created.name)\" — indexing in the background")
+                    showSuccess("Added \"\(created.name)\", indexing in the background")
                 },
                 onCancel: { isCreating = false }
             )
@@ -227,7 +227,7 @@ private struct KnowledgeCollectionCard: View {
                     .truncationMode(.middle)
             }
             if !collection.folderExists {
-                Text("Folder not found — search serves the last indexed state.", bundle: .module)
+                Text("Folder not found. Search serves the last indexed state.", bundle: .module)
                     .font(.system(size: 10))
                     .foregroundColor(.orange)
             }
@@ -332,7 +332,7 @@ private struct KnowledgeCollectionEditorSheet: View {
                 Text("Summary", bundle: .module)
                     .font(.system(size: 11, weight: .medium))
                     .foregroundColor(theme.secondaryText)
-                TextField("What this corpus contains — shown to agents", text: $summary)
+                TextField("What this corpus contains, shown to agents", text: $summary)
                     .textFieldStyle(.roundedBorder)
             }
 
