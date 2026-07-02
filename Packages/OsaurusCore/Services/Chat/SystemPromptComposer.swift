@@ -1604,7 +1604,7 @@ public struct SystemPromptComposer: Sendable {
     /// The tool re-checks the role at execution time, so this strip is a
     /// token-cost optimization, not the boundary.
     static let knowledgeCuratorToolNames: Set<String> = [
-        "propose_knowledge_update",
+        "propose_knowledge_update", "update_knowledge_ticket",
     ]
 
     /// Render the schema snapshot block injected after the onboarding

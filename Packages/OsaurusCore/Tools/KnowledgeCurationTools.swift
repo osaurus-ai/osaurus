@@ -246,6 +246,127 @@ final class ListKnowledgeTicketsTool: OsaurusTool, @unchecked Sendable {
     }
 }
 
+// MARK: - update_knowledge_ticket
+
+final class UpdateKnowledgeTicketTool: OsaurusTool, @unchecked Sendable {
+    let name = "update_knowledge_ticket"
+    let description =
+        "Claim or release a staleness ticket while working a curation "
+        + "queue. Set `in_progress` before researching a ticket so other "
+        + "scheduled runs skip it, or `open` to release one you cannot finish. "
+        + "Curator agents only; resolution happens via proposal approval, "
+        + "not this tool."
+
+    let parameters: JSONValue? = .object([
+        "type": .string("object"),
+        "additionalProperties": .bool(false),
+        "properties": .object([
+            "ticket_id": .object([
+                "type": .string("integer"),
+                "description": .string("The ticket to update."),
+            ]),
+            "status": .object([
+                "type": .string("string"),
+                "enum": .array([.string("in_progress"), .string("open")]),
+                "description": .string("`in_progress` to claim, `open` to release."),
+            ]),
+        ]),
+        "required": .array([.string("ticket_id"), .string("status")]),
+    ])
+
+    func execute(argumentsJSON: String) async throws -> String {
+        let argsReq = requireArgumentsDictionary(argumentsJSON, tool: name)
+        guard case .value(let args) = argsReq else { return argsReq.failureEnvelope ?? "" }
+
+        guard let ticketId = ArgumentCoercion.int(args["ticket_id"]) else {
+            return ToolEnvelope.failure(
+                kind: .invalidArgs,
+                message: "Argument `ticket_id` must be an integer.",
+                field: "ticket_id",
+                expected: "an existing ticket id",
+                tool: name
+            )
+        }
+        let statusRaw = ((args["status"] as? String) ?? "").lowercased()
+        guard let newStatus = KnowledgeTicketStatus(rawValue: statusRaw),
+            newStatus == .inProgress || newStatus == .open
+        else {
+            return ToolEnvelope.failure(
+                kind: .invalidArgs,
+                message: "Argument `status` must be `in_progress` or `open`.",
+                field: "status",
+                expected: "in_progress|open",
+                tool: name
+            )
+        }
+
+        // Curator gate at execution time, same as propose.
+        guard let agentId = ChatExecutionContext.currentAgentId else {
+            return ToolEnvelope.failure(
+                kind: .rejected,
+                message: "Knowledge tools require an active agent context.",
+                tool: name
+            )
+        }
+        let isCurator = await MainActor.run {
+            AgentManager.shared.effectiveCapabilities(for: agentId).knowledgeCuratorEnabled
+        }
+        guard isCurator else {
+            return ToolEnvelope.failure(
+                kind: .rejected,
+                message: "This agent is not a knowledge curator.",
+                tool: name
+            )
+        }
+
+        let scope = await KnowledgeToolScope.resolve(tool: name, collectionName: nil)
+        guard case .granted(let collections) = scope else {
+            if case .failure(let envelope) = scope { return envelope }
+            return ""
+        }
+        if let envelope = KnowledgeToolScope.ensureDatabaseOpen(tool: name) { return envelope }
+
+        guard let ticket = try? KnowledgeDatabase.shared.getTicket(id: ticketId),
+            collections.contains(where: { $0.id.uuidString == ticket.collectionId })
+        else {
+            return ToolEnvelope.failure(
+                kind: .notFound,
+                message: "No ticket #\(ticketId) in the granted collections.",
+                field: "ticket_id",
+                tool: name
+            )
+        }
+
+        // Only the open ↔ in_progress transitions are agent-drivable;
+        // proposed/resolved/dismissed belong to the review flow.
+        let allowed: Bool =
+            (ticket.status == .open && newStatus == .inProgress)
+            || (ticket.status == .inProgress && newStatus == .open)
+        guard allowed else {
+            return ToolEnvelope.failure(
+                kind: .rejected,
+                message:
+                    "Ticket #\(ticketId) is `\(ticket.status.rawValue)`; only open tickets can be claimed and only in_progress tickets released.",
+                tool: name
+            )
+        }
+
+        do {
+            try KnowledgeDatabase.shared.updateTicketStatus(id: ticketId, status: newStatus)
+            postCurationChanged()
+            let verb = newStatus == .inProgress ? "claimed" : "released"
+            return ToolEnvelope.success(tool: name, text: "Ticket #\(ticketId) \(verb).")
+        } catch {
+            return ToolEnvelope.failure(
+                kind: .executionError,
+                message: "Could not update the ticket: \(error.localizedDescription)",
+                tool: name,
+                retryable: true
+            )
+        }
+    }
+}
+
 // MARK: - propose_knowledge_update
 
 final class ProposeKnowledgeUpdateTool: OsaurusTool, PermissionedTool, @unchecked Sendable {

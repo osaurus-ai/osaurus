@@ -218,6 +218,8 @@ public final class ToolRegistry: ObservableObject {
             // denied). Creates pending proposals; the user approves them
             // in the Knowledge tab before anything lands in the corpus.
             ProposeKnowledgeUpdateTool(),
+            // Curator queue coordination (claim/release tickets).
+            UpdateKnowledgeTicketTool(),
             // Inline data visualization rendered as a chart card.
             RenderChartTool(),
             // Text-delegation family: `spawn_agent` hands a task to a configured
