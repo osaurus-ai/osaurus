@@ -126,7 +126,7 @@ private extension ManagementView {
         SidebarNavigation(
             selection: selectedTabBinding,
             searchText: $searchText,
-            items: sidebarItems
+            sections: sidebarSections
         ) { tabId in
             Group {
                 // A live query takes over the content pane with cross-tab
@@ -190,8 +190,6 @@ private extension ManagementView {
             AgentsView(deeplinkAgentId: deeplinkAgentId)
         case .plugins:
             PluginsView()
-        case .channels:
-            AgentsView(deeplinkAgentId: deeplinkAgentId)
         case .sandbox:
             SandboxView()
         case .tools:
@@ -238,11 +236,17 @@ private extension ManagementView {
 
 private extension ManagementView {
 
-    var sidebarItems: [SidebarItemData] {
-        ManagementTab.visibleCases.map { tab in
-            tab.sidebarItem(
-                badge: badgeCount(for: tab),
-                badgeHighlight: badgeHighlight(for: tab)
+    var sidebarSections: [SidebarSectionData] {
+        ManagementSection.allCases.map { section in
+            SidebarSectionData(
+                id: section.rawValue,
+                title: section.title,
+                items: section.tabs.map { tab in
+                    tab.sidebarItem(
+                        badge: badgeCount(for: tab),
+                        badgeHighlight: badgeHighlight(for: tab)
+                    )
+                }
             )
         }
     }
@@ -263,7 +267,7 @@ private extension ManagementView {
 
     func handleAppear() {
         if !ManagementTab.visibleCases.contains(stateManager.selectedTab) {
-            stateManager.selectedTab = .agents
+            stateManager.selectedTab = ManagementTab.visibleCases.first ?? .settings
         }
 
         // Delay fade-in to prevent initial layout jank
@@ -277,7 +281,7 @@ private extension ManagementView {
 
     func handleTabChange(to newTab: ManagementTab) {
         guard ManagementTab.visibleCases.contains(newTab) else {
-            stateManager.selectedTab = .agents
+            stateManager.selectedTab = ManagementTab.visibleCases.first ?? .settings
             return
         }
 
@@ -307,6 +311,7 @@ private extension ManagementView {
             case .voice: stateManager.voiceSubTabRequest = subTab
             case .server: stateManager.serverSectionRequest = subTab
             case .imageGeneration: stateManager.imageGenerationSubTabRequest = subTab
+            case .memory: stateManager.memorySubTabRequest = subTab
             default: break
             }
         }

@@ -61,13 +61,6 @@ struct ConcurrencySection: View {
                         blurb: "Persisted today; runtime consumers for these fields are not yet implemented."
                     )
 
-                    SettingsToggle(
-                        title: L("Continuous Batching"),
-                        description:
-                            "Reserved contract flag for explicit scheduler gating; concurrent sessions controls the active BatchEngine slot count today.",
-                        isOn: $draft.concurrency.continuousBatching
-                    )
-
                     OptionalIntField(
                         label: "Prefill Batch Size",
                         placeholder: "Empty = engine default",

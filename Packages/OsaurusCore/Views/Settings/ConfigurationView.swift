@@ -279,20 +279,6 @@ struct ConfigurationView: View {
 
                     SettingsDivider()
 
-                    // Storage
-                    SettingsSubsection(label: "Storage") {
-                        DirectoryPickerView()
-                    }
-
-                    SettingsDivider()
-
-                    // External models (HF cache, LM Studio)
-                    SettingsSubsection(label: "External models") {
-                        ExternalModelsSettingsView()
-                    }
-
-                    SettingsDivider()
-
                     // Maintenance
                     SettingsSubsection(label: "Maintenance", anchorId: "settings.general.reset") {
                         VStack(alignment: .leading, spacing: 12) {
@@ -367,7 +353,8 @@ struct ConfigurationView: View {
                                         // Position Picker
                                         SettingsField(
                                             label: "Toast Position",
-                                            hint: "Where toasts appear on screen"
+                                            hint: "Where toasts appear on screen",
+                                            anchorId: "settings.notifications.position"
                                         ) {
                                             ToastPositionPicker(selection: $tempToastPosition)
                                                 .onChange(of: tempToastPosition) { _, _ in
@@ -380,7 +367,8 @@ struct ConfigurationView: View {
                                             label: "Default Timeout",
                                             text: $tempToastTimeout,
                                             placeholder: "5.0",
-                                            help: "Seconds before auto-dismiss. Empty uses default 5s"
+                                            help: "Seconds before auto-dismiss. Empty uses default 5s",
+                                            anchorId: "settings.notifications.timeout"
                                         )
                                         .onChange(of: tempToastTimeout) { _, _ in
                                             saveToastConfig()
@@ -592,8 +580,8 @@ struct ConfigurationView: View {
 
     private var headerView: some View {
         ManagerHeaderWithActions(
-            title: L("Settings"),
-            subtitle: L("Configure your Osaurus settings")
+            title: L("General"),
+            subtitle: L("App behavior, system integration, and notifications")
         ) {
             HeaderSecondaryButton("Restore View Defaults", icon: "arrow.counterclockwise") {
                 resetToDefaults()

@@ -35,6 +35,7 @@ struct MemoryView: View {
     @ObservedObject var themeManager = ThemeManager.shared
     @ObservedObject var agentManager = AgentManager.shared
     @ObservedObject private var appConfig = AppConfiguration.shared
+    @ObservedObject private var managementState = ManagementStateManager.shared
 
     var theme: ThemeProtocol { themeManager.currentTheme }
 
@@ -107,6 +108,13 @@ struct MemoryView: View {
     @State private var selectedTab: MemoryTab = .identity
     @State private var selectedAgent: Agent?
     @State private var hasAppeared = false
+
+    /// Text-backed mirrors of the numeric config knobs, so the Settings
+    /// sub-tab can use the shared `SettingsStepperField`. Hydrated in
+    /// `loadData()`; edits parse + clamp + persist via `onChange`.
+    @State private var tempMemoryBudget: String = ""
+    @State private var tempEpisodeRetention: String = ""
+    @State private var tempConsolidationInterval: String = ""
     @State private var isLoading = true
     @State private var isRefreshing = false
     @State private var isSyncing = false
@@ -203,10 +211,23 @@ struct MemoryView: View {
             }
         }
         .onAppear {
+            // Honour a cross-view sub-tab request (e.g. a settings-search result
+            // that lands on the Settings sub-tab) before the default selection.
+            if let requested = managementState.memorySubTabRequest,
+                let tab = MemoryTab(rawValue: requested)
+            {
+                selectedTab = tab
+                managementState.memorySubTabRequest = nil
+            }
             loadData(staleAfter: Self.memoryDataFreshWindow)
             withAnimation(.easeOut(duration: 0.25).delay(0.05)) {
                 hasAppeared = true
             }
+        }
+        .onChange(of: managementState.memorySubTabRequest) { _, newValue in
+            guard let requested = newValue, let tab = MemoryTab(rawValue: requested) else { return }
+            selectedTab = tab
+            managementState.memorySubTabRequest = nil
         }
         .sheet(isPresented: $showIdentityEditor) {
             IdentityEditSheet(
@@ -696,7 +717,7 @@ struct MemoryView: View {
     // MARK: - Statistics Section
 
     private var statsSection: some View {
-        MemorySectionCard(title: L("Statistics"), icon: "chart.bar") {
+        SettingsSection(title: "Statistics", icon: "chart.bar") {
             HStack(spacing: 0) {
                 statBlock(label: "Total Calls", value: "\(processingStats.totalCalls)")
                 Divider().frame(height: 36).opacity(0.5)
@@ -714,8 +735,19 @@ struct MemoryView: View {
     // MARK: - Configuration Section
 
     private var configurationSection: some View {
-        MemorySectionCard(title: L("Configuration"), icon: "gearshape") {
+        SettingsSection(title: "Configuration", icon: "gearshape") {
             VStack(alignment: .leading, spacing: 14) {
+                SettingsToggle(
+                    title: L("Enable Memory"),
+                    description: "Build identity and long-term memories from your chats",
+                    isOn: $config.enabled
+                )
+                .onChange(of: config.enabled) { _, _ in
+                    MemoryConfigurationStore.save(config)
+                }
+
+                SettingsDivider()
+
                 HStack(spacing: 12) {
                     Text("Core Model", bundle: .module)
                         .font(.system(size: 12, weight: .medium))
@@ -733,69 +765,46 @@ struct MemoryView: View {
                         .foregroundColor(theme.tertiaryText)
                 }
 
-                Divider().opacity(0.5)
+                SettingsDivider()
 
-                HStack(spacing: 12) {
-                    Text("Memory Budget", bundle: .module)
-                        .font(.system(size: 12, weight: .medium))
-                        .foregroundColor(theme.secondaryText)
-                        .frame(width: 140, alignment: .leading)
-
-                    HStack(spacing: 8) {
-                        Stepper("", value: $config.memoryBudgetTokens, in: 100 ... 4000, step: 100)
-                            .labelsHidden()
-                        Text(pluralizedMemory(config.memoryBudgetTokens, "token"))
-                            .font(.system(size: 13))
-                            .foregroundColor(theme.primaryText)
-                    }
-                    .onChange(of: config.memoryBudgetTokens) { _, _ in
-                        MemoryConfigurationStore.save(config)
-                    }
+                SettingsStepperField(
+                    label: "Memory Budget",
+                    help: "Tokens of memory context injected per turn",
+                    text: $tempMemoryBudget,
+                    range: 100 ... 4000,
+                    step: 100,
+                    defaultValue: 800,
+                    anchorId: "memory.settings.budget"
+                )
+                .onChange(of: tempMemoryBudget) { _, newValue in
+                    applyConfigEdit(newValue, range: 100 ... 4000, keyPath: \.memoryBudgetTokens)
                 }
 
-                Divider().opacity(0.5)
-
-                HStack(spacing: 12) {
-                    Text("Episode Retention", bundle: .module)
-                        .font(.system(size: 12, weight: .medium))
-                        .foregroundColor(theme.secondaryText)
-                        .frame(width: 140, alignment: .leading)
-
-                    HStack(spacing: 8) {
-                        Stepper("", value: $config.episodeRetentionDays, in: 0 ... 3650, step: 30)
-                            .labelsHidden()
-                        Text(
-                            config.episodeRetentionDays == 0
-                                ? "forever" : pluralizedMemory(config.episodeRetentionDays, "day")
-                        )
-                        .font(.system(size: 13))
-                        .foregroundColor(theme.primaryText)
-                    }
-                    .onChange(of: config.episodeRetentionDays) { _, _ in
-                        MemoryConfigurationStore.save(config)
-                    }
+                SettingsStepperField(
+                    label: "Episode Retention",
+                    help: "Days episodes are kept before pruning. 0 keeps them forever",
+                    text: $tempEpisodeRetention,
+                    range: 0 ... 3650,
+                    step: 30,
+                    defaultValue: 365,
+                    anchorId: "memory.settings.retention"
+                )
+                .onChange(of: tempEpisodeRetention) { _, newValue in
+                    applyConfigEdit(newValue, range: 0 ... 3650, keyPath: \.episodeRetentionDays)
                 }
 
-                Divider().opacity(0.5)
-
-                HStack(spacing: 12) {
-                    Text("Consolidation", bundle: .module)
-                        .font(.system(size: 12, weight: .medium))
-                        .foregroundColor(theme.secondaryText)
-                        .frame(width: 140, alignment: .leading)
-
-                    HStack(spacing: 8) {
-                        Stepper("", value: $config.consolidationIntervalHours, in: 1 ... 168)
-                            .labelsHidden()
-                        Text("every \(pluralizedMemory(config.consolidationIntervalHours, "hour"))", bundle: .module)
-                            .font(.system(size: 13))
-                            .foregroundColor(theme.primaryText)
+                HStack(alignment: .bottom, spacing: 12) {
+                    SettingsStepperField(
+                        label: "Consolidation Interval",
+                        help: "Hours between decay / dedup / eviction runs",
+                        text: $tempConsolidationInterval,
+                        range: 1 ... 168,
+                        step: 1,
+                        defaultValue: 24
+                    )
+                    .onChange(of: tempConsolidationInterval) { _, newValue in
+                        applyConfigEdit(newValue, range: 1 ... 168, keyPath: \.consolidationIntervalHours)
                     }
-                    .onChange(of: config.consolidationIntervalHours) { _, _ in
-                        MemoryConfigurationStore.save(config)
-                    }
-
-                    Spacer()
 
                     Button {
                         guard !isConsolidating else { return }
@@ -810,47 +819,28 @@ struct MemoryView: View {
                         }
                     } label: {
                         Text(isConsolidating ? "Running..." : "Run Now", bundle: .module)
-                            .font(.system(size: 11, weight: .semibold))
-                            .foregroundColor(theme.secondaryText)
-                            .padding(.horizontal, 10)
-                            .padding(.vertical, 5)
-                            .background(
-                                RoundedRectangle(cornerRadius: 6)
-                                    .fill(theme.tertiaryBackground)
-                            )
                     }
-                    .buttonStyle(PlainButtonStyle())
+                    .buttonStyle(SettingsButtonStyle())
                     .disabled(isConsolidating || !config.enabled)
-                }
-
-                Divider().opacity(0.5)
-
-                HStack(spacing: 12) {
-                    Text("Status", bundle: .module)
-                        .font(.system(size: 12, weight: .medium))
-                        .foregroundColor(theme.secondaryText)
-                        .frame(width: 140, alignment: .leading)
-
-                    HStack(spacing: 8) {
-                        Circle()
-                            .fill(config.enabled ? Color.green : Color.red)
-                            .frame(width: 8, height: 8)
-                        Text(LocalizedStringKey(config.enabled ? "Active" : "Disabled"), bundle: .module)
-                            .font(.system(size: 13))
-                            .foregroundColor(theme.primaryText)
-                    }
-
-                    Spacer()
-
-                    Toggle("", isOn: $config.enabled)
-                        .toggleStyle(.switch)
-                        .labelsHidden()
-                        .onChange(of: config.enabled) { _, _ in
-                            MemoryConfigurationStore.save(config)
-                        }
+                    .padding(.bottom, 20)
                 }
             }
         }
+    }
+
+    /// Parses a stepper-field edit, clamps it to `range`, and persists the
+    /// config when the value actually changed. Non-numeric text (mid-typing)
+    /// is ignored; `loadData()` re-hydrates the field on next visit.
+    private func applyConfigEdit(
+        _ text: String,
+        range: ClosedRange<Int>,
+        keyPath: WritableKeyPath<MemoryConfiguration, Int>
+    ) {
+        guard let value = Int(text.trimmingCharacters(in: .whitespacesAndNewlines)) else { return }
+        let clamped = min(max(value, range.lowerBound), range.upperBound)
+        guard config[keyPath: keyPath] != clamped else { return }
+        config[keyPath: keyPath] = clamped
+        MemoryConfigurationStore.save(config)
     }
 
     // MARK: - Danger Zone
@@ -979,6 +969,9 @@ struct MemoryView: View {
         }
 
         config = MemoryConfigurationStore.load()
+        tempMemoryBudget = String(config.memoryBudgetTokens)
+        tempEpisodeRetention = String(config.episodeRetentionDays)
+        tempConsolidationInterval = String(config.consolidationIntervalHours)
         Task.detached(priority: .userInitiated) {
             let db = MemoryDatabase.shared
             if !db.isOpen {

@@ -78,101 +78,62 @@ struct TTSModeSettingsTab: View {
     // MARK: - Enable Card
 
     private var enableCard: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            HStack(spacing: 12) {
-                ZStack {
-                    RoundedRectangle(cornerRadius: 12)
-                        .fill(
-                            config.enabled
-                                ? theme.successColor.opacity(0.15)
-                                : theme.accentColor.opacity(0.15)
-                        )
-                    Image(systemName: config.enabled ? "speaker.wave.2.fill" : "speaker.wave.2")
-                        .font(.system(size: 24, weight: .medium))
-                        .foregroundColor(config.enabled ? theme.successColor : theme.accentColor)
-                }
-                .frame(width: 48, height: 48)
+        SettingsSection(title: "Text-to-Speech", icon: "speaker.wave.2") {
+            VStack(alignment: .leading, spacing: 12) {
+                SettingsToggle(
+                    title: L("Enable Text-to-Speech"),
+                    description: config.enabled
+                        ? "Speaker button appears on assistant messages"
+                        : "Enable to read assistant replies aloud",
+                    isOn: $config.enabled
+                )
+                .onChange(of: config.enabled) { _, _ in saveSettings() }
 
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("Text-to-Speech", bundle: .module)
-                        .font(.system(size: 15, weight: .semibold))
-                        .foregroundColor(theme.primaryText)
+                HStack(alignment: .top, spacing: 8) {
+                    Image(systemName: "info.circle")
+                        .font(.system(size: 12))
+                        .foregroundColor(theme.accentColor)
 
                     Text(
-                        config.enabled
-                            ? "Speaker button appears on assistant messages"
-                            : "Enable to read assistant replies aloud",
+                        "Powered by FluidAudio PocketTTS. English only. Streams audio as it's synthesized.",
                         bundle: .module
                     )
                     .font(.system(size: 12))
                     .foregroundColor(theme.secondaryText)
                 }
-
-                Spacer()
-
-                Toggle("", isOn: $config.enabled)
-                    .toggleStyle(SwitchToggleStyle(tint: theme.successColor))
-                    .labelsHidden()
-                    .onChange(of: config.enabled) { _, _ in saveSettings() }
-            }
-
-            HStack(alignment: .top, spacing: 8) {
-                Image(systemName: "info.circle")
-                    .font(.system(size: 12))
-                    .foregroundColor(theme.accentColor)
-
-                Text(
-                    "Powered by FluidAudio PocketTTS. English only. Streams audio as it's synthesized.",
-                    bundle: .module
+                .padding(12)
+                .background(
+                    RoundedRectangle(cornerRadius: 8)
+                        .fill(theme.accentColor.opacity(0.1))
                 )
-                .font(.system(size: 12))
-                .foregroundColor(theme.secondaryText)
             }
-            .padding(12)
-            .background(
-                RoundedRectangle(cornerRadius: 8)
-                    .fill(theme.accentColor.opacity(0.1))
-            )
         }
-        .padding(20)
-        .background(cardBackground(selected: config.enabled))
     }
 
     // MARK: - Model Card
 
     private var modelCard: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            HStack(spacing: 12) {
-                ZStack {
-                    RoundedRectangle(cornerRadius: 12)
-                        .fill(modelIconBackground)
+        SettingsSection(title: "PocketTTS Model", icon: "waveform.circle") {
+            VStack(alignment: .leading, spacing: 12) {
+                HStack(spacing: 12) {
                     Image(systemName: modelIconName)
-                        .font(.system(size: 20, weight: .medium))
+                        .font(.system(size: 16, weight: .medium))
                         .foregroundColor(modelIconColor)
-                }
-                .frame(width: 48, height: 48)
-
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("PocketTTS Model", bundle: .module)
-                        .font(.system(size: 14, weight: .semibold))
-                        .foregroundColor(theme.primaryText)
 
                     Text(modelStatusText)
                         .font(.system(size: 12))
                         .foregroundColor(theme.secondaryText)
+
+                    Spacer()
+
+                    modelAction
                 }
 
-                Spacer()
-
-                modelAction
-            }
-
-            if case .downloading(let fraction) = ttsService.modelState {
-                downloadProgressBar(fraction: fraction)
+                if case .downloading(let fraction) = ttsService.modelState {
+                    downloadProgressBar(fraction: fraction)
+                }
             }
         }
-        .padding(20)
-        .background(cardBackground(selected: ttsService.isModelReady))
     }
 
     @ViewBuilder
@@ -269,112 +230,91 @@ struct TTSModeSettingsTab: View {
     // MARK: - Voice Card
 
     private var voiceCard: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            Text("Voice", bundle: .module)
-                .font(.system(size: 14, weight: .semibold))
-                .foregroundColor(theme.primaryText)
-
-            HStack {
-                Text("Voice", bundle: .module)
-                    .font(.system(size: 12))
-                    .foregroundColor(theme.secondaryText)
-                Spacer()
-                Picker("", selection: $config.voice) {
-                    ForEach(voiceMenuOptions, id: \.self) { voice in
-                        Text(displayName(for: voice)).tag(voice)
-                    }
-                }
-                .labelsHidden()
-                .pickerStyle(MenuPickerStyle())
-                .frame(maxWidth: 180)
-                .onChange(of: config.voice) { _, _ in saveSettings() }
-            }
-
-            VStack(alignment: .leading, spacing: 6) {
+        SettingsSection(title: "Voice", icon: "person.wave.2", anchorId: "voice.tts.voice") {
+            VStack(alignment: .leading, spacing: 16) {
                 HStack {
-                    Text("Temperature", bundle: .module)
+                    Text("Voice", bundle: .module)
                         .font(.system(size: 12))
                         .foregroundColor(theme.secondaryText)
                     Spacer()
-                    Text(String(format: "%.2f", config.temperature))
-                        .font(.system(size: 12, design: .monospaced))
-                        .foregroundColor(theme.secondaryText)
+                    Picker("", selection: $config.voice) {
+                        ForEach(voiceMenuOptions, id: \.self) { voice in
+                            Text(displayName(for: voice)).tag(voice)
+                        }
+                    }
+                    .labelsHidden()
+                    .pickerStyle(MenuPickerStyle())
+                    .frame(maxWidth: 180)
+                    .onChange(of: config.voice) { _, _ in saveSettings() }
                 }
-                Slider(value: $config.temperature, in: 0.1 ... 1.2, step: 0.05) { editing in
-                    if !editing { saveSettings() }
+
+                VStack(alignment: .leading, spacing: 6) {
+                    HStack {
+                        Text("Temperature", bundle: .module)
+                            .font(.system(size: 12))
+                            .foregroundColor(theme.secondaryText)
+                        Spacer()
+                        Text(String(format: "%.2f", config.temperature))
+                            .font(.system(size: 12, design: .monospaced))
+                            .foregroundColor(theme.secondaryText)
+                    }
+                    Slider(value: $config.temperature, in: 0.1 ... 1.2, step: 0.05) { editing in
+                        if !editing { saveSettings() }
+                    }
                 }
+                .settingsLandingAnchor("voice.tts.temperature")
             }
         }
-        .padding(20)
-        .background(cardBackground(selected: false))
     }
 
     // MARK: - Preview Card
 
     private var previewCard: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text("Preview", bundle: .module)
-                .font(.system(size: 14, weight: .semibold))
-                .foregroundColor(theme.primaryText)
-
-            TextEditor(text: $previewText)
-                .font(.system(size: 13))
-                .scrollContentBackground(.hidden)
-                .frame(minHeight: 60)
-                .padding(8)
-                .background(
-                    RoundedRectangle(cornerRadius: 8)
-                        .fill(theme.tertiaryBackground)
-                )
-
-            HStack {
-                Spacer()
-                Button(action: {
-                    if ttsService.playingMessageId == previewMessageId {
-                        ttsService.stop()
-                    } else {
-                        ttsService.toggleSpeak(text: previewText, messageId: previewMessageId)
-                    }
-                }) {
-                    HStack(spacing: 6) {
-                        Image(
-                            systemName: ttsService.playingMessageId == previewMessageId
-                                ? "stop.fill" : "play.fill"
-                        )
-                        Text(
-                            ttsService.playingMessageId == previewMessageId ? "Stop" : "Play",
-                            bundle: .module
-                        )
-                    }
-                    .font(.system(size: 13, weight: .medium))
-                    .foregroundColor(theme.isDark ? theme.primaryBackground : .white)
-                    .padding(.horizontal, 16)
-                    .padding(.vertical, 8)
+        SettingsSection(title: "Preview", icon: "play.circle") {
+            VStack(alignment: .leading, spacing: 12) {
+                TextEditor(text: $previewText)
+                    .font(.system(size: 13))
+                    .scrollContentBackground(.hidden)
+                    .frame(minHeight: 60)
+                    .padding(8)
                     .background(
                         RoundedRectangle(cornerRadius: 8)
-                            .fill(canPreview ? theme.accentColor : theme.tertiaryBackground)
+                            .fill(theme.tertiaryBackground)
                     )
+
+                HStack {
+                    Spacer()
+                    Button(action: {
+                        if ttsService.playingMessageId == previewMessageId {
+                            ttsService.stop()
+                        } else {
+                            ttsService.toggleSpeak(text: previewText, messageId: previewMessageId)
+                        }
+                    }) {
+                        HStack(spacing: 6) {
+                            Image(
+                                systemName: ttsService.playingMessageId == previewMessageId
+                                    ? "stop.fill" : "play.fill"
+                            )
+                            Text(
+                                ttsService.playingMessageId == previewMessageId ? "Stop" : "Play",
+                                bundle: .module
+                            )
+                        }
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundColor(theme.isDark ? theme.primaryBackground : .white)
+                        .padding(.horizontal, 16)
+                        .padding(.vertical, 8)
+                        .background(
+                            RoundedRectangle(cornerRadius: 8)
+                                .fill(canPreview ? theme.accentColor : theme.tertiaryBackground)
+                        )
+                    }
+                    .buttonStyle(PlainButtonStyle())
+                    .disabled(!canPreview)
                 }
-                .buttonStyle(PlainButtonStyle())
-                .disabled(!canPreview)
             }
         }
-        .padding(20)
-        .background(cardBackground(selected: false))
-    }
-
-    // MARK: - Helpers
-
-    private func cardBackground(selected: Bool) -> some View {
-        RoundedRectangle(cornerRadius: 16)
-            .fill(theme.cardBackground)
-            .overlay(
-                RoundedRectangle(cornerRadius: 16)
-                    .stroke(
-                        selected ? theme.successColor.opacity(0.3) : theme.cardBorder,
-                        lineWidth: 1
-                    )
-            )
     }
 }
 
