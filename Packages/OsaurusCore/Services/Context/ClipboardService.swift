@@ -8,6 +8,7 @@
 import AppKit
 import Combine
 import Foundation
+import OsaurusObjCSupport
 
 /// Service for monitoring the macOS pasteboard and capturing selections from other apps
 @MainActor
@@ -64,13 +65,28 @@ public final class ClipboardService: ObservableObject {
         label: "com.dinoki.osaurus.clipboard.pasteboard"
     )
 
-    /// Runs `work` against the shared pasteboard on the serial pasteboard queue.
+    /// Runs `work` against the shared pasteboard on the serial pasteboard queue,
+    /// returning `nil` when the read raises. The serial queue only orders *our*
+    /// pasteboard access; `NSPasteboard.general` is a process-wide singleton that
+    /// other subsystems (e.g. the Cmd+V paste handler on the main thread) touch
+    /// concurrently, and AppKit's non-thread-safe type cache can throw an
+    /// `NSRangeException` mid-read. Catching it here degrades a poll to a no-op
+    /// instead of terminating the app on an exception Swift can't `catch`.
     nonisolated private static func onPasteboardQueue<T: Sendable>(
         _ work: @escaping @Sendable (NSPasteboard) -> T
-    ) async -> T {
+    ) async -> T? {
         await withCheckedContinuation { continuation in
             pasteboardQueue.async {
-                continuation.resume(returning: work(NSPasteboard.general))
+                var result: T?
+                let raised = osr_catch_exception {
+                    result = work(NSPasteboard.general)
+                }
+                if let raised {
+                    print("[ClipboardService] Pasteboard read raised \(raised.name.rawValue); skipping")
+                    continuation.resume(returning: nil)
+                } else {
+                    continuation.resume(returning: result)
+                }
             }
         }
     }
@@ -128,13 +144,13 @@ public final class ClipboardService: ObservableObject {
         // (never `readObjects(forClasses:)`), which are safe to call off the main actor.
         // They run on the shared serial pasteboard queue so they never overlap another
         // pasteboard access and corrupt its internal type cache.
-        let changeCount = await Self.onPasteboardQueue { $0.changeCount }
+        guard let changeCount = await Self.onPasteboardQueue({ $0.changeCount }) else { return }
         guard changeCount != knownChangeCount else { return }
 
         print("[ClipboardService] Pasteboard change detected. Count: \(changeCount) (was \(knownChangeCount))")
         lastChangeCount = changeCount
 
-        let detected = await Self.onPasteboardQueue { Self.detectContent(in: $0) }
+        let detected = await Self.onPasteboardQueue { Self.detectContent(in: $0) } ?? nil
         guard let content = detected else {
             print("[ClipboardService] Change detected but no meaningful content found on pasteboard.")
             return
@@ -206,7 +222,7 @@ public final class ClipboardService: ObservableObject {
     /// Attempt to grab the current selection from the active application
     /// by simulating Cmd+C and waiting for the pasteboard to update.
     public func grabSelection() async -> String? {
-        let startChangeCount = await Self.onPasteboardQueue { $0.changeCount }
+        guard let startChangeCount = await Self.onPasteboardQueue({ $0.changeCount }) else { return nil }
         print("[ClipboardService] Starting grabSelection. Current changeCount: \(startChangeCount)")
 
         // 1. simulate Cmd+C
@@ -222,7 +238,7 @@ public final class ClipboardService: ObservableObject {
         print("[ClipboardService] Waiting for pasteboard update...")
         for i in 0 ..< 10 {
             try? await Task.sleep(nanoseconds: 50_000_000)  // 50ms
-            let currentChangeCount = await Self.onPasteboardQueue { $0.changeCount }
+            guard let currentChangeCount = await Self.onPasteboardQueue({ $0.changeCount }) else { continue }
             if currentChangeCount != startChangeCount {
                 print(
                     "[ClipboardService] Pasteboard update detected at iteration \(i+1). New count: \(currentChangeCount)"
