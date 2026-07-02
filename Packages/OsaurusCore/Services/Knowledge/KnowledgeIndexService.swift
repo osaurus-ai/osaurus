@@ -124,6 +124,24 @@ public actor KnowledgeIndexService {
         return summary
     }
 
+    /// OKF conformance check over the indexed documents: every
+    /// non-reserved document must carry a non-empty frontmatter `type`.
+    /// Returns the relative paths that fail; empty means conformant.
+    /// Reads the index (not the disk), so run after an indexing pass.
+    public func okfNonconformingDocuments(collectionId: String) -> [String] {
+        guard openDatabaseIfNeeded() else { return [] }
+        let documents =
+            (try? KnowledgeDatabase.shared.listDocuments(
+                collectionIds: [collectionId],
+                limit: Self.maxFilesPerCollection
+            )) ?? []
+        // OKF reserves index.md / log.md (no frontmatter requirements).
+        let reserved: Set<String> = ["index.md", "log.md"]
+        return documents
+            .filter { $0.docType.isEmpty && !reserved.contains($0.relPath.lowercased()) }
+            .map(\.relPath)
+    }
+
     /// Purge every derived artifact of a deleted collection (SQLite rows
     /// + vector directory). The user's folder is untouched.
     public func removeCollectionArtifacts(collectionId: UUID) async {

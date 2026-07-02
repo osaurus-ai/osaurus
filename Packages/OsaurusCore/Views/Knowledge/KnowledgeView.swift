@@ -93,6 +93,29 @@ struct KnowledgeView: View {
                                         knowledgeManager.scheduleIndex(of: collection, force: true)
                                         showSuccess("Re-indexing \"\(collection.name)\"")
                                     },
+                                    onSync: {
+                                        showSuccess("Syncing \"\(collection.name)\"…")
+                                        Task {
+                                            let outcome = await knowledgeManager.syncNow(collection)
+                                            showSuccess(outcome.message)
+                                        }
+                                    },
+                                    onValidateOKF: {
+                                        Task.detached(priority: .userInitiated) {
+                                            let failing = await KnowledgeIndexService.shared
+                                                .okfNonconformingDocuments(collectionId: collection.id.uuidString)
+                                            await MainActor.run {
+                                                if failing.isEmpty {
+                                                    showSuccess("OKF conformant: every document carries a type")
+                                                } else {
+                                                    let sample = failing.prefix(3).joined(separator: ", ")
+                                                    showSuccess(
+                                                        "\(failing.count) document(s) missing a frontmatter type: \(sample)\(failing.count > 3 ? "…" : "")"
+                                                    )
+                                                }
+                                            }
+                                        }
+                                    },
                                     onEdit: {
                                         editingCollection = collection
                                     },
@@ -124,14 +147,30 @@ struct KnowledgeView: View {
         .sheet(isPresented: $isCreating) {
             KnowledgeCollectionEditorSheet(
                 collection: nil,
-                onSave: { name, summary, folderPath in
-                    let created = knowledgeManager.create(
-                        name: name,
-                        summary: summary,
-                        folderPath: folderPath
-                    )
+                onSave: { name, summary, folderPath, remoteURL in
                     isCreating = false
-                    showSuccess("Added \"\(created.name)\", indexing in the background")
+                    if let remoteURL, !remoteURL.isEmpty {
+                        showSuccess("Cloning \"\(name)\"…")
+                        Task {
+                            do {
+                                let created = try await knowledgeManager.createFromGit(
+                                    name: name,
+                                    summary: summary,
+                                    remoteURL: remoteURL
+                                )
+                                showSuccess("Cloned \"\(created.name)\", indexing in the background")
+                            } catch {
+                                showSuccess("Clone failed: \(error.localizedDescription)")
+                            }
+                        }
+                    } else {
+                        let created = knowledgeManager.create(
+                            name: name,
+                            summary: summary,
+                            folderPath: folderPath
+                        )
+                        showSuccess("Added \"\(created.name)\", indexing in the background")
+                    }
                 },
                 onCancel: { isCreating = false }
             )
@@ -139,7 +178,7 @@ struct KnowledgeView: View {
         .sheet(item: $editingCollection) { collection in
             KnowledgeCollectionEditorSheet(
                 collection: collection,
-                onSave: { name, summary, folderPath in
+                onSave: { name, summary, folderPath, _ in
                     var updated = collection
                     updated.name = name
                     updated.summary = summary
@@ -319,6 +358,8 @@ private struct KnowledgeCollectionCard: View {
     let hasAppeared: Bool
     let onToggle: (Bool) -> Void
     let onReindex: () -> Void
+    let onSync: () -> Void
+    let onValidateOKF: () -> Void
     let onEdit: () -> Void
     let onDelete: () -> Void
 
@@ -354,6 +395,14 @@ private struct KnowledgeCollectionCard: View {
                     .foregroundColor(theme.tertiaryText)
                     .lineLimit(1)
                     .truncationMode(.middle)
+                if collection.isGitRepository {
+                    Text("git", bundle: .module)
+                        .font(.system(size: 9, weight: .bold))
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 1)
+                        .background(Capsule().fill(theme.accentColor.opacity(0.18)))
+                        .foregroundColor(theme.accentColor)
+                }
             }
             if !collection.folderExists {
                 Text("Folder not found. Search serves the last indexed state.", bundle: .module)
@@ -362,7 +411,11 @@ private struct KnowledgeCollectionCard: View {
             }
 
             HStack(spacing: 10) {
+                if collection.isGitRepository {
+                    cardButton("Sync", icon: "arrow.triangle.2.circlepath.circle", action: onSync)
+                }
                 cardButton("Re-index", icon: "arrow.triangle.2.circlepath", action: onReindex)
+                cardButton("OKF", icon: "checkmark.seal", action: onValidateOKF)
                 cardButton("Edit", icon: "pencil", action: onEdit)
                 Spacer()
                 cardButton("Delete", icon: "trash", destructive: true, action: onDelete)
@@ -418,16 +471,19 @@ private struct KnowledgeCollectionEditorSheet: View {
 
     /// nil → create mode.
     let collection: KnowledgeCollection?
-    let onSave: (_ name: String, _ summary: String, _ folderPath: String) -> Void
+    /// `remoteURL` is non-nil only in create mode when the user chose to
+    /// clone from a git URL instead of picking a local folder.
+    let onSave: (_ name: String, _ summary: String, _ folderPath: String, _ remoteURL: String?) -> Void
     let onCancel: () -> Void
 
     @State private var name: String
     @State private var summary: String
     @State private var folderPath: String
+    @State private var remoteURL: String = ""
 
     init(
         collection: KnowledgeCollection?,
-        onSave: @escaping (_ name: String, _ summary: String, _ folderPath: String) -> Void,
+        onSave: @escaping (_ name: String, _ summary: String, _ folderPath: String, _ remoteURL: String?) -> Void,
         onCancel: @escaping () -> Void
     ) {
         self.collection = collection
@@ -438,9 +494,16 @@ private struct KnowledgeCollectionEditorSheet: View {
         _folderPath = State(initialValue: collection?.folderPath ?? "")
     }
 
+    private var trimmedRemote: String {
+        remoteURL.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
     private var canSave: Bool {
-        !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            && !folderPath.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        let hasName = !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        let hasSource =
+            !folderPath.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            || (collection == nil && !trimmedRemote.isEmpty)
+        return hasName && hasSource
     }
 
     var body: some View {
@@ -488,6 +551,24 @@ private struct KnowledgeCollectionEditorSheet: View {
                 .fixedSize(horizontal: false, vertical: true)
             }
 
+            if collection == nil {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("Or clone from a git URL", bundle: .module)
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundColor(theme.secondaryText)
+                    TextField("https://github.com/team/knowledge.git", text: $remoteURL)
+                        .textFieldStyle(.roundedBorder)
+                        .font(.system(size: 12, design: .monospaced))
+                    Text(
+                        "Clones into Osaurus-managed storage and keeps the git link for Sync. Uses your existing git credentials (credential helper or SSH agent). Leave empty to use the folder above.",
+                        bundle: .module
+                    )
+                    .font(.system(size: 10))
+                    .foregroundColor(theme.tertiaryText)
+                    .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+
             HStack {
                 Spacer()
                 Button {
@@ -500,7 +581,8 @@ private struct KnowledgeCollectionEditorSheet: View {
                     onSave(
                         name.trimmingCharacters(in: .whitespacesAndNewlines),
                         summary.trimmingCharacters(in: .whitespacesAndNewlines),
-                        folderPath.trimmingCharacters(in: .whitespacesAndNewlines)
+                        folderPath.trimmingCharacters(in: .whitespacesAndNewlines),
+                        (collection == nil && !trimmedRemote.isEmpty) ? trimmedRemote : nil
                     )
                 } label: {
                     Text(collection == nil ? "Add" : "Save", bundle: .module)
