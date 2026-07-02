@@ -589,7 +589,7 @@ public final class BackgroundTaskManager: ObservableObject {
             return false
         }
 
-        let globalLimit = ToastConfigurationStore.load().maxConcurrentTasks
+        let globalLimit = ToastManager.shared.configuration.maxConcurrentTasks
         let activeTasks = backgroundTasks.values.filter { $0.status.isActive }
 
         guard activeTasks.count < globalLimit else {
