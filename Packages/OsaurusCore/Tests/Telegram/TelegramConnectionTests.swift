@@ -25,7 +25,8 @@ struct TelegramConnectionTests {
                         writableChatIds: ["-100444555666"],
                         senderAllowlist: [" 7 ", "7"],
                         writeEnabled: true,
-                        defaultReadLimit: 250
+                        defaultReadLimit: 250,
+                        longPollingTimeoutSeconds: 0
                     )
                 )
 
@@ -33,6 +34,7 @@ struct TelegramConnectionTests {
             #expect(saved.readableChatIds == ["-100111222333", "@ops_channel"])
             #expect(saved.senderAllowlist == ["7"])
             #expect(saved.defaultReadLimit == 100)
+            #expect(saved.longPollingTimeoutSeconds == 1)
             #expect(!TelegramConnectionConfiguration.isValidChatId("١٢٣٤"))
 
             let disk = try String(
@@ -86,6 +88,30 @@ struct TelegramConnectionTests {
         }
     }
 
+    @Test func apiClientMapsLongPollConflictToTypedError() async throws {
+        let token = "123456:telegram-bot-token-super-secret"
+        let session = TelegramHTTPStubProtocol.session(
+            statusCode: 409,
+            body: #"{"ok":false,"error_code":409,"description":"Conflict: terminated by other getUpdates request"}"#
+        )
+        let client = TelegramAPIClient(
+            baseURL: URL(string: "https://telegram.test")!,
+            sessionProvider: { session }
+        )
+
+        do {
+            _ = try await client.getUpdates(offset: 99, limit: 250, timeout: 99, token: token)
+            Issue.record("Telegram getUpdates should have failed with conflict")
+        } catch let error as TelegramAPIError {
+            #expect(error == .conflict("Conflict: terminated by other getUpdates request"))
+        }
+
+        let body = try #require(TelegramHTTPStubProtocol.lastRequestJSONBody())
+        #expect(body["offset"] as? Int == 99)
+        #expect(body["limit"] as? Int == 100)
+        #expect(body["timeout"] as? Int == 50)
+    }
+
     @Test func apiClientSendsPlainTextWithoutParseMode() async throws {
         let token = "123456:telegram-bot-token-super-secret"
         let session = TelegramHTTPStubProtocol.session(
@@ -120,6 +146,27 @@ struct TelegramConnectionTests {
         #expect(body["text"] as? String == "Hello <b>ops</b>")
         #expect(body["reply_to_message_id"] as? Int == 12)
         #expect(body["parse_mode"] == nil)
+    }
+
+    @Test func diagnosticsWarnWhenLongPollingHasNoSenderAllowlist() async throws {
+        try await withIsolatedTelegramStores { credentials in
+            let service = TelegramConnectionService(client: FakeTelegramAPIClient(), credentialStore: credentials)
+            try service.saveBotToken("123456:telegram-bot-token-super-secret")
+            try service.saveConfiguration(
+                TelegramConnectionConfiguration(
+                    readableChatIds: ["-100111222333"],
+                    receiveStorageEnabled: true,
+                    longPollingEnabled: true
+                )
+            )
+
+            let diagnostics = await service.diagnostics()
+
+            #expect(diagnostics.status == "connected_receive_needs_sender_allowlist")
+            #expect(diagnostics.failures.contains {
+                $0.localizedCaseInsensitiveContains("no authorized sender IDs")
+            })
+        }
     }
 
     @Test func webhookPayloadNormalizesStoresAndDeduplicatesUpdates() async throws {
@@ -197,6 +244,293 @@ struct TelegramConnectionTests {
             #expect(await fake.lastUpdateOffset() == 42)
             #expect(try store.cursor(connectionId: "telegram", roomId: "__telegram_updates__") == "43")
         }
+    }
+
+    @Test func transportRuntimeUsesStoredOffsetBoundedPollingAndHealth() async throws {
+        try await withIsolatedTelegramStores { credentials in
+            let store = AgentChannelMessageStore()
+            try store.openInMemory()
+            defer { store.close() }
+            try store.upsertCursor(
+                connectionId: "telegram",
+                roomId: "__telegram_updates__",
+                cursor: "42"
+            )
+
+            let fake = FakeTelegramAPIClient()
+            await fake.setUpdates([
+                .fixture(updateId: 42, messageId: 10, chatId: -100111222333, text: "from runtime")
+            ])
+            let service = TelegramConnectionService(
+                client: fake,
+                credentialStore: credentials,
+                messageStore: store,
+                recordMessageSnapshotsInline: true
+            )
+            try service.saveBotToken("123456:telegram-bot-token-super-secret")
+            try service.saveConfiguration(
+                TelegramConnectionConfiguration(
+                    readableChatIds: ["-100111222333"],
+                    senderAllowlist: ["7"],
+                    receiveStorageEnabled: true,
+                    longPollingEnabled: true,
+                    longPollingLimit: 250,
+                    longPollingTimeoutSeconds: 99
+                )
+            )
+            let healthCenter = AgentChannelTransportHealthCenter()
+            let runtime = TelegramLongPollTransportRuntime(
+                service: service,
+                healthCenter: healthCenter
+            )
+
+            let now = Date(timeIntervalSince1970: 1_800_000_000)
+            let result = await runtime.runStep(now: now, jitter: 0.5)
+
+            #expect(result.disposition == .succeeded)
+            #expect(result.received == 1)
+            #expect(result.stored == 1)
+            #expect(result.dispatchAttempted == 0)
+            #expect(result.dispatchSuppressed == 1)
+            #expect(result.health.status == .healthy)
+            #expect(result.health.lastSuccessAt == now)
+            #expect(await fake.lastUpdateOffset() == 42)
+            #expect(await fake.lastUpdateLimit() == 100)
+            #expect(await fake.lastUpdateTimeout() == 50)
+            #expect(try store.cursor(connectionId: "telegram", roomId: "__telegram_updates__") == "43")
+            let published = await healthCenter.state(
+                connectionId: "telegram",
+                transportId: TelegramLongPollTransportRuntime.transportId
+            )
+            #expect(published == result.health)
+        }
+    }
+
+    @Test func transportRuntimeSurfacesTelegram409ConflictAsHealthState() async throws {
+        try await withIsolatedTelegramStores { credentials in
+            let store = AgentChannelMessageStore()
+            try store.openInMemory()
+            defer { store.close() }
+
+            let fake = FakeTelegramAPIClient()
+            await fake.failGetUpdatesWithConflict("Conflict: terminated by other getUpdates request")
+            let service = TelegramConnectionService(
+                client: fake,
+                credentialStore: credentials,
+                messageStore: store,
+                recordMessageSnapshotsInline: true
+            )
+            try service.saveBotToken("123456:telegram-bot-token-super-secret")
+            try service.saveConfiguration(
+                TelegramConnectionConfiguration(
+                    readableChatIds: ["-100111222333"],
+                    senderAllowlist: ["7"],
+                    receiveStorageEnabled: true,
+                    longPollingEnabled: true
+                )
+            )
+            let healthCenter = AgentChannelTransportHealthCenter()
+            let runtime = TelegramLongPollTransportRuntime(
+                service: service,
+                healthCenter: healthCenter,
+                backoffPolicy: AgentChannelTransportBackoffPolicy(
+                    initialDelay: 4,
+                    multiplier: 2,
+                    maxDelay: 30,
+                    jitterFraction: 0.25
+                )
+            )
+
+            let now = Date(timeIntervalSince1970: 1_800_000_100)
+            let result = await runtime.runStep(now: now, jitter: 0.5)
+
+            #expect(result.disposition == .conflict)
+            #expect(result.received == 0)
+            #expect(result.stored == 0)
+            #expect(result.dispatchAttempted == 0)
+            #expect(result.retryDelay == 4)
+            #expect(result.health.status == .conflict)
+            #expect(result.health.severity == .error)
+            #expect(result.health.nextRetryAt == now.addingTimeInterval(4))
+            #expect(result.health.detail?.contains("Conflict") == true)
+            #expect(try store.messageCount(connectionId: "telegram") == 0)
+            #expect(try store.cursor(connectionId: "telegram", roomId: "__telegram_updates__") == nil)
+            let published = await healthCenter.state(
+                connectionId: "telegram",
+                transportId: TelegramLongPollTransportRuntime.transportId
+            )
+            #expect(published == result.health)
+        }
+    }
+
+    @Test func transportRuntimeStoresReceiveOnlyMessagesWithoutDispatch() async throws {
+        try await withIsolatedTelegramStores { credentials in
+            let store = AgentChannelMessageStore()
+            try store.openInMemory()
+            defer { store.close() }
+
+            let fake = FakeTelegramAPIClient()
+            await fake.setUpdates([
+                .fixture(updateId: 51, messageId: 501, chatId: -100111222333, text: "store only")
+            ])
+            let service = TelegramConnectionService(
+                client: fake,
+                credentialStore: credentials,
+                messageStore: store,
+                recordMessageSnapshotsInline: true
+            )
+            try service.saveBotToken("123456:telegram-bot-token-super-secret")
+            try service.saveConfiguration(
+                TelegramConnectionConfiguration(
+                    readableChatIds: ["-100111222333"],
+                    senderAllowlist: ["7"],
+                    writeEnabled: false,
+                    receiveStorageEnabled: true,
+                    longPollingEnabled: true
+                )
+            )
+            let runtime = TelegramLongPollTransportRuntime(
+                service: service,
+                healthCenter: AgentChannelTransportHealthCenter()
+            )
+
+            let result = await runtime.runStep(now: Date(timeIntervalSince1970: 1_800_000_200), jitter: 0.5)
+
+            #expect(result.disposition == .succeeded)
+            #expect(result.stored == 1)
+            #expect(result.dispatchAttempted == 0)
+            #expect(result.dispatchSuppressed == 1)
+            #expect(try store.messageCount(connectionId: "telegram", roomId: "-100111222333") == 1)
+            let stored = try #require(
+                try store.recentMessages(
+                    connectionId: "telegram",
+                    roomId: "-100111222333",
+                    limit: 1
+                ).first
+            )
+            #expect(stored.direction == .inbound)
+            #expect(stored.content == "store only")
+        }
+    }
+
+    @Test func transportSupervisorStartsTelegramRuntimeOnlyWhenLongPollingIsEnabled() async {
+        let runtime = SpyReceiveTransportRuntime()
+        let supervisor = AgentChannelTransportSupervisor(
+            telegramConfiguration: {
+                TelegramConnectionConfiguration(
+                    readableChatIds: ["-100111222333"],
+                    senderAllowlist: ["7"],
+                    receiveStorageEnabled: true,
+                    longPollingEnabled: true
+                )
+            },
+            telegramHasBotToken: { true },
+            telegramRuntime: runtime
+        )
+
+        await supervisor.startFromLaunch()
+        await supervisor.startFromLaunch()
+
+        #expect(await runtime.startCount() == 1)
+        #expect(await runtime.stopCount() == 0)
+    }
+
+    @Test func transportSupervisorDoesNotStartTelegramRuntimeWithoutSenderAllowlist() async {
+        let runtime = SpyReceiveTransportRuntime()
+        let supervisor = AgentChannelTransportSupervisor(
+            telegramConfiguration: {
+                TelegramConnectionConfiguration(
+                    receiveStorageEnabled: true,
+                    longPollingEnabled: true
+                )
+            },
+            telegramHasBotToken: { true },
+            telegramRuntime: runtime
+        )
+
+        await supervisor.startFromLaunch()
+
+        #expect(await runtime.startCount() == 0)
+        #expect(await runtime.stopCount() == 0)
+    }
+
+    @Test func transportSupervisorDoesNotStartTelegramRuntimeWithoutReadableChats() async {
+        let runtime = SpyReceiveTransportRuntime()
+        let supervisor = AgentChannelTransportSupervisor(
+            telegramConfiguration: {
+                TelegramConnectionConfiguration(
+                    senderAllowlist: ["7"],
+                    receiveStorageEnabled: true,
+                    longPollingEnabled: true
+                )
+            },
+            telegramHasBotToken: { true },
+            telegramRuntime: runtime
+        )
+
+        await supervisor.startFromLaunch()
+
+        #expect(await runtime.startCount() == 0)
+        #expect(await runtime.stopCount() == 0)
+    }
+
+    @Test func transportSupervisorStopsTelegramRuntimeWhenLongPollingIsDisabled() async {
+        let runtime = SpyReceiveTransportRuntime()
+        let configuration = TelegramConfigurationBox(
+            TelegramConnectionConfiguration(
+                readableChatIds: ["-100111222333"],
+                senderAllowlist: ["7"],
+                receiveStorageEnabled: true,
+                longPollingEnabled: true
+            )
+        )
+        let supervisor = AgentChannelTransportSupervisor(
+            telegramConfiguration: { configuration.value() },
+            telegramHasBotToken: { true },
+            telegramRuntime: runtime
+        )
+        let stopDate = Date(timeIntervalSince1970: 1_800_000_500)
+
+        await supervisor.startFromLaunch()
+        configuration.set(
+            TelegramConnectionConfiguration(
+                readableChatIds: ["-100111222333"],
+                senderAllowlist: ["7"],
+                receiveStorageEnabled: true,
+                longPollingEnabled: false
+            )
+        )
+        await supervisor.refreshTelegramRuntime(now: stopDate)
+
+        #expect(await runtime.startCount() == 1)
+        #expect(await runtime.stopCount() == 1)
+        #expect(await runtime.lastStopDate() == stopDate)
+    }
+
+    @Test func transportSupervisorStopsTelegramRuntimeWhenBotTokenIsRemoved() async {
+        let runtime = SpyReceiveTransportRuntime()
+        let hasToken = TelegramTokenPresenceBox(true)
+        let supervisor = AgentChannelTransportSupervisor(
+            telegramConfiguration: {
+                TelegramConnectionConfiguration(
+                    readableChatIds: ["-100111222333"],
+                    senderAllowlist: ["7"],
+                    receiveStorageEnabled: true,
+                    longPollingEnabled: true
+                )
+            },
+            telegramHasBotToken: { hasToken.value() },
+            telegramRuntime: runtime
+        )
+        let stopDate = Date(timeIntervalSince1970: 1_800_000_700)
+
+        await supervisor.startFromLaunch()
+        hasToken.set(false)
+        await supervisor.refreshTelegramRuntime(now: stopDate)
+
+        #expect(await runtime.startCount() == 1)
+        #expect(await runtime.stopCount() == 1)
+        #expect(await runtime.lastStopDate() == stopDate)
     }
 
     @Test func normalizationSkipsUnauthorizedSelfAndBotMessages() async throws {
@@ -628,6 +962,58 @@ struct TelegramConnectionTests {
             )
             let messages = try #require(read["messages"] as? [[String: Any]])
             #expect(messages.first?["content"] as? String == "ops ready")
+
+            await AgentChannelTransportHealthCenter.shared.clear(connectionId: "telegram")
+            await AgentChannelTransportHealthCenter.shared.update(
+                AgentChannelTransportHealthState(
+                    connectionId: "telegram",
+                    transportId: TelegramLongPollTransportRuntime.transportId,
+                    provider: .telegram,
+                    status: .healthy,
+                    severity: .info,
+                    summary: "Telegram long polling is healthy.",
+                    isRunning: true,
+                    receiveEnabled: true,
+                    lastReceivedCount: 1,
+                    lastStoredCount: 1
+                )
+            )
+            let diagnostics = await service.diagnostics(connectionId: "telegram")
+            let healthRows = try #require(diagnostics["transport_health"] as? [[String: Any]])
+            #expect(healthRows.first?["transport_id"] as? String == TelegramLongPollTransportRuntime.transportId)
+            #expect(healthRows.first?["status"] as? String == "healthy")
+            await AgentChannelTransportHealthCenter.shared.clear(connectionId: "telegram")
+        }
+    }
+
+    @Test func agentChannelReadToolRejectsChatsOutsideTelegramReadAllowlist() async throws {
+        try await withIsolatedTelegramStores { credentials in
+            let telegram = TelegramConnectionService(
+                client: FakeTelegramAPIClient(),
+                credentialStore: credentials
+            )
+            try telegram.saveBotToken("123456:telegram-bot-token-super-secret")
+            try telegram.saveConfiguration(
+                TelegramConnectionConfiguration(
+                    readableChatIds: ["-100111222333"],
+                    senderAllowlist: ["7"]
+                )
+            )
+            let service = AgentChannelConnectionService(
+                discordService: DiscordConnectionService(
+                    client: FakeDiscordAPIClientForTelegramTests(),
+                    credentialStore: FakeDiscordCredentialStoreForTelegramTests()
+                ),
+                telegramService: telegram
+            )
+            let tool = AgentChannelReadMessagesTool(service: service)
+
+            let result = try await tool.execute(
+                argumentsJSON: #"{"connection_id":"telegram","room_id":"-100999888777"}"#
+            )
+
+            #expect(EnvelopeAssertions.failureKind(result) == "rejected")
+            #expect(EnvelopeAssertions.failureMessage(result)?.contains("not allowlisted") == true)
         }
     }
 
@@ -647,18 +1033,20 @@ struct TelegramConnectionTests {
     }
 
     private func withIsolatedTelegramStores(
-        _ body: (any TelegramCredentialStorage) async throws -> Void
+        _ body: @Sendable (any TelegramCredentialStorage) async throws -> Void
     ) async throws {
-        let previousTelegramDirectory = TelegramConnectionConfigurationStore.overrideDirectory
-        let directory = FileManager.default.temporaryDirectory
-            .appendingPathComponent("osaurus-telegram-tests-\(UUID().uuidString)", isDirectory: true)
-        let credentials = FakeTelegramCredentialStore()
-        TelegramConnectionConfigurationStore.overrideDirectory = directory
-        defer {
-            TelegramConnectionConfigurationStore.overrideDirectory = previousTelegramDirectory
-            try? FileManager.default.removeItem(at: directory)
+        try await AgentChannelConfigurationTestLock.shared.run {
+            let previousTelegramDirectory = TelegramConnectionConfigurationStore.overrideDirectory
+            let directory = FileManager.default.temporaryDirectory
+                .appendingPathComponent("osaurus-telegram-tests-\(UUID().uuidString)", isDirectory: true)
+            let credentials = FakeTelegramCredentialStore()
+            TelegramConnectionConfigurationStore.overrideDirectory = directory
+            defer {
+                TelegramConnectionConfigurationStore.overrideDirectory = previousTelegramDirectory
+                try? FileManager.default.removeItem(at: directory)
+            }
+            try await body(credentials)
         }
-        try await body(credentials)
     }
 }
 
@@ -690,11 +1078,18 @@ private final class FakeTelegramCredentialStore: TelegramCredentialStorage, @unc
 private actor FakeTelegramAPIClient: TelegramAPIClientProtocol {
     private var updates: [TelegramUpdate] = []
     private var lastOffset: Int64?
+    private var lastLimit: Int?
+    private var lastTimeout: Int?
     private var sentMessages: [(chatId: String, text: String, replyToMessageId: Int?)] = []
     private var getMeFailuresRemaining = 0
+    private var getUpdatesConflictMessage: String?
 
     func setUpdates(_ updates: [TelegramUpdate]) {
         self.updates = updates
+    }
+
+    func failGetUpdatesWithConflict(_ message: String) {
+        getUpdatesConflictMessage = message
     }
 
     func failNextGetMe() {
@@ -703,6 +1098,14 @@ private actor FakeTelegramAPIClient: TelegramAPIClientProtocol {
 
     func lastUpdateOffset() -> Int64? {
         lastOffset
+    }
+
+    func lastUpdateLimit() -> Int? {
+        lastLimit
+    }
+
+    func lastUpdateTimeout() -> Int? {
+        lastTimeout
     }
 
     func lastSentText() -> String? {
@@ -734,6 +1137,12 @@ private actor FakeTelegramAPIClient: TelegramAPIClientProtocol {
 
     func getUpdates(offset: Int64?, limit: Int, timeout: Int, token: String) async throws -> [TelegramUpdate] {
         lastOffset = offset
+        lastLimit = limit
+        lastTimeout = timeout
+        if let getUpdatesConflictMessage {
+            self.getUpdatesConflictMessage = nil
+            throw TelegramAPIError.conflict(getUpdatesConflictMessage)
+        }
         return Array(updates.prefix(limit))
     }
 
@@ -788,6 +1197,75 @@ private final class FakeDiscordCredentialStoreForTelegramTests: DiscordCredentia
     func botToken() -> String? { nil }
     func hasBotToken() -> Bool { false }
     func deleteBotToken() -> Bool { true }
+}
+
+private final class TelegramConfigurationBox: @unchecked Sendable {
+    private let lock = NSLock()
+    private var stored: TelegramConnectionConfiguration
+
+    init(_ configuration: TelegramConnectionConfiguration) {
+        self.stored = configuration
+    }
+
+    func value() -> TelegramConnectionConfiguration {
+        lock.lock()
+        defer { lock.unlock() }
+        return stored
+    }
+
+    func set(_ configuration: TelegramConnectionConfiguration) {
+        lock.lock()
+        stored = configuration
+        lock.unlock()
+    }
+}
+
+private final class TelegramTokenPresenceBox: @unchecked Sendable {
+    private let lock = NSLock()
+    private var stored: Bool
+
+    init(_ value: Bool) {
+        self.stored = value
+    }
+
+    func value() -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return stored
+    }
+
+    func set(_ value: Bool) {
+        lock.lock()
+        stored = value
+        lock.unlock()
+    }
+}
+
+private actor SpyReceiveTransportRuntime: AgentChannelReceiveTransportRuntime {
+    private var starts = 0
+    private var stops = 0
+    private var stoppedAt: Date?
+
+    func start(pollInterval: TimeInterval) async {
+        starts += 1
+    }
+
+    func stop(now: Date) async {
+        stops += 1
+        stoppedAt = now
+    }
+
+    func startCount() -> Int {
+        starts
+    }
+
+    func stopCount() -> Int {
+        stops
+    }
+
+    func lastStopDate() -> Date? {
+        stoppedAt
+    }
 }
 
 private final class TelegramHTTPStubProtocol: URLProtocol {

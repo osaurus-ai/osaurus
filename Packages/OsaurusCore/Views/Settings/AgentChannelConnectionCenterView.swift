@@ -26,10 +26,15 @@ struct AgentChannelConnectionCenterView: View {
     @State private var auditIsError = false
     @State private var isLoadingAudit = false
     @State private var auditLoadID = UUID()
+    @State private var globalWriteSnapshot = ChannelWriteKillSwitchSnapshot()
+    @State private var globalWritesEnabled = true
+    @State private var writeGateMessage: String?
+    @State private var writeGateIsError = false
 
     private let manager = AgentChannelConnectionManager.shared
     private let service = AgentChannelConnectionService.shared
     private let auditWorkbench = AgentChannelAuditWorkbenchService()
+    private let writeKillSwitch = ChannelWriteKillSwitch.shared
 
     private var theme: ThemeProtocol { themeManager.currentTheme }
 
@@ -38,7 +43,8 @@ struct AgentChannelConnectionCenterView: View {
             VStack(alignment: .leading, spacing: 22) {
                 header
                 overview
-                DiscordSettingsView()
+                globalWriteGateSection
+                nativeIntegrationsSection
                 auditWorkbenchSection
                 channelEditorSection
             }
@@ -46,6 +52,7 @@ struct AgentChannelConnectionCenterView: View {
         }
         .background(theme.primaryBackground)
         .onAppear {
+            reloadWriteGate()
             reloadConnections()
             reloadAuditWorkbench()
         }
@@ -63,7 +70,7 @@ struct AgentChannelConnectionCenterView: View {
             }
 
             Text(
-                "Configure communication channels agents can inspect or write to through one standard action surface.",
+                "Configure native Discord, Slack, and Telegram integrations plus custom JSON channels agents can inspect or write to through one standard action surface.",
                 bundle: .module
             )
             .font(.system(size: 13))
@@ -75,21 +82,21 @@ struct AgentChannelConnectionCenterView: View {
         VStack(alignment: .leading, spacing: 12) {
             HStack(spacing: 12) {
                 ChannelMetricCard(
-                    title: "Configured",
-                    value: "\(connections.count + 1)",
-                    caption: "including Discord",
+                    title: "Native Providers",
+                    value: "3",
+                    caption: "Discord, Slack, Telegram",
                     icon: "link"
                 )
                 ChannelMetricCard(
-                    title: "Enabled",
-                    value: "\(connections.filter(\.enabled).count + 1)",
-                    caption: "available to diagnose",
-                    icon: "checkmark.seal.fill"
+                    title: "Global Writes",
+                    value: globalWritesEnabled ? "On" : "Off",
+                    caption: "remote write gate",
+                    icon: globalWritesEnabled ? "checkmark.seal.fill" : "hand.raised.fill"
                 )
                 ChannelMetricCard(
-                    title: "JSON Channels",
+                    title: "Custom JSON",
                     value: "\(connections.count)",
-                    caption: "from agent-channels.json",
+                    caption: "custom HTTP definitions",
                     icon: "curlybraces"
                 )
             }
@@ -117,8 +124,58 @@ struct AgentChannelConnectionCenterView: View {
         }
     }
 
+    private var globalWriteGateSection: some View {
+        SettingsSubsection(label: "Global Channel Safety", anchorId: "agentChannels.globalWrites") {
+            VStack(alignment: .leading, spacing: 12) {
+                SettingsToggle(
+                    title: "Global Channel Writes",
+                    description:
+                        "Master remote/channel write gate used by channel safety checks. Provider write toggles below must also allow the destination.",
+                    isOn: Binding(
+                        get: { globalWritesEnabled },
+                        set: { setGlobalWritesEnabled($0) }
+                    )
+                )
+
+                HStack(spacing: 10) {
+                    Label {
+                        Text("Generation \(globalWriteSnapshot.generation)", bundle: .module)
+                    } icon: {
+                        Image(systemName: "number")
+                    }
+                    if globalWriteSnapshot.updatedAt.timeIntervalSince1970 > 0 {
+                        Label {
+                            Text(globalWriteSnapshot.updatedAt.formatted(date: .abbreviated, time: .shortened))
+                        } icon: {
+                            Image(systemName: "clock")
+                        }
+                    }
+                    Spacer(minLength: 0)
+                }
+                .font(.system(size: 11))
+                .foregroundColor(theme.tertiaryText)
+
+                if let writeGateMessage {
+                    AgentChannelInlineStatusMessage(message: writeGateMessage, isError: writeGateIsError)
+                }
+            }
+        }
+    }
+
+    private var nativeIntegrationsSection: some View {
+        SettingsSubsection(label: "Native Integrations", anchorId: "agentChannels.native") {
+            VStack(alignment: .leading, spacing: 20) {
+                DiscordSettingsView()
+                SettingsDivider()
+                SlackSettingsView()
+                SettingsDivider()
+                TelegramSettingsView()
+            }
+        }
+    }
+
     private var channelEditorSection: some View {
-        SettingsSubsection(label: "JSON Channel Connections") {
+        SettingsSubsection(label: "Custom JSON Connections") {
             VStack(alignment: .leading, spacing: 14) {
                 HStack(alignment: .top, spacing: 16) {
                     connectionList
@@ -261,7 +318,7 @@ struct AgentChannelConnectionCenterView: View {
             HStack(spacing: 8) {
                 Button(action: newCustomHTTPConnection) {
                     Label {
-                        Text("New Custom", bundle: .module)
+                        Text("New Custom HTTP", bundle: .module)
                     } icon: {
                         Image(systemName: "plus")
                     }
@@ -280,7 +337,7 @@ struct AgentChannelConnectionCenterView: View {
 
             if connections.isEmpty {
                 Text(
-                    "No JSON-backed channels yet. Add a custom HTTP, Slack, or Telegram connection definition to prepare agent communication without storing secrets in the file.",
+                    "No custom JSON channels yet. Add a custom HTTP connection definition when a provider does not have a native section above.",
                     bundle: .module
                 )
                 .font(.system(size: 12))
@@ -313,7 +370,7 @@ struct AgentChannelConnectionCenterView: View {
                 Text(draft.isNew ? "New Connection" : "Edit Connection", bundle: .module)
                     .font(.system(size: 16, weight: .semibold))
                     .foregroundColor(theme.primaryText)
-                ServerSettingsStatusBadge(status: draft.kind == .customHTTP ? .partial : .future)
+                ServerSettingsStatusBadge(status: draft.kind == .customHTTP ? .engineReady : .partial)
                 Spacer()
             }
 
@@ -328,7 +385,7 @@ struct AgentChannelConnectionCenterView: View {
                     label: "Connection ID",
                     text: $draft.id,
                     placeholder: "ops-webhook",
-                    help: "Stable id used by agent_channel tools. The native Discord id is reserved."
+                    help: "Stable id used by agent_channel tools. Native provider ids are reserved."
                 )
                 StyledSettingsTextField(
                     label: "Display Name",
@@ -413,14 +470,27 @@ struct AgentChannelConnectionCenterView: View {
             Text("Kind", bundle: .module)
                 .font(.system(size: 12, weight: .medium))
                 .foregroundColor(theme.primaryText)
-            Picker("", selection: $draft.kind) {
-                Text("Custom HTTP", bundle: .module).tag(AgentChannelKind.customHTTP)
-                Text("Slack", bundle: .module).tag(AgentChannelKind.slack)
-                Text("Telegram", bundle: .module).tag(AgentChannelKind.telegram)
+            HStack(spacing: 8) {
+                Image(systemName: draft.kind.icon)
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundColor(theme.accentColor)
+                Text(draft.kind.displayName)
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundColor(theme.primaryText)
+                Spacer(minLength: 0)
             }
-            .pickerStyle(.segmented)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 10)
+            .background(
+                RoundedRectangle(cornerRadius: 8)
+                    .fill(theme.inputBackground)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 8)
+                            .stroke(theme.inputBorder, lineWidth: 1)
+                    )
+            )
             Text(
-                "Slack and Telegram definitions can be prepared now; native execution lands in their adapter PRs.",
+                "Use the native Discord, Slack, and Telegram sections above for first-party providers. New custom connections use the reviewed HTTP runner.",
                 bundle: .module
             )
             .font(.system(size: 11))
@@ -568,6 +638,29 @@ struct AgentChannelConnectionCenterView: View {
             select(first)
         } else {
             newCustomHTTPConnection()
+        }
+    }
+
+    private func reloadWriteGate() {
+        let snapshot = writeKillSwitch.snapshot()
+        globalWriteSnapshot = snapshot
+        globalWritesEnabled = snapshot.writeEnabled
+    }
+
+    private func setGlobalWritesEnabled(_ enabled: Bool) {
+        let previousEnabled = globalWritesEnabled
+        globalWritesEnabled = enabled
+        do {
+            globalWriteSnapshot = try writeKillSwitch.setWriteEnabled(enabled)
+            writeGateMessage = enabled
+                ? "Global channel writes enabled"
+                : "Global channel writes disabled"
+            writeGateIsError = false
+        } catch {
+            globalWritesEnabled = previousEnabled
+            reloadWriteGate()
+            writeGateMessage = error.localizedDescription
+            writeGateIsError = true
         }
     }
 
@@ -932,7 +1025,7 @@ private struct ChannelConnectionRow: View {
                         .lineLimit(1)
                 }
                 Spacer()
-                ServerSettingsStatusBadge(status: connection.enabled ? .engineReady : .future)
+                ServerSettingsStatusBadge(status: connection.enabled ? .engineReady : .partial)
             }
 
             HStack(spacing: 6) {

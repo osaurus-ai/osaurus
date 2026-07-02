@@ -195,6 +195,7 @@ enum SlackAPIError: LocalizedError, Equatable, Sendable {
 
 protocol SlackAPIClientProtocol: Sendable {
     func authTest(token: String) async throws -> SlackAuthIdentity
+    func openSocketModeConnection(appToken: String) async throws -> URL
     func conversations(token: String, limit: Int) async throws -> [SlackConversation]
     func messages(channelId: String, token: String, limit: Int) async throws -> [SlackMessage]
     func threadMessages(channelId: String, threadTs: String, token: String, limit: Int) async throws -> [SlackMessage]
@@ -202,6 +203,10 @@ protocol SlackAPIClientProtocol: Sendable {
 }
 
 final class SlackAPIClient: SlackAPIClientProtocol, @unchecked Sendable {
+    private struct SocketModeConnectionPayload: Decodable {
+        let url: String
+    }
+
     private struct ConversationListPayload: Decodable {
         let channels: [SlackConversation]
     }
@@ -229,6 +234,20 @@ final class SlackAPIClient: SlackAPIClientProtocol, @unchecked Sendable {
 
     func authTest(token: String) async throws -> SlackAuthIdentity {
         try await postForm(method: "auth.test", token: token, form: [:])
+    }
+
+    func openSocketModeConnection(appToken: String) async throws -> URL {
+        let payload: SocketModeConnectionPayload = try await postForm(
+            method: "apps.connections.open",
+            token: appToken,
+            form: [:]
+        )
+        guard let url = URL(string: payload.url),
+              ["wss", "ws"].contains(url.scheme?.lowercased() ?? "")
+        else {
+            throw SlackAPIError.invalidResponse("Slack Socket Mode response did not include a WebSocket URL.")
+        }
+        return url
     }
 
     func conversations(token: String, limit: Int) async throws -> [SlackConversation] {

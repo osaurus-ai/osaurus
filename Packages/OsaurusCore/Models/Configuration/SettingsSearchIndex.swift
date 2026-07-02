@@ -451,6 +451,59 @@ public enum SettingsSearchIndex {
             keywords: ["screen control", "cursor", "automation", "accessibility", "per-app"]
         ),
 
+        // MARK: Agent Channels / Integrations
+        .init(
+            id: "agentChannels.overview",
+            tab: .agentChannels,
+            title: "Agent Channels",
+            keywords: [
+                "integrations", "channels", "discord", "slack", "telegram",
+                "custom json", "custom http", "remote channel",
+            ]
+        ),
+        .init(
+            id: "agentChannels.globalWrites",
+            tab: .agentChannels,
+            section: "Global Channel Safety",
+            title: "Global Channel Writes",
+            keywords: ["kill switch", "disable writes", "remote writes", "channel writes"]
+        ),
+        .init(
+            id: "agentChannels.discord",
+            tab: .agentChannels,
+            section: "Native Integrations",
+            title: "Discord",
+            keywords: ["discord bot token", "discord server ids", "discord channel allowlist"]
+        ),
+        .init(
+            id: "agentChannels.slack",
+            tab: .agentChannels,
+            section: "Native Integrations",
+            title: "Slack",
+            keywords: [
+                "slack bot token", "slack signing secret", "socket mode",
+                "slack workspace ids", "slack channel allowlist",
+            ]
+        ),
+        .init(
+            id: "agentChannels.telegram",
+            tab: .agentChannels,
+            section: "Native Integrations",
+            title: "Telegram",
+            keywords: [
+                "telegram bot token", "telegram chat ids", "sender allowlist",
+                "telegram channel allowlist", "telegram long polling",
+                "telegram getupdates", "store incoming messages",
+            ]
+        ),
+        .init(
+            id: "agentChannels.customJSON",
+            tab: .agentChannels,
+            section: "Custom JSON Connections",
+            title: "Custom HTTP Connections",
+            keywords: ["custom json channels", "webhook", "agent-channels.json", "secret references"]
+        ),
+
         // MARK: Image Generation tab (subTab values are ImageGenerationTab raw values)
         .init(
             id: "imageGeneration.tab",

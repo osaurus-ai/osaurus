@@ -15,6 +15,10 @@ struct TelegramConnectionConfiguration: Codable, Equatable, Sendable {
     var defaultReadLimit: Int
     var ignoreSelfMessages: Bool
     var ignoreBotMessages: Bool
+    var receiveStorageEnabled: Bool
+    var longPollingEnabled: Bool
+    var longPollingLimit: Int
+    var longPollingTimeoutSeconds: Int
 
     enum CodingKeys: String, CodingKey {
         case readableChatIds
@@ -24,6 +28,10 @@ struct TelegramConnectionConfiguration: Codable, Equatable, Sendable {
         case defaultReadLimit
         case ignoreSelfMessages
         case ignoreBotMessages
+        case receiveStorageEnabled
+        case longPollingEnabled
+        case longPollingLimit
+        case longPollingTimeoutSeconds
     }
 
     init(
@@ -33,7 +41,11 @@ struct TelegramConnectionConfiguration: Codable, Equatable, Sendable {
         writeEnabled: Bool = false,
         defaultReadLimit: Int = 50,
         ignoreSelfMessages: Bool = true,
-        ignoreBotMessages: Bool = true
+        ignoreBotMessages: Bool = true,
+        receiveStorageEnabled: Bool = true,
+        longPollingEnabled: Bool = false,
+        longPollingLimit: Int = 100,
+        longPollingTimeoutSeconds: Int = 20
     ) {
         self.readableChatIds = Self.normalizedIds(readableChatIds)
         self.writableChatIds = Self.normalizedIds(writableChatIds)
@@ -42,6 +54,10 @@ struct TelegramConnectionConfiguration: Codable, Equatable, Sendable {
         self.defaultReadLimit = Self.clampReadLimit(defaultReadLimit)
         self.ignoreSelfMessages = ignoreSelfMessages
         self.ignoreBotMessages = ignoreBotMessages
+        self.receiveStorageEnabled = receiveStorageEnabled
+        self.longPollingEnabled = longPollingEnabled
+        self.longPollingLimit = Self.clampLongPollingLimit(longPollingLimit)
+        self.longPollingTimeoutSeconds = Self.clampLongPollingTimeoutSeconds(longPollingTimeoutSeconds)
     }
 
     init(from decoder: Decoder) throws {
@@ -53,7 +69,17 @@ struct TelegramConnectionConfiguration: Codable, Equatable, Sendable {
             writeEnabled: try container.decodeIfPresent(Bool.self, forKey: .writeEnabled) ?? false,
             defaultReadLimit: try container.decodeIfPresent(Int.self, forKey: .defaultReadLimit) ?? 50,
             ignoreSelfMessages: try container.decodeIfPresent(Bool.self, forKey: .ignoreSelfMessages) ?? true,
-            ignoreBotMessages: try container.decodeIfPresent(Bool.self, forKey: .ignoreBotMessages) ?? true
+            ignoreBotMessages: try container.decodeIfPresent(Bool.self, forKey: .ignoreBotMessages) ?? true,
+            receiveStorageEnabled: try container.decodeIfPresent(
+                Bool.self,
+                forKey: .receiveStorageEnabled
+            ) ?? true,
+            longPollingEnabled: try container.decodeIfPresent(Bool.self, forKey: .longPollingEnabled) ?? false,
+            longPollingLimit: try container.decodeIfPresent(Int.self, forKey: .longPollingLimit) ?? 100,
+            longPollingTimeoutSeconds: try container.decodeIfPresent(
+                Int.self,
+                forKey: .longPollingTimeoutSeconds
+            ) ?? 20
         )
     }
 
@@ -65,7 +91,11 @@ struct TelegramConnectionConfiguration: Codable, Equatable, Sendable {
             writeEnabled: writeEnabled,
             defaultReadLimit: defaultReadLimit,
             ignoreSelfMessages: ignoreSelfMessages,
-            ignoreBotMessages: ignoreBotMessages
+            ignoreBotMessages: ignoreBotMessages,
+            receiveStorageEnabled: receiveStorageEnabled,
+            longPollingEnabled: longPollingEnabled,
+            longPollingLimit: longPollingLimit,
+            longPollingTimeoutSeconds: longPollingTimeoutSeconds
         )
     }
 
@@ -127,6 +157,14 @@ struct TelegramConnectionConfiguration: Codable, Equatable, Sendable {
 
     static func clampReadLimit(_ value: Int) -> Int {
         min(max(value, 1), 100)
+    }
+
+    static func clampLongPollingLimit(_ value: Int) -> Int {
+        min(max(value, 1), 100)
+    }
+
+    static func clampLongPollingTimeoutSeconds(_ value: Int) -> Int {
+        min(max(value, 1), 50)
     }
 }
 

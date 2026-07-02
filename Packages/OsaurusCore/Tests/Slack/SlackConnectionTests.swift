@@ -28,6 +28,7 @@ struct SlackConnectionTests {
                     configuredTeamIds: [" T12345 ", "T12345"],
                     readableChannelIds: ["C23456"],
                     writableChannelIds: ["C34567"],
+                    senderAllowlist: [" U55555 ", "U55555"],
                     writeEnabled: true,
                     defaultReadLimit: 250
                 )
@@ -35,6 +36,7 @@ struct SlackConnectionTests {
 
             let saved = SlackConnectionConfigurationStore.load()
             #expect(saved.configuredTeamIds == ["T12345"])
+            #expect(saved.senderAllowlist == ["U55555"])
             #expect(saved.defaultReadLimit == 100)
             #expect(!SlackConnectionConfiguration.isValidSlackId("T١٢٣"))
 
@@ -102,6 +104,50 @@ struct SlackConnectionTests {
             #expect(diagnostics.identity?.botId == "B12345")
             #expect(saved.botUserId == "U12345")
             #expect(saved.botId == "B12345")
+        }
+    }
+
+    @Test func saveConfigurationPreservesPersistedBotIdentity() async throws {
+        try await withIsolatedSlackStores { credentials in
+            let service = SlackConnectionService(client: FakeSlackAPIClient(), credentialStore: credentials)
+            try service.saveConfiguration(
+                SlackConnectionConfiguration(
+                    readableChannelIds: ["C23456"],
+                    botUserId: "UOSABOT",
+                    botId: "BOSABOT",
+                    apiAppId: "AOSABOT"
+                )
+            )
+
+            try service.saveConfiguration(
+                SlackConnectionConfiguration(
+                    readableChannelIds: ["C23456"],
+                    senderAllowlist: ["U55555"]
+                )
+            )
+
+            let saved = SlackConnectionConfigurationStore.load()
+            #expect(saved.botUserId == "UOSABOT")
+            #expect(saved.botId == "BOSABOT")
+            #expect(saved.apiAppId == "AOSABOT")
+        }
+    }
+
+    @Test func diagnosticsWarnWhenReceiveCredentialsHaveNoSenderAllowlist() async throws {
+        try await withIsolatedSlackStores { credentials in
+            let service = SlackConnectionService(client: FakeSlackAPIClient(), credentialStore: credentials)
+            try service.saveBotToken("xoxb-slack-bot-token-super-secret")
+            try service.saveAppToken("xapp-slack-app-token-super-secret")
+            try service.saveConfiguration(
+                SlackConnectionConfiguration(readableChannelIds: ["C23456"])
+            )
+
+            let diagnostics = await service.diagnostics()
+
+            #expect(diagnostics.status == "connected_receive_needs_sender_allowlist")
+            #expect(diagnostics.failures.contains {
+                $0.localizedCaseInsensitiveContains("no authorized sender IDs")
+            })
         }
     }
 
@@ -325,6 +371,7 @@ struct SlackConnectionTests {
             try service.saveConfiguration(
                 SlackConnectionConfiguration(
                     readableChannelIds: ["C23456"],
+                    senderAllowlist: ["U55555"],
                     botUserId: "UOSABOT"
                 )
             )
@@ -377,6 +424,7 @@ struct SlackConnectionTests {
             try service.saveConfiguration(
                 SlackConnectionConfiguration(
                     readableChannelIds: ["C23456"],
+                    senderAllowlist: ["U55555"],
                     botUserId: "UOSABOT"
                 )
             )
@@ -444,6 +492,7 @@ struct SlackConnectionTests {
             try service.saveConfiguration(
                 SlackConnectionConfiguration(
                     readableChannelIds: ["C99999"],
+                    senderAllowlist: ["U55555"],
                     botUserId: "UOSABOT"
                 )
             )
@@ -482,12 +531,60 @@ struct SlackConnectionTests {
         }
     }
 
+    @Test func slackInboundEventRequiresSenderAllowlistBeforeStorage() async throws {
+        try await withIsolatedSlackStores { credentials in
+            let store = AgentChannelMessageStore()
+            try store.openInMemory()
+            defer { store.close() }
+
+            let service = SlackConnectionService(
+                client: FakeSlackAPIClient(),
+                credentialStore: credentials,
+                messageStore: store
+            )
+            try service.saveConfiguration(
+                SlackConnectionConfiguration(
+                    readableChannelIds: ["C23456"],
+                    senderAllowlist: ["UAUTHORIZED"],
+                    botUserId: "UOSABOT"
+                )
+            )
+            let envelope = SlackEventEnvelope(
+                token: nil,
+                teamId: "T12345",
+                apiAppId: "A12345",
+                event: SlackEventMessage(
+                    type: "app_mention",
+                    subtype: nil,
+                    channel: "C23456",
+                    user: "U55555",
+                    botId: nil,
+                    text: "<@UOSABOT> should not dispatch",
+                    ts: "1718800001.000400",
+                    threadTs: nil,
+                    channelType: "channel"
+                ),
+                type: "event_callback",
+                eventId: "EvSenderDenied12345",
+                eventTime: 1_718_800_001
+            )
+
+            #expect(try service.recordInboundEvent(envelope) == nil)
+            #expect(try store.messageCount(connectionId: "slack", roomId: "C23456") == 0)
+            let audits = try store.recentAuditEvents(connectionId: "slack", roomId: "C23456", limit: 10)
+            let denied = try #require(audits.first)
+            #expect(denied.authorizationDecision == "deny")
+            #expect(denied.reason == "sender_not_allowlisted")
+        }
+    }
+
     @Test func slackInboundEventMentionAndSelfMessagePolicyAvoidsOverTriggering() async throws {
         try await withIsolatedSlackStores { credentials in
             let service = SlackConnectionService(client: FakeSlackAPIClient(), credentialStore: credentials)
             try service.saveConfiguration(
                 SlackConnectionConfiguration(
                     readableChannelIds: ["C23456"],
+                    senderAllowlist: ["U55555"],
                     botUserId: "UOSABOT",
                     botId: "BOSABOT",
                     apiAppId: "AOSABOT"
@@ -588,6 +685,7 @@ struct SlackConnectionTests {
                 SlackConnectionConfiguration(
                     configuredTeamIds: ["T12345"],
                     readableChannelIds: ["C23456"],
+                    senderAllowlist: ["U55555"],
                     botUserId: "UOSABOT"
                 )
             )
@@ -617,6 +715,7 @@ struct SlackConnectionTests {
             try service.saveConfiguration(
                 SlackConnectionConfiguration(
                     readableChannelIds: ["C23456"],
+                    senderAllowlist: ["U55555"],
                     botUserId: "UOSABOT"
                 )
             )
@@ -665,6 +764,158 @@ struct SlackConnectionTests {
         }
     }
 
+    @Test func socketModeRuntimeAcksAuthorizedEnvelopeAndStoresMessage() async throws {
+        try await withIsolatedSlackStores { credentials in
+            let store = AgentChannelMessageStore()
+            try store.openInMemory()
+            defer { store.close() }
+
+            let fake = FakeSlackAPIClient()
+            let service = SlackConnectionService(
+                client: fake,
+                credentialStore: credentials,
+                messageStore: store
+            )
+            try service.saveAppToken("xapp-slack-app-token-super-secret")
+            try service.saveConfiguration(
+                SlackConnectionConfiguration(
+                    configuredTeamIds: ["T12345"],
+                    readableChannelIds: ["C23456"],
+                    senderAllowlist: ["U55555"],
+                    botUserId: "UOSABOT",
+                    botId: "BOSABOT",
+                    apiAppId: "A12345"
+                )
+            )
+            let socket = FakeSlackSocketModeWebSocket(messages: [
+                Self.socketModeEnvelope(
+                    envelopeId: "env-1",
+                    eventId: "EvSOCKET1",
+                    userId: "U55555",
+                    text: "<@UOSABOT> eval report ready"
+                ),
+            ])
+            let runtime = SlackSocketModeTransportRuntime(
+                service: service,
+                client: fake,
+                webSocketFactory: FakeSlackSocketModeWebSocketFactory(socket: socket)
+            )
+
+            let result = await runtime.runStep(maxMessages: 1)
+
+            #expect(result.disposition == .succeeded)
+            #expect(result.received == 1)
+            #expect(result.stored == 1)
+            #expect(await fake.lastOpenedAppToken() == "xapp-slack-app-token-super-secret")
+            #expect(await socket.sentTexts().contains(#"{"envelope_id":"env-1"}"#))
+            #expect(try store.messageCount(connectionId: "slack", roomId: "C23456") == 1)
+        }
+    }
+
+    @Test func socketModeRuntimePersistsMissingBotIdentityBeforeReceiving() async throws {
+        try await withIsolatedSlackStores { credentials in
+            let store = AgentChannelMessageStore()
+            try store.openInMemory()
+            defer { store.close() }
+
+            let fake = FakeSlackAPIClient()
+            let service = SlackConnectionService(
+                client: fake,
+                credentialStore: credentials,
+                messageStore: store
+            )
+            try service.saveBotToken("xoxb-slack-bot-token-super-secret")
+            try service.saveAppToken("xapp-slack-app-token-super-secret")
+            try service.saveConfiguration(
+                SlackConnectionConfiguration(
+                    configuredTeamIds: ["T12345"],
+                    readableChannelIds: ["C23456"],
+                    senderAllowlist: ["U55555"]
+                )
+            )
+            let socket = FakeSlackSocketModeWebSocket(messages: [
+                Self.socketModeEnvelope(
+                    envelopeId: "env-identity",
+                    eventId: "EvSOCKETIDENTITY",
+                    userId: "U55555",
+                    text: "<@U12345> first setup event"
+                ),
+            ])
+            let runtime = SlackSocketModeTransportRuntime(
+                service: service,
+                client: fake,
+                webSocketFactory: FakeSlackSocketModeWebSocketFactory(socket: socket)
+            )
+
+            let result = await runtime.runStep(maxMessages: 1)
+
+            #expect(result.disposition == .succeeded)
+            #expect(result.stored == 1)
+            let saved = SlackConnectionConfigurationStore.load()
+            #expect(saved.botUserId == "U12345")
+            #expect(saved.botId == "B12345")
+            #expect(await fake.lastOpenedAppToken() == "xapp-slack-app-token-super-secret")
+            #expect(await socket.sentTexts().contains(#"{"envelope_id":"env-identity"}"#))
+            #expect(try store.messageCount(connectionId: "slack", roomId: "C23456") == 1)
+        }
+    }
+
+    @Test func transportSupervisorStopsSlackRuntimeWhenBotTokenIsRemoved() async {
+        let runtime = SlackReceiveTransportRuntimeSpy()
+        let hasBotToken = SlackTokenPresenceBox(true)
+        let supervisor = AgentChannelTransportSupervisor(
+            slackConfiguration: {
+                SlackConnectionConfiguration(
+                    readableChannelIds: ["C12345"],
+                    senderAllowlist: ["U12345"]
+                )
+            },
+            slackHasBotToken: { hasBotToken.value() },
+            slackHasAppToken: { true },
+            slackRuntime: runtime,
+            telegramConfiguration: { TelegramConnectionConfiguration() },
+            telegramHasBotToken: { false },
+            telegramRuntime: SlackReceiveTransportRuntimeSpy()
+        )
+        let stopDate = Date(timeIntervalSince1970: 1_800_001_000)
+
+        await supervisor.startFromLaunch()
+        hasBotToken.set(false)
+        await supervisor.refreshSlackRuntime(now: stopDate)
+
+        #expect(await runtime.startCount() == 1)
+        #expect(await runtime.stopCount() == 1)
+        #expect(await runtime.lastStopDate() == stopDate)
+    }
+
+    @Test func transportSupervisorStopsSlackRuntimeWhenAppTokenIsRemoved() async {
+        let runtime = SlackReceiveTransportRuntimeSpy()
+        let hasAppToken = SlackTokenPresenceBox(true)
+        let supervisor = AgentChannelTransportSupervisor(
+            slackConfiguration: {
+                SlackConnectionConfiguration(
+                    readableChannelIds: ["C12345"],
+                    senderAllowlist: ["U12345"]
+                )
+            },
+            slackHasBotToken: { true },
+            slackHasAppToken: { hasAppToken.value() },
+            slackRuntime: runtime,
+            telegramConfiguration: { TelegramConnectionConfiguration() },
+            telegramHasBotToken: { false },
+            telegramRuntime: SlackReceiveTransportRuntimeSpy()
+        )
+        let stopDate = Date(timeIntervalSince1970: 1_800_001_200)
+
+        await supervisor.startFromLaunch()
+        hasAppToken.set(false)
+        await supervisor.refreshSlackRuntime(now: stopDate)
+
+        #expect(await runtime.startCount() == 1)
+        #expect(await runtime.stopCount() == 1)
+        #expect(await runtime.lastStopDate() == stopDate)
+    }
+
     @Test func slackInboundDispatchSurvivesPassiveSnapshotCollision() async throws {
         try await withIsolatedSlackStores { credentials in
             let store = AgentChannelMessageStore()
@@ -679,6 +930,7 @@ struct SlackConnectionTests {
             try service.saveConfiguration(
                 SlackConnectionConfiguration(
                     readableChannelIds: ["C23456"],
+                    senderAllowlist: ["U55555"],
                     botUserId: "UOSABOT"
                 )
             )
@@ -927,6 +1179,35 @@ struct SlackConnectionTests {
         }
     }
 
+    private static func socketModeEnvelope(
+        envelopeId: String,
+        eventId: String,
+        userId: String,
+        text: String
+    ) -> String {
+        """
+        {
+          "envelope_id": "\(envelopeId)",
+          "type": "events_api",
+          "payload": {
+            "team_id": "T12345",
+            "api_app_id": "A12345",
+            "event_id": "\(eventId)",
+            "event_time": 1782427200,
+            "type": "event_callback",
+            "event": {
+              "type": "app_mention",
+              "channel": "C23456",
+              "user": "\(userId)",
+              "text": "\(text)",
+              "ts": "1718800000.000100",
+              "channel_type": "channel"
+            }
+          }
+        }
+        """
+    }
+
     private func withIsolatedSlackStores(
         _ body: @Sendable (any SlackCredentialStorage) async throws -> Void
     ) async throws {
@@ -1018,10 +1299,59 @@ private final class FakeSlackCredentialStore: SlackCredentialStorage, @unchecked
     }
 }
 
+private final class SlackTokenPresenceBox: @unchecked Sendable {
+    private let lock = NSLock()
+    private var stored: Bool
+
+    init(_ value: Bool) {
+        self.stored = value
+    }
+
+    func value() -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return stored
+    }
+
+    func set(_ value: Bool) {
+        lock.lock()
+        stored = value
+        lock.unlock()
+    }
+}
+
+private actor SlackReceiveTransportRuntimeSpy: AgentChannelReceiveTransportRuntime {
+    private var starts = 0
+    private var stops = 0
+    private var stoppedAt: Date?
+
+    func start(pollInterval: TimeInterval) async {
+        starts += 1
+    }
+
+    func stop(now: Date) async {
+        stops += 1
+        stoppedAt = now
+    }
+
+    func startCount() -> Int {
+        starts
+    }
+
+    func stopCount() -> Int {
+        stops
+    }
+
+    func lastStopDate() -> Date? {
+        stoppedAt
+    }
+}
+
 private actor FakeSlackAPIClient: SlackAPIClientProtocol {
     private var authFailureMessage: String?
     private var messagesByChannel: [String: [SlackMessage]] = [:]
     private var sentMessages: [(channelId: String, content: String, threadTs: String?)] = []
+    private var openedAppToken: String?
 
     func setAuthFailureEchoingSecrets(botToken: String, signingSecret: String, appToken: String) {
         authFailureMessage = """
@@ -1057,6 +1387,15 @@ private actor FakeSlackAPIClient: SlackAPIClientProtocol {
             userId: "U12345",
             botId: "B12345"
         )
+    }
+
+    func openSocketModeConnection(appToken: String) async throws -> URL {
+        openedAppToken = appToken
+        return URL(string: "wss://socket-mode.slack.test/link")!
+    }
+
+    func lastOpenedAppToken() -> String? {
+        openedAppToken
     }
 
     func conversations(token: String, limit: Int) async throws -> [SlackConversation] {
@@ -1101,6 +1440,57 @@ private actor FakeSlackAPIClient: SlackAPIClientProtocol {
             text: request.content,
             threadTs: request.threadTs
         )
+    }
+}
+
+private final class FakeSlackSocketModeWebSocketFactory: SlackSocketModeWebSocketFactory, @unchecked Sendable {
+    private let socket: FakeSlackSocketModeWebSocket
+
+    init(socket: FakeSlackSocketModeWebSocket) {
+        self.socket = socket
+    }
+
+    func connect(to url: URL) -> any SlackSocketModeWebSocket {
+        socket
+    }
+}
+
+private final class FakeSlackSocketModeWebSocket: SlackSocketModeWebSocket, @unchecked Sendable {
+    private let lock = NSLock()
+    private var messages: [String]
+    private var sent: [String] = []
+    private var cancelled = false
+
+    init(messages: [String]) {
+        self.messages = messages
+    }
+
+    func receiveText() async throws -> String {
+        try lock.withLock {
+            if cancelled {
+                throw CancellationError()
+            }
+            guard !messages.isEmpty else {
+                throw CancellationError()
+            }
+            return messages.removeFirst()
+        }
+    }
+
+    func sendText(_ text: String) async throws {
+        lock.withLock {
+            sent.append(text)
+        }
+    }
+
+    func cancel() {
+        lock.withLock {
+            cancelled = true
+        }
+    }
+
+    func sentTexts() async -> [String] {
+        lock.withLock { sent }
     }
 }
 

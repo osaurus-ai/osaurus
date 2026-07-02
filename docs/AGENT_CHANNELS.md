@@ -17,7 +17,7 @@ definitions.
 
 The model-facing tools use these standard verbs through `agent_channel_*`
 tools. Provider-specific adapters translate the standard action into the
-provider API. Native adapters currently include Discord and Slack.
+provider API. Native adapters currently include Discord, Slack, and Telegram.
 
 The `agent_channel_*` tools are native dynamic tools. They are available to the
 app runtime and can be loaded through the capability flow, but they are not part
@@ -82,20 +82,27 @@ server, bot, or chat and prove:
    response that can be mapped to a confirmed delivery.
 6. External HTTP/MCP surfaces reject the same `agent_channel_*` tool names.
 
-The smoke boundary does not require final visible settings placement,
-production webhook hosting, or background polling. Those remain integration
-work layered on top of the shared action vocabulary and policy gates.
+The smoke boundary uses the visible Agent Channels settings surface and, for
+Telegram, the app-managed long-poll receive path. It does not require
+production webhook hosting. Slack Socket Mode background receive wiring remains
+the follow-up needed for full Slack desktop inbound proof.
+
+Slack/Telegram release proof uses
+[`AGENT_CHANNELS_SLACK_TELEGRAM_SETUP.md`](AGENT_CHANNELS_SLACK_TELEGRAM_SETUP.md)
+and
+[`CHANNEL_RELEASE_RUNBOOK_SLACK_TELEGRAM.md`](CHANNEL_RELEASE_RUNBOOK_SLACK_TELEGRAM.md).
+Primary desktop transports are Slack Socket Mode and Telegram long-poll; public
+webhooks are advanced/future proof paths.
 
 ## Configuration
 
 Non-secret channel definitions live in `agent-channels.json`. Secrets should be
 stored separately in Keychain and referenced by name.
 
-The connection center implementation can create, edit, delete, export, import,
-and diagnose JSON-backed channel definitions, but the management entry remains
-hidden while Agent Channels are still WIP. This keeps unfinished Discord/channel
-settings out of the normal app surface while preserving the reviewable
-configuration foundation.
+The connection center can create, edit, delete, export, import, and diagnose
+JSON-backed channel definitions. It also hosts native Discord, Slack, and
+Telegram credential and allowlist settings so users do not need to hand-edit
+provider configuration files.
 
 ```json
 {
@@ -318,9 +325,10 @@ Slack is a native Agent Channel connection. It is addressed through
 `connection_id: "slack"` on the `agent_channel_*` tools rather than through a
 separate Slack-specific model-facing tool set.
 
-The Slack bot token and optional signing secret are stored in Keychain under
-the native Slack credential reference names `bot_token` and `signing_secret`.
-The JSON configuration stores only non-secret IDs and policy in `slack.json`:
+The Slack bot token, optional signing secret, and optional Socket Mode app
+token are stored in Keychain under the native Slack credential reference names
+`bot_token`, `signing_secret`, and `app_token`. The JSON configuration stores
+only non-secret IDs and policy in `slack.json`:
 
 - `configuredTeamIds` limits which workspace can be inspected. Leave it empty
   to allow the workspace authenticated by the saved bot token.
@@ -328,6 +336,9 @@ The JSON configuration stores only non-secret IDs and policy in `slack.json`:
   `search_messages` can read.
 - `writableChannelIds` limits rooms that `draft_message`, `send_message`, and
   `reply_thread` can target.
+- `senderAllowlist` limits which Slack user IDs may trigger inbound Agent
+  Channel handling from group channels. Leave it empty to disable inbound Slack
+  dispatch until explicit users are configured.
 - `writeEnabled` must be true, and send/reply actions still require
   `confirm_send: true`.
 - `allowBroadcastMentions` defaults to false. When false, outbound messages
@@ -352,13 +363,20 @@ room id, message timestamp, canonical `channel_id:thread_ts`, mention user ids,
 and payload JSON for the shared Agent Channel store. A repeated Slack event id
 is recorded once through `channel_seen_events`, and message snapshots from
 read/search/send paths are keyed as `slack + channel_id + message_ts`.
-Inbound event storage is also gated by `readableChannelIds`; a valid Slack
-signature does not authorize events from non-allowlisted channels. Inbound
-normalization also requires the saved bot identity (`botUserId` or `botId`) so
-the adapter can suppress self/echo messages before dispatch.
+Inbound event storage is also gated by `readableChannelIds` and
+`senderAllowlist`; a valid Slack signature does not authorize events from
+non-allowlisted channels or users. Inbound normalization also requires the saved
+bot identity (`botUserId` or `botId`) so the adapter can suppress self/echo
+messages before dispatch.
 Webhook receivers should use `SlackSignatureVerifier` with the saved
 `signing_secret` to validate `X-Slack-Request-Timestamp`,
 `X-Slack-Signature`, and the exact raw request body before normalizing content.
+For desktop release proof, Socket Mode is the inbound transport. The app opens
+Slack Socket Mode with the saved app token, ACKs envelopes, and routes event
+payloads through the same normalization, authorization, storage, and audit path
+used by signed webhook fixtures. Public Events API webhooks remain an
+advanced/future transport that still must use the same signature verifier
+before parsing user-visible content.
 
 ## Message State And Dedupe
 
@@ -392,8 +410,9 @@ remain readable until they age out or are pruned.
 Telegram is native as well. The Bot API does not expose arbitrary prior chat
 history to bots, so Telegram `read_messages` and `search_messages` read from the
 local Agent Channel message store. The adapter exposes webhook and long-poll
-service entry points for populating that store; a production HTTP receiver,
-background poller, and visible settings surface are separate integration work.
+service entry points for populating that store, and the app lifecycle starts the
+long-poll runtime when receive storage and long polling are enabled in Agent
+Channels settings.
 The native Telegram adapter:
 
 - stores non-secret allowlists in `telegram.json` and keeps the bot token in
@@ -426,6 +445,9 @@ the public HTTP receiver contract. Because Telegram bot tokens are part of Bot
 API request paths, any future network proxy, crash-report, or HTTP-diagnostics
 surface must redact full request URLs with the same token-redaction policy used
 for provider errors.
+For desktop release proof, Bot API long-poll is the primary inbound transport.
+Public webhooks remain an advanced/future transport and require the Telegram
+secret-token header check before update decoding.
 
 Relay or webhook receivers should follow the same sequence used by the Telegram
 plugin pattern:

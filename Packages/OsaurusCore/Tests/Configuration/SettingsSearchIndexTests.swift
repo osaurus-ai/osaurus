@@ -98,4 +98,18 @@ struct SettingsSearchIndexTests {
         let encryptionHits = SettingsSearchIndex.search("sqlcipher")
         #expect(encryptionHits.contains { $0.id == "storage.encryption" && $0.tab == .storage })
     }
+
+    @Test func searchFindsAgentChannelIntegrationEntries() {
+        let integrationHits = SettingsSearchIndex.search("integrations")
+        #expect(integrationHits.contains { $0.id == "agentChannels.overview" && $0.tab == .agentChannels })
+
+        let slackHits = SettingsSearchIndex.search("slack signing secret")
+        #expect(slackHits.contains { $0.id == "agentChannels.slack" && $0.tab == .agentChannels })
+
+        let telegramHits = SettingsSearchIndex.search("telegram bot token")
+        #expect(telegramHits.contains { $0.id == "agentChannels.telegram" && $0.tab == .agentChannels })
+
+        let killSwitchHits = SettingsSearchIndex.search("kill switch")
+        #expect(killSwitchHits.contains { $0.id == "agentChannels.globalWrites" && $0.tab == .agentChannels })
+    }
 }

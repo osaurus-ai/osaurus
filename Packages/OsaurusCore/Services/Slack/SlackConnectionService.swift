@@ -34,6 +34,7 @@ struct SlackConnectionDiagnostics: Equatable, Sendable {
     let configuredTeams: [SlackConfiguredTeamDiagnostic]
     let readableChannelIds: [String]
     let writableChannelIds: [String]
+    let senderAllowlist: [String]
     let writeEnabled: Bool
     let allowBroadcastMentions: Bool
     let status: String
@@ -47,6 +48,7 @@ struct SlackConnectionDiagnostics: Equatable, Sendable {
             "configured_teams": configuredTeams.map(\.dictionary),
             "readable_channel_ids": readableChannelIds,
             "writable_channel_ids": writableChannelIds,
+            "sender_allowlist": senderAllowlist,
             "write_enabled": writeEnabled,
             "allow_broadcast_mentions": allowBroadcastMentions,
             "status": status,
@@ -226,7 +228,18 @@ final class SlackConnectionService: @unchecked Sendable {
 
     func saveConfiguration(_ configuration: SlackConnectionConfiguration) throws {
         do {
-            try SlackConnectionConfigurationStore.save(configuration)
+            var merged = configuration.normalized
+            let current = SlackConnectionConfigurationStore.load()
+            if merged.botUserId == nil {
+                merged.botUserId = current.botUserId
+            }
+            if merged.botId == nil {
+                merged.botId = current.botId
+            }
+            if merged.apiAppId == nil {
+                merged.apiAppId = current.apiAppId
+            }
+            try SlackConnectionConfigurationStore.save(merged)
         } catch {
             throw SlackConnectionServiceError.configurationSaveFailed(error.localizedDescription)
         }
@@ -306,6 +319,29 @@ final class SlackConnectionService: @unchecked Sendable {
         credentialStore.hasAppToken()
     }
 
+    func socketModeAppToken() -> String? {
+        credentialStore.appToken()
+    }
+
+    @discardableResult
+    func ensureBotIdentity() async throws -> SlackAuthIdentity? {
+        let config = configuration()
+        guard config.botUserId == nil && config.botId == nil else { return nil }
+        let token = try requireToken()
+        do {
+            let identity = try await client.authTest(token: token)
+            persistIdentity(identity)
+            return identity
+        } catch {
+            throw SlackConnectionServiceError.api(redacted(
+                error,
+                token: token,
+                signingSecret: credentialStore.signingSecret(),
+                appToken: credentialStore.appToken()
+            ))
+        }
+    }
+
     func messageStoreDiagnostics() -> [String: Any] {
         [
             "enabled": messageStore != nil,
@@ -327,6 +363,7 @@ final class SlackConnectionService: @unchecked Sendable {
                 configuredTeams: [],
                 readableChannelIds: config.readableChannelIds,
                 writableChannelIds: config.writableChannelIds,
+                senderAllowlist: config.senderAllowlist,
                 writeEnabled: config.writeEnabled,
                 allowBroadcastMentions: config.allowBroadcastMentions,
                 status: "not_configured",
@@ -367,6 +404,11 @@ final class SlackConnectionService: @unchecked Sendable {
             ))
         }
 
+        let receiveCredentialSaved = signingSecret != nil || appToken != nil
+        let receiveNeedsSenderAllowlist = receiveCredentialSaved
+            && !config.readableChannelIds.isEmpty
+            && config.senderAllowlist.isEmpty
+
         let status: String
         if identity == nil {
             status = "token_invalid_or_unavailable"
@@ -374,12 +416,20 @@ final class SlackConnectionService: @unchecked Sendable {
             status = "connected_team_not_allowlisted"
         } else if config.readableChannelIds.isEmpty && config.writableChannelIds.isEmpty {
             status = "connected_needs_allowlist"
+        } else if receiveNeedsSenderAllowlist {
+            status = "connected_receive_needs_sender_allowlist"
         } else if config.writeEnabled && config.writableChannelIds.isEmpty {
             status = "connected_read_only_write_needs_channels"
         } else if config.writeEnabled {
             status = "connected_read_write"
         } else {
             status = "connected_read_only"
+        }
+
+        if receiveNeedsSenderAllowlist {
+            failures.append(
+                "Slack receive is configured with readable channels but no authorized sender IDs; inbound events will be denied before storage or dispatch."
+            )
         }
 
         return SlackConnectionDiagnostics(
@@ -390,6 +440,7 @@ final class SlackConnectionService: @unchecked Sendable {
             configuredTeams: teamRows,
             readableChannelIds: config.readableChannelIds,
             writableChannelIds: config.writableChannelIds,
+            senderAllowlist: config.senderAllowlist,
             writeEnabled: config.writeEnabled,
             allowBroadcastMentions: config.allowBroadcastMentions,
             status: status,
@@ -696,6 +747,14 @@ final class SlackConnectionService: @unchecked Sendable {
         _ envelope: SlackEventEnvelope,
         config: SlackConnectionConfiguration
     ) -> SlackNormalizedInboundMessage? {
+        normalizeInboundEvent(envelope, config: config, enforceSenderAllowlist: true)
+    }
+
+    private func normalizeInboundEvent(
+        _ envelope: SlackEventEnvelope,
+        config: SlackConnectionConfiguration,
+        enforceSenderAllowlist: Bool
+    ) -> SlackNormalizedInboundMessage? {
         guard let providerEventId = envelope.eventId?.trimmingCharacters(in: .whitespacesAndNewlines),
               !providerEventId.isEmpty,
               let event = envelope.event,
@@ -721,6 +780,11 @@ final class SlackConnectionService: @unchecked Sendable {
             return nil
         }
 
+        let authorId = event.user ?? event.botId
+        if enforceSenderAllowlist && !config.canUseSender(senderId: authorId) {
+            return nil
+        }
+
         let content = event.text?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         let threadTs = event.threadTs.flatMap { candidate -> String? in
             let normalized = candidate.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -736,7 +800,7 @@ final class SlackConnectionService: @unchecked Sendable {
             providerMessageId: messageTs,
             threadId: "\(channelId):\(threadTs)",
             threadTs: threadTs,
-            authorId: event.user ?? event.botId,
+            authorId: authorId,
             content: content,
             isThreadReply: threadTs != messageTs,
             isMention: event.type == "app_mention" || mentionsBot,
@@ -770,22 +834,48 @@ final class SlackConnectionService: @unchecked Sendable {
     }
 
     func recordInboundEvent(_ envelope: SlackEventEnvelope) throws -> SlackNormalizedInboundMessage? {
-        guard let normalized = normalizeInboundEvent(envelope) else { return nil }
-        guard let messageStore else { return normalized }
+        let config = configuration()
+        guard let normalized = normalizeInboundEvent(
+            envelope,
+            config: config,
+            enforceSenderAllowlist: messageStore == nil
+        ) else { return nil }
+        guard let messageStore else {
+            return normalized
+        }
         try messageStore.openIfNeeded()
-        guard try messageStore.markEventSeen(
+        let authorizationService = AgentChannelConnectionService(
+            discordService: .shared,
+            slackService: self,
+            telegramService: .shared
+        )
+        let authorization = try authorizationService.authorizeInboundMessage(
+            AgentChannelInboundMessageAuthorizationRequest(
+                connectionId: normalized.connectionId,
+                providerEventId: normalized.providerEventId,
+                providerMessageId: normalized.providerMessageId,
+                spaceId: normalized.teamId,
+                roomId: normalized.roomId,
+                senderId: normalized.authorId,
+                isBotMessage: envelope.event?.botId != nil,
+                isSelfMessage: false
+            ),
+            messageStore: messageStore
+        )
+        _ = try messageStore.recordReceiveEvent(
             connectionId: normalized.connectionId,
-            providerEventId: normalized.providerEventId
-        ) else {
+            providerEventId: normalized.providerEventId,
+            authorization: authorization,
+            message: normalized.storedMessage
+        )
+        guard authorization.decision == .allow,
+              try messageStore.markEventSeen(
+                  connectionId: normalized.connectionId,
+                  providerEventId: Self.inboundDispatchEventId(normalized)
+              )
+        else {
             return nil
         }
-        guard try messageStore.markEventSeen(
-            connectionId: normalized.connectionId,
-            providerEventId: Self.inboundDispatchEventId(normalized)
-        ) else {
-            return nil
-        }
-        _ = try messageStore.recordMessages([normalized.storedMessage])
         return normalized
     }
 

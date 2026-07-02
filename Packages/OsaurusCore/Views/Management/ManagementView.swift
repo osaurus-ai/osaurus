@@ -188,6 +188,8 @@ private extension ManagementView {
             RemoteProvidersView()
         case .agents:
             AgentsView(deeplinkAgentId: deeplinkAgentId)
+        case .agentChannels:
+            AgentChannelConnectionCenterView()
         case .plugins:
             PluginsView()
         case .sandbox:

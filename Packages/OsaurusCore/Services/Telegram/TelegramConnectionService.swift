@@ -188,14 +188,16 @@ private enum TelegramReceivePendingResult {
 }
 
 final class TelegramConnectionService: @unchecked Sendable {
+    static let nativeConnectionId = TelegramUpdateNormalizer.connectionId
+    static let updatesCursorRoomId = "__telegram_updates__"
+
     static let shared = TelegramConnectionService(
         client: TelegramAPIClient(),
         credentialStore: KeychainTelegramCredentialStorage(),
         messageStore: AgentChannelMessageStore.shared
     )
 
-    private static let connectionId = TelegramUpdateNormalizer.connectionId
-    private static let updatesCursorRoomId = "__telegram_updates__"
+    private static let connectionId = nativeConnectionId
 
     private let client: TelegramAPIClientProtocol
     private let credentialStore: any TelegramCredentialStorage
@@ -274,17 +276,30 @@ final class TelegramConnectionService: @unchecked Sendable {
             failures.append(redacted(error, token: token))
         }
 
+        let receiveNeedsSenderAllowlist = config.receiveStorageEnabled
+            && config.longPollingEnabled
+            && !config.readableChatIds.isEmpty
+            && config.senderAllowlist.isEmpty
+
         let status: String
         if bot == nil {
             status = "token_invalid_or_unavailable"
         } else if config.readableChatIds.isEmpty {
             status = "connected_needs_allowlist"
+        } else if receiveNeedsSenderAllowlist {
+            status = "connected_receive_needs_sender_allowlist"
         } else if config.writeEnabled && config.writableChatIds.isEmpty {
             status = "connected_read_only_write_needs_chats"
         } else if config.writeEnabled {
             status = "connected_read_write"
         } else {
             status = "connected_read_only"
+        }
+
+        if receiveNeedsSenderAllowlist {
+            failures.append(
+                "Telegram long polling is enabled with readable chats but no authorized sender IDs; inbound updates will be denied before storage or dispatch."
+            )
         }
 
         return TelegramConnectionDiagnostics(
@@ -307,6 +322,7 @@ final class TelegramConnectionService: @unchecked Sendable {
             "message_dedupe": "connection_id + room_id + provider_message_id",
             "event_dedupe": "connection_id + provider_event_id",
             "cursor": "telegram getUpdates offset stored in channel_receive_cursors",
+            "transport_runtime": "telegram_long_poll",
         ]
     }
 
@@ -463,7 +479,8 @@ final class TelegramConnectionService: @unchecked Sendable {
         secretTokenHeader: String? = nil,
         expectedSecretToken: String? = nil
     ) async throws -> TelegramReceiveBatchResult {
-        if let expectedSecretToken, secretTokenHeader != expectedSecretToken {
+        if let expectedSecretToken,
+           !Self.constantTimeEquals(secretTokenHeader ?? "", expectedSecretToken) {
             throw TelegramConnectionServiceError.invalidWebhookSecret
         }
         let update = try JSONDecoder().decode(TelegramUpdate.self, from: data)
@@ -483,8 +500,8 @@ final class TelegramConnectionService: @unchecked Sendable {
         let offset = cursor.flatMap(Int64.init)
         let updates = try await client.getUpdates(
             offset: offset,
-            limit: min(max(limit, 1), 100),
-            timeout: min(max(timeout, 0), 50),
+            limit: TelegramConnectionConfiguration.clampLongPollingLimit(limit),
+            timeout: TelegramConnectionConfiguration.clampLongPollingTimeoutSeconds(timeout),
             token: token
         )
         return try await processUpdates(updates, source: "long_poll")
@@ -737,6 +754,19 @@ final class TelegramConnectionService: @unchecked Sendable {
             ],
         ]
     }
+
+    private static func constantTimeEquals(_ lhs: String, _ rhs: String) -> Bool {
+        let left = Array(lhs.utf8)
+        let right = Array(rhs.utf8)
+        let count = max(left.count, right.count)
+        var difference = left.count ^ right.count
+        for index in 0 ..< count {
+            let leftByte = index < left.count ? left[index] : 0
+            let rightByte = index < right.count ? right[index] : 0
+            difference |= Int(leftByte ^ rightByte)
+        }
+        return difference == 0
+    }
 }
 
 private extension TelegramUpdateNormalizer {
@@ -744,3 +774,215 @@ private extension TelegramUpdateNormalizer {
         ISO8601DateFormatter().string(from: Date(timeIntervalSince1970: TimeInterval(date)))
     }
 }
+
+actor TelegramLongPollTransportRuntime {
+    static let transportId = "telegram_long_poll"
+
+    private let service: TelegramConnectionService
+    private let healthCenter: AgentChannelTransportHealthCenter
+    private let backoffPolicy: AgentChannelTransportBackoffPolicy
+    private let sleeper: any AgentChannelTransportSleeping
+    private var worker: Task<Void, Never>?
+    private var consecutiveFailures = 0
+    private var lastHealth: AgentChannelTransportHealthState
+
+    init(
+        service: TelegramConnectionService = .shared,
+        healthCenter: AgentChannelTransportHealthCenter = .shared,
+        backoffPolicy: AgentChannelTransportBackoffPolicy = AgentChannelTransportBackoffPolicy(),
+        sleeper: any AgentChannelTransportSleeping = AgentChannelTransportTaskSleeper()
+    ) {
+        self.service = service
+        self.healthCenter = healthCenter
+        self.backoffPolicy = backoffPolicy
+        self.sleeper = sleeper
+        self.lastHealth = AgentChannelTransportHealthState(
+            connectionId: TelegramConnectionService.nativeConnectionId,
+            transportId: Self.transportId,
+            provider: .telegram,
+            status: .idle,
+            severity: .info,
+            summary: "Telegram long polling is idle.",
+            isRunning: false,
+            receiveEnabled: false
+        )
+    }
+
+    func health() -> AgentChannelTransportHealthState {
+        lastHealth
+    }
+
+    func start(pollInterval: TimeInterval = 0) {
+        guard worker == nil else { return }
+        worker = Task { [weak self] in
+            await self?.runLoop(pollInterval: pollInterval)
+        }
+    }
+
+    func stop(now: Date = Date()) async {
+        let oldWorker = worker
+        worker = nil
+        oldWorker?.cancel()
+        await oldWorker?.value
+        consecutiveFailures = 0
+        await publish(
+            AgentChannelTransportHealthState(
+                connectionId: TelegramConnectionService.nativeConnectionId,
+                transportId: Self.transportId,
+                provider: .telegram,
+                status: .idle,
+                severity: .info,
+                summary: "Telegram long polling is idle.",
+                isRunning: false,
+                receiveEnabled: service.configuration().longPollingEnabled,
+                updatedAt: now
+            )
+        )
+    }
+
+    func runStep(
+        now: Date = Date(),
+        jitter: Double = Double.random(in: 0 ... 1)
+    ) async -> AgentChannelTransportStepResult {
+        let configuration = service.configuration()
+        guard configuration.receiveStorageEnabled else {
+            consecutiveFailures = 0
+            let health = await publish(
+                AgentChannelTransportHealthState(
+                    connectionId: TelegramConnectionService.nativeConnectionId,
+                    transportId: Self.transportId,
+                    provider: .telegram,
+                    status: .disabled,
+                    severity: .info,
+                    summary: "Telegram receive storage is disabled.",
+                    isRunning: false,
+                    receiveEnabled: false,
+                    updatedAt: now
+                )
+            )
+            return AgentChannelTransportStepResult(disposition: .skipped, health: health)
+        }
+        guard configuration.longPollingEnabled else {
+            consecutiveFailures = 0
+            let health = await publish(
+                AgentChannelTransportHealthState(
+                    connectionId: TelegramConnectionService.nativeConnectionId,
+                    transportId: Self.transportId,
+                    provider: .telegram,
+                    status: .disabled,
+                    severity: .info,
+                    summary: "Telegram long polling is disabled.",
+                    isRunning: false,
+                    receiveEnabled: true,
+                    updatedAt: now
+                )
+            )
+            return AgentChannelTransportStepResult(disposition: .skipped, health: health)
+        }
+
+        do {
+            let batch = try await service.pollUpdates(
+                limit: configuration.longPollingLimit,
+                timeout: configuration.longPollingTimeoutSeconds
+            )
+            consecutiveFailures = 0
+            let dispatchSuppressed = batch.results.filter { $0.status == .accepted }.count
+            let health = await publish(
+                AgentChannelTransportHealthState(
+                    connectionId: TelegramConnectionService.nativeConnectionId,
+                    transportId: Self.transportId,
+                    provider: .telegram,
+                    status: .healthy,
+                    severity: .info,
+                    summary: "Telegram long polling is healthy.",
+                    isRunning: worker != nil,
+                    receiveEnabled: true,
+                    lastSuccessAt: now,
+                    lastReceivedCount: batch.received,
+                    lastStoredCount: batch.stored,
+                    dispatchSuppressedCount: dispatchSuppressed,
+                    updatedAt: now
+                )
+            )
+            return AgentChannelTransportStepResult(
+                disposition: .succeeded,
+                health: health,
+                received: batch.received,
+                stored: batch.stored,
+                dispatchAttempted: 0,
+                dispatchSuppressed: dispatchSuppressed
+            )
+        } catch TelegramAPIError.conflict(let message) {
+            consecutiveFailures += 1
+            let delay = backoffPolicy.delay(consecutiveFailures: consecutiveFailures, jitter: jitter)
+            let health = await publish(
+                AgentChannelTransportHealthState(
+                    connectionId: TelegramConnectionService.nativeConnectionId,
+                    transportId: Self.transportId,
+                    provider: .telegram,
+                    status: .conflict,
+                    severity: .error,
+                    summary: "Telegram long polling has a competing consumer.",
+                    detail: message,
+                    isRunning: worker != nil,
+                    receiveEnabled: true,
+                    lastFailureAt: now,
+                    nextRetryAt: now.addingTimeInterval(delay),
+                    consecutiveFailures: consecutiveFailures,
+                    updatedAt: now
+                )
+            )
+            return AgentChannelTransportStepResult(
+                disposition: .conflict,
+                health: health,
+                retryDelay: delay
+            )
+        } catch {
+            consecutiveFailures += 1
+            let delay = backoffPolicy.delay(consecutiveFailures: consecutiveFailures, jitter: jitter)
+            let health = await publish(
+                AgentChannelTransportHealthState(
+                    connectionId: TelegramConnectionService.nativeConnectionId,
+                    transportId: Self.transportId,
+                    provider: .telegram,
+                    status: .failed,
+                    severity: .warning,
+                    summary: "Telegram long polling failed.",
+                    detail: error.localizedDescription,
+                    isRunning: worker != nil,
+                    receiveEnabled: true,
+                    lastFailureAt: now,
+                    nextRetryAt: now.addingTimeInterval(delay),
+                    consecutiveFailures: consecutiveFailures,
+                    updatedAt: now
+                )
+            )
+            return AgentChannelTransportStepResult(
+                disposition: .failed,
+                health: health,
+                retryDelay: delay
+            )
+        }
+    }
+
+    private func runLoop(pollInterval: TimeInterval) async {
+        while !Task.isCancelled {
+            let result = await runStep()
+            let delay = max(result.retryDelay ?? pollInterval, 1)
+            do {
+                try await sleeper.sleep(for: delay)
+            } catch {
+                break
+            }
+        }
+    }
+
+    @discardableResult
+    private func publish(_ health: AgentChannelTransportHealthState) async -> AgentChannelTransportHealthState {
+        lastHealth = health
+        await healthCenter.update(health)
+        return health
+    }
+}
+
+extension TelegramLongPollTransportRuntime: AgentChannelReceiveTransportRuntime {}

@@ -12,6 +12,7 @@ struct SlackConnectionConfiguration: Codable, Equatable, Sendable {
     var configuredTeamIds: [String]
     var readableChannelIds: [String]
     var writableChannelIds: [String]
+    var senderAllowlist: [String]
     var writeEnabled: Bool
     var defaultReadLimit: Int
     var allowBroadcastMentions: Bool
@@ -23,6 +24,7 @@ struct SlackConnectionConfiguration: Codable, Equatable, Sendable {
         configuredTeamIds: [String] = [],
         readableChannelIds: [String] = [],
         writableChannelIds: [String] = [],
+        senderAllowlist: [String] = [],
         writeEnabled: Bool = false,
         defaultReadLimit: Int = 50,
         allowBroadcastMentions: Bool = false,
@@ -33,6 +35,7 @@ struct SlackConnectionConfiguration: Codable, Equatable, Sendable {
         self.configuredTeamIds = Self.normalizedIds(configuredTeamIds)
         self.readableChannelIds = Self.normalizedIds(readableChannelIds)
         self.writableChannelIds = Self.normalizedIds(writableChannelIds)
+        self.senderAllowlist = Self.normalizedIds(senderAllowlist)
         self.writeEnabled = writeEnabled
         self.defaultReadLimit = Self.clampReadLimit(defaultReadLimit)
         self.allowBroadcastMentions = allowBroadcastMentions
@@ -46,6 +49,7 @@ struct SlackConnectionConfiguration: Codable, Equatable, Sendable {
             configuredTeamIds: configuredTeamIds,
             readableChannelIds: readableChannelIds,
             writableChannelIds: writableChannelIds,
+            senderAllowlist: senderAllowlist,
             writeEnabled: writeEnabled,
             defaultReadLimit: defaultReadLimit,
             allowBroadcastMentions: allowBroadcastMentions,
@@ -66,6 +70,45 @@ struct SlackConnectionConfiguration: Codable, Equatable, Sendable {
     func canUseTeam(teamId: String) -> Bool {
         let normalized = Self.normalizedId(teamId)
         return configuredTeamIds.isEmpty || configuredTeamIds.contains(normalized)
+    }
+
+    func canUseSender(senderId: String?) -> Bool {
+        guard let normalized = Self.normalizedOptionalId(senderId) else {
+            return false
+        }
+        return !senderAllowlist.isEmpty && senderAllowlist.contains(normalized)
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case configuredTeamIds
+        case readableChannelIds
+        case writableChannelIds
+        case senderAllowlist
+        case writeEnabled
+        case defaultReadLimit
+        case allowBroadcastMentions
+        case botUserId
+        case botId
+        case apiAppId
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.init(
+            configuredTeamIds: try container.decodeIfPresent([String].self, forKey: .configuredTeamIds) ?? [],
+            readableChannelIds: try container.decodeIfPresent([String].self, forKey: .readableChannelIds) ?? [],
+            writableChannelIds: try container.decodeIfPresent([String].self, forKey: .writableChannelIds) ?? [],
+            senderAllowlist: try container.decodeIfPresent([String].self, forKey: .senderAllowlist) ?? [],
+            writeEnabled: try container.decodeIfPresent(Bool.self, forKey: .writeEnabled) ?? false,
+            defaultReadLimit: try container.decodeIfPresent(Int.self, forKey: .defaultReadLimit) ?? 50,
+            allowBroadcastMentions: try container.decodeIfPresent(
+                Bool.self,
+                forKey: .allowBroadcastMentions
+            ) ?? false,
+            botUserId: try container.decodeIfPresent(String.self, forKey: .botUserId),
+            botId: try container.decodeIfPresent(String.self, forKey: .botId),
+            apiAppId: try container.decodeIfPresent(String.self, forKey: .apiAppId)
+        )
     }
 
     static func normalizedIds(_ ids: [String]) -> [String] {

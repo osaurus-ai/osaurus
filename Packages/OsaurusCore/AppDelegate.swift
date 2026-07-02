@@ -473,6 +473,12 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
         // Initialize WatcherManager to start file system watchers
         _ = WatcherManager.shared
 
+        if !keychainDisabledTestMode {
+            Task.detached(priority: .utility) {
+                await AgentChannelTransportSupervisor.shared.startFromLaunch()
+            }
+        }
+
         // Start the self-scheduling loop once storage is ready. In plaintext
         // mode (the default) that's immediate; in opt-in encrypted mode it
         // waits until the key is resident so startup never triggers a
@@ -645,8 +651,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
             // last-resort fallback if no app window is up.
             let scope: ThemedAlertScope
             if let chatId = ChatWindowManager.shared.lastFocusedWindowId,
-                ChatWindowManager.shared.windowExists(id: chatId)
-            {
+                ChatWindowManager.shared.windowExists(id: chatId) {
                 scope = .chat(chatId)
             } else if WindowManager.shared.isVisible(.management) {
                 scope = .management
@@ -1086,6 +1091,9 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
             SystemMonitorService.shared.stopMonitoring()
             ScheduleManager.shared.stop()
             WatcherManager.shared.stop()
+            await runWithDeadline(seconds: 2) {
+                await AgentChannelTransportSupervisor.shared.stop()
+            }
             // MemoryConsolidator / StorageMaintenance are actors; their stop()
             // just cancels timers, so the actor hop is quick — bound it anyway
             // so a busy actor can't stall phase 0.

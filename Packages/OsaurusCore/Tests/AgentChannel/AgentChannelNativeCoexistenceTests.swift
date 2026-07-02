@@ -45,6 +45,7 @@ struct AgentChannelNativeCoexistenceTests {
                     configuredTeamIds: ["T12345"],
                     readableChannelIds: ["C23456"],
                     writableChannelIds: ["C34567"],
+                    senderAllowlist: ["U55555"],
                     writeEnabled: true
                 )
             )
@@ -83,6 +84,7 @@ struct AgentChannelNativeCoexistenceTests {
             #expect(!rendered.contains("xapp-slack-app-token-super-secret"))
             #expect(!rendered.contains("123456:telegram-bot-token-super-secret"))
             #expect(nativeRows["slack"]?["app_token_saved"] as? Bool == true)
+            #expect(nativeRows["slack"]?["sender_allowlist"] as? [String] == ["U55555"])
 
             let slackPolicies = nativeRows["slack"]?["action_policies"] as? [[String: Any]] ?? []
             #expect(!slackPolicies.contains { $0["status"] as? String == "configured_only" })
@@ -111,6 +113,76 @@ struct AgentChannelNativeCoexistenceTests {
                     )
                 )
             }
+        }
+    }
+
+    @Test func globalWriteKillSwitchBlocksNativeProviderSends() async throws {
+        try await withIsolatedNativeChannelStores { stores in
+            let root = FileManager.default.temporaryDirectory
+                .appendingPathComponent("osaurus-native-channel-write-gate-\(UUID().uuidString)", isDirectory: true)
+            try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+            defer { try? FileManager.default.removeItem(at: root) }
+
+            let killSwitch = ChannelWriteKillSwitch(fileURL: root.appendingPathComponent("write-gate.json"))
+            _ = try killSwitch.disableWrites(now: Date(timeIntervalSince1970: 1))
+
+            let slack = SlackConnectionService(
+                client: SlackAPIClient(baseURL: URL(string: "https://slack.test/api")!),
+                credentialStore: stores.slackCredentials
+            )
+            let telegram = TelegramConnectionService(
+                client: TelegramAPIClient(baseURL: URL(string: "https://telegram.test")!),
+                credentialStore: stores.telegramCredentials
+            )
+            try slack.saveConfiguration(
+                SlackConnectionConfiguration(
+                    writableChannelIds: ["C34567"],
+                    writeEnabled: true
+                )
+            )
+            try telegram.saveConfiguration(
+                TelegramConnectionConfiguration(
+                    writableChatIds: ["-100111222333"],
+                    writeEnabled: true
+                )
+            )
+
+            let service = AgentChannelConnectionService(
+                discordService: DiscordConnectionService(
+                    client: DiscordAPIClient(baseURL: URL(string: "https://discord.test/api/v10")!),
+                    credentialStore: stores.discordCredentials
+                ),
+                slackService: slack,
+                telegramService: telegram,
+                writeKillSwitch: killSwitch
+            )
+
+            await #expect(throws: AgentChannelConnectionServiceError.globalWritesDisabled(generation: 1)) {
+                _ = try await service.sendMessage(
+                    connectionId: "slack",
+                    roomId: "C34567",
+                    content: "blocked",
+                    confirmSend: true
+                )
+            }
+            await #expect(throws: AgentChannelConnectionServiceError.globalWritesDisabled(generation: 1)) {
+                _ = try await service.sendMessage(
+                    connectionId: "telegram",
+                    roomId: "-100111222333",
+                    content: "blocked",
+                    confirmSend: true
+                )
+            }
+
+            let slackRow = try #require(
+                service.listConnections().first { $0["id"] as? String == "slack" }
+            )
+            let slackPolicies = slackRow["action_policies"] as? [[String: Any]] ?? []
+            let sendPolicy = try #require(
+                slackPolicies.first { $0["action"] as? String == "send_message" }
+            )
+            #expect(sendPolicy["status"] as? String == "unavailable")
+            #expect(sendPolicy["reason"] as? String == "Global Agent Channel writes are disabled.")
         }
     }
 

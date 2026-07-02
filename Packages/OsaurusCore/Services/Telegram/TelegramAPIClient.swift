@@ -163,6 +163,7 @@ struct TelegramReceiveBatchResult: Equatable, Sendable {
 enum TelegramAPIError: LocalizedError, Equatable, Sendable {
     case invalidToken
     case forbidden(String)
+    case conflict(String)
     case notFound(String)
     case rateLimited(String)
     case invalidResponse(String)
@@ -173,6 +174,7 @@ enum TelegramAPIError: LocalizedError, Equatable, Sendable {
         case .invalidToken:
             return "Telegram rejected the bot token."
         case .forbidden(let message),
+            .conflict(let message),
             .notFound(let message),
             .rateLimited(let message),
             .invalidResponse(let message),
@@ -215,15 +217,21 @@ final class TelegramAPIClient: TelegramAPIClientProtocol, @unchecked Sendable {
     }
 
     func getUpdates(offset: Int64?, limit: Int, timeout: Int, token: String) async throws -> [TelegramUpdate] {
+        let boundedTimeout = TelegramConnectionConfiguration.clampLongPollingTimeoutSeconds(timeout)
         var body: [String: Any] = [
-            "limit": min(max(limit, 1), 100),
-            "timeout": min(max(timeout, 0), 50),
+            "limit": TelegramConnectionConfiguration.clampLongPollingLimit(limit),
+            "timeout": boundedTimeout,
             "allowed_updates": ["message", "edited_message", "channel_post", "edited_channel_post"],
         ]
         if let offset {
             body["offset"] = offset
         }
-        return try await post(method: "getUpdates", token: token, body: body)
+        return try await post(
+            method: "getUpdates",
+            token: token,
+            body: body,
+            timeoutInterval: TimeInterval(boundedTimeout + 10)
+        )
     }
 
     func sendMessage(
@@ -243,10 +251,18 @@ final class TelegramAPIClient: TelegramAPIClientProtocol, @unchecked Sendable {
         return try await post(method: "sendMessage", token: token, body: body)
     }
 
-    private func post<T: Decodable>(method: String, token: String, body: [String: Any]) async throws -> T {
+    private func post<T: Decodable>(
+        method: String,
+        token: String,
+        body: [String: Any],
+        timeoutInterval: TimeInterval? = nil
+    ) async throws -> T {
         var request = try makeRequest(method: method, token: token)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        if let timeoutInterval {
+            request.timeoutInterval = timeoutInterval
+        }
         request.httpBody = try JSONSerialization.data(withJSONObject: body, options: .osaurusCanonical)
         return try await perform(request, token: token)
     }
@@ -313,6 +329,8 @@ final class TelegramAPIClient: TelegramAPIClientProtocol, @unchecked Sendable {
             return .invalidToken
         case 403:
             return .forbidden(message)
+        case 409:
+            return .conflict(message)
         case 404:
             return .notFound(message)
         case 429:

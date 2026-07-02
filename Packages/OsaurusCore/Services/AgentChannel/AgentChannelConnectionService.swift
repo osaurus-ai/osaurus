@@ -10,6 +10,7 @@ import Foundation
 enum AgentChannelConnectionServiceError: LocalizedError, Equatable, Sendable {
     case connectionNotFound(String)
     case connectionDisabled(String)
+    case globalWritesDisabled(generation: Int)
     case unsupportedKind(AgentChannelKind)
     case unsupportedAction(action: AgentChannelAction, connectionId: String)
     case customExecutionNotImplemented(String)
@@ -20,6 +21,8 @@ enum AgentChannelConnectionServiceError: LocalizedError, Equatable, Sendable {
             return "Agent channel connection `\(connectionId)` is not configured."
         case .connectionDisabled(let connectionId):
             return "Agent channel connection `\(connectionId)` is disabled."
+        case .globalWritesDisabled(let generation):
+            return "Global Agent Channel writes are disabled by the write kill switch (generation \(generation))."
         case .unsupportedKind(let kind):
             return "Agent channel kind `\(kind.rawValue)` is not executable yet."
         case .unsupportedAction(let action, let connectionId):
@@ -44,17 +47,20 @@ final class AgentChannelConnectionService: @unchecked Sendable {
     private let slackService: SlackConnectionService
     private let telegramService: TelegramConnectionService
     private let customJSONRunner: any AgentChannelCustomJSONRunning
+    private let writeKillSwitch: ChannelWriteKillSwitch
 
     init(
         discordService: DiscordConnectionService,
         slackService: SlackConnectionService = .shared,
         telegramService: TelegramConnectionService = .shared,
-        customJSONRunner: any AgentChannelCustomJSONRunning = AgentChannelCustomJSONRunner()
+        customJSONRunner: any AgentChannelCustomJSONRunning = AgentChannelCustomJSONRunner(),
+        writeKillSwitch: ChannelWriteKillSwitch = .shared
     ) {
         self.discordService = discordService
         self.slackService = slackService
         self.telegramService = telegramService
         self.customJSONRunner = customJSONRunner
+        self.writeKillSwitch = writeKillSwitch
     }
 
     func listConnections() -> [[String: Any]] {
@@ -96,6 +102,15 @@ final class AgentChannelConnectionService: @unchecked Sendable {
                 payload["action_policies"] = actionPolicies(for: connection).map(\.dictionary)
                 payload["relay_receive_policy"] = relayReceivePolicy(for: connection).dictionary
                 payload["message_store"] = slackService.messageStoreDiagnostics()
+                payload["transport_health"] = await AgentChannelTransportHealthCenter.shared
+                    .allStates(connectionId: connection.id)
+                    .map(\.dictionary)
+                payload["receive_transport"] = [
+                    "status": slackService.hasAppToken() ? "configured" : "not_configured",
+                    "transport_id": SlackSocketModeTransportRuntime.transportId,
+                    "summary": "Slack Socket Mode receive starts when an app token, readable channels, and authorized sender IDs are configured.",
+                    "app_token_saved": slackService.hasAppToken(),
+                ]
                 return payload
             case .telegram:
                 var payload = await telegramService.diagnostics().dictionary
@@ -105,6 +120,9 @@ final class AgentChannelConnectionService: @unchecked Sendable {
                 payload["action_policies"] = actionPolicies(for: connection).map(\.dictionary)
                 payload["relay_receive_policy"] = relayReceivePolicy(for: connection).dictionary
                 payload["message_store"] = telegramService.messageStoreDiagnostics()
+                payload["transport_health"] = await AgentChannelTransportHealthCenter.shared
+                    .allStates(connectionId: connection.id)
+                    .map(\.dictionary)
                 return payload
             case .customHTTP:
                 var payload = await customJSONRunner.diagnostics(connection: connection)
@@ -340,6 +358,7 @@ final class AgentChannelConnectionService: @unchecked Sendable {
         confirmSend: Bool
     ) async throws -> [String: Any] {
         let connection = try requireAction(.sendMessage, connectionId: connectionId)
+        try requireGlobalWritesEnabled()
         switch connection.kind {
         case .discord:
             var payload = try await discordService.sendMessage(
@@ -391,6 +410,7 @@ final class AgentChannelConnectionService: @unchecked Sendable {
         confirmSend: Bool
     ) async throws -> [String: Any] {
         let connection = try requireAction(.replyThread, connectionId: connectionId)
+        try requireGlobalWritesEnabled()
         switch connection.kind {
         case .discord:
             var payload = try await discordService.replyToThread(
@@ -560,6 +580,13 @@ final class AgentChannelConnectionService: @unchecked Sendable {
         return connection
     }
 
+    private func requireGlobalWritesEnabled() throws {
+        let snapshot = writeKillSwitch.snapshot()
+        guard snapshot.writeEnabled else {
+            throw AgentChannelConnectionServiceError.globalWritesDisabled(generation: snapshot.generation)
+        }
+    }
+
     private func resolveConnection(_ connectionId: String?) throws -> AgentChannelConnection {
         let id = AgentChannelConnection.normalizedId(connectionId ?? "")
         let resolvedId = id.isEmpty ? Self.discordConnectionId : id
@@ -644,7 +671,16 @@ final class AgentChannelConnectionService: @unchecked Sendable {
                     name: "app_token",
                     keychainId: SlackCredentialStore.appTokenKey
                 ),
-            ]
+            ],
+            inboundAuthorization: AgentChannelInboundAuthorizationPolicy(
+                senderAllowlist: config.senderAllowlist,
+                roomAllowlist: config.readableChannelIds,
+                allowUnscopedSpaces: config.configuredTeamIds.isEmpty,
+                allowBotMessages: false,
+                allowSelfMessages: false,
+                requireProviderEventId: true,
+                auditDecisionReason: "slack_receive_authorization"
+            )
         )
     }
 
@@ -665,6 +701,7 @@ final class AgentChannelConnectionService: @unchecked Sendable {
         row["bot_token_saved"] = slackService.hasBotToken()
         row["signing_secret_saved"] = slackService.hasSigningSecret()
         row["app_token_saved"] = slackService.hasAppToken()
+        row["sender_allowlist"] = slackService.configuration().senderAllowlist
         let readRooms = row["read_room_allowlist"] as? [String] ?? []
         let writeRooms = row["write_room_allowlist"] as? [String] ?? []
         row["configured"] = slackService.hasBotToken()
@@ -806,6 +843,9 @@ final class AgentChannelConnectionService: @unchecked Sendable {
                 guard !connection.writeRoomAllowlist.isEmpty else {
                     return (.unavailable, "No rooms are allowlisted for write access.")
                 }
+                guard action == .draftMessage || writeKillSwitch.snapshot().writeEnabled else {
+                    return (.unavailable, "Global Agent Channel writes are disabled.")
+                }
                 return (.available, nil)
             }
         case .discord, .slack, .telegram:
@@ -828,6 +868,9 @@ final class AgentChannelConnectionService: @unchecked Sendable {
                 }
                 guard !connection.writeRoomAllowlist.isEmpty else {
                     return (.unavailable, "No rooms are allowlisted for write access.")
+                }
+                guard action == .draftMessage || writeKillSwitch.snapshot().writeEnabled else {
+                    return (.unavailable, "Global Agent Channel writes are disabled.")
                 }
                 return (.available, nil)
             }

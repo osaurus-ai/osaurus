@@ -28,7 +28,7 @@ private extension OsaurusTool {
                     tool: tool,
                     retryable: false
                 )
-            case .unsupportedKind, .unsupportedAction, .customExecutionNotImplemented:
+            case .globalWritesDisabled, .unsupportedKind, .unsupportedAction, .customExecutionNotImplemented:
                 return ToolEnvelope.failure(
                     kind: .rejected,
                     message: error.localizedDescription,
@@ -203,6 +203,69 @@ private extension OsaurusTool {
                     retryable: false
                 )
             case .rateLimited:
+                return ToolEnvelope.failure(
+                    kind: .unavailable,
+                    message: error.localizedDescription,
+                    tool: tool,
+                    retryable: true
+                )
+            case .invalidResponse, .requestFailed:
+                return ToolEnvelope.failure(
+                    kind: .executionError,
+                    message: error.localizedDescription,
+                    tool: tool,
+                    retryable: false
+                )
+            }
+        }
+
+        if let error = error as? TelegramConnectionServiceError {
+            switch error {
+            case .invalidChatId, .sendConfirmationRequired, .messageTooLong, .emptyMessage, .invalidWebhookSecret:
+                return ToolEnvelope.failure(kind: .invalidArgs, message: error.localizedDescription, tool: tool)
+            case .chatNotReadable, .chatNotWritable, .writeDisabled:
+                return ToolEnvelope.failure(kind: .rejected, message: error.localizedDescription, tool: tool)
+            case .notConfigured, .messageStoreUnavailable:
+                return ToolEnvelope.failure(
+                    kind: .unavailable,
+                    message: error.localizedDescription,
+                    tool: tool,
+                    retryable: false
+                )
+            case .configurationSaveFailed, .api:
+                return ToolEnvelope.failure(
+                    kind: .executionError,
+                    message: error.localizedDescription,
+                    tool: tool,
+                    retryable: false
+                )
+            }
+        }
+
+        if let error = error as? TelegramAPIError {
+            switch error {
+            case .invalidToken:
+                return ToolEnvelope.failure(
+                    kind: .unavailable,
+                    message: error.localizedDescription,
+                    tool: tool,
+                    retryable: false
+                )
+            case .forbidden:
+                return ToolEnvelope.failure(
+                    kind: .rejected,
+                    message: error.localizedDescription,
+                    tool: tool,
+                    retryable: false
+                )
+            case .notFound:
+                return ToolEnvelope.failure(
+                    kind: .notFound,
+                    message: error.localizedDescription,
+                    tool: tool,
+                    retryable: false
+                )
+            case .conflict, .rateLimited:
                 return ToolEnvelope.failure(
                     kind: .unavailable,
                     message: error.localizedDescription,

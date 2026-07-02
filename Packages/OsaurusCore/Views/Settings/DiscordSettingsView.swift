@@ -99,23 +99,23 @@ struct DiscordSettingsView: View {
                 multilineField(
                     title: "Server IDs",
                     text: $guildIdsText,
-                    help: "Numeric Discord server IDs Osaurus may inspect for channel discovery."
+                    help: "Numeric Discord server IDs Osaurus may inspect for channel discovery. At least one server is required for diagnostics to report connected."
                 )
                 multilineField(
                     title: "Readable Channel IDs",
                     text: $readableChannelIdsText,
-                    help: "Numeric channel or thread IDs Osaurus may read. Recent reads are bounded."
+                    help: "Numeric channel or thread IDs Osaurus may read, search, or inspect. Recent reads are bounded."
                 )
                 SettingsToggle(
                     title: "Enable Discord Writes",
                     description:
-                        "Allow send/reply tools for write-allowlisted destinations. Tool calls still require approval.",
+                        "Allow send/reply tools for write-allowlisted Discord destinations. The global channel write switch must also be on.",
                     isOn: $writeEnabled
                 )
                 multilineField(
                     title: "Writable Channel IDs",
                     text: $writableChannelIdsText,
-                    help: "Numeric channel or thread IDs Osaurus may post to when writes are enabled."
+                    help: "Numeric channel or thread IDs Osaurus may post to when Discord writes are enabled."
                 )
                 StyledSettingsTextField(
                     label: "Default Read Limit",
@@ -190,7 +190,7 @@ struct DiscordSettingsView: View {
         writableChannelIdsText = configuration.writableChannelIds.joined(separator: "\n")
         writeEnabled = configuration.writeEnabled
         defaultReadLimit = "\(configuration.defaultReadLimit)"
-        tokenSaved = DiscordCredentialStore.hasBotToken()
+        tokenSaved = DiscordConnectionService.shared.hasBotToken()
     }
 
     private func saveToken() {
