@@ -150,6 +150,20 @@ final class ConfigureAIState: ObservableObject {
     // Local
     @Published var selectedModel: MLXModel? = nil
 
+    /// Free bytes on the volume that will host the model download, refreshed
+    /// one-shot (`refreshFreeDiskSpace`) on appear / chooser open / CTA press.
+    /// Deliberately not `SystemMonitorService.availableStorageGB`: subscribing
+    /// this deep onboarding tree to the monitor's 2s publishes forced a full
+    /// re-render every tick (see the note on `ConfigureAIBody.systemMonitor`),
+    /// and the stat lines only need a point-in-time value. `nil` means the
+    /// query failed — render stats without the free-space context.
+    @Published var freeDiskBytes: Int64? = nil
+
+    /// Inline "not enough disk space" warning shown under the local card when
+    /// the CTA-press preflight refuses. Cleared on model change and on a
+    /// passing preflight, so it never sticks to a different selection.
+    @Published var diskSpaceWarning: String? = nil
+
     // API
     @Published var apiKey: String = ""
     /// The connection method pinned for the selected provider, set from the
@@ -223,6 +237,21 @@ final class ConfigureAIState: ObservableObject {
     var localFailedError: String? {
         if case .failed(let e) = localDownloadState { return e }
         return nil
+    }
+
+    /// A download refusal that never flipped the state machine: the service's
+    /// upfront preflight (e.g. not enough disk space) sets only
+    /// `downloadAlert` and returns while the state is still `.notStarted`.
+    /// Attributed by model id so an alert for some other download can't
+    /// hijack this step. Read by both the downloading screen (renders the
+    /// failed card inline) and the CTA (flips to "Try Again") so the two
+    /// surfaces can't disagree.
+    var localDownloadRefusal: ModelDownloadService.DownloadAlertInfo? {
+        guard let alert = ModelManager.shared.downloadAlert,
+            alert.modelId == selectedModel?.id,
+            case .notStarted = localDownloadState
+        else { return nil }
+        return alert
     }
 
     /// Progress fraction (0…1) of the latest download attempt regardless
@@ -314,11 +343,222 @@ final class ConfigureAIState: ObservableObject {
         return smallest(comfortable) ?? smallest(candidates)
     }
 
+    /// Collapses same-family quant variants — rows whose titles collapse to
+    /// the same `simplifiedName`, e.g. the MXFP8 and QAT builds of one model —
+    /// to a single pick per family, so the chooser never shows what reads as
+    /// a duplicate. Group order follows the first occurrence in `candidates`
+    /// (catalog order). Within a family the app chooses for the user:
+    ///
+    ///   1. The active selection (`selectedId`) — the committed model must
+    ///      never vanish from the list.
+    ///   2. A downloaded variant that can still run here — never steer the
+    ///      user into re-downloading a near-duplicate of bits already on
+    ///      disk. Largest wins if several are on disk.
+    ///   3. The variant `recommendedLocalPick` chose — the tuned auto-default
+    ///      (QAT spine) must survive dedupe, or the "Picked for your Mac"
+    ///      badge would point at a hidden row.
+    ///   4. Quality first, comfort permitting: the largest (highest-
+    ///      precision) build inside the best compatibility band a variant
+    ///      reaches (comfortable beats tight).
+    ///   5. If every variant is too large, the smallest one — the disabled
+    ///      row then documents the family's floor.
+    static func dedupedTopPicks(
+        from candidates: [MLXModel],
+        totalMemoryGB: Double,
+        selectedId: String?
+    ) -> [MLXModel] {
+        let recommendedId = recommendedLocalPick(
+            from: candidates,
+            totalMemoryGB: totalMemoryGB
+        )?.id
+        var order: [String] = []
+        var groups: [String: [MLXModel]] = [:]
+        for model in candidates {
+            let key = model.simplifiedName
+            if groups[key] == nil { order.append(key) }
+            groups[key, default: []].append(model)
+        }
+        return order.compactMap { key in
+            guard let variants = groups[key] else { return nil }
+            return bestVariant(
+                of: variants,
+                totalMemoryGB: totalMemoryGB,
+                selectedId: selectedId,
+                recommendedId: recommendedId
+            )
+        }
+    }
+
+    /// Representative of one same-name variant group; see `dedupedTopPicks`
+    /// for the preference order.
+    private static func bestVariant(
+        of variants: [MLXModel],
+        totalMemoryGB: Double,
+        selectedId: String?,
+        recommendedId: String?
+    ) -> MLXModel? {
+        if let selected = variants.first(where: { $0.id == selectedId }) {
+            return selected
+        }
+
+        func sizeBytes(_ model: MLXModel) -> Int64 { model.downloadSizeBytes ?? 0 }
+        func comfortRank(_ model: MLXModel) -> Int {
+            switch model.compatibility(totalMemoryGB: totalMemoryGB) {
+            case .compatible, .unknown: return 0
+            case .tight: return 1
+            case .tooLarge: return 2
+            }
+        }
+
+        let runnable = variants.filter { comfortRank($0) < 2 }
+        if let downloaded = runnable.filter(\.isDownloaded)
+            .max(by: { sizeBytes($0) < sizeBytes($1) })
+        {
+            return downloaded
+        }
+        if let recommended = variants.first(where: { $0.id == recommendedId }) {
+            return recommended
+        }
+        if let best = runnable.min(by: { lhs, rhs in
+            let (lhsRank, rhsRank) = (comfortRank(lhs), comfortRank(rhs))
+            if lhsRank != rhsRank { return lhsRank < rhsRank }
+            return sizeBytes(lhs) > sizeBytes(rhs)
+        }) {
+            return best
+        }
+        return variants.min(by: { sizeBytes($0) < sizeBytes($1) })
+    }
+
     /// Tapping a local model row (in the "Change" popover) makes it the active
     /// local brain. Kept side-effect-light (no `withAnimation`) so the footer
-    /// CTA doesn't morph through the shared transaction.
+    /// CTA doesn't morph through the shared transaction. Clears any disk-space
+    /// warning raised for the previous selection — the new model has its own
+    /// footprint and gets its own preflight at the next CTA press.
     func selectLocalModel(_ model: MLXModel) {
         selectedModel = model
+        diskSpaceWarning = nil
+    }
+
+    // MARK: Machine specs (free storage)
+
+    /// One-shot query of the free bytes on the volume that hosts the models
+    /// directory. The same query path the downloader's preflight uses
+    /// (`OsaurusPaths.volumeFreeBytes` via an existing ancestor), so the number
+    /// the user sees matches the number the refusal logic compares against.
+    func refreshFreeDiskSpace() {
+        freeDiskBytes = Self.queryFreeDiskBytes()
+    }
+
+    /// Free bytes on the models volume, or `nil` when the query fails
+    /// (callers render without the free-space context rather than showing 0).
+    static func queryFreeDiskBytes() -> Int64? {
+        let dir = DirectoryPickerService.effectiveModelsDirectory()
+        guard let probe = ModelDownloadService.existingAncestor(of: dir) else { return nil }
+        return OsaurusPaths.volumeFreeBytes(forPath: probe.path)
+    }
+
+    /// Whether `selected` is exactly the model `recommendedLocalPick` would
+    /// choose for this machine — the condition for the "picked for your Mac's
+    /// specs" line on the home card. Pure so the render rule is unit-testable.
+    static func isRecommendedSelection(
+        _ selected: MLXModel?,
+        candidates: [MLXModel],
+        totalMemoryGB: Double
+    ) -> Bool {
+        guard let selected else { return false }
+        return recommendedLocalPick(from: candidates, totalMemoryGB: totalMemoryGB)?.id
+            == selected.id
+    }
+
+    // MARK: Resource stat formatting
+
+    /// Home-card memory stat: the model's runtime RAM cost read against the
+    /// Mac's own total, so cost and capacity land in one glance. `nil` when
+    /// the model has no RAM estimate (hide the line rather than show "~—").
+    static func memoryStatText(for model: MLXModel, totalMemoryGB: Double) -> String? {
+        guard let memory = model.formattedEstimatedMemory else { return nil }
+        guard totalMemoryGB > 0 else {
+            return L("Uses \(memory) of memory while it runs")
+        }
+        return L(
+            "Uses \(memory) of your \(Int(totalMemoryGB.rounded())) GB memory while it runs"
+        )
+    }
+
+    /// Home-card disk stat: download cost against the Mac's free space, or
+    /// the on-disk footprint once downloaded. `nil` when the size is unknown;
+    /// an unknown free-space query drops the "you have N free" suffix rather
+    /// than showing 0.
+    static func diskStatText(for model: MLXModel, freeDiskBytes: Int64?) -> String? {
+        guard let size = model.formattedDownloadSize else { return nil }
+        if model.isDownloaded {
+            return L("\(size) on disk")
+        }
+        guard let free = freeDiskBytes else {
+            return L("\(size) download")
+        }
+        let freeText = free.formatted(.byteCount(style: .file, allowedUnits: [.gb, .mb]))
+        return L("\(size) download — you have \(freeText) free")
+    }
+
+    /// Chooser-row stat line ("7.5 GB download · needs ~9.4 GB memory") —
+    /// the size moved out of the badge cluster into a labeled, scannable
+    /// line. `nil` when neither stat is known so the row omits it entirely.
+    static func chooserStatsLine(for model: MLXModel) -> String? {
+        var parts: [String] = []
+        if let size = model.formattedDownloadSize {
+            parts.append(model.isDownloaded ? L("\(size) on disk") : L("\(size) download"))
+        }
+        if let memory = model.formattedEstimatedMemory {
+            parts.append(L("needs \(memory) memory"))
+        }
+        return parts.isEmpty ? nil : parts.joined(separator: " · ")
+    }
+
+    /// Plain-language one-liner for a chooser row, derived from the curated
+    /// use case instead of the catalog description. The raw descriptions are
+    /// written for the Models tab and lean on exactly the vocabulary
+    /// first-timers shouldn't have to parse (MoE, MXFP8, context windows);
+    /// this keeps the row to "what is it for". `nil` when the model carries
+    /// no use case — no subtitle beats a jargon leak.
+    static func chooserSubtitle(for model: MLXModel) -> String? {
+        guard let useCase = model.useCase else { return nil }
+        switch useCase {
+        case .general: return L("A great everyday model for chat and writing.")
+        case .vision: return L("Chats, and understands images and video.")
+        case .reasoning: return L("Takes extra time to think through hard problems.")
+        case .coding: return L("Tuned for writing and fixing code.")
+        case .smallest: return L("Light and fast — runs on any Mac.")
+        case .bestQuality: return L("The most capable pick — for powerful Macs.")
+        }
+    }
+
+    // MARK: Disk-space preflight
+
+    /// Mirrors `ModelDownloadService.storageRefusalMessage` semantics
+    /// (including its 256 MB safety margin): returns `true` when the download
+    /// definitely won't fit. Unknown sizes on either side fail open — the
+    /// downloader's own in-task preflight remains the authoritative check.
+    static func downloadWontFit(neededBytes: Int64?, freeBytes: Int64?) -> Bool {
+        guard let needed = neededBytes, needed > 0, let free = freeBytes else { return false }
+        return ModelDownloadService.storageRefusalMessage(neededBytes: needed, freeBytes: free)
+            != nil
+    }
+
+    /// Runs the disk preflight for the current selection, refreshing the
+    /// cached free-space value. Returns the user-facing warning on refusal,
+    /// `nil` when the download fits (or sizes are unknown — fail open).
+    private func evaluateDiskShortfall() -> String? {
+        refreshFreeDiskSpace()
+        guard let model = selectedModel,
+            Self.downloadWontFit(neededBytes: model.totalSizeEstimateBytes, freeBytes: freeDiskBytes),
+            let needed = model.formattedDownloadSize,
+            let freeBytes = freeDiskBytes
+        else { return nil }
+        let free = freeBytes.formatted(.byteCount(style: .file, allowedUnits: [.gb, .mb]))
+        return L(
+            "Not enough free disk space — this model needs \(needed) and this Mac has \(free) free. Free up space or choose a smaller model."
+        )
     }
 
     // MARK: Model chooser (centered modal)
@@ -335,7 +575,10 @@ final class ConfigureAIState: ObservableObject {
     @Published var draftModel: MLXModel? = nil
 
     /// Open the chooser, seeding the highlight from the current selection.
+    /// Refreshes the free-storage snapshot so the footer's machine-spec line
+    /// is current when the dialog appears.
     func openModelChooser() {
+        refreshFreeDiskSpace()
         draftModel = selectedModel
         isChoosingModel = true
     }
@@ -359,6 +602,17 @@ final class ConfigureAIState: ObservableObject {
     }
 
     func startLocalDownloadOrContinue(onComplete: () -> Void) {
+        // Disk preflight before committing anything: without it, the download
+        // service's own refusal only sets `downloadAlert` (presented by the
+        // Models tab, not onboarding) and the user would land on a permanent
+        // "Preparing download..." screen. Refusing here keeps them on home
+        // with an inline banner and a clear way forward.
+        if selectedModel?.isDownloaded != true, let warning = evaluateDiskShortfall() {
+            diskSpaceWarning = warning
+            return
+        }
+        diskSpaceWarning = nil
+
         // Committing to a local model — record the brain source for the funnel
         // (no payment, no network).
         selectedBrainSource = .local
@@ -374,6 +628,10 @@ final class ConfigureAIState: ObservableObject {
 
     func startLocalDownload() {
         guard let model = selectedModel else { return }
+        // Consume any stale refusal for this model before retrying, so the
+        // downloading screen's inline failed card doesn't resurrect it while
+        // the fresh attempt is spinning up. A repeat refusal sets a new alert.
+        clearDownloadAlertForSelectedModel()
         ModelManager.shared.downloadModel(model)
     }
 
@@ -398,10 +656,24 @@ final class ConfigureAIState: ObservableObject {
         popToHome()
     }
 
+    /// Drops a pending `downloadAlert` that belongs to the current selection.
+    /// Onboarding presents these refusals inline (never as the Models tab's
+    /// alert dialog), so once handled here the global alert must not linger
+    /// and re-present later in the Models tab.
+    private func clearDownloadAlertForSelectedModel() {
+        guard let id = selectedModel?.id,
+            ModelManager.shared.downloadAlert?.modelId == id
+        else { return }
+        ModelManager.shared.downloadAlert = nil
+    }
+
     // MARK: Navigation
 
-    /// Any drilled-in sub-screen → home (backward slide).
+    /// Any drilled-in sub-screen → home (backward slide). Consumes a pending
+    /// refusal alert for the selection — it was already shown inline on the
+    /// downloading screen.
     func popToHome() {
+        clearDownloadAlertForSelectedModel()
         substateDirection = .backward
         screen = .home
         isChoosingModel = false
@@ -705,6 +977,7 @@ struct ConfigureAIBody: View {
         }
         .onAppear {
             state.ensureLocalSelection(totalMemoryGB: systemMonitor.totalMemoryGB)
+            state.refreshFreeDiskSpace()
         }
     }
 
@@ -814,6 +1087,9 @@ struct ConfigureAIBody: View {
     private var homeView: some View {
         VStack(spacing: 12) {
             runOnYourMacCard
+            if let warning = state.diskSpaceWarning {
+                OnboardingCalloutBanner(tone: .error, rawMessage: warning)
+            }
             useYourOwnKeyRow
         }
     }
@@ -822,6 +1098,9 @@ struct ConfigureAIBody: View {
 
     /// The recommended local card. Tapping the upper region selects the local
     /// brain; the model inset's "Change" control opens the model popover.
+    /// The subtitle dropped its vague "uses some memory" clause — the inset's
+    /// stat lines now state the exact memory/disk cost against this Mac's
+    /// specs, and the caption below says how to undo the download later.
     private var runOnYourMacCard: some View {
         OnboardingGlassCard(isSelected: true) {
             VStack(alignment: .leading, spacing: 12) {
@@ -838,7 +1117,7 @@ struct ConfigureAIBody: View {
                             Spacer(minLength: 8)
                         }
                         Text(
-                            "Free, private, and works offline. Uses some memory while it runs.",
+                            "Free, private, and works offline.",
                             bundle: .module
                         )
                         .font(theme.font(size: 12))
@@ -849,10 +1128,30 @@ struct ConfigureAIBody: View {
                 }
 
                 localModelInset
+
+                deleteAnytimeCaption
             }
             .padding(.horizontal, OnboardingMetrics.cardPaddingH)
             .padding(.vertical, OnboardingMetrics.cardPaddingV)
         }
+    }
+
+    /// Quiet one-liner that answers "what am I committing to?" — the model is
+    /// a single self-contained folder, removable later from the Models tab.
+    private var deleteAnytimeCaption: some View {
+        HStack(alignment: .top, spacing: 6) {
+            Image(systemName: "info.circle")
+                .font(.system(size: 10))
+                .padding(.top, 2)
+            Text(
+                "Kept in one folder on your Mac — delete it anytime from the Models tab to get the space back.",
+                bundle: .module
+            )
+            .font(theme.font(size: 11))
+            .fixedSize(horizontal: false, vertical: true)
+            Spacer(minLength: 0)
+        }
+        .foregroundColor(theme.tertiaryText)
     }
 
     /// Leading accent badge for the local card, mirroring `OnboardingRowCard`'s
@@ -875,48 +1174,138 @@ struct ConfigureAIBody: View {
         }
     }
 
-    /// The selected-model chip under the local card body: model name + a
-    /// Downloaded / size badge + a "Change" control that opens the model dialog.
+    /// The selected-model summary under the local card body. Every number
+    /// carries the machine context inline (cost *of* this Mac's capacity) so
+    /// the user reads cost and headroom in one glance:
+    ///   - name row: model name + Downloaded chip + "Change"
+    ///   - stat rows: runtime memory vs total RAM, download size vs free disk
+    ///   - fit row: "picked for your specs" when the auto-default is active,
+    ///     else the plain compatibility verdict.
     private var localModelInset: some View {
-        HStack(spacing: 8) {
-            Text(state.selectedModel?.simplifiedName ?? L("Choose a model"))
-                .font(theme.font(size: 13, weight: .semibold))
-                .foregroundColor(theme.primaryText)
-                .lineLimit(1)
-            localInsetPrecisionBadge
-            localInsetBadge
-            Spacer(minLength: 8)
-            changeButton
+        VStack(alignment: .leading, spacing: 7) {
+            HStack(spacing: 8) {
+                Text(state.selectedModel?.simplifiedName ?? L("Choose a model"))
+                    .font(theme.font(size: 13, weight: .semibold))
+                    .foregroundColor(theme.primaryText)
+                    .lineLimit(1)
+                localInsetBadge
+                Spacer(minLength: 8)
+                changeButton
+            }
+            localResourceStats
+            localFitLine
         }
         .padding(.horizontal, 12)
-        .padding(.vertical, 9)
+        .padding(.vertical, 10)
         .background(
             RoundedRectangle(cornerRadius: 8, style: .continuous)
                 .fill(theme.tertiaryBackground)
         )
     }
 
-    /// The friendly precision tag (e.g. "High precision") for the selected
-    /// model, mirroring the chip in the chooser so the card matches what the
-    /// user tapped — `simplifiedName` alone can't tell two same-size builds
-    /// apart. Reuses `OnboardingBadgeChip` so the styling can't drift from the
-    /// chooser's chips.
     @ViewBuilder
-    private var localInsetPrecisionBadge: some View {
-        if let model = state.selectedModel, let precision = onboardingPrecisionTag(for: model) {
-            OnboardingBadgeChip(badge: OnboardingRowBadge(precision))
+    private var localInsetBadge: some View {
+        if state.selectedModel?.isDownloaded == true {
+            OnboardingBadgeChip(badge: OnboardingRowBadge(L("Downloaded"), style: .success))
         }
     }
 
+    /// The explicit resource cost of the selected model, read against this
+    /// Mac's own specs. Lines with unknown values disappear instead of
+    /// rendering placeholders.
     @ViewBuilder
-    private var localInsetBadge: some View {
+    private var localResourceStats: some View {
         if let model = state.selectedModel {
-            if model.isDownloaded {
-                OnboardingBadgeChip(badge: OnboardingRowBadge(L("Downloaded"), style: .success))
-            } else if let size = model.formattedDownloadSize {
-                OnboardingBadgeChip(badge: OnboardingRowBadge(size))
+            VStack(alignment: .leading, spacing: 4) {
+                if let memory = ConfigureAIState.memoryStatText(
+                    for: model,
+                    totalMemoryGB: systemMonitor.totalMemoryGB
+                ) {
+                    localStatLine(icon: "memorychip", text: memory)
+                }
+                if let disk = ConfigureAIState.diskStatText(
+                    for: model,
+                    freeDiskBytes: state.freeDiskBytes
+                ) {
+                    localStatLine(icon: "internaldrive", text: disk)
+                }
             }
         }
+    }
+
+    private func localStatLine(icon: String, text: String) -> some View {
+        HStack(spacing: 6) {
+            Image(systemName: icon)
+                .font(.system(size: 10, weight: .medium))
+                .foregroundColor(theme.tertiaryText)
+                .frame(width: 13)
+            Text(text)
+                .font(theme.font(size: 11))
+                .foregroundColor(theme.secondaryText)
+                .lineLimit(1)
+            Spacer(minLength: 0)
+        }
+    }
+
+    /// The trust line: when the selection is exactly the model the funnel
+    /// recommends for this hardware, say so ("we chose this for you"). When
+    /// the user picked something else in the chooser, fall back to the plain
+    /// fit verdict so the claim stays honest.
+    @ViewBuilder
+    private var localFitLine: some View {
+        if let model = state.selectedModel {
+            if isRecommendedSelection(model) {
+                localFitRow(
+                    icon: "checkmark.seal.fill",
+                    text: L("Picked for your Mac's specs — nothing to configure"),
+                    color: theme.successColor
+                )
+            } else {
+                switch model.compatibility(totalMemoryGB: systemMonitor.totalMemoryGB) {
+                case .compatible:
+                    localFitRow(
+                        icon: "checkmark.shield.fill",
+                        text: L("Runs well on this Mac"),
+                        color: theme.successColor
+                    )
+                case .tight:
+                    localFitRow(
+                        icon: "exclamationmark.triangle.fill",
+                        text: L("Tight fit on this Mac"),
+                        color: theme.warningColor
+                    )
+                case .tooLarge:
+                    localFitRow(
+                        icon: "xmark.octagon.fill",
+                        text: L("Too large for this Mac"),
+                        color: theme.errorColor
+                    )
+                case .unknown:
+                    EmptyView()
+                }
+            }
+        }
+    }
+
+    private func localFitRow(icon: String, text: String, color: Color) -> some View {
+        HStack(spacing: 6) {
+            Image(systemName: icon)
+                .font(.system(size: 10, weight: .semibold))
+                .frame(width: 13)
+            Text(text)
+                .font(theme.font(size: 11, weight: .semibold))
+                .lineLimit(1)
+            Spacer(minLength: 0)
+        }
+        .foregroundColor(color)
+    }
+
+    private func isRecommendedSelection(_ model: MLXModel) -> Bool {
+        ConfigureAIState.isRecommendedSelection(
+            model,
+            candidates: modelManager.suggestedModels.filter(\.isTopSuggestion),
+            totalMemoryGB: systemMonitor.totalMemoryGB
+        )
     }
 
     private var changeButton: some View {
@@ -995,20 +1384,49 @@ struct ConfigureAIBody: View {
 
     // MARK: - Local downloading
 
-    /// State-driven downloading view. Renders one of two layouts depending on
-    /// the live `localDownloadState`:
+    /// State-driven downloading view. Renders one of three layouts depending
+    /// on the live `localDownloadState`:
     /// - `.downloading` / `.paused` (or initial): progress card with inline
-    ///   Pause / Resume / Cancel controls.
+    ///   Pause / Resume / Cancel controls, plus the delete-anytime caption.
     /// - `.failed`: inline error card with Retry and Choose-another-model
     ///   actions, so the user always has a path forward without a disabled
     ///   Continue button.
+    /// - a refusal that never started (`downloadAlert` with `.notStarted`):
+    ///   rendered through the same failed card. The service's upfront disk
+    ///   preflight refuses by setting only `downloadAlert` — presented by the
+    ///   Models tab, not here — which used to strand onboarding on a permanent
+    ///   "Preparing download..." screen.
     @ViewBuilder
     private var localDownloadingView: some View {
         if case .failed(let message) = state.localDownloadState {
             localDownloadFailedCard(message: message)
+        } else if let refusal = state.localDownloadRefusal {
+            localDownloadFailedCard(message: refusal.message)
         } else {
-            localDownloadProgressCard
+            VStack(alignment: .leading, spacing: 10) {
+                localDownloadProgressCard
+                downloadReassuranceCaption
+            }
         }
+    }
+
+    /// Deletion reassurance at the moment the user is watching gigabytes
+    /// arrive — where the "what did I just commit to?" worry actually lives.
+    private var downloadReassuranceCaption: some View {
+        HStack(alignment: .top, spacing: 6) {
+            Image(systemName: "info.circle")
+                .font(.system(size: 10))
+                .padding(.top, 2)
+            Text(
+                "Saved to your Models folder as a single download — delete it anytime to get the space back.",
+                bundle: .module
+            )
+            .font(theme.font(size: 11))
+            .fixedSize(horizontal: false, vertical: true)
+            Spacer(minLength: 0)
+        }
+        .foregroundColor(theme.tertiaryText)
+        .padding(.horizontal, 4)
     }
 
     private var localDownloadProgressCard: some View {
@@ -1550,25 +1968,6 @@ struct ConfigureAIBody: View {
     }
 }
 
-/// Friendly precision/variant tag for the onboarding model surfaces. The
-/// chooser strips precision tokens from the title for a clean, product-style
-/// name (`MLXModel.simplifiedName`); this chip re-surfaces the meaningful
-/// difference so same-size variants (e.g. the two "Gemma 4 12B" builds) stay
-/// distinguishable. Returns `nil` when no precision marker is recognized. Order
-/// matters: `qat` is checked before the bare 4-bit branch (QAT builds are
-/// MXFP4), and the high-precision 8-bit branch before the 4-bit one.
-private func onboardingPrecisionTag(for model: MLXModel) -> String? {
-    let lower = model.name.lowercased()
-    if lower.contains("qat") { return L("Efficient (QAT)") }
-    if lower.contains("mxfp8") || lower.contains("8bit") { return L("High precision") }
-    if lower.contains("mxfp4") || lower.contains("4bit") { return L("Efficient") }
-    if lower.contains("fp16") || lower.contains("bf16") || lower.contains("fp32") {
-        return L("Full precision")
-    }
-    if lower.contains("jangtq") || lower.contains("jang") { return L("TurboQuant") }
-    return nil
-}
-
 // MARK: - Model chooser modal
 
 /// Centered "Choose your model" dialog, hosted at the OnboardingView window
@@ -1579,9 +1978,10 @@ private func onboardingPrecisionTag(for model: MLXModel) -> String? {
 /// Forgiving draft-then-confirm so brand-new users can browse without
 /// committing: tapping a row only highlights it (`state.draftModel`); "Use this
 /// model" commits, while Cancel / X / Esc / scrim-tap dismiss without touching
-/// the active selection. Copy and badges are written for first-timers — no
-/// `LLM`/`VLM` jargon, a clear "Recommended" tag, and a plain-language memory
-/// hint.
+/// the active selection. Copy and rows are written for first-timers — no
+/// `LLM`/`VLM` jargon, one hardware-chosen build per model family, a
+/// "Picked for your Mac" pill on the safe default, and per-row cost stats
+/// read against this Mac's specs in the footer.
 struct ConfigureModelChooserModal: View {
     @ObservedObject var state: ConfigureAIState
 
@@ -1680,7 +2080,7 @@ struct ConfigureModelChooserModal: View {
                     .font(theme.font(size: 18, weight: .semibold))
                     .foregroundColor(theme.primaryText)
                 Text(
-                    "Every model here runs privately on your Mac. Not sure? Start with the recommended one — you can switch anytime.",
+                    "Every model here runs privately on your Mac. Not sure? Keep the one we picked for your Mac's specs — you can switch anytime.",
                     bundle: .module
                 )
                 .font(theme.font(size: 12))
@@ -1702,14 +2102,19 @@ struct ConfigureModelChooserModal: View {
         ScrollView(.vertical, showsIndicators: false) {
             VStack(spacing: OnboardingMetrics.cardSpacing) {
                 ForEach(pickerModels, id: \.model.id) { pair in
+                    // Too-large models stay visible so the badge can explain
+                    // why, but can't be selected — committing to a model that
+                    // won't run is the one unsafe choice this list can offer.
                     OnboardingRowCard(
                         icon: .symbol(pair.model.isVLM ? "eye" : "cpu"),
                         title: pair.model.simplifiedName,
-                        subtitle: pair.model.description,
+                        subtitle: ConfigureAIState.chooserSubtitle(for: pair.model),
+                        secondaryLine: ConfigureAIState.chooserStatsLine(for: pair.model),
                         badges: badges(for: pair.model, compatibility: pair.compatibility),
                         badgesBelowTitle: true,
                         accessory: .radio(isSelected: isDraftSelected(pair.model)),
-                        isSelected: isDraftSelected(pair.model)
+                        isSelected: isDraftSelected(pair.model),
+                        isDisabled: pair.compatibility == .tooLarge
                     ) {
                         state.selectDraftModel(pair.model)
                     }
@@ -1728,7 +2133,7 @@ struct ConfigureModelChooserModal: View {
             HStack(spacing: 6) {
                 Image(systemName: "info.circle")
                     .font(.system(size: 11, weight: .medium))
-                Text("Bigger models are smarter but use more memory.", bundle: .module)
+                Text(footerHint)
                     .font(theme.font(size: 11))
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -1753,64 +2158,101 @@ struct ConfigureModelChooserModal: View {
         .padding(.bottom, 18)
     }
 
+    /// Footer hint carrying the Mac's actual specs, so every row's download /
+    /// memory numbers above are readable against real capacity. Degrades to
+    /// the generic wording when the monitor hasn't reported RAM yet.
+    private var footerHint: String {
+        let totalMemoryGB = systemMonitor.totalMemoryGB
+        guard totalMemoryGB > 0 else {
+            return L("Bigger models are smarter but use more memory.")
+        }
+        let memoryGB = Int(totalMemoryGB.rounded())
+        if let free = state.freeDiskBytes {
+            let freeText = free.formatted(.byteCount(style: .file, allowedUnits: [.gb, .mb]))
+            return L(
+                "Bigger models are smarter but need more memory — your Mac has \(memoryGB) GB memory and \(freeText) free storage."
+            )
+        }
+        return L("Bigger models are smarter but need more memory — your Mac has \(memoryGB) GB memory.")
+    }
+
     // MARK: Catalog (modal-local)
 
-    /// Top-suggestion curated models paired with their compatibility verdict
-    /// against the current `totalMemoryGB`. `.unknown` is treated as "let
-    /// through" (fail-open) so the list isn't blank during startup before the
-    /// system monitor reports.
-    private var topSuggestionsWithCompatibility: [(model: MLXModel, compatibility: ModelCompatibility)] {
-        let totalMemoryGB = systemMonitor.totalMemoryGB
-        return modelManager.suggestedModels
-            .filter(\.isTopSuggestion)
-            .map { ($0, $0.compatibility(totalMemoryGB: totalMemoryGB)) }
+    /// The curated top picks with same-family quant variants collapsed to a
+    /// single, hardware-chosen build (`ConfigureAIState.dedupedTopPicks`) —
+    /// the raw catalog ships e.g. two "Qwen3.6 27B" builds that read as
+    /// duplicates once titles are simplified. Keyed on the committed
+    /// `selectedModel` (stable while the dialog is open, unlike the draft) so
+    /// rows don't reshuffle as the user taps around.
+    private var dedupedTopPicks: [MLXModel] {
+        ConfigureAIState.dedupedTopPicks(
+            from: modelManager.suggestedModels.filter(\.isTopSuggestion),
+            totalMemoryGB: systemMonitor.totalMemoryGB,
+            selectedId: state.selectedModel?.id
+        )
     }
 
     /// Onboarding is intentionally opinionated — it surfaces only our curated
     /// top picks (downloaded ones still appear, badged "Downloaded"), so the
     /// first-run list never balloons with ad-hoc / auto-fetched models on disk.
-    /// The full catalog lives in the Models tab.
+    /// The full catalog lives in the Models tab. Each row is paired with its
+    /// compatibility verdict (`.unknown` fails open so the list isn't blank
+    /// before the system monitor reports), and the hardware-aware
+    /// recommendation is pinned first so the safe default is the first thing
+    /// a first-timer sees; everything else keeps catalog order.
     private var pickerModels: [(model: MLXModel, compatibility: ModelCompatibility)] {
-        topSuggestionsWithCompatibility
+        let totalMemoryGB = systemMonitor.totalMemoryGB
+        let items = dedupedTopPicks.map {
+            (model: $0, compatibility: $0.compatibility(totalMemoryGB: totalMemoryGB))
+        }
+        guard let recommendedId = recommendedRowId else { return items }
+        let recommended = items.filter { $0.model.id == recommendedId }
+        let rest = items.filter { $0.model.id != recommendedId }
+        return recommended + rest
     }
 
-    /// The single model the funnel recommends for this Mac — gets the
-    /// "Recommended" pill so a first-timer has an obvious safe default.
-    private var recommendedModelId: String? {
-        ConfigureAIState.recommendedLocalPick(
-            from: modelManager.suggestedModels.filter(\.isTopSuggestion),
-            totalMemoryGB: systemMonitor.totalMemoryGB
-        )?.id
+    /// The row carrying the "Picked for your Mac" pill — the exact build
+    /// `recommendedLocalPick` chose, and only when dedupe kept it visible
+    /// (it always does unless a family sibling is selected or already on
+    /// disk). No family-level fallback: badging a sibling the policy didn't
+    /// pick would contradict the home card's "picked for your specs" line,
+    /// which requires an exact id match.
+    private var recommendedRowId: String? {
+        guard
+            let recommended = ConfigureAIState.recommendedLocalPick(
+                from: modelManager.suggestedModels.filter(\.isTopSuggestion),
+                totalMemoryGB: systemMonitor.totalMemoryGB
+            )
+        else { return nil }
+        return dedupedTopPicks.contains(where: { $0.id == recommended.id })
+            ? recommended.id : nil
     }
 
     private func isDraftSelected(_ model: MLXModel) -> Bool {
         state.draftModel?.id == model.id
     }
 
-    /// Friendlier than the inline card badges: leads with a clear `Recommended`
-    /// pill for first-timers, keeps the use-case category and a Downloaded/size
-    /// chip, and surfaces the capability warnings — but drops the `LLM`/`VLM`
-    /// jargon (the eye/cpu icon already signals modality).
+    /// Friendlier than the inline card badges: leads with a hardware-aware
+    /// "Picked for your Mac" pill for first-timers, keeps the use-case
+    /// category and a Downloaded chip, and surfaces the capability warnings —
+    /// but drops the `LLM`/`VLM` jargon (the eye/cpu icon already signals
+    /// modality). Sizes moved out of the badges into each row's labeled stat
+    /// line (`ConfigureAIState.chooserStatsLine`), and precision chips went
+    /// away entirely: dedupe guarantees one build per family, so there is no
+    /// same-title pair left to tell apart.
     private func badges(
         for model: MLXModel,
         compatibility: ModelCompatibility
     ) -> [OnboardingRowBadge] {
         var result: [OnboardingRowBadge] = []
-        if model.id == recommendedModelId {
-            result.append(OnboardingRowBadge(L("Recommended"), style: .accent))
+        if model.id == recommendedRowId {
+            result.append(OnboardingRowBadge(L("Picked for your Mac"), style: .accent))
         }
         if let useCase = model.useCase {
             result.append(.useCase(useCase))
         }
-        // Re-surface the precision the title dropped (e.g. "High precision" vs
-        // "Efficient (QAT)") so same-size variants stay distinguishable.
-        if let precision = onboardingPrecisionTag(for: model) {
-            result.append(OnboardingRowBadge(precision))
-        }
         if model.isDownloaded {
             result.append(OnboardingRowBadge(L("Downloaded"), style: .success))
-        } else if let size = model.formattedDownloadSize {
-            result.append(OnboardingRowBadge(size))
         }
         switch compatibility {
         case .tight:
@@ -1880,7 +2322,7 @@ struct ConfigureAICTA: View {
         switch state.screen {
         case .home:
             OnboardingBrandButton(
-                title: state.selectedModel?.isDownloaded == true ? "Continue" : "Download & Install",
+                title: homeCTATitle,
                 action: { state.startLocalDownloadOrContinue(onComplete: onComplete) },
                 isEnabled: state.selectedModel != nil
             )
@@ -1902,6 +2344,18 @@ struct ConfigureAICTA: View {
         }
     }
 
+    /// Home CTA title states the cost at the action itself: the download size
+    /// rides along ("Download & Install (7.5 GB)") so pressing the button is
+    /// never a surprise commitment. Falls back to the plain label when the
+    /// size is unknown; already-downloaded models continue as before.
+    private var homeCTATitle: String {
+        if state.selectedModel?.isDownloaded == true { return L("Continue") }
+        if let size = state.selectedModel?.formattedDownloadSize {
+            return L("Download & Install (\(size))")
+        }
+        return L("Download & Install")
+    }
+
     /// Footer text shown on the bring-your-own-key provider list / API-key hub,
     /// where the cards themselves are the action. A quiet hint reads better than
     /// a dead disabled "Continue".
@@ -1915,11 +2369,13 @@ struct ConfigureAICTA: View {
     /// CTA for the local downloading screen. Mirrors the inline state-driven
     /// downloading view: while the download is in flight or paused, the CTA is
     /// disabled and the inline Pause/Resume/Cancel controls own the action
-    /// surface. On failure the CTA flips to a "Try Again" button so the user
-    /// always has a path forward — issue [#1071](https://github.com/osaurus-ai/osaurus/issues/1071).
+    /// surface. On failure — including a preflight refusal that never started
+    /// the download (`localDownloadRefusal`) — the CTA flips to a "Try Again"
+    /// button so the user always has a path forward — issue
+    /// [#1071](https://github.com/osaurus-ai/osaurus/issues/1071).
     @ViewBuilder
     private var localDownloadingCTA: some View {
-        if state.isLocalFailed {
+        if state.isLocalFailed || state.localDownloadRefusal != nil {
             OnboardingBrandButton(
                 title: "Try Again",
                 action: { state.startLocalDownload() }

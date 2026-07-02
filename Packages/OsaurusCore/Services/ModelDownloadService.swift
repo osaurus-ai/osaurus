@@ -77,9 +77,12 @@ final class ModelDownloadService: ObservableObject {
     /// Categorised failure info shown in the alert. The `title` describes
     /// the kind of failure, `message` is the human-readable cause, and
     /// `details` is a copyable diagnostic line users can paste into bug
-    /// reports.
+    /// reports. `modelId` names the affected model so surfaces that render
+    /// alerts inline (onboarding) can attribute them without parsing
+    /// `details`.
     struct DownloadAlertInfo: Equatable, Identifiable {
         let id = UUID()
+        let modelId: String
         let title: String
         let message: String
         let details: String
@@ -150,7 +153,7 @@ final class ModelDownloadService: ObservableObject {
         if let filePath { detailParts.append("file=\(filePath)") }
         detailParts.append("raw=\(rawError)")
         let details = detailParts.joined(separator: " | ")
-        return DownloadAlertInfo(title: title, message: message, details: details)
+        return DownloadAlertInfo(modelId: modelId, title: title, message: message, details: details)
     }
 
     // MARK: - Properties
