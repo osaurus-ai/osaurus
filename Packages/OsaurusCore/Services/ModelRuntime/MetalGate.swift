@@ -131,6 +131,25 @@ public actor MetalGate {
         release("embedding")
     }
 
+    // MARK: - Media prep (audio/image/video encode before generation) — exclusive
+
+    /// Preparing a media-bearing request runs GPU evals on the SUBMITTING
+    /// task's thread — the Nemotron-Omni audio pre-encode and any VLM media
+    /// encoder that materializes during `UserInputProcessor.prepare` — i.e.
+    /// outside the `BatchEngine` actor loop that makes same-model generation
+    /// overlap safe. Under the shared `gen:` owner those prep evals could
+    /// encode concurrently with an in-flight decode (or another request's
+    /// prep) on the shared Metal command queue. Media prep therefore takes
+    /// its own exclusive owner; text-only prep does no GPU encode and keeps
+    /// the shared generation owner so batching is preserved.
+    public func enterMediaPrep(model: String) async {
+        await acquire("prep:\(model)", shared: false)
+    }
+
+    public func exitMediaPrep(model: String) {
+        release("prep:\(model)")
+    }
+
     // MARK: - PII detection (Rampart NER behind the privacy filter) — exclusive
 
     /// The Rampart PII model (an MLX BERT token classifier) is another MLX
