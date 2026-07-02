@@ -44,7 +44,7 @@ public final class KnowledgeDatabase: @unchecked Sendable {
     public static let shared = KnowledgeDatabase()
 
     /// Highest schema version this build knows how to produce.
-    private static let latestSchemaVersion = 1
+    private static let latestSchemaVersion = 2
 
     nonisolated(unsafe) private static let iso8601Formatter: ISO8601DateFormatter = {
         let f = ISO8601DateFormatter()
@@ -142,6 +142,9 @@ public final class KnowledgeDatabase: @unchecked Sendable {
         }
         if currentVersion < 1 {
             try runMigrationStep(1, migrateToV1)
+        }
+        if currentVersion < 2 {
+            try runMigrationStep(2, migrateToV2)
         }
     }
 
@@ -253,6 +256,51 @@ public final class KnowledgeDatabase: @unchecked Sendable {
         )
 
         KnowledgeLogger.database.info("v1 migration completed")
+    }
+
+    /// V2: curation tables. Tickets are agent-filed staleness reports;
+    /// proposals are curator-drafted replacements awaiting human review.
+    /// Neither table references the corpus rows — a ticket survives its
+    /// document being re-indexed or pruned.
+    private func migrateToV2() throws {
+        KnowledgeLogger.database.info("Running v2 migration (curation tables)")
+
+        try executeRaw(
+            """
+            CREATE TABLE IF NOT EXISTS tickets (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                collection_id TEXT NOT NULL,
+                rel_path TEXT NOT NULL,
+                reason TEXT NOT NULL,
+                evidence TEXT NOT NULL DEFAULT '',
+                status TEXT NOT NULL DEFAULT 'open',
+                created_by TEXT NOT NULL DEFAULT '',
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            )
+            """
+        )
+        try executeRaw("CREATE INDEX IF NOT EXISTS idx_tickets_status ON tickets(status)")
+
+        try executeRaw(
+            """
+            CREATE TABLE IF NOT EXISTS proposals (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                ticket_id INTEGER,
+                collection_id TEXT NOT NULL,
+                rel_path TEXT NOT NULL,
+                new_content TEXT NOT NULL,
+                rationale TEXT NOT NULL DEFAULT '',
+                status TEXT NOT NULL DEFAULT 'pending',
+                created_by TEXT NOT NULL DEFAULT '',
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            )
+            """
+        )
+        try executeRaw("CREATE INDEX IF NOT EXISTS idx_proposals_status ON proposals(status)")
+
+        KnowledgeLogger.database.info("v2 migration completed")
     }
 
     // MARK: - Documents
@@ -642,6 +690,238 @@ public final class KnowledgeDatabase: @unchecked Sendable {
         return hits
     }
 
+    // MARK: - Curation: tickets
+
+    /// File a staleness ticket. Returns the new row id.
+    public func createTicket(
+        collectionId: String,
+        relPath: String,
+        reason: String,
+        evidence: String,
+        createdBy: String
+    ) throws -> Int {
+        var ticketId = 0
+        let now = Self.iso8601Now()
+        try prepareAndExecute(
+            """
+            INSERT INTO tickets (collection_id, rel_path, reason, evidence, status, created_by, created_at, updated_at)
+            VALUES (?1, ?2, ?3, ?4, 'open', ?5, ?6, ?6)
+            RETURNING id
+            """,
+            bind: { stmt in
+                Self.bindText(stmt, index: 1, value: collectionId)
+                Self.bindText(stmt, index: 2, value: relPath)
+                Self.bindText(stmt, index: 3, value: reason)
+                Self.bindText(stmt, index: 4, value: evidence)
+                Self.bindText(stmt, index: 5, value: createdBy)
+                Self.bindText(stmt, index: 6, value: now)
+            },
+            process: { stmt in
+                if sqlite3_step(stmt) == SQLITE_ROW {
+                    ticketId = Int(sqlite3_column_int64(stmt, 0))
+                }
+            }
+        )
+        guard ticketId != 0 else {
+            throw KnowledgeDatabaseError.failedToExecute("createTicket returned no id")
+        }
+        return ticketId
+    }
+
+    /// The open ticket for a document, if any — used to dedupe repeat flags.
+    public func openTicket(collectionId: String, relPath: String) throws -> KnowledgeTicket? {
+        var ticket: KnowledgeTicket?
+        try prepareAndExecute(
+            """
+            SELECT \(Self.ticketColumns) FROM tickets
+            WHERE collection_id = ?1 AND rel_path = ?2 AND status = 'open'
+            ORDER BY id DESC LIMIT 1
+            """,
+            bind: { stmt in
+                Self.bindText(stmt, index: 1, value: collectionId)
+                Self.bindText(stmt, index: 2, value: relPath)
+            },
+            process: { stmt in
+                if sqlite3_step(stmt) == SQLITE_ROW {
+                    ticket = Self.readTicket(stmt)
+                }
+            }
+        )
+        return ticket
+    }
+
+    public func getTicket(id: Int) throws -> KnowledgeTicket? {
+        var ticket: KnowledgeTicket?
+        try prepareAndExecute(
+            "SELECT \(Self.ticketColumns) FROM tickets WHERE id = ?1 LIMIT 1",
+            bind: { stmt in sqlite3_bind_int64(stmt, 1, Int64(id)) },
+            process: { stmt in
+                if sqlite3_step(stmt) == SQLITE_ROW {
+                    ticket = Self.readTicket(stmt)
+                }
+            }
+        )
+        return ticket
+    }
+
+    /// List tickets in the supplied collections, optionally by status.
+    /// Newest first. Empty `collectionIds` returns nothing (scoped callers)
+    /// — pass nil for the unscoped UI listing.
+    public func listTickets(
+        collectionIds: [String]?,
+        status: KnowledgeTicketStatus? = nil,
+        limit: Int = 100
+    ) throws -> [KnowledgeTicket] {
+        if let collectionIds, collectionIds.isEmpty { return [] }
+        var tickets: [KnowledgeTicket] = []
+        var sql = "SELECT \(Self.ticketColumns) FROM tickets"
+        var clauses: [String] = []
+        var nextIndex = 1
+        var idsRange: Range<Int>?
+        var statusIndex: Int?
+        if let collectionIds {
+            clauses.append(
+                "collection_id IN (\(Self.inPlaceholders(count: collectionIds.count, startingAt: nextIndex)))"
+            )
+            idsRange = nextIndex ..< (nextIndex + collectionIds.count)
+            nextIndex += collectionIds.count
+        }
+        if status != nil {
+            clauses.append("status = ?\(nextIndex)")
+            statusIndex = nextIndex
+            nextIndex += 1
+        }
+        if !clauses.isEmpty { sql += " WHERE " + clauses.joined(separator: " AND ") }
+        sql += " ORDER BY id DESC LIMIT ?\(nextIndex)"
+        try prepareAndExecute(
+            sql,
+            bind: { stmt in
+                if let collectionIds, let idsRange {
+                    for (offset, id) in collectionIds.enumerated() {
+                        Self.bindText(stmt, index: Int32(idsRange.lowerBound + offset), value: id)
+                    }
+                }
+                if let statusIndex, let status {
+                    Self.bindText(stmt, index: Int32(statusIndex), value: status.rawValue)
+                }
+                sqlite3_bind_int(stmt, Int32(nextIndex), Int32(limit))
+            },
+            process: { stmt in
+                while sqlite3_step(stmt) == SQLITE_ROW {
+                    tickets.append(Self.readTicket(stmt))
+                }
+            }
+        )
+        return tickets
+    }
+
+    public func updateTicketStatus(id: Int, status: KnowledgeTicketStatus) throws {
+        try prepareAndExecute(
+            "UPDATE tickets SET status = ?1, updated_at = ?2 WHERE id = ?3",
+            bind: { stmt in
+                Self.bindText(stmt, index: 1, value: status.rawValue)
+                Self.bindText(stmt, index: 2, value: Self.iso8601Now())
+                sqlite3_bind_int64(stmt, 3, Int64(id))
+            },
+            process: { stmt in _ = sqlite3_step(stmt) }
+        )
+    }
+
+    // MARK: - Curation: proposals
+
+    /// Store a curator-drafted replacement. Returns the new row id.
+    public func createProposal(
+        ticketId: Int?,
+        collectionId: String,
+        relPath: String,
+        newContent: String,
+        rationale: String,
+        createdBy: String
+    ) throws -> Int {
+        var proposalId = 0
+        let now = Self.iso8601Now()
+        try prepareAndExecute(
+            """
+            INSERT INTO proposals (ticket_id, collection_id, rel_path, new_content, rationale, status, created_by, created_at, updated_at)
+            VALUES (?1, ?2, ?3, ?4, ?5, 'pending', ?6, ?7, ?7)
+            RETURNING id
+            """,
+            bind: { stmt in
+                if let ticketId {
+                    sqlite3_bind_int64(stmt, 1, Int64(ticketId))
+                } else {
+                    sqlite3_bind_null(stmt, 1)
+                }
+                Self.bindText(stmt, index: 2, value: collectionId)
+                Self.bindText(stmt, index: 3, value: relPath)
+                Self.bindText(stmt, index: 4, value: newContent)
+                Self.bindText(stmt, index: 5, value: rationale)
+                Self.bindText(stmt, index: 6, value: createdBy)
+                Self.bindText(stmt, index: 7, value: now)
+            },
+            process: { stmt in
+                if sqlite3_step(stmt) == SQLITE_ROW {
+                    proposalId = Int(sqlite3_column_int64(stmt, 0))
+                }
+            }
+        )
+        guard proposalId != 0 else {
+            throw KnowledgeDatabaseError.failedToExecute("createProposal returned no id")
+        }
+        return proposalId
+    }
+
+    public func getProposal(id: Int) throws -> KnowledgeProposal? {
+        var proposal: KnowledgeProposal?
+        try prepareAndExecute(
+            "SELECT \(Self.proposalColumns) FROM proposals WHERE id = ?1 LIMIT 1",
+            bind: { stmt in sqlite3_bind_int64(stmt, 1, Int64(id)) },
+            process: { stmt in
+                if sqlite3_step(stmt) == SQLITE_ROW {
+                    proposal = Self.readProposal(stmt)
+                }
+            }
+        )
+        return proposal
+    }
+
+    /// List proposals (all collections — review is a human, unscoped
+    /// surface), optionally by status. Newest first.
+    public func listProposals(
+        status: KnowledgeProposalStatus? = nil,
+        limit: Int = 100
+    ) throws -> [KnowledgeProposal] {
+        var proposals: [KnowledgeProposal] = []
+        var sql = "SELECT \(Self.proposalColumns) FROM proposals"
+        if status != nil { sql += " WHERE status = ?1" }
+        sql += " ORDER BY id DESC LIMIT ?\(status != nil ? 2 : 1)"
+        try prepareAndExecute(
+            sql,
+            bind: { stmt in
+                if let status { Self.bindText(stmt, index: 1, value: status.rawValue) }
+                sqlite3_bind_int(stmt, Int32(status != nil ? 2 : 1), Int32(limit))
+            },
+            process: { stmt in
+                while sqlite3_step(stmt) == SQLITE_ROW {
+                    proposals.append(Self.readProposal(stmt))
+                }
+            }
+        )
+        return proposals
+    }
+
+    public func updateProposalStatus(id: Int, status: KnowledgeProposalStatus) throws {
+        try prepareAndExecute(
+            "UPDATE proposals SET status = ?1, updated_at = ?2 WHERE id = ?3",
+            bind: { stmt in
+                Self.bindText(stmt, index: 1, value: status.rawValue)
+                Self.bindText(stmt, index: 2, value: Self.iso8601Now())
+                sqlite3_bind_int64(stmt, 3, Int64(id))
+            },
+            process: { stmt in _ = sqlite3_step(stmt) }
+        )
+    }
+
     // MARK: - Row readers
 
     private static let documentColumns =
@@ -660,6 +940,42 @@ public final class KnowledgeDatabase: @unchecked Sendable {
             sizeBytes: Int(sqlite3_column_int(stmt, 8)),
             modifiedAt: columnText(stmt, 9),
             indexedAt: columnText(stmt, 10)
+        )
+    }
+
+    private static let ticketColumns =
+        "id, collection_id, rel_path, reason, evidence, status, created_by, created_at, updated_at"
+
+    private static func readTicket(_ stmt: OpaquePointer) -> KnowledgeTicket {
+        KnowledgeTicket(
+            id: Int(sqlite3_column_int64(stmt, 0)),
+            collectionId: columnText(stmt, 1),
+            relPath: columnText(stmt, 2),
+            reason: columnText(stmt, 3),
+            evidence: columnText(stmt, 4),
+            status: KnowledgeTicketStatus(rawValue: columnText(stmt, 5)) ?? .open,
+            createdBy: columnText(stmt, 6),
+            createdAt: columnText(stmt, 7),
+            updatedAt: columnText(stmt, 8)
+        )
+    }
+
+    private static let proposalColumns =
+        "id, ticket_id, collection_id, rel_path, new_content, rationale, status, created_by, created_at, updated_at"
+
+    private static func readProposal(_ stmt: OpaquePointer) -> KnowledgeProposal {
+        KnowledgeProposal(
+            id: Int(sqlite3_column_int64(stmt, 0)),
+            ticketId: sqlite3_column_type(stmt, 1) == SQLITE_NULL
+                ? nil : Int(sqlite3_column_int64(stmt, 1)),
+            collectionId: columnText(stmt, 2),
+            relPath: columnText(stmt, 3),
+            newContent: columnText(stmt, 4),
+            rationale: columnText(stmt, 5),
+            status: KnowledgeProposalStatus(rawValue: columnText(stmt, 6)) ?? .pending,
+            createdBy: columnText(stmt, 7),
+            createdAt: columnText(stmt, 8),
+            updatedAt: columnText(stmt, 9)
         )
     }
 
