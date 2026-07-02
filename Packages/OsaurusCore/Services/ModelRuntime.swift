@@ -487,8 +487,8 @@ public actor ModelRuntime {
         // that to disable caching on the superseded holder; at *quit* we
         // skip the join (and the intermediate GPU fence) so a load in
         // progress can't stall process exit. The OS reclaims GPU resources
-        // on exit, and `clearAll(quit:)` still issues a final, watchdog-
-        // bounded `Stream.gpu.synchronize()`.
+        // on exit; `clearAll(quit:)` likewise skips all GPU teardown on the
+        // quit path and lets the kernel reclaim at `_exit`.
         if !quit {
             for (_, record) in records {
                 if let holder = try? await record.task.value,
@@ -684,20 +684,30 @@ public actor ModelRuntime {
         let loadingRecords = loadingTasks.map { ($0.key, $0.value) }
         await cancelAndDrainLoadingTasks(loadingRecords, quit: quit)
 
-        // Quit-path use-after-free guard: `ModelLease` exists precisely to
-        // stop us from freeing a model's Metal buffers while a generation
-        // still references them (`notifyExternalReferencesNonZeroOnDealloc`).
-        // If a holder ignored cancellation and the lease never drained, the
-        // safe move on the way out is NOT to free anything: calling
-        // `disableCaching()` / `Stream.gpu.synchronize()` against a live,
-        // stuck command buffer is either a UAF or a hang. The process is
-        // terminating, so let the OS reclaim GPU memory on `exit()` instead
-        // of a partial container free. (`cancelAllGenerations` already shut
-        // down every BatchEngine, so no new GPU work can be scheduled.)
-        if quit && hasStuckLease {
-            genLog.error(
-                "clearAll(quit:) detected a stuck model lease — skipping buffer free; OS will reclaim GPU on exit"
-            )
+        // Quit-path GPU hazard: the process is about to `_exit(0)`, which
+        // reclaims RAM and GPU atomically, so ANY GPU work here is pure risk
+        // with no payoff. Freeing buffers or issuing `Stream.gpu.synchronize()`
+        // from this teardown thread commits the shared Metal command buffer,
+        // and a background producer still submitting on its own thread — an
+        // orphaned generation (`BatchEngine.shutdown()` cancels but does not
+        // join its producer task), a Rampart PII scan, the memory embedder —
+        // then hits `addCompletedHandler: provided after commit call` and
+        // aborts the app on quit. `ModelLease` only tracks generations, so a
+        // clean lease drain does NOT prove those other producers are idle.
+        //
+        // So on quit we skip every GPU touch — disable-caching, the
+        // buffer-freeing `modelCache.removeAll()`, the synchronize, the cache
+        // clear — and let the OS reclaim it. `cancelAllGenerations` already
+        // ended the SSE producers and shut every BatchEngine down, which is all
+        // the quit chain needs; the rest is the kernel's job at `_exit`. The
+        // stuck-lease case (a holder that ignored cancellation) takes the same
+        // path for the additional use-after-free reason.
+        if quit {
+            if hasStuckLease {
+                genLog.error(
+                    "clearAll(quit:) detected a stuck model lease — skipping buffer free; OS will reclaim GPU on exit"
+                )
+            }
             loadingTasks.removeAll()
             supersededLoadingTaskIDs.removeAll()
             currentModelName = nil
