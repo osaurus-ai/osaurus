@@ -4,7 +4,8 @@
 //
 //  Process-wide mutual-exclusion gate across every MLX/Metal *GPU producer*
 //  in the app — LLM generation (vmlx-swift's `BatchEngine`), the Model2Vec
-//  embedder behind capability/memory search, and model loading (weight
+//  embedder behind capability/memory search, the Rampart PII detector behind
+//  the privacy filter, and model loading (weight
 //  dequantization + kernel compilation). All submit work to the same Metal
 //  device on different threads, and two distinct producers driving the Metal
 //  command queue at once race on the command buffer and abort with crashes
@@ -128,6 +129,24 @@ public actor MetalGate {
 
     public func exitEmbedding() {
         release("embedding")
+    }
+
+    // MARK: - PII detection (Rampart NER behind the privacy filter) — exclusive
+
+    /// The Rampart PII model (an MLX BERT token classifier) is another MLX
+    /// graph on the shared Metal device: its load materializes the weights
+    /// with an `eval`, and every `detect` runs a forward pass (including a
+    /// cold-start kernel JIT compile). Observed live as the outbound privacy
+    /// scan of a remote-provider request racing an in-flight local
+    /// generation's decode on the shared command queue
+    /// (`tryCoalescingPreviousComputeCommandEncoder` abort). Exclusive, like
+    /// the embedder.
+    public func enterPIIDetection() async {
+        await acquire("pii", shared: false)
+    }
+
+    public func exitPIIDetection() {
+        release("pii")
     }
 
     // MARK: - Model load (weight dequant + kernel compile) — exclusive
