@@ -6674,7 +6674,7 @@
         "ko" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "전송할 때 %@의 읽기 전용 스냅샷이 이 채팅과 공유됩니다. 컴퓨터 사용 설정에서 이를 관리할 수 있습니다."
+            "value" : "전송할 때 %@의 읽기 전용 스냅샷이 이 채팅과 공유됩니다. 컴퓨터 제어 설정에서 이를 관리할 수 있습니다."
           }
         },
         "ru" : {
@@ -7512,7 +7512,7 @@
         "ko" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "손쉬운 사용"
+            "value" : "접근성"
           }
         },
         "ru" : {
@@ -7540,7 +7540,7 @@
         "ko" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "손쉬운 사용 권한"
+            "value" : "접근성 권한"
           }
         },
         "ru" : {
@@ -7568,7 +7568,7 @@
         "ko" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "앱을 인식하고 제어하려면 손쉬운 사용 권한이 필요합니다."
+            "value" : "앱을 인식하고 제어하려면 접근성 권한이 필요합니다."
           }
         },
         "ru" : {
@@ -12537,8 +12537,8 @@
         },
         "ko" : {
           "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "AppleScript runs on this Mac. The first time the agent controls an app, macOS asks you to allow Automation for Osaurus. Download AppleScript models in Settings → Computer Use → Models."
+            "state" : "translated",
+            "value" : "AppleScript는 이 Mac에서 실행됩니다. 에이전트가 처음으로 앱을 제어할 때 macOS가 Osaurus에 대한 자동화 허용 여부를 묻습니다. AppleScript 모델은 설정 → 컴퓨터 제어 → 모델에서 다운로드하세요."
           }
         },
         "ru" : {
@@ -24744,7 +24744,7 @@
         "ko" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "컴퓨터 사용"
+            "value" : "컴퓨터 제어"
           }
         },
         "ru" : {
@@ -24774,7 +24774,7 @@
         "ko" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "에이전트에 대해 활성화하면 컴퓨터 사용 기능이 앱을 제어할 수 있습니다."
+            "value" : "에이전트에 대해 활성화하면 컴퓨터 제어 기능으로 앱을 조작할 수 있습니다."
           }
         },
         "ru" : {
@@ -24804,7 +24804,7 @@
         "ko" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "컴퓨터 사용은 기본적으로 꺼져 있습니다. 에이전트별로 활성화할 수 있으며 — 사용자 지정 에이전트만 사용할 수 있습니다(기본 에이전트는 사용할 수 없음)."
+            "value" : "컴퓨터 제어는 기본적으로 꺼져 있습니다. 에이전트별로 활성화할 수 있으며 — 사용자 지정 에이전트만 사용할 수 있습니다(기본 에이전트는 사용할 수 없음)."
           }
         },
         "ru" : {
@@ -30029,7 +30029,7 @@
         "ko" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "감시자 생성"
+            "value" : "모니터링 생성"
           }
         },
         "ru" : {
@@ -30234,7 +30234,7 @@
         "ko" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "첫 번째 감시자 생성"
+            "value" : "첫 번째 모니터링 생성"
           }
         },
         "ru" : {
@@ -31317,7 +31317,7 @@
         "ko" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "사용자 지정"
+            "value" : "맞춤 설정"
           }
         },
         "ru" : {
@@ -31401,7 +31401,7 @@
         "ko" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "사용자 지정…"
+            "value" : "맞춤 설정…"
           }
         },
         "ru" : {
@@ -32428,7 +32428,7 @@
         "ko" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "AI가 생성한 인사말 및 빠른 작업을 위한 기본 음성입니다. 에이전트의 기능 탭에서 에이전트별로 인사말을 켜세요. 각 에이전트는 사용자 지정 탭에서 이 음성을 재정의할 수도 있습니다."
+            "value" : "AI가 생성한 인사말 및 빠른 작업을 위한 기본 음성입니다. 에이전트의 기능 탭에서 에이전트별로 인사말을 켜세요. 각 에이전트는 맞춤 설정 탭에서 이 음성을 재정의할 수도 있습니다."
           }
         },
         "ru" : {
@@ -38424,7 +38424,7 @@
         "ko" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "감시자 편집"
+            "value" : "모니터링 편집"
           }
         },
         "ru" : {
@@ -38694,6 +38694,41 @@
         }
       }
     },
+    "editor.section.identity" : {
+      "comment" : "Section title for basic name/description/author metadata in the agent Configure tab, Skill editor, and Sandbox Plugin editor. Kept separate from the 'Identity' key (cryptographic identity) so locales can translate this one as 'basic info'.",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Identität"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Identity"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "기본 정보"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Идентификация"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "身份"
+          }
+        }
+      }
+    },
     "Edits run; only sending, deleting, and similar ask first." : {
       "localizations" : {
         "de" : {
@@ -38854,7 +38889,7 @@
         "ko" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "비어 있음 — 모든 앱에서 컴퓨터 사용이 허용됩니다."
+            "value" : "비어 있음 — 모든 앱에서 컴퓨터 제어가 허용됩니다."
           }
         },
         "ru" : {
@@ -39052,7 +39087,7 @@
         "ko" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "도구를 추가하려면 작업 폴더, 샌드박스, 플러그인 또는 원격 제공업체를 사용하세요"
+            "value" : "도구를 추가하려면 작업 폴더, 샌드박스, 플러그인 또는 원격 제공자를 사용하세요"
           }
         },
         "ru" : {
@@ -39442,7 +39477,7 @@
         "ko" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "모델을 테스트하거나 선택하기 전에 제공업체를 사용하세요."
+            "value" : "모델을 테스트하거나 선택하기 전에 제공사를 사용하세요."
           }
         },
         "ru" : {
@@ -41163,7 +41198,7 @@
         "ko" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "오류: 프로세스가 손쉬운 사용에 대해 신뢰되지 않았습니다. 시스템 설정에서 사용함으로 설정된 경우, 목록에서 Osaurus를 제거한 후 다시 추가해 보세요."
+            "value" : "오류: 프로세스가 손쉬운 사용(접근성)에 대해 신뢰되지 않았습니다. 시스템 설정에서 사용함으로 설정된 경우, 목록에서 Osaurus를 제거한 후 다시 추가해 보세요."
           }
         },
         "ru" : {
@@ -41924,7 +41959,7 @@
         "ko" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "설명 "
+            "value" : "다음을 설명해 주세요: "
           }
         },
         "ru" : {
@@ -41952,7 +41987,7 @@
         "ko" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "개념 설명"
+            "value" : "개념 이해하기"
           }
         },
         "ru" : {
@@ -47655,7 +47690,7 @@
         "ko" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "기능으로 이동하여 컴퓨터 사용을 켜세요."
+            "value" : "기능으로 이동하여 컴퓨터 제어를 켜세요."
           }
         },
         "ru" : {
@@ -48106,7 +48141,7 @@
         "ko" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "에이전트가 앱을 읽고 제어할 수 있도록 아래에서 손쉬운 사용 권한을 부여하세요."
+            "value" : "에이전트가 앱을 읽고 제어할 수 있도록 아래에서 접근성 권한을 부여하세요."
           }
         },
         "ru" : {
@@ -48134,8 +48169,8 @@
         },
         "ko" : {
           "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Grant Accessibility to preview what would be shared."
+            "state" : "translated",
+            "value" : "공유될 내용을 미리 보려면 접근성 권한을 부여하세요."
           }
         },
         "ru" : {
@@ -48644,7 +48679,7 @@
         "ko" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "클라우드 AI 제공업체 추가를 도와주세요."
+            "value" : "클라우드 AI 제공사 추가를 도와주세요."
           }
         },
         "ru" : {
@@ -48728,7 +48763,7 @@
         "ko" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "작성 도와주기"
+            "value" : "글 작성"
           }
         },
         "ru" : {
@@ -48756,7 +48791,7 @@
         "ko" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "작성 도와주기 "
+            "value" : "다음 글을 작성해 주세요: "
           }
         },
         "ru" : {
@@ -50535,7 +50570,7 @@
         "ko" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "신원, 모델 및 동작 재정의입니다."
+            "value" : "기본 정보, 모델 및 동작 재정의입니다."
           }
         },
         "ru" : {
@@ -53060,7 +53095,7 @@
         "ko" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "클라우드 제공업체가 수신한 내용(개인정보 필터 적용 후)"
+            "value" : "클라우드 제공사가 수신한 내용(개인정보 필터 적용 후)"
           }
         },
         "ru" : {
@@ -53095,7 +53130,7 @@
         "ko" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "클라우드 제공업체가 다시 스트리밍한 내용(자리표시자)"
+            "value" : "클라우드 제공사가 다시 스트리밍한 내용(자리표시자)"
           }
         },
         "ru" : {
@@ -54604,7 +54639,7 @@
         "ko" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "유효하지 않은 제공업체 URL 구성"
+            "value" : "유효하지 않은 제공사 URL 구성"
           }
         },
         "ru" : {
@@ -54632,7 +54667,7 @@
         "ko" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "제공업체로부터 유효하지 않은 응답 수신됨"
+            "value" : "제공사로부터 유효하지 않은 응답 수신됨"
           }
         },
         "ru" : {
@@ -56190,7 +56225,7 @@
         "ko" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "모든 앱에서 컴퓨터 사용을 허용하려면 비워 두세요. 특정 앱만 허용하려면 앱을 추가하세요 — 추가된 앱을 제외한 다른 모든 앱은 작업 전에 차단됩니다."
+            "value" : "모든 앱에서 컴퓨터 제어를 허용하려면 비워 두세요. 특정 앱만 허용하려면 앱을 추가하세요 — 추가된 앱을 제외한 다른 모든 앱은 작업 전에 차단됩니다."
           }
         },
         "ru" : {
@@ -60176,7 +60211,7 @@
         "ko" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "감시자 관리…"
+            "value" : "모니터링 관리…"
           }
         },
         "ru" : {
@@ -64375,7 +64410,7 @@
         "ko" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "파일 시스템 감시자 수정"
+            "value" : "파일 시스템 모니터링 수정"
           }
         },
         "ru" : {
@@ -65410,7 +65445,7 @@
         "ko" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "손쉬운 사용 권한 필요"
+            "value" : "접근성 권한 필요"
           }
         },
         "ru" : {
@@ -66163,7 +66198,7 @@
         "ko" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "새 감시자…"
+            "value" : "새 모니터링…"
           }
         },
         "ru" : {
@@ -66674,8 +66709,8 @@
         },
         "ko" : {
           "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "No AppleScript models installed yet. Download one in Settings → Computer Use → Models."
+            "state" : "translated",
+            "value" : "아직 설치된 AppleScript 모델이 없습니다. 설정 → 컴퓨터 제어 → 모델에서 다운로드하세요."
           }
         },
         "ru" : {
@@ -70364,7 +70399,7 @@
         "ko" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "아직 감시자가 없습니다"
+            "value" : "아직 모니터링이 없습니다"
           }
         },
         "ru" : {
@@ -72156,7 +72191,7 @@
         "ko" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "기본적으로 꺼져 있습니다. 손쉬운 사용 권한이 필요합니다. 각 대화가 시작될 때 고정됩니다."
+            "value" : "기본적으로 꺼져 있습니다. 접근성 권한이 필요합니다. 각 대화가 시작될 때 고정됩니다."
           }
         },
         "ru" : {
@@ -72185,7 +72220,7 @@
         "ko" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "기본적으로 꺼져 있습니다. 켜면 각 빈 상태에서 구성된 코어 모델을 통해 새로운 인사말과 빠른 작업이 생성됩니다. Foundation과 같은 작은 모델에서는 첫 번째 생성이 느리게 느껴질 수 있지만, 정적 인사말은 여전히 즉시 표시됩니다. 사용자 지정 탭의 에이전트별 재정의가 여전히 우선 적용됩니다."
+            "value" : "기본적으로 꺼져 있습니다. 켜면 각 빈 상태에서 구성된 코어 모델을 통해 새로운 인사말과 빠른 작업이 생성됩니다. Foundation과 같은 작은 모델에서는 첫 번째 생성이 느리게 느껴질 수 있지만, 정적 인사말은 여전히 즉시 표시됩니다. 맞춤 설정 탭의 에이전트별 재정의가 여전히 우선 적용됩니다."
           }
         },
         "ru" : {
@@ -76996,7 +77031,7 @@
         "ko" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "데이터가 제공업체에 도달하기 전에 현재 규칙에 따라 Osaurus가 정확히 무엇을 비식별화할지 미리 보려면 샘플 텍스트를 붙여넣으세요."
+            "value" : "데이터가 제공사에 도달하기 전에 현재 규칙에 따라 Osaurus가 정확히 무엇을 비식별화할지 미리 보려면 샘플 텍스트를 붙여넣으세요."
           }
         },
         "ru" : {
@@ -78296,7 +78331,7 @@
         "ko" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "제공업체별"
+            "value" : "제공사별"
           }
         },
         "ru" : {
@@ -78875,7 +78910,7 @@
         "ko" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "클라우드 제공업체 선택"
+            "value" : "클라우드 제공사 선택"
           }
         },
         "ru" : {
@@ -79030,7 +79065,7 @@
         "ko" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "계속하려면 제공업체를 선택하세요"
+            "value" : "계속하려면 제공사를 선택하세요"
           }
         },
         "ru" : {
@@ -84488,7 +84523,7 @@
         "ko" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "원격 제공업체 탭에서 클라우드 제공업체를 구성하면 제공업체별 필터 재정의가 여기에 표시됩니다."
+            "value" : "AI 제공사 탭에서 클라우드 제공사를 구성하면 제공사별 필터 재정의가 여기에 표시됩니다."
           }
         },
         "ru" : {
@@ -84523,7 +84558,7 @@
         "ko" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "아직 클라우드 제공업체가 없습니다"
+            "value" : "아직 클라우드 제공사가 없습니다"
           }
         },
         "ru" : {
@@ -84558,7 +84593,7 @@
         "ko" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "클라우드 제공업체 — %@"
+            "value" : "클라우드 제공사 — %@"
           }
         },
         "ru" : {
@@ -85909,7 +85944,7 @@
         "ko" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "제공업체 연결"
+            "value" : "제공사 연결"
           }
         },
         "ru" : {
@@ -85937,7 +85972,7 @@
         "ko" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "제공업체 연결 진단"
+            "value" : "제공사 연결 진단"
           }
         },
         "ru" : {
@@ -85965,7 +86000,7 @@
         "ko" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "제공업체가 연결되지 않았습니다"
+            "value" : "제공사가 연결되지 않았습니다"
           }
         },
         "ru" : {
@@ -85993,7 +86028,7 @@
         "ko" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "제공업체"
+            "value" : "AI 제공사"
           }
         },
         "ru" : {
@@ -92331,7 +92366,7 @@
         "ko" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "손쉬운 사용 권한이 필요합니다. 권한을 부여하고 설정 > 컴퓨터 사용에서 상태를 검토하세요."
+            "value" : "접근성 권한이 필요합니다. 권한을 부여하고 설정 > 컴퓨터 제어에서 상태를 검토하세요."
           }
         },
         "ru" : {
@@ -98869,7 +98904,7 @@
         "ko" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "자율적인 동작을 위한 일정 및 파일 감시자입니다."
+            "value" : "자율적인 동작을 위한 일정 및 파일 모니터링입니다."
           }
         },
         "ru" : {
@@ -101426,7 +101461,7 @@
         "ko" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "감시할 폴더 선택"
+            "value" : "모니터링할 폴더 선택"
           }
         },
         "ru" : {
@@ -103145,7 +103180,7 @@
         "ko" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "AI가 생성하는 빈 상태 인사말 및 빠른 작업의 음성을 구성합니다. 각 에이전트는 사용자 지정 탭에서 이를 재정의할 수 있습니다."
+            "value" : "AI가 생성하는 빈 상태 인사말 및 빠른 작업의 음성을 구성합니다. 각 에이전트는 맞춤 설정 탭에서 이를 재정의할 수 있습니다."
           }
         },
         "ru" : {
@@ -103404,8 +103439,8 @@
         },
         "ko" : {
           "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Share screen context"
+            "state" : "translated",
+            "value" : "화면 컨텍스트 공유"
           }
         },
         "ru" : {
@@ -110091,7 +110126,7 @@
         "ko" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "성공: 손쉬운 사용에 대해 신뢰할 수 있는 프로세스입니다."
+            "value" : "성공: 프로세스가 손쉬운 사용(접근성)에 대해 신뢰되었습니다."
           }
         },
         "ru" : {
@@ -119173,8 +119208,8 @@
         },
         "ko" : {
           "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Turn this on per agent: open the agent's Subagents tab, enable Computer Use, and use the Share screen context option (on by default). Requires Accessibility."
+            "state" : "translated",
+            "value" : "에이전트별로 켜세요: 에이전트의 서브 에이전트 탭을 열고 컴퓨터 제어를 활성화한 다음 화면 컨텍스트 공유 옵션(기본적으로 켜짐)을 사용하세요. 접근성 권한이 필요합니다."
           }
         },
         "ru" : {
@@ -122726,8 +122761,8 @@
         },
         "ko" : {
           "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Verifying identity"
+            "state" : "translated",
+            "value" : "신원 확인 중"
           }
         },
         "ru" : {
@@ -123764,7 +123799,7 @@
         "ko" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "음성 출력은 음성 섹션에 있으며, 채팅 인사말은 사용자 지정 > 빈 상태에 있습니다."
+            "value" : "음성 출력은 음성 섹션에 있으며, 채팅 인사말은 맞춤 설정 > 빈 상태에 있습니다."
           }
         },
         "ru" : {
@@ -123794,7 +123829,7 @@
         "ko" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "음성 출력은 음성 섹션에 있으며, 인사말 텍스트와 성격은 사용자 지정 > 빈 상태에 있습니다."
+            "value" : "음성 출력은 음성 섹션에 있으며, 인사말 텍스트와 성격은 맞춤 설정 > 빈 상태에 있습니다."
           }
         },
         "ru" : {
@@ -124367,7 +124402,7 @@
         "ko" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "새 파일에 대해 폴더를 감시합니다 — 변경 사항이 있을 때마다 에이전트가 자동으로 실행됩니다."
+            "value" : "새 파일에 대해 폴더를 모니터링합니다 — 변경 사항이 있을 때마다 에이전트가 자동으로 실행됩니다."
           }
         },
         "ru" : {
@@ -124395,7 +124430,7 @@
         "ko" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "감시 대상 폴더"
+            "value" : "모니터링 대상 폴더"
           }
         },
         "ru" : {
@@ -124423,7 +124458,7 @@
         "ko" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "감시자"
+            "value" : "모니터링"
           }
         },
         "ru" : {
@@ -124451,7 +124486,7 @@
         "ko" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "감시자"
+            "value" : "모니터링"
           }
         },
         "ru" : {
@@ -125439,7 +125474,7 @@
         "ko" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "에이전트에 대해 이 기능을 켜면 컴퓨터 사용 기능을 통해 해당 에이전트가 사용자를 대신하여 macOS 앱을 작동할 수 있습니다. 단계별로 목표를 수행하며 모든 작업을 실시간 피드에 표시합니다."
+            "value" : "에이전트에 대해 이 기능을 켜면 컴퓨터 제어 기능을 통해 해당 에이전트가 사용자를 대신하여 macOS 앱을 조작할 수 있습니다. 단계별로 목표를 수행하며 모든 작업을 실시간 피드에 표시합니다."
           }
         },
         "ru" : {
@@ -126265,7 +126300,7 @@
         "ko" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "코드 작성"
+            "value" : "코드 생성"
           }
         },
         "ru" : {

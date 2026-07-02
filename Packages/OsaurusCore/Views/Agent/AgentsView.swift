@@ -1898,7 +1898,7 @@ struct AgentDetailView: View {
     /// the top of the Configure tab now that the title bar's avatar/dropdown is
     /// dedicated to switching between agents.
     private var identitySection: some View {
-        AgentDetailSection(title: L("Identity"), icon: "person.crop.circle") {
+        AgentDetailSection(title: L("editor.section.identity"), icon: "person.crop.circle") {
             VStack(alignment: .leading, spacing: 10) {
                 StyledTextField(
                     placeholder: L("e.g., Code Assistant"),
