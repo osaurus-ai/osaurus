@@ -1024,6 +1024,7 @@ struct AgentDetailView: View {
     /// folds them back into the persisted `AgentSettings` block.
     @State private var knowledgeEnabled: Bool = false
     @State private var knowledgeCollectionIds: [UUID] = []
+    @State private var knowledgeCuratorEnabled: Bool = false
     /// Registry of knowledge collections for the grants checklist.
     @ObservedObject private var knowledgeManager = KnowledgeManager.shared
     /// Per-agent subagent capability toggles, keyed by the capability
@@ -2819,6 +2820,12 @@ struct AgentDetailView: View {
                         knowledgeGrantRow(collection)
                     }
                 }
+                featureToggleRow(
+                    title: "Curator",
+                    subtitle:
+                        "Let this agent draft document updates as pending proposals (it can also file and work staleness tickets). Nothing changes in a collection until you approve a proposal in the Knowledge section.",
+                    isOn: $knowledgeCuratorEnabled
+                )
             }
         }
     }
@@ -6132,6 +6139,7 @@ struct AgentDetailView: View {
         selfSchedulingEnabled = agent.settings.selfSchedulingEnabled
         knowledgeEnabled = agent.settings.knowledgeEnabled
         knowledgeCollectionIds = agent.settings.knowledgeCollectionIds
+        knowledgeCuratorEnabled = agent.settings.knowledgeCuratorEnabled
         subagentToggles = SubagentCapabilityRegistry.perAgentToggleFlags.reduce(into: [:]) {
             acc,
             flag in
@@ -6380,7 +6388,8 @@ struct AgentDetailView: View {
                 // selection, and the tools stay hidden while the feature is
                 // off regardless.
                 knowledgeEnabled: knowledgeEnabled,
-                knowledgeCollectionIds: knowledgeCollectionIds
+                knowledgeCollectionIds: knowledgeCollectionIds,
+                knowledgeCuratorEnabled: knowledgeCuratorEnabled
             ),
             order: current.order
         )
