@@ -1829,7 +1829,7 @@ struct DiscordConnectionTests {
         }
     }
 
-    @Test func nativeAgentChannelToolsAreDisabledButRemainExternallyDenied() async throws {
+    @Test func nativeAgentChannelToolsAreRegisteredAsDynamicNativeToolsAndRemainExternallyDenied() async throws {
         let names = ToolRegistry.agentChannelToolNames.sorted()
         let phantomDiscordNames: Set<String> = [
             "discord_diagnostics",
@@ -1842,28 +1842,31 @@ struct DiscordConnectionTests {
             "discord_send_message",
             "discord_reply_to_thread",
         ]
-        let (registeredNames, builtInNames, pluginNames, phantomNames) = await MainActor.run {
+        let (registeredNames, builtInNames, runtimeNames, pluginNames, alwaysLoadedNames, phantomNames) = await MainActor.run {
             (
                 Set(ToolRegistry.shared.listTools().map(\.name)),
                 ToolRegistry.shared.builtInToolNames,
+                ToolRegistry.shared.runtimeManagedToolNames,
                 names.filter { ToolRegistry.shared.isPluginTool($0) },
+                Set(ToolRegistry.shared.alwaysLoadedSpecs(mode: .none).map(\.function.name)),
                 phantomDiscordNames.filter { ToolRegistry.shared.entry(named: $0) != nil }
             )
         }
-        // Agent Channel tool registration is intentionally disabled in
-        // `ToolRegistry.registerBuiltInTools`, so none of the native action
-        // tools are live in the registry. They must also never leak in as
-        // plugin-owned tools or collide with the phantom Discord vocabulary.
-        #expect(Set(names).isDisjoint(with: registeredNames))
+        // Agent Channel actions are provider-neutral native dynamic tools:
+        // callable by the app runtime, but not injected into the always-loaded
+        // prompt baseline.
+        #expect(Set(names).isSubset(of: registeredNames))
         #expect(pluginNames.isEmpty)
+        #expect(Set(names).isDisjoint(with: builtInNames))
+        #expect(Set(names).isDisjoint(with: runtimeNames))
+        #expect(Set(names).isDisjoint(with: alwaysLoadedNames))
         #expect(phantomNames.isEmpty)
 
-        // Even while the tools are disabled, their names stay on the
-        // external-surface deny list (defense in depth) and must never be
-        // promoted to built-ins.
+        // The native action vocabulary stays restricted to the app surface.
+        // External HTTP/MCP callers must not be able to send channel messages
+        // through these tools.
         for name in names {
             #expect(ToolRegistry.externallyDeniedToolNames.contains(name))
-            #expect(!builtInNames.contains(name))
             #expect(!ToolRegistry.isDeniedForCurrentSurface(name))
             let denied = ChatExecutionContext.$isExternalSurface.withValue(true) {
                 ToolRegistry.isDeniedForCurrentSurface(name)

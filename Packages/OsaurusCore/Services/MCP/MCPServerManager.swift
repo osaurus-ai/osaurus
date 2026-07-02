@@ -68,9 +68,11 @@ final class MCPServerManager {
 
     // MARK: - Internal
     private func registerHandlers(on server: MCP.Server) async {
-        // ListTools returns only enabled tools from ToolRegistry
+        // ListTools returns only enabled, externally exposable tools from ToolRegistry.
         await server.withMethodHandler(MCP.ListTools.self) { _ in
-            let entries = await ToolRegistry.shared.listTools().filter { $0.enabled }
+            let entries = await ToolRegistry.shared.listTools().filter {
+                Self.isToolVisibleToExternalMCP(name: $0.name, enabled: $0.enabled)
+            }
             let tools: [MCP.Tool] = entries.map { entry in
                 let schema: MCP.Value = entry.parameters.map { Self.toMCPValue($0) } ?? .null
                 return MCP.Tool(name: entry.name, description: entry.description, inputSchema: schema)
@@ -107,12 +109,25 @@ final class MCPServerManager {
             }()
             let argsJSON: String = {
                 if let d = argsData {
-                    return String(decoding: d, as: UTF8.self)
+                    return String(data: d, encoding: .utf8) ?? "{}"
                 }
                 return "{}"
             }()
 
             do {
+                if let denial = Self.externalMCPDenialMessage(for: params.name) {
+                    return .init(
+                        content: [
+                            .text(
+                                text: denial,
+                                annotations: nil,
+                                _meta: nil
+                            )
+                        ],
+                        isError: true
+                    )
+                }
+
                 // Validate against tool schema when available
                 if let schema = await ToolRegistry.shared.parametersForTool(name: params.name) {
                     let result = SchemaValidator.validate(arguments: argumentsAny, against: schema)
@@ -122,7 +137,10 @@ final class MCPServerManager {
                     }
                 }
 
-                let result = try await ToolRegistry.shared.execute(name: params.name, argumentsJSON: argsJSON)
+                let result = try await Self.executeToolAsExternalMCP(
+                    name: params.name,
+                    argumentsJSON: argsJSON
+                )
                 return .init(content: [.text(text: result, annotations: nil, _meta: nil)], isError: false)
             } catch {
                 return .init(
@@ -130,6 +148,22 @@ final class MCPServerManager {
                     isError: true
                 )
             }
+        }
+    }
+
+    nonisolated static func isToolVisibleToExternalMCP(name: String, enabled: Bool) -> Bool {
+        enabled && !ToolRegistry.externallyDeniedToolNames.contains(name)
+    }
+
+    nonisolated static func externalMCPDenialMessage(for name: String) -> String? {
+        guard ToolRegistry.externallyDeniedToolNames.contains(name) else { return nil }
+        return "'\(name)' is not available to external callers. "
+            + "App-only tools can only run from the Osaurus app."
+    }
+
+    static func executeToolAsExternalMCP(name: String, argumentsJSON: String) async throws -> String {
+        try await ChatExecutionContext.$isExternalSurface.withValue(true) {
+            try await ToolRegistry.shared.execute(name: name, argumentsJSON: argumentsJSON)
         }
     }
 

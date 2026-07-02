@@ -19,6 +19,12 @@ The model-facing tools use these standard verbs through `agent_channel_*`
 tools. Provider-specific adapters translate the standard action into the
 provider API. Discord is the first executable adapter.
 
+The `agent_channel_*` tools are native dynamic tools. They are available to the
+app runtime and can be loaded through the capability flow, but they are not part
+of the always-loaded prompt baseline. They are also denied to external HTTP/MCP
+surfaces; channel reads and writes must originate from the Osaurus app surface
+where connection policy, confirmations, and local credentials are available.
+
 Each connection also reports provider-neutral action policy metadata in
 `agent_channel_list_connections` and `agent_channel_diagnostics`:
 
@@ -54,6 +60,31 @@ but no space allowlist is configured, unless the connection explicitly opts into
 `allowUnscopedSpaces`. Each decision carries an `audit_decision_reason` so
 denied relays can be logged without exposing secrets or external message
 content.
+
+## Service-Level Smoke Boundary
+
+Agent Channels are ready for provider smoke testing when a disposable connection
+can exercise the standard app-surface tools without exposing unfinished settings
+UI or external caller access. A smoke pass should use a disposable workspace,
+server, bot, or chat and prove:
+
+1. `agent_channel_list_connections` reports the connection with readable action
+   policy, write confirmation requirements, and no raw secrets.
+2. `agent_channel_diagnostics` reports missing credentials, disabled writes,
+   denied rooms/chats, and provider auth failures as explicit failure states.
+3. `agent_channel_read_messages` or `agent_channel_search_messages` returns
+   only allowlisted rooms/chats and treats provider message content as external
+   data.
+4. `agent_channel_draft_message` returns a redacted local preview and never
+   dispatches to the provider.
+5. `agent_channel_send_message` or `agent_channel_reply_thread` succeeds only
+   with `confirm_send: true`, a write-allowlisted destination, and a provider
+   response that can be mapped to a confirmed delivery.
+6. External HTTP/MCP surfaces reject the same `agent_channel_*` tool names.
+
+The smoke boundary does not require final visible settings placement,
+production webhook hosting, or background polling. Those remain integration
+work layered on top of the shared action vocabulary and policy gates.
 
 ## Configuration
 

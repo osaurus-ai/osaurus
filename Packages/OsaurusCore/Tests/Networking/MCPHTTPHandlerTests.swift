@@ -206,6 +206,44 @@ struct MCPHTTPHandlerTests {
         }
     }
 
+    @Test func stdio_mcp_policy_hides_externally_denied_tools() {
+        #expect(MCPServerManager.isToolVisibleToExternalMCP(name: EchoTool.nameStatic, enabled: true))
+        #expect(!MCPServerManager.isToolVisibleToExternalMCP(name: EchoTool.nameStatic, enabled: false))
+
+        for name in ["file_write", "shell_run", "agent_channel_send_message"] {
+            #expect(!MCPServerManager.isToolVisibleToExternalMCP(name: name, enabled: true))
+            let denial = MCPServerManager.externalMCPDenialMessage(for: name)
+            #expect(denial?.contains("App-only tools") == true)
+        }
+    }
+
+    @Test func stdio_mcp_execution_binds_external_surface() async throws {
+        try await DynamicCatalogTestLock.shared.run {
+            let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent(
+                "osaurus-tests-\(UUID().uuidString)",
+                isDirectory: true
+            )
+            ToolConfigurationStore.overrideDirectory = tempDir
+            try? FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+
+            ToolRegistry.shared.register(ExternalSurfaceProbeTool())
+            ToolRegistry.shared.setEnabled(true, for: ExternalSurfaceProbeTool.nameStatic)
+            defer { ToolRegistry.shared.unregister(names: [ExternalSurfaceProbeTool.nameStatic]) }
+
+            let text = try await MCPServerManager.executeToolAsExternalMCP(
+                name: ExternalSurfaceProbeTool.nameStatic,
+                argumentsJSON: "{}"
+            )
+            let envelope =
+                try JSONSerialization.jsonObject(
+                    with: Data(text.utf8)
+                ) as? [String: Any]
+            #expect(envelope?["ok"] as? Bool == true)
+            let result = envelope?["result"] as? [String: Any]
+            #expect(result?["text"] as? String == "external")
+        }
+    }
+
     @Test func mcp_call_with_missing_required_arg_returns_error() async throws {
         try await DynamicCatalogTestLock.shared.run {
             let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent(
@@ -265,6 +303,17 @@ private struct NamedEchoTool: OsaurusTool {
     let parameters: JSONValue? = nil
     func execute(argumentsJSON: String) async throws -> String {
         return argumentsJSON
+    }
+}
+
+private struct ExternalSurfaceProbeTool: OsaurusTool {
+    static let nameStatic: String = "external_surface_probe"
+    let name: String = ExternalSurfaceProbeTool.nameStatic
+    let description: String = "Reports whether the current execution surface is external"
+    let parameters: JSONValue? = nil
+
+    func execute(argumentsJSON: String) async throws -> String {
+        ChatExecutionContext.isExternalSurface ? "external" : "internal"
     }
 }
 

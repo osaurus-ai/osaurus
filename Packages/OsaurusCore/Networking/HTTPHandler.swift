@@ -9279,8 +9279,8 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         let logUserAgent = userAgent
         let logSelf = self
         runRequestTask(priority: .userInitiated) {
-            // External callers never see the externally-denied tool classes
-            // (folder write/shell) — `/mcp/call` refuses them too.
+            // External callers never see app-only tool classes; `/mcp/call`
+            // refuses the same deny list too.
             let entries = await MainActor.run {
                 ToolRegistry.shared.listTools().filter {
                     $0.enabled && !ToolRegistry.externallyDeniedToolNames.contains($0.name)
@@ -9460,12 +9460,12 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             return "{}"
         }()
 
-        // External deny list: folder write/shell tool classes are never
-        // invocable through the MCP bridge (they're also hidden from
-        // `/mcp/tools`). Refuse before any schema validation or gating.
+        // External deny list: app-only tool classes are never invocable
+        // through the MCP bridge (they're also hidden from `/mcp/tools`).
+        // Refuse before any schema validation or gating.
         if ToolRegistry.externallyDeniedToolNames.contains(req.name) {
             let message =
-                "'\(req.name)' is not available to external callers. Folder write and shell tools can only run from the Osaurus app."
+                "'\(req.name)' is not available to external callers. App-only tools can only run from the Osaurus app."
             let bodyJSON = #"{"error":"tool_not_exposable","message":"\#(message)"}"#
             sendResponse(
                 context: context,
