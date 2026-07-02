@@ -639,7 +639,16 @@ struct RuntimePolicySourceTests {
         // isolation, so the MLX eval() it triggers no longer blocks the main
         // thread during image generation (fixes the Sentry App Hanging report
         // in ZImage.performGenerate).
-        let expectedRuntimeHardenedRevision = "b6eda04f4e471271778c64af5166ad3d9298afcf"
+        // plus the deterministic-load checkpoint: the shared RMSNorm
+        // convention resolver (vmlx-swift#102) and the full
+        // order-dependent-load sweep (vmlx-swift#108) that remove every
+        // per-process-random Dictionary/Set-order load decision (no more
+        // ~7.5% "degenerates until reload" loads), the Mistral3 VLM fix
+        // (vmlx-swift#107) that honors the bundle's longest_edge instead of
+        // crushing images to 336px, and the stop-string fix (vmlx-swift#109)
+        // that discards post-stop buffers at end-of-stream so text after a
+        // matched stop string can no longer leak into responses.
+        let expectedRuntimeHardenedRevision = "6f154490e1dbaf0d10f396da77ca6a752d0f20a1"
         let manifestRevision = try Self.vmlxPinRevision(in: manifest)
         let workspaceRevision = try Self.vmlxPinRevision(in: workspaceResolved)
         let appRevision = try Self.vmlxPinRevision(in: appResolved)
