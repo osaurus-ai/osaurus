@@ -1436,6 +1436,20 @@ public actor RemoteProviderService: ToolCapableService {
         }
     }
 
+    /// Whether the target accepts OpenAI's `prompt_cache_key` body field —
+    /// a session-scoped routing hint that improves upstream prompt-cache hit
+    /// rates for multi-turn conversations (OpenAI already auto-caches
+    /// >=1024-token prefixes; the key routes same-session requests to the
+    /// same cache shard). Gated to genuine OpenAI hosts only: third-party
+    /// OpenAI-compat schemas can be strict about unknown fields (the same
+    /// reason `idempotency_key` is router-only), and Gemini/Anthropic have
+    /// their own caching (implicit / `cache_control`).
+    static func supportsPromptCacheKey(providerType: RemoteProviderType, host: String) -> Bool {
+        guard providerType == .openaiLegacy else { return false }
+        let normalizedHost = host.lowercased()
+        return normalizedHost == "api.openai.com" || normalizedHost.hasSuffix(".openai.com")
+    }
+
     static func remoteChatMaxTokens(
         providerType: RemoteProviderType,
         parameters: GenerationParameters
@@ -1541,6 +1555,20 @@ public actor RemoteProviderService: ToolCapableService {
         }
 
         switch event.type {
+        case "message_start":
+            // Prompt-caching telemetry: `message_start` carries the request's
+            // usage split. Log the cache read/write counts so the win from the
+            // top-level `cache_control` in `toAnthropicRequest()` is observable
+            // per turn (cache reads bill 0.1x input; writes 1.25x).
+            if let startEvent = try? JSONDecoder().decode(MessageStartEvent.self, from: jsonData) {
+                let usage = startEvent.message.usage
+                debugLog(
+                    "[Cache][Anthropic] input=\(usage.input_tokens)"
+                        + " cacheRead=\(usage.cache_read_input_tokens ?? 0)"
+                        + " cacheWrite=\(usage.cache_creation_input_tokens ?? 0)"
+                )
+            }
+
         case "content_block_delta":
             guard let deltaEvent = try? JSONDecoder().decode(ContentBlockDeltaEvent.self, from: jsonData)
             else { return .continue }
@@ -2384,6 +2412,16 @@ public actor RemoteProviderService: ToolCapableService {
         if stream, Self.requestsStreamUsageOptions(providerType: provider.providerType) {
             request.streamOptions = StreamOptions(include_usage: true)
         }
+        // Session-scoped prompt-cache routing hint for genuine OpenAI hosts.
+        // The chat surface already threads a stable per-conversation
+        // `session_id`; scoping the key to it keeps one conversation's turns
+        // on one cache shard without coupling unrelated sessions.
+        if !isAgentRun,
+            let sessionId = parameters.sessionId, !sessionId.isEmpty,
+            Self.supportsPromptCacheKey(providerType: provider.providerType, host: provider.host)
+        {
+            request.promptCacheKey = "osaurus-session-\(sessionId)"
+        }
         request.runAsRemoteAgent = parameters.runAsRemoteAgent
         return request
     }
@@ -3082,6 +3120,13 @@ public actor RemoteProviderService: ToolCapableService {
         switch providerType {
         case .anthropic:
             let response = try JSONDecoder().decode(AnthropicMessagesResponse.self, from: data)
+            // Same prompt-caching telemetry as the streaming `message_start`
+            // handler, for the non-streaming path.
+            debugLog(
+                "[Cache][Anthropic] input=\(response.usage.input_tokens)"
+                    + " cacheRead=\(response.usage.cache_read_input_tokens ?? 0)"
+                    + " cacheWrite=\(response.usage.cache_creation_input_tokens ?? 0)"
+            )
             var textContent = ""
             var toolCalls: [ToolCall] = []
 
@@ -3395,6 +3440,13 @@ struct RemoteChatRequest: Encodable {
     /// wire bytes (the non-streaming path and Anthropic/Gemini/Responses, which
     /// build their own bodies, never set it).
     var streamOptions: StreamOptions? = nil
+    /// OpenAI `prompt_cache_key`: session-scoped routing hint that improves
+    /// upstream prompt-cache hit rates (OpenAI auto-caches >=1024-token
+    /// prefixes; the key routes same-session requests to the same cache
+    /// shard). Set (in `buildChatRequest`) only for genuine OpenAI hosts (see
+    /// `supportsPromptCacheKey`) so strict third-party OpenAI-compat schemas
+    /// never see an unknown field. Encoded only when non-nil.
+    var promptCacheKey: String? = nil
     /// Local-only routing marker (Mode 2). When true, `buildURLRequest` targets
     /// the peer's `/agents/{address}/run` endpoint instead of
     /// `/chat/completions`. Intentionally absent from `CodingKeys` so it never
@@ -3411,6 +3463,7 @@ struct RemoteChatRequest: Encodable {
         case idempotencyKey = "idempotency_key"
         case veniceParameters = "venice_parameters"
         case streamOptions = "stream_options"
+        case promptCacheKey = "prompt_cache_key"
     }
 
     func encode(to encoder: Encoder) throws {
@@ -3461,6 +3514,7 @@ struct RemoteChatRequest: Encodable {
         try container.encodeIfPresent(idempotencyKey, forKey: .idempotencyKey)
         try container.encodeIfPresent(veniceParameters, forKey: .veniceParameters)
         try container.encodeIfPresent(streamOptions, forKey: .streamOptions)
+        try container.encodeIfPresent(promptCacheKey, forKey: .promptCacheKey)
         // `modelOptions` is intentionally not in `CodingKeys` — it stays
         // in-process for model-specific feature flags.
     }
@@ -3650,7 +3704,16 @@ struct RemoteChatRequest: Encodable {
             stop_sequences: stop,
             tools: anthropicTools,
             tool_choice: anthropicToolChoice,
-            metadata: nil
+            metadata: nil,
+            // Top-level automatic prompt caching: Anthropic puts the cache
+            // breakpoint on the last cacheable block and advances it as the
+            // conversation grows, so multi-turn sessions re-read the whole
+            // prefix at 0.1x input price instead of re-paying full rate every
+            // turn. Safe to send unconditionally — the canonical JSON encoder
+            // already guarantees byte-stable prefixes across turns, and
+            // requests below the model's minimum cacheable length are simply
+            // processed uncached.
+            cache_control: AnthropicCacheControl()
         )
     }
 

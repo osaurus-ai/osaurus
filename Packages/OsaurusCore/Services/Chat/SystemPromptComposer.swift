@@ -2374,6 +2374,116 @@ public struct SystemPromptComposer: Sendable {
         )
     }
 
+    /// Render the memory + screen-context block exactly as the per-turn
+    /// injectors (`injectMemoryPrefix` + `injectScreenContextPrefix`) would
+    /// prepend it to a non-empty user message, INCLUDING the trailing
+    /// separator — so `prefix + originalContent` reproduces the legacy
+    /// injected bytes. Callers freeze this string per user turn (chat) or
+    /// per session ledger entry (HTTP/plugin) so that once a turn has been
+    /// sent with an injected prefix, every later request replays the same
+    /// bytes and the paged KV cache can reuse the whole prior exchange.
+    /// Returns nil when both inputs are nil/blank.
+    static func composeInjectedUserPrefix(
+        memorySection: String?,
+        screenContext: String?
+    ) -> String? {
+        var prefix = ""
+        if let memorySection {
+            let trimmed = memorySection.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !trimmed.isEmpty { prefix = "[Memory]\n\(trimmed)\n[/Memory]\n\n" }
+        }
+        if let screenContext {
+            let trimmed = screenContext.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !trimmed.isEmpty { prefix = "\(trimmed)\n\n" + prefix }
+        }
+        return prefix.isEmpty ? nil : prefix
+    }
+
+    /// Session-stable memory injection for surfaces whose history is owned
+    /// by the CALLER (HTTP `/agents/{id}/run`, plugin host): the client
+    /// resends clean history each request, so a prefix injected into the
+    /// latest user message on request N silently vanishes from request
+    /// N+1's history and the local paged-KV prefix diverges at that message
+    /// (the whole last exchange re-prefills). This helper makes the
+    /// injected bytes sticky:
+    ///   1. re-applies previously recorded prefixes (`frozen`, keyed by
+    ///      content-hash + occurrence of the ORIGINAL user message) to
+    ///      matching history user messages, and
+    ///   2. injects this request's `memorySection` into the latest user
+    ///      message — unless that message already has a recorded prefix
+    ///      (identical retry), in which case the recorded bytes win.
+    /// Returns the (key, prefix) recorded for the latest user message so
+    /// the caller can persist it into the session ledger; nil when nothing
+    /// new was injected. Multimodal (`contentParts`) messages are skipped,
+    /// matching `injectMemoryPrefix`.
+    static func applyFrozenMemoryPrefixes(
+        memorySection: String?,
+        frozen: [String: String],
+        into messages: inout [ChatMessage]
+    ) -> (key: String, prefix: String)? {
+        guard let lastUserIdx = messages.lastIndex(where: { $0.role == "user" }) else { return nil }
+        let keys = frozenPrefixKeys(for: messages)
+
+        func prepend(_ prefix: String, at idx: Int) {
+            let existing = messages[idx]
+            guard existing.contentParts == nil else { return }
+            messages[idx] = ChatMessage(
+                role: existing.role,
+                content: prefix + (existing.content ?? ""),
+                tool_calls: existing.tool_calls,
+                tool_call_id: existing.tool_call_id
+            )
+        }
+
+        // History user messages: replay the exact bytes they were sent with.
+        for (idx, key) in keys where idx != lastUserIdx {
+            if let prefix = frozen[key] { prepend(prefix, at: idx) }
+        }
+
+        guard let lastKey = keys[lastUserIdx] else { return nil }
+        if let recorded = frozen[lastKey] {
+            // Identical retry of the same latest message — byte stability
+            // beats fresher memory.
+            prepend(recorded, at: lastUserIdx)
+            return nil
+        }
+        guard messages[lastUserIdx].contentParts == nil,
+            let prefix = composeInjectedUserPrefix(
+                memorySection: memorySection,
+                screenContext: nil
+            )
+        else { return nil }
+        prepend(prefix, at: lastUserIdx)
+        return (key: lastKey, prefix: prefix)
+    }
+
+    /// Stable ledger keys for every user message in the array:
+    /// FNV-1a hash of the ORIGINAL content plus an occurrence ordinal, so
+    /// duplicate texts ("yes", "continue") map to distinct entries while
+    /// remaining deterministic for a client that resends identical history.
+    private static func frozenPrefixKeys(for messages: [ChatMessage]) -> [Int: String] {
+        var occurrence: [String: Int] = [:]
+        var keys: [Int: String] = [:]
+        for (idx, msg) in messages.enumerated() where msg.role == "user" {
+            let hash = fnv1aHex(msg.content ?? "")
+            let ordinal = occurrence[hash, default: 0]
+            occurrence[hash] = ordinal + 1
+            keys[idx] = "\(hash)#\(ordinal)"
+        }
+        return keys
+    }
+
+    /// Deterministic FNV-1a 64-bit over UTF-8 bytes (matches the hashing
+    /// style used by `CompactionWatermark` for message identities).
+    private static func fnv1aHex(_ text: String) -> String {
+        var hash: UInt64 = 0xcbf2_9ce4_8422_2325
+        for byte in text.utf8 {
+            hash ^= UInt64(byte)
+            hash = hash &* 0x0000_0100_0000_01b3
+        }
+        return String(hash, radix: 16)
+    }
+
     /// Prepend a frozen screen-context block (already rendered by
     /// `ScreenContextSnapshot.render()`, tags and all) to the latest user
     /// message. Placed on the user turn — not the system prompt — for two

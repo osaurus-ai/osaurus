@@ -316,7 +316,14 @@ struct RuntimePolicySourceTests {
         #expect(source.contains("query: extractLatestUserQuery(from: messages)"))
         #expect(source.contains("messages: messages"))
         #expect(source.contains("memorySection: composed.memorySection"))
-        #expect(source.contains("SystemPromptComposer.injectMemoryPrefix(ctx.memorySection, into: &messages)"))
+        // Memory rides the latest user message via the session-stable frozen
+        // prefix path (KV-safe across requests), not a per-request injection
+        // that vanishes from the next request's history.
+        #expect(source.contains("SystemPromptComposer.applyFrozenMemoryPrefixes("))
+        #expect(source.contains("memorySection: ctx.memorySection"))
+        #expect(source.contains("frozen: frozenUserPrefixes"))
+        #expect(source.contains("recordUserPrefix("))
+        #expect(!source.contains("SystemPromptComposer.injectMemoryPrefix("))
     }
 
     @Test("plugin host inference defaults to a real tool loop")

@@ -753,6 +753,9 @@ final class PluginHostContext: @unchecked Sendable {
     private struct EnrichedInference {
         var request: ChatCompletionRequest
         let tools: [Tool]?
+        /// (key, prefix) for the memory block injected into this request's
+        /// latest user message, when the session ledger should record it.
+        var recordedUserPrefix: (key: String, prefix: String)? = nil
     }
 
     /// Fully prepared inference state ready for the agentic loop.
@@ -809,7 +812,34 @@ final class PluginHostContext: @unchecked Sendable {
             sessionId: request.session_id
         )
         let execMode = agentCtx?.executionMode ?? .none
-        var enriched = enrichRequest(request, context: agentCtx, options: options)
+        // Session-stable memory injection (parity with the chat surface's
+        // frozen turn prefixes): fetch previously recorded per-user-message
+        // prefixes so `enrichRequest` replays the exact bytes earlier
+        // requests were sent with, and record the prefix newly injected into
+        // this request's latest user message for the NEXT request. Without
+        // this, plugin history resent clean each call diverges from the
+        // prior wire bytes and re-prefills the last exchange.
+        let frozenPrefixes: [String: String]
+        if let sid = request.session_id, !sid.isEmpty {
+            frozenPrefixes = await SessionToolStateStore.shared.frozenUserPrefixes(sid)
+        } else {
+            frozenPrefixes = [:]
+        }
+        var enriched = enrichRequest(
+            request,
+            context: agentCtx,
+            options: options,
+            frozenUserPrefixes: frozenPrefixes
+        )
+        if let sid = request.session_id, !sid.isEmpty,
+            let recorded = enriched.recordedUserPrefix
+        {
+            await SessionToolStateStore.shared.recordUserPrefix(
+                sid,
+                key: recorded.key,
+                prefix: recorded.prefix
+            )
+        }
         if let pid = pluginId {
             let instructions: String? = await MainActor.run {
                 PluginInstructionsResolver.instructions(pluginId: pid, agentId: agentCtx?.agentId)
@@ -961,7 +991,8 @@ final class PluginHostContext: @unchecked Sendable {
     private static func enrichRequest(
         _ request: ChatCompletionRequest,
         context: AgentContext?,
-        options: InferenceOptions
+        options: InferenceOptions,
+        frozenUserPrefixes: [String: String] = [:]
     ) -> EnrichedInference {
         guard let ctx = context else {
             return EnrichedInference(request: request, tools: request.tools)
@@ -977,7 +1008,17 @@ final class PluginHostContext: @unchecked Sendable {
 
         var messages = request.messages
         SystemPromptComposer.injectSystemContent(ctx.systemPrompt, into: &messages)
-        SystemPromptComposer.injectMemoryPrefix(ctx.memorySection, into: &messages)
+        // Byte-stable memory injection: replay prefixes recorded on earlier
+        // requests of this session onto matching history messages, then
+        // inject this request's memory into the latest user message (see
+        // SystemPromptComposer.applyFrozenMemoryPrefixes). The recorded pair
+        // rides back on EnrichedInference so `prepareInference` can persist
+        // it into the session ledger.
+        let recordedUserPrefix = SystemPromptComposer.applyFrozenMemoryPrefixes(
+            memorySection: ctx.memorySection,
+            frozen: frozenUserPrefixes,
+            into: &messages
+        )
 
         let effectiveTools: [Tool]?
         if let explicit = request.tools, !explicit.isEmpty {
@@ -1007,7 +1048,11 @@ final class PluginHostContext: @unchecked Sendable {
         enrichedWithRuntimeOptions.enable_thinking = request.enable_thinking
         enrichedWithRuntimeOptions.reasoning_effort = request.reasoning_effort
         enrichedWithRuntimeOptions.modelOptions = request.modelOptions
-        return EnrichedInference(request: enrichedWithRuntimeOptions, tools: effectiveTools)
+        return EnrichedInference(
+            request: enrichedWithRuntimeOptions,
+            tools: effectiveTools,
+            recordedUserPrefix: recordedUserPrefix
+        )
     }
 
     private static func iterationRequest(

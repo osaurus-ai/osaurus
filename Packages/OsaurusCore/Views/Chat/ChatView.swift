@@ -1166,6 +1166,25 @@ final class ChatSession: ObservableObject {
         return ChatMessage(role: "user", content: messageText)
     }
 
+    /// Prepend a user turn's frozen memory / screen-context prefix to its
+    /// rendered message. The prefix already carries its trailing separator
+    /// (`SystemPromptComposer.composeInjectedUserPrefix`), so this is a pure
+    /// byte concatenation — `prefix + content` reproduces exactly what the
+    /// legacy per-iteration injectors used to send. Multimodal messages are
+    /// returned unchanged, matching the injectors' `contentParts` guard.
+    static func applyingFrozenInjectedPrefix(
+        _ prefix: String?,
+        to message: ChatMessage
+    ) -> ChatMessage {
+        guard let prefix, !prefix.isEmpty, message.contentParts == nil else { return message }
+        return ChatMessage(
+            role: message.role,
+            content: prefix + (message.content ?? ""),
+            tool_calls: message.tool_calls,
+            tool_call_id: message.tool_call_id
+        )
+    }
+
     private static func audioPayload(from attachment: Attachment) -> (
         data: Data,
         format: String,
@@ -3191,6 +3210,46 @@ final class ChatSession: ObservableObject {
         isDirty = true
     }
 
+    /// Freeze this run's memory + screen-context blocks onto the latest user
+    /// turn, once, at send time. From then on `turnToMessage` replays the
+    /// prefix verbatim on every request, so the turn's wire bytes are
+    /// byte-identical across loop iterations AND across later turns — the
+    /// paged KV cache reuses the whole prior exchange instead of
+    /// re-prefilling it (the prefix used to vanish from history the moment
+    /// the next turn became "latest"). Mirrors how `frozenManifest` /
+    /// `frozenSoul` freeze the static prompt side.
+    private func freezeInjectedContextOntoLatestUserTurn(
+        memorySection: String?,
+        screenContext: String?
+    ) {
+        guard let turn = turns.last(where: { $0.role == .user }) else { return }
+        // Regeneration re-runs an already-sent turn: keep the original
+        // bytes. The KV prefix through this turn is still valid, and the
+        // model already read the original memory block — fresher recall is
+        // not worth rewriting sent history.
+        guard turn.injectedContextPrefix == nil else { return }
+        // Parity with the legacy injector guard: a turn that renders as a
+        // multimodal parts message never carries an injected prefix.
+        if !turn.attachments.isEmpty {
+            let rendered = Self.buildUserChatMessage(
+                content: turn.content,
+                attachments: turn.attachments,
+                supportsImages: selectedModelSupportsImages,
+                supportsAudio: selectedModelSupportsAudio,
+                supportsVideo: selectedModelSupportsVideo
+            )
+            if rendered.contentParts != nil { return }
+        }
+        guard
+            let prefix = SystemPromptComposer.composeInjectedUserPrefix(
+                memorySection: memorySection,
+                screenContext: screenContext
+            )
+        else { return }
+        turn.injectedContextPrefix = prefix
+        isDirty = true
+    }
+
     func send(_ text: String, attachments: [Attachment] = []) {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         let hasContent = !trimmed.isEmpty || !attachments.isEmpty
@@ -3495,6 +3554,23 @@ final class ChatSession: ObservableObject {
                     budgetTracker.snapshot(context: context)
                     budgetTracker.updateScreenContext(tokens: cachedScreenContextTokens)
 
+                    // Freeze this turn's memory + screen-context prefix into
+                    // the turn history BEFORE any messages are rendered: the
+                    // injected bytes become part of the turn's permanent
+                    // rendering, so turn N+1 replays turn N byte-identically
+                    // and the paged KV cache reuses the whole previous
+                    // exchange. (Previously the prefix was re-injected onto
+                    // whichever user message was latest and vanished from
+                    // history on the next turn, re-prefilling the last
+                    // exchange every turn.) Skipped in Mode 2: requests stay
+                    // bare and the remote agent applies its own context.
+                    if !isRemoteAgentTarget {
+                        freezeInjectedContextOntoLatestUserTurn(
+                            memorySection: context.memorySection,
+                            screenContext: screenContextEnabled ? frozenScreenContext : nil
+                        )
+                    }
+
                     let effectiveMaxTokensForAgent = AgentManager.shared.effectiveMaxTokens(for: effectiveAgentId)
 
                     // KV-cache-aware history compaction: shared window
@@ -3553,12 +3629,23 @@ final class ChatSession: ObservableObject {
                                 tool_call_id: t.toolCallId
                             )
                         case .user:
-                            return Self.buildUserChatMessage(
+                            let base = Self.buildUserChatMessage(
                                 content: t.content,
                                 attachments: t.attachments,
                                 supportsImages: selectedModelSupportsImages,
                                 supportsAudio: selectedModelSupportsAudio,
                                 supportsVideo: selectedModelSupportsVideo
+                            )
+                            // Replay the frozen memory / screen-context block
+                            // this turn was originally sent with, so its wire
+                            // bytes never change once it has been part of a
+                            // token stream (paged-KV prefix reuse across
+                            // turns). Mode 2 requests stay bare — the local
+                            // agent's memory must not ride to a remote agent.
+                            if isRemoteAgentTarget { return base }
+                            return Self.applyingFrozenInjectedPrefix(
+                                t.injectedContextPrefix,
+                                to: base
                             )
                         default:
                             return ChatMessage(role: t.role.rawValue, content: t.content)
@@ -4130,44 +4217,30 @@ final class ChatSession: ObservableObject {
                                 )
                             }
 
-                            // Conversation tokens are measured BEFORE the memory
-                            // + screen-context prefixes are injected, so each is
-                            // attributed to its own budget row (Memory / Screen
-                            // Context) instead of being double-counted inside the
-                            // Conversation total.
+                            // Memory + screen context ride the latest user
+                            // message as a FROZEN turn prefix (see
+                            // `freezeInjectedContextOntoLatestUserTurn`), so
+                            // `buildMessages()` already rendered them and the
+                            // trimmer/watermark above saw the final bytes.
+                            // The current turn's injected block is attributed
+                            // to its own budget rows (Memory / Screen
+                            // Context), so subtract it from the Conversation
+                            // total; PAST turns' frozen prefixes are genuine
+                            // history bytes and stay counted here.
+                            let currentInjectedTokens =
+                                self.turns.last(where: { $0.role == .user })?
+                                .injectedContextPrefix
+                                .map { ContextBudgetManager.estimateTokens(for: $0) } ?? 0
                             let convTokens =
                                 msgs
                                 .filter { $0.role != "system" }
                                 .reduce(0) { $0 + ContextBudgetManager.estimateTokens(for: $1.content) }
+                                - currentInjectedTokens
                             self.budgetTracker.updateConversation(
-                                tokens: convTokens,
+                                tokens: max(0, convTokens),
                                 finishedOutputTurn: assistantTurn
                             )
 
-                            // Memory now lives on the latest user message instead of
-                            // the system prompt — keeps the system prefix byte-stable
-                            // across turns so the MLX paged KV cache can reuse the
-                            // entire conversation prefix. Skipped in Mode 2: this is
-                            // the *local* agent's memory and must not ride along to
-                            // the remote agent, which applies its own.
-                            if !self.isRemoteAgentTarget {
-                                SystemPromptComposer.injectMemoryPrefix(
-                                    context.memorySection,
-                                    into: &msgs
-                                )
-                            }
-
-                            // Opt-in: prepend the frozen screen-context snapshot
-                            // to the latest user message (same seam as memory).
-                            // Keeps the system prefix KV-stable and routes the
-                            // snapshot through the Privacy Filter on cloud sends.
-                            // Skipped in Mode 2 (no local context leaves the client).
-                            if !self.isRemoteAgentTarget, screenContextEnabled {
-                                SystemPromptComposer.injectScreenContextPrefix(
-                                    self.frozenScreenContext,
-                                    into: &msgs
-                                )
-                            }
                             // `overBudget` (protected first message + tail
                             // alone exceed the budget after every compaction
                             // lever) ends the run with a distinct exit
@@ -4272,12 +4345,17 @@ final class ChatSession: ObservableObject {
                             // matching TTFT fields per send so we can audit KV reuse
                             // without instrumenting MLX. Helper lives on the store
                             // so the turn counter + previous-hint comparison sit
-                            // next to the state they describe.
+                            // next to the state they describe. Passing the outbound
+                            // messages adds the conversation-level line — reused vs
+                            // re-prefilled history tokens per send — which is the
+                            // tripwire for cross-turn byte divergence (frozen turn
+                            // prefixes keep it near-total reuse).
                             if let sid = self.sessionId {
                                 await SessionToolStateStore.shared.recordSend(
                                     sessionId: self.sessionStateKey(sid),
                                     cacheHint: context.cacheHint,
-                                    trace: ttftTrace
+                                    trace: ttftTrace,
+                                    conversation: msgs
                                 )
                             }
                             do {

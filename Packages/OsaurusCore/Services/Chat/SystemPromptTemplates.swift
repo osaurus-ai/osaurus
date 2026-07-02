@@ -73,16 +73,24 @@ public enum SystemPromptTemplates {
     /// Compact agent-loop cheat-sheet for small-context / small local models
     /// (`prefersCompactPrompt`). Same four tools and the load-bearing rules
     /// (always answer in plain text, OPTIONAL 3+ step todo, OPTIONAL complete
-    /// that only closes a todo alongside the answer, one-question clarify,
-    /// file-exists artifact), one line each.
+    /// that only closes a todo alongside the answer, last-resort one-question
+    /// clarify with the anti-punt rule, file-exists artifact), one line each.
+    ///
+    /// The clarify line keeps the false-clarify discipline from the W4 eval
+    /// fixes compressed, not dropped: "fully specified is not ambiguous" +
+    /// the user-asks escape hatch must survive because the compact bootstrap
+    /// skeleton truncates the ClarifyTool description to its first sentence,
+    /// so this bullet is the only place a small model sees the anti-punt
+    /// rule. Argument constraints (option limits, ≥30-char summary) live in
+    /// the constraint-preserving tool schemas and are not restated here.
     public static let agentLoopGuidanceCompact = """
         ## Agent loop
 
-        - Always answer the user in plain text; that plain-text reply ends the turn.
-        - `todo(markdown)` — OPTIONAL checklist for multi-step (3+) work; re-send it with each box checked as you finish. Skip single-step or direct questions.
-        - `complete(summary)` — OPTIONAL: only to close a `todo`, in the SAME message as your answer; a short WHAT+HOW status, not the answer. No vague placeholders.
-        - `clarify(question)` — last resort, NOT for big or multi-step tasks. If the request is fully specified, just do the work. Ask one concrete question only when a required input is missing or contradictory and no sensible default exists (or the user explicitly asks you to); otherwise assume a reasonable default, proceed, and note it.
-        - `share_artifact(path | content+filename)` — the only way the user sees a file/image/report; the file MUST exist first. Sandbox: save under home, not `/tmp`.
+        - Answer the user in plain text; that reply ends the turn.
+        - `todo(markdown)` — OPTIONAL, 3+ step work only: create first, re-send with each box checked. Skip single-step work.
+        - `complete(summary)` — OPTIONAL, only closes a `todo`: short WHAT+HOW status in the SAME message as your answer, not the answer.
+        - `clarify(question)` — last resort; a fully specified task is not ambiguous, just do it. Ask ONE question only when the user asks or a required input is missing/contradictory with no sensible default.
+        - `share_artifact(path | content+filename)` — the only way the user sees a file/image; it MUST exist first. Sandbox: save under home, not `/tmp`.
         """
 
     // MARK: - Grounding
@@ -475,8 +483,8 @@ public enum SystemPromptTemplates {
             : verboseBlocks(groups)
 
         // The "never deny a listed capability" rule is owned by
-        // `toolGroundingLine` / `groundingDirective` (which co-fire whenever
-        // this section renders), so the intro doesn't restate it. Compact
+        // `groundingDirective` (which co-fires whenever this section
+        // renders), so the intro doesn't restate it. Compact
         // mode (small-context models) also drops the worked example — the
         // ids themselves are what stop a small model from denying a
         // capability, and the example's tokens crowd an 8K window.

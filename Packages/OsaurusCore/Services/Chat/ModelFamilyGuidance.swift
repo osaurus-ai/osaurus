@@ -20,8 +20,9 @@
 //      unguided model paired with the always-on prohibition sections
 //      reads as net-restrictive (refuses more) and, when it does act
 //      with no fitting tool, fabricates. The default block is the
-//      smallest counterweight that keeps it obedient without encouraging
-//      tool enumeration (it explicitly says "only call tools that exist").
+//      smallest counterweight that keeps it obedient; the anti-invention
+//      guardrail is owned by `SystemPromptTemplates.groundingDirective`,
+//      which co-fires for every tool-enabled chat with a non-empty schema.
 //
 //  Each family gets a tightly-targeted block; the default block is kept
 //  minimal so it does not inflate every prompt the way a full universal
@@ -142,20 +143,17 @@ enum ModelFamilyGuidance {
         return compact ? compactGuidance(for: resolved) : guidance(for: resolved)
     }
 
-    // MARK: - Shared lines
-
-    /// One-line tool-grounding rule shared across the family blocks. The
-    /// full statement (live-data grounding, manifest-vs-schema, discover
-    /// before denying) lives once in `SystemPromptTemplates.groundingDirective`,
-    /// which always co-fires with a family block; this compact reminder keeps
-    /// the anti-fabrication guardrail visible inside each family's own block
-    /// without re-printing the whole paragraph four times. Wording preserves
-    /// the substrings the obedience tests pin ("Only call tools that exist in
-    /// your schema", "never invent a tool name").
-    static let toolGroundingLine =
-        "Only call tools that exist in your schema. If a capability seems missing, run `capabilities_discover` before saying it's unavailable; never invent a tool name, and never deny a capability named in the Enabled capabilities list."
-
     // MARK: - Family blocks
+    //
+    // None of the blocks restate the tool-grounding rule ("only call tools
+    // that exist in your schema / never invent a tool name / never deny a
+    // listed capability"). That statement is owned by
+    // `SystemPromptTemplates.groundingDirective`, which co-fires with every
+    // family block that has a non-empty tool schema — and, unlike a shared
+    // line here, it picks the schema-correct variant (the tool-name-free
+    // base when `capabilities_discover` isn't resolvable). Re-stating it
+    // here both duplicated ~40 tokens per prompt and named tools that some
+    // schemas (Default agent, manual mode) cannot call.
 
     /// GPT / Codex / o-series: persistence + verification + act-don't-ask.
     /// The XML-tag shape matters — these models were trained to weight
@@ -227,7 +225,6 @@ enum ModelFamilyGuidance {
     static let googleGeminiGuidance = """
         ## Operational directives
 
-        - \(toolGroundingLine)
         - Act, don't narrate. When the next step is a tool call, emit it in \
         this response — don't describe what you would do.
         - Parallel tool calls when independent: batch reads and searches in \
@@ -248,7 +245,6 @@ enum ModelFamilyGuidance {
     static let googleGemmaGuidance = """
         ## Operational directives
 
-        - \(toolGroundingLine)
         - **Don't enumerate tools.** Never list or describe your available \
         tools in your reply, and never mention a name that isn't in your schema.
         - **Verify before you act.** Read the file or list the directory first \
@@ -269,8 +265,8 @@ enum ModelFamilyGuidance {
     static let googleGemmaGuidanceCompact = """
         ## Operational directives
 
-        - \(toolGroundingLine)
-        - Never list or describe your tools in a reply.
+        - Never list or describe your tools in a reply, and never mention a \
+        name that isn't in your schema.
         - Be concise — a few sentences, not paragraphs.
         - Verify before you act: read the file or list the directory first \
         when a path is involved; never guess at contents.
@@ -287,7 +283,6 @@ enum ModelFamilyGuidance {
     static let glmQwenGuidance = """
         ## Reminders
 
-        - \(toolGroundingLine)
         - Prefer one rich shell invocation over many small calls when the \
         steps are mechanical.
         - Keep going until the task is done. After a tool returns, take \
@@ -315,7 +310,6 @@ enum ModelFamilyGuidance {
         - After a tool result, continue with the next concrete tool call when \
         more evidence is needed. Only answer in prose once the requested work \
         is actually grounded or complete.
-        - \(toolGroundingLine)
         """
 
     /// LFM2 / Liquid: small-active MoE that hedges and refuses when it sees
@@ -336,7 +330,6 @@ enum ModelFamilyGuidance {
         web pages, current state), don't decline — fetch it yourself with \
         sandbox_exec (e.g. curl) or run capabilities_discover first. Treating a \
         missing purpose-built tool as a dead end is an error.
-        - \(toolGroundingLine)
         - For local, reversible work (reading, editing a file, running a test), \
         just proceed. Ask a clarifying question only when guessing wrong would \
         change the result.
@@ -346,16 +339,16 @@ enum ModelFamilyGuidance {
 
     /// Default block for unrecognised families (Apple Foundation and any
     /// future model). The smallest obedience counterweight that offsets the
-    /// always-on prohibition sections without encouraging tool enumeration:
-    /// the "only call tools that exist" line is what keeps an unguided model
-    /// from listing or inventing tool names. Live-data/anti-fabrication is
-    /// owned by `SystemPromptTemplates.groundingDirective` (always co-fires),
-    /// so it is intentionally not repeated here.
+    /// always-on prohibition sections without encouraging tool enumeration —
+    /// "a listed tool" keeps the framing anchored to the schema. Live-data /
+    /// anti-invention rules ("never invent a tool name", capability claims
+    /// need backing) are owned by `SystemPromptTemplates.groundingDirective`,
+    /// which co-fires whenever the request carries a tool schema, so they are
+    /// intentionally not repeated here.
     static let defaultGuidance = """
         ## Reminders
 
         - Use a listed tool when it improves correctness or grounds a claim. \
         Don't decline a request you have the tools to satisfy.
-        - \(toolGroundingLine)
         """
 }

@@ -2854,7 +2854,29 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         if !composed.prompt.isEmpty {
             SystemPromptComposer.injectSystemContent(composed.prompt, into: &enriched.messages)
         }
-        SystemPromptComposer.injectMemoryPrefix(composed.memorySection, into: &enriched.messages)
+        // Session-stable memory injection: when the caller supplies a
+        // session_id, previously injected prefixes are replayed onto the
+        // matching history user messages (the client resends CLEAN history,
+        // so without this the prior turn's injected bytes vanish and the
+        // paged-KV prefix diverges at that message — re-prefilling the whole
+        // last exchange). Without a session_id there is no cross-request
+        // identity, so it falls back to plain latest-message injection.
+        if let sid = request.session_id, !sid.isEmpty {
+            let frozen = await SessionToolStateStore.shared.frozenUserPrefixes(sid)
+            if let recorded = SystemPromptComposer.applyFrozenMemoryPrefixes(
+                memorySection: composed.memorySection,
+                frozen: frozen,
+                into: &enriched.messages
+            ) {
+                await SessionToolStateStore.shared.recordUserPrefix(
+                    sid,
+                    key: recorded.key,
+                    prefix: recorded.prefix
+                )
+            }
+        } else {
+            SystemPromptComposer.injectMemoryPrefix(composed.memorySection, into: &enriched.messages)
+        }
         // Agent-run / HTTP orchestrators must get the active Subagent
         // tools as callable SCHEMAS too. `composeChatContext` only surfaces the
         // built-in image tools as a prompt-hint capability (not the schema), so

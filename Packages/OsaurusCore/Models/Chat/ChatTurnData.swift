@@ -45,6 +45,12 @@ public struct ChatTurnData: Codable, Identifiable, Sendable {
     /// assistant turn. Metadata only - no prompt/response text. Nil for local
     /// models and non-router providers.
     public var routerBilling: RouterBillingSummary?
+    /// Frozen memory / screen-context block this user turn was sent with
+    /// (see `ChatTurn.injectedContextPrefix`). Persisted so a reloaded
+    /// session replays the exact wire bytes of every past turn and the
+    /// disk-backed prefix cache can still hit. Nil for non-user turns and
+    /// legacy sessions.
+    public var injectedContextPrefix: String?
 
     public init(
         id: UUID = UUID(),
@@ -64,7 +70,8 @@ public struct ChatTurnData: Codable, Identifiable, Sendable {
         timeToFirstToken: TimeInterval? = nil,
         reasoningItemId: String? = nil,
         reasoningEncrypted: String? = nil,
-        routerBilling: RouterBillingSummary? = nil
+        routerBilling: RouterBillingSummary? = nil,
+        injectedContextPrefix: String? = nil
     ) {
         self.id = id
         self.role = role
@@ -84,6 +91,7 @@ public struct ChatTurnData: Codable, Identifiable, Sendable {
         self.reasoningItemId = reasoningItemId
         self.reasoningEncrypted = reasoningEncrypted
         self.routerBilling = routerBilling
+        self.injectedContextPrefix = injectedContextPrefix
     }
 
     // Backward-compatible decoder: migrates old `attachedImages` into unified `attachments`
@@ -106,6 +114,7 @@ public struct ChatTurnData: Codable, Identifiable, Sendable {
         reasoningItemId = try container.decodeIfPresent(String.self, forKey: .reasoningItemId)
         reasoningEncrypted = try container.decodeIfPresent(String.self, forKey: .reasoningEncrypted)
         routerBilling = try container.decodeIfPresent(RouterBillingSummary.self, forKey: .routerBilling)
+        injectedContextPrefix = try container.decodeIfPresent(String.self, forKey: .injectedContextPrefix)
 
         if let unified = try container.decodeIfPresent([Attachment].self, forKey: .attachments) {
             attachments = unified
@@ -140,6 +149,7 @@ public struct ChatTurnData: Codable, Identifiable, Sendable {
         try container.encodeIfPresent(reasoningItemId, forKey: .reasoningItemId)
         try container.encodeIfPresent(reasoningEncrypted, forKey: .reasoningEncrypted)
         try container.encodeIfPresent(routerBilling, forKey: .routerBilling)
+        try container.encodeIfPresent(injectedContextPrefix, forKey: .injectedContextPrefix)
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -151,6 +161,7 @@ public struct ChatTurnData: Codable, Identifiable, Sendable {
         case createdAt, completedAt, generationTokenCount, timeToFirstToken
         case reasoningItemId, reasoningEncrypted
         case routerBilling
+        case injectedContextPrefix
     }
 }
 
@@ -178,6 +189,7 @@ extension ChatTurnData {
         self.reasoningItemId = turn.reasoningItemId
         self.reasoningEncrypted = turn.reasoningEncrypted
         self.routerBilling = turn.routerBilling
+        self.injectedContextPrefix = turn.injectedContextPrefix
     }
 }
 
@@ -204,5 +216,6 @@ extension ChatTurn {
         self.reasoningItemId = data.reasoningItemId
         self.reasoningEncrypted = data.reasoningEncrypted
         self.routerBilling = data.routerBilling
+        self.injectedContextPrefix = data.injectedContextPrefix
     }
 }

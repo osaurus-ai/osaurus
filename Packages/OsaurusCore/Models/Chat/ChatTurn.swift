@@ -186,6 +186,17 @@ final class ChatTurn: ObservableObject, Identifiable {
     var reasoningEncrypted: String? = nil
     /// For role==.tool messages, associates this result with the originating call id
     var toolCallId: String? = nil
+    /// Frozen memory / screen-context block this USER turn was originally
+    /// sent with, INCLUDING the trailing separator (see
+    /// `SystemPromptComposer.composeInjectedUserPrefix`). Recorded once at
+    /// send time and replayed verbatim by `turnToMessage` on every later
+    /// request, so the wire bytes for this turn never change after it has
+    /// been part of a token stream — required for paged-KV prefix reuse
+    /// across turns. Never rendered in the UI (the bubble shows `content`);
+    /// persisted so a reloaded session still matches the disk-backed L2
+    /// prefix cache. Nil on assistant/tool turns and on turns sent before
+    /// this field existed.
+    var injectedContextPrefix: String? = nil
     /// Convenience map for UI to show tool results grouped under the assistant turn
     @Published var toolResults: [String: String] = [:]
     /// Wall-clock duration (seconds) each tool call took to finish, keyed by call
@@ -470,6 +481,7 @@ extension ChatTurn {
         let toolCalls: [ToolCall]?
         let toolResults: [String: String]?
         let toolCallId: String?
+        var injectedContextPrefix: String? = nil
     }
 
     /// Converts this turn to a persistable representation
@@ -481,7 +493,8 @@ extension ChatTurn {
             thinking: thinkingIsEmpty ? nil : thinking,
             toolCalls: toolCalls,
             toolResults: toolResults.isEmpty ? nil : toolResults,
-            toolCallId: toolCallId
+            toolCallId: toolCallId,
+            injectedContextPrefix: injectedContextPrefix
         )
     }
 
@@ -502,6 +515,7 @@ extension ChatTurn {
             turn.toolResults = toolResults
         }
         turn.toolCallId = p.toolCallId
+        turn.injectedContextPrefix = p.injectedContextPrefix
 
         return turn
     }

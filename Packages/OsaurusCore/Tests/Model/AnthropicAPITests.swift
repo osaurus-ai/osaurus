@@ -34,6 +34,77 @@ struct AnthropicAPITests {
         #expect(request.messages[0].content.plainText == "Hello, Claude!")
     }
 
+    // MARK: - Prompt caching (top-level cache_control)
+
+    @Test func outboundAnthropicRequestCarriesTopLevelCacheControl() throws {
+        let request = RemoteChatRequest(
+            model: "claude-opus-4-8",
+            messages: [ChatMessage(role: "user", content: "Hello")],
+            temperature: nil,
+            max_completion_tokens: 512,
+            stream: true,
+            top_p: nil,
+            frequency_penalty: nil,
+            presence_penalty: nil,
+            stop: nil,
+            tools: nil,
+            tool_choice: nil,
+            reasoning_effort: nil,
+            reasoning: nil,
+            thinking: nil,
+            modelOptions: [:],
+            veniceParameters: nil
+        ).toAnthropicRequest()
+
+        #expect(request.cache_control?.type == "ephemeral")
+
+        // And it reaches the wire as a top-level key.
+        let encoded = try JSONEncoder.osaurusCanonical().encode(request)
+        let json = try JSONSerialization.jsonObject(with: encoded) as? [String: Any]
+        let cacheControl = json?["cache_control"] as? [String: Any]
+        #expect(cacheControl?["type"] as? String == "ephemeral")
+    }
+
+    @Test func inboundAnthropicRequestWithoutCacheControlStillDecodes() throws {
+        // Server-side compat path: SDK clients that don't send cache_control
+        // must keep decoding exactly as before.
+        let json = """
+            {
+                "model": "claude-3-5-sonnet-20241022",
+                "max_tokens": 1024,
+                "messages": [
+                    {"role": "user", "content": "Hello"}
+                ]
+            }
+            """
+        let request = try JSONDecoder().decode(AnthropicMessagesRequest.self, from: Data(json.utf8))
+        #expect(request.cache_control == nil)
+    }
+
+    @Test func anthropicUsageDecodesCacheFields() throws {
+        let json = """
+            {
+                "input_tokens": 12,
+                "output_tokens": 34,
+                "cache_creation_input_tokens": 2048,
+                "cache_read_input_tokens": 4096
+            }
+            """
+        let usage = try JSONDecoder().decode(AnthropicUsage.self, from: Data(json.utf8))
+        #expect(usage.input_tokens == 12)
+        #expect(usage.output_tokens == 34)
+        #expect(usage.cache_creation_input_tokens == 2048)
+        #expect(usage.cache_read_input_tokens == 4096)
+
+        // Absent fields stay nil (server-side writer / non-caching providers).
+        let bare = try JSONDecoder().decode(
+            AnthropicUsage.self,
+            from: Data(#"{"input_tokens": 1, "output_tokens": 2}"#.utf8)
+        )
+        #expect(bare.cache_creation_input_tokens == nil)
+        #expect(bare.cache_read_input_tokens == nil)
+    }
+
     @Test func parseAnthropicRequestWithSystem() throws {
         let json = """
             {

@@ -1578,6 +1578,112 @@ struct RemoteChatRequestEncodingTests {
         #expect(!openAICompatBody.contains("\"clamp_to_balance\""))
     }
 
+    // MARK: - prompt_cache_key (session-scoped OpenAI prompt-cache routing)
+
+    @Test func supportsPromptCacheKey_onlyForGenuineOpenAIHosts() throws {
+        #expect(
+            RemoteProviderService.supportsPromptCacheKey(
+                providerType: .openaiLegacy,
+                host: "api.openai.com"
+            )
+        )
+        #expect(
+            RemoteProviderService.supportsPromptCacheKey(
+                providerType: .openaiLegacy,
+                host: "eu.api.openai.com"
+            )
+        )
+        // Third-party OpenAI-compat schemas can be strict about unknown
+        // fields — same rationale as router-only `idempotency_key`.
+        #expect(
+            !RemoteProviderService.supportsPromptCacheKey(
+                providerType: .openaiLegacy,
+                host: "api.x.ai"
+            )
+        )
+        #expect(
+            !RemoteProviderService.supportsPromptCacheKey(
+                providerType: .osaurusRouter,
+                host: "router.osaurus.ai"
+            )
+        )
+        #expect(
+            !RemoteProviderService.supportsPromptCacheKey(
+                providerType: .anthropic,
+                host: "api.anthropic.com"
+            )
+        )
+    }
+
+    @Test func wireBody_carriesPromptCacheKeyOnlyWhenSet() throws {
+        var request = Self.makeRequest(model: "gpt-5.2", maxTokens: 128)
+        let bare = try JSONEncoder.osaurusCanonical().encode(request)
+        #expect(!String(decoding: bare, as: UTF8.self).contains("prompt_cache_key"))
+
+        request.promptCacheKey = "osaurus-session-ABC"
+        let payload = try Self.decodeAsDictionary(
+            try JSONEncoder.osaurusCanonical().encode(request)
+        )
+        #expect(payload["prompt_cache_key"] as? String == "osaurus-session-ABC")
+    }
+
+    @Test func buildChatRequest_setsSessionScopedPromptCacheKeyForOpenAIOnly() async throws {
+        func service(host: String, providerType: RemoteProviderType) -> RemoteProviderService {
+            RemoteProviderService(
+                provider: RemoteProvider(
+                    name: "p",
+                    host: host,
+                    providerProtocol: .https,
+                    port: nil,
+                    basePath: "/v1",
+                    authType: .none,
+                    providerType: providerType
+                ),
+                models: ["gpt-5.2"],
+                resolvedHeaders: [:]
+            )
+        }
+        let params = GenerationParameters(
+            temperature: 0.7,
+            maxTokens: 256,
+            sessionId: "SESSION-1"
+        )
+
+        let openAIReq = await service(host: "api.openai.com", providerType: .openaiLegacy)
+            .buildChatRequest(
+                messages: [ChatMessage(role: "user", content: "hi")],
+                parameters: params,
+                model: "gpt-5.2",
+                stream: true,
+                tools: nil,
+                toolChoice: nil
+            )
+        #expect(openAIReq.promptCacheKey == "osaurus-session-SESSION-1")
+
+        let compatReq = await service(host: "api.x.ai", providerType: .openaiLegacy)
+            .buildChatRequest(
+                messages: [ChatMessage(role: "user", content: "hi")],
+                parameters: params,
+                model: "grok-4",
+                stream: true,
+                tools: nil,
+                toolChoice: nil
+            )
+        #expect(compatReq.promptCacheKey == nil)
+
+        // No session id → no key, even on the genuine OpenAI host.
+        let noSessionReq = await service(host: "api.openai.com", providerType: .openaiLegacy)
+            .buildChatRequest(
+                messages: [ChatMessage(role: "user", content: "hi")],
+                parameters: GenerationParameters(temperature: 0.7, maxTokens: 256),
+                model: "gpt-5.2",
+                stream: true,
+                tools: nil,
+                toolChoice: nil
+            )
+        #expect(noSessionReq.promptCacheKey == nil)
+    }
+
     @Test func wireBody_routerMatchesVeniceToolRequest_exceptRouterOnlyFields() throws {
         let priorCall = ToolCall(
             id: "call_write_1",
