@@ -34,12 +34,13 @@ let package = Package(
         // the full order-dependent-load sweep (#108, no more ~7.5% degenerate
         // loads), the Mistral3 VLM fix that honors the bundle's longest_edge
         // instead of clamping images to 336px, the stop-string fix (#109), the
-        // Mistral bare-JSON-array tool-call recovery (#110), and chunk-level
-        // prefill cancellation (#111) so a dropped request stops encoding
-        // GPU work within one chunk instead of holding it to end of prompt.
+        // Mistral bare-JSON-array tool-call recovery (#110), chunk-level
+        // prefill cancellation (#111), and shutdown-drains-producers (#112)
+        // so engine teardown returns only after its producers are off the
+        // shared GPU command queue (cold-load disconnect crash).
         .package(
             url: "https://github.com/osaurus-ai/vmlx-swift",
-            revision: "822888f6f79079c5683676a13b1ac084dd798908"
+            revision: "634d11d3a9489cc09ffbf33ae1235d9aaf6b9821"
         ),
         // FluidAudio 0.14.3 added a breaking `language:` parameter to TTS
         // calls that osaurus's `TTSService` doesn't pass. Pinning to the
