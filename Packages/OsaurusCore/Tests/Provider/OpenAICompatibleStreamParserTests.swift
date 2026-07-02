@@ -282,6 +282,36 @@ struct OpenAICompatibleStreamParserTests {
         #expect(visible == ["Answer", " text"])
     }
 
+    @Test func parser_routesSeparateReasoningContentFieldToReasoning() throws {
+        // Regression guard for the flexible `DeltaContent` decoder: the
+        // DeepSeek/Qwen/vLLM separate `reasoning_content` string field must
+        // still route to the reasoning channel and plain `content` to visible.
+        var state = RemoteProviderService.StreamingState(stopSequences: [], trackContent: false)
+        var yielded: [String] = []
+
+        _ = try OpenAICompatibleStreamParser.handleEvent(
+            jsonData: Data(
+                #"{"id":"x","created":0,"model":"deepseek-reasoner","choices":[{"index":0,"delta":{"reasoning_content":"thinking"},"finish_reason":null}]}"#
+                    .utf8),
+            options: .strict,
+            state: &state,
+            yield: { yielded.append($0) }
+        )
+        _ = try OpenAICompatibleStreamParser.handleEvent(
+            jsonData: Data(
+                #"{"id":"x","created":0,"model":"deepseek-reasoner","choices":[{"index":0,"delta":{"content":"answer"},"finish_reason":null}]}"#
+                    .utf8),
+            options: .strict,
+            state: &state,
+            yield: { yielded.append($0) }
+        )
+
+        let reasoning = yielded.compactMap { StreamingReasoningHint.decode($0) }
+        let visible = yielded.filter { StreamingReasoningHint.decode($0) == nil }
+        #expect(reasoning == ["thinking"])
+        #expect(visible == ["answer"])
+    }
+
     private func dispatchEvents(
         from parser: inout OpenAICompatibleStreamFramer.SSELineParser,
         options: OpenAICompatibleStreamFramer.Options
