@@ -39,6 +39,7 @@ struct AgentChannelNativeCoexistenceTests {
             )
             try slack.saveBotToken("xoxb-slack-bot-token-super-secret")
             try slack.saveSigningSecret("slack-signing-secret-super-secret")
+            try slack.saveAppToken("xapp-slack-app-token-super-secret")
             try slack.saveConfiguration(
                 SlackConnectionConfiguration(
                     configuredTeamIds: ["T12345"],
@@ -79,7 +80,9 @@ struct AgentChannelNativeCoexistenceTests {
             #expect(!rendered.contains("discord-bot-token-super-secret"))
             #expect(!rendered.contains("xoxb-slack-bot-token-super-secret"))
             #expect(!rendered.contains("slack-signing-secret-super-secret"))
+            #expect(!rendered.contains("xapp-slack-app-token-super-secret"))
             #expect(!rendered.contains("123456:telegram-bot-token-super-secret"))
+            #expect(nativeRows["slack"]?["app_token_saved"] as? Bool == true)
 
             let slackPolicies = nativeRows["slack"]?["action_policies"] as? [[String: Any]] ?? []
             #expect(!slackPolicies.contains { $0["status"] as? String == "configured_only" })
@@ -112,28 +115,30 @@ struct AgentChannelNativeCoexistenceTests {
     }
 
     private func withIsolatedNativeChannelStores(
-        _ body: (NativeChannelCredentialStores) async throws -> Void
+        _ body: @Sendable (NativeChannelCredentialStores) async throws -> Void
     ) async throws {
-        let root = FileManager.default.temporaryDirectory
-            .appendingPathComponent("osaurus-native-channel-coexistence-\(UUID().uuidString)", isDirectory: true)
-        let previousAgentChannelDirectory = AgentChannelConfigurationStore.overrideDirectory
-        let previousDiscordDirectory = DiscordConnectionConfigurationStore.overrideDirectory
-        let previousSlackDirectory = SlackConnectionConfigurationStore.overrideDirectory
-        let previousTelegramDirectory = TelegramConnectionConfigurationStore.overrideDirectory
+        try await AgentChannelConfigurationTestLock.shared.run {
+            let root = FileManager.default.temporaryDirectory
+                .appendingPathComponent("osaurus-native-channel-coexistence-\(UUID().uuidString)", isDirectory: true)
+            let previousAgentChannelDirectory = AgentChannelConfigurationStore.overrideDirectory
+            let previousDiscordDirectory = DiscordConnectionConfigurationStore.overrideDirectory
+            let previousSlackDirectory = SlackConnectionConfigurationStore.overrideDirectory
+            let previousTelegramDirectory = TelegramConnectionConfigurationStore.overrideDirectory
 
-        AgentChannelConfigurationStore.overrideDirectory = root.appendingPathComponent("agent-channels")
-        DiscordConnectionConfigurationStore.overrideDirectory = root.appendingPathComponent("discord")
-        SlackConnectionConfigurationStore.overrideDirectory = root.appendingPathComponent("slack")
-        TelegramConnectionConfigurationStore.overrideDirectory = root.appendingPathComponent("telegram")
-        defer {
-            AgentChannelConfigurationStore.overrideDirectory = previousAgentChannelDirectory
-            DiscordConnectionConfigurationStore.overrideDirectory = previousDiscordDirectory
-            SlackConnectionConfigurationStore.overrideDirectory = previousSlackDirectory
-            TelegramConnectionConfigurationStore.overrideDirectory = previousTelegramDirectory
-            try? FileManager.default.removeItem(at: root)
+            AgentChannelConfigurationStore.overrideDirectory = root.appendingPathComponent("agent-channels")
+            DiscordConnectionConfigurationStore.overrideDirectory = root.appendingPathComponent("discord")
+            SlackConnectionConfigurationStore.overrideDirectory = root.appendingPathComponent("slack")
+            TelegramConnectionConfigurationStore.overrideDirectory = root.appendingPathComponent("telegram")
+            defer {
+                AgentChannelConfigurationStore.overrideDirectory = previousAgentChannelDirectory
+                DiscordConnectionConfigurationStore.overrideDirectory = previousDiscordDirectory
+                SlackConnectionConfigurationStore.overrideDirectory = previousSlackDirectory
+                TelegramConnectionConfigurationStore.overrideDirectory = previousTelegramDirectory
+                try? FileManager.default.removeItem(at: root)
+            }
+
+            try await body(NativeChannelCredentialStores())
         }
-
-        try await body(NativeChannelCredentialStores())
     }
 }
 
@@ -170,6 +175,7 @@ private final class NativeSlackCredentialStore: SlackCredentialStorage, @uncheck
     private let lock = NSLock()
     private var botTokenValue: String?
     private var signingSecretValue: String?
+    private var appTokenValue: String?
 
     func saveBotToken(_ token: String) -> Bool {
         lock.withLock { botTokenValue = token }
@@ -204,6 +210,24 @@ private final class NativeSlackCredentialStore: SlackCredentialStorage, @uncheck
 
     func deleteSigningSecret() -> Bool {
         lock.withLock { signingSecretValue = nil }
+        return true
+    }
+
+    func saveAppToken(_ token: String) -> Bool {
+        lock.withLock { appTokenValue = token }
+        return true
+    }
+
+    func appToken() -> String? {
+        lock.withLock { appTokenValue }
+    }
+
+    func hasAppToken() -> Bool {
+        appToken() != nil
+    }
+
+    func deleteAppToken() -> Bool {
+        lock.withLock { appTokenValue = nil }
         return true
     }
 }

@@ -640,6 +640,10 @@ final class AgentChannelConnectionService: @unchecked Sendable {
                     name: "signing_secret",
                     keychainId: SlackCredentialStore.signingSecretKey
                 ),
+                AgentChannelSecretReference(
+                    name: "app_token",
+                    keychainId: SlackCredentialStore.appTokenKey
+                ),
             ]
         )
     }
@@ -660,6 +664,7 @@ final class AgentChannelConnectionService: @unchecked Sendable {
         row["credential_saved"] = slackService.hasBotToken()
         row["bot_token_saved"] = slackService.hasBotToken()
         row["signing_secret_saved"] = slackService.hasSigningSecret()
+        row["app_token_saved"] = slackService.hasAppToken()
         let readRooms = row["read_room_allowlist"] as? [String] ?? []
         let writeRooms = row["write_room_allowlist"] as? [String] ?? []
         row["configured"] = slackService.hasBotToken()

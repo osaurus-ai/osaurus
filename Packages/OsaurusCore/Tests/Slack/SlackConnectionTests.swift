@@ -18,9 +18,11 @@ struct SlackConnectionTests {
         try await withIsolatedSlackStores { credentials in
             let botToken = "xoxb-slack-bot-token-super-secret"
             let signingSecret = "slack-signing-secret-super-secret"
+            let appToken = "xapp-slack-app-token-super-secret"
             let service = SlackConnectionService(client: FakeSlackAPIClient(), credentialStore: credentials)
             try service.saveBotToken(botToken)
             try service.saveSigningSecret(signingSecret)
+            try service.saveAppToken(appToken)
             try service.saveConfiguration(
                 SlackConnectionConfiguration(
                     configuredTeamIds: [" T12345 ", "T12345"],
@@ -43,8 +45,10 @@ struct SlackConnectionTests {
             #expect(disk.contains("C23456"))
             #expect(!disk.contains(botToken))
             #expect(!disk.contains(signingSecret))
+            #expect(!disk.contains(appToken))
             #expect(!disk.localizedCaseInsensitiveContains("bot_token"))
             #expect(!disk.localizedCaseInsensitiveContains("signing_secret"))
+            #expect(!disk.localizedCaseInsensitiveContains("app_token"))
         }
     }
 
@@ -52,24 +56,34 @@ struct SlackConnectionTests {
         try await withIsolatedSlackStores { credentials in
             let botToken = "xoxb-slack-bot-token-super-secret"
             let signingSecret = "slack-signing-secret-super-secret"
+            let appToken = "xapp-slack-app-token-super-secret"
             let fake = FakeSlackAPIClient()
-            await fake.setAuthFailureEchoingSecrets(botToken: botToken, signingSecret: signingSecret)
+            await fake.setAuthFailureEchoingSecrets(
+                botToken: botToken,
+                signingSecret: signingSecret,
+                appToken: appToken
+            )
             let service = SlackConnectionService(client: fake, credentialStore: credentials)
             try service.saveBotToken(botToken)
             try service.saveSigningSecret(signingSecret)
+            try service.saveAppToken(appToken)
 
             let diagnostics = await service.diagnostics()
 
             #expect(diagnostics.botTokenSaved)
             #expect(diagnostics.signingSecretSaved)
+            #expect(diagnostics.appTokenSaved)
             #expect(diagnostics.status == "token_invalid_or_unavailable")
             let failures = diagnostics.failures.joined(separator: " ")
             #expect(failures.contains("[REDACTED:SLACK_BOT_TOKEN]"))
             #expect(failures.contains("[REDACTED:SLACK_SIGNING_SECRET]"))
+            #expect(failures.contains("[REDACTED:SLACK_APP_TOKEN]"))
             #expect(!failures.contains(botToken))
             #expect(!failures.contains(signingSecret))
+            #expect(!failures.contains(appToken))
             #expect(!String(describing: diagnostics.dictionary).contains(botToken))
             #expect(!String(describing: diagnostics.dictionary).contains(signingSecret))
+            #expect(!String(describing: diagnostics.dictionary).contains(appToken))
         }
     }
 
@@ -893,7 +907,7 @@ struct SlackConnectionTests {
             )
             #expect(slackRow["kind"] as? String == "slack")
             #expect(slackRow["configured"] as? Bool == true)
-            #expect(slackRow["secret_names"] as? [String] == ["bot_token", "signing_secret"])
+            #expect(slackRow["secret_names"] as? [String] == ["bot_token", "signing_secret", "app_token"])
 
             let manager = AgentChannelConnectionManager()
             #expect(throws: AgentChannelConnectionManagerError.reservedConnectionId("slack")) {
@@ -914,18 +928,20 @@ struct SlackConnectionTests {
     }
 
     private func withIsolatedSlackStores(
-        _ body: (any SlackCredentialStorage) async throws -> Void
+        _ body: @Sendable (any SlackCredentialStorage) async throws -> Void
     ) async throws {
-        let previousDirectory = SlackConnectionConfigurationStore.overrideDirectory
-        let directory = FileManager.default.temporaryDirectory
-            .appendingPathComponent("osaurus-slack-tests-\(UUID().uuidString)", isDirectory: true)
-        let credentials = FakeSlackCredentialStore()
-        SlackConnectionConfigurationStore.overrideDirectory = directory
-        defer {
-            SlackConnectionConfigurationStore.overrideDirectory = previousDirectory
-            try? FileManager.default.removeItem(at: directory)
+        try await AgentChannelConfigurationTestLock.shared.run {
+            let previousDirectory = SlackConnectionConfigurationStore.overrideDirectory
+            let directory = FileManager.default.temporaryDirectory
+                .appendingPathComponent("osaurus-slack-tests-\(UUID().uuidString)", isDirectory: true)
+            let credentials = FakeSlackCredentialStore()
+            SlackConnectionConfigurationStore.overrideDirectory = directory
+            defer {
+                SlackConnectionConfigurationStore.overrideDirectory = previousDirectory
+                try? FileManager.default.removeItem(at: directory)
+            }
+            try await body(credentials)
         }
-        try await body(credentials)
     }
 
     private func slackSignature(secret: String, timestamp: String, body: Data) -> String {
@@ -941,6 +957,7 @@ private final class FakeSlackCredentialStore: SlackCredentialStorage, @unchecked
     private let lock = NSLock()
     private var storedBotToken: String?
     private var storedSigningSecret: String?
+    private var storedAppToken: String?
 
     func saveBotToken(_ token: String) -> Bool {
         save(token, assign: { storedBotToken = $0 })
@@ -976,6 +993,23 @@ private final class FakeSlackCredentialStore: SlackCredentialStorage, @unchecked
         return true
     }
 
+    func saveAppToken(_ token: String) -> Bool {
+        save(token, assign: { storedAppToken = $0 })
+    }
+
+    func appToken() -> String? {
+        lock.withLock { storedAppToken }
+    }
+
+    func hasAppToken() -> Bool {
+        appToken() != nil
+    }
+
+    func deleteAppToken() -> Bool {
+        lock.withLock { storedAppToken = nil }
+        return true
+    }
+
     private func save(_ value: String, assign: (String) -> Void) -> Bool {
         let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return false }
@@ -989,8 +1023,10 @@ private actor FakeSlackAPIClient: SlackAPIClientProtocol {
     private var messagesByChannel: [String: [SlackMessage]] = [:]
     private var sentMessages: [(channelId: String, content: String, threadTs: String?)] = []
 
-    func setAuthFailureEchoingSecrets(botToken: String, signingSecret: String) {
-        authFailureMessage = "transport included token \(botToken) and signing secret \(signingSecret)"
+    func setAuthFailureEchoingSecrets(botToken: String, signingSecret: String, appToken: String) {
+        authFailureMessage = """
+        transport included token \(botToken), signing secret \(signingSecret), and app token \(appToken)
+        """
     }
 
     func setMessages(_ messagesByChannel: [String: [SlackMessage]]) {

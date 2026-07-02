@@ -29,6 +29,7 @@ struct SlackConfiguredTeamDiagnostic: Equatable, Sendable {
 struct SlackConnectionDiagnostics: Equatable, Sendable {
     let botTokenSaved: Bool
     let signingSecretSaved: Bool
+    let appTokenSaved: Bool
     let identity: SlackAuthIdentity?
     let configuredTeams: [SlackConfiguredTeamDiagnostic]
     let readableChannelIds: [String]
@@ -42,6 +43,7 @@ struct SlackConnectionDiagnostics: Equatable, Sendable {
         var result: [String: Any] = [
             "bot_token_saved": botTokenSaved,
             "signing_secret_saved": signingSecretSaved,
+            "app_token_saved": appTokenSaved,
             "configured_teams": configuredTeams.map(\.dictionary),
             "readable_channel_ids": readableChannelIds,
             "writable_channel_ids": writableChannelIds,
@@ -284,6 +286,26 @@ final class SlackConnectionService: @unchecked Sendable {
         credentialStore.hasSigningSecret()
     }
 
+    @discardableResult
+    func saveAppToken(_ token: String) throws -> Bool {
+        let saved = credentialStore.saveAppToken(token)
+        if !saved {
+            throw SlackConnectionServiceError.configurationSaveFailed(
+                "The app-level token was empty or Keychain storage was unavailable."
+            )
+        }
+        return saved
+    }
+
+    @discardableResult
+    func deleteAppToken() -> Bool {
+        credentialStore.deleteAppToken()
+    }
+
+    func hasAppToken() -> Bool {
+        credentialStore.hasAppToken()
+    }
+
     func messageStoreDiagnostics() -> [String: Any] {
         [
             "enabled": messageStore != nil,
@@ -300,6 +322,7 @@ final class SlackConnectionService: @unchecked Sendable {
             return SlackConnectionDiagnostics(
                 botTokenSaved: false,
                 signingSecretSaved: credentialStore.hasSigningSecret(),
+                appTokenSaved: credentialStore.hasAppToken(),
                 identity: nil,
                 configuredTeams: [],
                 readableChannelIds: config.readableChannelIds,
@@ -311,6 +334,7 @@ final class SlackConnectionService: @unchecked Sendable {
             )
         }
         let signingSecret = credentialStore.signingSecret()
+        let appToken = credentialStore.appToken()
 
         let identity: SlackAuthIdentity?
         var failures: [String] = []
@@ -321,7 +345,7 @@ final class SlackConnectionService: @unchecked Sendable {
             }
         } catch {
             identity = nil
-            failures.append(redacted(error, token: token, signingSecret: signingSecret))
+            failures.append(redacted(error, token: token, signingSecret: signingSecret, appToken: appToken))
         }
 
         var teamRows: [SlackConfiguredTeamDiagnostic] = []
@@ -361,6 +385,7 @@ final class SlackConnectionService: @unchecked Sendable {
         return SlackConnectionDiagnostics(
             botTokenSaved: true,
             signingSecretSaved: signingSecret != nil,
+            appTokenSaved: appToken != nil,
             identity: identity,
             configuredTeams: teamRows,
             readableChannelIds: config.readableChannelIds,
@@ -649,8 +674,18 @@ final class SlackConnectionService: @unchecked Sendable {
         return (String(parts[0]), String(parts[1]))
     }
 
-    private func redacted(_ error: Error, token: String, signingSecret: String?) -> String {
-        SlackSecurity.redact(error.localizedDescription, token: token, signingSecret: signingSecret)
+    private func redacted(
+        _ error: Error,
+        token: String,
+        signingSecret: String?,
+        appToken: String?
+    ) -> String {
+        SlackSecurity.redact(
+            error.localizedDescription,
+            token: token,
+            signingSecret: signingSecret,
+            appToken: appToken
+        )
     }
 
     func normalizeInboundEvent(_ envelope: SlackEventEnvelope) -> SlackNormalizedInboundMessage? {

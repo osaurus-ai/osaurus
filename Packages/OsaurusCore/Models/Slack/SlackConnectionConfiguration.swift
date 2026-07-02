@@ -137,6 +137,7 @@ enum SlackCredentialStore {
     static let pluginId = "osaurus.slack"
     static let botTokenKey = "bot_token"
     static let signingSecretKey = "signing_secret"
+    static let appTokenKey = "app_token"
 
     @discardableResult
     static func saveBotToken(_ token: String) -> Bool {
@@ -172,6 +173,24 @@ enum SlackCredentialStore {
     @discardableResult
     static func deleteSigningSecret() -> Bool {
         deleteSecret(id: signingSecretKey)
+    }
+
+    @discardableResult
+    static func saveAppToken(_ token: String) -> Bool {
+        saveSecret(token, id: appTokenKey)
+    }
+
+    static func appToken() -> String? {
+        secret(id: appTokenKey)
+    }
+
+    static func hasAppToken() -> Bool {
+        hasSecret(id: appTokenKey)
+    }
+
+    @discardableResult
+    static func deleteAppToken() -> Bool {
+        deleteSecret(id: appTokenKey)
     }
 
     private static func saveSecret(_ value: String, id: String) -> Bool {
@@ -220,6 +239,10 @@ protocol SlackCredentialStorage: Sendable {
     func signingSecret() -> String?
     func hasSigningSecret() -> Bool
     func deleteSigningSecret() -> Bool
+    func saveAppToken(_ token: String) -> Bool
+    func appToken() -> String?
+    func hasAppToken() -> Bool
+    func deleteAppToken() -> Bool
 }
 
 struct KeychainSlackCredentialStorage: SlackCredentialStorage {
@@ -256,12 +279,35 @@ struct KeychainSlackCredentialStorage: SlackCredentialStorage {
     func deleteSigningSecret() -> Bool {
         SlackCredentialStore.deleteSigningSecret()
     }
+
+    func saveAppToken(_ token: String) -> Bool {
+        SlackCredentialStore.saveAppToken(token)
+    }
+
+    func appToken() -> String? {
+        SlackCredentialStore.appToken()
+    }
+
+    func hasAppToken() -> Bool {
+        SlackCredentialStore.hasAppToken()
+    }
+
+    @discardableResult
+    func deleteAppToken() -> Bool {
+        SlackCredentialStore.deleteAppToken()
+    }
 }
 
 enum SlackSecurity {
-    static func redact(_ text: String, token: String?, signingSecret: String? = nil) -> String {
+    static func redact(
+        _ text: String,
+        token: String?,
+        signingSecret: String? = nil,
+        appToken: String? = nil
+    ) -> String {
         var redacted = redactValue(text, value: token, replacement: "[REDACTED:SLACK_BOT_TOKEN]")
         redacted = redactValue(redacted, value: signingSecret, replacement: "[REDACTED:SLACK_SIGNING_SECRET]")
+        redacted = redactValue(redacted, value: appToken, replacement: "[REDACTED:SLACK_APP_TOKEN]")
         return redacted
     }
 
