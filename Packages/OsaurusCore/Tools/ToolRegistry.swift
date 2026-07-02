@@ -209,6 +209,11 @@ public final class ToolRegistry: ObservableObject {
             SearchKnowledgeTool(),
             ReadKnowledgeTool(),
             ListKnowledgeTool(),
+            // Knowledge curation loop: staleness tickets (annotation only,
+            // same gate as the retrieval tools). The corpus itself is never
+            // written by a tool.
+            FlagKnowledgeStaleTool(),
+            ListKnowledgeTicketsTool(),
             // Inline data visualization rendered as a chart card.
             RenderChartTool(),
             // Text-delegation family: `spawn_agent` hands a task to a configured

@@ -1596,6 +1596,7 @@ public struct SystemPromptComposer: Sendable {
     /// tools, so this strip is a token-cost optimization, not the boundary.
     static let knowledgeToolNames: Set<String> = [
         "search_knowledge", "read_knowledge", "list_knowledge",
+        "flag_knowledge_stale", "list_knowledge_tickets",
     ]
 
     /// Render the schema snapshot block injected after the onboarding
