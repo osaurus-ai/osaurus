@@ -952,6 +952,24 @@ struct MLXBatchAdapter {
 
     // MARK: - Submission
 
+    /// Sendable box for a chat snapshot built once before the prep gate.
+    ///
+    /// `MLXLMCommon.Chat.Message` is not `Sendable`, but the snapshot is
+    /// immutable and only read from the downstream `buildChat` closure —
+    /// same rationale as `ModelRuntime.ChatMessageBox`.
+    private final class PrepChatBox: @unchecked Sendable {
+        let messages: [MLXLMCommon.Chat.Message]
+        init(_ messages: [MLXLMCommon.Chat.Message]) { self.messages = messages }
+
+        /// Media attachments mean `prepareInput` will run GPU evals (audio
+        /// pre-encode, VLM media encode) on the submitting thread.
+        var hasMedia: Bool {
+            messages.contains {
+                !($0.images.isEmpty && $0.videos.isEmpty && $0.audios.isEmpty)
+            }
+        }
+    }
+
     /// Tokenize the chat + tools, fetch (or create) the per-model
     /// `BatchEngine`, and submit one request via `engine.generate`. Returns
     /// the resulting `Generation` stream wrapped with cancellation plumbing.
@@ -996,28 +1014,51 @@ struct MLXBatchAdapter {
         // `prepareInput` can run a GPU eval on THIS submit thread before the
         // generation gate is taken below — notably the Nemotron-Omni audio
         // pre-encode (`MLX.eval` in `preencodedAudio`) and any media encoder
-        // that materializes during `UserInputProcessor.prepare`. Hold the Metal
-        // gate's shared lock across `prepareInput` too, so that eval can't race
-        // a concurrent Model2Vec embedder on the Metal command buffer (the same
-        // `addCompletedHandler:` crash class the gate exists to prevent). This
-        // is a separate, fully-balanced acquire/release from the generation
-        // gate below; the brief window between them is eval-free.
+        // that materializes during `UserInputProcessor.prepare`. Those evals
+        // happen OUTSIDE the `BatchEngine` actor loop, so under the shared
+        // `gen:` owner they could encode concurrently with an in-flight
+        // decode or another request's prep on the shared Metal command queue
+        // (the driver-assert crash class the gate exists to prevent). So:
+        // media-bearing prep takes the gate EXCLUSIVELY; text-only prep does
+        // no GPU encode (CPU tokenization + data-backed arrays) and keeps the
+        // shared generation owner, preserving same-model batching. Either
+        // acquire is fully balanced before the generation gate below; the
+        // brief window between them is eval-free.
+        let prepChat: PrepChatBox? = buildRawPrompt == nil ? PrepChatBox(buildChat()) : nil
+        let prepBuildChat: @Sendable () -> [MLXLMCommon.Chat.Message]
+        if let prepChat {
+            prepBuildChat = { prepChat.messages }
+        } else {
+            prepBuildChat = buildChat
+        }
+        let prepIsExclusive = prepChat?.hasMedia ?? false
         let prepared: PreparedInput
-        await MetalGate.shared.enterGeneration(model: modelName)
+        if prepIsExclusive {
+            await MetalGate.shared.enterMediaPrep(model: modelName)
+        } else {
+            await MetalGate.shared.enterGeneration(model: modelName)
+        }
+        func exitPrepGate() async {
+            if prepIsExclusive {
+                await MetalGate.shared.exitMediaPrep(model: modelName)
+            } else {
+                await MetalGate.shared.exitGeneration(model: modelName)
+            }
+        }
         do {
             prepared = try await prepareInput(
                 modelName: modelName,
                 container: container,
-                buildChat: buildChat,
+                buildChat: prepBuildChat,
                 buildToolsSpec: buildToolsSpec,
                 buildRawPrompt: buildRawPrompt,
                 generation: generation,
                 toolChoice: toolChoice,
                 trace: trace
             )
-            await MetalGate.shared.exitGeneration(model: modelName)
+            await exitPrepGate()
         } catch {
-            await MetalGate.shared.exitGeneration(model: modelName)
+            await exitPrepGate()
             if let soloLease { await soloLease.release() }
             throw error
         }
