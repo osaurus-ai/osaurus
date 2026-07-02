@@ -149,6 +149,10 @@ struct RemoteReasoningPolicyTests {
                 .allowsReasoningObject == false
         )
         #expect(
+            RemoteReasoningPolicy.resolve(providerType: .openaiLegacy, host: "api.mistral.ai", model: "mistral-medium-3.5")
+                .allowsReasoningObject == false
+        )
+        #expect(
             RemoteReasoningPolicy.resolve(providerType: .anthropic, host: "api.anthropic.com", model: "x")
                 .allowsReasoningObject == false
         )

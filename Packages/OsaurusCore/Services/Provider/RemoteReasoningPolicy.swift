@@ -158,7 +158,12 @@ struct RemoteReasoningPolicy {
     var allowsReasoningObject: Bool {
         switch providerType {
         case .openaiLegacy:
-            return !host.lowercased().contains("openai.com")
+            let lowered = host.lowercased()
+            // Mistral's chat-completions schema accepts only the root-level
+            // `reasoning_effort` string; a sibling `reasoning: { effort }`
+            // object is rejected with HTTP 422 (`extra_forbidden`). OpenAI
+            // proper likewise only reads `reasoning_effort` here.
+            return !lowered.contains("openai.com") && !lowered.contains("mistral")
         case .azureOpenAI, .anthropic, .openResponses, .openAICodex, .gemini, .osaurus, .osaurusRouter:
             return false
         }
