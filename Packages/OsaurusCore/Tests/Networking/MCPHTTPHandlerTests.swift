@@ -141,7 +141,7 @@ struct MCPHTTPHandlerTests {
         let server = try await startTestServer()
         defer { Task { await server.shutdown() } }
 
-        for tool in ["file_write", "file_edit", "shell_run", "git_commit"] {
+        for tool in ["file_write", "file_edit", "shell_run", "git_commit", "agent_channel_send_message"] {
             var request = URLRequest(url: URL(string: "http://\(server.host):\(server.port)/mcp/call")!)
             request.httpMethod = "POST"
             request.setValue("application/json", forHTTPHeaderField: "Content-Type")
@@ -155,6 +155,43 @@ struct MCPHTTPHandlerTests {
             #expect(status == 403, "expected 403 for \(tool), got \(status)")
             #expect(body.contains("tool_not_exposable"))
         }
+    }
+
+    @Test func remote_dispatch_surface_binding_denies_agent_channel_tools() {
+        #expect(!HTTPHandler.shouldBindExternalSurfaceForDispatch(isLoopback: true))
+        #expect(HTTPHandler.shouldBindExternalSurfaceForDispatch(isLoopback: false))
+
+        let local = ChatExecutionContext.$isExternalSurface.withValue(
+            HTTPHandler.shouldBindExternalSurfaceForDispatch(isLoopback: true)
+        ) {
+            ToolRegistry.isDeniedForCurrentSurface("agent_channel_send_message")
+        }
+        #expect(!local)
+
+        let remote = ChatExecutionContext.$isExternalSurface.withValue(
+            HTTPHandler.shouldBindExternalSurfaceForDispatch(isLoopback: false)
+        ) {
+            ToolRegistry.isDeniedForCurrentSurface("agent_channel_send_message")
+        }
+        #expect(remote)
+
+        let remoteHostWrite = ChatExecutionContext.$isExternalSurface.withValue(
+            HTTPHandler.shouldBindExternalSurfaceForDispatch(isLoopback: false)
+        ) {
+            ToolRegistry.isDeniedForCurrentSurface("file_write")
+        }
+        #expect(remoteHostWrite)
+    }
+
+    @Test func remote_dispatch_surface_binding_propagates_to_unstructured_tasks() async {
+        let inherited = await ChatExecutionContext.$isExternalSurface.withValue(
+            HTTPHandler.shouldBindExternalSurfaceForDispatch(isLoopback: false)
+        ) {
+            await Task {
+                ToolRegistry.isDeniedForCurrentSurface("agent_channel_send_message")
+            }.value
+        }
+        #expect(inherited)
     }
 
     @Test func mcp_call_rejects_malformed_agent_header() async throws {

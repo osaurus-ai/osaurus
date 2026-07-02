@@ -1842,25 +1842,28 @@ struct DiscordConnectionTests {
             "discord_send_message",
             "discord_reply_to_thread",
         ]
-        let (registeredNames, builtInNames, runtimeNames, pluginNames, alwaysLoadedNames, phantomNames) = await MainActor.run {
-            (
-                Set(ToolRegistry.shared.listTools().map(\.name)),
-                ToolRegistry.shared.builtInToolNames,
-                ToolRegistry.shared.runtimeManagedToolNames,
-                names.filter { ToolRegistry.shared.isPluginTool($0) },
-                Set(ToolRegistry.shared.alwaysLoadedSpecs(mode: .none).map(\.function.name)),
-                phantomDiscordNames.filter { ToolRegistry.shared.entry(named: $0) != nil }
+        let snapshot = await MainActor.run {
+            let registered = Set(ToolRegistry.shared.listTools().map(\.name))
+            return AgentChannelRegistrySnapshot(
+                registeredNames: registered,
+                registeredChannelNames: Set(registered.filter { $0.hasPrefix("agent_channel_") }),
+                builtInNames: ToolRegistry.shared.builtInToolNames,
+                runtimeNames: ToolRegistry.shared.runtimeManagedToolNames,
+                pluginNames: Set(names.filter { ToolRegistry.shared.isPluginTool($0) }),
+                alwaysLoadedNames: Set(ToolRegistry.shared.alwaysLoadedSpecs(mode: .none).map(\.function.name)),
+                phantomNames: Set(phantomDiscordNames.filter { ToolRegistry.shared.entry(named: $0) != nil })
             )
         }
         // Agent Channel actions are provider-neutral native dynamic tools:
         // callable by the app runtime, but not injected into the always-loaded
         // prompt baseline.
-        #expect(Set(names).isSubset(of: registeredNames))
-        #expect(pluginNames.isEmpty)
-        #expect(Set(names).isDisjoint(with: builtInNames))
-        #expect(Set(names).isDisjoint(with: runtimeNames))
-        #expect(Set(names).isDisjoint(with: alwaysLoadedNames))
-        #expect(phantomNames.isEmpty)
+        #expect(Set(names).isSubset(of: snapshot.registeredNames))
+        #expect(snapshot.registeredChannelNames == Set(names))
+        #expect(snapshot.pluginNames.isEmpty)
+        #expect(Set(names).isDisjoint(with: snapshot.builtInNames))
+        #expect(Set(names).isDisjoint(with: snapshot.runtimeNames))
+        #expect(Set(names).isDisjoint(with: snapshot.alwaysLoadedNames))
+        #expect(snapshot.phantomNames.isEmpty)
 
         // The native action vocabulary stays restricted to the app surface.
         // External HTTP/MCP callers must not be able to send channel messages
@@ -2133,6 +2136,16 @@ private final class DiscordHTTPStubProtocol: URLProtocol {
     }
 
     override func stopLoading() {}
+}
+
+private struct AgentChannelRegistrySnapshot {
+    let registeredNames: Set<String>
+    let registeredChannelNames: Set<String>
+    let builtInNames: Set<String>
+    let runtimeNames: Set<String>
+    let pluginNames: Set<String>
+    let alwaysLoadedNames: Set<String>
+    let phantomNames: Set<String>
 }
 
 private extension DiscordMessage {

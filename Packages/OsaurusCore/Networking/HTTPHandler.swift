@@ -5495,6 +5495,10 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
 
     // MARK: - Dispatch & Task Endpoints
 
+    nonisolated static func shouldBindExternalSurfaceForDispatch(isLoopback: Bool) -> Bool {
+        !isLoopback
+    }
+
     /// POST /agents/{identifier}/dispatch — dispatch work/chat task
     /// The identifier can be an agent UUID or a crypto address (0x...).
     private func handleDispatchEndpoint(
@@ -5694,7 +5698,14 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 externalSessionKey: externalSessionKey
             )
 
-            let handle = await TaskDispatcher.shared.dispatch(request)
+            let handle: DispatchHandle?
+            if Self.shouldBindExternalSurfaceForDispatch(isLoopback: isLoopback) {
+                handle = await ChatExecutionContext.$isExternalSurface.withValue(true) {
+                    await TaskDispatcher.shared.dispatch(request)
+                }
+            } else {
+                handle = await TaskDispatcher.shared.dispatch(request)
+            }
             let responseBody: String
             let status: HTTPResponseStatus
 
