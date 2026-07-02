@@ -30,6 +30,11 @@ public struct KnowledgeCollection: Identifiable, Codable, Equatable, Sendable {
     /// Disabled collections stay registered but are excluded from
     /// indexing, search, and agent grants resolution.
     public var isEnabled: Bool
+    /// Git remote this collection syncs with (`nil` for plain local
+    /// folders). Set when the collection was added by cloning a URL, or
+    /// detected from an existing repo's `origin`. Sync is always
+    /// user-triggered or approval-triggered; there is no background poll.
+    public var gitRemoteURL: String?
     public var createdAt: Date
     public var updatedAt: Date
 
@@ -39,6 +44,7 @@ public struct KnowledgeCollection: Identifiable, Codable, Equatable, Sendable {
         summary: String = "",
         folderPath: String,
         isEnabled: Bool = true,
+        gitRemoteURL: String? = nil,
         createdAt: Date = Date(),
         updatedAt: Date = Date()
     ) {
@@ -47,6 +53,7 @@ public struct KnowledgeCollection: Identifiable, Codable, Equatable, Sendable {
         self.summary = summary
         self.folderPath = folderPath
         self.isEnabled = isEnabled
+        self.gitRemoteURL = gitRemoteURL
         self.createdAt = createdAt
         self.updatedAt = updatedAt
     }
@@ -58,6 +65,7 @@ public struct KnowledgeCollection: Identifiable, Codable, Equatable, Sendable {
         summary = try c.decodeIfPresent(String.self, forKey: .summary) ?? ""
         folderPath = try c.decode(String.self, forKey: .folderPath)
         isEnabled = try c.decodeIfPresent(Bool.self, forKey: .isEnabled) ?? true
+        gitRemoteURL = try c.decodeIfPresent(String.self, forKey: .gitRemoteURL)
         createdAt = try c.decodeIfPresent(Date.self, forKey: .createdAt) ?? Date()
         updatedAt = try c.decodeIfPresent(Date.self, forKey: .updatedAt) ?? Date()
     }
@@ -73,5 +81,14 @@ public struct KnowledgeCollection: Identifiable, Codable, Equatable, Sendable {
         var isDirectory: ObjCBool = false
         return FileManager.default.fileExists(atPath: folderURL.path, isDirectory: &isDirectory)
             && isDirectory.boolValue
+    }
+
+    /// Whether the collection folder is a git repository (a `.git` entry
+    /// at its root — a plain directory for normal repos, a file for
+    /// worktrees/submodules).
+    public var isGitRepository: Bool {
+        FileManager.default.fileExists(
+            atPath: folderURL.appendingPathComponent(".git").path
+        )
     }
 }

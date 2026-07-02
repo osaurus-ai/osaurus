@@ -82,7 +82,52 @@ public final class KnowledgeManager: ObservableObject {
         NotificationCenter.default.post(name: .knowledgeCollectionsChanged, object: id)
         Task.detached(priority: .utility) {
             await KnowledgeIndexService.shared.removeCollectionArtifacts(collectionId: id)
+            // A cloned collection's content lives in our managed
+            // directory; remove it with the registration. User-chosen
+            // folders are never touched.
+            try? FileManager.default.removeItem(
+                at: OsaurusPaths.knowledge().appendingPathComponent(id.uuidString, isDirectory: true)
+            )
         }
+    }
+
+    // MARK: - Git sync
+
+    /// Clone a git remote into the managed content directory and register
+    /// it as a collection. Throws with git's error when the clone fails.
+    @discardableResult
+    public func createFromGit(
+        name: String,
+        summary: String = "",
+        remoteURL: String
+    ) async throws -> KnowledgeCollection {
+        let id = UUID()
+        let target = try await KnowledgeGitSyncService.shared.clone(
+            remoteURL: remoteURL,
+            collectionId: id
+        )
+        let collection = KnowledgeCollection(
+            id: id,
+            name: name,
+            summary: summary,
+            folderPath: target.path,
+            gitRemoteURL: remoteURL
+        )
+        KnowledgeCollectionStore.save(collection)
+        collections = KnowledgeCollectionStore.loadAll()
+        NotificationCenter.default.post(name: .knowledgeCollectionsChanged, object: collection.id)
+        scheduleIndex(of: collection)
+        return collection
+    }
+
+    /// Pull + push a git-backed collection, re-indexing when the pull
+    /// brought changes. Returns the outcome for the UI toast.
+    public func syncNow(_ collection: KnowledgeCollection) async -> KnowledgeSyncOutcome {
+        let outcome = await KnowledgeGitSyncService.shared.sync(collection)
+        if case .updated = outcome {
+            scheduleIndex(of: collection)
+        }
+        return outcome
     }
 
     /// Kick a background (re-)index of one collection. `force` bypasses

@@ -311,6 +311,15 @@ public enum OsaurusPaths {
             .appendingPathComponent(id.uuidString, isDirectory: true)
     }
 
+    /// Managed content directory for a collection cloned from a git
+    /// remote: `~/.osaurus/knowledge/<uuid>/content/`. Collections that
+    /// point at a user-chosen folder never use this.
+    public static func knowledgeManagedContentDirectory(for id: UUID) -> URL {
+        knowledge()
+            .appendingPathComponent(id.uuidString, isDirectory: true)
+            .appendingPathComponent("content", isDirectory: true)
+    }
+
     /// On-device Osaurus Router billing ledger directory (`~/.osaurus/billing/`).
     public static func billing() -> URL {
         root().appendingPathComponent("billing", isDirectory: true)
