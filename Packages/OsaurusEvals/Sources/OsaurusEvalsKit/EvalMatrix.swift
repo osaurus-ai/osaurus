@@ -47,6 +47,10 @@ public struct EvalMatrixModelColumn: Sendable, Codable, Equatable {
     public let meanPromptTokensPerTask: Double?
     /// Mean estimated total tokens per task (input + output) across rows.
     public let meanTotalTokensPerTask: Double?
+    /// Number of cases whose repeat trials disagreed (`--repeat N` runs) —
+    /// the per-model flakiness signal. nil when no row carried trial data
+    /// (single-execution runs), 0 when trials ran and all agreed.
+    public let flakyCases: Int?
     /// Run provenance for this model's reports (hardware, OS, build, judge,
     /// catalog hash). nil for older reports; carried through so the history
     /// log and the crowdsourced compatibility leaderboard stay attributable.
@@ -65,6 +69,7 @@ public struct EvalMatrixModelColumn: Sendable, Codable, Equatable {
         peakCpuPercent: Double? = nil,
         meanPromptTokensPerTask: Double? = nil,
         meanTotalTokensPerTask: Double? = nil,
+        flakyCases: Int? = nil,
         environment: RunEnvironment? = nil
     ) {
         self.modelId = modelId
@@ -79,6 +84,7 @@ public struct EvalMatrixModelColumn: Sendable, Codable, Equatable {
         self.peakCpuPercent = peakCpuPercent
         self.meanPromptTokensPerTask = meanPromptTokensPerTask
         self.meanTotalTokensPerTask = meanTotalTokensPerTask
+        self.flakyCases = flakyCases
         self.environment = environment
     }
 }
@@ -87,6 +93,49 @@ public struct EvalMatrix: Sendable, Codable, Equatable {
     public let generatedAt: String
     public let domains: [String]
     public let models: [EvalMatrixModelColumn]
+
+    /// Cross-column comparability caveats, mirroring the checks `EvalCompat`
+    /// applies to crowdsourced contributions: columns that graded different
+    /// case catalogs (mixed denominators), columns with no catalog hash at
+    /// all, and columns whose LLM rubrics were graded by the run model
+    /// itself. Surfaced in both markdown and console output so a maintainer
+    /// scoreboard can't silently mix incomparable columns (the way an early
+    /// `reports/SNAPSHOT.md` did).
+    public var comparabilityWarnings: [String] {
+        var warnings: [String] = []
+        let hashed = models.compactMap { col -> (model: String, hash: String)? in
+            guard let hash = col.environment?.catalogHash else { return nil }
+            return (shortModel(col.modelId), hash)
+        }
+        if Set(hashed.map(\.hash)).count > 1 {
+            let detail = hashed.map { "\($0.model)=\($0.hash)" }.joined(separator: ", ")
+            warnings.append(
+                "columns graded DIFFERENT case catalogs (\(detail)) — totals mix "
+                    + "denominators; only same-catalog columns compare 1:1"
+            )
+        }
+        let unhashed =
+            models
+            .filter { $0.environment?.catalogHash == nil }
+            .map { shortModel($0.modelId) }
+        if !unhashed.isEmpty && !hashed.isEmpty {
+            warnings.append(
+                "no catalog hash for: \(unhashed.joined(separator: ", ")) — "
+                    + "comparability with the hashed columns is unverified"
+            )
+        }
+        let selfJudged =
+            models
+            .filter { $0.environment?.judge == "self-judge" }
+            .map { shortModel($0.modelId) }
+        if !selfJudged.isEmpty {
+            warnings.append(
+                "self-judged column(s): \(selfJudged.joined(separator: ", ")) — "
+                    + "LLM-rubric rows were graded by the run model itself (weaker grade)"
+            )
+        }
+        return warnings
+    }
 
     public func toJSON(prettyPrinted: Bool = true) throws -> Data {
         let encoder = JSONEncoder()
@@ -161,6 +210,22 @@ public struct EvalMatrix: Sendable, Codable, Equatable {
                 + models.map { $0.meanTotalTokensPerTask.map { String(format: "%.0f", $0) } ?? "—" }
                 .joined(separator: " | ") + " |"
         )
+        if models.contains(where: { $0.flakyCases != nil }) {
+            lines.append(
+                "| flaky cases (repeat trials) | "
+                    + models.map { $0.flakyCases.map(String.init) ?? "—" }
+                    .joined(separator: " | ") + " |"
+            )
+        }
+        let warnings = comparabilityWarnings
+        if !warnings.isEmpty {
+            lines.append("")
+            lines.append("## Comparability")
+            lines.append("")
+            for warning in warnings {
+                lines.append("- ⚠ \(warning)")
+            }
+        }
         let envRows = models.compactMap { col -> String? in
             guard let env = col.environment else { return nil }
             return "- `\(shortModel(col.modelId))` — \(env.summary)"
@@ -185,6 +250,9 @@ public struct EvalMatrix: Sendable, Codable, Equatable {
             if let ctx = col.meanPromptTokensPerTask { perf.append(String(format: "%.0f ctx tok", ctx)) }
             let perfStr = perf.isEmpty ? "" : "  [\(perf.joined(separator: ", "))]"
             lines.append("  \(shortModel(col.modelId)): \(col.totalPassed)/\(col.totalScored)\(perfStr)")
+        }
+        for warning in comparabilityWarnings {
+            lines.append("  ⚠ \(warning)")
         }
         return lines.joined(separator: "\n")
     }
@@ -267,6 +335,7 @@ public enum EvalMatrixBuilder {
             let cpus = telem.compactMap(\.meanCpuPercent)
             let promptToks = telem.compactMap(\.promptTokensTotal)
             let totalToks = telem.compactMap(\.totalModelTokens)
+            let trialed = cases.filter { $0.trials != nil }
             return EvalMatrixModelColumn(
                 modelId: modelId,
                 startedAt: startedByModel[modelId],
@@ -282,6 +351,7 @@ public enum EvalMatrixBuilder {
                     ? nil : Double(promptToks.reduce(0, +)) / Double(promptToks.count),
                 meanTotalTokensPerTask: totalToks.isEmpty
                     ? nil : Double(totalToks.reduce(0, +)) / Double(totalToks.count),
+                flakyCases: trialed.isEmpty ? nil : trialed.filter(\.isFlaky).count,
                 environment: envByModel[modelId]
             )
         }

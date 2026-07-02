@@ -283,16 +283,28 @@ extension EvalRunner {
         )
 
         var verdicts: [CapabilityClaimsJudgement] = []
+        var judgeAudit: EvalJudgeAudit?
+        var judgeElapsed: Double?
         if transcript.error == nil, let rubric = exp.rubric, !rubric.isEmpty {
-            verdicts = await CapabilityClaimsEvaluator.judge(
+            // Self-heal the ephemeral judge provider before grading — a
+            // provider-mutating suite earlier in the same process (e.g.
+            // `default_agent`'s `osaurus_provider`) can have evicted it,
+            // which would otherwise fail every rubric row spuriously.
+            await ensureJudgeProviderRoutable(judgeModel)
+            let judgeStarted = Date()
+            let audit = await CapabilityClaimsEvaluator.judgeDetailed(
                 finalText: transcript.finalText,
                 conditions: rubric,
                 model: judgeModel
             )
+            judgeElapsed = Date().timeIntervalSince(judgeStarted) * 1000
+            verdicts = audit.verdicts
+            judgeAudit = EvalJudgeAudit.from(audit, rubric: rubric, selfJudge: judgeModel == nil)
         }
         let elapsed = Date().timeIntervalSince(started) * 1000
         // Report loop-only latency (model steps + tool execution), not
-        // wall time inflated by judge calls and workspace setup.
+        // wall time inflated by judge calls and workspace setup; judge
+        // time rides in `judgeLatencyMs`.
         let latency = transcript.loopDurationMs > 0 ? transcript.loopDurationMs : elapsed
 
         if let err = transcript.error {
@@ -302,17 +314,21 @@ extension EvalRunner {
                     pluginIdsBeforeRun: pluginIdsBeforeRun
                 )
             }
-            return EvalCaseReport(
-                id: testCase.id,
-                label: label,
-                domain: testCase.domain,
-                query: testCase.query,
-                outcome: .errored,
-                notes: ["agent loop error: \(err)"],
-                modelId: modelId,
-                latencyMs: latency,
-                toolUsage: toolUsageStats(transcript),
-                telemetry: telemetry(from: transcript)
+            return persistAgentLoopTranscript(
+                transcript,
+                for: EvalCaseReport(
+                    id: testCase.id,
+                    label: label,
+                    domain: testCase.domain,
+                    query: testCase.query,
+                    outcome: .errored,
+                    notes: ["agent loop error: \(err)"],
+                    modelId: modelId,
+                    latencyMs: latency,
+                    toolUsage: toolUsageStats(transcript),
+                    telemetry: telemetry(from: transcript)
+                ),
+                query: testCase.query
             )
         }
 
@@ -404,6 +420,13 @@ extension EvalRunner {
                 fail: "finalText missing '\(needle)'"
             )
         }
+        for needle in exp.finalTextMustNotContain ?? [] {
+            score.check(
+                !transcript.finalText.localizedCaseInsensitiveContains(needle),
+                pass: "finalText free of '\(needle)'",
+                fail: "finalText LEAKED '\(needle)'"
+            )
+        }
 
         // 5. LLM-judge rubric — every condition must pass.
         let rubric = exp.rubric ?? []
@@ -443,18 +466,61 @@ extension EvalRunner {
             )
         }
 
-        return EvalCaseReport(
-            id: testCase.id,
-            label: label,
-            domain: testCase.domain,
-            query: testCase.query,
-            outcome: score.passed ? .passed : .failed,
-            notes: score.notes,
-            modelId: modelId,
-            latencyMs: latency,
-            toolUsage: toolUsageStats(transcript),
-            telemetry: telemetry(from: transcript)
+        return persistAgentLoopTranscript(
+            transcript,
+            for: EvalCaseReport(
+                id: testCase.id,
+                label: label,
+                domain: testCase.domain,
+                query: testCase.query,
+                outcome: score.passed ? .passed : .failed,
+                notes: score.notes,
+                modelId: modelId,
+                latencyMs: latency,
+                judgeLatencyMs: judgeElapsed,
+                toolUsage: toolUsageStats(transcript),
+                telemetry: telemetry(from: transcript),
+                judge: judgeAudit
+            ),
+            query: testCase.query
         )
+    }
+
+    /// Hand the full loop transcript to the transcript store (a no-op
+    /// unless `--transcripts` configured it, and it only keeps
+    /// failed/errored rows). Returns the report unchanged so call sites
+    /// stay single-expression returns.
+    private static func persistAgentLoopTranscript(
+        _ transcript: AgentLoopTranscript,
+        for report: EvalCaseReport,
+        query: String
+    ) -> EvalCaseReport {
+        EvalTranscriptStore.persistIfEnabled(
+            EvalCaseTranscript(
+                caseId: report.id,
+                domain: report.domain,
+                modelId: report.modelId,
+                outcome: report.outcome.rawValue,
+                query: query,
+                systemPrompt: transcript.systemPrompt,
+                toolSchemaNames: transcript.toolSchemaNames,
+                toolCalls: transcript.toolCalls.map {
+                    EvalCaseTranscript.ToolEvent(
+                        name: $0.name,
+                        arguments: $0.arguments,
+                        resultPreview: $0.resultPreview,
+                        wasDeduped: $0.wasDeduped,
+                        wasError: $0.wasError
+                    )
+                },
+                finalText: transcript.finalText,
+                iterations: transcript.iterations,
+                exit: transcript.exit,
+                notices: transcript.notices,
+                error: transcript.error
+            )
+        )
+        return report
     }
 
     /// Project the agent-loop transcript's generation metrics into the

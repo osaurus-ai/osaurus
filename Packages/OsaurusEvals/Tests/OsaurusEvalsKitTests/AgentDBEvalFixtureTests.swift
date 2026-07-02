@@ -101,7 +101,9 @@ struct AgentDBEvalFixtureTests {
 
         let suite = try EvalSuite.load(from: suiteDir)
         #expect(suite.decodeFailures.isEmpty, "decode failures: \(suite.decodeFailures)")
-        #expect(suite.cases.count == 7)
+        // Floor, not exact: new cases must not break this smoke — only
+        // deletions or decode drift should.
+        #expect(suite.cases.count >= 12, "AgentDB suite shrank; got \(suite.cases.count)")
         for testCase in suite.cases {
             #expect(testCase.domain == "agent_loop")
             #expect(

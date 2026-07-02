@@ -87,6 +87,22 @@ public struct EvalBootstrapPlan: Sendable, Equatable {
         requiresWork
     }
 
+    /// Union of several per-suite plans — the bootstrap for a multi-suite
+    /// (`--suite A --suite B`) run, where ONE process must satisfy every
+    /// selected suite: plugins load if ANY suite needs them, and each index
+    /// lane comes up if ANY suite touches it. Over-provisioning a lane for
+    /// a sibling suite is harmless; under-provisioning skips cases.
+    public static func merged(_ plans: [EvalBootstrapPlan]) -> EvalBootstrapPlan {
+        EvalBootstrapPlan(
+            loadInstalledPlugins: plans.contains { $0.loadInstalledPlugins },
+            searchIndexScope: EvalSearchIndexBootstrapScope(
+                tools: plans.contains { $0.searchIndexScope.tools },
+                methods: plans.contains { $0.searchIndexScope.methods },
+                skills: plans.contains { $0.searchIndexScope.skills }
+            )
+        )
+    }
+
     public static func make(
         suite: EvalSuite,
         filter: String?,
@@ -159,9 +175,15 @@ public enum EvalBootstrap {
     /// the root is already isolated this only installs the credential-sheet
     /// bypass and returns nil (no double-isolation).
     ///
-    /// `MODEL` must be local MLX or `foundation`; a remote run/judge model
-    /// would need provider credentials that live in the (now-isolated, empty)
-    /// config root. That matches the plan's local-MLX + Foundation matrix.
+    /// Model compatibility: local MLX and `foundation` resolve through the
+    /// symlinked external-models manifest; remote `provider/model` runs work
+    /// too because the CLI never routes through config-root provider records
+    /// anyway — `EvalRemoteProviderBootstrap` connects ephemeral providers
+    /// from environment API keys. Only `--model auto` needs the real config
+    /// root (an isolated root has no chat config to resolve against). The
+    /// optimization loop's parallel remote lane leans on this: it forces
+    /// isolation (`OSAURUS_EVALS_ISOLATE_CONFIG=1`) for explicit remote ids
+    /// so concurrent processes never share the real `~/.osaurus`.
     @discardableResult
     public static func configureIsolatedConfigStorageIfNeeded(isolate: Bool) -> URL? {
         guard isolate else { return nil }

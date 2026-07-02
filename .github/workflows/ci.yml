@@ -575,6 +575,54 @@ jobs:
         if: always()
         run: echo "::notice title=test-cli duration::$SECONDS seconds"
 
+  test-evals:
+    # Harness unit tests for Packages/OsaurusEvals (fixture decode, scorer
+    # contracts, regression-lab plumbing, judge resolution). Deterministic
+    # and token-free — no LLM calls, no model loads — so it's safe on a
+    # hosted runner. This exists because the eval suites evolve faster than
+    # the kit and these tests previously had no lane at all (stale
+    # suite-count assertions sat red for weeks unnoticed).
+    #
+    # Pinned (was `macos-latest`) for the same reason as test-core.
+    runs-on: macos-26
+    # Cold build compiles the whole OsaurusCore graph (mlx-swift Cmlx C++ +
+    # SQLCipher amalgamation) under SwiftPM — same ~25-30 min floor as
+    # test-core's cold xcodebuild. The .build cache below returns warm runs
+    # to single-digit minutes.
+    timeout-minutes: 45
+    env:
+      SPM_BUILD: Packages/OsaurusEvals/.build
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Set up Xcode ${{ env.XCODE_VERSION }}
+        uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: ${{ env.XCODE_VERSION }}
+
+      - name: Cache SwiftPM build
+        uses: actions/cache@v5
+        with:
+          path: ${{ env.SPM_BUILD }}
+          key: evals-build-${{ runner.os }}-${{ env.CACHE_SALT }}-xcode${{ env.XCODE_VERSION }}-${{ hashFiles('Packages/OsaurusEvals/Package.resolved', 'Packages/**/Package.swift', 'Packages/**/*.swift', 'Packages/**/*.c', 'Packages/**/*.h') }}
+          restore-keys: |
+            evals-build-${{ runner.os }}-${{ env.CACHE_SALT }}-xcode${{ env.XCODE_VERSION }}-
+            evals-build-${{ runner.os }}-${{ env.CACHE_SALT }}-
+
+      - name: Run evals harness tests
+        env:
+          DEVELOPER_DIR: /Applications/Xcode_${{ env.XCODE_VERSION }}.app/Contents/Developer
+          # Keychain wrappers no-op so hosted runners never hit the
+          # "wants to use your confidential information" prompt.
+          OSAURUS_DISABLE_KEYCHAIN_FOR_TESTS: "1"
+          OSAURUS_TEST_ROOT: /tmp/osaurus-evals-test
+        run: swift test --package-path Packages/OsaurusEvals
+
+      - name: Annotate timing
+        if: always()
+        run: echo "::notice title=test-evals duration::$SECONDS seconds"
+
   swiftlint:
     # Pinned (was `macos-latest`).
     runs-on: macos-26

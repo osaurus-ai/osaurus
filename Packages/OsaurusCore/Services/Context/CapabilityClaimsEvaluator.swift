@@ -114,6 +114,36 @@ public struct CapabilityClaimsJudgement: Sendable, Codable {
     }
 }
 
+/// Full audit of one judge call: the verdicts plus what actually happened
+/// on the wire — which model graded, the raw reply text, and how many
+/// attempts the retry ladder burned. `judge` returns only `verdicts`;
+/// callers that persist judge evidence (the eval harness) use
+/// `judgeDetailed` so a disputed rubric grade can be audited from the
+/// report alone instead of re-running the case.
+public struct CapabilityClaimsJudgeAudit: Sendable, Codable {
+    public let verdicts: [CapabilityClaimsJudgement]
+    /// The model id the judge call actually used (after nil-model fallback
+    /// to the configured chat model / foundation).
+    public let judgeModelId: String
+    /// Raw judge reply text from the attempt that produced `verdicts`.
+    /// nil when every attempt threw before returning a body.
+    public let raw: String?
+    /// Attempts consumed (1 = first try worked; >1 = retried a thrown call).
+    public let attempts: Int
+
+    public init(
+        verdicts: [CapabilityClaimsJudgement],
+        judgeModelId: String,
+        raw: String?,
+        attempts: Int
+    ) {
+        self.verdicts = verdicts
+        self.judgeModelId = judgeModelId
+        self.raw = raw
+        self.attempts = attempts
+    }
+}
+
 // MARK: - Evaluator
 
 /// Public entry point for the capability-claims behaviour evals. Lives
@@ -420,7 +450,24 @@ public enum CapabilityClaimsEvaluator {
         conditions: [String],
         model: String? = nil
     ) async -> [CapabilityClaimsJudgement] {
-        guard !conditions.isEmpty else { return [] }
+        await judgeDetailed(finalText: finalText, conditions: conditions, model: model).verdicts
+    }
+
+    /// `judge` plus the audit trail (raw judge reply, resolved judge model,
+    /// attempt count). Same grading semantics — `judge` delegates here.
+    public static func judgeDetailed(
+        finalText: String,
+        conditions: [String],
+        model: String? = nil
+    ) async -> CapabilityClaimsJudgeAudit {
+        guard !conditions.isEmpty else {
+            return CapabilityClaimsJudgeAudit(
+                verdicts: [],
+                judgeModelId: model ?? "",
+                raw: nil,
+                attempts: 0
+            )
+        }
         let resolvedModel =
             model
             ?? ChatConfigurationStore.load().coreModelIdentifier
@@ -483,19 +530,31 @@ public enum CapabilityClaimsEvaluator {
         // looping on its own teardown.
         let maxJudgeAttempts = 3
         var lastError: Error?
+        var attemptsUsed = 0
         for attempt in 1 ... maxJudgeAttempts {
+            attemptsUsed = attempt
             do {
                 let response = try await engine.completeChat(request: request)
                 let raw = response.choices.first?.message.content ?? ""
                 if let parsed = parseVerdicts(raw, expected: conditions.count) {
-                    return parsed
-                }
-                return conditions.map {
-                    CapabilityClaimsJudgement(
-                        pass: false,
-                        reason: "judge output not parseable for condition: \($0)"
+                    return CapabilityClaimsJudgeAudit(
+                        verdicts: parsed,
+                        judgeModelId: resolvedModel,
+                        raw: raw,
+                        attempts: attempt
                     )
                 }
+                return CapabilityClaimsJudgeAudit(
+                    verdicts: conditions.map {
+                        CapabilityClaimsJudgement(
+                            pass: false,
+                            reason: "judge output not parseable for condition: \($0)"
+                        )
+                    },
+                    judgeModelId: resolvedModel,
+                    raw: raw,
+                    attempts: attempt
+                )
             } catch {
                 lastError = error
                 if Task.isCancelled { break }
@@ -505,12 +564,17 @@ public enum CapabilityClaimsEvaluator {
                 }
             }
         }
-        return conditions.map { _ in
-            CapabilityClaimsJudgement(
-                pass: false,
-                reason: "judge call failed: \(lastError?.localizedDescription ?? "unknown error")"
-            )
-        }
+        return CapabilityClaimsJudgeAudit(
+            verdicts: conditions.map { _ in
+                CapabilityClaimsJudgement(
+                    pass: false,
+                    reason: "judge call failed: \(lastError?.localizedDescription ?? "unknown error")"
+                )
+            },
+            judgeModelId: resolvedModel,
+            raw: nil,
+            attempts: attemptsUsed
+        )
     }
 
     // MARK: - Judge-output parsing (hardened, self-judge friendly)

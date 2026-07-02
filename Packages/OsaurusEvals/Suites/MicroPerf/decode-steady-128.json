@@ -1,0 +1,14 @@
+{
+  "id": "micro_perf.decode-steady-128",
+  "domain": "micro_perf",
+  "label": "micro perf • steady-state decode, 128 fixed tokens × 5 reps",
+  "query": "Count upward from 1, one number per line, and do not stop until you are told. Output only numbers, no commentary.",
+  "notes": "The headline decode-throughput row for history.jsonl trends: short fixed prompt, decode pinned at max_tokens 128 (the counting prompt never EOSes early), 5 measured reps after 1 unmeasured warm-up, median ± stdev. Same prompt + same session across reps = steady-state (prefix warm), which is the point — cold-start TTFT is visible in behaviour rows' first steps instead. No floors: absolute tok/s is machine-specific; the diff/history trend is the gate. Off-CI (needs a model).",
+  "fixtures": {},
+  "expect": {
+    "microPerf": {
+      "reps": 5,
+      "maxTokens": 128
+    }
+  }
+}

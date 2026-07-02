@@ -1,0 +1,15 @@
+{
+  "id": "micro_perf.prefill-long-prompt-64",
+  "domain": "micro_perf",
+  "label": "micro perf • long fixed prefill (query × 60), 64 decode tokens × 3 reps",
+  "query": "The quick brown fox jumps over the lazy dog while the observatory logs each transit event, the harbor master reconciles the evening manifests, and the archivist files another day of measurements into the long ledger of ordinary hours. Repeat this exact paragraph back to me once, then keep counting upward from 1, one number per line, without stopping.",
+  "notes": "The prompt-processing row: promptRepeat 60 builds a ~4k-token fixed prefill from a committed one-paragraph query (fixture stays readable; the effective prompt is byte-identical every run). 3 reps keep the lane fast since each rep re-sends the full prompt. With one session across reps the measured prefill is the WARM-prefix path, so this row trends KV/prefix-reuse efficiency (a prefix-cache regression shows up here as a prefill/TTFT jump even when raw decode is unchanged). Off-CI (needs a model).",
+  "fixtures": {},
+  "expect": {
+    "microPerf": {
+      "reps": 3,
+      "maxTokens": 64,
+      "promptRepeat": 60
+    }
+  }
+}

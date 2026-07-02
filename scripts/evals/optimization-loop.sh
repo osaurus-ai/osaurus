@@ -9,8 +9,11 @@ set -uo pipefail
 #
 #   measure ──▶ scoreboard ──▶ diff vs baseline ──▶ triage/promote
 #
-# It is NOT an agent orchestrator: it's a robust sequential test driver
-# (sequential keeps local MLX GPU work from contending across suites).
+# It is NOT an agent orchestrator: it's a robust test driver. Local-model
+# work stays sequential (one MLX process at a time keeps GPU work from
+# contending); each model's suites run in ONE process so the model loads
+# and warms once (multi-suite mode); remote-provider models — network-bound,
+# no GPU contention — run in a parallel lane when PARALLEL_REMOTE=1.
 #
 # Env overrides:
 #   MODELS         space-separated model ids run through the LLM suites.
@@ -49,14 +52,35 @@ set -uo pipefail
 #                  contributor's model, so they add nothing to a per-model
 #                  compatibility report. Default off.
 #   OSAURUS_EVALS_SKIP_PREP=1   skip the asset-prep step.
-#   SUITE_TIMEOUT_SEC   hard wall-clock cap (seconds) for ONE suite/model
-#                  subprocess. Backstop so a wedged process can't stall the
+#   SUITE_TIMEOUT_SEC   hard wall-clock cap (seconds) PER SUITE. Multi-suite
+#                  batches get cap × suite-count for the whole subprocess.
+#                  Backstop so a wedged process can't stall the
 #                  whole sequential matrix (the in-process per-case watchdog,
 #                  OSAURUS_EVALS_CASE_TIMEOUT_SEC, is the first line of
 #                  defense; this catches a hang the in-process timer can't,
 #                  e.g. a CPU-bound spin that never yields). Default 2700
 #                  (45m). 0 disables. Requires `timeout`/`gtimeout` on PATH;
 #                  if neither is present the cap is skipped with a warning.
+#   EVALS_REPEAT   run every case N times per suite (one process, model stays
+#                  warm) and report merged majority outcomes + passRate; flaky
+#                  rows are marked and the diff treats their flips as
+#                  non-blocking. Default 1 (single execution).
+#   EVALS_TRANSCRIPTS "1" (default) → pass --transcripts so every failed or
+#                  errored LLM case keeps its FULL transcript (system prompt,
+#                  tool calls + result previews, final text) in a
+#                  <report>.transcripts/ sidecar inside the run dir. The run
+#                  dir is git-ignored, so nothing sensitive can land in a
+#                  commit; RECORD=1 snapshots never copy sidecars. "0" turns
+#                  it off.
+#   PARALLEL_REMOTE "1" (default) → when MODELS mixes local and remote-provider
+#                  ids, run the remote models' LLM pass in a background lane
+#                  concurrent with the local lane (remote decode is
+#                  network-bound — no GPU contention). The remote lane runs
+#                  with config storage force-isolated so it can never race the
+#                  local lane on the real ~/.osaurus chat config, and the
+#                  sandbox-VM suite is serialized across lanes with a lock
+#                  (Apple Containerization is host-global). "0" restores the
+#                  fully sequential order.
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
@@ -104,7 +128,7 @@ read -ra DET_SUITES <<< "${DET_SUITES:-ArgumentCoercion CapabilitySearch Compute
 # (real-model + mock/real executor) vary with the run model, so it lands real
 # `apple_script` rows in the cross-model matrix (same rationale as `Subagent`).
 # `read -ra` splits the override/default into the array (SC2206-clean, bash 3.2-safe).
-read -ra LLM_SUITES <<< "${LLM_SUITES:-AgentLoop AgentLoopFrontier AgentDB AppleScript CapabilityClaims ComputerUseLoop DefaultAgent SandboxFrontier Subagent}"
+read -ra LLM_SUITES <<< "${LLM_SUITES:-AgentLoop AgentLoopFrontier AgentDB AppleScript CapabilityClaims ComputerUseLoop DefaultAgent MicroPerf PromptInjection SandboxFrontier Subagent}"
 
 log() { printf '[opt-loop] %s\n' "$*"; }
 
@@ -130,8 +154,55 @@ log "Run dir: ${OUT}"
 filter_args=()
 [[ -n "${FILTER}" ]] && filter_args=(--filter "${FILTER}")
 
+# Optional per-case repeat trials (EVALS_REPEAT=N → merged majority outcome +
+# passRate per case; the kit marks inconsistent rows flaky).
+repeat_args=()
+[[ "${EVALS_REPEAT:-1}" != "1" ]] && repeat_args=(--repeat "${EVALS_REPEAT}")
+
+# Failed-case transcript sidecars (on by default: the run dir is git-ignored,
+# and a failed row without its transcript usually means a re-run).
+transcript_args=()
+[[ "${EVALS_TRANSCRIPTS:-1}" == "1" ]] && transcript_args=(--transcripts)
+
 # Sanitize a model id into a filename-safe label (xai/grok-4.3 → xai-grok-4.3).
 label_for() { printf '%s' "$1" | tr '/' '-'; }
+
+# Remote-provider routing prefixes the CLI can bootstrap ephemerally — must
+# mirror `EvalRemoteProviderBootstrap.presets`. A slash alone doesn't mean
+# remote (local HF repo ids like mlx-community/Qwen3-4B also have one); only
+# a known provider prefix routes off-device.
+REMOTE_PREFIXES="xai openai groq openrouter anthropic google deepseek"
+is_remote_model() {
+  local model="$1"
+  case "${model}" in */*) ;; *) return 1 ;; esac
+  local prefix
+  prefix="$(printf '%s' "${model%%/*}" | tr '[:upper:]' '[:lower:]')"
+  local p
+  for p in ${REMOTE_PREFIXES}; do
+    [[ "${prefix}" == "${p}" ]] && return 0
+  done
+  return 1
+}
+
+# Serialize sandbox-VM suites across parallel lanes: Apple Containerization
+# state (rootfs, container name) is host-global, and two concurrent boots can
+# corrupt the guest. mkdir is the atomic test-and-set; the lock lives inside
+# this run's OUT dir so a crashed previous run can never wedge a new one.
+SANDBOX_LOCK_DIR="${OUT}/.sandbox-vm.lock"
+with_sandbox_lock() {
+  local waited=0
+  while ! mkdir "${SANDBOX_LOCK_DIR}" 2>/dev/null; do
+    sleep 5
+    waited=$((waited + 5))
+    if (( waited % 300 == 0 )); then
+      log "  (waited ${waited}s for the sandbox-VM lock…)"
+    fi
+  done
+  "$@"
+  local rc=$?
+  rmdir "${SANDBOX_LOCK_DIR}" 2>/dev/null || true
+  return ${rc}
+}
 
 run_suite() {
   # run_suite <model> <label> <suite>
@@ -156,6 +227,8 @@ run_suite() {
       --suite "Suites/${suite}" \
       --model "${model}" \
       --out "${out_path}" \
+      ${repeat_args[@]+"${repeat_args[@]}"} \
+      ${transcript_args[@]+"${transcript_args[@]}"} \
       ${filter_args[@]+"${filter_args[@]}"} ) >"${log_path}" 2>&1
   local rc=$?
   if [[ ${rc} -eq 124 || ${rc} -eq 137 ]]; then
@@ -173,24 +246,166 @@ run_suite() {
   return 0  # case failures are the measurement, never abort the loop
 }
 
+run_suites_batch() {
+  # run_suites_batch <model> <label> <batch-name> <suite...>
+  # ONE CLI process for all the suites: the model loads + warms once and stays
+  # resident across them (the CLI's repeatable --suite mode) — the biggest
+  # wall-clock lever for a local-model pass vs. the old process-per-suite
+  # order. Report names match run_suite's exactly (--out-dir + --out-prefix
+  # resolve to ${OUT}/${label}-<Suite>.json), so matrix/diff see no change.
+  local model="$1" label="$2" batch="$3"
+  shift 3
+  local suites=("$@")
+  [[ ${#suites[@]} -eq 0 ]] && return 0
+  if [[ ${#suites[@]} -eq 1 ]]; then
+    run_suite "${model}" "${label}" "${suites[0]}"
+    return 0
+  fi
+  local log_path="${OUT}/${label}-${batch}.log"
+  local suite_args=()
+  local s
+  for s in "${suites[@]}"; do
+    suite_args+=(--suite "Suites/${s}")
+  done
+  log "  ${label} / ${#suites[@]} suites in one process: ${suites[*]}"
+  # SUITE_TIMEOUT_SEC is a per-suite cap; the batch process gets cap × count.
+  local batch_timeout=$((SUITE_TIMEOUT_SEC * ${#suites[@]}))
+  local timeout_cmd=()
+  if [[ -n "${TIMEOUT_BIN}" && "${SUITE_TIMEOUT_SEC}" != "0" ]]; then
+    timeout_cmd=("${TIMEOUT_BIN}" --kill-after=30 "${batch_timeout}")
+  fi
+  ( cd "${EVALS_PKG}" && "${timeout_cmd[@]+${timeout_cmd[@]}}" "${BIN}" run \
+      "${suite_args[@]}" \
+      --model "${model}" \
+      --out-dir "${OUT}" \
+      --out-prefix "${label}-" \
+      ${repeat_args[@]+"${repeat_args[@]}"} \
+      ${transcript_args[@]+"${transcript_args[@]}"} \
+      ${filter_args[@]+"${filter_args[@]}"} ) >"${log_path}" 2>&1
+  local rc=$?
+  if [[ ${rc} -eq 124 || ${rc} -eq 137 ]]; then
+    log "    rc=${rc} (BATCH TIMEOUT after ${batch_timeout}s) → ${label} batch KILLED"
+  else
+    log "    rc=${rc} → ${label}-*.json"
+  fi
+  # Self-heal: a timeout/watchdog kill mid-batch leaves LATER suites
+  # reportless — a robustness gap process-per-suite never had. Re-run just the
+  # missing suites individually so one wedged suite can't zero its siblings.
+  # If EVERY suite is missing the failure is systematic (bad model id, startup
+  # crash); re-running each would fail identically, so only warn loudly.
+  local missing=()
+  for s in "${suites[@]}"; do
+    [[ -s "${OUT}/${label}-${s}.json" ]] || missing+=("${s}")
+  done
+  if [[ ${#missing[@]} -eq ${#suites[@]} ]]; then
+    log "    WARNING: batch wrote no reports at all for ${label} — see ${log_path##*/}"
+  elif [[ ${#missing[@]} -gt 0 ]]; then
+    log "    batch left ${#missing[@]} suite(s) without a report; re-running individually…"
+    for s in "${missing[@]}"; do
+      run_suite "${model}" "${label}" "${s}"
+    done
+  fi
+  return 0  # case failures are the measurement, never abort the loop
+}
+
+# LLM suites that boot the Apple Containerization VM — split out of the batch
+# so with_sandbox_lock can serialize them across the parallel lanes. The VM is
+# the only host-global resource worth a lock: ComputerUseLoop drives an
+# in-process scripted world, and AppleScript's single real-executor case
+# writes a fixed-content scratch note (identical across lanes — a concurrent
+# write is benign), so serializing those suites would only cost the local
+# lane an extra model load for no safety gain.
+SANDBOX_VM_SUITES="SandboxFrontier"
+
+run_model_lane() {
+  # run_model_lane <model> <label> — the full LLM pass for one model: every
+  # non-VM suite in one warm process, then the VM suites under the lock.
+  local model="$1" label="$2"
+  local batch_suites=() vm_suites=()
+  local s
+  for s in "${LLM_SUITES[@]}"; do
+    if [[ " ${SANDBOX_VM_SUITES} " == *" ${s} "* ]]; then
+      vm_suites+=("${s}")
+    else
+      batch_suites+=("${s}")
+    fi
+  done
+  run_suites_batch "${model}" "llm-${label}" "batch" ${batch_suites[@]+"${batch_suites[@]}"}
+  for s in ${vm_suites[@]+"${vm_suites[@]}"}; do
+    with_sandbox_lock run_suite "${model}" "llm-${label}" "${s}"
+  done
+}
+
 # ── 2. Deterministic suites (once) ───────────────────────────────────────
 if [[ "${SKIP_DET}" == "1" ]]; then
   log "Skipping deterministic suites (SKIP_DET=1)."
 else
   log "Deterministic suites (model=${DET_MODEL}):"
-  for suite in "${DET_SUITES[@]}"; do
-    run_suite "${DET_MODEL}" "det" "${suite}"
-  done
+  run_suites_batch "${DET_MODEL}" "det" "batch" ${DET_SUITES[@]+"${DET_SUITES[@]}"}
+fi
+
+# ── 2b. Judge calibration (once) ─────────────────────────────────────────
+# Grades the RESOLVED judge (JUDGE_MODEL / strong *_API_KEY / self-judge
+# fallback) against fixtures with KNOWN verdicts — the judge doesn't vary by
+# run model, so this runs once per loop, not once per MODELS entry. Burns a
+# handful of judge calls (~1 per case). Skipped alongside SKIP_DET so the
+# crowdsourced contribute flow (per-model compat only) is unchanged; skip
+# individually with JUDGE_CAL=0.
+JUDGE_CAL="${JUDGE_CAL:-1}"
+if [[ "${SKIP_DET}" == "1" || "${JUDGE_CAL}" != "1" ]]; then
+  log "Skipping judge calibration (SKIP_DET=${SKIP_DET}, JUDGE_CAL=${JUDGE_CAL})."
+else
+  log "Judge calibration (measures the judge itself):"
+  run_suite "${DET_MODEL}" "judge" "JudgeCalibration"
 fi
 
 # ── 3. LLM suites (per model) ────────────────────────────────────────────
+# Split MODELS into the local lane (sequential — MLX GPU work must not
+# contend) and the remote lane (network-bound provider APIs). With
+# PARALLEL_REMOTE=1 and both lanes non-empty, the remote lane runs in the
+# background while the local lane keeps the GPU busy.
+LOCAL_MODELS=()
+REMOTE_MODELS=()
 for model in ${MODELS}; do
-  label="$(label_for "${model}")"
-  log "LLM suites for model=${model} (label=${label}):"
-  for suite in "${LLM_SUITES[@]}"; do
-    run_suite "${model}" "llm-${label}" "${suite}"
-  done
+  if is_remote_model "${model}"; then
+    REMOTE_MODELS+=("${model}")
+  else
+    LOCAL_MODELS+=("${model}")
+  fi
 done
+
+remote_lane() {
+  # Remote models never need the real ~/.osaurus chat config (the model id is
+  # explicit and the provider is bootstrapped from env keys), so force config
+  # isolation: the lane cannot race the local lane — or the developer's live
+  # app — on shared config state.
+  local model label
+  for model in ${REMOTE_MODELS[@]+"${REMOTE_MODELS[@]}"}; do
+    label="$(label_for "${model}")"
+    log "LLM suites for model=${model} (label=${label}) [remote lane]:"
+    OSAURUS_EVALS_ISOLATE_CONFIG=1 run_model_lane "${model}" "${label}"
+  done
+}
+
+PARALLEL_REMOTE="${PARALLEL_REMOTE:-1}"
+if [[ "${PARALLEL_REMOTE}" == "1" && ${#REMOTE_MODELS[@]} -gt 0 && ${#LOCAL_MODELS[@]} -gt 0 ]]; then
+  log "Parallel lanes: ${#LOCAL_MODELS[@]} local + ${#REMOTE_MODELS[@]} remote model(s) (PARALLEL_REMOTE=0 to serialize)."
+  remote_lane &
+  remote_lane_pid=$!
+  for model in "${LOCAL_MODELS[@]}"; do
+    label="$(label_for "${model}")"
+    log "LLM suites for model=${model} (label=${label}) [local lane]:"
+    run_model_lane "${model}" "${label}"
+  done
+  wait "${remote_lane_pid}" || true
+  log "Remote lane finished."
+else
+  for model in ${MODELS}; do
+    label="$(label_for "${model}")"
+    log "LLM suites for model=${model} (label=${label}):"
+    run_model_lane "${model}" "${label}"
+  done
+fi
 
 # ── 4. Scoreboard (cross-model matrix) ───────────────────────────────────
 log "Writing cross-model matrix…"

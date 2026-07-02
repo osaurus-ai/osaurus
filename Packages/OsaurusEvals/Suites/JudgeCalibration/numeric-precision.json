@@ -1,0 +1,19 @@
+{
+  "id": "judge_calibration.numeric-precision",
+  "domain": "judge_calibration",
+  "label": "Judge • exact number vs. lookalike number",
+  "query": "(calibration) The judge must distinguish the number the reply states from a nearby wrong one.",
+  "notes": "Precision probe: the reply says 42; one condition asserts 42 (pass) and one asserts 24 (fail). A judge skimming for 'a number was mentioned' passes both and is caught.",
+  "fixtures": {},
+  "expect": {
+    "judgeCalibration": {
+      "finalText": "The scan finished: 42 files matched the pattern, spread across 6 directories. The largest match is src/models/schema.ts at 18 KB.",
+      "conditions": [
+        "The reply states that exactly 42 files matched.",
+        "The reply states that exactly 24 files matched.",
+        "The reply names the largest matching file."
+      ],
+      "expectedVerdicts": [true, false, true]
+    }
+  }
+}

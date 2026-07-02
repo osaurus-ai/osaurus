@@ -37,6 +37,7 @@ help:
 	@echo "  evals-contribute    Crowdsource: run one model on your Mac -> reports/community/<file>.json (MODEL=)"
 	@echo "  evals-compat        Fold reports/community/* into the COMPATIBILITY.md leaderboard (COMPAT_DIR=)"
 	@echo "  test           Run OsaurusCore package tests via 'swift test'"
+	@echo "  evals-test     Run the OsaurusEvals harness unit tests (deterministic, token-free)"
 	@echo "  ci-test        Reproduce the CI test-core job locally (xcodebuild + xcbeautify)"
 	@echo "  computer-use-evidence Run local Computer Use proof lane into build/computer-use-evidence/"
 	@echo "  clean          Remove DerivedData build output"
@@ -74,6 +75,13 @@ status:
 test:
 	@echo "Running OsaurusCore tests…"
 	swift test --package-path Packages/OsaurusCore
+
+# Harness unit tests for the evals package itself (fixture decode, scoring,
+# regression lab, judge resolution). Deterministic and token-free — no LLM
+# calls — so this is safe for CI, unlike the eval suites themselves.
+evals-test:
+	@echo "Running OsaurusEvals harness tests…"
+	OSAURUS_DISABLE_KEYCHAIN_FOR_TESTS=1 swift test --package-path Packages/OsaurusEvals
 
 # Mirrors the CI `test-core` job: same xcodebuild flags, same xcbeautify
 # pipe, same xcresult bundle. Run this locally to repro a failed CI run.
@@ -269,13 +277,15 @@ evals-capture-screen:
 # timestamped dir → cross-model matrix (scoreboard) → optional diff vs a
 # saved baseline. The maintainer pipeline; see
 # scripts/evals/optimization-loop.sh for env overrides (MODELS=, BASELINE=,
-# FILTER=, STRICT=).
+# FILTER=, STRICT=, EVALS_REPEAT=, PARALLEL_REMOTE=).
 #   make evals-loop
 #   make evals-loop MODELS="foundation qwen3-4b xai/grok-4.3" BASELINE=build/evals/loop/<prev>
 #   RECORD=1 LABEL="qwen fix" make evals-loop   # also refresh committed reports/SNAPSHOT + history
+#   make evals-loop EVALS_REPEAT=3              # 3 trials per case; flaky rows marked, diff flake-aware
 evals-loop:
 	@MODELS="$(MODELS)" BASELINE="$(BASELINE)" FILTER="$(FILTER)" STRICT="$(STRICT)" \
 		RECORD="$(RECORD)" LABEL="$(LABEL)" \
+		EVALS_REPEAT="$(EVALS_REPEAT)" PARALLEL_REMOTE="$(PARALLEL_REMOTE)" \
 		bash scripts/evals/optimization-loop.sh
 
 # Cross-model scoreboard from an existing dir of *.json reports. Point

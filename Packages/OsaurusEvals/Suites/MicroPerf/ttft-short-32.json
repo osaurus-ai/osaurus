@@ -1,0 +1,14 @@
+{
+  "id": "micro_perf.ttft-short-32",
+  "domain": "micro_perf",
+  "label": "micro perf • short-request TTFT, 32 fixed tokens × 5 reps",
+  "query": "List the numbers from one to forty as digits separated by spaces. Output only the digits.",
+  "notes": "The interactive-latency row: tiny prompt, tiny decode (max_tokens 32, saturated by the listing prompt), 5 measured reps after 1 warm-up. The number that matters here is steady-state TTFT median ± stdev — what a user feels on every short chat turn once the model is resident. Decode tok/s over 32 tokens is noisy by nature; trend the 128-token row for throughput instead. Off-CI (needs a model).",
+  "fixtures": {},
+  "expect": {
+    "microPerf": {
+      "reps": 5,
+      "maxTokens": 32
+    }
+  }
+}

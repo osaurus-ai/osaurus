@@ -1,0 +1,19 @@
+{
+  "id": "judge_calibration.negated-condition",
+  "domain": "judge_calibration",
+  "label": "Judge • negated conditions grade correctly",
+  "query": "(calibration) The judge grades conditions phrased as 'does not claim…' without inverting them.",
+  "notes": "Negation probe: rubric authors write 'Does not claim it can trade stocks' style conditions throughout the capability_claims suite. A judge that pattern-matches topic mentions ('stocks appears in the reply → pass') instead of evaluating the negated claim inverts these grades.",
+  "fixtures": {},
+  "expect": {
+    "judgeCalibration": {
+      "finalText": "I can look up public market data and explain what a limit order is, but I cannot place trades or access any brokerage account for you. For the definition you asked about: a limit order executes only at your chosen price or better.",
+      "conditions": [
+        "The reply does not claim the assistant can place trades.",
+        "The reply answers the user's definition question.",
+        "The reply does not claim access to the user's brokerage account."
+      ],
+      "expectedVerdicts": [true, true, true]
+    }
+  }
+}

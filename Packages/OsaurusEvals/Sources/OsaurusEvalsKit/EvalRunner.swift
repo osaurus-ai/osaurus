@@ -32,6 +32,19 @@ public enum EvalRunner {
     /// `expect.capabilitySearch.thresholdOverride`. No-op for other
     /// domains. Lets the CLI sweep candidate thresholds without
     /// editing fixtures (`--threshold 0.25`).
+    ///
+    /// `repeatCount` (`--repeat N`) runs every case N times in this same
+    /// process (model stays warm across trials) and folds the trials into
+    /// one row via `EvalCaseReport.mergedTrials` — majority outcome plus a
+    /// `trials`/`trialsPassed` pass-rate the diff/history tooling reads for
+    /// flake awareness. 1 (default) preserves single-execution behavior.
+    ///
+    /// `resumeRows` carries completed rows from a prior interrupted run:
+    /// any case whose id appears is NOT re-run — the prior row is emitted
+    /// unchanged. The CLI decides what counts as "completed" (`--resume`).
+    ///
+    /// `onCaseCompleted` fires after each case row is final (merged across
+    /// trials), including resumed rows — the CLI's incremental JSONL hook.
     public static func run(
         suite: EvalSuite,
         model: ModelSelection,
@@ -39,7 +52,10 @@ public enum EvalRunner {
         thresholdOverride: Float? = nil,
         embedCosineFloorOverride: Float? = nil,
         bootstrapMode: BootstrapMode = .loadInstalledPlugins,
-        outPath: String? = nil
+        outPath: String? = nil,
+        repeatCount: Int = 1,
+        resumeRows: [EvalCaseReport] = [],
+        onCaseCompleted: ((EvalCaseReport) -> Void)? = nil
     ) async -> EvalReport {
         if bootstrapMode == .loadInstalledPlugins {
             // The CLI is its own process — it has to scan + dlopen every
@@ -58,17 +74,22 @@ public enum EvalRunner {
         // contributor with a typo sees the file name in the report
         // instead of silently losing one case.
         for failure in suite.decodeFailures {
-            rows.append(
-                EvalCaseReport.terminal(
-                    id: failure.filename,
-                    label: failure.filename,
-                    domain: "(unknown)",
-                    outcome: .errored,
-                    notes: ["decode failure: \(failure.error)"],
-                    modelId: modelLabel
-                )
+            let row = EvalCaseReport.terminal(
+                id: failure.filename,
+                label: failure.filename,
+                domain: "(unknown)",
+                outcome: .errored,
+                notes: ["decode failure: \(failure.error)"],
+                modelId: modelLabel
             )
+            rows.append(row)
+            onCaseCompleted?(row)
         }
+
+        let resumeById = Dictionary(
+            resumeRows.map { ($0.id, $0) },
+            uniquingKeysWith: { first, _ in first }
+        )
 
         await ModelOverride.withSelection(model) {
             // Warm the model's JIT'd Metal kernels once, BEFORE any scored
@@ -108,9 +129,24 @@ public enum EvalRunner {
             }
             let rowSink = EvalRowSink()
             rows.forEach { rowSink.append($0) }  // seed with any decode-failure rows
+            let trialsWanted = max(1, repeatCount)
             var caseIndex = 0
             for testCase in scoredCases {
                 caseIndex += 1
+                // A completed row from a prior interrupted run is carried
+                // over verbatim — no tokens burned, no fixtures touched.
+                if let resumed = resumeById[testCase.id] {
+                    FileHandle.standardError.write(
+                        Data(
+                            ("[evals] (\(caseIndex)/\(scoredCases.count)) \(testCase.id) "
+                                + "[\(modelLabel)] — resumed (\(resumed.outcome.rawValue))\n").utf8
+                        )
+                    )
+                    rows.append(resumed)
+                    rowSink.append(resumed)
+                    onCaseCompleted?(resumed)
+                    continue
+                }
                 // Per-case progress to STDERR (never the JSON `--out`). A long
                 // suite on a slow local model otherwise looks frozen, and when a
                 // case genuinely wedges, this is the only signal of WHICH case
@@ -122,23 +158,36 @@ public enum EvalRunner {
                             .utf8
                     )
                 )
-                let row = await runOneWatchdogged(
-                    testCase,
-                    modelId: modelLabel,
-                    thresholdOverride: thresholdOverride,
-                    embedCosineFloorOverride: embedCosineFloorOverride,
-                    suiteDirectory: suite.directory,
-                    watchdogContext: EvalWatchdogContext(
-                        sink: rowSink,
-                        outPath: outPath,
-                        startedAt: startedAt,
-                        allDescriptors: allDescriptors,
-                        currentIndex: caseIndex - 1
+                var trialRows: [EvalCaseReport] = []
+                for trial in 1 ... trialsWanted {
+                    if trialsWanted > 1 {
+                        FileHandle.standardError.write(
+                            Data("[evals]   trial \(trial)/\(trialsWanted) \(testCase.id)\n".utf8)
+                        )
+                    }
+                    let row = await runOneWatchdogged(
+                        testCase,
+                        modelId: modelLabel,
+                        thresholdOverride: thresholdOverride,
+                        embedCosineFloorOverride: embedCosineFloorOverride,
+                        suiteDirectory: suite.directory,
+                        watchdogContext: EvalWatchdogContext(
+                            sink: rowSink,
+                            outPath: outPath,
+                            startedAt: startedAt,
+                            allDescriptors: allDescriptors,
+                            currentIndex: caseIndex - 1
+                        )
                     )
-                )
-                let annotated = annotatedWithCaseNotes(row, from: testCase)
-                rows.append(annotated)
-                rowSink.append(annotated)
+                    trialRows.append(annotatedWithCaseNotes(row, from: testCase))
+                    // A skip is host-deterministic (missing plugin/sandbox);
+                    // repeating it adds no signal and wastes wall-clock.
+                    if row.outcome == .skipped { break }
+                }
+                let merged = EvalCaseReport.mergedTrials(trialRows)
+                rows.append(merged)
+                rowSink.append(merged)
+                onCaseCompleted?(merged)
             }
         }
 
@@ -176,8 +225,12 @@ public enum EvalRunner {
             notes: ["note: \(extra)"] + row.notes,
             modelId: row.modelId,
             latencyMs: row.latencyMs,
+            judgeLatencyMs: row.judgeLatencyMs,
             toolUsage: row.toolUsage,
-            telemetry: row.telemetry
+            telemetry: row.telemetry,
+            trials: row.trials,
+            trialsPassed: row.trialsPassed,
+            judge: row.judge
         )
     }
 
@@ -189,7 +242,7 @@ public enum EvalRunner {
     /// stay telemetry-free instead of carrying a noisy process footprint.
     private static let resourceSampledDomains: Set<String> = [
         "agent_loop", "capability_claims", "computer_use_loop", "capability_search",
-        "default_agent", "subagent", "apple_script",
+        "default_agent", "subagent", "apple_script", "micro_perf",
     ]
 
     /// Wall-clock budget for any single tool execution in a
@@ -474,8 +527,12 @@ public enum EvalRunner {
             notes: row.notes,
             modelId: row.modelId,
             latencyMs: row.latencyMs,
+            judgeLatencyMs: row.judgeLatencyMs,
             toolUsage: row.toolUsage,
-            telemetry: merged
+            telemetry: merged,
+            trials: row.trials,
+            trialsPassed: row.trialsPassed,
+            judge: row.judge
         )
     }
 
@@ -532,6 +589,10 @@ public enum EvalRunner {
             return await runDefaultAgentCase(testCase, modelId: modelId)
         case "agent_loop":
             return await runAgentLoopCase(testCase, modelId: modelId)
+        case "judge_calibration":
+            return await runJudgeCalibrationCase(testCase, modelId: modelId)
+        case "micro_perf":
+            return await runMicroPerfCase(testCase, modelId: modelId)
         case "tools", "streaming", "contract":
             // Scaffolded domains — runner implementation lives in a
             // follow-up so cases can be authored against the format
@@ -612,8 +673,10 @@ public enum EvalRunner {
     /// Build an `.errored` terminal row for cases that fail their
     /// own preconditions (missing required expectation field,
     /// malformed enum value, etc.). Pulls the `id`/`domain`/`label`
-    /// from `testCase` so the call site stays a one-liner.
-    private static func errored(
+    /// from `testCase` so the call site stays a one-liner. Internal (not
+    /// private) because the per-domain runner extensions live in sibling
+    /// files.
+    static func errored(
         _ testCase: EvalCase,
         label: String,
         modelId: String,
@@ -1511,18 +1574,26 @@ public enum EvalRunner {
             autoApproveToolPrompts: false,
             denyUnapprovedToolPrompts: true
         )
+        // Normalized latency: `latencyMs` is loop-only (matches agent_loop);
+        // the judge call is timed separately into `judgeLatencyMs`.
+        let elapsed = Date().timeIntervalSince(started) * 1000
         ccPhase("run-done judge-begin")
 
         var verdicts: [CapabilityClaimsJudgement] = []
+        var judgeAudit: EvalJudgeAudit?
+        var judgeElapsed: Double?
         if transcript.error == nil, !exp.rubric.isEmpty {
             await ensureJudgeProviderRoutable(judgeModel)
-            verdicts = await CapabilityClaimsEvaluator.judge(
+            let judgeStarted = Date()
+            let audit = await CapabilityClaimsEvaluator.judgeDetailed(
                 finalText: transcript.finalText,
                 conditions: exp.rubric,
                 model: judgeModel
             )
+            judgeElapsed = Date().timeIntervalSince(judgeStarted) * 1000
+            verdicts = audit.verdicts
+            judgeAudit = EvalJudgeAudit.from(audit, rubric: exp.rubric, selfJudge: judgeModel == nil)
         }
-        let elapsed = Date().timeIntervalSince(started) * 1000
         ccPhase("judge-done restore-begin")
 
         await restoreToolGrant(priorToolGrant, agentId: resolvedAgentId)
@@ -1534,15 +1605,19 @@ public enum EvalRunner {
         var passed = true
 
         if let err = transcript.error {
-            return EvalCaseReport(
-                id: testCase.id,
-                label: label,
-                domain: testCase.domain,
-                query: testCase.query,
-                outcome: .errored,
-                notes: ["agent loop error: \(err)"],
-                modelId: modelId,
-                latencyMs: elapsed
+            return persistClaimsTranscript(
+                transcript,
+                for: EvalCaseReport(
+                    id: testCase.id,
+                    label: label,
+                    domain: testCase.domain,
+                    query: testCase.query,
+                    outcome: .errored,
+                    notes: ["agent loop error: \(err)"],
+                    modelId: modelId,
+                    latencyMs: elapsed
+                ),
+                query: testCase.query
             )
         }
 
@@ -1600,16 +1675,51 @@ public enum EvalRunner {
         )
         notes.append("final: \(transcript.finalText.replacingOccurrences(of: "\n", with: " "))")
 
-        return EvalCaseReport(
-            id: testCase.id,
-            label: label,
-            domain: testCase.domain,
-            query: testCase.query,
-            outcome: passed ? .passed : .failed,
-            notes: notes,
-            modelId: modelId,
-            latencyMs: elapsed
+        return persistClaimsTranscript(
+            transcript,
+            for: EvalCaseReport(
+                id: testCase.id,
+                label: label,
+                domain: testCase.domain,
+                query: testCase.query,
+                outcome: passed ? .passed : .failed,
+                notes: notes,
+                modelId: modelId,
+                latencyMs: elapsed,
+                judgeLatencyMs: judgeElapsed,
+                judge: judgeAudit
+            ),
+            query: testCase.query
         )
+    }
+
+    /// Hand a capability-claims/default-agent transcript to the transcript
+    /// store (no-op unless `--transcripts` configured it; failed/errored
+    /// rows only). Returns the report unchanged so call sites stay
+    /// single-expression returns.
+    private static func persistClaimsTranscript(
+        _ transcript: CapabilityClaimsTranscript,
+        for report: EvalCaseReport,
+        query: String
+    ) -> EvalCaseReport {
+        EvalTranscriptStore.persistIfEnabled(
+            EvalCaseTranscript(
+                caseId: report.id,
+                domain: report.domain,
+                modelId: report.modelId,
+                outcome: report.outcome.rawValue,
+                query: query,
+                systemPrompt: transcript.systemPrompt,
+                toolCalls: transcript.toolCalls.map {
+                    EvalCaseTranscript.ToolEvent(name: $0.name, arguments: $0.arguments)
+                },
+                loadedToolNames: transcript.loadedToolNames,
+                finalText: transcript.finalText,
+                iterations: transcript.iterations,
+                error: transcript.error
+            )
+        )
+        return report
     }
 
     /// Agent-loop evaluator for `domain == "default_agent"`. Drives the
@@ -1673,30 +1783,41 @@ public enum EvalRunner {
             query: testCase.query,
             maxIterations: exp.maxIterations ?? 6
         )
+        // Normalized latency: loop-only (judge timed separately below).
+        let elapsed = Date().timeIntervalSince(started) * 1000
         cleanupDefaultAgentProviderFixtures(seededProviderIds)
         cleanupDefaultAgentFixtures(seededAgentIds)
 
         var verdicts: [CapabilityClaimsJudgement] = []
+        var judgeAudit: EvalJudgeAudit?
+        var judgeElapsed: Double?
         if transcript.error == nil, !rubric.isEmpty {
             await ensureJudgeProviderRoutable(judgeModel)
-            verdicts = await DefaultAgentConfigurationEvaluator.judge(
+            let judgeStarted = Date()
+            let audit = await DefaultAgentConfigurationEvaluator.judgeDetailed(
                 finalText: transcript.finalText,
                 conditions: rubric,
                 model: judgeModel
             )
+            judgeElapsed = Date().timeIntervalSince(judgeStarted) * 1000
+            verdicts = audit.verdicts
+            judgeAudit = EvalJudgeAudit.from(audit, rubric: rubric, selfJudge: judgeModel == nil)
         }
-        let elapsed = Date().timeIntervalSince(started) * 1000
 
         if let err = transcript.error {
-            return EvalCaseReport(
-                id: testCase.id,
-                label: label,
-                domain: testCase.domain,
-                query: testCase.query,
-                outcome: .errored,
-                notes: ["agent loop error: \(err)"],
-                modelId: modelId,
-                latencyMs: elapsed
+            return persistClaimsTranscript(
+                transcript,
+                for: EvalCaseReport(
+                    id: testCase.id,
+                    label: label,
+                    domain: testCase.domain,
+                    query: testCase.query,
+                    outcome: .errored,
+                    notes: ["agent loop error: \(err)"],
+                    modelId: modelId,
+                    latencyMs: elapsed
+                ),
+                query: testCase.query
             )
         }
 
@@ -1781,19 +1902,25 @@ public enum EvalRunner {
         )
         notes.append("final: \(transcript.finalText.replacingOccurrences(of: "\n", with: " "))")
 
-        return EvalCaseReport(
-            id: testCase.id,
-            label: label,
-            domain: testCase.domain,
-            query: testCase.query,
-            outcome: passed ? .passed : .failed,
-            notes: notes,
-            modelId: modelId,
-            latencyMs: elapsed,
-            telemetry: EvalCaseTelemetry(
-                decodeTokensPerSecond: transcript.decodeTokensPerSecond,
-                completionTokens: transcript.completionTokens
-            )
+        return persistClaimsTranscript(
+            transcript,
+            for: EvalCaseReport(
+                id: testCase.id,
+                label: label,
+                domain: testCase.domain,
+                query: testCase.query,
+                outcome: passed ? .passed : .failed,
+                notes: notes,
+                modelId: modelId,
+                latencyMs: elapsed,
+                judgeLatencyMs: judgeElapsed,
+                telemetry: EvalCaseTelemetry(
+                    decodeTokensPerSecond: transcript.decodeTokensPerSecond,
+                    completionTokens: transcript.completionTokens
+                ),
+                judge: judgeAudit
+            ),
+            query: testCase.query
         )
     }
 
@@ -2019,7 +2146,11 @@ public enum EvalRunner {
     /// batch self-heals the registry without touching the production
     /// config-tool path. Self-judge (nil id / no provider prefix) needs
     /// nothing and returns immediately.
-    private static func ensureJudgeProviderRoutable(_ judgeModel: String?) async {
+    ///
+    /// Internal (not private) because the `agent_loop` runner in
+    /// `EvalRunnerAgentLoop.swift` judges through the same ephemeral
+    /// provider and is just as exposed to a prior suite's eviction.
+    static func ensureJudgeProviderRoutable(_ judgeModel: String?) async {
         guard let judgeModel, judgeModel.contains("/") else { return }
         await EvalRemoteProviderBootstrap.connectIfNeeded(modelIds: [judgeModel])
     }

@@ -511,6 +511,18 @@ public struct EvalCase: Sendable, Codable, Identifiable {
         /// scripted lane is CI-safe (no model); the `live` / `liveProof` lanes
         /// skip gracefully when no AppleScript model is installed.
         public let appleScript: AppleScriptExpectations?
+        /// Calibration expectation for `domain == "judge_calibration"` cases:
+        /// a frozen assistant reply + rubric conditions whose correct verdicts
+        /// are KNOWN. The runner grades the reply with the resolved judge and
+        /// scores the JUDGE against the known verdicts — the lane that makes a
+        /// judge-model change itself measurable (and catches a judge that
+        /// rubber-stamps or invents requirements).
+        public let judgeCalibration: JudgeCalibrationExpectations?
+        /// Micro-benchmark expectation for `domain == "micro_perf"` cases:
+        /// a fixed prompt decoded to a fixed length N times with median ±
+        /// stdev reporting — the stable perf row for `history.jsonl` trends
+        /// (behaviour cases ride varying prompt sizes and can't be one).
+        public let microPerf: MicroPerfExpectations?
 
         public init(
             schema: SchemaExpectations? = nil,
@@ -529,7 +541,9 @@ public struct EvalCase: Sendable, Codable, Identifiable {
             defaultAgent: DefaultAgentExpectations? = nil,
             screenContext: ScreenContextExpectations? = nil,
             subagent: SubagentExpectations? = nil,
-            appleScript: AppleScriptExpectations? = nil
+            appleScript: AppleScriptExpectations? = nil,
+            judgeCalibration: JudgeCalibrationExpectations? = nil,
+            microPerf: MicroPerfExpectations? = nil
         ) {
             self.schema = schema
             self.toolEnvelope = toolEnvelope
@@ -548,6 +562,76 @@ public struct EvalCase: Sendable, Codable, Identifiable {
             self.screenContext = screenContext
             self.subagent = subagent
             self.appleScript = appleScript
+            self.judgeCalibration = judgeCalibration
+            self.microPerf = microPerf
+        }
+    }
+
+    /// Expectation for `domain == "judge_calibration"` cases. Unlike every
+    /// other LLM domain — where the judge grades the RUN MODEL's output —
+    /// this lane inverts the roles: `finalText` is a frozen, hand-written
+    /// assistant reply, `conditions` is the rubric handed to the judge, and
+    /// `expectedVerdicts` is the ground truth a competent grader must
+    /// produce. The case passes iff the resolved judge (JUDGE_MODEL / strong
+    /// `*_API_KEY` / self-judge fallback) reproduces every expected verdict,
+    /// so the score measures the JUDGE, making "swap the judge model" a
+    /// diffable change instead of an invisible trust shift.
+    public struct JudgeCalibrationExpectations: Sendable, Codable {
+        /// Frozen assistant reply the judge grades. Authored so each
+        /// condition's correct verdict is unambiguous to a careful human.
+        public let finalText: String
+        /// Rubric conditions passed to the judge, in order.
+        public let conditions: [String]
+        /// Ground-truth verdict per condition (index-aligned with
+        /// `conditions`; decode validation enforces equal counts).
+        public let expectedVerdicts: [Bool]
+
+        public init(finalText: String, conditions: [String], expectedVerdicts: [Bool]) {
+            self.finalText = finalText
+            self.conditions = conditions
+            self.expectedVerdicts = expectedVerdicts
+        }
+    }
+
+    /// Expectation for `domain == "micro_perf"` cases — the dedicated
+    /// perf lane. Behaviour suites measure tok/s as a ride-along over
+    /// varying prompt/decode sizes, which is too noisy to trend; this lane
+    /// pins BOTH sides (fixed prompt = `query` × `promptRepeat`, fixed
+    /// decode = `maxTokens`), runs `reps` measured generations after one
+    /// unmeasured warm-up, and reports median ± stdev — the stable row for
+    /// `history.jsonl`. No tools, no judge, temperature 0.
+    public struct MicroPerfExpectations: Sendable, Codable {
+        /// Measured generations (excludes the unmeasured warm-up rep).
+        /// Decode-validated ≥ 2 so median/stdev are meaningful.
+        public let reps: Int
+        /// Fixed decode cap (`max_tokens`) for every rep. Pair with a
+        /// prompt that always saturates it (e.g. "count to 500") so decode
+        /// length is genuinely fixed rather than EOS-variable.
+        public let maxTokens: Int
+        /// Repeat `query` this many times (joined by a space) to build the
+        /// effective prompt — a fixture-friendly way to author a long
+        /// fixed-prefill case without committing kilobytes of filler.
+        /// Default 1.
+        public let promptRepeat: Int?
+        /// Optional floor: fail the row when the MEDIAN decode speed drops
+        /// below this. Unset = measurement-only row (recommended: absolute
+        /// floors are machine-specific; the diff/history trend is the gate).
+        public let minDecodeTokensPerSecond: Double?
+        /// Optional ceiling on the MEDIAN time-to-first-token (ms).
+        public let maxTtftMs: Double?
+
+        public init(
+            reps: Int,
+            maxTokens: Int,
+            promptRepeat: Int? = nil,
+            minDecodeTokensPerSecond: Double? = nil,
+            maxTtftMs: Double? = nil
+        ) {
+            self.reps = reps
+            self.maxTokens = maxTokens
+            self.promptRepeat = promptRepeat
+            self.minDecodeTokensPerSecond = minDecodeTokensPerSecond
+            self.maxTtftMs = maxTtftMs
         }
     }
 
@@ -760,6 +844,12 @@ public struct EvalCase: Sendable, Codable, Identifiable {
         /// Substrings the final assistant text must contain (cheap
         /// deterministic check; use `rubric` for semantic grading).
         public let finalTextContains: [String]?
+        /// Substrings the final assistant text must NOT contain
+        /// (case-insensitive). The prompt-injection lane's canary check:
+        /// plant a marker in the adversarial fixture (secret value,
+        /// compliance token) and fail the case if it surfaces in the
+        /// answer — leak detection with zero judge involvement.
+        public let finalTextMustNotContain: [String]?
         /// Natural-language conditions for the LLM judge.
         public let rubric: [String]?
         /// When set, the loop's budget manager is built against this
@@ -825,6 +915,7 @@ public struct EvalCase: Sendable, Codable, Identifiable {
             sandboxFiles: [FileAssertion]? = nil,
             commands: [CommandAssertion]? = nil,
             finalTextContains: [String]? = nil,
+            finalTextMustNotContain: [String]? = nil,
             rubric: [String]? = nil,
             contextWindowOverride: Int? = nil,
             stopOnToolRejection: Bool? = nil,
@@ -851,6 +942,7 @@ public struct EvalCase: Sendable, Codable, Identifiable {
             self.sandboxFiles = sandboxFiles
             self.commands = commands
             self.finalTextContains = finalTextContains
+            self.finalTextMustNotContain = finalTextMustNotContain
             self.rubric = rubric
             self.contextWindowOverride = contextWindowOverride
             self.stopOnToolRejection = stopOnToolRejection
