@@ -125,6 +125,10 @@ final class AppleScriptKind: SubagentKind, @unchecked Sendable {
         SubagentResidency.handoff(for: residencyPlan)
     }
 
+    func admissionClass(_ resolved: ResolvedModel) -> SubagentAdmissionClass {
+        SubagentResidency.admissionClass(isLocal: resolved.isLocal, plan: residencyPlan)
+    }
+
     /// `.allow` at the host level: the consent surface is the per-script
     /// execution-mode gate inside `run` (confirm-each / auto-run-with-warning),
     /// not a per-call approval card.

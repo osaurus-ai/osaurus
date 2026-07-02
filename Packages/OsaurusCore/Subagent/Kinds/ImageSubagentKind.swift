@@ -57,6 +57,11 @@ final class ImageSubagentKind: SubagentKind, @unchecked Sendable {
 
     private let params: ImageJobParams
     private let argumentsJSON: String
+    /// Load policy snapshotted in `resolveModel`, read by `admissionClass`:
+    /// `.agentSingleResidency` unloads chat models inside the coordinator, so
+    /// the run must hold the GPU exclusively even though the host handoff
+    /// stays passthrough (the coordinator is the residency authority).
+    private var loadPolicy: SubagentImageLoadPolicy = .agentSingleResidency
 
     init(params: ImageJobParams, argumentsJSON: String) {
         self.params = params
@@ -96,6 +101,7 @@ final class ImageSubagentKind: SubagentKind, @unchecked Sendable {
             )
         }
         let modelKind: SubagentModelKind = params.isEdit ? .imageEdit : .imageGeneration
+        self.loadPolicy = config.imageJobLoadPolicy
         let configured = SubagentToolVisibility.effectiveImageModel(
             isEdit: params.isEdit,
             isDefault: isDefault,
@@ -114,6 +120,14 @@ final class ImageSubagentKind: SubagentKind, @unchecked Sendable {
         } catch {
             throw SubagentError.unavailable(String(describing: error))
         }
+    }
+
+    /// The image model is always a local MLX graph; under `.agentSingleResidency`
+    /// the coordinator additionally unloads/restores chat models, which is a
+    /// full residency handoff — exclusive. Other policies keep the image model
+    /// alongside (in-place local).
+    func admissionClass(_ resolved: ResolvedModel) -> SubagentAdmissionClass {
+        loadPolicy == .agentSingleResidency ? .localExclusive : .localInPlace
     }
 
     // MARK: - Permission

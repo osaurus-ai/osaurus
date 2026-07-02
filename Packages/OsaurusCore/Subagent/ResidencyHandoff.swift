@@ -42,17 +42,27 @@ struct ResidencyPlan: Sendable {
     var ramSafetyEnabled: Bool
     /// Idle-wait budget (seconds) before the unload gives up on chat going idle.
     var maxElapsedSeconds: Int
+    /// RAM-aware coexistence: a DIFFERENT local model loads alongside the
+    /// resident orchestrator (no unload, no restore) because the projection
+    /// said both fit under the flexible eviction policy. The handoff still
+    /// waits for local chat generation to go idle before the run — the drain
+    /// keeps "two resident graphs" from becoming "two GENERATING graphs"
+    /// (the BUG G crash class) at run start; process-wide exclusivity for the
+    /// run itself comes from the admission class.
+    var coexists: Bool
 
     init(
         shouldUnload: Bool,
         requiredBytes: Int64 = 0,
         ramSafetyEnabled: Bool = false,
-        maxElapsedSeconds: Int = 300
+        maxElapsedSeconds: Int = 300,
+        coexists: Bool = false
     ) {
         self.shouldUnload = shouldUnload
         self.requiredBytes = requiredBytes
         self.ramSafetyEnabled = ramSafetyEnabled
         self.maxElapsedSeconds = maxElapsedSeconds
+        self.coexists = coexists
     }
 
     /// A plan that performs no residency change.
@@ -146,5 +156,49 @@ struct ResidencyHandoff: SubagentHandoff {
             _ = await restore(lease, emit)
             throw error
         }
+    }
+}
+
+/// Coexistence handoff: the subagent model loads ALONGSIDE the resident
+/// orchestrator (flexible eviction policy + RAM projection passed), so there
+/// is nothing to unload or restore. The one residency obligation kept from the
+/// single-residency flow is the idle drain: local chat generation must be idle
+/// before the run starts, so a second MLX graph never begins producing while
+/// another graph is mid-generation (the BUG G crash class). `waitForIdle` is
+/// injectable for tests; `.production` wires it to `InferenceLoadCoordinator`.
+struct CoexistenceHandoff: SubagentHandoff {
+    typealias WaitForIdle = @Sendable (_ timeoutMs: Int) async -> Bool
+
+    let maxElapsedSeconds: Int
+    let waitForIdle: WaitForIdle
+
+    static func production(maxElapsedSeconds: Int) -> CoexistenceHandoff {
+        CoexistenceHandoff(
+            maxElapsedSeconds: maxElapsedSeconds,
+            waitForIdle: { timeoutMs in
+                await InferenceLoadCoordinator.shared.waitForChatIdle(timeoutMs: timeoutMs)
+            }
+        )
+    }
+
+    func around(
+        scope: SubagentScope,
+        resolved: ResolvedModel,
+        feed: SubagentFeed,
+        run body: () async throws -> SubagentResult
+    ) async throws -> SubagentResult {
+        // Same wait bounds as the unload path (15s floor, 300s ceiling).
+        let waitMs = max(15, min(maxElapsedSeconds, 300)) * 1000
+        feed.emitPhase(
+            "coexisting",
+            detail: "keeping the chat model loaded; waiting for local generation to go idle"
+        )
+        let wentIdle = await waitForIdle(waitMs)
+        guard wentIdle else {
+            throw SubagentError.unavailable(
+                "Local chat generation did not become idle before the coexistence run."
+            )
+        }
+        return try await body()
     }
 }

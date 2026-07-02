@@ -762,13 +762,21 @@ public enum SystemPromptTemplates {
     /// one-time cached-prefix bust), matching the other config-driven sections.
     public static func spawnGuidance(
         agents: [SpawnAgentDescriptor],
-        models: [SpawnModelDescriptor]
+        models: [SpawnModelDescriptor],
+        toolAccess: SpawnToolAccess = .none
     ) -> String {
         var lines: [String] = ["## Delegating subtasks (spawn)", ""]
         lines.append(
-            "- You can hand a bounded, self-contained subtask to another worker and get back ONLY a "
-                + "compact result digest (not its transcript). Use it to offload focused "
-                + "text/coding/analysis work; keep the orchestration and the final answer to the user here."
+            "- You can hand a bounded, self-contained subtask to a worker and get back ONLY a "
+                + "compact result digest — the worker's transcript never enters this conversation, "
+                + "so delegating context-heavy work costs you a digest instead of everything the "
+                + "worker read and produced."
+        )
+        lines.append(
+            "- Offload work that would bloat this context: bulk reading + summarization, research "
+                + "and extraction over long material, log/error triage, first drafts. Prefer a "
+                + "small/local worker for that kind of work when one is listed; keep orchestration "
+                + "and the final answer to the user here."
         )
         if !agents.isEmpty {
             lines.append(
@@ -784,10 +792,28 @@ public enum SystemPromptTemplates {
             )
             for model in models { lines.append("  - " + modelLine(model)) }
         }
+        switch toolAccess {
+        case .readOnly:
+            lines.append(
+                "- Workers CAN read files themselves (read-only: file_read / file_search, plus "
+                    + "sandbox reads when available) within a per-run call budget — so you can "
+                    + "delegate \"read these files and report X\" with exact paths in `input` "
+                    + "instead of pasting file contents."
+            )
+        case .none:
+            lines.append(
+                "- Workers are text-only (no tools) — paste ALL material the task needs directly "
+                    + "into `input`; the worker cannot read files or fetch anything itself."
+            )
+        }
         lines.append(
             "- `input` must be the COMPLETE task as a self-contained prompt — the worker sees only that, "
                 + "not this conversation. Pick the target whose description or note best fits the task; "
                 + "if none clearly fits, just do it yourself rather than guessing."
+        )
+        lines.append(
+            "- Spawns of remote/cloud targets may run in parallel (several spawn calls in one turn); "
+                + "spawns of local targets run one at a time — a second local spawn waits for the GPU."
         )
         return lines.joined(separator: "\n")
     }

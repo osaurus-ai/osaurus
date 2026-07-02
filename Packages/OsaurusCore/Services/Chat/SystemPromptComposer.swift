@@ -989,13 +989,23 @@ public struct SystemPromptComposer: Sendable {
                     modelNames: modelNames,
                     modelNotes: modelNotes
                 )
+                // The worker tool-reach line must match what the runtime will
+                // actually grant, so resolve it through the SAME helper the
+                // spawn kind uses (default agent → global config, custom →
+                // its own settings).
+                let toolAccess = SubagentToolVisibility.effectiveSpawnToolAccess(
+                    isDefault: isDefault,
+                    config: config,
+                    settings: AgentManager.shared.agent(for: snapshot.agentId)?.settings
+                )
                 composer.append(
                     .static(
                         id: "spawn",
                         label: L("Subagents"),
                         content: SystemPromptTemplates.spawnGuidance(
                             agents: descriptors.agents,
-                            models: descriptors.models
+                            models: descriptors.models,
+                            toolAccess: toolAccess
                         )
                     )
                 )

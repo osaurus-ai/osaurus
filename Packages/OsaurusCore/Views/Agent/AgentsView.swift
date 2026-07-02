@@ -1075,6 +1075,7 @@ struct AgentDetailView: View {
     /// from / into `AgentSettings`.
     @State private var subagentPermissions: SubagentPermissionDefaults = SubagentPermissionDefaults()
     @State private var subagentBudgets: SubagentBudgets = SubagentBudgets()
+    @State private var spawnToolAccess: SpawnToolAccess = .none
     /// Per-agent subagent model overrides keyed by capability id (computer_use /
     /// spawn). Empty/absent = inherit the kind's default model.
     /// Mirrored from / into `AgentSettings.subagentModelOverrides`.
@@ -3434,6 +3435,8 @@ struct AgentDetailView: View {
                 label: "Permission"
             )
             subagentPanelDivider
+            spawnToolAccessRow
+            subagentPanelDivider
             subagentBudgetRows
             subagentFootnote(
                 "Local handoff and RAM-safety for spawn jobs are system settings in Settings → Subagents."
@@ -3758,6 +3761,35 @@ struct AgentDetailView: View {
             get: { subagentBudgets[keyPath: keyPath] },
             set: {
                 subagentBudgets[keyPath: keyPath] = $0
+                debouncedSave()
+            }
+        )
+    }
+
+    /// Worker tool grant for spawned subagents: text-only (default) or the
+    /// curated read-only file set. What "read-only" reaches is enforced in
+    /// `TextSubagentKind.makeToolset`, not here.
+    private var spawnToolAccessRow: some View {
+        subagentControlRow(
+            "Worker tools",
+            subtitle:
+                "Let spawned workers read files themselves (file_read / file_search) so bulk reading stays out of this agent's context."
+        ) {
+            Picker("", selection: spawnToolAccessSelection) {
+                Text("Text-only", bundle: .module).tag(SpawnToolAccess.none)
+                Text("Read-only files", bundle: .module).tag(SpawnToolAccess.readOnly)
+            }
+            .labelsHidden()
+            .pickerStyle(.menu)
+            .frame(maxWidth: 160)
+        }
+    }
+
+    private var spawnToolAccessSelection: Binding<SpawnToolAccess> {
+        Binding(
+            get: { spawnToolAccess },
+            set: {
+                spawnToolAccess = $0
                 debouncedSave()
             }
         )
@@ -6062,6 +6094,7 @@ struct AgentDetailView: View {
         subagentPermissions = agent.settings.subagentPermissions
         subagentBudgets = agent.settings.subagentBudgets
         subagentModelOverrides = agent.settings.subagentModelOverrides
+        spawnToolAccess = agent.settings.spawnToolAccess
         // Snapshot the global subagent config for the spawn-handoff warning.
         globalSubagentConfig = SubagentConfigurationStore.snapshot()
         hostWorkspacePath = agent.hostWorkspacePath
@@ -6287,7 +6320,8 @@ struct AgentDetailView: View {
                 imageEditModelId: imageEditModelId,
                 subagentPermissions: subagentPermissions,
                 subagentBudgets: subagentBudgets,
-                subagentModelOverrides: subagentModelOverrides
+                subagentModelOverrides: subagentModelOverrides,
+                spawnToolAccess: spawnToolAccess
             ),
             order: current.order
         )

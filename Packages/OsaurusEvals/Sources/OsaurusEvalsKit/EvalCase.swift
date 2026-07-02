@@ -1846,6 +1846,31 @@ public struct EvalCase: Sendable, Codable, Identifiable {
         public let recurse: Bool?
         /// Lifecycle phases the scripted kind emits onto the feed.
         public let phases: [String]?
+        /// Scripted lane: run this many copies CONCURRENTLY through the host
+        /// (one parallel tool batch). ≥2 selects the parallel-batch path; the
+        /// transcript then reports `maxConcurrent` + `runsCompleted`. Pair
+        /// with `needsHandoff` (local-exclusive → must serialize) or `remote`
+        /// (fan-out → must overlap).
+        public let parallel: Int?
+        /// Scripted lane: resolve as a REMOTE model (`isLocal: false`) so the
+        /// admission class is `.remote` — the parallel fan-out input.
+        public let remote: Bool?
+        /// Scripted lane: hold `run()` open this long (polling the interrupt
+        /// token every ~20 ms) so interrupts / sibling overlap can land.
+        public let runDelayMs: Int?
+        /// Scripted parallel lane: rendezvous — each run waits (bounded) until
+        /// ALL siblings have entered, so fan-out overlap is observed by
+        /// construction. Only set for concurrent-capable classes (`remote`);
+        /// a serialized batch would just burn the bounded wait.
+        public let rendezvous: Bool?
+        /// Scripted lane: attach canned `usage` + `context` accounting to the
+        /// success payload — deterministic CI coverage for the usage /
+        /// context-saved scoring plumbing the live spawn lanes ride.
+        public let includeUsageAccounting: Bool?
+        /// Scripted + live spawn lanes: trip the run's stop button (the real
+        /// `SubagentInterruptCenter` path) after this many milliseconds — the
+        /// interrupt-mid-generation lane. Expect `user_denied` + "stopped".
+        public let interruptAfterMs: Int?
 
         // --- live spawn lane inputs ---
         /// Spawnable agent name for the `spawn` lane.
@@ -1868,6 +1893,11 @@ public struct EvalCase: Sendable, Codable, Identifiable {
         /// rejected") that must NOT be seeded. `input` is the task; `model` (when
         /// set) pins the target id, otherwise the run model is used.
         public let seedSpawnableModel: Bool?
+        /// Tool-capable spawn lane: grant the child this tool reach for the
+        /// run (`"readOnly"` → curated read-only toolset; nil/`"none"` →
+        /// text-only). Applied with the seeding snapshot/restore, so a
+        /// developer's real config is untouched.
+        public let seedSpawnToolAccess: String?
 
         // --- live spawn_model_residency lane inputs ---
         /// The chat/core ORCHESTRATOR model the residency decision is made
@@ -1885,6 +1915,27 @@ public struct EvalCase: Sendable, Codable, Identifiable {
         /// `false` for a remote orchestrator (nothing local to make resident).
         /// nil → false.
         public let ensureResident: Bool?
+        /// Residency matrix lane: repeat the FULL production run this many
+        /// times back-to-back (rapid unload/reload cycles — the crash-safety
+        /// stressor). Every cycle must satisfy the per-cycle checks. nil → 1.
+        public let cycles: Int?
+        /// Residency matrix lane: a distinctive token appended to the input
+        /// with an instruction to echo it verbatim. EVERY cycle's digest must
+        /// contain it — the sentinel context-recall proof across the handoff.
+        public let sentinel: String?
+
+        // --- residency matrix expectations ---
+        /// Assert no NEW osaurus-related crash reports (`.ips`/`.crash` under
+        /// ~/Library/Logs/DiagnosticReports) appeared during the case — the
+        /// before/after crash-count gate from the manual proof campaigns.
+        public let expectNoNewCrashReports: Bool?
+        /// Assert the local orchestrator is verified GPU-resident again after
+        /// EVERY cycle (restore actually happened / in-place never dropped it).
+        /// Only meaningful with `ensureResident: true`.
+        public let expectRestoredResident: Bool?
+        /// Assert no raw parser/template/tool markers (`<think>`, `<|`,
+        /// `<tool_call>`, `<start_of_turn>`, …) leak into any cycle's digest.
+        public let expectNoMarkerLeaks: Bool?
 
         // --- live image lane inputs ---
         /// Prompt for the `image` lane (also the edit instruction).
@@ -1947,6 +1998,34 @@ public struct EvalCase: Sendable, Codable, Identifiable {
         public let expectImageMode: String?
         /// Image lane: minimum number of images on success.
         public let minImages: Int?
+        /// Parallel-batch lane: exact peak overlap of run bodies. `1` pins
+        /// serialization (two local handoffs never overlap — the batch-race
+        /// guard); `2` pins remote fan-out (both actually ran concurrently).
+        public let expectMaxConcurrent: Int?
+        /// Parallel-batch lane: exact number of runs that must succeed (the
+        /// queued run completes rather than being refused or deadlocking).
+        public let expectRunsCompleted: Int?
+        /// Assert worker usage was recorded: `prompt_tokens` +
+        /// `completion_tokens` present and > 0 (per the proof rule that a
+        /// generation row without token accounting is not a pass).
+        public let expectUsageRecorded: Bool?
+        /// Assert context-saved accounting is present (`worker_tokens` > 0,
+        /// `digest_tokens` > 0, `context_saved_tokens` recorded) — the
+        /// measurable "delegation saved the parent context" row.
+        public let expectContextAccounting: Bool?
+        /// Minimum `context_saved_tokens` the delegation must have saved.
+        public let minContextSavedTokens: Int?
+        /// Residency phase names that must appear in the recorded phase
+        /// timings (e.g. `unloading_chat_models`, `restoring_chat_models`) —
+        /// the handoff-latency telemetry proof.
+        public let expectResidencyPhases: [String]?
+        /// Per-phase duration ceilings (seconds) on the recorded residency
+        /// phase timings — MicroPerf-style latency assertions. A phase listed
+        /// here must be present AND under its ceiling.
+        public let maxPhaseSeconds: [String: Double]?
+        /// Assert the post-run cache counters were captured for a local run
+        /// (`prefix_hits` / `disk_l2_*`) — the resume prefix-hit signal.
+        public let expectPostRunCache: Bool?
 
         public init(
             lane: String,
@@ -1956,13 +2035,25 @@ public struct EvalCase: Sendable, Codable, Identifiable {
             runFailure: String? = nil,
             recurse: Bool? = nil,
             phases: [String]? = nil,
+            parallel: Int? = nil,
+            remote: Bool? = nil,
+            runDelayMs: Int? = nil,
+            rendezvous: Bool? = nil,
+            includeUsageAccounting: Bool? = nil,
+            interruptAfterMs: Int? = nil,
             agent: String? = nil,
             input: String? = nil,
             seedSpawnableAgent: Bool? = nil,
             seedSpawnableModel: Bool? = nil,
+            seedSpawnToolAccess: String? = nil,
             orchestrator: String? = nil,
             handoffEnabled: Bool? = nil,
             ensureResident: Bool? = nil,
+            cycles: Int? = nil,
+            sentinel: String? = nil,
+            expectNoNewCrashReports: Bool? = nil,
+            expectRestoredResident: Bool? = nil,
+            expectNoMarkerLeaks: Bool? = nil,
             prompt: String? = nil,
             sourcePaths: [String]? = nil,
             model: String? = nil,
@@ -1984,7 +2075,15 @@ public struct EvalCase: Sendable, Codable, Identifiable {
             expectHandoffWrapped: Bool? = nil,
             expectNestedRefused: Bool? = nil,
             expectImageMode: String? = nil,
-            minImages: Int? = nil
+            minImages: Int? = nil,
+            expectMaxConcurrent: Int? = nil,
+            expectRunsCompleted: Int? = nil,
+            expectUsageRecorded: Bool? = nil,
+            expectContextAccounting: Bool? = nil,
+            minContextSavedTokens: Int? = nil,
+            expectResidencyPhases: [String]? = nil,
+            maxPhaseSeconds: [String: Double]? = nil,
+            expectPostRunCache: Bool? = nil
         ) {
             self.lane = lane
             self.needsHandoff = needsHandoff
@@ -1993,13 +2092,25 @@ public struct EvalCase: Sendable, Codable, Identifiable {
             self.runFailure = runFailure
             self.recurse = recurse
             self.phases = phases
+            self.parallel = parallel
+            self.remote = remote
+            self.runDelayMs = runDelayMs
+            self.rendezvous = rendezvous
+            self.includeUsageAccounting = includeUsageAccounting
+            self.interruptAfterMs = interruptAfterMs
             self.agent = agent
             self.input = input
             self.seedSpawnableAgent = seedSpawnableAgent
             self.seedSpawnableModel = seedSpawnableModel
+            self.seedSpawnToolAccess = seedSpawnToolAccess
             self.orchestrator = orchestrator
             self.handoffEnabled = handoffEnabled
             self.ensureResident = ensureResident
+            self.cycles = cycles
+            self.sentinel = sentinel
+            self.expectNoNewCrashReports = expectNoNewCrashReports
+            self.expectRestoredResident = expectRestoredResident
+            self.expectNoMarkerLeaks = expectNoMarkerLeaks
             self.prompt = prompt
             self.sourcePaths = sourcePaths
             self.model = model
@@ -2022,6 +2133,14 @@ public struct EvalCase: Sendable, Codable, Identifiable {
             self.expectNestedRefused = expectNestedRefused
             self.expectImageMode = expectImageMode
             self.minImages = minImages
+            self.expectMaxConcurrent = expectMaxConcurrent
+            self.expectRunsCompleted = expectRunsCompleted
+            self.expectUsageRecorded = expectUsageRecorded
+            self.expectContextAccounting = expectContextAccounting
+            self.minContextSavedTokens = minContextSavedTokens
+            self.expectResidencyPhases = expectResidencyPhases
+            self.maxPhaseSeconds = maxPhaseSeconds
+            self.expectPostRunCache = expectPostRunCache
         }
     }
 

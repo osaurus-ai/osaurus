@@ -1,0 +1,20 @@
+{
+  "id": "subagent.scripted-interrupt-mid-run",
+  "domain": "subagent",
+  "label": "Subagent • interrupt mid-run -> honest user-stop envelope",
+  "query": "The user presses the subagent row's stop button while the run is in flight.",
+  "notes": "Model-free. THE INTERRUPT LANE, deterministically: the scripted run holds itself open for 5 s while the evaluator trips the run's InterruptToken through the REAL SubagentInterruptCenter after ~150 ms (the exact stop-button path). The kind must observe the token mid-run and map it to the HONEST user-stop error — a `user_denied` envelope whose copy says stopped, NOT a `timeout` blaming the time budget (the historical dishonest mapping). Also proves interruption takes effect promptly (the case completes in well under the 5 s run window).",
+  "fixtures": {},
+  "expect": {
+    "subagent": {
+      "lane": "scripted",
+      "decision": "allow",
+      "phases": ["running"],
+      "runDelayMs": 5000,
+      "interruptAfterMs": 150,
+      "expectSuccess": false,
+      "expectEnvelopeKind": "user_denied",
+      "summaryContains": ["stopped"]
+    }
+  }
+}

@@ -162,6 +162,156 @@ struct SubagentEvalTests {
         #expect(report.outcome == .errored, "notes: \(report.notes)")
     }
 
+    // MARK: - Parallel batch (batch-race + remote fan-out lanes)
+
+    /// Two concurrent LOCAL-HANDOFF runs in one batch must serialize through
+    /// the process-wide admission gate (peak overlap 1) and BOTH complete —
+    /// the batch-race guard, scored end-to-end through the runner.
+    @Test func parallelExclusiveBatchSerializesAndCompletes() async {
+        let report = await scoreScripted(
+            Sub(
+                lane: "scripted",
+                needsHandoff: true,
+                decision: "allow",
+                phases: ["running"],
+                parallel: 2,
+                runDelayMs: 120,
+                expectSuccess: true,
+                expectMaxConcurrent: 1,
+                expectRunsCompleted: 2
+            )
+        )
+        #expect(report.outcome == .passed, "notes: \(report.notes)")
+    }
+
+    /// Two concurrent REMOTE runs must actually overlap (peak concurrency 2)
+    /// — the parallel fan-out policy, observed via the rendezvous knob.
+    @Test func parallelRemoteBatchFansOut() async {
+        let report = await scoreScripted(
+            Sub(
+                lane: "scripted",
+                decision: "allow",
+                phases: ["running"],
+                parallel: 2,
+                remote: true,
+                runDelayMs: 40,
+                rendezvous: true,
+                expectSuccess: true,
+                expectMaxConcurrent: 2,
+                expectRunsCompleted: 2
+            )
+        )
+        #expect(report.outcome == .passed, "notes: \(report.notes)")
+    }
+
+    // MARK: - Interrupt mid-run (honest user-stop mapping)
+
+    /// Tripping the run's InterruptToken through the real interrupt center
+    /// mid-run must surface the HONEST user-stop envelope (`user_denied`,
+    /// "stopped" copy) — never a timeout blaming the budget — and must take
+    /// effect promptly (well before the 5 s run window elapses).
+    @Test func interruptMidRunMapsToUserDenied() async {
+        let started = Date()
+        let report = await scoreScripted(
+            Sub(
+                lane: "scripted",
+                decision: "allow",
+                phases: ["running"],
+                runDelayMs: 5000,
+                interruptAfterMs: 100,
+                expectSuccess: false,
+                expectEnvelopeKind: "user_denied",
+                summaryContains: ["stopped"]
+            )
+        )
+        let elapsed = Date().timeIntervalSince(started)
+        #expect(report.outcome == .passed, "notes: \(report.notes)")
+        #expect(elapsed < 4, "interrupt should land promptly; took \(elapsed)s")
+    }
+
+    // MARK: - Usage + context-saved accounting plumbing
+
+    /// A payload carrying `usage` + `context` must satisfy the usage and
+    /// context-saved matchers — the plumbing the live spawn lanes ride.
+    @Test func usageAndContextAccountingScores() async {
+        let report = await scoreScripted(
+            Sub(
+                lane: "scripted",
+                decision: "allow",
+                phases: ["running"],
+                includeUsageAccounting: true,
+                expectSuccess: true,
+                expectUsageRecorded: true,
+                expectContextAccounting: true,
+                minContextSavedTokens: 100
+            )
+        )
+        #expect(report.outcome == .passed, "notes: \(report.notes)")
+    }
+
+    /// The usage matcher must FAIL a run that recorded no usage (a
+    /// generation row without token accounting is not a pass).
+    @Test func usageMatcherFailsWithoutAccounting() async {
+        let report = await scoreScripted(
+            Sub(
+                lane: "scripted",
+                decision: "allow",
+                phases: ["running"],
+                expectSuccess: true,
+                expectUsageRecorded: true
+            )
+        )
+        #expect(report.outcome == .failed, "notes: \(report.notes)")
+    }
+
+    /// Residency-phase matchers must fail when the run recorded no phase
+    /// timings (passthrough run), so a telemetry case can't silently pass.
+    @Test func residencyPhaseMatcherFailsWithoutTimings() async {
+        let report = await scoreScripted(
+            Sub(
+                lane: "scripted",
+                decision: "allow",
+                phases: ["running"],
+                expectSuccess: true,
+                expectResidencyPhases: ["unloading_chat_models"]
+            )
+        )
+        #expect(report.outcome == .failed, "notes: \(report.notes)")
+    }
+
+    // MARK: - Residency matrix lane helpers (model-free)
+
+    /// The marker-leak detector must flag every hosted template family's raw
+    /// markers and stay quiet on clean prose (including the sentinel token).
+    @Test func markerLeakDetection() {
+        #expect(EvalRunner.markerLeaks(in: "Task received. ZEBRA-7431 confirmed.").isEmpty)
+        #expect(EvalRunner.markerLeaks(in: "ok <think>hidden</think>") == ["<think>", "</think>"])
+        #expect(EvalRunner.markerLeaks(in: "<|im_start|>assistant") == ["<|"])
+        #expect(EvalRunner.markerLeaks(in: "<start_of_turn>model hi") == ["<start_of_turn>"])
+        #expect(EvalRunner.markerLeaks(in: "<tool_call>{}</tool_call>").contains("<tool_call>"))
+        #expect(EvalRunner.markerLeaks(in: "text [/INST] more") == ["[/INST]"])
+    }
+
+    /// Sentinel composition appends the verbatim-echo instruction exactly
+    /// once and leaves sentinel-free inputs untouched.
+    @Test func sentinelInputComposition() {
+        let plain = EvalRunner.composedInput("Do the task.", sentinel: nil)
+        #expect(plain == "Do the task.")
+        let composed = EvalRunner.composedInput("Do the task.", sentinel: "ZEBRA-7431")
+        #expect(composed.hasPrefix("Do the task."))
+        #expect(composed.contains("\"ZEBRA-7431\""))
+        #expect(composed.contains("verbatim"))
+    }
+
+    /// The crash-report snapshot is a stable, non-throwing filename set
+    /// (contents are machine state; two immediate scans must agree).
+    @Test func crashReportSnapshotIsStable() {
+        let first = EvalRunner.crashReportSnapshot()
+        let second = EvalRunner.crashReportSnapshot()
+        #expect(first == second)
+        #expect(first.allSatisfy { $0.lowercased().contains("osaurus") })
+    }
+
     @Test func unknownLaneErrors() async {
         let report = await scoreScripted(Sub(lane: "teleport"))
         #expect(report.outcome == .errored, "notes: \(report.notes)")
@@ -174,7 +324,11 @@ struct SubagentEvalTests {
         #expect(t.succeeded)
         #expect(t.envelopeKind == "success")
         #expect(t.resultKind == "scripted_result")
-        #expect(t.feedPhases == ["running"])
+        // Parallel-running tests share the process-wide admission gate, so
+        // the host may legitimately prepend a "waiting for local GPU" queue
+        // phase; the kind's own phase must still be present and terminal.
+        #expect(t.feedPhases.last == "running")
+        #expect(t.feedPhases.allSatisfy { $0 == "running" || $0 == "waiting for local GPU" })
         #expect(t.summary == "scripted digest")
         #expect(t.feedEventKinds.contains("phase"))
     }
@@ -193,6 +347,26 @@ struct SubagentEvalTests {
         )
         #expect(t.succeeded)
         #expect(t.handoffWrapped == true)
+    }
+
+    @Test func facadeParallelBatchTranscriptShape() async {
+        let t = await SubagentJobEvaluator.runScriptedParallelBatch(
+            ScriptedSubagentSpec(needsHandoff: true, runDelayMs: 80),
+            count: 2
+        )
+        #expect(t.succeeded)
+        #expect(t.maxConcurrent == 1)
+        #expect(t.runsCompleted == 2)
+    }
+
+    @Test func facadeUsageAccountingTranscript() async {
+        let t = await SubagentJobEvaluator.runScripted(
+            ScriptedSubagentSpec(includeUsageAccounting: true)
+        )
+        #expect(t.succeeded)
+        #expect((t.usage?["prompt_tokens"] ?? 0) > 0)
+        #expect((t.usage?["completion_tokens"] ?? 0) > 0)
+        #expect((t.contextAccounting?["context_saved_tokens"] ?? 0) > 0)
     }
 
     // MARK: - computer_use lane (scripted driver, model-free)

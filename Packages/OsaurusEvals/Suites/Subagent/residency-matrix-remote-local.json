@@ -1,0 +1,27 @@
+{
+  "id": "subagent.residency-matrix-remote-local",
+  "domain": "subagent",
+  "label": "Subagent • matrix: remote→local × rapid cycles, load in place crash-free",
+  "query": "Rapid repeated local spawns under a remote orchestrator (nothing resident).",
+  "notes": "LIVE RESIDENCY MATRIX (crash lane) — REMOTE orchestrator, LOCAL target: nothing local is resident to evict, so 2 rapid production cycles load and run the local target in place (handoffWrapped=false). This is repeated cold load→generate→teardown churn on the local GPU — the load/unload half of the BUG G class without the swap. Asserts sentinel recall, no raw markers in the digest, and zero NEW osaurus crash reports across the case. Needs NO remote key (the remote orchestrator never generates — only the local target runs); SKIPS when the local target isn't installed. Run with FILTER=residency-matrix.",
+  "fixtures": {},
+  "expect": {
+    "subagent": {
+      "lane": "spawn_model_residency",
+      "orchestrator": "xai/grok-4.3",
+      "model": "mlx-community/Qwen3.5-4B-OptiQ-4bit",
+      "handoffEnabled": true,
+      "ensureResident": false,
+      "cycles": 2,
+      "sentinel": "papaya-window-88",
+      "input": "Reply with one short sentence confirming you received this task.",
+      "expectSuccess": true,
+      "expectEnvelopeKind": "success",
+      "expectResultKind": "spawn_result",
+      "expectHandoffWrapped": false,
+      "expectNoNewCrashReports": true,
+      "expectNoMarkerLeaks": true,
+      "expectUsageRecorded": true
+    }
+  }
+}

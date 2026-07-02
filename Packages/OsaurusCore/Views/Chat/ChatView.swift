@@ -4122,9 +4122,20 @@ final class ChatSession: ObservableObject {
                                 historyTokens >= Int(Double(historyBudget) * 0.9)
                             {
                                 tokenBudgetNoticeFired = true
+                                // Delegation nudge rides along when a spawn tool
+                                // is actually in this run's frozen schema: a
+                                // tight window is exactly when offloading bulk
+                                // reading to a worker pays for itself.
+                                let spawnVisible = toolSpecs.contains {
+                                    $0.function.name == SubagentCapabilityRegistry.spawnAgentToolName
+                                        || $0.function.name
+                                            == SubagentCapabilityRegistry.spawnModelToolName
+                                }
                                 msgs = AgentLoopBudget.appendingTransientNotices(
                                     [
-                                        "[System Notice] Context is nearly full — older messages are being compacted. Wrap up the current work and provide a summary."
+                                        AgentToolLoop.contextNearLimitNotice(
+                                            spawnAvailable: spawnVisible
+                                        )
                                     ],
                                     to: msgs
                                 )

@@ -41,6 +41,13 @@ struct SubagentSettingsSection: View {
                                 "Before a spawned image or text job, verify the helper model fits in memory once the chat model is freed. If it won't fit, refuse the job instead of unloading the chat model and failing to load the helper.",
                             isOn: $configuration.ramSafetyPreflightEnabled
                         )
+
+                        SettingsToggle(
+                            title: "Keep Chat Model Loaded (Coexistence)",
+                            description:
+                                "Experimental: when the server eviction policy is Flexible (Multi Model) and memory projections say both fit, load the helper model alongside the chat model instead of unloading and reloading it — skipping the swap round-trip on high-RAM Macs. Tight RAM or the Strict policy always falls back to the normal handoff.",
+                            isOn: $configuration.subagentCoexistenceEnabled
+                        )
                     }
                 }
             }

@@ -773,7 +773,11 @@ public actor ModelRuntime {
         return min(byModel, bySystem)
     }
 
-    private static func flexibleResidentBudgetBytes() -> Int64 {
+    /// Flexible-mode resident-weights soft cap. Also read by
+    /// `SubagentResidency`'s coexistence gate, which must stay under it —
+    /// loading past this triggers `unloadForFlexibleResidentBudget`'s own
+    /// eviction, which would evict the orchestrator with no restore lease.
+    static func flexibleResidentBudgetBytes() -> Int64 {
         let thresholds = ServerRuntimeSettingsStore.modelLoadRAMThresholds()
         return Int64(Double(ProcessInfo.processInfo.physicalMemory) * thresholds.soft)
     }

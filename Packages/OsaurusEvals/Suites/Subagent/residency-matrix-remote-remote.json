@@ -1,0 +1,26 @@
+{
+  "id": "subagent.residency-matrix-remote-remote",
+  "domain": "subagent",
+  "label": "Subagent • matrix: remote→remote × rapid cycles, no residency involved",
+  "query": "Rapid repeated remote spawns under a remote orchestrator.",
+  "notes": "LIVE RESIDENCY MATRIX (crash lane) — both sides REMOTE: no local residency in play at all, so 2 rapid production cycles run in place (handoffWrapped=false) and are safe to parallelize in production (the .remote admission class). Asserts sentinel recall, no raw markers in the digest, and zero NEW osaurus crash reports across the case. Requires the remote provider connected — run with a remote --model (e.g. MODEL=xai/grok-4.3) + XAI_API_KEY; SKIPS when the remote target isn't routable. Run with FILTER=residency-matrix.",
+  "fixtures": {},
+  "expect": {
+    "subagent": {
+      "lane": "spawn_model_residency",
+      "orchestrator": "xai/grok-4.3",
+      "model": "xai/grok-4.3",
+      "handoffEnabled": true,
+      "ensureResident": false,
+      "cycles": 2,
+      "sentinel": "papaya-window-88",
+      "input": "Reply with one short sentence confirming you received this task.",
+      "expectSuccess": true,
+      "expectEnvelopeKind": "success",
+      "expectResultKind": "spawn_result",
+      "expectHandoffWrapped": false,
+      "expectNoNewCrashReports": true,
+      "expectNoMarkerLeaks": true
+    }
+  }
+}

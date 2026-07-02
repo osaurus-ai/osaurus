@@ -52,11 +52,29 @@ final class TextSubagentKind: SubagentKind, @unchecked Sendable {
     /// Cap on the digest handed back to the parent.
     private static let digestMaxChars = 8_000
 
+    /// Curated read-only child toolset (host reads + sandbox reads).
+    /// `specs(forTools:)` silently drops whichever aren't registered right
+    /// now, so the child only ever sees live tools.
+    static let readOnlyChildToolNames = [
+        "file_read", "file_search",
+        "sandbox_read_file", "sandbox_search_files",
+    ]
+
+    /// Tool-call cap applied when the launching agent grants `readOnly`
+    /// access but its `maxToolCalls` budget is 0 (the "use default" marker) —
+    /// so enabling tool access is never silently inert.
+    static let defaultReadOnlyToolCallCap = 8
+
     // Resolved up front in `resolveModel`, read by permission/handoff/run.
     private var resolvedAgentName: String = ""
     private var resolvedAgentId: UUID?
     private var systemPrompt: String = ""
     private var budgets = SubagentBudgets()
+    /// The launching agent's child-tool grant (`none` = text-only).
+    private var toolAccess: SpawnToolAccess = .none
+    /// The target agent's user-set temperature override (agent mode only;
+    /// `nil` keeps the model bundle's own generation defaults).
+    private var temperature: Float?
     /// The residency plan resolved at `resolveModel` time (reject-before-evict),
     /// consumed by `makeHandoff()`. `.none` when no swap is needed.
     private var residencyPlan: ResidencyPlan = .none
@@ -125,6 +143,11 @@ final class TextSubagentKind: SubagentKind, @unchecked Sendable {
             config: config,
             settings: settings
         )
+        self.toolAccess = SubagentToolVisibility.effectiveSpawnToolAccess(
+            isDefault: isDefault,
+            config: config,
+            settings: settings
+        )
 
         switch target {
         case .agent(let agentName):
@@ -183,6 +206,12 @@ final class TextSubagentKind: SubagentKind, @unchecked Sendable {
         self.resolvedAgentName = agent.name
         self.resolvedAgentId = agent.id
         self.systemPrompt = agent.systemPrompt
+        // The target agent's own sampling override rides along (a user-set
+        // value, consistent with "defaults come from the model bundle unless
+        // the user explicitly overrides").
+        self.temperature = await MainActor.run {
+            AgentManager.shared.effectiveTemperature(for: agent.id)
+        }
 
         // One shared path for precedence (eval seam → per-agent `spawn` override
         // → the target agent's own model), the availability fallback, and the live
@@ -262,6 +291,10 @@ final class TextSubagentKind: SubagentKind, @unchecked Sendable {
         SubagentResidency.handoff(for: residencyPlan)
     }
 
+    func admissionClass(_ resolved: ResolvedModel) -> SubagentAdmissionClass {
+        SubagentResidency.admissionClass(isLocal: resolved.isLocal, plan: residencyPlan)
+    }
+
     func run(
         _ scope: SubagentScope,
         _ resolved: ResolvedModel,
@@ -274,6 +307,11 @@ final class TextSubagentKind: SubagentKind, @unchecked Sendable {
         let started = Date()
         let seed = seedMessages(systemPrompt: systemPrompt, input: input)
         let sessionId = "spawn-\((resolvedAgentId ?? UUID()).uuidString)-\(UUID().uuidString)"
+        let toolset = await Self.makeToolset(
+            access: toolAccess,
+            maxToolCalls: budgets.maxToolCalls,
+            feed: feed
+        )
 
         let result = try await AgentSubagentRunner.run(
             modelName: resolved.name,
@@ -282,7 +320,18 @@ final class TextSubagentKind: SubagentKind, @unchecked Sendable {
             maxIterations: budgets.maxDelegateTurns,
             deadline: deadline,
             sessionId: sessionId,
-            isInterrupted: { interrupt.isInterrupted }
+            temperature: temperature,
+            isInterrupted: { interrupt.isInterrupted },
+            toolset: toolset,
+            onProgress: { [feed] tokens, tokensPerSecond in
+                // Live "generating" row: coalesced in place by the feed, so
+                // long generations show advancing tokens + tok/s.
+                var detail = "\(tokens) tokens"
+                if let tokensPerSecond {
+                    detail += String(format: " · %.1f tok/s", tokensPerSecond)
+                }
+                feed.emitProgress("generating", step: tokens, detail: detail)
+            }
         )
         let elapsed = Date().timeIntervalSince(started)
 
@@ -310,10 +359,33 @@ final class TextSubagentKind: SubagentKind, @unchecked Sendable {
                 "handoff": residencyPlan.shouldUnload,
             ]
             if case .agent = target { payload["agent"] = resolvedAgentName }
+
+            // Usage + context-saved accounting: what the worker consumed vs
+            // what the digest costs the parent — the measurable "context
+            // saved" per delegation.
+            let usage = result.usage
+            var usageDict: [String: Any] = [
+                "prompt_tokens": usage.promptTokens,
+                "completion_tokens": usage.completionTokens,
+                "total_tokens": usage.promptTokens + usage.completionTokens,
+            ]
+            if let tps = usage.tokensPerSecond {
+                usageDict["tokens_per_second"] = (tps * 10).rounded() / 10
+            }
+            payload["usage"] = usageDict
+            let workerTokens = usage.promptTokens + usage.completionTokens
+            let digestTokens = TokenEstimator.estimate(capped)
+            payload["context"] = [
+                "worker_tokens": workerTokens,
+                "digest_tokens": digestTokens,
+                "context_saved_tokens": max(0, workerTokens - digestTokens),
+            ]
             return SubagentResult(payload: payload, summary: capped)
         case .cancelled:
-            throw SubagentError.timedOut(
-                "Subagent '\(targetLabel)' hit its \(budgets.maxElapsedSeconds)s time budget."
+            throw Self.cancelError(
+                cause: result.cancelCause,
+                label: targetLabel,
+                maxElapsedSeconds: budgets.maxElapsedSeconds
             )
         case .iterationCapReached:
             throw SubagentError.iterationCap(
@@ -334,6 +406,117 @@ final class TextSubagentKind: SubagentKind, @unchecked Sendable {
         }
     }
 
+    /// Honest exit mapping for a `.cancelled` runner exit: the three cancel
+    /// causes get DISTINCT copy (a user stop is not a "time budget" failure).
+    /// Pure — unit-testable without a live runner.
+    static func cancelError(
+        cause: SubagentCancelCause?,
+        label: String,
+        maxElapsedSeconds: Int
+    ) -> SubagentError {
+        switch cause {
+        case .userInterrupt:
+            return .userDenied("Subagent '\(label)' was stopped by the user.")
+        case .parentTask:
+            return .executionFailed(
+                message: "Subagent '\(label)' was cancelled with the parent run.",
+                retryable: false
+            )
+        case .deadline, .none:
+            return .timedOut(
+                "Subagent '\(label)' hit its \(maxElapsedSeconds)s time budget."
+            )
+        }
+    }
+
+    /// Build the child's curated read-only toolset when the launching agent
+    /// granted access; `nil` keeps the run text-only. The closure enforces the
+    /// allowlist and the per-run tool-call cap, dispatches through the shared
+    /// `ToolRegistry` (its permission gate + schema preflight included), and
+    /// narrates each call to the live feed.
+    ///
+    /// `specs` / `dispatch` are injection seams for unit tests (production
+    /// passes nil → live registry lookup + registry dispatch).
+    static func makeToolset(
+        access: SpawnToolAccess,
+        maxToolCalls: Int,
+        feed: SubagentFeed?,
+        specs specsOverride: [Tool]? = nil,
+        dispatch: (@Sendable (ServiceToolInvocation) async -> String)? = nil
+    ) async -> AgentSubagentToolset? {
+        guard access == .readOnly else { return nil }
+        let specs: [Tool]
+        if let specsOverride {
+            specs = specsOverride
+        } else {
+            specs = await MainActor.run {
+                ToolRegistry.shared.specs(forTools: readOnlyChildToolNames)
+            }
+        }
+        guard !specs.isEmpty else { return nil }
+        let allowed = Set(specs.map { $0.function.name })
+        let cap = maxToolCalls > 0 ? maxToolCalls : defaultReadOnlyToolCallCap
+        let counter = ToolCallCounter()
+        let dispatchCall: @Sendable (ServiceToolInvocation) async -> String =
+            dispatch
+            ?? { invocation in
+                do {
+                    return try await ToolRegistry.shared.execute(
+                        name: invocation.toolName,
+                        argumentsJSON: invocation.jsonArguments
+                    )
+                } catch {
+                    return ToolEnvelope.fromError(error, tool: invocation.toolName)
+                }
+            }
+        return AgentSubagentToolset(
+            specs: specs,
+            execute: { [weak feed] invocation in
+                guard allowed.contains(invocation.toolName) else {
+                    return ToolEnvelope.failure(
+                        kind: .rejected,
+                        message:
+                            "Tool '\(invocation.toolName)' is not available inside this subagent. "
+                            + "Available: \(allowed.sorted().joined(separator: ", ")).",
+                        tool: invocation.toolName,
+                        retryable: false
+                    )
+                }
+                let used = counter.increment()
+                guard used <= cap else {
+                    return ToolEnvelope.failure(
+                        kind: .rejected,
+                        message:
+                            "Tool-call budget (\(cap)) exhausted for this subagent run. "
+                            + "Produce your final answer from what you already have.",
+                        tool: invocation.toolName,
+                        retryable: false
+                    )
+                }
+                feed?.emit(
+                    SubagentActivityEvent(
+                        step: used,
+                        kind: .act,
+                        title: invocation.toolName,
+                        detail: Self.toolCallDetail(invocation)
+                    )
+                )
+                return await dispatchCall(invocation)
+            }
+        )
+    }
+
+    /// Compact one-line feed detail for a child tool call: the `path` /
+    /// `query` argument when present, else nothing (never the raw JSON).
+    private static func toolCallDetail(_ invocation: ServiceToolInvocation) -> String? {
+        guard let data = invocation.jsonArguments.data(using: .utf8),
+            let obj = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
+        else { return nil }
+        let value = (obj["path"] ?? obj["query"] ?? obj["pattern"]) as? String
+        guard let value, !value.isEmpty else { return nil }
+        return value.count > 80 ? String(value.prefix(80)) + "…" : value
+    }
+
     /// Shared "not spawnable" denial copy for both targets, so the agent and
     /// model messages can't drift. `kind` is the capitalized noun ("Agent" /
     /// "Model"); the tab pointer differs for the main chat vs a custom agent.
@@ -349,5 +532,20 @@ final class TextSubagentKind: SubagentKind, @unchecked Sendable {
         if !sys.isEmpty { msgs.append(ChatMessage(role: "system", content: sys)) }
         msgs.append(ChatMessage(role: "user", content: input))
         return msgs
+    }
+}
+
+/// Thread-safe per-run tool-call counter for the child toolset closure
+/// (parallel batches may execute two child calls concurrently).
+private final class ToolCallCounter: @unchecked Sendable {
+    private let lock = NSLock()
+    private var count = 0
+
+    /// Increment and return the new total.
+    func increment() -> Int {
+        lock.lock()
+        defer { lock.unlock() }
+        count += 1
+        return count
     }
 }

@@ -120,14 +120,25 @@ public struct SubagentPermissionDefaults: Codable, Equatable, Sendable {
     }
 }
 
+/// What tools a spawned subagent (the child worker) may reach. `none` keeps
+/// spawn text-only (every child tool call is refused); `readOnly` exposes the
+/// curated read-only set (`file_read` / `file_search`, plus the sandbox reads
+/// when registered) so the worker can do its own bulk reading — the parent's
+/// context is preserved instead of ferrying file contents through the digest.
+public enum SpawnToolAccess: String, Codable, CaseIterable, Sendable {
+    case none
+    case readOnly = "read_only"
+}
+
 public struct SubagentBudgets: Codable, Equatable, Sendable {
     public var maxDelegateTokens: Int
     public var maxDelegateTurns: Int
-    /// Reserved. Spawned subagents run text-only (`AgentSubagentRunner` passes
-    /// `tools: nil` and rejects any tool call), so there are no nested tool calls
-    /// to cap and nothing enforces this today. Kept for forward-compat for when a
-    /// subagent kind gains tool use; intentionally NOT surfaced in Settings until
-    /// then so the control isn't a no-op.
+    /// Cap on child tool calls per spawn run when the launching agent grants
+    /// tool access (`SpawnToolAccess.readOnly`). `0` means "use the built-in
+    /// default cap" (`TextSubagentKind.defaultReadOnlyToolCallCap`) rather
+    /// than zero calls, so enabling tool access is never silently inert.
+    /// Ignored while tool access is `none` (text-only spawn refuses every
+    /// call regardless).
     public var maxToolCalls: Int
     public var maxElapsedSeconds: Int
 
@@ -141,7 +152,7 @@ public struct SubagentBudgets: Codable, Equatable, Sendable {
 
     public init(
         maxDelegateTokens: Int = 2048,
-        maxDelegateTurns: Int = 1,
+        maxDelegateTurns: Int = 2,
         maxToolCalls: Int = 0,
         maxElapsedSeconds: Int = 120
     ) {
@@ -203,6 +214,15 @@ struct SubagentConfiguration: Codable, Equatable, Sendable {
     /// is freed, the job is rejected instead of unloading the orchestrator and
     /// failing to load the spawn model. See `ChatResidencyHandoff.memoryPreflight`.
     var ramSafetyPreflightEnabled: Bool
+    /// When true, a local spawn model may load ALONGSIDE the resident chat
+    /// model instead of the unload→run→reload handoff — but only when the
+    /// server eviction policy is Flexible (Multi Model) AND the live RAM
+    /// projection says both fit (see `SubagentResidency.decidePlan`'s
+    /// coexistence gate). Default OFF: two resident MLX graphs is the
+    /// historical BUG G concurrent-GPU crash class, so single residency stays
+    /// the default until the direction-matrix crash lane proves a machine's
+    /// configuration safe. Strict eviction policy ignores this flag entirely.
+    var subagentCoexistenceEnabled: Bool
     /// Per-capability model override for the DEFAULT / main-chat agent's subagent
     /// kinds, keyed by capability id (`"spawn"`, `"computer_use"`). An entry
     /// supersedes the kind's default model source; absent means "inherit". Custom
@@ -218,6 +238,10 @@ struct SubagentConfiguration: Codable, Equatable, Sendable {
     /// security gate stays on `spawnableModelNames`. Trimmed, blanks dropped, and
     /// pruned to current pool members on normalize.
     var spawnableModelNotes: [String: String]
+    /// The DEFAULT / main-chat agent's child-tool grant for spawn runs. Custom
+    /// agents carry their own `AgentSettings.spawnToolAccess`; this governs the
+    /// main chat only. Default `.none` (text-only spawn).
+    var spawnToolAccess: SpawnToolAccess
 
     init(
         localTextDelegationEnabled: Bool = true,
@@ -232,9 +256,11 @@ struct SubagentConfiguration: Codable, Equatable, Sendable {
         permissionDefaults: SubagentPermissionDefaults = SubagentPermissionDefaults(),
         budgets: SubagentBudgets = SubagentBudgets(),
         ramSafetyPreflightEnabled: Bool = true,
+        subagentCoexistenceEnabled: Bool = false,
         subagentModelOverrides: [String: String] = [:],
         spawnableModelNames: [String] = [],
-        spawnableModelNotes: [String: String] = [:]
+        spawnableModelNotes: [String: String] = [:],
+        spawnToolAccess: SpawnToolAccess = .none
     ) {
         self.localTextDelegationEnabled = localTextDelegationEnabled
         self.spawnableAgentNames = spawnableAgentNames
@@ -248,6 +274,7 @@ struct SubagentConfiguration: Codable, Equatable, Sendable {
         self.permissionDefaults = permissionDefaults
         self.budgets = budgets.normalized
         self.ramSafetyPreflightEnabled = ramSafetyPreflightEnabled
+        self.subagentCoexistenceEnabled = subagentCoexistenceEnabled
         self.subagentModelOverrides = Self.normalizedModelOverrides(subagentModelOverrides)
         let normalizedModelNames = Self.normalizedSpawnableModelNames(spawnableModelNames)
         self.spawnableModelNames = normalizedModelNames
@@ -255,6 +282,7 @@ struct SubagentConfiguration: Codable, Equatable, Sendable {
             spawnableModelNotes,
             names: normalizedModelNames
         )
+        self.spawnToolAccess = spawnToolAccess
     }
 
     static let `default` = SubagentConfiguration()
@@ -341,11 +369,13 @@ struct SubagentConfiguration: Codable, Equatable, Sendable {
             // Omitting this dropped it back to the init default (`true`), making the
             // toggle un-disableable (the store runs `.normalized` on every save+load).
             ramSafetyPreflightEnabled: ramSafetyPreflightEnabled,
+            subagentCoexistenceEnabled: subagentCoexistenceEnabled,
             subagentModelOverrides: subagentModelOverrides,
             // The init trims model names, drops blanks, and prunes notes to the
             // surviving pool members, so passing the raw values here is enough.
             spawnableModelNames: spawnableModelNames,
-            spawnableModelNotes: spawnableModelNotes
+            spawnableModelNotes: spawnableModelNotes,
+            spawnToolAccess: spawnToolAccess
         )
     }
 
@@ -362,9 +392,11 @@ struct SubagentConfiguration: Codable, Equatable, Sendable {
         case permissionDefaults
         case budgets
         case ramSafetyPreflightEnabled
+        case subagentCoexistenceEnabled
         case subagentModelOverrides
         case spawnableModelNames
         case spawnableModelNotes
+        case spawnToolAccess
     }
 
     init(from decoder: Decoder) throws {
@@ -413,6 +445,10 @@ struct SubagentConfiguration: Codable, Equatable, Sendable {
                 Bool.self,
                 forKey: .ramSafetyPreflightEnabled
             ) ?? true,
+            subagentCoexistenceEnabled: try container.decodeIfPresent(
+                Bool.self,
+                forKey: .subagentCoexistenceEnabled
+            ) ?? false,
             // Lenient: a malformed map must never discard the whole delegation
             // config (same approach as `permissionDefaults`).
             subagentModelOverrides: (try? container.decodeIfPresent(
@@ -426,7 +462,13 @@ struct SubagentConfiguration: Codable, Equatable, Sendable {
             spawnableModelNotes: (try? container.decodeIfPresent(
                 [String: String].self,
                 forKey: .spawnableModelNotes
-            )) ?? [:]
+            )) ?? [:],
+            // Enum field: lenient like the other enums so an invalid raw value
+            // falls back to the safe text-only default.
+            spawnToolAccess: (try? container.decodeIfPresent(
+                SpawnToolAccess.self,
+                forKey: .spawnToolAccess
+            )) ?? .none
         )
     }
 

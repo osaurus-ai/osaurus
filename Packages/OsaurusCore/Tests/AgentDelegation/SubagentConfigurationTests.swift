@@ -24,7 +24,9 @@ struct SubagentConfigurationTests {
         #expect(config.permissionDefaults.policy(for: "spawn") == .ask)
         #expect(config.permissionDefaults.policy(for: "image") == .ask)
         #expect(config.budgets.maxDelegateTokens == 2048)
-        #expect(config.budgets.maxDelegateTurns == 1)
+        // 2 turns so a first tool-refusal envelope (text-only spawn) still
+        // leaves the model one turn to produce its digest.
+        #expect(config.budgets.maxDelegateTurns == 2)
         #expect(config.budgets.maxToolCalls == 0)
         #expect(config.budgets.maxElapsedSeconds == 120)
     }

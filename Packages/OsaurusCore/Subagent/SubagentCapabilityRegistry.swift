@@ -612,4 +612,15 @@ public enum SubagentToolVisibility {
         let budgets = isDefault ? config.budgets : (settings?.subagentBudgets ?? SubagentBudgets())
         return budgets.normalized
     }
+
+    /// The effective child-tool grant for spawn runs launched by an agent.
+    /// Default / main chat uses the global setting; a custom agent uses its
+    /// own. Missing settings resolve to the safe text-only `.none`.
+    static func effectiveSpawnToolAccess(
+        isDefault: Bool,
+        config: SubagentConfiguration,
+        settings: AgentSettings?
+    ) -> SpawnToolAccess {
+        isDefault ? config.spawnToolAccess : (settings?.spawnToolAccess ?? .none)
+    }
 }

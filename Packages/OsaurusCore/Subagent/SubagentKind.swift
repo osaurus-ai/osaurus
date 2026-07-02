@@ -51,6 +51,12 @@ public protocol SubagentKind: Sendable {
     /// `ResidencyHandoff` configured with their per-run plan (the kind owns the
     /// policy + size source, so the middleware stays generic).
     func makeHandoff() -> SubagentHandoff
+
+    /// The run's residency class for process-wide admission
+    /// (`SubagentAdmission`): remote runs fan out concurrently, local
+    /// handoffs are exclusive. Called after `resolveModel`, so kinds derive it
+    /// from their live residency plan.
+    func admissionClass(_ resolved: ResolvedModel) -> SubagentAdmissionClass
 }
 
 extension SubagentKind {
@@ -58,6 +64,13 @@ extension SubagentKind {
 
     /// Default: no residency change. Model-swapping kinds override.
     public func makeHandoff() -> SubagentHandoff { PassthroughHandoff() }
+
+    /// Default: a local model runs in place; a remote model doesn't touch the
+    /// GPU. Kinds whose plan unloads resident models override to
+    /// `.localExclusive`.
+    public func admissionClass(_ resolved: ResolvedModel) -> SubagentAdmissionClass {
+        resolved.isLocal ? .localInPlace : .remote
+    }
 }
 
 // MARK: - Optional handoff middleware

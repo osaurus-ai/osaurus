@@ -31,12 +31,61 @@ struct SubagentResidencyDecision: Sendable {
     let plan: ResidencyPlan
 }
 
+/// Live RAM numbers for the coexistence gate in `decidePlan`, resolved by the
+/// `resolve` wrapper so the decision itself stays a pure function. `.disabled`
+/// (allowed == false) preserves the single-residency default.
+struct SubagentCoexistence: Sendable {
+    /// User opt-in AND flexible eviction policy. Strict policy must pass
+    /// false: the runtime itself strict-evicts any other resident model on
+    /// load, which would silently evict the orchestrator with NO restore lease.
+    var allowed: Bool
+    /// Reclaimable physical memory right now (free + inactive + purgeable),
+    /// WITHOUT counting resident chat models — they stay loaded.
+    var availableBytes: Int64
+    /// Sum of resident chat-model weight bytes (they remain resident).
+    var residentBytes: Int64
+    /// The runtime's flexible-mode resident-weights soft cap
+    /// (`ModelRuntime.flexibleResidentBudgetBytes`). Loading past it triggers
+    /// the runtime's own budget eviction — which would evict the orchestrator
+    /// without a restore lease — so the gate must stay under it. `0` = no cap.
+    var flexibleBudgetBytes: Int64
+
+    static let disabled = SubagentCoexistence(
+        allowed: false,
+        availableBytes: 0,
+        residentBytes: 0,
+        flexibleBudgetBytes: 0
+    )
+
+    /// Same footprint model as `ChatResidencyHandoff.memoryPreflight`: weights
+    /// inflate ~1.3x once resident (KV + activations + framework overhead)…
+    static let residencyInflation = 1.3
+    /// …plus fixed headroom kept for the OS/app.
+    static let headroomBytes: Int64 = 3 * 1024 * 1024 * 1024
+
+    /// Whether a subagent model of `requiredBytes` (on-disk weights) fits
+    /// alongside the resident models. Unknown size (`<= 0`) never fits — the
+    /// gate must be able to prove the projection, not assume it.
+    func fits(requiredBytes: Int64) -> Bool {
+        guard allowed, requiredBytes > 0 else { return false }
+        let needed = Int64(Double(requiredBytes) * Self.residencyInflation) + Self.headroomBytes
+        guard availableBytes >= needed else { return false }
+        // Mirror the runtime's flexible-budget eviction check (raw weights,
+        // uninflated — same terms `unloadForFlexibleResidentBudget` compares).
+        if flexibleBudgetBytes > 0, residentBytes + requiredBytes > flexibleBudgetBytes {
+            return false
+        }
+        return true
+    }
+}
+
 enum SubagentResidency {
     /// Pure residency decision — no `ModelRuntime` / `ModelManager`, so the
     /// control flow (remote ⇒ none, same ⇒ none, different-local + handoff-off ⇒
-    /// denied, different-local + handoff-on ⇒ unload) is unit-testable with no
-    /// GPU. `residentChatModels` is the live set of resident chat-model names;
-    /// the caller resolves it (empty when the model isn't local).
+    /// denied, different-local + coexistence-fits ⇒ coexist, different-local +
+    /// handoff-on ⇒ unload) is unit-testable with no GPU. `residentChatModels`
+    /// is the live set of resident chat-model names; the caller resolves it
+    /// (empty when the model isn't local).
     static func decidePlan(
         isLocal: Bool,
         modelName: String,
@@ -45,7 +94,8 @@ enum SubagentResidency {
         ramSafetyEnabled: Bool,
         requiredBytes: Int64,
         idleWaitSeconds: Int,
-        deniedMessage: String
+        deniedMessage: String,
+        coexistence: SubagentCoexistence = .disabled
     ) throws -> ResidencyPlan {
         // A remote/router model never touches local GPU residency.
         guard isLocal else { return .none }
@@ -55,6 +105,20 @@ enum SubagentResidency {
             $0.caseInsensitiveCompare(modelName) != .orderedSame
         }
         guard !otherResidentModels.isEmpty else { return .none }
+        // RAM-aware coexistence: both models fit (flexible policy, projection
+        // proven) → skip the 10–60s unload+reload round-trip and run alongside.
+        // Checked before the handoff-enabled gate on purpose: coexistence does
+        // not unload the orchestrator, which is exactly what that toggle
+        // protects. Tight RAM or unknown size falls through to the handoff.
+        if coexistence.fits(requiredBytes: requiredBytes) {
+            return ResidencyPlan(
+                shouldUnload: false,
+                requiredBytes: requiredBytes,
+                ramSafetyEnabled: ramSafetyEnabled,
+                maxElapsedSeconds: idleWaitSeconds,
+                coexists: true
+            )
+        }
         // Reject BEFORE evicting: if the handoff is disabled, fail cleanly so
         // nothing is unloaded.
         guard handoffEnabled else { throw SubagentError.denied(deniedMessage) }
@@ -88,12 +152,30 @@ enum SubagentResidency {
         // spawning the SAME model the user is chatting with runs in place
         // instead of needlessly unloading + reloading the identical bundle.
         let canonicalName = installed?.name ?? modelName
-        let residentChatModels: [String] =
-            isLocal
-            ? await ModelRuntime.shared.cachedModelSummaries().map {
-                ModelManager.findInstalledModel(named: $0.name)?.name ?? $0.name
+        let residentSummaries =
+            isLocal ? await ModelRuntime.shared.cachedModelSummaries() : []
+        let residentChatModels: [String] = residentSummaries.map {
+            ModelManager.findInstalledModel(named: $0.name)?.name ?? $0.name
+        }
+        // Coexistence gate inputs (live numbers; the decision itself is pure).
+        // Only meaningful when the user opted in AND the server eviction policy
+        // is Flexible — under Strict the runtime itself evicts any other
+        // resident model on load, which would strand the orchestrator with no
+        // restore lease, so Strict always keeps the single-residency handoff.
+        let coexistence: SubagentCoexistence
+        if isLocal, config.subagentCoexistenceEnabled {
+            let policy = await MainActor.run {
+                ServerConfigurationStore.load()?.modelEvictionPolicy ?? .strictSingleModel
             }
-            : []
+            coexistence = SubagentCoexistence(
+                allowed: policy == .manualMultiModel,
+                availableBytes: ChatResidencyHandoff.availableMemoryBytes(),
+                residentBytes: residentSummaries.reduce(Int64(0)) { $0 + $1.bytes },
+                flexibleBudgetBytes: ModelRuntime.flexibleResidentBudgetBytes()
+            )
+        } else {
+            coexistence = .disabled
+        }
         let plan = try decidePlan(
             isLocal: isLocal,
             modelName: canonicalName,
@@ -108,14 +190,31 @@ enum SubagentResidency {
             requiredBytes: isLocal
                 ? ChatResidencyHandoff.estimatedChatModelBytes(named: modelName) : 0,
             idleWaitSeconds: idleWaitSeconds,
-            deniedMessage: deniedMessage
+            deniedMessage: deniedMessage,
+            coexistence: coexistence
         )
         return SubagentResidencyDecision(isLocal: isLocal, plan: plan)
     }
 
     /// Map a resolved plan onto the host handoff middleware: a real
-    /// `ResidencyHandoff` when it unloads, otherwise the passthrough default.
+    /// `ResidencyHandoff` when it unloads, the idle-drain `CoexistenceHandoff`
+    /// when both models stay resident, otherwise the passthrough default.
     static func handoff(for plan: ResidencyPlan) -> SubagentHandoff {
-        plan.shouldUnload ? ResidencyHandoff.production { _ in plan } : PassthroughHandoff()
+        if plan.shouldUnload { return ResidencyHandoff.production { _ in plan } }
+        if plan.coexists {
+            return CoexistenceHandoff.production(maxElapsedSeconds: plan.maxElapsedSeconds)
+        }
+        return PassthroughHandoff()
+    }
+
+    /// Map a resolved plan onto the process-wide admission class
+    /// (`SubagentAdmission`): a plan that unloads resident models owns the GPU
+    /// exclusively; a coexistence run ALSO admits exclusively (two resident
+    /// graphs must never both generate — the run may share residency but not
+    /// the GPU's producer slot); a local run without a swap shares with other
+    /// in-place runs; remote never contends.
+    static func admissionClass(isLocal: Bool, plan: ResidencyPlan) -> SubagentAdmissionClass {
+        if plan.shouldUnload || plan.coexists { return .localExclusive }
+        return isLocal ? .localInPlace : .remote
     }
 }

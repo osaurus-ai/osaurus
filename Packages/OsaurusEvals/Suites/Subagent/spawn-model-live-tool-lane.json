@@ -1,0 +1,21 @@
+{
+  "id": "subagent.spawn-model-live-tool-lane",
+  "domain": "subagent",
+  "label": "Subagent • live tool-capable spawn with context-saved accounting",
+  "query": "Spawn a tool-capable worker and verify usage + context-saved accounting.",
+  "notes": "LIVE. THE CONTEXT-OFFLOAD LANE: seeds the run model as spawnable AND grants the child the curated read-only toolset (seedSpawnToolAccess readOnly — the per-agent SpawnToolAccess wiring) for the run. The worker digests inline material; success must carry REAL usage (prompt/completion tokens — a generation row without token accounting is not a pass) and the context-saved accounting object (worker_tokens vs digest_tokens), making \"what did delegation save the parent\" measurable per run. Tool USE itself is model-discretionary (the material is inline), so scoring pins the accounting contract, not the model's tool whims; SpawnToolsetTests pin allowlist/cap enforcement deterministically.",
+  "fixtures": {},
+  "expect": {
+    "subagent": {
+      "lane": "spawn_model",
+      "seedSpawnableModel": true,
+      "seedSpawnToolAccess": "readOnly",
+      "input": "Summarize the following incident report in exactly two sentences. Report: At 09:12 the API gateway began returning 502s for 8% of requests. The cause was a routing table update that removed the healthy upstream pool for the EU region. Rollback completed at 09:41 and error rates returned to baseline by 09:44. A postmortem action item was filed to add canary validation for routing changes.",
+      "expectSuccess": true,
+      "expectEnvelopeKind": "success",
+      "expectResultKind": "spawn_result",
+      "expectUsageRecorded": true,
+      "expectContextAccounting": true
+    }
+  }
+}

@@ -1,0 +1,22 @@
+{
+  "id": "subagent.scripted-parallel-batch-remote",
+  "domain": "subagent",
+  "label": "Subagent • parallel batch: two remote spawns fan out concurrently",
+  "query": "One tool batch starts two remote-model subagents concurrently.",
+  "notes": "Model-free. THE REMOTE FAN-OUT PROOF: two scripted kinds that resolve as REMOTE (.remote admission — no local GPU involvement) start concurrently through the real host and must actually OVERLAP (peak concurrency 2), not serialize. The rendezvous knob makes each run wait (bounded) until both have entered, so overlap is observed by construction instead of sleep timing. Pins the parallel-remote admission policy documented in the spawn guidance.",
+  "fixtures": {},
+  "expect": {
+    "subagent": {
+      "lane": "scripted",
+      "decision": "allow",
+      "remote": true,
+      "parallel": 2,
+      "rendezvous": true,
+      "runDelayMs": 50,
+      "phases": ["running"],
+      "expectSuccess": true,
+      "expectMaxConcurrent": 2,
+      "expectRunsCompleted": 2
+    }
+  }
+}

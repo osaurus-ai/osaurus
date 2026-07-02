@@ -1,0 +1,28 @@
+{
+  "id": "subagent.residency-matrix-local-local-same",
+  "domain": "subagent",
+  "label": "Subagent • matrix: local→local (same) × rapid cycles, crash-free + sentinel recall",
+  "query": "Rapid repeated spawns of the SAME local model as the resident orchestrator.",
+  "notes": "LIVE RESIDENCY MATRIX (crash lane, machine-specific) — extends residency-dir-local-local-same from decision-proof to CRASH-proof: 2 rapid production cycles of run-in-place (no unload), asserting per cycle a coherent digest with the sentinel token recalled across the boundary, no raw parser/template markers in the digest, and the orchestrator still verified GPU-resident; plus zero NEW osaurus crash reports (.ips before/after) across the whole case — the 2026-06 manual campaign turned into a rerunnable lane. Run with FILTER=residency-matrix; SKIPS when the model isn't installed.",
+  "fixtures": {},
+  "expect": {
+    "subagent": {
+      "lane": "spawn_model_residency",
+      "orchestrator": "mlx-community/Qwen3.5-4B-OptiQ-4bit",
+      "model": "mlx-community/Qwen3.5-4B-OptiQ-4bit",
+      "handoffEnabled": true,
+      "ensureResident": true,
+      "cycles": 2,
+      "sentinel": "papaya-window-88",
+      "input": "Reply with one short sentence confirming you received this task.",
+      "expectSuccess": true,
+      "expectEnvelopeKind": "success",
+      "expectResultKind": "spawn_result",
+      "expectHandoffWrapped": false,
+      "expectNoNewCrashReports": true,
+      "expectRestoredResident": true,
+      "expectNoMarkerLeaks": true,
+      "expectUsageRecorded": true
+    }
+  }
+}

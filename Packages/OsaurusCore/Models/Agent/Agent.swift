@@ -823,6 +823,10 @@ public struct AgentSettings: Codable, Sendable, Equatable {
     /// Per-agent budgets for `spawn` jobs (token / turn / wall-clock caps). The
     /// Default agent uses the global `SubagentConfiguration.budgets` instead.
     public var subagentBudgets: SubagentBudgets
+    /// What tools this agent's spawned workers may reach (`none` = text-only,
+    /// `readOnly` = curated read-only set). Default `.none`; the Default agent
+    /// uses the global `SubagentConfiguration.spawnToolAccess` instead.
+    public var spawnToolAccess: SpawnToolAccess
     /// Per-agent model override for subagent kinds, keyed by capability id
     /// (`"computer_use"`, `"spawn"`). An entry supersedes the
     /// kind's default model source (the parent agent's model for computer_use;
@@ -857,7 +861,8 @@ public struct AgentSettings: Codable, Sendable, Equatable {
         imageEditModelId: String? = nil,
         subagentPermissions: SubagentPermissionDefaults = SubagentPermissionDefaults(),
         subagentBudgets: SubagentBudgets = SubagentBudgets(),
-        subagentModelOverrides: [String: String] = [:]
+        subagentModelOverrides: [String: String] = [:],
+        spawnToolAccess: SpawnToolAccess = .none
     ) {
         self.dbEnabled = dbEnabled
         self.schedule = schedule
@@ -884,6 +889,7 @@ public struct AgentSettings: Codable, Sendable, Equatable {
         self.subagentPermissions = subagentPermissions
         self.subagentBudgets = subagentBudgets
         self.subagentModelOverrides = subagentModelOverrides
+        self.spawnToolAccess = spawnToolAccess
     }
 
     public init(from decoder: Decoder) throws {
@@ -971,6 +977,10 @@ public struct AgentSettings: Codable, Sendable, Equatable {
         subagentModelOverrides = Self.normalizedModelOverrides(
             (try? c.decodeIfPresent([String: String].self, forKey: .subagentModelOverrides)) ?? [:]
         )
+        // Lenient enum decode: an invalid/renamed raw value falls back to the
+        // safe text-only default instead of failing the whole agent decode.
+        spawnToolAccess =
+            (try? c.decodeIfPresent(SpawnToolAccess.self, forKey: .spawnToolAccess)) ?? .none
     }
 
     /// Trim values and drop blank entries so a cleared override (empty string)
@@ -1012,6 +1022,7 @@ public struct AgentSettings: Codable, Sendable, Equatable {
         case subagentPermissions
         case subagentBudgets
         case subagentModelOverrides
+        case spawnToolAccess
         // Read-only legacy key — never encoded after migration.
         case generativeGreetings
     }
@@ -1043,6 +1054,7 @@ public struct AgentSettings: Codable, Sendable, Equatable {
         try c.encode(subagentPermissions, forKey: .subagentPermissions)
         try c.encode(subagentBudgets, forKey: .subagentBudgets)
         try c.encode(subagentModelOverrides, forKey: .subagentModelOverrides)
+        try c.encode(spawnToolAccess, forKey: .spawnToolAccess)
     }
 
     /// Default settings for newly created agents (and for back-compat decoding of
