@@ -30,12 +30,12 @@ let package = Package(
         // MLXLMCommon, MLXLLM, MLXVLM, Tokenizers, Jinja, cache, parser,
         // MTP, and media-runtime surfaces Osaurus previously pulled from
         // separate MLX, inference, tokenizer, template, and transformer pins.
-        // Pinned to vmlx main with the deterministic qwen3.5 RMSNorm-shift
+        // Pinned to vmlx main with the deterministic qwen3.5 RMSNorm-shift + the full order-dependent-load sweep (#108)
         // fix (no more ~7.5% degenerate loads) and the Mistral3 VLM fix that
         // honors the bundle's longest_edge instead of clamping images to 336px.
         .package(
             url: "https://github.com/osaurus-ai/vmlx-swift",
-            revision: "b6f5cd31e266387b9b5f1015866fffad9b775ec0"
+            revision: "3515555eb6e86cc5d124f2b6bb4694d7df43b608"
         ),
         // FluidAudio 0.14.3 added a breaking `language:` parameter to TTS
         // calls that osaurus's `TTSService` doesn't pass. Pinning to the
