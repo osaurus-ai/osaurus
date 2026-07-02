@@ -987,6 +987,57 @@ struct DeltaContent: Codable, Sendable {
         self.tool_calls = tool_calls
         self.reasoning_content = reasoning_content
     }
+
+    private enum CodingKeys: String, CodingKey {
+        case role, content, refusal, tool_calls, reasoning_content
+    }
+
+    /// One entry of Mistral's structured `content` array. Mistral streams
+    /// reasoning models as `content: [{type:"thinking", thinking:[{type:"text",
+    /// text:…}]}, {type:"text", text:…}]` rather than the OpenAI-standard plain
+    /// `content` string plus separate `reasoning_content`. Decoded here so
+    /// thinking chunks route to `reasoning_content` and text chunks to `content`,
+    /// letting the rest of the streaming pipeline handle Mistral like every other
+    /// separate-channel reasoning provider.
+    private struct MistralContentChunk: Decodable {
+        let type: String?
+        let text: String?
+        let thinking: [InnerText]?
+
+        struct InnerText: Decodable {
+            let type: String?
+            let text: String?
+        }
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.role = try? container.decode(String.self, forKey: .role)
+        self.refusal = try? container.decode(String.self, forKey: .refusal)
+        self.tool_calls = try? container.decode([DeltaToolCall].self, forKey: .tool_calls)
+        let explicitReasoning = try? container.decode(String.self, forKey: .reasoning_content)
+
+        if let stringContent = try? container.decode(String.self, forKey: .content) {
+            self.content = stringContent
+            self.reasoning_content = explicitReasoning
+        } else if let chunks = try? container.decode([MistralContentChunk].self, forKey: .content) {
+            var visible = ""
+            var thinking = ""
+            for chunk in chunks {
+                if chunk.type == "thinking" {
+                    for part in chunk.thinking ?? [] { thinking += part.text ?? "" }
+                } else {
+                    visible += chunk.text ?? ""
+                }
+            }
+            self.content = visible.isEmpty ? nil : visible
+            let mergedReasoning = (explicitReasoning ?? "") + thinking
+            self.reasoning_content = mergedReasoning.isEmpty ? nil : mergedReasoning
+        } else {
+            self.content = nil
+            self.reasoning_content = explicitReasoning
+        }
+    }
 }
 
 /// Streaming choice

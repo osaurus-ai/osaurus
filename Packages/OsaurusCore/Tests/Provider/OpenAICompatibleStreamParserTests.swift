@@ -240,6 +240,48 @@ struct OpenAICompatibleStreamParserTests {
         #expect(yielded == ["partial"])
     }
 
+    @Test func parser_routesMistralStructuredThinkingContentToReasoning() throws {
+        var state = RemoteProviderService.StreamingState(stopSequences: [], trackContent: false)
+        var yielded: [String] = []
+
+        // Thinking phase: Mistral streams `content` as an array of chunks.
+        let thinking = try OpenAICompatibleStreamParser.handleEvent(
+            jsonData: Data(
+                #"{"id":"x","created":0,"model":"mistral-medium-3.5","choices":[{"index":0,"delta":{"content":[{"type":"thinking","thinking":[{"type":"text","text":"let me think"}]}]},"finish_reason":null}]}"#
+                    .utf8),
+            options: .strict,
+            state: &state,
+            yield: { yielded.append($0) }
+        )
+        guard case .continue = thinking else {
+            Issue.record("Expected thinking chunk to continue, got \(thinking)")
+            return
+        }
+
+        // Transition chunk: a closing think chunk plus the first text chunk.
+        _ = try OpenAICompatibleStreamParser.handleEvent(
+            jsonData: Data(
+                #"{"id":"x","created":0,"model":"mistral-medium-3.5","choices":[{"index":0,"delta":{"content":[{"type":"thinking","thinking":[{"type":"text","text":" done"}]},{"type":"text","text":"Answer"}]},"finish_reason":null}]}"#
+                    .utf8),
+            options: .strict,
+            state: &state,
+            yield: { yielded.append($0) }
+        )
+
+        // Answer phase: `content` becomes a plain string.
+        _ = try OpenAICompatibleStreamParser.handleEvent(
+            jsonData: Data(#"{"id":"x","created":0,"model":"mistral-medium-3.5","choices":[{"index":0,"delta":{"content":" text"},"finish_reason":null}]}"#.utf8),
+            options: .strict,
+            state: &state,
+            yield: { yielded.append($0) }
+        )
+
+        let reasoning = yielded.compactMap { StreamingReasoningHint.decode($0) }
+        let visible = yielded.filter { StreamingReasoningHint.decode($0) == nil }
+        #expect(reasoning == ["let me think", " done"])
+        #expect(visible == ["Answer", " text"])
+    }
+
     private func dispatchEvents(
         from parser: inout OpenAICompatibleStreamFramer.SSELineParser,
         options: OpenAICompatibleStreamFramer.Options
