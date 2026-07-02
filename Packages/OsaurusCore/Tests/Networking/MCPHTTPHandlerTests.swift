@@ -16,6 +16,18 @@ import Testing
 @Suite(.serialized)
 @MainActor
 struct MCPHTTPHandlerTests {
+    private static let agentChannelToolNames = [
+        "agent_channel_list_connections",
+        "agent_channel_diagnostics",
+        "agent_channel_list_spaces",
+        "agent_channel_list_rooms",
+        "agent_channel_read_messages",
+        "agent_channel_read_thread",
+        "agent_channel_search_messages",
+        "agent_channel_draft_message",
+        "agent_channel_send_message",
+        "agent_channel_reply_thread",
+    ]
 
     @Test func mcp_health_returns_ok() async throws {
         let server = try await startTestServer()
@@ -141,7 +153,9 @@ struct MCPHTTPHandlerTests {
         let server = try await startTestServer()
         defer { Task { await server.shutdown() } }
 
-        for tool in ["file_write", "file_edit", "shell_run", "git_commit"] {
+        let externallyDeniedTools = ["file_write", "file_edit", "shell_run", "git_commit"]
+            + Self.agentChannelToolNames
+        for tool in externallyDeniedTools {
             var request = URLRequest(url: URL(string: "http://\(server.host):\(server.port)/mcp/call")!)
             request.httpMethod = "POST"
             request.setValue("application/json", forHTTPHeaderField: "Content-Type")
@@ -154,6 +168,47 @@ struct MCPHTTPHandlerTests {
             let body = String(decoding: data, as: UTF8.self)
             #expect(status == 403, "expected 403 for \(tool), got \(status)")
             #expect(body.contains("tool_not_exposable"))
+        }
+    }
+
+    @Test func remote_dispatch_surface_binding_denies_agent_channel_tools() {
+        #expect(!HTTPHandler.shouldBindExternalSurfaceForDispatch(isLoopback: true))
+        #expect(HTTPHandler.shouldBindExternalSurfaceForDispatch(isLoopback: false))
+
+        for toolName in Self.agentChannelToolNames {
+            let local = ChatExecutionContext.$isExternalSurface.withValue(
+                HTTPHandler.shouldBindExternalSurfaceForDispatch(isLoopback: true)
+            ) {
+                ToolRegistry.isDeniedForCurrentSurface(toolName)
+            }
+            #expect(!local, "\(toolName) should remain app-usable on loopback dispatch")
+
+            let remote = ChatExecutionContext.$isExternalSurface.withValue(
+                HTTPHandler.shouldBindExternalSurfaceForDispatch(isLoopback: false)
+            ) {
+                ToolRegistry.isDeniedForCurrentSurface(toolName)
+            }
+            #expect(remote, "\(toolName) should be denied on non-loopback dispatch")
+        }
+
+        let remoteHostWrite = ChatExecutionContext.$isExternalSurface.withValue(
+            HTTPHandler.shouldBindExternalSurfaceForDispatch(isLoopback: false)
+        ) {
+            ToolRegistry.isDeniedForCurrentSurface("file_write")
+        }
+        #expect(remoteHostWrite)
+    }
+
+    @Test func remote_dispatch_surface_binding_propagates_to_unstructured_tasks() async {
+        for toolName in Self.agentChannelToolNames {
+            let inherited = await ChatExecutionContext.$isExternalSurface.withValue(
+                HTTPHandler.shouldBindExternalSurfaceForDispatch(isLoopback: false)
+            ) {
+                await Task {
+                    ToolRegistry.isDeniedForCurrentSurface(toolName)
+                }.value
+            }
+            #expect(inherited, "\(toolName) should keep external-surface denial across unstructured tasks")
         }
     }
 
@@ -203,6 +258,44 @@ struct MCPHTTPHandlerTests {
             let tools = (json?["tools"] as? [[String: Any]]) ?? []
             let names = Set(tools.compactMap { $0["name"] as? String })
             #expect(!names.contains("shell_run"))
+        }
+    }
+
+    @Test func stdio_mcp_policy_hides_externally_denied_tools() {
+        #expect(MCPServerManager.isToolVisibleToExternalMCP(name: EchoTool.nameStatic, enabled: true))
+        #expect(!MCPServerManager.isToolVisibleToExternalMCP(name: EchoTool.nameStatic, enabled: false))
+
+        for name in ["file_write", "shell_run"] + Self.agentChannelToolNames {
+            #expect(!MCPServerManager.isToolVisibleToExternalMCP(name: name, enabled: true))
+            let denial = MCPServerManager.externalMCPDenialMessage(for: name)
+            #expect(denial?.contains("App-only tools") == true)
+        }
+    }
+
+    @Test func stdio_mcp_execution_binds_external_surface() async throws {
+        try await DynamicCatalogTestLock.shared.run {
+            let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent(
+                "osaurus-tests-\(UUID().uuidString)",
+                isDirectory: true
+            )
+            ToolConfigurationStore.overrideDirectory = tempDir
+            try? FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+
+            ToolRegistry.shared.register(ExternalSurfaceProbeTool())
+            ToolRegistry.shared.setEnabled(true, for: ExternalSurfaceProbeTool.nameStatic)
+            defer { ToolRegistry.shared.unregister(names: [ExternalSurfaceProbeTool.nameStatic]) }
+
+            let text = try await MCPServerManager.executeToolAsExternalMCP(
+                name: ExternalSurfaceProbeTool.nameStatic,
+                argumentsJSON: "{}"
+            )
+            let envelope =
+                try JSONSerialization.jsonObject(
+                    with: Data(text.utf8)
+                ) as? [String: Any]
+            #expect(envelope?["ok"] as? Bool == true)
+            let result = envelope?["result"] as? [String: Any]
+            #expect(result?["text"] as? String == "external")
         }
     }
 
@@ -265,6 +358,17 @@ private struct NamedEchoTool: OsaurusTool {
     let parameters: JSONValue? = nil
     func execute(argumentsJSON: String) async throws -> String {
         return argumentsJSON
+    }
+}
+
+private struct ExternalSurfaceProbeTool: OsaurusTool {
+    static let nameStatic: String = "external_surface_probe"
+    let name: String = ExternalSurfaceProbeTool.nameStatic
+    let description: String = "Reports whether the current execution surface is external"
+    let parameters: JSONValue? = nil
+
+    func execute(argumentsJSON: String) async throws -> String {
+        ChatExecutionContext.isExternalSurface ? "external" : "internal"
     }
 }
 

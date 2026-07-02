@@ -28,7 +28,7 @@ enum AgentChannelConnectionManagerError: LocalizedError, Equatable, Sendable {
         case .emptyConnectionId:
             return "Agent channel connection id is required."
         case .reservedConnectionId(let id):
-            return "`\(id)` is reserved for the native Discord connection."
+            return "`\(id)` is reserved for a native Agent Channel connection."
         case .emptyName:
             return "Agent channel connection name is required."
         case .missingSupportedActions(let id):
@@ -60,7 +60,11 @@ enum AgentChannelConnectionManagerError: LocalizedError, Equatable, Sendable {
 final class AgentChannelConnectionManager: @unchecked Sendable {
     static let shared = AgentChannelConnectionManager()
 
-    private static let reservedConnectionIds = Set([AgentChannelConnection.nativeDiscordConnectionId])
+    private static let reservedConnectionIds = Set([
+        AgentChannelConnection.nativeDiscordConnectionId,
+        AgentChannelConnection.nativeSlackConnectionId,
+        AgentChannelConnection.nativeTelegramConnectionId,
+    ])
     private static let supportedHTTPMethods = Set(["GET", "POST", "PUT", "PATCH", "DELETE"])
 
     func configurationFileURL() -> URL {

@@ -284,9 +284,9 @@ public final class ToolRegistry: ObservableObject {
             ToolConfigurationStore.save(configuration)
         }
 
-        // for tool in Self.agentChannelTools {
-        //     registerNativeDynamicTool(tool)
-        // }
+        for tool in Self.agentChannelTools {
+            registerNativeDynamicTool(tool)
+        }
     }
 
     private static let agentChannelTools: [OsaurusTool] = [

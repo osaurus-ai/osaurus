@@ -5495,6 +5495,10 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
 
     // MARK: - Dispatch & Task Endpoints
 
+    nonisolated static func shouldBindExternalSurfaceForDispatch(isLoopback: Bool) -> Bool {
+        !isLoopback
+    }
+
     /// POST /agents/{identifier}/dispatch — dispatch work/chat task
     /// The identifier can be an agent UUID or a crypto address (0x...).
     private func handleDispatchEndpoint(
@@ -5694,7 +5698,14 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 externalSessionKey: externalSessionKey
             )
 
-            let handle = await TaskDispatcher.shared.dispatch(request)
+            let handle: DispatchHandle?
+            if Self.shouldBindExternalSurfaceForDispatch(isLoopback: isLoopback) {
+                handle = await ChatExecutionContext.$isExternalSurface.withValue(true) {
+                    await TaskDispatcher.shared.dispatch(request)
+                }
+            } else {
+                handle = await TaskDispatcher.shared.dispatch(request)
+            }
             let responseBody: String
             let status: HTTPResponseStatus
 
@@ -9279,8 +9290,8 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         let logUserAgent = userAgent
         let logSelf = self
         runRequestTask(priority: .userInitiated) {
-            // External callers never see the externally-denied tool classes
-            // (folder write/shell) — `/mcp/call` refuses them too.
+            // External callers never see app-only tool classes; `/mcp/call`
+            // refuses the same deny list too.
             let entries = await MainActor.run {
                 ToolRegistry.shared.listTools().filter {
                     $0.enabled && !ToolRegistry.externallyDeniedToolNames.contains($0.name)
@@ -9460,12 +9471,12 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             return "{}"
         }()
 
-        // External deny list: folder write/shell tool classes are never
-        // invocable through the MCP bridge (they're also hidden from
-        // `/mcp/tools`). Refuse before any schema validation or gating.
+        // External deny list: app-only tool classes are never invocable
+        // through the MCP bridge (they're also hidden from `/mcp/tools`).
+        // Refuse before any schema validation or gating.
         if ToolRegistry.externallyDeniedToolNames.contains(req.name) {
             let message =
-                "'\(req.name)' is not available to external callers. Folder write and shell tools can only run from the Osaurus app."
+                "'\(req.name)' is not available to external callers. App-only tools can only run from the Osaurus app."
             let bodyJSON = #"{"error":"tool_not_exposable","message":"\#(message)"}"#
             sendResponse(
                 context: context,

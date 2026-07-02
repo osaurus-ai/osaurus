@@ -1,5 +1,68 @@
 # Open PR and Bug Development Plan
 
+Snapshot update: 2026-07-02 13:30 UTC, repo `osaurus-ai/osaurus`.
+
+This snapshot supersedes the older channel sections below for the Agent Channel
+testing question.
+
+## Agent Channel Readiness - 2026-07-02
+
+Maintainer question: "how are you doing with the agent channels? is it ready for
+testing?"
+
+Current answer:
+
+- Slack Agent Channel (#1707) is draft, merge-clean, and green on required CI.
+  It provides the Slack adapter, credential storage, allowlists, read/search/send
+  routing, inbound normalization, and service/security tests.
+- Telegram Agent Channel (#1709) is draft, merge-clean, and green on required
+  CI. It provides the Telegram adapter, token storage, chat/topic allowlists,
+  read/search/send routing, update dedupe, message storage, and service/security
+  tests.
+- The shared `agent_channel_*` action vocabulary existed on `main`, but the
+  native tools were not registered in `ToolRegistry`. That made the adapters
+  service-testable but not end-to-end testable from the agent tool path.
+
+Goal:
+
+- Make Agent Channels ready for maintainer service-level testing through the
+  provider-neutral `agent_channel_*` tools, while keeping WIP settings UI hidden
+  and preventing external API/MCP callers from sending channel messages.
+
+Execution plan:
+
+1. Shared readiness PR:
+   - Register the provider-neutral Agent Channel tools as native dynamic tools.
+   - Keep them out of the always-loaded prompt baseline.
+   - Keep them off external surfaces through `externallyDeniedToolNames`.
+   - Prove no Discord-specific phantom tools are introduced.
+   - Run focused channel, registry, and external-denial tests.
+2. Adapter PR refresh, parallel after the shared readiness PR is available:
+   - Keep #1707 and #1709 draft until the shared tool registration branch is
+     merged or explicitly used as their base.
+   - Rebase Slack and Telegram independently after the shared registration path
+     lands.
+   - Re-run the adapter tests plus one shared Agent Channel tool-path smoke for
+     each adapter.
+3. Testing boundary:
+   - Ready for maintainer testing means app-surface `agent_channel_*` calls can
+     list connections, inspect diagnostics, read/search permitted messages,
+     draft outbound messages, and send/reply only when the connection policy
+     allows it.
+   - Live Slack/Telegram tests still require real bot credentials and
+     workspace/chat allowlists.
+   - Production webhook receiver, background poller, and final visible settings
+     placement remain follow-up integration work.
+
+Parallelization notes:
+
+- The shared readiness PR owns only `ToolRegistry`, focused registry/security
+  tests, and this plan update.
+- Slack and Telegram adapter branches stay independent once they consume the
+  shared registration behavior.
+- Inbox/audit UI and remote Computer Use-over-channel work should remain
+  separate until at least one native adapter completes service-level testing.
+
 Snapshot update: 2026-06-16 23:11 UTC, repo `osaurus-ai/osaurus`.
 
 This section is the current actionable plan. Older dated sections remain below

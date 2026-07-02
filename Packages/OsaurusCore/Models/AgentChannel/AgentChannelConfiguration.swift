@@ -570,6 +570,8 @@ struct AgentChannelCustomHTTPConfiguration: Codable, Equatable, Sendable {
 
 struct AgentChannelConnection: Codable, Equatable, Identifiable, Sendable {
     static let nativeDiscordConnectionId = "discord"
+    static let nativeSlackConnectionId = "slack"
+    static let nativeTelegramConnectionId = "telegram"
 
     var id: String
     var name: String
