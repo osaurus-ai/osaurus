@@ -22,6 +22,14 @@ import Security
 /// Callers apply their own `KeychainQueryHelpers.disablesKeychainForProcess`
 /// short-circuit before calling these methods.
 enum Keychain {
+    /// Serial queue for fire-and-forget writes. `SecItemAdd`/`SecItemUpdate`
+    /// are synchronous and can block for seconds under iCloud-keychain or
+    /// first-unlock contention; running them here keeps that I/O off the main
+    /// thread (a recurring app-hang source). Serial so concurrent writes to the
+    /// same item don't race.
+    private static let writeQueue = DispatchQueue(
+        label: "com.dinoki.osaurus.keychain.write", qos: .utility)
+
     private static func baseQuery(service: String, account: String) -> [String: Any] {
         [
             kSecClass as String: kSecClassGenericPassword,
@@ -56,6 +64,23 @@ enum Keychain {
         var add = base
         add.merge(attributes) { _, new in new }
         return SecItemAdd(add as CFDictionary, nil) == errSecSuccess
+    }
+
+    /// Fire-and-forget variant of `write` that runs the blocking SecItem call
+    /// off the caller's thread. Use when the authoritative value is held in
+    /// memory and the write result isn't needed synchronously, so the caller
+    /// never blocks the main thread on Security-framework I/O. `data` is
+    /// captured at call time, so callers can encode their snapshot first and
+    /// return immediately.
+    static func writeInBackground(
+        service: String,
+        account: String,
+        data: Data,
+        accessible: CFString = kSecAttrAccessibleWhenUnlockedThisDeviceOnly
+    ) {
+        writeQueue.async {
+            _ = write(service: service, account: account, data: data, accessible: accessible)
+        }
     }
 
     /// Read (`service`, `account`). Returns `nil` when the item is absent or

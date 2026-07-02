@@ -35,9 +35,14 @@ final class AgentChannelConnectionService: @unchecked Sendable {
 
     private static let discordConnectionId = AgentChannelConnection.nativeDiscordConnectionId
     private let discordService: DiscordConnectionService
+    private let customJSONRunner: any AgentChannelCustomJSONRunning
 
-    init(discordService: DiscordConnectionService) {
+    init(
+        discordService: DiscordConnectionService,
+        customJSONRunner: any AgentChannelCustomJSONRunning = AgentChannelCustomJSONRunner()
+    ) {
         self.discordService = discordService
+        self.customJSONRunner = customJSONRunner
     }
 
     func listConnections() -> [[String: Any]] {
@@ -63,16 +68,12 @@ final class AgentChannelConnectionService: @unchecked Sendable {
                 payload["message_store"] = discordService.messageStoreDiagnostics()
                 return payload
             case .customHTTP:
-                return [
-                    "connection_id": connection.id,
-                    "kind": connection.kind.rawValue,
-                    "status": "configured_not_executable",
-                    "enabled": connection.enabled,
-                    "standard_actions": connection.supportedActions.map(\.rawValue),
-                    "custom_actions": connection.customHTTP?.actions.keys.sorted() ?? [],
-                    "action_policies": actionPolicies(for: connection).map(\.dictionary),
-                    "relay_receive_policy": relayReceivePolicy(for: connection).dictionary,
-                ]
+                var payload = await customJSONRunner.diagnostics(connection: connection)
+                payload["standard_actions"] = connection.supportedActions.map(\.rawValue)
+                payload["custom_actions"] = connection.customHTTP?.actions.keys.sorted() ?? []
+                payload["action_policies"] = actionPolicies(for: connection).map(\.dictionary)
+                payload["relay_receive_policy"] = relayReceivePolicy(for: connection).dictionary
+                return payload
             case .slack, .telegram:
                 return [
                     "connection_id": connection.id,
@@ -106,7 +107,7 @@ final class AgentChannelConnectionService: @unchecked Sendable {
                 ]
             }
         case .customHTTP:
-            throw AgentChannelConnectionServiceError.customExecutionNotImplemented(connection.id)
+            return try await customJSONRunner.listSpaces(connection: connection)
         case .slack, .telegram:
             throw AgentChannelConnectionServiceError.unsupportedKind(connection.kind)
         }
@@ -129,7 +130,7 @@ final class AgentChannelConnectionService: @unchecked Sendable {
                 ]
             }
         case .customHTTP:
-            throw AgentChannelConnectionServiceError.customExecutionNotImplemented(connection.id)
+            return try await customJSONRunner.listRooms(connection: connection, spaceId: spaceId)
         case .slack, .telegram:
             throw AgentChannelConnectionServiceError.unsupportedKind(connection.kind)
         }
@@ -145,7 +146,7 @@ final class AgentChannelConnectionService: @unchecked Sendable {
             payload["standard_kind"] = "channel_messages"
             return payload
         case .customHTTP:
-            throw AgentChannelConnectionServiceError.customExecutionNotImplemented(connection.id)
+            return try await customJSONRunner.readMessages(connection: connection, roomId: roomId, limit: limit)
         case .slack, .telegram:
             throw AgentChannelConnectionServiceError.unsupportedKind(connection.kind)
         }
@@ -161,7 +162,7 @@ final class AgentChannelConnectionService: @unchecked Sendable {
             payload["standard_kind"] = "thread_messages"
             return payload
         case .customHTTP:
-            throw AgentChannelConnectionServiceError.customExecutionNotImplemented(connection.id)
+            return try await customJSONRunner.readThread(connection: connection, threadId: threadId, limit: limit)
         case .slack, .telegram:
             throw AgentChannelConnectionServiceError.unsupportedKind(connection.kind)
         }
@@ -188,7 +189,13 @@ final class AgentChannelConnectionService: @unchecked Sendable {
             payload["standard_kind"] = "message_search"
             return payload
         case .customHTTP:
-            throw AgentChannelConnectionServiceError.customExecutionNotImplemented(connection.id)
+            return try await customJSONRunner.searchMessages(
+                connection: connection,
+                query: query,
+                roomIds: roomIds,
+                limitPerRoom: limitPerRoom,
+                maxMatches: maxMatches
+            )
         case .slack, .telegram:
             throw AgentChannelConnectionServiceError.unsupportedKind(connection.kind)
         }
@@ -204,7 +211,7 @@ final class AgentChannelConnectionService: @unchecked Sendable {
             payload["standard_kind"] = "message_draft"
             return payload
         case .customHTTP:
-            throw AgentChannelConnectionServiceError.customExecutionNotImplemented(connection.id)
+            return try customJSONRunner.draftMessage(connection: connection, roomId: roomId, content: content)
         case .slack, .telegram:
             throw AgentChannelConnectionServiceError.unsupportedKind(connection.kind)
         }
@@ -229,7 +236,12 @@ final class AgentChannelConnectionService: @unchecked Sendable {
             payload["standard_kind"] = "message_sent"
             return payload
         case .customHTTP:
-            throw AgentChannelConnectionServiceError.customExecutionNotImplemented(connection.id)
+            return try await customJSONRunner.sendMessage(
+                connection: connection,
+                roomId: roomId,
+                content: content,
+                confirmSend: confirmSend
+            )
         case .slack, .telegram:
             throw AgentChannelConnectionServiceError.unsupportedKind(connection.kind)
         }
@@ -253,7 +265,12 @@ final class AgentChannelConnectionService: @unchecked Sendable {
             payload["standard_kind"] = "thread_reply_sent"
             return payload
         case .customHTTP:
-            throw AgentChannelConnectionServiceError.customExecutionNotImplemented(connection.id)
+            return try await customJSONRunner.replyThread(
+                connection: connection,
+                threadId: threadId,
+                content: content,
+                confirmSend: confirmSend
+            )
         case .slack, .telegram:
             throw AgentChannelConnectionServiceError.unsupportedKind(connection.kind)
         }
@@ -355,8 +372,7 @@ final class AgentChannelConnectionService: @unchecked Sendable {
             }
             do {
                 if let providerEventId,
-                    try messageStore.isEventSeen(connectionId: connection.id, providerEventId: providerEventId)
-                {
+                    try messageStore.isEventSeen(connectionId: connection.id, providerEventId: providerEventId) {
                     return deny("duplicate_event_\(policy.duplicateBehavior)", decision: .duplicate)
                 }
             } catch {
@@ -508,7 +524,36 @@ final class AgentChannelConnectionService: @unchecked Sendable {
 
         switch connection.kind {
         case .customHTTP:
-            return (.configuredOnly, "Custom HTTP action is configured, but execution is not enabled yet.")
+            guard let customHTTP = connection.customHTTP else {
+                return (.unavailable, "Custom HTTP configuration is missing.")
+            }
+            guard action == .diagnostics || customHTTP.actions[action.rawValue] != nil else {
+                return (.unavailable, "No custom HTTP mapping is configured for this action.")
+            }
+            switch action {
+            case .diagnostics:
+                return (.available, nil)
+            case .listSpaces:
+                return (.available, nil)
+            case .listRooms:
+                guard !connection.spaceAllowlist.isEmpty else {
+                    return (.unavailable, "No spaces are allowlisted for this connection.")
+                }
+                return (.available, nil)
+            case .readMessages, .searchMessages:
+                guard !connection.readRoomAllowlist.isEmpty else {
+                    return (.unavailable, "No rooms are allowlisted for read access.")
+                }
+                return (.available, nil)
+            case .draftMessage, .sendMessage, .replyThread:
+                guard connection.writeEnabled else {
+                    return (.unavailable, "Write access is disabled for this connection.")
+                }
+                guard !connection.writeRoomAllowlist.isEmpty else {
+                    return (.unavailable, "No rooms are allowlisted for write access.")
+                }
+                return (.available, nil)
+            }
         case .slack, .telegram:
             return (.configuredOnly, "Provider adapter is configured, but execution is not implemented yet.")
         case .discord:

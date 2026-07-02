@@ -38,6 +38,52 @@ private extension OsaurusTool {
             }
         }
 
+        if let error = error as? AgentChannelCustomJSONRunnerError {
+            let metadata: [String: Any]? = error.partialWriteStatus.map {
+                [
+                    "partial_write": true,
+                    "partial_write_status": $0,
+                ]
+            }
+            switch error {
+            case .missingConfiguration, .actionNotConfigured, .methodNotAllowed,
+                .blockedURL, .spaceNotAllowlisted, .roomNotReadable, .roomNotWritable,
+                .writeDisabled:
+                return ToolEnvelope.failure(
+                    kind: .rejected,
+                    message: error.localizedDescription,
+                    tool: tool,
+                    retryable: false,
+                    metadata: metadata
+                )
+            case .missingSecret:
+                return ToolEnvelope.failure(
+                    kind: .unavailable,
+                    message: error.localizedDescription,
+                    tool: tool,
+                    retryable: false,
+                    metadata: metadata
+                )
+            case .invalidRequest, .invalidTemplate, .missingInput,
+                .sendConfirmationRequired, .emptyMessage:
+                return ToolEnvelope.failure(
+                    kind: .invalidArgs,
+                    message: error.localizedDescription,
+                    tool: tool,
+                    retryable: false,
+                    metadata: metadata
+                )
+            case .httpStatus, .invalidResponse, .transport, .cancelled:
+                return ToolEnvelope.failure(
+                    kind: .executionError,
+                    message: error.localizedDescription,
+                    tool: tool,
+                    retryable: false,
+                    metadata: metadata
+                )
+            }
+        }
+
         if let error = error as? DiscordConnectionServiceError {
             switch error {
             case .invalidId, .sendConfirmationRequired, .messageTooLong, .emptyMessage:
@@ -110,8 +156,7 @@ private extension OsaurusTool {
     }
 }
 
-final class AgentChannelListConnectionsTool: OsaurusTool, PermissionedTool, AgentChannelServiceTool, @unchecked Sendable
-{
+final class AgentChannelListConnectionsTool: OsaurusTool, PermissionedTool, AgentChannelServiceTool, @unchecked Sendable {
     let name = "agent_channel_list_connections"
     let description =
         "List configured agent communication channel connections such as Discord, Slack, Telegram, or custom JSON channels."
@@ -359,8 +404,7 @@ final class AgentChannelReadThreadTool: OsaurusTool, PermissionedTool, AgentChan
     }
 }
 
-final class AgentChannelSearchMessagesTool: OsaurusTool, PermissionedTool, AgentChannelServiceTool, @unchecked Sendable
-{
+final class AgentChannelSearchMessagesTool: OsaurusTool, PermissionedTool, AgentChannelServiceTool, @unchecked Sendable {
     let name = "agent_channel_search_messages"
     let description = "Search recent messages across allowlisted channel rooms."
     let parameters: JSONValue? = .object([

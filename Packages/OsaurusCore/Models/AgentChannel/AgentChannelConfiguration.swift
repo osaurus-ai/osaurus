@@ -390,19 +390,34 @@ struct AgentChannelCustomHTTPAction: Codable, Equatable, Sendable {
     var query: [String: String]
     var headers: [String: String]
     var bodyTemplate: String?
+    var successStatusCodes: [Int]
+    var responseMapping: AgentChannelCustomHTTPResponseMapping
+    var idempotency: AgentChannelCustomHTTPIdempotency?
+    var timeoutSeconds: Double?
+    var maxResponseBytes: Int?
 
     init(
         method: String = "GET",
         path: String,
         query: [String: String] = [:],
         headers: [String: String] = [:],
-        bodyTemplate: String? = nil
+        bodyTemplate: String? = nil,
+        successStatusCodes: [Int] = Array(200 ... 299),
+        responseMapping: AgentChannelCustomHTTPResponseMapping = AgentChannelCustomHTTPResponseMapping(),
+        idempotency: AgentChannelCustomHTTPIdempotency? = nil,
+        timeoutSeconds: Double? = nil,
+        maxResponseBytes: Int? = nil
     ) {
         self.method = method.uppercased()
         self.path = path
         self.query = query
         self.headers = headers
         self.bodyTemplate = bodyTemplate
+        self.successStatusCodes = Self.normalizedStatusCodes(successStatusCodes)
+        self.responseMapping = responseMapping.normalized
+        self.idempotency = idempotency?.normalized
+        self.timeoutSeconds = timeoutSeconds.map(Self.clampTimeout)
+        self.maxResponseBytes = maxResponseBytes.map(Self.clampResponseBytes)
     }
 
     init(from decoder: Decoder) throws {
@@ -412,21 +427,144 @@ struct AgentChannelCustomHTTPAction: Codable, Equatable, Sendable {
         query = try container.decodeIfPresent([String: String].self, forKey: .query) ?? [:]
         headers = try container.decodeIfPresent([String: String].self, forKey: .headers) ?? [:]
         bodyTemplate = try container.decodeIfPresent(String.self, forKey: .bodyTemplate)
+        successStatusCodes = Self.normalizedStatusCodes(
+            try container.decodeIfPresent([Int].self, forKey: .successStatusCodes) ?? Array(200 ... 299)
+        )
+        responseMapping =
+            try container.decodeIfPresent(AgentChannelCustomHTTPResponseMapping.self, forKey: .responseMapping)?
+            .normalized ?? AgentChannelCustomHTTPResponseMapping()
+        idempotency =
+            try container.decodeIfPresent(AgentChannelCustomHTTPIdempotency.self, forKey: .idempotency)?
+            .normalized
+        timeoutSeconds = try container.decodeIfPresent(Double.self, forKey: .timeoutSeconds).map(Self.clampTimeout)
+        maxResponseBytes = try container.decodeIfPresent(Int.self, forKey: .maxResponseBytes)
+            .map(Self.clampResponseBytes)
+    }
+
+    var normalized: AgentChannelCustomHTTPAction {
+        AgentChannelCustomHTTPAction(
+            method: method,
+            path: path,
+            query: query,
+            headers: headers,
+            bodyTemplate: bodyTemplate,
+            successStatusCodes: successStatusCodes,
+            responseMapping: responseMapping,
+            idempotency: idempotency,
+            timeoutSeconds: timeoutSeconds,
+            maxResponseBytes: maxResponseBytes
+        )
+    }
+
+    static func normalizedStatusCodes(_ codes: [Int]) -> [Int] {
+        var seen = Set<Int>()
+        let filtered = codes.filter { (100 ... 599).contains($0) && seen.insert($0).inserted }
+        return filtered.isEmpty ? Array(200 ... 299) : filtered
+    }
+
+    static func clampTimeout(_ value: Double) -> Double {
+        min(max(value, 1), 30)
+    }
+
+    static func clampResponseBytes(_ value: Int) -> Int {
+        min(max(value, 1_024), 1_048_576)
     }
 }
 
 struct AgentChannelCustomHTTPConfiguration: Codable, Equatable, Sendable {
     var baseURL: String
+    var allowedHosts: [String]
+    var allowedMethods: [String]
+    var allowInsecureHTTP: Bool
+    var timeoutSeconds: Double
+    var maxResponseBytes: Int
     var actions: [String: AgentChannelCustomHTTPAction]
 
-    init(baseURL: String, actions: [String: AgentChannelCustomHTTPAction] = [:]) {
+    init(
+        baseURL: String,
+        allowedHosts: [String] = [],
+        allowedMethods: [String] = ["GET", "POST"],
+        allowInsecureHTTP: Bool = false,
+        timeoutSeconds: Double = 15,
+        maxResponseBytes: Int = 131_072,
+        actions: [String: AgentChannelCustomHTTPAction] = [:]
+    ) {
         self.baseURL = baseURL
-        self.actions = actions
+        self.allowedHosts = Self.normalizedHosts(allowedHosts)
+        self.allowedMethods = Self.normalizedMethods(allowedMethods)
+        self.allowInsecureHTTP = allowInsecureHTTP
+        self.timeoutSeconds = AgentChannelCustomHTTPAction.clampTimeout(timeoutSeconds)
+        self.maxResponseBytes = AgentChannelCustomHTTPAction.clampResponseBytes(maxResponseBytes)
+        self.actions = Self.normalizedActions(actions)
     }
 
     init(baseURL: String, actions: [AgentChannelAction: AgentChannelCustomHTTPAction]) {
-        self.baseURL = baseURL
-        self.actions = Dictionary(uniqueKeysWithValues: actions.map { ($0.rawValue, $1) })
+        self.init(
+            baseURL: baseURL,
+            actions: Dictionary(uniqueKeysWithValues: actions.map { ($0.rawValue, $1) })
+        )
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        baseURL = try container.decode(String.self, forKey: .baseURL)
+        allowedHosts = Self.normalizedHosts(try container.decodeIfPresent([String].self, forKey: .allowedHosts) ?? [])
+        allowedMethods = Self.normalizedMethods(
+            try container.decodeIfPresent([String].self, forKey: .allowedMethods) ?? ["GET", "POST"]
+        )
+        allowInsecureHTTP = try container.decodeIfPresent(Bool.self, forKey: .allowInsecureHTTP) ?? false
+        timeoutSeconds = AgentChannelCustomHTTPAction.clampTimeout(
+            try container.decodeIfPresent(Double.self, forKey: .timeoutSeconds) ?? 15
+        )
+        maxResponseBytes = AgentChannelCustomHTTPAction.clampResponseBytes(
+            try container.decodeIfPresent(Int.self, forKey: .maxResponseBytes) ?? 131_072
+        )
+        actions = Self.normalizedActions(
+            try container.decodeIfPresent([String: AgentChannelCustomHTTPAction].self, forKey: .actions) ?? [:]
+        )
+    }
+
+    var normalized: AgentChannelCustomHTTPConfiguration {
+        AgentChannelCustomHTTPConfiguration(
+            baseURL: baseURL,
+            allowedHosts: allowedHosts,
+            allowedMethods: allowedMethods,
+            allowInsecureHTTP: allowInsecureHTTP,
+            timeoutSeconds: timeoutSeconds,
+            maxResponseBytes: maxResponseBytes,
+            actions: actions
+        )
+    }
+
+    static func normalizedHosts(_ hosts: [String]) -> [String] {
+        var seen = Set<String>()
+        return hosts.map {
+            $0.trimmingCharacters(in: .whitespacesAndNewlines)
+                .trimmingCharacters(in: CharacterSet(charactersIn: "[]"))
+                .lowercased()
+        }
+        .filter { !$0.isEmpty && seen.insert($0).inserted }
+    }
+
+    static func normalizedMethods(_ methods: [String]) -> [String] {
+        var seen = Set<String>()
+        let normalized = methods.map {
+            $0.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
+        }
+        .filter { !$0.isEmpty && seen.insert($0).inserted }
+        return normalized.isEmpty ? ["GET", "POST"] : normalized
+    }
+
+    static func normalizedActions(
+        _ actions: [String: AgentChannelCustomHTTPAction]
+    ) -> [String: AgentChannelCustomHTTPAction] {
+        var normalized: [String: AgentChannelCustomHTTPAction] = [:]
+        for (key, action) in actions {
+            let trimmedKey = key.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmedKey.isEmpty else { continue }
+            normalized[trimmedKey] = action.normalized
+        }
+        return normalized
     }
 }
 
@@ -534,7 +672,7 @@ struct AgentChannelConnection: Codable, Equatable, Identifiable, Sendable {
             writeEnabled: writeEnabled,
             defaultReadLimit: defaultReadLimit,
             secrets: secrets,
-            customHTTP: customHTTP,
+            customHTTP: customHTTP?.normalized,
             inboundAuthorization: inboundAuthorization
         )
     }

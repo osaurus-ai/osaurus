@@ -23,6 +23,12 @@
             "value" : "Osaurus"
           }
         },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Osaurus"
+          }
+        },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
@@ -54,6 +60,12 @@
           }
         },
         "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "osaurus"
+          }
+        },
+        "ru" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "osaurus"
@@ -95,6 +107,12 @@
             "value" : "Osaurus 플러그인이 사용자를 대신하여 다른 응용 프로그램을 제어하기 위해 자동화를 사용할 수 있습니다."
           }
         },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Osaurus использует автоматизацию, чтобы управлять другими приложениями от вашего имени: в том числе агенты могут писать и запускать AppleScript для автоматизации задач на этом Mac, а плагины могут использовать автоматизацию."
+          }
+        },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "needs_review",
@@ -129,6 +147,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Osaurus 플러그인이 이벤트를 읽고 생성하기 위해 캘린더에 접근할 수 있습니다."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Плагины Osaurus могут получать доступ к календарю, чтобы читать и создавать события."
           }
         },
         "zh-Hans" : {
@@ -167,6 +191,12 @@
             "value" : "Osaurus 플러그인이 이벤트를 읽고 생성하기 위해 캘린더에 접근할 수 있습니다."
           }
         },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Плагины Osaurus могут получать доступ к календарю, чтобы читать и создавать события."
+          }
+        },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
@@ -201,6 +231,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Osaurus 플러그인이 연락처 정보를 검색하고 읽기 위해 연락처에 접근할 수 있습니다."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Плагины Osaurus могут получать доступ к контактам, чтобы искать и читать контактную информацию."
           }
         },
         "zh-Hans" : {
@@ -251,6 +287,12 @@
             "value" : "Osaurus가 다른 기기에서 실행 중인 에이전트를 검색하고 연결하기 위해 로컬 네트워크를 사용합니다."
           }
         },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Osaurus использует локальную сеть, чтобы находить агентов на других устройствах и подключаться к ним."
+          }
+        },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
@@ -285,6 +327,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Osaurus 플러그인이 위치 기반 서비스를 제공하기 위해 위치 정보에 접근할 수 있습니다."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Плагины Osaurus могут получать доступ к вашей геопозиции, чтобы предоставлять сервисы с учётом местоположения."
           }
         },
         "zh-Hans" : {
@@ -323,6 +371,12 @@
             "value" : "Osaurus 플러그인이 위치 기반 서비스를 제공하기 위해 위치 정보에 접근할 수 있습니다."
           }
         },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Плагины Osaurus могут получать доступ к вашей геопозиции, чтобы предоставлять сервисы с учётом местоположения."
+          }
+        },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
@@ -357,6 +411,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Osaurus가 FluidAudio를 사용한 온디바이스 음성 텍스트 변환을 위해 마이크를 사용합니다."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Osaurus использует микрофон для локальной расшифровки речи с помощью FluidAudio."
           }
         },
         "zh-Hans" : {
@@ -395,6 +455,12 @@
             "value" : "Osaurus 플러그인이 작업을 읽고 생성하기 위해 미리 알림에 접근할 수 있습니다."
           }
         },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Плагины Osaurus могут получать доступ к напоминаниям, чтобы читать и создавать задачи."
+          }
+        },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
@@ -429,6 +495,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Osaurus는 화면 기록 접근 권한을 부여한 경우에만 스크린샷 및 시스템 오디오를 캡처할 수 있습니다."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Osaurus может записывать снимки экрана и системный звук только после предоставления доступа к записи экрана."
           }
         },
         "zh-Hans" : {

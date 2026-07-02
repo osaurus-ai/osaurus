@@ -17,6 +17,7 @@ enum AgentChannelConnectionManagerError: LocalizedError, Equatable, Sendable {
     case invalidCustomHTTPMethod(action: String, method: String)
     case invalidCustomHTTPPath(action: String, path: String)
     case invalidCustomHTTPHeader(action: String, header: String)
+    case invalidCustomHTTPResponseMapping(action: String, path: String)
     case unsupportedCustomHTTPAction(String)
     case invalidSecretReference(String)
     case duplicateConnectionId(String)
@@ -42,6 +43,8 @@ enum AgentChannelConnectionManagerError: LocalizedError, Equatable, Sendable {
             return "Custom action `\(action)` path `\(path)` must start with `/` and must not contain line breaks."
         case .invalidCustomHTTPHeader(let action, let header):
             return "Custom action `\(action)` header `\(header)` must not contain line breaks."
+        case .invalidCustomHTTPResponseMapping(let action, let path):
+            return "Custom action `\(action)` response mapping path `\(path)` is not supported."
         case .unsupportedCustomHTTPAction(let action):
             return "Custom action `\(action)` must be one of the standard Agent Channel actions."
         case .invalidSecretReference(let name):
@@ -91,20 +94,17 @@ final class AgentChannelConnectionManager: @unchecked Sendable {
             .map(AgentChannelConnection.normalizedId)
             .flatMap { $0.isEmpty ? nil : $0 }
         if let normalizedOriginalId,
-            Self.reservedConnectionIds.contains(normalizedOriginalId.lowercased())
-        {
+            Self.reservedConnectionIds.contains(normalizedOriginalId.lowercased()) {
             throw AgentChannelConnectionManagerError.reservedConnectionId(normalizedOriginalId)
         }
         var configuration = loadConfiguration()
         if let normalizedOriginalId,
             normalizedOriginalId != validated.id,
-            configuration.connections.contains(where: { $0.id == validated.id })
-        {
+            configuration.connections.contains(where: { $0.id == validated.id }) {
             throw AgentChannelConnectionManagerError.duplicateConnectionId(validated.id)
         }
         if normalizedOriginalId == nil,
-            configuration.connections.contains(where: { $0.id == validated.id })
-        {
+            configuration.connections.contains(where: { $0.id == validated.id }) {
             throw AgentChannelConnectionManagerError.duplicateConnectionId(validated.id)
         }
         configuration.connections.removeAll { existing in
@@ -216,6 +216,11 @@ final class AgentChannelConnectionManager: @unchecked Sendable {
         else {
             throw AgentChannelConnectionManagerError.invalidCustomHTTPBaseURL(customHTTP.baseURL)
         }
+        do {
+            try AgentChannelCustomJSONRunner.validateConfigurationURL(customHTTP)
+        } catch {
+            throw AgentChannelConnectionManagerError.invalidCustomHTTPBaseURL(customHTTP.baseURL)
+        }
 
         let supportedActionNames = Set(connection.supportedActions.map(\.rawValue))
         for (actionName, action) in customHTTP.actions {
@@ -240,6 +245,41 @@ final class AgentChannelConnectionManager: @unchecked Sendable {
             }
             try validateHeaderLikeFields(action: actionName, values: action.query)
             try validateHeaderLikeFields(action: actionName, values: action.headers)
+            try validateResponseMapping(action: actionName, mapping: action.responseMapping)
+            try validateIdempotency(action: actionName, idempotency: action.idempotency)
+        }
+    }
+
+    private func validateResponseMapping(
+        action: String,
+        mapping: AgentChannelCustomHTTPResponseMapping
+    ) throws {
+        for path in mapping.allConfiguredPaths {
+            do {
+                try AgentChannelCustomHTTPResponseMapping.validatePath(path)
+            } catch {
+                throw AgentChannelConnectionManagerError.invalidCustomHTTPResponseMapping(
+                    action: action,
+                    path: path
+                )
+            }
+        }
+    }
+
+    private func validateIdempotency(
+        action: String,
+        idempotency: AgentChannelCustomHTTPIdempotency?
+    ) throws {
+        guard let idempotency else { return }
+        for path in idempotency.configuredResponsePaths {
+            do {
+                try AgentChannelCustomHTTPResponseMapping.validatePath(path)
+            } catch {
+                throw AgentChannelConnectionManagerError.invalidCustomHTTPResponseMapping(
+                    action: action,
+                    path: path
+                )
+            }
         }
     }
 
