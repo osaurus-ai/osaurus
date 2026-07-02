@@ -120,6 +120,84 @@ struct MetalGateTests {
         #expect(events == ["teardown-released", "gen-acquired"])
     }
 
+    // MARK: - Media prep owner — exclusive against every producer
+
+    @Test func mediaPrepProceedsWhenIdle() async {
+        await MetalGate.shared.enterMediaPrep(model: "omni-model")
+        await MetalGate.shared.exitMediaPrep(model: "omni-model")
+    }
+
+    @Test func mediaPrepWaitsForSameModelGenerationToRelease() async {
+        // The prepareInput hole: a media request's submit-thread encode evals
+        // must not overlap an in-flight decode even for the SAME model — the
+        // shared gen owner would have admitted it. Prove the exclusive prep
+        // owner waits for the generation to release.
+        let rec = GateOrderRecorder()
+        await MetalGate.shared.enterGeneration(model: "omni-model")
+        let waiter = Task {
+            await MetalGate.shared.enterMediaPrep(model: "omni-model")
+            await rec.record("prep-acquired")
+            await MetalGate.shared.exitMediaPrep(model: "omni-model")
+        }
+        try? await Task.sleep(for: .milliseconds(80))
+        await rec.record("gen-released")
+        await MetalGate.shared.exitGeneration(model: "omni-model")
+        _ = await waiter.value
+        let events = await rec.events
+        #expect(events == ["gen-released", "prep-acquired"])
+    }
+
+    @Test func mediaPrepsAreMutuallyExclusive() async {
+        // Two media requests' prep evals must not encode concurrently either
+        // (prep-vs-prep on two submit threads).
+        let rec = GateOrderRecorder()
+        await MetalGate.shared.enterMediaPrep(model: "omni-model")
+        let waiter = Task {
+            await MetalGate.shared.enterMediaPrep(model: "omni-model")
+            await rec.record("second-prep-acquired")
+            await MetalGate.shared.exitMediaPrep(model: "omni-model")
+        }
+        try? await Task.sleep(for: .milliseconds(80))
+        await rec.record("first-prep-released")
+        await MetalGate.shared.exitMediaPrep(model: "omni-model")
+        _ = await waiter.value
+        let events = await rec.events
+        #expect(events == ["first-prep-released", "second-prep-acquired"])
+    }
+
+    // MARK: - Source contract: media prep is actually gate-bracketed
+
+    @Test func mediaPrepIsGateBracketedInSource() throws {
+        // Pin the adapter wiring textually (no Metal in CI): the exclusive
+        // prep owner exists, and the adapter routes media-bearing prep
+        // through it while text-only prep keeps the shared generation owner.
+        let coreRoot = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()  // Service/
+            .deletingLastPathComponent()  // Tests/
+            .deletingLastPathComponent()  // OsaurusCore/
+
+        let gate = try String(
+            contentsOf: coreRoot.appendingPathComponent("Services/ModelRuntime/MetalGate.swift"),
+            encoding: .utf8
+        )
+        let adapter = try String(
+            contentsOf: coreRoot.appendingPathComponent(
+                "Services/ModelRuntime/MLXBatchAdapter.swift"
+            ),
+            encoding: .utf8
+        )
+
+        // Exclusive media-prep owner.
+        #expect(gate.contains("public func enterMediaPrep(model: String) async"))
+        #expect(gate.contains("public func exitMediaPrep(model: String)"))
+        #expect(gate.contains(#"acquire("prep:\(model)", shared: false)"#))
+
+        // The adapter branches on media and brackets prep with the right owner.
+        #expect(adapter.contains("await MetalGate.shared.enterMediaPrep(model: modelName)"))
+        #expect(adapter.contains("await MetalGate.shared.exitMediaPrep(model: modelName)"))
+        #expect(adapter.contains("let prepIsExclusive = prepChat?.hasMedia ?? false"))
+    }
+
     // MARK: - PII detection (Rampart) owner — exclusive against every producer
 
     @Test func piiDetectionProceedsWhenIdle() async {
