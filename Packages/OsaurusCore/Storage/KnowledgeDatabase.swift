@@ -922,6 +922,22 @@ public final class KnowledgeDatabase: @unchecked Sendable {
         return proposals
     }
 
+    /// Cheap pending-proposal count for the sidebar badge (avoids
+    /// loading full proposal contents via `listProposals`).
+    public func pendingProposalCount() throws -> Int {
+        var count = 0
+        try prepareAndExecute(
+            "SELECT COUNT(*) FROM proposals WHERE status = 'pending'",
+            bind: { _ in },
+            process: { stmt in
+                if sqlite3_step(stmt) == SQLITE_ROW {
+                    count = Int(sqlite3_column_int(stmt, 0))
+                }
+            }
+        )
+        return count
+    }
+
     public func updateProposalStatus(id: Int, status: KnowledgeProposalStatus) throws {
         try prepareAndExecute(
             "UPDATE proposals SET status = ?1, updated_at = ?2 WHERE id = ?3",
