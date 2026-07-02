@@ -1,0 +1,77 @@
+//
+//  KnowledgeCollection.swift
+//  osaurus
+//
+//  A knowledge collection is a user-curated folder of markdown documents
+//  ("knowledge": SOPs, templates, guides — human-governed reference
+//  material) that agents can search and read on demand. Distinct from
+//  memory, which is agent-written and distilled from conversations.
+//
+//  The folder is the source of truth and is indexed in place — the
+//  knowledge feature never mutates it. All indexes (SQLite + vectors)
+//  are derived, rebuildable artifacts. Documents are plain markdown,
+//  optionally carrying YAML frontmatter; when present, the Open
+//  Knowledge Format (OKF) reserved fields (`type`, `title`,
+//  `description`, `tags`, `timestamp`) are recognized for faceting.
+//
+
+import Foundation
+
+public struct KnowledgeCollection: Identifiable, Codable, Equatable, Sendable {
+    public var id: UUID
+    /// Display name; also how the model addresses the collection in tool
+    /// arguments (matched case-insensitively).
+    public var name: String
+    /// Short summary of what the corpus contains, surfaced to agents so
+    /// they know when to consult it.
+    public var summary: String
+    /// Absolute path to the folder of markdown documents.
+    public var folderPath: String
+    /// Disabled collections stay registered but are excluded from
+    /// indexing, search, and agent grants resolution.
+    public var isEnabled: Bool
+    public var createdAt: Date
+    public var updatedAt: Date
+
+    public init(
+        id: UUID = UUID(),
+        name: String,
+        summary: String = "",
+        folderPath: String,
+        isEnabled: Bool = true,
+        createdAt: Date = Date(),
+        updatedAt: Date = Date()
+    ) {
+        self.id = id
+        self.name = name
+        self.summary = summary
+        self.folderPath = folderPath
+        self.isEnabled = isEnabled
+        self.createdAt = createdAt
+        self.updatedAt = updatedAt
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(UUID.self, forKey: .id)
+        name = try c.decode(String.self, forKey: .name)
+        summary = try c.decodeIfPresent(String.self, forKey: .summary) ?? ""
+        folderPath = try c.decode(String.self, forKey: .folderPath)
+        isEnabled = try c.decodeIfPresent(Bool.self, forKey: .isEnabled) ?? true
+        createdAt = try c.decodeIfPresent(Date.self, forKey: .createdAt) ?? Date()
+        updatedAt = try c.decodeIfPresent(Date.self, forKey: .updatedAt) ?? Date()
+    }
+
+    public var folderURL: URL {
+        URL(fileURLWithPath: (folderPath as NSString).expandingTildeInPath, isDirectory: true)
+    }
+
+    /// Whether the collection's folder currently exists on disk. A missing
+    /// folder (unmounted volume, deleted directory) degrades search to the
+    /// already-indexed rows; `read_knowledge` reports it as unavailable.
+    public var folderExists: Bool {
+        var isDirectory: ObjCBool = false
+        return FileManager.default.fileExists(atPath: folderURL.path, isDirectory: &isDirectory)
+            && isDirectory.boolValue
+    }
+}
