@@ -476,7 +476,9 @@ public final class KnowledgeDatabase: @unchecked Sendable {
     }
 
     /// Delete every row belonging to a collection (registry delete or
-    /// full re-index).
+    /// full re-index): index rows AND its curation trail — orphaned
+    /// tickets/proposals would otherwise resurface in the review UI with
+    /// no collection to apply them to.
     public func deleteCollection(collectionId: String) throws {
         try prepareAndExecute(
             """
@@ -488,6 +490,16 @@ public final class KnowledgeDatabase: @unchecked Sendable {
         )
         try prepareAndExecute(
             "DELETE FROM documents WHERE collection_id = ?1",
+            bind: { stmt in Self.bindText(stmt, index: 1, value: collectionId) },
+            process: { stmt in _ = sqlite3_step(stmt) }
+        )
+        try prepareAndExecute(
+            "DELETE FROM tickets WHERE collection_id = ?1",
+            bind: { stmt in Self.bindText(stmt, index: 1, value: collectionId) },
+            process: { stmt in _ = sqlite3_step(stmt) }
+        )
+        try prepareAndExecute(
+            "DELETE FROM proposals WHERE collection_id = ?1",
             bind: { stmt in Self.bindText(stmt, index: 1, value: collectionId) },
             process: { stmt in _ = sqlite3_step(stmt) }
         )
