@@ -119,127 +119,83 @@ struct VADModeSettingsTab: View {
     // MARK: - VAD Toggle Card
 
     private var vadToggleCard: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            HStack(spacing: 12) {
-                ZStack {
-                    RoundedRectangle(cornerRadius: 12, style: .continuous)
-                        .fill(vadEnabled ? theme.successColor.opacity(0.15) : theme.accentColor.opacity(0.15))
-
-                    if vadEnabled {
-                        RoundedRectangle(cornerRadius: 12, style: .continuous)
-                            .fill(
-                                LinearGradient(
-                                    colors: [theme.successColor.opacity(0.1), Color.clear],
-                                    startPoint: .topLeading,
-                                    endPoint: .bottomTrailing
-                                )
-                            )
-                    }
-
-                    Image(systemName: vadEnabled ? "waveform.circle.fill" : "waveform.circle")
-                        .font(.system(size: 24, weight: .medium))
-                        .foregroundColor(vadEnabled ? theme.successColor : theme.accentColor)
-                }
-                .frame(width: 48, height: 48)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 12, style: .continuous)
-                        .strokeBorder(
-                            (vadEnabled ? theme.successColor : theme.accentColor).opacity(0.2),
-                            lineWidth: 1
-                        )
+        SettingsSection(title: "VAD Mode", icon: "waveform.circle") {
+            VStack(alignment: .leading, spacing: 12) {
+                SettingsToggle(
+                    title: L("Enable VAD Mode"),
+                    description: vadEnabled
+                        ? L("Always listening for wake words")
+                        : L("Voice-activated agent switching"),
+                    isOn: $vadEnabled
                 )
-
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("VAD Mode", bundle: .module)
-                        .font(.system(size: 15, weight: .semibold))
-                        .foregroundColor(theme.primaryText)
-
-                    Text(vadEnabled ? L("Always listening for wake words") : L("Voice-activated agent switching"))
-                        .font(.system(size: 12))
-                        .foregroundColor(theme.secondaryText)
-                }
-
-                Spacer()
-
-                Toggle("", isOn: $vadEnabled)
-                    .toggleStyle(SwitchToggleStyle(tint: theme.successColor))
-                    .labelsHidden()
-                    .disabled(!canEnableVAD)
-                    .opacity(canEnableVAD ? 1 : 0.5)
-                    .onChange(of: vadEnabled) { _, newValue in
-                        saveSettings()
-                        Task {
-                            if newValue {
-                                try? await vadService.start()
-                            } else {
-                                await vadService.stop()
-                            }
+                .disabled(!canEnableVAD)
+                .opacity(canEnableVAD ? 1 : 0.6)
+                .onChange(of: vadEnabled) { _, newValue in
+                    saveSettings()
+                    Task {
+                        if newValue {
+                            try? await vadService.start()
+                        } else {
+                            await vadService.stop()
                         }
                     }
-            }
-
-            // Status indicator
-            if vadEnabled {
-                HStack(spacing: 8) {
-                    VoiceStatusIndicator(
-                        state: vadServiceState,
-                        showLabel: true,
-                        compact: false
-                    )
-
-                    Spacer()
-
-                    if vadService.state == .listening {
-                        WaveformView(level: vadService.audioLevel, style: .minimal)
-                            .frame(width: 36, height: 36)
-                    }
                 }
-                .padding(14)
-                .background(
-                    ZStack {
+
+                // Status indicator
+                if vadEnabled {
+                    HStack(spacing: 8) {
+                        VoiceStatusIndicator(
+                            state: vadServiceState,
+                            showLabel: true,
+                            compact: false
+                        )
+
+                        Spacer()
+
+                        if vadService.state == .listening {
+                            WaveformView(level: vadService.audioLevel, style: .minimal)
+                                .frame(width: 36, height: 36)
+                        }
+                    }
+                    .padding(14)
+                    .background(
                         RoundedRectangle(cornerRadius: 10, style: .continuous)
                             .fill(theme.tertiaryBackground.opacity(0.8))
+                    )
+                    .overlay(
                         RoundedRectangle(cornerRadius: 10, style: .continuous)
-                            .fill(
-                                LinearGradient(
-                                    colors: [theme.successColor.opacity(0.05), Color.clear],
-                                    startPoint: .leading,
-                                    endPoint: .trailing
-                                )
-                            )
-                    }
-                )
-                .overlay(
-                    RoundedRectangle(cornerRadius: 10, style: .continuous)
-                        .strokeBorder(theme.successColor.opacity(0.15), lineWidth: 1)
+                            .strokeBorder(theme.successColor.opacity(0.15), lineWidth: 1)
+                    )
+                }
+
+                infoBox(
+                    "When enabled, Osaurus will continuously listen for agent names. Say a agent's name to automatically open a chat with that agent."
                 )
             }
+        }
+    }
 
-            // Info about VAD mode
-            HStack(alignment: .top, spacing: 8) {
-                Image(systemName: "info.circle")
-                    .font(.system(size: 12))
-                    .foregroundColor(theme.accentColor)
+    /// Accent-tinted informational callout shared by this tab's sections.
+    private func infoBox(_ text: String) -> some View {
+        HStack(alignment: .top, spacing: 8) {
+            Image(systemName: "info.circle")
+                .font(.system(size: 12))
+                .foregroundColor(theme.accentColor)
 
-                Text(
-                    "When enabled, Osaurus will continuously listen for agent names. Say a agent's name to automatically open a chat with that agent.",
-                    bundle: .module
-                )
+            Text(LocalizedStringKey(text), bundle: .module)
                 .font(.system(size: 12))
                 .foregroundColor(theme.secondaryText)
-            }
-            .padding(12)
-            .background(
-                ZStack {
-                    RoundedRectangle(cornerRadius: 8, style: .continuous)
-                        .fill(theme.accentColor.opacity(0.08))
-                    RoundedRectangle(cornerRadius: 8, style: .continuous)
-                        .strokeBorder(theme.accentColor.opacity(0.12), lineWidth: 1)
-                }
-            )
+                .fixedSize(horizontal: false, vertical: true)
         }
-        .padding(20)
-        .modifier(SettingsCardStyle(accentColor: vadEnabled ? theme.successColor : nil))
+        .padding(12)
+        .background(
+            ZStack {
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .fill(theme.accentColor.opacity(0.08))
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .strokeBorder(theme.accentColor.opacity(0.12), lineWidth: 1)
+            }
+        )
     }
 
     private var vadServiceState: VoiceState {
@@ -254,376 +210,279 @@ struct VADModeSettingsTab: View {
     // MARK: - Requirements Card
 
     private var requirementsCard: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            HStack(spacing: 12) {
-                CardIconBox(icon: "exclamationmark.triangle.fill", color: theme.warningColor)
+        SettingsSection(title: "Setup Required", icon: "exclamationmark.triangle.fill") {
+            VStack(alignment: .leading, spacing: 12) {
+                Text("Complete these steps to enable VAD mode", bundle: .module)
+                    .font(.system(size: 12))
+                    .foregroundColor(theme.secondaryText)
 
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("Setup Required", bundle: .module)
-                        .font(.system(size: 15, weight: .semibold))
-                        .foregroundColor(theme.primaryText)
-
-                    Text("Complete these steps to enable VAD mode", bundle: .module)
-                        .font(.system(size: 12))
-                        .foregroundColor(theme.secondaryText)
-                }
-
-                Spacer()
-            }
-
-            VStack(spacing: 12) {
-                RequirementRow(
-                    title: L("Microphone Access"),
-                    isComplete: speechService.microphonePermissionGranted,
-                    action: {
-                        Task {
-                            _ = await speechService.requestMicrophonePermission()
+                VStack(spacing: 12) {
+                    RequirementRow(
+                        title: L("Microphone Access"),
+                        isComplete: speechService.microphonePermissionGranted,
+                        action: {
+                            Task {
+                                _ = await speechService.requestMicrophonePermission()
+                            }
                         }
-                    }
-                )
+                    )
 
-                RequirementRow(
-                    title: L("Speech Model Downloaded"),
-                    isComplete: modelManager.downloadedModelsCount > 0,
-                    action: nil
-                )
+                    RequirementRow(
+                        title: L("Speech Model Downloaded"),
+                        isComplete: modelManager.downloadedModelsCount > 0,
+                        action: nil
+                    )
 
-                RequirementRow(
-                    title: L("Model Selected"),
-                    isComplete: modelManager.selectedModel != nil,
-                    action: nil
-                )
+                    RequirementRow(
+                        title: L("Model Selected"),
+                        isComplete: modelManager.selectedModel != nil,
+                        action: nil
+                    )
+                }
             }
         }
-        .padding(20)
-        .modifier(SettingsCardStyle(accentColor: theme.warningColor))
     }
 
     // MARK: - Agent Selection Card
 
     private var agentSelectionCard: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            HStack(spacing: 12) {
-                CardIconBox(icon: "person.2.fill", color: theme.accentColor)
+        SettingsSection(title: "Activated Agents", icon: "person.2") {
+            VStack(alignment: .leading, spacing: 12) {
+                Text("Select which agents can be activated by voice", bundle: .module)
+                    .font(.system(size: 12))
+                    .foregroundColor(theme.secondaryText)
 
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("Activated Agents", bundle: .module)
-                        .font(.system(size: 15, weight: .semibold))
-                        .foregroundColor(theme.primaryText)
-
-                    Text("Select which agents can be activated by voice", bundle: .module)
-                        .font(.system(size: 12))
-                        .foregroundColor(theme.secondaryText)
-                }
-
-                Spacer()
-            }
-
-            if enabledAgentIds.isEmpty {
-                HStack(spacing: 8) {
-                    Image(systemName: "info.circle")
-                        .font(.system(size: 12))
-                        .foregroundColor(theme.warningColor)
-                    Text("Select at least one agent to enable VAD", bundle: .module)
-                        .font(.system(size: 12))
-                        .foregroundColor(theme.warningColor)
-                }
-                .padding(12)
-                .background(
-                    ZStack {
-                        RoundedRectangle(cornerRadius: 8, style: .continuous)
-                            .fill(theme.warningColor.opacity(0.08))
-                        RoundedRectangle(cornerRadius: 8, style: .continuous)
-                            .strokeBorder(theme.warningColor.opacity(0.15), lineWidth: 1)
+                if enabledAgentIds.isEmpty {
+                    HStack(spacing: 8) {
+                        Image(systemName: "info.circle")
+                            .font(.system(size: 12))
+                            .foregroundColor(theme.warningColor)
+                        Text("Select at least one agent to enable VAD", bundle: .module)
+                            .font(.system(size: 12))
+                            .foregroundColor(theme.warningColor)
                     }
-                )
-            }
-
-            // Agent list
-            VStack(spacing: 8) {
-                ForEach(agentManager.agents) { agent in
-                    AgentToggleRow(
-                        agent: agent,
-                        isEnabled: enabledAgentIds.contains(agent.id),
-                        onToggle: { enabled in
-                            if enabled {
-                                if !enabledAgentIds.contains(agent.id) {
-                                    enabledAgentIds.append(agent.id)
-                                }
-                            } else {
-                                enabledAgentIds.removeAll { $0 == agent.id }
-                            }
-                            saveSettings()
+                    .padding(12)
+                    .background(
+                        ZStack {
+                            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                .fill(theme.warningColor.opacity(0.08))
+                            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                .strokeBorder(theme.warningColor.opacity(0.15), lineWidth: 1)
                         }
                     )
                 }
+
+                // Agent list
+                VStack(spacing: 8) {
+                    ForEach(agentManager.agents) { agent in
+                        AgentToggleRow(
+                            agent: agent,
+                            isEnabled: enabledAgentIds.contains(agent.id),
+                            onToggle: { enabled in
+                                if enabled {
+                                    if !enabledAgentIds.contains(agent.id) {
+                                        enabledAgentIds.append(agent.id)
+                                    }
+                                } else {
+                                    enabledAgentIds.removeAll { $0 == agent.id }
+                                }
+                                saveSettings()
+                            }
+                        )
+                    }
+                }
             }
         }
-        .padding(20)
-        .modifier(SettingsCardStyle(accentColor: nil))
     }
 
     // MARK: - Wake Word Settings Card
 
     private var wakeWordSettingsCard: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            HStack(spacing: 12) {
-                CardIconBox(icon: "text.bubble.fill", color: theme.accentColor)
-
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("Wake Word Settings", bundle: .module)
-                        .font(.system(size: 15, weight: .semibold))
-                        .foregroundColor(theme.primaryText)
-
-                    Text("Configure how wake words are detected", bundle: .module)
-                        .font(.system(size: 12))
-                        .foregroundColor(theme.secondaryText)
-                }
-
-                Spacer()
-            }
-
-            // Custom wake phrase
-            VStack(alignment: .leading, spacing: 8) {
-                Text("Custom Wake Phrase (Optional)", bundle: .module)
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundColor(theme.secondaryText)
-
-                TextField(text: $customWakePhrase, prompt: Text("e.g., Hey Osaurus", bundle: .module)) {
-                    Text("e.g., Hey Osaurus", bundle: .module)
-                }
-                .textFieldStyle(.plain)
-                .font(.system(size: 14))
-                .foregroundColor(theme.primaryText)
-                .padding(12)
-                .background(
-                    RoundedRectangle(cornerRadius: 10)
-                        .fill(theme.inputBackground)
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 10)
-                                .stroke(theme.inputBorder, lineWidth: 1)
-                        )
+        SettingsSection(title: "Wake Word", icon: "text.bubble") {
+            VStack(alignment: .leading, spacing: 12) {
+                StyledSettingsTextField(
+                    label: "Custom Wake Phrase (Optional)",
+                    text: $customWakePhrase,
+                    placeholder: "e.g., Hey Osaurus",
+                    help: "Leave empty to only use agent names as wake words"
                 )
                 .onChange(of: customWakePhrase) { _, _ in
                     saveSettings()
                 }
 
-                Text("Leave empty to only use agent names as wake words", bundle: .module)
-                    .font(.system(size: 11))
-                    .foregroundColor(theme.tertiaryText)
+                infoBox("Detection sensitivity is configured in the Setup tab")
             }
-
-            // Info about sensitivity
-            HStack(spacing: 8) {
-                Image(systemName: "info.circle")
-                    .font(.system(size: 12))
-                    .foregroundColor(theme.accentColor)
-                Text("Detection sensitivity is configured in the Audio tab", bundle: .module)
-                    .font(.system(size: 11))
-                    .foregroundColor(theme.secondaryText)
-            }
-            .padding(12)
-            .background(
-                ZStack {
-                    RoundedRectangle(cornerRadius: 8, style: .continuous)
-                        .fill(theme.accentColor.opacity(0.08))
-                    RoundedRectangle(cornerRadius: 8, style: .continuous)
-                        .strokeBorder(theme.accentColor.opacity(0.12), lineWidth: 1)
-                }
-            )
         }
-        .padding(20)
-        .modifier(SettingsCardStyle(accentColor: nil))
     }
 
     // MARK: - Behavior Settings Card
 
     private var behaviorSettingsCard: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            HStack(spacing: 12) {
-                CardIconBox(icon: "gearshape.fill", color: theme.accentColor)
-
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("Behavior", bundle: .module)
-                        .font(.system(size: 15, weight: .semibold))
-                        .foregroundColor(theme.primaryText)
-
-                    Text("Configure what happens when a wake word is detected", bundle: .module)
-                        .font(.system(size: 12))
-                        .foregroundColor(theme.secondaryText)
-                }
-
-                Spacer()
-            }
-
-            // Auto-start voice input
-            ToggleSettingRow(
+        SettingsSection(title: "Behavior", icon: "gearshape") {
+            SettingsToggle(
                 title: L("Auto-Start Voice Input"),
-                description: L("Immediately start voice input after agent activation"),
-                isOn: $autoStartVoiceInput,
-                onChange: { saveSettings() }
+                description: "Immediately start voice input after agent activation",
+                isOn: $autoStartVoiceInput
             )
+            .onChange(of: autoStartVoiceInput) { _, _ in
+                saveSettings()
+            }
         }
-        .padding(20)
-        .modifier(SettingsCardStyle(accentColor: nil))
     }
 
     // MARK: - Test Area Card
 
     private var testAreaCard: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            HStack {
-                Text("Test Wake Word Detection", bundle: .module)
-                    .font(.system(size: 15, weight: .semibold))
-                    .foregroundColor(theme.primaryText)
+        SettingsSection(title: "Test Wake Word Detection", icon: "mic") {
+            VStack(alignment: .leading, spacing: 16) {
+                HStack {
+                    Text("Speak an agent name to test detection", bundle: .module)
+                        .font(.system(size: 12))
+                        .foregroundColor(theme.secondaryText)
 
-                Spacer()
-
-                if isTestingVAD {
-                    HStack(spacing: 6) {
-                        Circle()
-                            .fill(theme.errorColor)
-                            .frame(width: 8, height: 8)
-                        Text("LISTENING", bundle: .module)
-                            .font(.system(size: 10, weight: .bold))
-                            .foregroundColor(theme.errorColor)
-                    }
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 5)
-                    .background(
-                        ZStack {
-                            Capsule()
-                                .fill(theme.errorColor.opacity(0.1))
-                            Capsule()
-                                .strokeBorder(theme.errorColor.opacity(0.2), lineWidth: 1)
-                        }
-                    )
-                }
-            }
-
-            Text("Speak an agent name to test detection", bundle: .module)
-                .font(.system(size: 12))
-                .foregroundColor(theme.secondaryText)
-
-            // Waveform
-            if isTestingVAD {
-                WaveformView(level: speechService.audioLevel, style: .bars, barCount: 20)
-                    .frame(height: 48)
-            }
-
-            // Transcription
-            VStack(alignment: .leading, spacing: 8) {
-                Text(testTranscription.isEmpty ? "Waiting for speech..." : testTranscription)
-                    .font(.system(size: 15))
-                    .foregroundColor(testTranscription.isEmpty ? theme.tertiaryText : theme.primaryText)
-                    .italic(testTranscription.isEmpty)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-            }
-            .padding(16)
-            .background(
-                ZStack {
-                    RoundedRectangle(cornerRadius: 12, style: .continuous)
-                        .fill(theme.inputBackground)
+                    Spacer()
 
                     if isTestingVAD {
-                        RoundedRectangle(cornerRadius: 12, style: .continuous)
-                            .fill(
-                                LinearGradient(
-                                    colors: [theme.accentColor.opacity(0.05), Color.clear],
-                                    startPoint: .top,
-                                    endPoint: .bottom
-                                )
-                            )
+                        HStack(spacing: 6) {
+                            Circle()
+                                .fill(theme.errorColor)
+                                .frame(width: 8, height: 8)
+                            Text("LISTENING", bundle: .module)
+                                .font(.system(size: 10, weight: .bold))
+                                .foregroundColor(theme.errorColor)
+                        }
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 5)
+                        .background(
+                            ZStack {
+                                Capsule()
+                                    .fill(theme.errorColor.opacity(0.1))
+                                Capsule()
+                                    .strokeBorder(theme.errorColor.opacity(0.2), lineWidth: 1)
+                            }
+                        )
                     }
                 }
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .strokeBorder(
-                        LinearGradient(
-                            colors: [
-                                isTestingVAD ? theme.accentColor.opacity(0.5) : theme.glassEdgeLight.opacity(0.15),
-                                isTestingVAD ? theme.accentColor.opacity(0.2) : theme.inputBorder,
-                            ],
-                            startPoint: .topLeading,
-                            endPoint: .bottomTrailing
-                        ),
-                        lineWidth: isTestingVAD ? 1.5 : 1
-                    )
-            )
 
-            // Detection result
-            if let detection = testDetection {
-                HStack(spacing: 12) {
-                    Image(systemName: "checkmark.circle.fill")
-                        .font(.system(size: 24))
-                        .foregroundColor(theme.successColor)
+                // Waveform
+                if isTestingVAD {
+                    WaveformView(level: speechService.audioLevel, style: .bars, barCount: 20)
+                        .frame(height: 48)
+                }
 
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("Detected: \(detection.agentName)", bundle: .module)
-                            .font(.system(size: 14, weight: .semibold))
+                // Transcription
+                VStack(alignment: .leading, spacing: 8) {
+                    Text(testTranscription.isEmpty ? "Waiting for speech..." : testTranscription)
+                        .font(.system(size: 15))
+                        .foregroundColor(testTranscription.isEmpty ? theme.tertiaryText : theme.primaryText)
+                        .italic(testTranscription.isEmpty)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .padding(16)
+                .background(
+                    ZStack {
+                        RoundedRectangle(cornerRadius: 12, style: .continuous)
+                            .fill(theme.inputBackground)
+
+                        if isTestingVAD {
+                            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                                .fill(
+                                    LinearGradient(
+                                        colors: [theme.accentColor.opacity(0.05), Color.clear],
+                                        startPoint: .top,
+                                        endPoint: .bottom
+                                    )
+                                )
+                        }
+                    }
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                        .strokeBorder(
+                            LinearGradient(
+                                colors: [
+                                    isTestingVAD
+                                        ? theme.accentColor.opacity(0.5) : theme.glassEdgeLight.opacity(0.15),
+                                    isTestingVAD ? theme.accentColor.opacity(0.2) : theme.inputBorder,
+                                ],
+                                startPoint: .topLeading,
+                                endPoint: .bottomTrailing
+                            ),
+                            lineWidth: isTestingVAD ? 1.5 : 1
+                        )
+                )
+
+                // Detection result
+                if let detection = testDetection {
+                    HStack(spacing: 12) {
+                        Image(systemName: "checkmark.circle.fill")
+                            .font(.system(size: 24))
                             .foregroundColor(theme.successColor)
-                        Text("Confidence: \(Int(detection.confidence * 100))%", bundle: .module)
+
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Detected: \(detection.agentName)", bundle: .module)
+                                .font(.system(size: 14, weight: .semibold))
+                                .foregroundColor(theme.successColor)
+                            Text("Confidence: \(Int(detection.confidence * 100))%", bundle: .module)
+                                .font(.system(size: 12))
+                                .foregroundColor(theme.secondaryText)
+                        }
+
+                        Spacer()
+                    }
+                    .padding(14)
+                    .background(
+                        ZStack {
+                            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                                .fill(theme.successColor.opacity(0.1))
+                            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                                .strokeBorder(theme.successColor.opacity(0.2), lineWidth: 1)
+                        }
+                    )
+                    .transition(.opacity.combined(with: .scale(scale: 0.95)))
+                }
+
+                // Error
+                if let error = testError {
+                    HStack(spacing: 8) {
+                        Image(systemName: "exclamationmark.triangle.fill")
+                            .foregroundColor(theme.errorColor)
+                        Text(error)
                             .font(.system(size: 12))
-                            .foregroundColor(theme.secondaryText)
+                            .foregroundColor(theme.errorColor)
+                    }
+                }
+
+                // Controls
+                HStack(spacing: 16) {
+                    TestButton(
+                        isActive: isTestingVAD,
+                        action: toggleTest
+                    )
+
+                    if testDetection != nil || !testTranscription.isEmpty {
+                        Button(action: clearTest) {
+                            Text("Clear", bundle: .module)
+                                .font(.system(size: 13, weight: .medium))
+                                .foregroundColor(theme.secondaryText)
+                                .padding(.horizontal, 16)
+                                .padding(.vertical, 10)
+                                .background(
+                                    ZStack {
+                                        RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                            .fill(theme.tertiaryBackground)
+                                        RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                            .strokeBorder(theme.primaryBorder.opacity(0.15), lineWidth: 1)
+                                    }
+                                )
+                        }
+                        .buttonStyle(.plain)
                     }
 
                     Spacer()
                 }
-                .padding(14)
-                .background(
-                    ZStack {
-                        RoundedRectangle(cornerRadius: 10, style: .continuous)
-                            .fill(theme.successColor.opacity(0.1))
-                        RoundedRectangle(cornerRadius: 10, style: .continuous)
-                            .strokeBorder(theme.successColor.opacity(0.2), lineWidth: 1)
-                    }
-                )
-                .transition(.opacity.combined(with: .scale(scale: 0.95)))
-            }
-
-            // Error
-            if let error = testError {
-                HStack(spacing: 8) {
-                    Image(systemName: "exclamationmark.triangle.fill")
-                        .foregroundColor(theme.errorColor)
-                    Text(error)
-                        .font(.system(size: 12))
-                        .foregroundColor(theme.errorColor)
-                }
-            }
-
-            // Controls
-            HStack(spacing: 16) {
-                TestButton(
-                    isActive: isTestingVAD,
-                    action: toggleTest
-                )
-
-                if testDetection != nil || !testTranscription.isEmpty {
-                    Button(action: clearTest) {
-                        Text("Clear", bundle: .module)
-                            .font(.system(size: 13, weight: .medium))
-                            .foregroundColor(theme.secondaryText)
-                            .padding(.horizontal, 16)
-                            .padding(.vertical, 10)
-                            .background(
-                                ZStack {
-                                    RoundedRectangle(cornerRadius: 8, style: .continuous)
-                                        .fill(theme.tertiaryBackground)
-                                    RoundedRectangle(cornerRadius: 8, style: .continuous)
-                                        .strokeBorder(theme.primaryBorder.opacity(0.15), lineWidth: 1)
-                                }
-                            )
-                    }
-                    .buttonStyle(.plain)
-                }
-
-                Spacer()
             }
         }
-        .padding(20)
-        .modifier(SettingsCardStyle(accentColor: isTestingVAD ? theme.errorColor : nil))
         .onChange(of: speechService.currentTranscription) { _, newValue in
             if isTestingVAD {
                 testTranscription = newValue
@@ -898,72 +757,6 @@ private struct AgentToggleRow: View {
     }
 }
 
-private struct ToggleSettingRow: View {
-    @Environment(\.theme) private var theme
-
-    let title: String
-    let description: String
-    @Binding var isOn: Bool
-    var onChange: (() -> Void)?
-
-    var body: some View {
-        HStack(spacing: 12) {
-            VStack(alignment: .leading, spacing: 4) {
-                Text(title)
-                    .font(.system(size: 14, weight: .medium))
-                    .foregroundColor(theme.primaryText)
-
-                Text(description)
-                    .font(.system(size: 12))
-                    .foregroundColor(theme.secondaryText)
-            }
-
-            Spacer()
-
-            Toggle("", isOn: $isOn)
-                .toggleStyle(SwitchToggleStyle(tint: theme.accentColor))
-                .labelsHidden()
-                .onChange(of: isOn) { _, _ in
-                    onChange?()
-                }
-        }
-    }
-}
-
-// MARK: - Card Icon Box
-
-private struct CardIconBox: View {
-    let icon: String
-    let color: Color
-
-    @Environment(\.theme) private var theme
-
-    var body: some View {
-        ZStack {
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .fill(color.opacity(0.15))
-
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .fill(
-                    LinearGradient(
-                        colors: [color.opacity(0.1), Color.clear],
-                        startPoint: .topLeading,
-                        endPoint: .bottomTrailing
-                    )
-                )
-
-            Image(systemName: icon)
-                .font(.system(size: 20, weight: .medium))
-                .foregroundColor(color)
-        }
-        .frame(width: 48, height: 48)
-        .overlay(
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .strokeBorder(color.opacity(0.2), lineWidth: 1)
-        )
-    }
-}
-
 // MARK: - Test Button
 
 private struct TestButton: View {
@@ -987,8 +780,10 @@ private struct TestButton: View {
             .background(buttonBackground)
             .overlay(buttonBorder)
             .shadow(
+                // Fixed radius: animating shadow radius re-renders the blur
+                // every frame; opacity alone reads the same on hover.
                 color: (isActive ? theme.errorColor : theme.accentColor).opacity(isHovered ? 0.4 : 0.25),
-                radius: isHovered ? 10 : 6,
+                radius: 8,
                 x: 0,
                 y: 2
             )
@@ -1020,68 +815,6 @@ private struct TestButton: View {
                     colors: [
                         Color.white.opacity(isHovered ? 0.3 : 0.2),
                         (isActive ? theme.errorColor : theme.accentColor).opacity(0.3),
-                    ],
-                    startPoint: .topLeading,
-                    endPoint: .bottomTrailing
-                ),
-                lineWidth: 1
-            )
-    }
-}
-
-// MARK: - Settings Card Style
-
-private struct SettingsCardStyle: ViewModifier {
-    var accentColor: Color?
-
-    @Environment(\.theme) private var theme
-
-    func body(content: Content) -> some View {
-        content
-            .background(cardBackground)
-            .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-            .overlay(cardBorder)
-            .shadow(color: theme.shadowColor.opacity(0.08), radius: 8, x: 0, y: 4)
-    }
-
-    private var cardBackground: some View {
-        ZStack {
-            // Layer 1: Glass material
-            if theme.glassEnabled {
-                RoundedRectangle(cornerRadius: 16, style: .continuous)
-                    .fill(.ultraThinMaterial)
-            }
-
-            // Layer 2: Card background
-            RoundedRectangle(cornerRadius: 16, style: .continuous)
-                .fill(theme.cardBackground.opacity(theme.isDark ? 0.85 : 0.92))
-
-            // Layer 3: Subtle accent gradient at top
-            if let accent = accentColor {
-                LinearGradient(
-                    colors: [accent.opacity(theme.isDark ? 0.08 : 0.05), Color.clear],
-                    startPoint: .top,
-                    endPoint: .center
-                )
-                .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-            } else {
-                LinearGradient(
-                    colors: [theme.accentColor.opacity(theme.isDark ? 0.04 : 0.02), Color.clear],
-                    startPoint: .top,
-                    endPoint: .center
-                )
-                .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-            }
-        }
-    }
-
-    private var cardBorder: some View {
-        RoundedRectangle(cornerRadius: 16, style: .continuous)
-            .strokeBorder(
-                LinearGradient(
-                    colors: [
-                        accentColor?.opacity(0.25) ?? theme.glassEdgeLight.opacity(0.15),
-                        accentColor?.opacity(0.1) ?? theme.cardBorder.opacity(0.8),
                     ],
                     startPoint: .topLeading,
                     endPoint: .bottomTrailing

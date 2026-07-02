@@ -20,6 +20,11 @@ public final class ManagementStateManager: ObservableObject {
     /// VoiceView observes this and resets it to nil after applying.
     @Published public var voiceSubTabRequest: String?
 
+    /// One-shot request to focus a specific sub-tab inside `MemoryView`
+    /// (raw value of `MemoryTab`, e.g. "settings"). `MemoryView` observes
+    /// this and resets it to nil after applying.
+    @Published public var memorySubTabRequest: String?
+
     /// One-shot request to focus a specific sub-tab inside `ImageGenerationView`
     /// (raw value of `ImageGenerationTab`, e.g. "Models"). `ImageGenerationView`
     /// observes this and resets it to nil after applying.

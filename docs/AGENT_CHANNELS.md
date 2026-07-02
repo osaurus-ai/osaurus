@@ -95,14 +95,30 @@ configuration foundation.
       ],
       "customHTTP": {
         "baseURL": "https://hooks.example.test",
+        "allowedHosts": ["hooks.example.test"],
+        "allowedMethods": ["POST"],
+        "allowInsecureHTTP": false,
+        "timeoutSeconds": 15,
+        "maxResponseBytes": 131072,
         "actions": {
           "send_message": {
             "method": "POST",
-            "path": "/rooms/{room_id}/messages",
+            "path": "/rooms/{{input.room_id}}/messages",
             "headers": {
-              "Authorization": "Bearer ${secret:bearer}"
+              "Authorization": "Bearer {{secret.bearer}}",
+              "Content-Type": "application/json"
             },
-            "bodyTemplate": "{\"text\":\"${content}\"}"
+            "bodyTemplate": "{\"text\":{{input.content}}}",
+            "successStatusCodes": [200, 201, 202],
+            "responseMapping": {
+              "idPath": "id",
+              "contentPath": "text",
+              "timestampPath": "created_at"
+            },
+            "idempotency": {
+              "header": "Idempotency-Key",
+              "responseIdPath": "id"
+            }
           }
         }
       }
@@ -111,10 +127,125 @@ configuration foundation.
 }
 ```
 
-Custom HTTP execution is intentionally not enabled until the request templating,
-credential substitution, response mapping, and security review are implemented.
-Until then, JSON custom channels can be loaded and diagnosed, while executable
-actions are provided by native adapters such as Discord.
+Custom JSON execution is implemented as a configuration-only adapter behind the
+standard `agent_channel_*` tools. It does not add provider-specific standalone
+tools. Each configured action must map to a standard Agent Channel action, and
+the runner enforces the same read/write gates as native adapters before it
+builds an HTTP request.
+
+## Safe Custom JSON Runner
+
+Custom JSON channels are bounded HTTP adapters for services that expose simple
+JSON APIs. They are intended for connector-style integrations, not arbitrary
+network browsing.
+
+Request safety:
+
+- `baseURL` must be an absolute HTTP(S) URL. HTTPS is required unless
+  `allowInsecureHTTP` is true.
+- `allowedHosts` limits the final request host. When omitted, only the base URL
+  host is allowed.
+- `allowedMethods` limits methods globally per connection. Each action method
+  must be an uppercase token and must be allowlisted.
+- Action `path` values must start with `/` and cannot contain `//`, `://`, `?`,
+  `#`, or control characters.
+- Localhost, loopback, RFC1918 private IPv4 ranges, link-local/cloud metadata
+  addresses, carrier-grade NAT, multicast, IPv6 loopback, IPv6 link-local, and
+  IPv6 unique-local hosts are denied before dispatch.
+- Redirects are disabled by the default runner session.
+- Request bodies are capped, responses are capped by `maxResponseBytes`, and
+  action-level timeout/response limits are clamped.
+- Headers cannot override `Host`, `Content-Length`, `Connection`, or
+  `Transfer-Encoding`, and header names/values reject invalid control data.
+
+Read/write gates:
+
+- `list_rooms` checks `spaceAllowlist` when it is non-empty.
+- `read_messages`, `read_thread`, and `search_messages` require room ids in
+  `readRoomAllowlist`.
+- `draft_message`, `send_message`, and `reply_thread` require `writeEnabled`
+  and target ids in `writeRoomAllowlist`.
+- `send_message` and `reply_thread` also require `confirm_send: true`.
+- `draft_message` is a local dry run. It returns a redacted request summary and
+  never dispatches HTTP.
+- The custom runner has an injectable authorization policy hook so tests and
+  future shared Agent Channel contracts can deny a standard action after the
+  static allowlists pass and before HTTP dispatch.
+
+Templates:
+
+- Supported placeholders are `{{input.name}}`, `{{connection.id}}`,
+  `{{connection.name}}`, `{{connection.kind}}`, `{{secret.name}}`, and
+  `{{idempotency.key}}`.
+- Path placeholders are percent-encoded as path segments.
+- Query and header placeholders render as raw strings, after newline/header
+  validation.
+- JSON request bodies are parsed after rendering. For JSON fields, leave
+  placeholders unquoted: use `"text":{{input.content}}`, not
+  `"text":"{{input.content}}"`. The renderer inserts a valid JSON literal, so
+  quotes and braces inside user content cannot escape into sibling fields.
+- Non-JSON request bodies may be static, but cannot contain placeholders. This
+  avoids form/XML/text body injection through user-controlled message content.
+- Unknown placeholders, missing inputs, missing secrets, and malformed rendered
+  JSON reject the action before dispatch.
+
+Secrets:
+
+- The JSON file stores only `secrets` references:
+  `{ "name": "bearer", "keychainId": "ops_webhook_token" }`.
+- Runtime lookup uses Keychain entries under plugin id
+  `osaurus.agent-channel.<connection_id>` for the default agent, trying
+  `keychainId` first and then `name`.
+- Diagnostics report secret names and placeholder references only. They do not
+  resolve or print raw secret values.
+- Provider error bodies and mapped raw JSON are scrubbed for any resolved secret
+  values before they enter tool output.
+
+Responses:
+
+- `responseMapping.itemsPath` selects arrays for `list_spaces`, `list_rooms`,
+  `read_messages`, and `search_messages`; defaults are `spaces`, `rooms`, and
+  `messages`.
+- `idPath`, `namePath`, `roomIdPath`, `threadIdPath`, `contentPath`,
+  `authorIdPath`, `authorNamePath`, `timestampPath`, and `cursorPath` select
+  fields inside provider objects.
+- Mapping paths are bounded: at most 160 UTF-8 bytes, 12 dot-separated
+  segments, no empty/control/template/wildcard/bracket syntax, and array
+  indexes must be 1,000 or lower. Mapped row output is capped at 100 rows.
+- Read and search results are marked `partial: true` because the runner only
+  proves the provider response slice it fetched.
+- Successful writes return `partial_write: false` and
+  `delivery_status: "confirmed"`.
+- If cancellation, transport failure, HTTP failure, or malformed write response
+  happens after dispatch, tool failures include a `partial_write_status` such as
+  `cancelled_after_dispatch`, `transport_unconfirmed`,
+  `http_status_unconfirmed`, or `malformed_write_response`.
+- When a write receives a 2xx response but JSON parsing or response mapping
+  fails, the idempotency ledger preserves an unconfirmed terminal state for the
+  key so an immediate retry cannot duplicate the delivery.
+
+Idempotency:
+
+- Configure `idempotency.header` to send an idempotency key with write actions.
+- Configure `idempotency.keyTemplate` when the provider requires a specific key
+  format; otherwise Osaurus derives a stable key from connection id, action,
+  target, and content.
+- Configure `idempotency.responseIdPath` when the provider's id field differs
+  from the normal response mapping.
+- Repeated write attempts with the same completed key are suppressed in-process
+  and return `delivery_status: "duplicate_suppressed"` without dispatching
+  another HTTP request. Concurrent repeats while the first request is still in
+  flight are reserved and return
+  `delivery_status: "duplicate_in_flight_suppressed"` without a second
+  delivery attempt.
+
+Diagnostics:
+
+`agent_channel_diagnostics` for a custom JSON connection is a dry run. It
+validates base URL safety, configured method allowlists, header names, template
+inputs, secret reference names, response mapping presence, idempotency presence,
+and per-action request shape without resolving secrets or making network
+requests.
 
 ## Connection Center Validation
 
@@ -122,9 +253,13 @@ The connection center validates channel definitions before saving:
 
 - `discord` is reserved for the native Discord adapter.
 - Custom HTTP connections require an HTTP or HTTPS base URL.
+- Custom HTTP base URLs run through the same blocked-host policy used by the
+  runner, so localhost/private/link-local targets are rejected before save.
 - Custom action names must match supported standard actions.
 - HTTP action paths must start with `/`.
 - Header/query fields and secret references reject line breaks.
+- `responseMapping` paths and `idempotency.responseIdPath` must satisfy the
+  same bounded response-path rules used at runtime.
 - Secret references store only `name=keychain-id` pointers, not raw credentials.
 
 ## Discord Connection
@@ -159,6 +294,10 @@ The schema is intentionally provider-neutral:
   `connection_id + provider_event_id`.
 - `channel_receive_cursors` stores optional per-room cursors for polling or
   relay catch-up.
+- `channel_audit_events` stores redacted receive/action decisions so operators
+  can prove whether an external message was accepted, denied, or treated as a
+  duplicate while keeping copied support evidence bounded and best-effort
+  redacted.
 
 Native adapters should write message snapshots whenever they read or send a
 message. Discord does this for `read_messages`, `search_messages`, and
@@ -211,9 +350,37 @@ out of provider event ids, the helper still requires an allow decision and uses
 the normalized provider message id, bound into that allow decision, to suppress
 duplicate dispatch for the same message snapshot.
 
-This PR does not add a live Discord receive relay. It adds the durable message
-and duplicate-filtering foundation that a relay, webhook receiver, Slack
-adapter, or Telegram adapter can share.
+Receive decisions also write a redacted audit row. Accepted rows record whether
+the normalized snapshot was inserted and dispatchable. Duplicate rows record
+that the provider event or message snapshot was acknowledged without a second
+dispatch. Denied rows record the typed denial reason before any message reaches
+agent context. Audit summaries are redacted at write time and exports omit raw
+payload JSON so support bundles can be copied without intentionally leaking
+channel secrets. Redaction is best-effort and targets known credential, token,
+email, and phone shapes; unknown secret shapes should still be handled with the
+same care as any diagnostic export.
+
+The audit ledger is retention-bounded. The store keeps at most 10,000 audit rows
+per connection by default and also exposes explicit time-based pruning for
+maintenance jobs. This keeps repeated denied or replayed traffic from growing
+the channel database without bound.
+
+## Inbox And Audit Workbench
+
+The Agent Channels connection center includes an Inbox & Audit workbench backed
+by `AgentChannelAuditWorkbenchService`. It can show recent redacted message
+snapshots, receive decisions, accepted/denied/duplicate counts, and a copyable
+redacted JSON export for the selected connection or all connections.
+
+This workbench is diagnostic evidence, not an authorization layer. Adapters
+must still run provider verification, inbound authorization, replay checks,
+reply-token validation, and remote safety gates before dispatching or writing to
+a channel. The workbench helps maintainers and operators answer: "Did this
+group message come from an authorized sender, and if not, why was it dropped?"
+
+This foundation does not add a live Discord receive relay. It adds the durable
+message, duplicate-filtering, and redacted audit foundation that a relay,
+webhook receiver, Slack adapter, or Telegram adapter can share.
 
 ## Async Channel Substrate
 

@@ -21,9 +21,15 @@ struct AgentChannelConnectionCenterView: View {
     @State private var statusIsError = false
     @State private var diagnosticsText: String?
     @State private var isDiagnosing = false
+    @State private var auditSnapshot: AgentChannelAuditWorkbenchSnapshot?
+    @State private var auditMessage: String?
+    @State private var auditIsError = false
+    @State private var isLoadingAudit = false
+    @State private var auditLoadID = UUID()
 
     private let manager = AgentChannelConnectionManager.shared
     private let service = AgentChannelConnectionService.shared
+    private let auditWorkbench = AgentChannelAuditWorkbenchService()
 
     private var theme: ThemeProtocol { themeManager.currentTheme }
 
@@ -33,12 +39,16 @@ struct AgentChannelConnectionCenterView: View {
                 header
                 overview
                 DiscordSettingsView()
+                auditWorkbenchSection
                 channelEditorSection
             }
             .padding(24)
         }
         .background(theme.primaryBackground)
-        .onAppear(perform: reloadConnections)
+        .onAppear {
+            reloadConnections()
+            reloadAuditWorkbench()
+        }
     }
 
     private var header: some View {
@@ -121,6 +131,129 @@ struct AgentChannelConnectionCenterView: View {
                 }
             }
         }
+    }
+
+    private var auditWorkbenchSection: some View {
+        SettingsSubsection(label: "Inbox & Audit") {
+            VStack(alignment: .leading, spacing: 14) {
+                HStack(alignment: .top, spacing: 12) {
+                    ChannelMetricCard(
+                        title: "Messages",
+                        value: "\(auditSnapshot?.summary.messageCount ?? 0)",
+                        caption: selectedAuditScopeLabel,
+                        icon: "tray.full"
+                    )
+                    ChannelMetricCard(
+                        title: "Accepted",
+                        value: "\(auditSnapshot?.summary.acceptedCount ?? 0)",
+                        caption: "authorized receives",
+                        icon: "checkmark.shield.fill"
+                    )
+                    ChannelMetricCard(
+                        title: "Denied",
+                        value: "\(auditSnapshot?.summary.deniedCount ?? 0)",
+                        caption: "blocked before dispatch",
+                        icon: "hand.raised.fill"
+                    )
+                    ChannelMetricCard(
+                        title: "Duplicates",
+                        value: "\(auditSnapshot?.summary.duplicateCount ?? 0)",
+                        caption: "acknowledged once",
+                        icon: "arrow.triangle.2.circlepath"
+                    )
+                }
+
+                HStack(spacing: 10) {
+                    Button(action: reloadAuditWorkbench) {
+                        Label {
+                            Text(isLoadingAudit ? "Loading..." : "Refresh Audit", bundle: .module)
+                        } icon: {
+                            Image(systemName: "arrow.clockwise")
+                        }
+                    }
+                    .buttonStyle(SettingsButtonStyle())
+                    .disabled(isLoadingAudit)
+
+                    Button(action: copyAuditExport) {
+                        Label {
+                            Text("Copy Redacted Export", bundle: .module)
+                        } icon: {
+                            Image(systemName: "doc.on.doc")
+                        }
+                    }
+                    .buttonStyle(SettingsButtonStyle())
+                    .disabled(isLoadingAudit)
+
+                    Text(selectedAuditScopeLabel)
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundColor(theme.tertiaryText)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                    Spacer()
+                }
+
+                if let auditMessage {
+                    StatusMessageView(message: auditMessage, isError: auditIsError)
+                }
+
+                HStack(alignment: .top, spacing: 14) {
+                    recentAuditEvents
+                    recentInboxMessages
+                }
+            }
+        }
+    }
+
+    private var recentAuditEvents: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Recent Decisions", bundle: .module)
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundColor(theme.primaryText)
+            if auditSnapshot?.auditEvents.isEmpty ?? true {
+                Text(
+                    "No receive audit events have been recorded for this scope.",
+                    bundle: .module
+                )
+                .font(.system(size: 12))
+                .foregroundColor(theme.tertiaryText)
+                .padding(12)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(cardBackground)
+            } else {
+                VStack(spacing: 8) {
+                    ForEach(auditSnapshot?.auditEvents ?? []) { event in
+                        AgentChannelAuditDecisionRow(event: event)
+                    }
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .topLeading)
+    }
+
+    private var recentInboxMessages: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Recent Inbox", bundle: .module)
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundColor(theme.primaryText)
+            if auditSnapshot?.messages.isEmpty ?? true {
+                Text(
+                    "No stored message snapshots have been recorded for this scope.",
+                    bundle: .module
+                )
+                .font(.system(size: 12))
+                .foregroundColor(theme.tertiaryText)
+                .padding(12)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(cardBackground)
+            } else {
+                VStack(spacing: 8) {
+                    ForEach(auditSnapshot?.messages ?? []) { message in
+                        AgentChannelInboxMessageRow(message: message)
+                    }
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .topLeading)
     }
 
     private var connectionList: some View {
@@ -429,8 +562,7 @@ struct AgentChannelConnectionCenterView: View {
     private func reloadConnections() {
         connections = manager.editableConnections()
         if let selectedConnectionId,
-            let selected = connections.first(where: { $0.id == selectedConnectionId })
-        {
+            let selected = connections.first(where: { $0.id == selectedConnectionId }) {
             draft = AgentChannelConnectionDraft(connection: selected)
         } else if let first = connections.first {
             select(first)
@@ -439,16 +571,29 @@ struct AgentChannelConnectionCenterView: View {
         }
     }
 
+    private var selectedAuditConnectionId: String? {
+        draft.originalId ?? selectedConnectionId
+    }
+
+    private var selectedAuditScopeLabel: String {
+        guard let selectedAuditConnectionId else {
+            return "all channel connections"
+        }
+        return selectedAuditConnectionId
+    }
+
     private func select(_ connection: AgentChannelConnection) {
         selectedConnectionId = connection.id
         draft = AgentChannelConnectionDraft(connection: connection)
         diagnosticsText = nil
+        reloadAuditWorkbench()
     }
 
     private func newCustomHTTPConnection() {
         selectedConnectionId = nil
         draft = AgentChannelConnectionDraft()
         diagnosticsText = nil
+        reloadAuditWorkbench()
     }
 
     private func saveDraft() {
@@ -457,6 +602,7 @@ struct AgentChannelConnectionCenterView: View {
             try manager.upsertConnection(connection, replacingOriginalId: draft.originalId)
             selectedConnectionId = connection.id
             reloadConnections()
+            reloadAuditWorkbench()
             showStatus("Agent channel connection saved", isError: false)
         } catch {
             showStatus(error.localizedDescription, isError: true)
@@ -468,9 +614,74 @@ struct AgentChannelConnectionCenterView: View {
             try manager.deleteConnection(id: draft.id)
             selectedConnectionId = nil
             reloadConnections()
+            reloadAuditWorkbench()
             showStatus("Agent channel connection deleted", isError: false)
         } catch {
             showStatus(error.localizedDescription, isError: true)
+        }
+    }
+
+    private func reloadAuditWorkbench() {
+        let loadID = UUID()
+        auditLoadID = loadID
+        isLoadingAudit = true
+        let connectionId = selectedAuditConnectionId
+        Task {
+            do {
+                let snapshot = try auditWorkbench.snapshot(
+                    connectionId: connectionId,
+                    messageLimit: 8,
+                    auditLimit: 10
+                )
+                await MainActor.run {
+                    guard auditLoadID == loadID,
+                        selectedAuditConnectionId == connectionId
+                    else {
+                        return
+                    }
+                    auditSnapshot = snapshot
+                    auditMessage = nil
+                    auditIsError = false
+                    isLoadingAudit = false
+                }
+            } catch {
+                await MainActor.run {
+                    guard auditLoadID == loadID,
+                        selectedAuditConnectionId == connectionId
+                    else {
+                        return
+                    }
+                    auditMessage = error.localizedDescription
+                    auditIsError = true
+                    isLoadingAudit = false
+                }
+            }
+        }
+    }
+
+    private func copyAuditExport() {
+        let connectionId = selectedAuditConnectionId
+        Task {
+            do {
+                let export = try auditWorkbench.exportRedactedJSON(
+                    connectionId: connectionId,
+                    messageLimit: 25,
+                    auditLimit: 100
+                )
+                await MainActor.run {
+                    #if os(macOS)
+                        NSPasteboard.general.clearContents()
+                        NSPasteboard.general.setString(export, forType: .string)
+                    #endif
+                    auditMessage = "Redacted channel audit export copied"
+                    auditIsError = false
+                }
+            } catch {
+                await MainActor.run {
+                    auditMessage = error.localizedDescription
+                    auditIsError = true
+                }
+            }
         }
     }
 
@@ -552,6 +763,139 @@ private struct ChannelMetricCard: View {
             Spacer(minLength: 0)
         }
         .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: 8)
+                .fill(themeManager.currentTheme.cardBackground)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 8)
+                        .stroke(themeManager.currentTheme.cardBorder, lineWidth: 1)
+                )
+        )
+    }
+}
+
+private struct AgentChannelAuditDecisionRow: View {
+    @ObservedObject private var themeManager = ThemeManager.shared
+
+    let event: AgentChannelAuditRecord
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Image(systemName: statusIcon)
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundColor(statusColor)
+                    .frame(width: 18)
+                Text(event.status.rawValue.capitalized)
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundColor(themeManager.currentTheme.primaryText)
+                Text(event.action)
+                    .font(.system(size: 11, design: .monospaced))
+                    .foregroundColor(themeManager.currentTheme.tertiaryText)
+                    .lineLimit(1)
+                Spacer()
+                Text(event.connectionId)
+                    .font(.system(size: 10, design: .monospaced))
+                    .foregroundColor(themeManager.currentTheme.tertiaryText)
+                    .lineLimit(1)
+            }
+
+            if !event.redactedSummary.isEmpty {
+                Text(event.redactedSummary)
+                    .font(.system(size: 12))
+                    .foregroundColor(themeManager.currentTheme.secondaryText)
+                    .lineLimit(2)
+            }
+
+            HStack(spacing: 8) {
+                if let roomId = event.roomId {
+                    Label(roomId, systemImage: "number")
+                }
+                if let reason = event.reason {
+                    Label(reason, systemImage: "info.circle")
+                }
+                Label(event.shouldDispatch ? "dispatch" : "no dispatch", systemImage: "arrow.turn.down.right")
+            }
+            .font(.system(size: 10))
+            .foregroundColor(themeManager.currentTheme.tertiaryText)
+            .lineLimit(1)
+        }
+        .padding(10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: 8)
+                .fill(themeManager.currentTheme.cardBackground)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 8)
+                        .stroke(themeManager.currentTheme.cardBorder, lineWidth: 1)
+                )
+        )
+    }
+
+    private var statusIcon: String {
+        switch event.status {
+        case .accepted: "checkmark.shield.fill"
+        case .duplicate: "arrow.triangle.2.circlepath"
+        case .denied: "hand.raised.fill"
+        case .failed: "xmark.octagon.fill"
+        }
+    }
+
+    private var statusColor: Color {
+        switch event.status {
+        case .accepted:
+            themeManager.currentTheme.successColor
+        case .duplicate:
+            themeManager.currentTheme.accentColor
+        case .denied, .failed:
+            themeManager.currentTheme.warningColor
+        }
+    }
+}
+
+private struct AgentChannelInboxMessageRow: View {
+    @ObservedObject private var themeManager = ThemeManager.shared
+
+    let message: AgentChannelInboxMessage
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Image(systemName: message.direction == .inbound ? "tray.and.arrow.down" : "paperplane")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundColor(themeManager.currentTheme.accentColor)
+                    .frame(width: 18)
+                Text(message.direction.rawValue.capitalized)
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundColor(themeManager.currentTheme.primaryText)
+                Text(message.roomId)
+                    .font(.system(size: 11, design: .monospaced))
+                    .foregroundColor(themeManager.currentTheme.tertiaryText)
+                    .lineLimit(1)
+                Spacer()
+                Text(message.connectionId)
+                    .font(.system(size: 10, design: .monospaced))
+                    .foregroundColor(themeManager.currentTheme.tertiaryText)
+                    .lineLimit(1)
+            }
+
+            Text(message.preview.isEmpty ? "Empty message" : message.preview)
+                .font(.system(size: 12))
+                .foregroundColor(themeManager.currentTheme.secondaryText)
+                .lineLimit(2)
+
+            HStack(spacing: 8) {
+                if let authorDisplay = message.authorDisplay, !authorDisplay.isEmpty {
+                    Label(authorDisplay, systemImage: "person")
+                }
+                Label(message.providerMessageId, systemImage: "number")
+            }
+            .font(.system(size: 10))
+            .foregroundColor(themeManager.currentTheme.tertiaryText)
+            .lineLimit(1)
+        }
+        .padding(10)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(
             RoundedRectangle(cornerRadius: 8)

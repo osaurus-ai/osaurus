@@ -592,7 +592,9 @@ private struct ProviderCard: View {
                 .frame(width: 44, height: 44)
 
                 // Provider info
-                Button(action: { withAnimation(.spring(response: 0.3)) { isExpanded.toggle() } }) {
+                Button(action: {
+                    withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) { isExpanded.toggle() }
+                }) {
                     HStack(spacing: 10) {
                         VStack(alignment: .leading, spacing: 4) {
                             HStack(spacing: 8) {
@@ -2645,7 +2647,7 @@ private struct ProviderEditSheet: View {
     private var oauthAdvancedSection: some View {
         VStack(alignment: .leading, spacing: 8) {
             Button(action: {
-                withAnimation(.easeInOut(duration: 0.18)) { showOAuthAdvanced.toggle() }
+                withAnimation(.easeInOut(duration: 0.2)) { showOAuthAdvanced.toggle() }
             }) {
                 HStack(spacing: 4) {
                     Image(systemName: "chevron.right")

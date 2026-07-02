@@ -946,11 +946,17 @@ struct DiscordConnectionTests {
                 )
             )
             let diagnostics = await service.diagnostics(connectionId: "ops-webhook")
-            #expect(diagnostics["status"] as? String == "configured_not_executable")
+            #expect(diagnostics["status"] as? String == "configured_dry_run")
+            #expect((diagnostics["allowed_methods"] as? [String])?.contains("POST") == true)
             #expect(diagnostics["custom_actions"] as? [String] == ["send_message"])
+            let actions = try #require(diagnostics["actions"] as? [[String: Any]])
+            let sendAction = try #require(actions.first { $0["action"] as? String == "send_message" })
+            #expect(sendAction["method"] as? String == "POST")
+            #expect(sendAction["path_template"] as? String == "/rooms/{room_id}/messages")
+            #expect(sendAction["dry_run"] as? Bool == true)
             let policies = try #require(diagnostics["action_policies"] as? [[String: Any]])
             let sendPolicy = try #require(policy(named: "send_message", in: policies))
-            #expect(sendPolicy["status"] as? String == "configured_only")
+            #expect(sendPolicy["status"] as? String == "available")
             #expect(sendPolicy["effect"] as? String == "confirmed_write")
             #expect(sendPolicy["requires_confirmation"] as? Bool == true)
             let readPolicy = try #require(policy(named: "read_messages", in: policies))
@@ -969,6 +975,46 @@ struct DiscordConnectionTests {
             #expect(
                 inboundAuthorization["dispatch_contract"] as? String
                     == "authorize_before_agent_context_or_tool_input"
+            )
+        }
+    }
+
+    @Test func customHTTPListRoomsPolicyRequiresAllowlistedSpace() async throws {
+        try await withIsolatedDiscordStores { credentials in
+            try AgentChannelConfigurationStore.save(
+                AgentChannelConfiguration(
+                    connections: [
+                        AgentChannelConnection(
+                            id: "ops-webhook",
+                            name: "Ops Webhook",
+                            kind: .customHTTP,
+                            supportedActions: [.diagnostics, .listRooms],
+                            customHTTP: AgentChannelCustomHTTPConfiguration(
+                                baseURL: "https://hooks.example.test",
+                                actions: [
+                                    "list_rooms": AgentChannelCustomHTTPAction(
+                                        path: "/spaces/{{input.space_id}}/rooms"
+                                    )
+                                ]
+                            )
+                        )
+                    ]
+                )
+            )
+            let service = AgentChannelConnectionService(
+                discordService: DiscordConnectionService(
+                    client: FakeDiscordAPIClient(),
+                    credentialStore: credentials
+                )
+            )
+
+            let diagnostics = await service.diagnostics(connectionId: "ops-webhook")
+            let policies = try #require(diagnostics["action_policies"] as? [[String: Any]])
+            let listRoomsPolicy = try #require(policy(named: "list_rooms", in: policies))
+            #expect(listRoomsPolicy["status"] as? String == "unavailable")
+            #expect(
+                (listRoomsPolicy["reason"] as? String)?
+                    .contains("No spaces are allowlisted") == true
             )
         }
     }

@@ -279,6 +279,7 @@ private struct WaveformMinimal: View {
     let color: Color
     let isActive: Bool
 
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var isPulsing = false
 
     var body: some View {
@@ -298,13 +299,14 @@ private struct WaveformMinimal: View {
         }
         .frame(width: 36, height: 36)
         .onAppear {
-            guard isActive else { return }
+            // Continuous decorative pulse: keep the static ring under Reduce Motion.
+            guard isActive, !reduceMotion else { return }
             withAnimation(.easeOut(duration: 1.0).repeatForever(autoreverses: false)) {
                 isPulsing = true
             }
         }
         .onChange(of: isActive) { _, active in
-            if active {
+            if active, !reduceMotion {
                 withAnimation(.easeOut(duration: 1.0).repeatForever(autoreverses: false)) {
                     isPulsing = true
                 }
@@ -329,6 +331,7 @@ public struct TranscriptionPreviewView: View {
     var placeholder: String = "Listening..."
 
     @Environment(\.theme) private var theme
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var cursorVisible = true
 
     public init(
@@ -354,13 +357,18 @@ public struct TranscriptionPreviewView: View {
                     .foregroundColor(theme.primaryText)
             }
 
-            // Blinking cursor
+            // Blinking cursor (static under Reduce Motion)
             if isTranscribing {
                 Rectangle()
                     .fill(theme.accentColor)
                     .frame(width: 2, height: 18)
                     .opacity(cursorVisible ? 1 : 0)
-                    .animation(.easeInOut(duration: 0.5).repeatForever(autoreverses: true), value: cursorVisible)
+                    .animation(
+                        reduceMotion
+                            ? nil
+                            : .easeInOut(duration: 0.5).repeatForever(autoreverses: true),
+                        value: cursorVisible
+                    )
                     .onAppear {
                         cursorVisible = true
                     }
@@ -531,6 +539,7 @@ public struct VoiceStatusIndicator: View {
 // MARK: - Pulse Modifier
 
 private struct PulseModifier: ViewModifier {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var isPulsing = false
 
     func body(content: Content) -> some View {
@@ -542,7 +551,11 @@ private struct PulseModifier: ViewModifier {
                 value: isPulsing
             )
             .onAppear {
-                isPulsing = true
+                // Continuous decorative pulse: hold the steady state under
+                // Reduce Motion.
+                if !reduceMotion {
+                    isPulsing = true
+                }
             }
     }
 }

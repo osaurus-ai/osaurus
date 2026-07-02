@@ -306,7 +306,10 @@ struct CreditsTopUpSheet: View {
             // so the user can see why and retry.
             return
         }
-        NSWorkspace.shared.open(url)
+        // Launching the browser blocks on an XPC round-trip to LaunchServices
+        // that can stall for seconds, so hand the URL off the main actor. The
+        // sheet dismisses immediately; the open completes in the background.
+        Task.detached { NSWorkspace.shared.open(url) }
         dismiss()
     }
 }

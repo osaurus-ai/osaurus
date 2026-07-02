@@ -165,390 +165,248 @@ struct TranscriptionModeSettingsTab: View {
     // MARK: - Transcription Toggle Card
 
     private var transcriptionToggleCard: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            HStack(spacing: 12) {
-                ZStack {
-                    RoundedRectangle(cornerRadius: 12)
-                        .fill(
-                            transcriptionEnabled
-                                ? theme.successColor.opacity(0.15) : theme.accentColor.opacity(0.15)
-                        )
-                    Image(systemName: transcriptionEnabled ? "keyboard.fill" : "keyboard")
-                        .font(.system(size: 24, weight: .medium))
-                        .foregroundColor(transcriptionEnabled ? theme.successColor : theme.accentColor)
-                }
-                .frame(width: 48, height: 48)
-
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("Transcription Mode", bundle: .module)
-                        .font(.system(size: 15, weight: .semibold))
-                        .foregroundColor(theme.primaryText)
-
-                    Text(
-                        transcriptionEnabled
-                            ? L("Type with your voice into any text field")
-                            : L("Voice-to-text input for any application")
-                    )
-                    .font(.system(size: 12))
-                    .foregroundColor(theme.secondaryText)
-                }
-
-                Spacer()
-
-                Toggle("", isOn: $transcriptionEnabled)
-                    .toggleStyle(SwitchToggleStyle(tint: theme.successColor))
-                    .labelsHidden()
-                    .disabled(!canEnableTranscription)
-                    .opacity(canEnableTranscription ? 1 : 0.5)
-                    .onChange(of: transcriptionEnabled) { _, _ in
-                        saveSettings()
-                    }
-            }
-
-            // Info about transcription mode
-            HStack(alignment: .top, spacing: 8) {
-                Image(systemName: "info.circle")
-                    .font(.system(size: 12))
-                    .foregroundColor(theme.accentColor)
-
-                Text(
-                    "When enabled, press the hotkey to start transcribing. Your voice will be typed directly into the focused text field in any application.",
-                    bundle: .module
+        SettingsSection(title: "Transcription Mode", icon: "keyboard") {
+            VStack(alignment: .leading, spacing: 12) {
+                SettingsToggle(
+                    title: L("Enable Transcription Mode"),
+                    description: transcriptionEnabled
+                        ? L("Type with your voice into any text field")
+                        : L("Voice-to-text input for any application"),
+                    isOn: $transcriptionEnabled
                 )
+                .disabled(!canEnableTranscription)
+                .opacity(canEnableTranscription ? 1 : 0.6)
+                .onChange(of: transcriptionEnabled) { _, _ in
+                    saveSettings()
+                }
+
+                infoBox(
+                    "When enabled, press the hotkey to start transcribing. Your voice will be typed directly into the focused text field in any application."
+                )
+            }
+        }
+    }
+
+    /// Accent-tinted informational callout shared by this tab's sections.
+    private func infoBox(_ text: String) -> some View {
+        HStack(alignment: .top, spacing: 8) {
+            Image(systemName: "info.circle")
+                .font(.system(size: 12))
+                .foregroundColor(theme.accentColor)
+
+            Text(LocalizedStringKey(text), bundle: .module)
                 .font(.system(size: 12))
                 .foregroundColor(theme.secondaryText)
-            }
-            .padding(12)
-            .background(
-                RoundedRectangle(cornerRadius: 8)
-                    .fill(theme.accentColor.opacity(0.1))
-            )
+                .fixedSize(horizontal: false, vertical: true)
         }
-        .padding(20)
+        .padding(12)
         .background(
-            RoundedRectangle(cornerRadius: 16)
-                .fill(theme.cardBackground)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 16)
-                        .stroke(
-                            transcriptionEnabled ? theme.successColor.opacity(0.3) : theme.cardBorder,
-                            lineWidth: 1
-                        )
-                )
+            RoundedRectangle(cornerRadius: 8)
+                .fill(theme.accentColor.opacity(0.1))
         )
     }
 
     // MARK: - Requirements Card
 
     private var requirementsCard: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            HStack(spacing: 12) {
-                ZStack {
-                    RoundedRectangle(cornerRadius: 12)
-                        .fill(theme.warningColor.opacity(0.15))
-                    Image(systemName: "exclamationmark.triangle.fill")
-                        .font(.system(size: 20, weight: .medium))
-                        .foregroundColor(theme.warningColor)
-                }
-                .frame(width: 48, height: 48)
+        SettingsSection(title: "Setup Required", icon: "exclamationmark.triangle.fill") {
+            VStack(alignment: .leading, spacing: 12) {
+                Text("Complete these steps to enable Transcription Mode", bundle: .module)
+                    .font(.system(size: 12))
+                    .foregroundColor(theme.secondaryText)
 
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("Setup Required", bundle: .module)
-                        .font(.system(size: 15, weight: .semibold))
-                        .foregroundColor(theme.primaryText)
-
-                    Text("Complete these steps to enable Transcription Mode", bundle: .module)
-                        .font(.system(size: 12))
-                        .foregroundColor(theme.secondaryText)
-                }
-
-                Spacer()
-            }
-
-            VStack(spacing: 12) {
-                RequirementRowView(
-                    title: L("Accessibility Permission"),
-                    description: L("Required to type into other applications"),
-                    isComplete: keyboardService.hasAccessibilityPermission,
-                    action: {
-                        keyboardService.requestAccessibilityPermission()
-                    }
-                )
-
-                RequirementRowView(
-                    title: L("Microphone Access"),
-                    description: L("Required for voice input"),
-                    isComplete: speechService.microphonePermissionGranted,
-                    action: {
-                        Task {
-                            _ = await speechService.requestMicrophonePermission()
+                VStack(spacing: 12) {
+                    RequirementRowView(
+                        title: L("Accessibility Permission"),
+                        description: L("Required to type into other applications"),
+                        isComplete: keyboardService.hasAccessibilityPermission,
+                        action: {
+                            keyboardService.requestAccessibilityPermission()
                         }
-                    }
-                )
+                    )
 
-                RequirementRowView(
-                    title: L("Speech Model Downloaded"),
-                    description: L("Required for transcription"),
-                    isComplete: modelManager.downloadedModelsCount > 0,
-                    action: nil
-                )
+                    RequirementRowView(
+                        title: L("Microphone Access"),
+                        description: L("Required for voice input"),
+                        isComplete: speechService.microphonePermissionGranted,
+                        action: {
+                            Task {
+                                _ = await speechService.requestMicrophonePermission()
+                            }
+                        }
+                    )
 
-                RequirementRowView(
-                    title: L("Model Selected"),
-                    description: L("Select a default model in the Models tab"),
-                    isComplete: modelManager.selectedModel != nil,
-                    action: nil
-                )
+                    RequirementRowView(
+                        title: L("Speech Model Downloaded"),
+                        description: L("Required for transcription"),
+                        isComplete: modelManager.downloadedModelsCount > 0,
+                        action: nil
+                    )
+
+                    RequirementRowView(
+                        title: L("Model Selected"),
+                        description: L("Select a default model in the Models tab"),
+                        isComplete: modelManager.selectedModel != nil,
+                        action: nil
+                    )
+                }
             }
         }
-        .padding(20)
-        .background(
-            RoundedRectangle(cornerRadius: 16)
-                .fill(theme.cardBackground)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 16)
-                        .stroke(theme.warningColor.opacity(0.3), lineWidth: 1)
-                )
-        )
     }
 
     // MARK: - Hotkey Settings Card
 
     private var hotkeySettingsCard: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            HStack(spacing: 12) {
-                ZStack {
-                    RoundedRectangle(cornerRadius: 12)
-                        .fill(theme.accentColor.opacity(0.15))
-                    Image(systemName: "command")
-                        .font(.system(size: 20, weight: .medium))
-                        .foregroundColor(theme.accentColor)
-                }
-                .frame(width: 48, height: 48)
+        SettingsSection(title: "Activation Hotkey", icon: "command") {
+            SettingsField(
+                label: "Global Hotkey",
+                hint: "Press this shortcut to start/stop transcription"
+            ) {
+                VStack(alignment: .leading, spacing: 8) {
+                    HotkeyRecorder(value: $hotkey)
+                        .onChange(of: hotkey) { _, _ in
+                            saveSettings()
+                        }
 
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("Activation Hotkey", bundle: .module)
-                        .font(.system(size: 15, weight: .semibold))
-                        .foregroundColor(theme.primaryText)
-
-                    Text("Press this shortcut to start/stop transcription", bundle: .module)
-                        .font(.system(size: 12))
-                        .foregroundColor(theme.secondaryText)
-                }
-
-                Spacer()
-            }
-
-            VStack(alignment: .leading, spacing: 8) {
-                Text("Global Hotkey", bundle: .module)
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundColor(theme.secondaryText)
-
-                HotkeyRecorder(value: $hotkey)
-                    .onChange(of: hotkey) { _, _ in
-                        saveSettings()
+                    if hotkey == nil {
+                        Text("Set a hotkey to enable transcription mode", bundle: .module)
+                            .font(.system(size: 11))
+                            .foregroundColor(theme.warningColor)
                     }
-
-                if hotkey == nil {
-                    Text("Set a hotkey to enable transcription mode", bundle: .module)
-                        .font(.system(size: 11))
-                        .foregroundColor(theme.warningColor)
                 }
             }
         }
-        .padding(20)
-        .background(
-            RoundedRectangle(cornerRadius: 16)
-                .fill(theme.cardBackground)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 16)
-                        .stroke(theme.cardBorder, lineWidth: 1)
-                )
-        )
     }
 
     // MARK: - Test Area Card
 
     private var testAreaCard: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            HStack {
-                Text("Test Transcription", bundle: .module)
-                    .font(.system(size: 15, weight: .semibold))
-                    .foregroundColor(theme.primaryText)
+        SettingsSection(title: "Test Transcription", icon: "waveform") {
+            VStack(alignment: .leading, spacing: 16) {
+                HStack {
+                    Text(
+                        "Test transcription mode here. Text will be typed into the field below.",
+                        bundle: .module
+                    )
+                    .font(.system(size: 12))
+                    .foregroundColor(theme.secondaryText)
 
-                Spacer()
+                    Spacer()
 
-                if transcriptionService.state == .transcribing {
-                    HStack(spacing: 6) {
-                        Circle()
-                            .fill(theme.errorColor)
-                            .frame(width: 8, height: 8)
-                            .modifier(PulsingIndicatorModifier())
-                        Text("TRANSCRIBING", bundle: .module)
-                            .font(.system(size: 10, weight: .bold))
+                    if transcriptionService.state == .transcribing {
+                        HStack(spacing: 6) {
+                            Circle()
+                                .fill(theme.errorColor)
+                                .frame(width: 8, height: 8)
+                                .modifier(PulsingIndicatorModifier())
+                            Text("TRANSCRIBING", bundle: .module)
+                                .font(.system(size: 10, weight: .bold))
+                                .foregroundColor(theme.errorColor)
+                        }
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 4)
+                        .background(
+                            Capsule()
+                                .fill(theme.errorColor.opacity(0.1))
+                        )
+                    }
+                }
+
+                // Test text field
+                TextField(
+                    text: .constant(""),
+                    prompt: Text("Transcribed text will appear here...", bundle: .module)
+                ) {
+                    Text("Transcribed text will appear here...", bundle: .module)
+                }
+                .textFieldStyle(.plain)
+                .font(.system(size: 14))
+                .foregroundColor(theme.primaryText)
+                .padding(12)
+                .background(
+                    RoundedRectangle(cornerRadius: 10)
+                        .fill(theme.inputBackground)
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 10)
+                                .stroke(theme.inputBorder, lineWidth: 1)
+                        )
+                )
+
+                // Error display
+                if case .error(let message) = transcriptionService.state {
+                    HStack(spacing: 8) {
+                        Image(systemName: "exclamationmark.triangle.fill")
+                            .foregroundColor(theme.errorColor)
+                        Text(message)
+                            .font(.system(size: 12))
                             .foregroundColor(theme.errorColor)
                     }
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 4)
-                    .background(
-                        Capsule()
-                            .fill(theme.errorColor.opacity(0.1))
-                    )
                 }
-            }
 
-            Text("Test transcription mode here. Text will be typed into the field below.", bundle: .module)
-                .font(.system(size: 12))
-                .foregroundColor(theme.secondaryText)
-
-            // Test text field
-            TextField(text: .constant(""), prompt: Text("Transcribed text will appear here...", bundle: .module)) {
-                Text("Transcribed text will appear here...", bundle: .module)
-            }
-            .textFieldStyle(.plain)
-            .font(.system(size: 14))
-            .foregroundColor(theme.primaryText)
-            .padding(12)
-            .background(
-                RoundedRectangle(cornerRadius: 10)
-                    .fill(theme.inputBackground)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 10)
-                            .stroke(theme.inputBorder, lineWidth: 1)
-                    )
-            )
-
-            // Error display
-            if case .error(let message) = transcriptionService.state {
-                HStack(spacing: 8) {
-                    Image(systemName: "exclamationmark.triangle.fill")
-                        .foregroundColor(theme.errorColor)
-                    Text(message)
-                        .font(.system(size: 12))
-                        .foregroundColor(theme.errorColor)
-                }
-            }
-
-            // Controls
-            HStack(spacing: 16) {
-                Button(action: {
-                    transcriptionService.toggle()
-                }) {
-                    HStack(spacing: 8) {
-                        Image(
-                            systemName: transcriptionService.state == .transcribing ? "stop.fill" : "mic.fill"
-                        )
-                        .font(.system(size: 14))
-                        Text(transcriptionService.state == .transcribing ? L("Stop") : L("Start Test"))
-                            .font(.system(size: 14, weight: .medium))
-                    }
-                    .foregroundColor(
-                        transcriptionService.state == .transcribing
-                            ? Color.white
-                            : (theme.isDark ? theme.primaryBackground : Color.white)
-                    )
-                    .padding(.horizontal, 20)
-                    .padding(.vertical, 10)
-                    .background(
-                        RoundedRectangle(cornerRadius: 10)
-                            .fill(
-                                transcriptionService.state == .transcribing
-                                    ? theme.errorColor : theme.accentColor
+                // Controls
+                HStack(spacing: 16) {
+                    Button(action: {
+                        transcriptionService.toggle()
+                    }) {
+                        HStack(spacing: 8) {
+                            Image(
+                                systemName: transcriptionService.state == .transcribing ? "stop.fill" : "mic.fill"
                             )
-                    )
-                }
-                .buttonStyle(.plain)
-                .disabled(!speechService.isModelLoaded || transcriptionService.state == .starting)
+                            .font(.system(size: 14))
+                            Text(transcriptionService.state == .transcribing ? L("Stop") : L("Start Test"))
+                                .font(.system(size: 14, weight: .medium))
+                        }
+                        .foregroundColor(
+                            transcriptionService.state == .transcribing
+                                ? Color.white
+                                : (theme.isDark ? theme.primaryBackground : Color.white)
+                        )
+                        .padding(.horizontal, 20)
+                        .padding(.vertical, 10)
+                        .background(
+                            RoundedRectangle(cornerRadius: 10)
+                                .fill(
+                                    transcriptionService.state == .transcribing
+                                        ? theme.errorColor : theme.accentColor
+                                )
+                        )
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(!speechService.isModelLoaded || transcriptionService.state == .starting)
 
-                if let hk = hotkey {
-                    Text("or press \(hk.displayString)", bundle: .module)
-                        .font(.system(size: 12))
-                        .foregroundColor(theme.tertiaryText)
-                }
+                    if let hk = hotkey {
+                        Text("or press \(hk.displayString)", bundle: .module)
+                            .font(.system(size: 12))
+                            .foregroundColor(theme.tertiaryText)
+                    }
 
-                Spacer()
+                    Spacer()
+                }
             }
         }
-        .padding(20)
-        .background(
-            RoundedRectangle(cornerRadius: 16)
-                .fill(theme.cardBackground)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 16)
-                        .stroke(theme.cardBorder, lineWidth: 1)
-                )
-        )
     }
 
     // MARK: - Voice Input Toggle Card
 
     private var voiceInputToggleCard: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            HStack(spacing: 12) {
-                ZStack {
-                    RoundedRectangle(cornerRadius: 12)
-                        .fill(
-                            voiceInputEnabled
-                                ? theme.successColor.opacity(0.15) : theme.accentColor.opacity(0.15)
-                        )
-                    Image(systemName: voiceInputEnabled ? "mic.fill" : "mic")
-                        .font(.system(size: 20, weight: .medium))
-                        .foregroundColor(voiceInputEnabled ? theme.successColor : theme.accentColor)
-                }
-                .frame(width: 48, height: 48)
-
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("Voice Input in Chat", bundle: .module)
-                        .font(.system(size: 15, weight: .semibold))
-                        .foregroundColor(theme.primaryText)
-
-                    Text(
-                        voiceInputEnabled
-                            ? L("Microphone button enabled in chat input")
-                            : L("Enable microphone button in the chat input area")
-                    )
-                    .font(.system(size: 12))
-                    .foregroundColor(theme.secondaryText)
-                }
-
-                Spacer()
-
-                Toggle("", isOn: $voiceInputEnabled)
-                    .toggleStyle(SwitchToggleStyle(tint: theme.successColor))
-                    .labelsHidden()
-                    .onChange(of: voiceInputEnabled) { _, _ in
-                        saveVoiceSettings()
-                    }
-            }
-
-            if voiceInputEnabled {
-                HStack(spacing: 8) {
-                    Image(systemName: "info.circle")
-                        .font(.system(size: 12))
-                        .foregroundColor(theme.accentColor)
-                    Text("A microphone button will appear in the chat input when voice is ready", bundle: .module)
-                        .font(.system(size: 12))
-                        .foregroundColor(theme.secondaryText)
-                }
-                .padding(12)
-                .background(
-                    RoundedRectangle(cornerRadius: 8)
-                        .fill(theme.accentColor.opacity(0.1))
+        SettingsSection(title: "Voice Input in Chat", icon: "mic") {
+            VStack(alignment: .leading, spacing: 12) {
+                SettingsToggle(
+                    title: L("Enable Voice Input"),
+                    description: voiceInputEnabled
+                        ? L("Microphone button enabled in chat input")
+                        : L("Enable microphone button in the chat input area"),
+                    isOn: $voiceInputEnabled
                 )
+                .onChange(of: voiceInputEnabled) { _, _ in
+                    saveVoiceSettings()
+                }
+
+                if voiceInputEnabled {
+                    infoBox("A microphone button will appear in the chat input when voice is ready")
+                }
             }
         }
-        .padding(20)
-        .background(
-            RoundedRectangle(cornerRadius: 16)
-                .fill(theme.cardBackground)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 16)
-                        .stroke(
-                            voiceInputEnabled ? theme.successColor.opacity(0.3) : theme.cardBorder,
-                            lineWidth: 1
-                        )
-                )
-        )
     }
 
     // MARK: - Transcription Behavior Card
@@ -556,167 +414,140 @@ struct TranscriptionModeSettingsTab: View {
     /// Stop mode / pause / confirmation / silence. These settings govern both
     /// chat voice input and the Transcription Mode overlay.
     private var transcriptionBehaviorCard: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            HStack(spacing: 12) {
-                ZStack {
-                    RoundedRectangle(cornerRadius: 12)
-                        .fill(theme.accentColor.opacity(0.15))
-                    Image(systemName: "timer")
-                        .font(.system(size: 20, weight: .medium))
-                        .foregroundColor(theme.accentColor)
-                }
-                .frame(width: 48, height: 48)
+        SettingsSection(title: "Transcription Behavior", icon: "timer") {
+            VStack(alignment: .leading, spacing: 16) {
+                Text("Applies to both chat voice input and Transcription Mode", bundle: .module)
+                    .font(.system(size: 12))
+                    .foregroundColor(theme.secondaryText)
 
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("Transcription Behavior", bundle: .module)
-                        .font(.system(size: 15, weight: .semibold))
-                        .foregroundColor(theme.primaryText)
+                // Voice Stop Mode Picker
+                VStack(alignment: .leading, spacing: 10) {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Stop Mode", bundle: .module)
+                            .font(.system(size: 13, weight: .medium))
+                            .foregroundColor(theme.primaryText)
 
-                    Text("Applies to both chat voice input and Transcription Mode", bundle: .module)
-                        .font(.system(size: 12))
-                        .foregroundColor(theme.secondaryText)
-                }
+                        Text("Choose how the app knows when you've finished speaking.", bundle: .module)
+                            .font(.system(size: 11))
+                            .foregroundColor(theme.tertiaryText)
+                    }
 
-                Spacer()
-            }
+                    ThemedTabPicker(
+                        selection: $transcriptionStopMode,
+                        tabs: TranscriptionStopMode.allCases.map { ($0, $0.displayName) }
+                    )
+                    .frame(maxWidth: .infinity)
+                    .onChange(of: transcriptionStopMode) { _, _ in
+                        saveVoiceSettings()
+                    }
 
-            // Voice Stop Mode Picker
-            VStack(alignment: .leading, spacing: 10) {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("Stop Mode", bundle: .module)
-                        .font(.system(size: 13, weight: .medium))
-                        .foregroundColor(theme.primaryText)
-
-                    Text("Choose how the app knows when you've finished speaking.", bundle: .module)
+                    Text(transcriptionStopMode.description)
                         .font(.system(size: 11))
                         .foregroundColor(theme.tertiaryText)
                 }
 
-                ThemedTabPicker(
-                    selection: $transcriptionStopMode,
-                    tabs: TranscriptionStopMode.allCases.map { ($0, $0.displayName) }
-                )
-                .frame(maxWidth: .infinity)
-                .onChange(of: transcriptionStopMode) { _, _ in
-                    saveVoiceSettings()
-                }
+                SettingsDivider()
 
-                Text(transcriptionStopMode.description)
-                    .font(.system(size: 11))
-                    .foregroundColor(theme.tertiaryText)
-            }
-            .padding(.top, 4)
+                // Pause Duration Slider
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack {
+                        Text("Pause Detection", bundle: .module)
+                            .font(.system(size: 13, weight: .medium))
+                            .foregroundColor(theme.primaryText)
 
-            Divider()
-                .background(theme.cardBorder)
+                        Spacer()
 
-            // Pause Duration Slider
-            VStack(alignment: .leading, spacing: 8) {
-                HStack {
-                    Text("Pause Detection", bundle: .module)
-                        .font(.system(size: 13, weight: .medium))
-                        .foregroundColor(theme.primaryText)
-
-                    Spacer()
-
-                    Text(
-                        transcriptionStopMode == .manual || pauseDuration == 0
-                            ? "Disabled" : String(format: "%.1fs", pauseDuration)
-                    )
-                    .font(.system(size: 13, weight: .medium, design: .monospaced))
-                    .foregroundColor(theme.accentColor)
-                }
-
-                Slider(value: $pauseDuration, in: 0 ... 5, step: 0.5)
-                    .tint(theme.accentColor)
-                    .disabled(transcriptionStopMode == .manual)
-                    .opacity(transcriptionStopMode == .manual ? 0.5 : 1)
-                    .onChange(of: pauseDuration) { _, _ in
-                        saveVoiceSettings()
+                        Text(
+                            transcriptionStopMode == .manual || pauseDuration == 0
+                                ? "Disabled" : String(format: "%.1fs", pauseDuration)
+                        )
+                        .font(.system(size: 13, weight: .medium, design: .monospaced))
+                        .foregroundColor(theme.accentColor)
                     }
 
-                if transcriptionStopMode == .manual {
-                    Text("Auto-stop is disabled in manual stop mode.", bundle: .module)
+                    Slider(value: $pauseDuration, in: 0 ... 5, step: 0.5)
+                        .tint(theme.accentColor)
+                        .disabled(transcriptionStopMode == .manual)
+                        .opacity(transcriptionStopMode == .manual ? 0.5 : 1)
+                        .onChange(of: pauseDuration) { _, _ in
+                            saveVoiceSettings()
+                        }
+
+                    if transcriptionStopMode == .manual {
+                        Text("Auto-stop is disabled in manual stop mode.", bundle: .module)
+                            .font(.system(size: 11))
+                            .foregroundColor(theme.tertiaryText)
+                    } else {
+                        Text(
+                            pauseDuration == 0
+                                ? "Auto-stop disabled. You must stop transcription manually."
+                                : "Stops after \(String(format: "%.1f", pauseDuration)) seconds of silence"
+                        )
                         .font(.system(size: 11))
                         .foregroundColor(theme.tertiaryText)
-                } else {
-                    Text(
-                        pauseDuration == 0
-                            ? "Auto-stop disabled. You must stop transcription manually."
-                            : "Stops after \(String(format: "%.1f", pauseDuration)) seconds of silence"
-                    )
-                    .font(.system(size: 11))
-                    .foregroundColor(theme.tertiaryText)
+                    }
                 }
-            }
+                .settingsLandingAnchor("voice.stt.pause")
 
-            Divider()
-                .background(theme.cardBorder)
+                SettingsDivider()
 
-            // Confirmation Delay Slider
-            VStack(alignment: .leading, spacing: 8) {
-                HStack {
-                    Text("Confirmation Delay", bundle: .module)
-                        .font(.system(size: 13, weight: .medium))
-                        .foregroundColor(theme.primaryText)
+                // Confirmation Delay Slider
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack {
+                        Text("Confirmation Delay", bundle: .module)
+                            .font(.system(size: 13, weight: .medium))
+                            .foregroundColor(theme.primaryText)
 
-                    Spacer()
+                        Spacer()
 
-                    Text(String(format: "%.1fs", confirmationDelay))
-                        .font(.system(size: 13, weight: .medium, design: .monospaced))
-                        .foregroundColor(theme.accentColor)
-                }
-
-                Slider(value: $confirmationDelay, in: 1 ... 5, step: 0.5)
-                    .tint(theme.accentColor)
-                    .disabled(transcriptionStopMode == .manual || pauseDuration == 0)
-                    .opacity(transcriptionStopMode == .manual || pauseDuration == 0 ? 0.5 : 1)
-                    .onChange(of: confirmationDelay) { _, _ in
-                        saveVoiceSettings()
+                        Text(String(format: "%.1fs", confirmationDelay))
+                            .font(.system(size: 13, weight: .medium, design: .monospaced))
+                            .foregroundColor(theme.accentColor)
                     }
 
-                Text("Time to cancel before a chat message is automatically sent", bundle: .module)
-                    .font(.system(size: 11))
-                    .foregroundColor(theme.tertiaryText)
-            }
+                    Slider(value: $confirmationDelay, in: 1 ... 5, step: 0.5)
+                        .tint(theme.accentColor)
+                        .disabled(transcriptionStopMode == .manual || pauseDuration == 0)
+                        .opacity(transcriptionStopMode == .manual || pauseDuration == 0 ? 0.5 : 1)
+                        .onChange(of: confirmationDelay) { _, _ in
+                            saveVoiceSettings()
+                        }
 
-            Divider()
-                .background(theme.cardBorder)
-
-            // Silence Timeout Slider
-            VStack(alignment: .leading, spacing: 8) {
-                HStack {
-                    Text("Silence Timeout", bundle: .module)
-                        .font(.system(size: 13, weight: .medium))
-                        .foregroundColor(theme.primaryText)
-
-                    Spacer()
-
-                    Text(silenceTimeoutFormatted)
-                        .font(.system(size: 13, weight: .medium, design: .monospaced))
-                        .foregroundColor(theme.accentColor)
+                    Text("Time to cancel before a chat message is automatically sent", bundle: .module)
+                        .font(.system(size: 11))
+                        .foregroundColor(theme.tertiaryText)
                 }
+                .settingsLandingAnchor("voice.stt.confirmation")
 
-                Slider(value: $silenceTimeoutSeconds, in: 10 ... 120, step: 5)
-                    .tint(theme.accentColor)
-                    .onChange(of: silenceTimeoutSeconds) { _, _ in
-                        saveVoiceSettings()
+                SettingsDivider()
+
+                // Silence Timeout Slider
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack {
+                        Text("Silence Timeout", bundle: .module)
+                            .font(.system(size: 13, weight: .medium))
+                            .foregroundColor(theme.primaryText)
+
+                        Spacer()
+
+                        Text(silenceTimeoutFormatted)
+                            .font(.system(size: 13, weight: .medium, design: .monospaced))
+                            .foregroundColor(theme.accentColor)
                     }
 
-                Text("Auto-stop or close voice input after this duration of silence", bundle: .module)
-                    .font(.system(size: 11))
-                    .foregroundColor(theme.tertiaryText)
+                    Slider(value: $silenceTimeoutSeconds, in: 10 ... 120, step: 5)
+                        .tint(theme.accentColor)
+                        .onChange(of: silenceTimeoutSeconds) { _, _ in
+                            saveVoiceSettings()
+                        }
+
+                    Text("Auto-stop or close voice input after this duration of silence", bundle: .module)
+                        .font(.system(size: 11))
+                        .foregroundColor(theme.tertiaryText)
+                }
+                .settingsLandingAnchor("voice.stt.silence")
             }
         }
-        .padding(20)
-        .background(
-            RoundedRectangle(cornerRadius: 16)
-                .fill(theme.cardBackground)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 16)
-                        .stroke(theme.cardBorder, lineWidth: 1)
-                )
-        )
     }
 }
 
@@ -774,6 +605,7 @@ private struct RequirementRowView: View {
 // MARK: - Pulsing Indicator Modifier
 
 private struct PulsingIndicatorModifier: ViewModifier {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var isPulsing = false
 
     func body(content: Content) -> some View {
@@ -784,7 +616,11 @@ private struct PulsingIndicatorModifier: ViewModifier {
                 value: isPulsing
             )
             .onAppear {
-                isPulsing = true
+                // Continuous decorative motion: hold the steady state under
+                // Reduce Motion.
+                if !reduceMotion {
+                    isPulsing = true
+                }
             }
     }
 }

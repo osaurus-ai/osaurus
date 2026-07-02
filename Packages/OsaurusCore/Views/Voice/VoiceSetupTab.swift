@@ -78,17 +78,17 @@ struct VoiceSetupTab: View {
                     // Requirements checklist (compact)
                     requirementsSection
                         .opacity(hasAppeared ? 1 : 0)
-                        .offset(y: hasAppeared ? 0 : 8)
-                        .animation(.spring(response: 0.5, dampingFraction: 0.85).delay(0.05), value: hasAppeared)
+                        .animation(.easeOut(duration: 0.25).delay(0.05), value: hasAppeared)
 
                     Spacer()
                         .frame(height: 24)
 
-                    // Central voice test area
+                    // Central voice test area — the hero beat of the two-beat
+                    // entrance (house spring; everything else fades in behind it)
                     voiceTestSection
                         .opacity(hasAppeared ? 1 : 0)
                         .scaleEffect(hasAppeared ? 1 : 0.95)
-                        .animation(.spring(response: 0.6, dampingFraction: 0.8).delay(0.15), value: hasAppeared)
+                        .animation(.spring(response: 0.4, dampingFraction: 0.8), value: hasAppeared)
 
                     Spacer()
                         .frame(height: 16)
@@ -96,7 +96,7 @@ struct VoiceSetupTab: View {
                     // Privacy footer
                     privacyFooter
                         .opacity(hasAppeared ? 1 : 0)
-                        .animation(.easeOut(duration: 0.4).delay(0.3), value: hasAppeared)
+                        .animation(.easeOut(duration: 0.25).delay(0.05), value: hasAppeared)
                 }
                 .padding(.horizontal, 24)
                 .frame(maxWidth: 520)
@@ -109,7 +109,7 @@ struct VoiceSetupTab: View {
                 // matching the other voice settings tabs.
                 audioSettingsSection
                     .opacity(hasAppeared ? 1 : 0)
-                    .animation(.easeOut(duration: 0.4).delay(0.35), value: hasAppeared)
+                    .animation(.easeOut(duration: 0.25).delay(0.05), value: hasAppeared)
                     .padding(.horizontal, 24)
 
                 Spacer()
@@ -429,255 +429,210 @@ struct VoiceSetupTab: View {
     }
 
     private var sensitivitySettingsCard: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            HStack(spacing: 12) {
-                ZStack {
-                    RoundedRectangle(cornerRadius: 12)
-                        .fill(theme.accentColor.opacity(0.15))
-                    Image(systemName: "waveform")
-                        .font(.system(size: 20, weight: .medium))
-                        .foregroundColor(theme.accentColor)
-                }
-                .frame(width: 48, height: 48)
-
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("Voice Sensitivity", bundle: .module)
-                        .font(.system(size: 15, weight: .semibold))
-                        .foregroundColor(theme.primaryText)
-
-                    Text("Adjust how sensitive voice detection is", bundle: .module)
-                        .font(.system(size: 12))
-                        .foregroundColor(theme.secondaryText)
-                }
-
-                Spacer()
-            }
-
-            // Sensitivity Picker
-            VStack(alignment: .leading, spacing: 8) {
-                Text("Sensitivity Level", bundle: .module)
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundColor(theme.secondaryText)
-
-                HStack(spacing: 0) {
-                    ForEach(VoiceSensitivity.allCases, id: \.self) { level in
-                        Button(action: {
-                            sensitivity = level
-                            saveSettings()
-                        }) {
-                            Text(level.displayName)
-                                .font(.system(size: 13, weight: sensitivity == level ? .semibold : .medium))
-                                .foregroundColor(
-                                    sensitivity == level
-                                        ? (theme.isDark ? theme.primaryBackground : .white)
-                                        : theme.primaryText
-                                )
-                                .frame(maxWidth: .infinity)
-                                .padding(.vertical, 8)
-                                .contentShape(Rectangle())
-                                .background(
-                                    RoundedRectangle(cornerRadius: 6)
-                                        .fill(sensitivity == level ? theme.accentColor : Color.clear)
-                                )
-                        }
-                        .buttonStyle(.plain)
-                        .contentShape(Rectangle())
-                    }
-                }
-                .padding(4)
-                .background(
-                    RoundedRectangle(cornerRadius: 10)
-                        .fill(theme.tertiaryBackground)
-                )
-
-                Text(sensitivity.description)
-                    .font(.system(size: 11))
-                    .foregroundColor(theme.tertiaryText)
-            }
-
-            // Additional info
-            HStack(spacing: 8) {
-                Image(systemName: "info.circle")
+        SettingsSection(title: "Voice Sensitivity", icon: "waveform") {
+            VStack(alignment: .leading, spacing: 16) {
+                Text("Adjust how sensitive voice detection is", bundle: .module)
                     .font(.system(size: 12))
-                    .foregroundColor(theme.accentColor)
-                Text("Applies to all voice modes: pause detection, wake word, and voice activity", bundle: .module)
-                    .font(.system(size: 11))
-                    .foregroundColor(theme.secondaryText)
-            }
-            .padding(12)
-            .background(
-                RoundedRectangle(cornerRadius: 8)
-                    .fill(theme.accentColor.opacity(0.1))
-            )
-        }
-        .padding(20)
-        .background(
-            RoundedRectangle(cornerRadius: 16)
-                .fill(theme.cardBackground)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 16)
-                        .stroke(theme.cardBorder, lineWidth: 1)
-                )
-        )
-    }
-
-    private var inputDeviceCard: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            HStack(spacing: 12) {
-                ZStack {
-                    RoundedRectangle(cornerRadius: 12)
-                        .fill(theme.accentColor.opacity(0.15))
-                    Image(systemName: audioInputManager.selectedInputSource.iconName)
-                        .font(.system(size: 20, weight: .medium))
-                        .foregroundColor(theme.accentColor)
-                }
-                .frame(width: 48, height: 48)
-
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("Audio Input", bundle: .module)
-                        .font(.system(size: 15, weight: .semibold))
-                        .foregroundColor(theme.primaryText)
-
-                    Text(inputSourceDescription)
-                        .font(.system(size: 12))
-                        .foregroundColor(theme.secondaryText)
-                }
-
-                Spacer()
-
-                Button(action: { audioInputManager.refreshDevices() }) {
-                    Image(systemName: "arrow.clockwise")
-                        .font(.system(size: 14, weight: .medium))
-                        .foregroundColor(theme.secondaryText)
-                        .padding(8)
-                        .background(
-                            RoundedRectangle(cornerRadius: 8)
-                                .fill(theme.tertiaryBackground)
-                        )
-                }
-                .buttonStyle(PlainButtonStyle())
-                .localizedHelp("Refresh available devices")
-            }
-
-            // Input Source Picker
-            VStack(alignment: .leading, spacing: 8) {
-                Text("Input Source", bundle: .module)
-                    .font(.system(size: 11, weight: .medium))
                     .foregroundColor(theme.secondaryText)
 
-                HStack(spacing: 8) {
-                    ForEach(AudioInputSource.allCases, id: \.self) { source in
-                        let isSelected = audioInputManager.selectedInputSource == source
-                        let isDisabled = source == .systemAudio && !systemAudioManager.isAvailable
-
-                        Button(action: {
-                            if !isDisabled {
-                                withAnimation(.easeInOut(duration: 0.2)) {
-                                    audioInputManager.selectedInputSource = source
-                                }
-                            }
-                        }) {
-                            HStack(spacing: 6) {
-                                Image(systemName: source.iconName)
-                                    .font(.system(size: 12, weight: .medium))
-                                Text(source.displayName)
-                                    .font(.system(size: 12, weight: .medium))
-                            }
-                            .foregroundColor(
-                                isDisabled
-                                    ? theme.tertiaryText
-                                    : (isSelected
-                                        ? (theme.isDark ? theme.primaryBackground : .white) : theme.primaryText)
-                            )
-                            .padding(.horizontal, 14)
-                            .padding(.vertical, 8)
-                            .background(
-                                RoundedRectangle(cornerRadius: 8)
-                                    .fill(isSelected ? theme.accentColor : theme.tertiaryBackground)
-                            )
-                        }
-                        .buttonStyle(PlainButtonStyle())
-                        .disabled(isDisabled)
-                    }
-
-                    Spacer()
-                }
-            }
-
-            // Device picker (microphone mode only)
-            if audioInputManager.selectedInputSource == .microphone {
+                // Sensitivity Picker
                 VStack(alignment: .leading, spacing: 8) {
-                    Text("Select Input Device", bundle: .module)
+                    Text("Sensitivity Level", bundle: .module)
                         .font(.system(size: 11, weight: .medium))
                         .foregroundColor(theme.secondaryText)
 
-                    Menu {
-                        Button(action: { audioInputManager.selectDevice(nil) }) {
-                            HStack {
-                                Text("System Default", bundle: .module)
-                                if audioInputManager.selectedDeviceId == nil {
-                                    Image(systemName: "checkmark")
-                                }
+                    HStack(spacing: 0) {
+                        ForEach(VoiceSensitivity.allCases, id: \.self) { level in
+                            Button(action: {
+                                sensitivity = level
+                                saveSettings()
+                            }) {
+                                Text(level.displayName)
+                                    .font(.system(size: 13, weight: sensitivity == level ? .semibold : .medium))
+                                    .foregroundColor(
+                                        sensitivity == level
+                                            ? (theme.isDark ? theme.primaryBackground : .white)
+                                            : theme.primaryText
+                                    )
+                                    .frame(maxWidth: .infinity)
+                                    .padding(.vertical, 8)
+                                    .contentShape(Rectangle())
+                                    .background(
+                                        RoundedRectangle(cornerRadius: 6)
+                                            .fill(sensitivity == level ? theme.accentColor : Color.clear)
+                                    )
                             }
+                            .buttonStyle(.plain)
+                            .contentShape(Rectangle())
+                        }
+                    }
+                    .padding(4)
+                    .background(
+                        RoundedRectangle(cornerRadius: 10)
+                            .fill(theme.tertiaryBackground)
+                    )
+
+                    Text(sensitivity.description)
+                        .font(.system(size: 11))
+                        .foregroundColor(theme.tertiaryText)
+                }
+
+                // Additional info
+                HStack(spacing: 8) {
+                    Image(systemName: "info.circle")
+                        .font(.system(size: 12))
+                        .foregroundColor(theme.accentColor)
+                    Text(
+                        "Applies to all voice modes: pause detection, wake word, and voice activity",
+                        bundle: .module
+                    )
+                    .font(.system(size: 11))
+                    .foregroundColor(theme.secondaryText)
+                }
+                .padding(12)
+                .background(
+                    RoundedRectangle(cornerRadius: 8)
+                        .fill(theme.accentColor.opacity(0.1))
+                )
+            }
+        }
+    }
+
+    private var inputDeviceCard: some View {
+        SettingsSection(title: "Audio Input", icon: "mic") {
+            VStack(alignment: .leading, spacing: 16) {
+                HStack(spacing: 12) {
+                    Text(inputSourceDescription)
+                        .font(.system(size: 12))
+                        .foregroundColor(theme.secondaryText)
+
+                    Spacer()
+
+                    Button(action: { audioInputManager.refreshDevices() }) {
+                        Image(systemName: "arrow.clockwise")
+                            .font(.system(size: 14, weight: .medium))
+                            .foregroundColor(theme.secondaryText)
+                            .padding(8)
+                            .background(
+                                RoundedRectangle(cornerRadius: 8)
+                                    .fill(theme.tertiaryBackground)
+                            )
+                    }
+                    .buttonStyle(PlainButtonStyle())
+                    .localizedHelp("Refresh available devices")
+                }
+
+                // Input Source Picker
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Input Source", bundle: .module)
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundColor(theme.secondaryText)
+
+                    HStack(spacing: 8) {
+                        ForEach(AudioInputSource.allCases, id: \.self) { source in
+                            let isSelected = audioInputManager.selectedInputSource == source
+                            let isDisabled = source == .systemAudio && !systemAudioManager.isAvailable
+
+                            Button(action: {
+                                if !isDisabled {
+                                    withAnimation(.easeInOut(duration: 0.2)) {
+                                        audioInputManager.selectedInputSource = source
+                                    }
+                                }
+                            }) {
+                                HStack(spacing: 6) {
+                                    Image(systemName: source.iconName)
+                                        .font(.system(size: 12, weight: .medium))
+                                    Text(source.displayName)
+                                        .font(.system(size: 12, weight: .medium))
+                                }
+                                .foregroundColor(
+                                    isDisabled
+                                        ? theme.tertiaryText
+                                        : (isSelected
+                                            ? (theme.isDark ? theme.primaryBackground : .white) : theme.primaryText)
+                                )
+                                .padding(.horizontal, 14)
+                                .padding(.vertical, 8)
+                                .background(
+                                    RoundedRectangle(cornerRadius: 8)
+                                        .fill(isSelected ? theme.accentColor : theme.tertiaryBackground)
+                                )
+                            }
+                            .buttonStyle(PlainButtonStyle())
+                            .disabled(isDisabled)
                         }
 
-                        Divider()
+                        Spacer()
+                    }
+                }
 
-                        ForEach(audioInputManager.availableDevices) { device in
-                            Button(action: { audioInputManager.selectDevice(device.id) }) {
+                // Device picker (microphone mode only)
+                if audioInputManager.selectedInputSource == .microphone {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("Select Input Device", bundle: .module)
+                            .font(.system(size: 11, weight: .medium))
+                            .foregroundColor(theme.secondaryText)
+
+                        Menu {
+                            Button(action: { audioInputManager.selectDevice(nil) }) {
                                 HStack {
-                                    Text(device.name)
-                                    if device.isDefault {
-                                        Text("(Default)", bundle: .module)
-                                            .foregroundColor(.secondary)
-                                    }
-                                    if audioInputManager.selectedDeviceId == device.id {
+                                    Text("System Default", bundle: .module)
+                                    if audioInputManager.selectedDeviceId == nil {
                                         Image(systemName: "checkmark")
                                     }
                                 }
                             }
+
+                            Divider()
+
+                            ForEach(audioInputManager.availableDevices) { device in
+                                Button(action: { audioInputManager.selectDevice(device.id) }) {
+                                    HStack {
+                                        Text(device.name)
+                                        if device.isDefault {
+                                            Text("(Default)", bundle: .module)
+                                                .foregroundColor(.secondary)
+                                        }
+                                        if audioInputManager.selectedDeviceId == device.id {
+                                            Image(systemName: "checkmark")
+                                        }
+                                    }
+                                }
+                            }
+                        } label: {
+                            HStack(spacing: 10) {
+                                Image(systemName: "mic.fill")
+                                    .font(.system(size: 14))
+                                    .foregroundColor(theme.accentColor)
+
+                                Text(selectedDeviceName)
+                                    .font(.system(size: 13, weight: .medium))
+                                    .foregroundColor(theme.primaryText)
+                                    .lineLimit(1)
+
+                                Spacer()
+
+                                Image(systemName: "chevron.up.chevron.down")
+                                    .font(.system(size: 10, weight: .medium))
+                                    .foregroundColor(theme.tertiaryText)
+                            }
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 10)
+                            .background(
+                                RoundedRectangle(cornerRadius: 10)
+                                    .fill(theme.inputBackground)
+                                    .overlay(
+                                        RoundedRectangle(cornerRadius: 10)
+                                            .stroke(theme.inputBorder, lineWidth: 1)
+                                    )
+                            )
                         }
-                    } label: {
-                        HStack(spacing: 10) {
-                            Image(systemName: "mic.fill")
-                                .font(.system(size: 14))
-                                .foregroundColor(theme.accentColor)
-
-                            Text(selectedDeviceName)
-                                .font(.system(size: 13, weight: .medium))
-                                .foregroundColor(theme.primaryText)
-                                .lineLimit(1)
-
-                            Spacer()
-
-                            Image(systemName: "chevron.up.chevron.down")
-                                .font(.system(size: 10, weight: .medium))
-                                .foregroundColor(theme.tertiaryText)
-                        }
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 10)
-                        .background(
-                            RoundedRectangle(cornerRadius: 10)
-                                .fill(theme.inputBackground)
-                                .overlay(
-                                    RoundedRectangle(cornerRadius: 10)
-                                        .stroke(theme.inputBorder, lineWidth: 1)
-                                )
-                        )
+                        .menuStyle(.borderlessButton)
                     }
-                    .menuStyle(.borderlessButton)
                 }
             }
         }
-        .padding(20)
-        .background(
-            RoundedRectangle(cornerRadius: 16)
-                .fill(theme.cardBackground)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 16)
-                        .stroke(theme.cardBorder, lineWidth: 1)
-                )
-        )
     }
 
     private var inputSourceDescription: String {

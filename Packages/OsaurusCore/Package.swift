@@ -161,10 +161,19 @@ let package = Package(
                 .linkedFramework("Security")
             ]
         ),
+        // Objective-C shim for framework calls that raise an NSException Swift
+        // cannot `catch` (see `osr_catch_exception`). Kept in its own target
+        // because a SwiftPM target cannot mix Swift and Objective-C sources.
+        .target(
+            name: "OsaurusObjCSupport",
+            path: "ObjCSupport",
+            publicHeadersPath: "include"
+        ),
         .target(
             name: "OsaurusCore",
             dependencies: [
                 "OsaurusSQLCipher",
+                "OsaurusObjCSupport",
                 .product(name: "NIOCore", package: "swift-nio"),
                 .product(name: "NIOHTTP1", package: "swift-nio"),
                 .product(name: "NIOPosix", package: "swift-nio"),
@@ -197,7 +206,7 @@ let package = Package(
                 .product(name: "Sentry", package: "sentry-cocoa"),
             ],
             path: ".",
-            exclude: ["Tests", "SQLCipher"],
+            exclude: ["Tests", "SQLCipher", "ObjCSupport"],
             resources: [.process("Resources")],
             swiftSettings: [
                 // `SystemLanguageModel.contextSize` only exists in the macOS 26.4+

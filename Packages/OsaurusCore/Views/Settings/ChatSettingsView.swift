@@ -71,14 +71,14 @@ struct ChatSettingsView: View {
         ZStack {
             VStack(spacing: 0) {
                 headerView
-                    .opacity(hasAppeared ? 1 : 0)
-                    .offset(y: hasAppeared ? 0 : -10)
-                    .animation(.spring(response: 0.4, dampingFraction: 0.8), value: hasAppeared)
+                    .managerHeaderEntrance(hasAppeared: hasAppeared)
 
                 ScrollViewReader { proxy in
                     ScrollView {
                         VStack(alignment: .leading, spacing: 24) {
                             chatSection
+
+                            generationSection
 
                             ToolPermissionsSection()
                                 .settingsLandingAnchor("settings.toolPermissions")
@@ -155,115 +155,104 @@ struct ChatSettingsView: View {
 
     // MARK: - Chat Section
 
-    // The settings render directly on the page rather than inside a card:
-    // the Chat tab's own header already names and describes the section, so a
-    // wrapping "Chat" card would just repeat it.
     @ViewBuilder private var chatSection: some View {
-        VStack(alignment: .leading, spacing: 20) {
-            // System Prompt
-            StyledSettingsTextArea(
-                label: "System Prompt",
-                text: $tempSystemPrompt,
-                placeholder: "Enter the default Osaurus agent's instructions...",
-                hint: "Optional. Persona for the built-in Osaurus agent."
-            )
-            .settingsLandingAnchor("settings.chat.systemPrompt")
+        SettingsSection(title: "Chat", icon: "text.bubble") {
+            VStack(alignment: .leading, spacing: 20) {
+                // System Prompt
+                StyledSettingsTextArea(
+                    label: "System Prompt",
+                    text: $tempSystemPrompt,
+                    placeholder: "Enter the default Osaurus agent's instructions...",
+                    hint: "Optional. Persona for the built-in Osaurus agent."
+                )
+                .settingsLandingAnchor("settings.chat.systemPrompt")
 
-            SettingsSubsection(label: "Display") {
                 SettingsToggle(
-                    title: L("Smooth streaming"),
+                    title: L("Smooth Streaming"),
                     description:
                         "Pace incoming tokens at a steady rate so streaming looks like a typewriter across all providers. Disable to render tokens as soon as they arrive — useful with very fast remote providers that you'd rather see complete instantly.",
                     isOn: $smoothStreamingEnabled
                 )
-            }
 
-            SettingsDivider()
-
-            SettingsSubsection(label: "Clipboard") {
-                VStack(alignment: .leading, spacing: 8) {
-                    Toggle(isOn: $tempEnableClipboardMonitoring) {
-                        Text("Enable clipboard monitoring", bundle: .module)
-                            .font(.system(size: 12))
-                    }
-                    Text(
+                SettingsToggle(
+                    title: L("Clipboard Monitoring"),
+                    description:
                         "Automatically detect and offer text from any app as context. Includes 'grab selection' feature when summoning Osaurus.",
-                        bundle: .module
-                    )
-                    .font(.system(size: 11))
-                    .foregroundColor(theme.tertiaryText)
+                    isOn: $tempEnableClipboardMonitoring
+                )
+
+                SettingsDivider()
+
+                SettingsSubsection(label: "Generative Greetings") {
+                    VStack(alignment: .leading, spacing: 12) {
+                        Text(
+                            "Default voice for AI-generated greetings + quick actions. Turn greetings on per agent under the agent's Features tab; each agent can also override this voice in its Customization tab.",
+                            bundle: .module
+                        )
+                        .font(.system(size: 11))
+                        .foregroundColor(theme.tertiaryText)
+
+                        personalityEditorBlock
+                    }
                 }
             }
+        }
+    }
 
-            SettingsDivider()
+    // MARK: - Generation Section
 
-            SettingsSubsection(label: "Generative Greetings") {
-                VStack(alignment: .leading, spacing: 12) {
-                    Text(
-                        "Default voice for AI-generated greetings + quick actions. Turn greetings on per agent under the agent's Features tab; each agent can also override this voice in its Customization tab.",
-                        bundle: .module
-                    )
-                    .font(.system(size: 11))
-                    .foregroundColor(theme.tertiaryText)
-
-                    personalityEditorBlock
-                }
-            }
-
-            SettingsDivider()
-
-            // Generation knobs sit last: the most technical controls, used
-            // mainly by power users tuning sampling / token budgets.
-            SettingsSubsection(label: "Generation") {
-                VStack(alignment: .leading, spacing: 12) {
-                    SettingsSliderField(
-                        label: "Temperature",
-                        help: "Randomness (0–2). Higher = more creative",
-                        text: $tempChatTemperature,
-                        range: 0 ... 2,
-                        step: 0.1,
-                        defaultValue: 0.7,
-                        formatString: "%.1f",
-                        anchorId: "settings.chat.temperature"
-                    )
-                    SettingsStepperField(
-                        label: "Max Tokens",
-                        help: "Maximum response tokens",
-                        text: $tempChatMaxTokens,
-                        range: 1 ... 65536,
-                        step: 1024,
-                        defaultValue: 16384,
-                        anchorId: "settings.chat.maxTokens"
-                    )
-                    SettingsStepperField(
-                        label: "Context Length",
-                        help: "Context window for remote models",
-                        text: $tempChatContextLength,
-                        range: 2048 ... 256000,
-                        step: 1024,
-                        defaultValue: 128000,
-                        anchorId: "settings.chat.contextLength"
-                    )
-                    SettingsSliderField(
-                        label: "Top P Override",
-                        help: "Sampling diversity (0–1)",
-                        text: $tempChatTopP,
-                        range: 0 ... 1,
-                        step: 0.05,
-                        defaultValue: 1.0,
-                        formatString: "%.2f",
-                        anchorId: "settings.chat.topP"
-                    )
-                    SettingsStepperField(
-                        label: "Max Tool Attempts",
-                        help: "Max consecutive tool calls per turn",
-                        text: $tempChatMaxToolAttempts,
-                        range: 1 ... 50,
-                        step: 1,
-                        defaultValue: 15,
-                        anchorId: "settings.chat.toolAttempts"
-                    )
-                }
+    // Generation knobs sit last before permissions: the most technical
+    // controls, used mainly by power users tuning sampling / token budgets.
+    @ViewBuilder private var generationSection: some View {
+        SettingsSection(title: "Generation", icon: "slider.horizontal.3") {
+            VStack(alignment: .leading, spacing: 12) {
+                SettingsSliderField(
+                    label: "Temperature",
+                    help: "Randomness (0–2). Higher = more creative",
+                    text: $tempChatTemperature,
+                    range: 0 ... 2,
+                    step: 0.1,
+                    defaultValue: 0.7,
+                    formatString: "%.1f",
+                    anchorId: "settings.chat.temperature"
+                )
+                SettingsStepperField(
+                    label: "Max Tokens",
+                    help: "Maximum response tokens",
+                    text: $tempChatMaxTokens,
+                    range: 1 ... 65536,
+                    step: 1024,
+                    defaultValue: 16384,
+                    anchorId: "settings.chat.maxTokens"
+                )
+                SettingsStepperField(
+                    label: "Context Length",
+                    help: "Context window for remote models",
+                    text: $tempChatContextLength,
+                    range: 2048 ... 256000,
+                    step: 1024,
+                    defaultValue: 128000,
+                    anchorId: "settings.chat.contextLength"
+                )
+                SettingsSliderField(
+                    label: "Top P Override",
+                    help: "Sampling diversity (0–1)",
+                    text: $tempChatTopP,
+                    range: 0 ... 1,
+                    step: 0.05,
+                    defaultValue: 1.0,
+                    formatString: "%.2f",
+                    anchorId: "settings.chat.topP"
+                )
+                SettingsStepperField(
+                    label: "Max Tool Attempts",
+                    help: "Max consecutive tool calls per turn",
+                    text: $tempChatMaxToolAttempts,
+                    range: 1 ... 50,
+                    step: 1,
+                    defaultValue: 15,
+                    anchorId: "settings.chat.toolAttempts"
+                )
             }
         }
     }

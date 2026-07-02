@@ -28,6 +28,17 @@ struct SidebarItemData: Identifiable, Hashable {
     }
 }
 
+// MARK: - Sidebar Section Data
+
+/// A labeled group of sidebar items. Sections render a small uppercase
+/// header when the sidebar is expanded and a thin divider when collapsed.
+/// An empty `title` renders the items without a header.
+struct SidebarSectionData: Identifiable {
+    let id: String
+    let title: String
+    let items: [SidebarItemData]
+}
+
 // MARK: - Layout Constants
 
 private enum SidebarLayout {
@@ -52,7 +63,7 @@ struct SidebarNavigation<Content: View, Footer: View>: View {
     @Environment(\.theme) private var theme
     @Binding var selection: String
     @Binding var searchText: String
-    let items: [SidebarItemData]
+    let sections: [SidebarSectionData]
     let content: (String) -> Content
     let footer: () -> Footer
 
@@ -69,15 +80,32 @@ struct SidebarNavigation<Content: View, Footer: View>: View {
     init(
         selection: Binding<String>,
         searchText: Binding<String>,
-        items: [SidebarItemData],
+        sections: [SidebarSectionData],
         @ViewBuilder content: @escaping (String) -> Content,
         @ViewBuilder footer: @escaping () -> Footer
     ) {
         self._selection = selection
         self._searchText = searchText
-        self.items = items
+        self.sections = sections
         self.content = content
         self.footer = footer
+    }
+
+    /// Convenience for a flat, unlabeled item list (previews, simple uses).
+    init(
+        selection: Binding<String>,
+        searchText: Binding<String>,
+        items: [SidebarItemData],
+        @ViewBuilder content: @escaping (String) -> Content,
+        @ViewBuilder footer: @escaping () -> Footer
+    ) {
+        self.init(
+            selection: selection,
+            searchText: searchText,
+            sections: [SidebarSectionData(id: "main", title: "", items: items)],
+            content: content,
+            footer: footer
+        )
     }
 
     // MARK: Body
@@ -151,18 +179,22 @@ private extension SidebarNavigation {
                     alignment: isCollapsed ? .center : .leading,
                     spacing: isCollapsed ? SidebarLayout.collapsedItemSpacing : SidebarLayout.expandedItemSpacing
                 ) {
-                    ForEach(items) { item in
-                        SidebarItemView(
-                            item: item,
-                            isSelected: selection == item.id,
-                            isCollapsed: isCollapsed,
-                            namespace: sidebarNamespace
-                        ) {
-                            withAnimation(.easeOut(duration: 0.2)) {
-                                selection = item.id
+                    ForEach(Array(sections.enumerated()), id: \.element.id) { index, section in
+                        sectionHeader(for: section, isFirst: index == 0)
+
+                        ForEach(section.items) { item in
+                            SidebarItemView(
+                                item: item,
+                                isSelected: selection == item.id,
+                                isCollapsed: isCollapsed,
+                                namespace: sidebarNamespace
+                            ) {
+                                withAnimation(.easeOut(duration: 0.2)) {
+                                    selection = item.id
+                                }
                             }
+                            .id(item.id)
                         }
-                        .id(item.id)
                     }
 
                     Color.clear
@@ -181,6 +213,23 @@ private extension SidebarNavigation {
             .onAppear {
                 // Ensure initial selection is visible
                 proxy.scrollTo(selection, anchor: .center)
+            }
+        }
+    }
+
+    /// Group label when expanded; a thin divider between groups when collapsed.
+    @ViewBuilder
+    func sectionHeader(for section: SidebarSectionData, isFirst: Bool) -> some View {
+        if !section.title.isEmpty {
+            if isCollapsed {
+                if !isFirst {
+                    Rectangle()
+                        .fill(theme.primaryBorder.opacity(0.6))
+                        .frame(width: 24, height: 1)
+                        .padding(.vertical, 4)
+                }
+            } else {
+                SidebarSectionHeader(title: section.title, topPadding: isFirst ? 4 : 16)
             }
         }
     }
@@ -213,7 +262,7 @@ private extension SidebarNavigation {
         ZStack {
             content(selection)
                 .id(selection)
-                .transition(.opacity.animation(.easeOut(duration: 0.15)))
+                .transition(.opacity.animation(.easeOut(duration: 0.2)))
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .animation(.easeOut(duration: 0.2), value: selection)
@@ -229,11 +278,13 @@ extension SidebarNavigation where Footer == EmptyView {
         items: [SidebarItemData],
         @ViewBuilder content: @escaping (String) -> Content
     ) {
-        self._selection = selection
-        self._searchText = searchText
-        self.items = items
-        self.content = content
-        self.footer = { EmptyView() }
+        self.init(
+            selection: selection,
+            searchText: searchText,
+            items: items,
+            content: content,
+            footer: { EmptyView() }
+        )
     }
 }
 
@@ -381,13 +432,14 @@ private struct SidebarItemView: View {
 struct SidebarSectionHeader: View {
     @Environment(\.theme) private var theme
     let title: String
+    var topPadding: CGFloat = 16
 
     var body: some View {
         Text(title.uppercased())
             .font(.system(size: 11, weight: .semibold, design: .rounded))
             .foregroundColor(theme.tertiaryText)
             .padding(.horizontal, 12)
-            .padding(.top, 16)
+            .padding(.top, topPadding)
             .padding(.bottom, 4)
     }
 }

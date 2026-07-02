@@ -50,8 +50,12 @@ public struct SettingsSearchEntry: Identifiable, Sendable, Hashable {
     }
 
     /// Breadcrumb shown in results, e.g. ["Voice", "Speech to Text", "Transcription Model"].
+    /// A section that just repeats the tab label (e.g. the "General" card inside
+    /// the General tab) is collapsed so results don't read "General › General".
     public var breadcrumb: [String] {
-        section.isEmpty ? [tab.label, title] : [tab.label, section, title]
+        section.isEmpty || section == tab.label
+            ? [tab.label, title]
+            : [tab.label, section, title]
     }
 }
 
@@ -143,35 +147,35 @@ public enum SettingsSearchIndex {
         .init(
             id: "settings.chat.temperature",
             tab: .chat,
-            section: "Chat",
+            section: "Generation",
             title: "Temperature",
             keywords: ["randomness", "creativity", "sampling"]
         ),
         .init(
             id: "settings.chat.maxTokens",
             tab: .chat,
-            section: "Chat",
+            section: "Generation",
             title: "Max Tokens",
             keywords: ["response length", "output tokens"]
         ),
         .init(
             id: "settings.chat.contextLength",
             tab: .chat,
-            section: "Chat",
+            section: "Generation",
             title: "Context Length",
             keywords: ["context window", "context"]
         ),
         .init(
             id: "settings.chat.topP",
             tab: .chat,
-            section: "Chat",
+            section: "Generation",
             title: "Top P",
             keywords: ["nucleus sampling", "top-p"]
         ),
         .init(
             id: "settings.chat.toolAttempts",
             tab: .chat,
-            section: "Chat",
+            section: "Generation",
             title: "Max Tool Attempts",
             keywords: ["tool calls", "agent loop", "attempts"]
         ),
@@ -199,6 +203,20 @@ public enum SettingsSearchIndex {
             section: "Notifications",
             title: "Toast Notifications",
             keywords: ["toast", "position", "timeout", "alerts"]
+        ),
+        .init(
+            id: "settings.notifications.position",
+            tab: .settings,
+            section: "Notifications",
+            title: "Toast Position",
+            keywords: ["position", "corner", "top", "bottom", "placement"]
+        ),
+        .init(
+            id: "settings.notifications.timeout",
+            tab: .settings,
+            section: "Notifications",
+            title: "Toast Timeout",
+            keywords: ["timeout", "duration", "auto dismiss", "seconds"]
         ),
         .init(
             id: "settings.toolPermissions",
@@ -241,11 +259,43 @@ public enum SettingsSearchIndex {
             subTab: "VAD Mode"
         ),
         .init(
+            id: "voice.stt.pause",
+            tab: .voice,
+            section: "Speech to Text",
+            title: "Pause Detection",
+            keywords: ["pause", "auto stop", "auto send", "stop after silence"],
+            subTab: "Speech To Text"
+        ),
+        .init(
+            id: "voice.stt.confirmation",
+            tab: .voice,
+            section: "Speech to Text",
+            title: "Confirmation Delay",
+            keywords: ["confirmation", "cancel window", "delay before send"],
+            subTab: "Speech To Text"
+        ),
+        .init(
+            id: "voice.stt.silence",
+            tab: .voice,
+            section: "Speech to Text",
+            title: "Silence Timeout",
+            keywords: ["silence", "timeout", "close voice input", "inactivity"],
+            subTab: "Speech To Text"
+        ),
+        .init(
             id: "voice.tts.voice",
             tab: .voice,
             section: "Text to Speech",
             title: "Spoken Voice",
             keywords: ["tts", "read aloud", "speech synthesis", "voice"],
+            subTab: "Text To Speech"
+        ),
+        .init(
+            id: "voice.tts.temperature",
+            tab: .voice,
+            section: "Text to Speech",
+            title: "Voice Temperature",
+            keywords: ["tts temperature", "expressiveness", "variation"],
             subTab: "Text To Speech"
         ),
         .init(
@@ -486,11 +536,25 @@ public enum SettingsSearchIndex {
                 "cryptographic identity", "keys",
             ]
         ),
+        // The Storage tab is the single home for disk concerns: the models
+        // directory + external sources moved here from the General tab.
         .init(
             id: "storage.location",
             tab: .storage,
-            title: "Storage & Cleanup",
-            keywords: ["disk", "cache", "data location", "cleanup", "models size"]
+            title: "Models Directory",
+            keywords: ["disk", "data location", "models folder", "move models", "cleanup", "models size"]
+        ),
+        .init(
+            id: "storage.externalModels",
+            tab: .storage,
+            title: "External Model Sources",
+            keywords: ["hugging face", "hf cache", "lm studio", "external", "import models"]
+        ),
+        .init(
+            id: "storage.encryption",
+            tab: .storage,
+            title: "Encrypt Local Data at Rest",
+            keywords: ["sqlcipher", "encryption", "filevault", "at rest", "storage key", "backup"]
         ),
         .init(
             id: "themes.appearance",
@@ -503,6 +567,22 @@ public enum SettingsSearchIndex {
             tab: .memory,
             title: "Memory",
             keywords: ["memories", "facts", "recall", "long term memory"]
+        ),
+        .init(
+            id: "memory.settings.budget",
+            tab: .memory,
+            section: "Configuration",
+            title: "Memory Budget",
+            keywords: ["memory tokens", "context budget", "injection"],
+            subTab: "settings"
+        ),
+        .init(
+            id: "memory.settings.retention",
+            tab: .memory,
+            section: "Configuration",
+            title: "Episode Retention",
+            keywords: ["retention", "prune", "days", "history cleanup"],
+            subTab: "settings"
         ),
     ]
 }
