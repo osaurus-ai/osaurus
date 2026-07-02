@@ -63,6 +63,7 @@ public final class KnowledgeManager: ObservableObject {
         KnowledgeCollectionStore.save(collection)
         collections = KnowledgeCollectionStore.loadAll()
         NotificationCenter.default.post(name: .knowledgeCollectionsChanged, object: collection.id)
+        scheduleIndex(of: collection)
         return collection
     }
 
@@ -72,11 +73,33 @@ public final class KnowledgeManager: ObservableObject {
         KnowledgeCollectionStore.save(updated)
         collections = KnowledgeCollectionStore.loadAll()
         NotificationCenter.default.post(name: .knowledgeCollectionsChanged, object: collection.id)
+        scheduleIndex(of: updated)
     }
 
     public func delete(id: UUID) {
         KnowledgeCollectionStore.delete(id: id)
         collections = KnowledgeCollectionStore.loadAll()
         NotificationCenter.default.post(name: .knowledgeCollectionsChanged, object: id)
+        Task.detached(priority: .utility) {
+            await KnowledgeIndexService.shared.removeCollectionArtifacts(collectionId: id)
+        }
+    }
+
+    /// Kick a background (re-)index of one collection. `force` bypasses
+    /// the content-hash skip for a manual full rebuild.
+    public func scheduleIndex(of collection: KnowledgeCollection, force: Bool = false) {
+        guard collection.isEnabled else { return }
+        Task.detached(priority: .utility) {
+            await KnowledgeIndexService.shared.indexCollection(collection, force: force)
+        }
+    }
+
+    /// Kick a background incremental pass over every enabled collection
+    /// (app startup, deferred off the launch path).
+    public func scheduleIndexAll() {
+        let snapshot = collections
+        Task.detached(priority: .utility) {
+            await KnowledgeIndexService.shared.indexAll(snapshot)
+        }
     }
 }

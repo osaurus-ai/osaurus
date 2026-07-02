@@ -314,21 +314,28 @@ public final class KnowledgeDatabase: @unchecked Sendable {
     }
 
     /// Replace all chunks of a document in one transaction. Explicit
-    /// DELETE + INSERT so the FTS triggers fire for every row.
+    /// DELETE + INSERT so the FTS triggers fire for every row. Returns
+    /// the count of chunks removed so the caller can drop stale vectors
+    /// when a document shrinks.
+    @discardableResult
     public func replaceChunks(
         documentId: Int,
         chunks: [(headingPath: String, content: String)]
-    ) throws {
+    ) throws -> Int {
         dispatchPrecondition(condition: .notOnQueue(queue))
-        try queue.sync {
+        return try queue.sync {
             guard let connection = db else { throw KnowledgeDatabaseError.notOpen }
+            var removed = 0
             try Self.execRaw(on: connection, "BEGIN TRANSACTION")
             do {
                 try Self.prepareAndExecute(
                     on: connection,
                     "DELETE FROM chunks WHERE document_id = ?1",
                     bind: { stmt in sqlite3_bind_int64(stmt, 1, Int64(documentId)) },
-                    process: { stmt in _ = sqlite3_step(stmt) }
+                    process: { stmt in
+                        _ = sqlite3_step(stmt)
+                        removed = Int(sqlite3_changes(connection))
+                    }
                 )
                 for (index, chunk) in chunks.enumerated() {
                     try Self.prepareAndExecute(
@@ -357,6 +364,7 @@ public final class KnowledgeDatabase: @unchecked Sendable {
                 try? Self.execRaw(on: connection, "ROLLBACK")
                 throw error
             }
+            return removed
         }
     }
 
