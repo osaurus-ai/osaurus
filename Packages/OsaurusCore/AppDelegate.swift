@@ -445,6 +445,15 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
             }
         }
 
+        // Incremental knowledge index pass so collection folder changes
+        // made while the app was closed are picked up. Waits for the
+        // embedder init to avoid competing for it; hash-incremental, so an
+        // unchanged corpus costs one folder scan per collection.
+        Task { @MainActor in
+            await embeddingInitTask.value
+            KnowledgeManager.shared.scheduleIndexAll()
+        }
+
         // Setup global hotkey for Chat overlay (configured)
         applyChatHotkey()
 
