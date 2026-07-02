@@ -511,6 +511,9 @@
         }
       }
     },
+    "[%@] %@" : {
+      "shouldTranslate" : false
+    },
     "[secret]" : {
       "localizations" : {
         "de" : {
@@ -690,6 +693,9 @@
           }
         }
       }
+    },
+    "/path/to/markdown-folder" : {
+      "shouldTranslate" : false
     },
     "/plugins/%@%@" : {
       "localizations" : {
@@ -6547,6 +6553,28 @@
         }
       }
     },
+    "Add Collection" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Sammlung hinzufügen"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "컬렉션 추가"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "添加集合"
+          }
+        }
+      }
+    },
     "Add Color" : {
       "localizations" : {
         "de" : {
@@ -6699,6 +6727,28 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "添加标头"
+          }
+        }
+      }
+    },
+    "Add Knowledge Collection" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Wissenssammlung hinzufügen"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "지식 컬렉션 추가"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "添加知识集合"
           }
         }
       }
@@ -6925,6 +6975,28 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "添加变量"
+          }
+        }
+      }
+    },
+    "Add Your First Knowledge Collection" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Füge deine erste Wissenssammlung hinzu"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "첫 지식 컬렉션을 추가하세요"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "添加你的第一个知识集合"
           }
         }
       }
@@ -9248,6 +9320,28 @@
         }
       }
     },
+    "Answers ticket #%lld" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Beantwortet Ticket #%lld"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "티켓 #%lld에 대한 답변"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "回应工单 #%lld"
+          }
+        }
+      }
+    },
     "Anthropic" : {
       "localizations" : {
         "de" : {
@@ -10196,6 +10290,28 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "在发送前批准每一个匹配项，或在你信任这些选择后自动批准。"
+          }
+        }
+      }
+    },
+    "Approving writes this content into the collection folder and re-indexes it. Dismissing reopens the linked ticket." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Beim Genehmigen wird dieser Inhalt in den Sammlungsordner geschrieben und neu indiziert. Beim Verwerfen wird das verknüpfte Ticket wieder geöffnet."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "승인하면 이 내용이 컬렉션 폴더에 기록되고 다시 색인됩니다. 기각하면 연결된 티켓이 다시 열립니다."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "批准后，此内容将写入集合文件夹并重新建立索引。驳回则会重新打开关联的工单。"
           }
         }
       }
@@ -18700,6 +18816,28 @@
         }
       }
     },
+    "Coding and testing guidelines agents must follow" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Codierungs- und Testrichtlinien, die Agenten befolgen müssen"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "에이전트가 따라야 하는 코딩 및 테스트 지침"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "代理必须遵循的编码与测试规范"
+          }
+        }
+      }
+    },
     "Collapse" : {
       "localizations" : {
         "de" : {
@@ -23958,6 +24096,72 @@
         }
       }
     },
+    "Curated reference material the agent can consult on demand." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Kuratiertes Referenzmaterial, das der Agent bei Bedarf heranziehen kann."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "에이전트가 필요할 때 참조할 수 있는 선별된 자료입니다."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "代理可按需查阅的精选参考资料。"
+          }
+        }
+      }
+    },
+    "Curation" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Kuratierung"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "큐레이션"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "内容维护"
+          }
+        }
+      }
+    },
+    "Curator" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Kurator"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "큐레이터"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "维护者"
+          }
+        }
+      }
+    },
     "Currently Active" : {
       "localizations" : {
         "de" : {
@@ -27683,6 +27887,28 @@
         }
       }
     },
+    "Dismiss Proposal" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Vorschlag verwerfen"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "제안 기각"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "驳回提案"
+          }
+        }
+      }
+    },
     "Dispatch a work or chat task to an agent" : {
       "localizations" : {
         "de" : {
@@ -28272,9 +28498,7 @@
         }
       }
     },
-    "Download or import the model before Osaurus can inspect or prove local tool use." : {
-
-    },
+    "Download or import the model before Osaurus can inspect or prove local tool use." : {},
     "Download required" : {
       "localizations" : {
         "de" : {
@@ -29720,6 +29944,28 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "编辑图片"
+          }
+        }
+      }
+    },
+    "Edit Knowledge Collection" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Wissenssammlung bearbeiten"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "지식 컬렉션 편집"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "编辑知识集合"
           }
         }
       }
@@ -35304,6 +35550,50 @@
         }
       }
     },
+    "Folder not found. Search serves the last indexed state." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ordner nicht gefunden. Die Suche liefert den zuletzt indizierten Stand."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "폴더를 찾을 수 없습니다. 검색은 마지막으로 색인된 상태를 사용합니다."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "未找到文件夹。搜索将使用最后一次建立的索引。"
+          }
+        }
+      }
+    },
+    "Folders of markdown your agents can search and read on demand" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Markdown-Ordner, die deine Agenten bei Bedarf durchsuchen und lesen können"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "에이전트가 필요할 때 검색하고 읽을 수 있는 마크다운 폴더"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "供代理按需搜索和阅读的 Markdown 文件夹"
+          }
+        }
+      }
+    },
     "for \"%@\"" : {
       "localizations" : {
         "de" : {
@@ -39177,6 +39467,28 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "聊天界面在你发送第一条消息前的样子。"
+          }
+        }
+      }
+    },
+    "How-to Guides" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Anleitungen"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "사용 가이드"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "操作指南"
           }
         }
       }
@@ -43690,6 +44002,28 @@
         }
       }
     },
+    "Knowledge" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Wissen"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "지식"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "知识"
+          }
+        }
+      }
+    },
     "KV" : {
       "localizations" : {
         "de" : {
@@ -44603,6 +44937,28 @@
         }
       }
     },
+    "Let the agent search and read the knowledge collections granted below: curated guides, templates, and standards. Separate from memory, knowledge is yours to edit and never written by the agent." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Erlaube dem Agenten, die unten freigegebenen Wissenssammlungen zu durchsuchen und zu lesen: kuratierte Leitfäden, Vorlagen und Standards. Anders als das Gedächtnis gehört Wissen dir: Du bearbeitest es, der Agent schreibt es nie."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "아래에서 허용한 지식 컬렉션(선별된 가이드, 템플릿, 표준)을 에이전트가 검색하고 읽을 수 있게 합니다. 메모리와 달리 지식은 사용자가 직접 편집하며 에이전트는 절대 수정하지 않습니다."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "允许代理搜索和阅读下方授权的知识集合：精选指南、模板和规范。与记忆不同，知识由你编辑，代理绝不会改写。"
+          }
+        }
+      }
+    },
     "Let the agent search its own memory mid-conversation to pull up past details on demand. Separate from Memory above, which only auto-injects and saves." : {
       "localizations" : {
         "de" : {
@@ -44734,6 +45090,28 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "允许此智能体委托工作 — 控制您的 Mac、将任务移交给其他智能体，或生成图像。"
+          }
+        }
+      }
+    },
+    "Let this agent draft document updates as pending proposals (it can also file and work staleness tickets). Nothing changes in a collection until you approve a proposal in the Knowledge section." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Erlaube diesem Agenten, Dokument-Updates als ausstehende Vorschläge zu entwerfen (er kann auch Veraltet-Tickets anlegen und bearbeiten). In einer Sammlung ändert sich nichts, bis du einen Vorschlag im Bereich Wissen genehmigst."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "이 에이전트가 문서 업데이트를 대기 중인 제안으로 작성할 수 있게 합니다(오래된 문서 티켓을 등록하고 처리할 수도 있습니다). 지식 섹션에서 제안을 승인하기 전에는 컬렉션이 변경되지 않습니다."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "允许此代理将文档更新起草为待审提案（它也可以提交和处理过期工单）。在你于知识板块批准提案之前，集合不会有任何变化。"
           }
         }
       }
@@ -47581,6 +47959,28 @@
         }
       }
     },
+    "Markdown files in this folder are indexed in place and never modified. YAML frontmatter (`type`, `tags`, …) is used for filtering." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Markdown-Dateien in diesem Ordner werden an Ort und Stelle indiziert und nie verändert. YAML-Frontmatter (`type`, `tags`, …) dient zum Filtern."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "이 폴더의 마크다운 파일은 제자리에서 색인되며 절대 수정되지 않습니다. YAML 프런트매터(`type`, `tags` 등)는 필터링에 사용됩니다."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "此文件夹中的 Markdown 文件将就地建立索引，绝不会被修改。YAML frontmatter（`type`、`tags` 等）用于筛选。"
+          }
+        }
+      }
+    },
     "Mascot: %@" : {
       "localizations" : {
         "de" : {
@@ -47666,6 +48066,28 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "主地址"
+          }
+        }
+      }
+    },
+    "Master templates referenced when building" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Mastervorlagen, die beim Erstellen herangezogen werden"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "작업 시 참조하는 마스터 템플릿"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "构建时参考的主模板"
           }
         }
       }
@@ -49539,52 +49961,6 @@
         }
       }
     },
-    "Mistral" : {
-      "comment" : "Name of the credential prompt preset for Mistral.",
-      "isCommentAutoGenerated" : true,
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Mistral"
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Mistral"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Mistral"
-          }
-        }
-      }
-    },
-    "Mistral Small/Medium models" : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Mistral Small/Medium-Modelle"
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Mistral Small/Medium 모델"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Mistral Small/Medium 模型"
-          }
-        }
-      }
-    },
     "Minimum top-up is $5.00" : {
       "comment" : "A tooltip explaining that the minimum amount to top up their credit is $5.00.",
       "isCommentAutoGenerated" : true,
@@ -49795,6 +50171,52 @@
         }
       }
     },
+    "Mistral" : {
+      "comment" : "Name of the credential prompt preset for Mistral.",
+      "isCommentAutoGenerated" : true,
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Mistral"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Mistral"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Mistral"
+          }
+        }
+      }
+    },
+    "Mistral Small/Medium models" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Mistral Small/Medium-Modelle"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Mistral Small/Medium 모델"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Mistral Small/Medium 模型"
+          }
+        }
+      }
+    },
     "Mode" : {
       "localizations" : {
         "de" : {
@@ -49937,9 +50359,7 @@
         }
       }
     },
-    "Model capability detection reports local tool calling as unsupported for this bundle." : {
-
-    },
+    "Model capability detection reports local tool calling as unsupported for this bundle." : {},
     "Model Card" : {
       "comment" : "The title of a section that displays detailed information about a machine learning model.",
       "isCommentAutoGenerated" : true,
@@ -53005,9 +53425,6 @@
         }
       }
     },
-    "No live tool-call proof is recorded for this exact bundle yet." : {
-
-    },
     "No folder selected" : {
       "localizations" : {
         "de" : {
@@ -53300,6 +53717,28 @@
         }
       }
     },
+    "No knowledge collections yet. Add one in the Knowledge section of this window." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Noch keine Wissenssammlungen. Füge eine im Bereich Wissen dieses Fensters hinzu."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "아직 지식 컬렉션이 없습니다. 이 창의 지식 섹션에서 추가하세요."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "还没有知识集合。请在此窗口的知识板块中添加。"
+          }
+        }
+      }
+    },
     "No limit" : {
       "localizations" : {
         "de" : {
@@ -53322,6 +53761,7 @@
         }
       }
     },
+    "No live tool-call proof is recorded for this exact bundle yet." : {},
     "No local benchmark proof is recorded here yet. A passing row needs visible output, token/s, RAM status, cancellation, and cache evidence." : {
       "localizations" : {
         "de" : {
@@ -63406,6 +63846,28 @@
         }
       }
     },
+    "Point Osaurus at a folder of markdown (guides, templates, standards) and grant it to agents so they can consult it on demand." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Zeige Osaurus auf einen Markdown-Ordner (Leitfäden, Vorlagen, Standards) und gib ihn für Agenten frei, damit sie ihn bei Bedarf heranziehen können."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "마크다운 폴더(가이드, 템플릿, 표준)를 Osaurus에 지정하고 에이전트에 허용하면 필요할 때 참조할 수 있습니다."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "让 Osaurus 指向一个 Markdown 文件夹（指南、模板、规范），并授权给代理，让它们可以按需查阅。"
+          }
+        }
+      }
+    },
     "Poll task status and activity" : {
       "localizations" : {
         "de" : {
@@ -67350,6 +67812,78 @@
         }
       }
     },
+    "Proposal #%lld" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Vorschlag #%lld"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "제안 #%lld"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "提案 #%lld"
+          }
+        }
+      }
+    },
+    "Proposal #%lld: %@" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Proposal #%1$lld: %2$@"
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Vorschlag #%lld: %@"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "제안 #%lld: %@"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "提案 #%lld：%@"
+          }
+        }
+      }
+    },
+    "Proposed content" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Vorgeschlagener Inhalt"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "제안된 내용"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "提议的内容"
+          }
+        }
+      }
+    },
     "Protocol" : {
       "localizations" : {
         "de" : {
@@ -68413,6 +68947,28 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "重新下载以获取缺失的文件。"
+          }
+        }
+      }
+    },
+    "Re-index" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Neu indizieren"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "다시 색인"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "重建索引"
           }
         }
       }
@@ -75017,9 +75573,7 @@
     "Run a local signing check to inspect the redacted request shape." : {
       "shouldTranslate" : false
     },
-    "Run AppleScript" : {
-
-    },
+    "Run AppleScript" : {},
     "Run code and commands in an isolated sandbox." : {
       "comment" : "Section title for a feature group related to running code and commands in a sandbox.",
       "isCommentAutoGenerated" : true,
@@ -75969,12 +76523,6 @@
         }
       }
     },
-    "Runtime support is incomplete; a live tool-call proof is not meaningful until the runtime blocker is resolved." : {
-
-    },
-    "Runtime preflight blocks this bundle, so Osaurus cannot run a tool-call proof." : {
-
-    },
     "Runtime" : {
       "localizations" : {
         "de" : {
@@ -75997,6 +76545,7 @@
         }
       }
     },
+    "Runtime preflight blocks this bundle, so Osaurus cannot run a tool-call proof." : {},
     "Runtime socket path exists." : {
       "localizations" : {
         "de" : {
@@ -76019,6 +76568,7 @@
         }
       }
     },
+    "Runtime support is incomplete; a live tool-call proof is not meaningful until the runtime blocker is resolved." : {},
     "Runtime Tools" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -78017,9 +78567,7 @@
         }
       }
     },
-    "Script" : {
-
-    },
+    "Script" : {},
     "Script execution" : {
       "extractionState" : "manual"
     },
@@ -83777,6 +84325,28 @@
         }
       }
     },
+    "SOPs and runbooks for recurring tasks" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "SOPs und Runbooks für wiederkehrende Aufgaben"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "반복 작업을 위한 SOP 및 런북"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "用于重复任务的操作规程与手册"
+          }
+        }
+      }
+    },
     "Sort" : {
       "localizations" : {
         "de" : {
@@ -86498,6 +87068,28 @@
         }
       }
     },
+    "Summary" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Zusammenfassung"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "요약"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "摘要"
+          }
+        }
+      }
+    },
     "Support Export" : {
       "shouldTranslate" : false
     },
@@ -87275,6 +87867,28 @@
         }
       }
     },
+    "Team Standards" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Team-Standards"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "팀 표준"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "团队规范"
+          }
+        }
+      }
+    },
     "Telegram" : {
       "comment" : "An option in the picker for Telegram.",
       "isCommentAutoGenerated" : true,
@@ -87308,6 +87922,28 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Vorlage"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "템플릿"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "模板"
+          }
+        }
+      }
+    },
+    "Templates" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Vorlagen"
           }
         },
         "ko" : {
@@ -88199,9 +88835,7 @@
         }
       }
     },
-    "The bundle declares a tool-call parser (%@), but Osaurus still needs a live tool-call proof before marking it proven." : {
-
-    },
+    "The bundle declares a tool-call parser (%@), but Osaurus still needs a live tool-call proof before marking it proven." : {},
     "The bundle has the required local files. Runtime quality still depends on model-family support and live generation proof." : {
       "localizations" : {
         "de" : {
@@ -88224,12 +88858,8 @@
         }
       }
     },
-    "The bundle is incomplete, so Osaurus cannot run a tool-call proof." : {
-
-    },
-    "The bundle still needs a live tool-call proof before Osaurus should call it tool-use capable." : {
-
-    },
+    "The bundle is incomplete, so Osaurus cannot run a tool-call proof." : {},
+    "The bundle still needs a live tool-call proof before Osaurus should call it tool-use capable." : {},
     "The config file is invalid JSON or has an incompatible shape." : {
       "localizations" : {
         "de" : {
@@ -91085,6 +91715,34 @@
         }
       }
     },
+    "Ticket #%lld: %@" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Ticket #%1$lld: %2$@"
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ticket #%lld: %@"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "티켓 #%lld: %@"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "工单 #%lld：%@"
+          }
+        }
+      }
+    },
     "Tied LM Head Codec" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -92039,21 +92697,6 @@
         }
       }
     },
-    "Tool use" : {
-
-    },
-    "Tool use blocked" : {
-
-    },
-    "Tool use proof required" : {
-
-    },
-    "Tool use unproven" : {
-
-    },
-    "Tool use unsupported" : {
-
-    },
     "Tool Permissions" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -92077,6 +92720,11 @@
         }
       }
     },
+    "Tool use" : {},
+    "Tool use blocked" : {},
+    "Tool use proof required" : {},
+    "Tool use unproven" : {},
+    "Tool use unsupported" : {},
     "Tools" : {
       "localizations" : {
         "de" : {
@@ -97975,6 +98623,28 @@
         }
       }
     },
+    "What this corpus contains, shown to agents" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Was dieser Korpus enthält; wird Agenten angezeigt"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "이 자료의 내용 설명, 에이전트에게 표시됩니다"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "描述该资料库的内容，会展示给代理"
+          }
+        }
+      }
+    },
     "What this means right now" : {
       "localizations" : {
         "de" : {
@@ -98672,6 +99342,9 @@
           }
         }
       }
+    },
+    "WordPress Development" : {
+      "shouldTranslate" : false
     },
     "Work" : {
       "localizations" : {
@@ -100296,6 +100969,191 @@
           }
         }
       }
+    },
+    "Changes" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Änderungen"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "변경 사항"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "变更"
+          }
+        }
+      }
+    },
+    "New document" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Neues Dokument"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "새 문서"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "新文档"
+          }
+        }
+      }
+    },
+    "Changes vs. current document" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Änderungen gegenüber dem aktuellen Dokument"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "현재 문서와의 변경 사항"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "与当前文档的差异"
+          }
+        }
+      }
+    },
+    "Edit before approving" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Vor dem Genehmigen bearbeiten"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "승인 전 편집"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "批准前编辑"
+          }
+        }
+      }
+    },
+    "Approve Edited" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Bearbeitet genehmigen"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "편집본 승인"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "批准已编辑版本"
+          }
+        }
+      }
+    },
+    "Approving writes this content into the collection folder and re-indexes it. Your edits in the Edit tab are what gets written. Dismissing reopens the linked ticket." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Beim Genehmigen wird dieser Inhalt in den Sammlungsordner geschrieben und neu indiziert. Geschrieben wird, was du im Tab Bearbeiten geändert hast. Beim Verwerfen wird das verknüpfte Ticket wieder geöffnet."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "승인하면 이 내용이 컬렉션 폴더에 기록되고 다시 색인됩니다. 편집 탭에서 수정한 내용이 기록됩니다. 기각하면 연결된 티켓이 다시 열립니다."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "批准后，此内容将写入集合文件夹并重新建立索引。实际写入的是你在编辑标签页中的内容。驳回则会重新打开关联的工单。"
+          }
+        }
+      }
+    },
+    "Or clone from a git URL" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Oder von einer Git-URL klonen"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "또는 git URL에서 클론"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "或从 git URL 克隆"
+          }
+        }
+      }
+    },
+    "Clones into Osaurus-managed storage and keeps the git link for Sync. Uses your existing git credentials (credential helper or SSH agent). Leave empty to use the folder above." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Klont in den von Osaurus verwalteten Speicher und behält die Git-Verbindung für Sync. Verwendet deine vorhandenen Git-Zugangsdaten (Credential Helper oder SSH-Agent). Leer lassen, um den Ordner oben zu verwenden."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Osaurus가 관리하는 저장소로 클론하고 동기화를 위한 git 연결을 유지합니다. 기존 git 자격 증명(credential helper 또는 SSH 에이전트)을 사용합니다. 위의 폴더를 사용하려면 비워 두세요."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "克隆到 Osaurus 管理的存储中，并保留 git 关联用于同步。使用你现有的 git 凭据（credential helper 或 SSH agent）。留空则使用上面的文件夹。"
+          }
+        }
+      }
+    },
+    "git" : {
+      "shouldTranslate" : false
+    },
+    "OKF" : {
+      "shouldTranslate" : false
+    },
+    "https://github.com/team/knowledge.git" : {
+      "shouldTranslate" : false
     }
   },
   "version" : "1.1"
