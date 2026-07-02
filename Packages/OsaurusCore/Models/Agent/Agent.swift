@@ -500,6 +500,14 @@ public struct AgentCapabilities: Sendable, Equatable {
     /// Optional "when/how to use" note per spawnable model id, surfaced in the
     /// spawn guidance descriptor. Pure metadata — the gate is `spawnableModelNames`.
     public var spawnableModelNotes: [String: String]
+    /// Knowledge tools (`search_knowledge` / `read_knowledge` /
+    /// `list_knowledge`) exposed to the model — per-agent opt-in.
+    public var knowledgeEnabled: Bool
+    /// Knowledge collections this agent may search/read. Scoping is
+    /// enforced at tool execution time (not just schema stripping), so an
+    /// agent can never reach a collection it wasn't granted. Empty → the
+    /// knowledge tools stay hidden (nothing to search).
+    public var knowledgeCollectionIds: [UUID]
 
     public init(
         toolsEnabled: Bool,
@@ -516,7 +524,9 @@ public struct AgentCapabilities: Sendable, Equatable {
         appleScriptEnabled: Bool = false,
         spawnableAgentNames: [String] = [],
         spawnableModelNames: [String] = [],
-        spawnableModelNotes: [String: String] = [:]
+        spawnableModelNotes: [String: String] = [:],
+        knowledgeEnabled: Bool = false,
+        knowledgeCollectionIds: [UUID] = []
     ) {
         self.toolsEnabled = toolsEnabled
         self.memoryEnabled = memoryEnabled
@@ -533,6 +543,8 @@ public struct AgentCapabilities: Sendable, Equatable {
         self.spawnableAgentNames = spawnableAgentNames
         self.spawnableModelNames = spawnableModelNames
         self.spawnableModelNotes = spawnableModelNotes
+        self.knowledgeEnabled = knowledgeEnabled
+        self.knowledgeCollectionIds = knowledgeCollectionIds
     }
 }
 
@@ -831,6 +843,16 @@ public struct AgentSettings: Codable, Sendable, Equatable {
     /// `subagentPermissions` — so a new kind needs no new field. The Default
     /// agent uses the global `SubagentConfiguration.subagentModelOverrides`.
     public var subagentModelOverrides: [String: String]
+    /// Per-agent opt-in for the knowledge tools (`search_knowledge` /
+    /// `read_knowledge` / `list_knowledge`). Default off; like the other
+    /// gated built-ins the tools stay registered but are stripped from the
+    /// model's schema unless enabled AND at least one collection is granted.
+    public var knowledgeEnabled: Bool
+    /// Knowledge collections this agent may search/read (per-agent
+    /// allow-list of `KnowledgeCollection` ids). Scope is enforced at tool
+    /// execution time, so the grant list — not the schema — is the
+    /// security boundary. Empty → the knowledge tools stay hidden.
+    public var knowledgeCollectionIds: [UUID]
 
     public init(
         dbEnabled: Bool,
@@ -857,7 +879,9 @@ public struct AgentSettings: Codable, Sendable, Equatable {
         imageEditModelId: String? = nil,
         subagentPermissions: SubagentPermissionDefaults = SubagentPermissionDefaults(),
         subagentBudgets: SubagentBudgets = SubagentBudgets(),
-        subagentModelOverrides: [String: String] = [:]
+        subagentModelOverrides: [String: String] = [:],
+        knowledgeEnabled: Bool = false,
+        knowledgeCollectionIds: [UUID] = []
     ) {
         self.dbEnabled = dbEnabled
         self.schedule = schedule
@@ -884,6 +908,8 @@ public struct AgentSettings: Codable, Sendable, Equatable {
         self.subagentPermissions = subagentPermissions
         self.subagentBudgets = subagentBudgets
         self.subagentModelOverrides = subagentModelOverrides
+        self.knowledgeEnabled = knowledgeEnabled
+        self.knowledgeCollectionIds = knowledgeCollectionIds
     }
 
     public init(from decoder: Decoder) throws {
@@ -971,6 +997,11 @@ public struct AgentSettings: Codable, Sendable, Equatable {
         subagentModelOverrides = Self.normalizedModelOverrides(
             (try? c.decodeIfPresent([String: String].self, forKey: .subagentModelOverrides)) ?? [:]
         )
+        // Knowledge opt-in + grants. Default off; lenient (`try?`) so a
+        // malformed grant list never discards the rest of the settings.
+        knowledgeEnabled = try c.decodeIfPresent(Bool.self, forKey: .knowledgeEnabled) ?? false
+        knowledgeCollectionIds =
+            (try? c.decodeIfPresent([UUID].self, forKey: .knowledgeCollectionIds)) ?? []
     }
 
     /// Trim values and drop blank entries so a cleared override (empty string)
@@ -1012,6 +1043,8 @@ public struct AgentSettings: Codable, Sendable, Equatable {
         case subagentPermissions
         case subagentBudgets
         case subagentModelOverrides
+        case knowledgeEnabled
+        case knowledgeCollectionIds
         // Read-only legacy key — never encoded after migration.
         case generativeGreetings
     }
@@ -1043,6 +1076,8 @@ public struct AgentSettings: Codable, Sendable, Equatable {
         try c.encode(subagentPermissions, forKey: .subagentPermissions)
         try c.encode(subagentBudgets, forKey: .subagentBudgets)
         try c.encode(subagentModelOverrides, forKey: .subagentModelOverrides)
+        try c.encode(knowledgeEnabled, forKey: .knowledgeEnabled)
+        try c.encode(knowledgeCollectionIds, forKey: .knowledgeCollectionIds)
     }
 
     /// Default settings for newly created agents (and for back-compat decoding of

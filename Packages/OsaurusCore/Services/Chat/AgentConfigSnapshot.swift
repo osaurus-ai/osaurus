@@ -126,6 +126,11 @@ public struct AgentConfigSnapshot: Sendable, Equatable {
     /// Optional "when/how to use" note per spawnable model id, surfaced in the
     /// spawn guidance descriptor (gate stays on `spawnableModelNames`).
     public let spawnableModelNotes: [String: String]
+    /// Per-agent opt-in for the knowledge tools, pre-folded with "has at
+    /// least one granted collection" — false strips `search_knowledge` /
+    /// `read_knowledge` / `list_knowledge` from the model-visible schema.
+    /// Execution-time scoping happens in the tools themselves.
+    public let knowledgeEnabled: Bool
 
     public init(
         agentId: UUID,
@@ -148,7 +153,8 @@ public struct AgentConfigSnapshot: Sendable, Equatable {
         appleScriptEnabled: Bool = false,
         spawnableAgentNames: [String] = [],
         spawnableModelNames: [String] = [],
-        spawnableModelNotes: [String: String] = [:]
+        spawnableModelNotes: [String: String] = [:],
+        knowledgeEnabled: Bool = false
     ) {
         self.agentId = agentId
         self.toolsDisabled = toolsDisabled
@@ -171,6 +177,7 @@ public struct AgentConfigSnapshot: Sendable, Equatable {
         self.spawnableAgentNames = spawnableAgentNames
         self.spawnableModelNames = spawnableModelNames
         self.spawnableModelNotes = spawnableModelNotes
+        self.knowledgeEnabled = knowledgeEnabled
     }
 
     /// Read every `effective*` field in one MainActor batch.
@@ -214,7 +221,10 @@ public struct AgentConfigSnapshot: Sendable, Equatable {
             appleScriptEnabled: caps.appleScriptEnabled,
             spawnableAgentNames: caps.spawnableAgentNames,
             spawnableModelNames: caps.spawnableModelNames,
-            spawnableModelNotes: caps.spawnableModelNotes
+            spawnableModelNotes: caps.spawnableModelNotes,
+            // Pre-fold the "anything to search?" half of the gate, like the
+            // spawn tools: enabled with zero grants keeps the tools hidden.
+            knowledgeEnabled: caps.knowledgeEnabled && !caps.knowledgeCollectionIds.isEmpty
         )
     }
 }

@@ -788,8 +788,21 @@ extension AgentManager {
             appleScriptEnabled: agent.settings.appleScriptEnabled,
             spawnableAgentNames: agent.settings.spawnableAgentNames,
             spawnableModelNames: agent.settings.spawnableModelNames,
-            spawnableModelNotes: agent.settings.spawnableModelNotes
+            spawnableModelNotes: agent.settings.spawnableModelNotes,
+            knowledgeEnabled: agent.settings.knowledgeEnabled,
+            knowledgeCollectionIds: agent.settings.knowledgeCollectionIds
         )
+    }
+
+    /// Knowledge collections the agent may search/read: its grant list,
+    /// filtered to enabled collections, empty when the opt-in is off.
+    /// This is the execution-time scope source for the knowledge tools —
+    /// the tools resolve it via `ChatExecutionContext.currentAgentId`, so
+    /// the grant list (not the model-visible schema) is the boundary.
+    public func effectiveKnowledgeCollections(for agentId: UUID) -> [KnowledgeCollection] {
+        let caps = effectiveCapabilities(for: agentId)
+        guard caps.knowledgeEnabled, !caps.knowledgeCollectionIds.isEmpty else { return [] }
+        return KnowledgeManager.shared.enabledCollections(withIds: caps.knowledgeCollectionIds)
     }
 
     /// Whether tools are disabled for an agent. Thin negative-polarity
