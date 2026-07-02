@@ -247,7 +247,7 @@ struct OpenAICompatibleStreamParserTests {
         // Thinking phase: Mistral streams `content` as an array of chunks.
         let thinking = try OpenAICompatibleStreamParser.handleEvent(
             jsonData: Data(
-                #"{"id":"x","created":0,"model":"mistral-medium-3.5","choices":[{"index":0,"delta":{"content":[{"type":"thinking","thinking":[{"type":"text","text":"let me think"}]}]},"finish_reason":null}]}"#
+                #"{"id":"x","object":"chat.completion.chunk","created":0,"model":"mistral-medium-3.5","choices":[{"index":0,"delta":{"content":[{"type":"thinking","thinking":[{"type":"text","text":"let me think"}]}]},"finish_reason":null}]}"#
                     .utf8),
             options: .strict,
             state: &state,
@@ -261,7 +261,7 @@ struct OpenAICompatibleStreamParserTests {
         // Transition chunk: a closing think chunk plus the first text chunk.
         _ = try OpenAICompatibleStreamParser.handleEvent(
             jsonData: Data(
-                #"{"id":"x","created":0,"model":"mistral-medium-3.5","choices":[{"index":0,"delta":{"content":[{"type":"thinking","thinking":[{"type":"text","text":" done"}]},{"type":"text","text":"Answer"}]},"finish_reason":null}]}"#
+                #"{"id":"x","object":"chat.completion.chunk","created":0,"model":"mistral-medium-3.5","choices":[{"index":0,"delta":{"content":[{"type":"thinking","thinking":[{"type":"text","text":" done"}]},{"type":"text","text":"Answer"}]},"finish_reason":null}]}"#
                     .utf8),
             options: .strict,
             state: &state,
@@ -270,7 +270,7 @@ struct OpenAICompatibleStreamParserTests {
 
         // Answer phase: `content` becomes a plain string.
         _ = try OpenAICompatibleStreamParser.handleEvent(
-            jsonData: Data(#"{"id":"x","created":0,"model":"mistral-medium-3.5","choices":[{"index":0,"delta":{"content":" text"},"finish_reason":null}]}"#.utf8),
+            jsonData: Data(#"{"id":"x","object":"chat.completion.chunk","created":0,"model":"mistral-medium-3.5","choices":[{"index":0,"delta":{"content":" text"},"finish_reason":null}]}"#.utf8),
             options: .strict,
             state: &state,
             yield: { yielded.append($0) }
@@ -291,7 +291,7 @@ struct OpenAICompatibleStreamParserTests {
 
         _ = try OpenAICompatibleStreamParser.handleEvent(
             jsonData: Data(
-                #"{"id":"x","created":0,"model":"deepseek-reasoner","choices":[{"index":0,"delta":{"reasoning_content":"thinking"},"finish_reason":null}]}"#
+                #"{"id":"x","object":"chat.completion.chunk","created":0,"model":"deepseek-reasoner","choices":[{"index":0,"delta":{"reasoning_content":"thinking"},"finish_reason":null}]}"#
                     .utf8),
             options: .strict,
             state: &state,
@@ -299,7 +299,7 @@ struct OpenAICompatibleStreamParserTests {
         )
         _ = try OpenAICompatibleStreamParser.handleEvent(
             jsonData: Data(
-                #"{"id":"x","created":0,"model":"deepseek-reasoner","choices":[{"index":0,"delta":{"content":"answer"},"finish_reason":null}]}"#
+                #"{"id":"x","object":"chat.completion.chunk","created":0,"model":"deepseek-reasoner","choices":[{"index":0,"delta":{"content":"answer"},"finish_reason":null}]}"#
                     .utf8),
             options: .strict,
             state: &state,

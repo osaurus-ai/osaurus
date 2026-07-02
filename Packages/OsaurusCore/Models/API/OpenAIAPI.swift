@@ -1011,16 +1011,26 @@ struct DeltaContent: Codable, Sendable {
     }
 
     init(from decoder: Decoder) throws {
+        // Preserve the synthesized decoder's throwing `decodeIfPresent`
+        // semantics for every field: a present-but-malformed value must throw so
+        // the stream parser's split-JSON recovery path can retry, rather than
+        // being silently dropped. Only `content` adds a string-or-array fallback.
         let container = try decoder.container(keyedBy: CodingKeys.self)
-        self.role = try? container.decode(String.self, forKey: .role)
-        self.refusal = try? container.decode(String.self, forKey: .refusal)
-        self.tool_calls = try? container.decode([DeltaToolCall].self, forKey: .tool_calls)
-        let explicitReasoning = try? container.decode(String.self, forKey: .reasoning_content)
+        self.role = try container.decodeIfPresent(String.self, forKey: .role)
+        self.refusal = try container.decodeIfPresent(String.self, forKey: .refusal)
+        self.tool_calls = try container.decodeIfPresent([DeltaToolCall].self, forKey: .tool_calls)
+        let explicitReasoning = try container.decodeIfPresent(String.self, forKey: .reasoning_content)
 
-        if let stringContent = try? container.decode(String.self, forKey: .content) {
-            self.content = stringContent
+        do {
+            // Standard OpenAI-compatible shape: `content` is a string (or absent).
+            self.content = try container.decodeIfPresent(String.self, forKey: .content)
             self.reasoning_content = explicitReasoning
-        } else if let chunks = try? container.decode([MistralContentChunk].self, forKey: .content) {
+        } catch DecodingError.typeMismatch(_, _) {
+            // Mistral reasoning models stream `content` as a structured array of
+            // thinking/text chunks. Route thinking to `reasoning_content` and
+            // text to `content`. A genuine structural error (not a type mismatch)
+            // propagates from here so recovery can retry.
+            let chunks = try container.decode([MistralContentChunk].self, forKey: .content)
             var visible = ""
             var thinking = ""
             for chunk in chunks {
@@ -1033,9 +1043,6 @@ struct DeltaContent: Codable, Sendable {
             self.content = visible.isEmpty ? nil : visible
             let mergedReasoning = (explicitReasoning ?? "") + thinking
             self.reasoning_content = mergedReasoning.isEmpty ? nil : mergedReasoning
-        } else {
-            self.content = nil
-            self.reasoning_content = explicitReasoning
         }
     }
 }
