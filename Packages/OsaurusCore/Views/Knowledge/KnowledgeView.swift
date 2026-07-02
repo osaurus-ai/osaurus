@@ -23,6 +23,11 @@ struct KnowledgeView: View {
     @State private var hasAppeared = false
     @State private var successMessage: String?
 
+    // Curation review state (Phase 2).
+    @State private var openTickets: [KnowledgeTicket] = []
+    @State private var pendingProposals: [KnowledgeProposal] = []
+    @State private var reviewingProposal: KnowledgeProposal?
+
     var body: some View {
         VStack(spacing: 0) {
             headerView
@@ -64,6 +69,7 @@ struct KnowledgeView: View {
                     )
                 } else {
                     ScrollView {
+                        curationSection
                         LazyVGrid(
                             columns: [
                                 GridItem(.flexible(minimum: 300), spacing: 20),
@@ -145,9 +151,129 @@ struct KnowledgeView: View {
                 onCancel: { editingCollection = nil }
             )
         }
+        .sheet(item: $reviewingProposal) { proposal in
+            KnowledgeProposalReviewSheet(
+                proposal: proposal,
+                collectionName: knowledgeManager.collection(
+                    for: UUID(uuidString: proposal.collectionId) ?? UUID()
+                )?.name ?? proposal.collectionId,
+                onApprove: {
+                    reviewingProposal = nil
+                    Task.detached(priority: .userInitiated) {
+                        do {
+                            try await KnowledgeCurationService.shared.approve(proposalId: proposal.id)
+                            await MainActor.run { showSuccess("Approved proposal #\(proposal.id)") }
+                        } catch {
+                            await MainActor.run { showSuccess("Approve failed: \(error.localizedDescription)") }
+                        }
+                    }
+                },
+                onDismissProposal: {
+                    reviewingProposal = nil
+                    Task.detached(priority: .userInitiated) {
+                        try? await KnowledgeCurationService.shared.dismissProposal(proposalId: proposal.id)
+                        await MainActor.run { showSuccess("Dismissed proposal #\(proposal.id)") }
+                    }
+                },
+                onCancel: { reviewingProposal = nil }
+            )
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .knowledgeCurationChanged)) { _ in
+            reloadCuration()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .knowledgeCollectionsChanged)) { _ in
+            reloadCuration()
+        }
         .onAppear {
             withAnimation(.easeOut(duration: 0.25).delay(0.05)) {
                 hasAppeared = true
+            }
+            reloadCuration()
+        }
+    }
+
+    // MARK: - Curation
+
+    @ViewBuilder
+    private var curationSection: some View {
+        if !pendingProposals.isEmpty || !openTickets.isEmpty {
+            VStack(alignment: .leading, spacing: 12) {
+                Text("Curation", bundle: .module)
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundColor(theme.primaryText)
+
+                ForEach(pendingProposals) { proposal in
+                    HStack(spacing: 10) {
+                        Image(systemName: "doc.badge.ellipsis")
+                            .font(.system(size: 13))
+                            .foregroundColor(theme.accentColor)
+                        VStack(alignment: .leading, spacing: 1) {
+                            Text("Proposal #\(proposal.id): \(proposal.relPath)")
+                                .font(.system(size: 12, weight: .medium))
+                                .foregroundColor(theme.primaryText)
+                            Text(proposal.rationale)
+                                .font(.system(size: 11))
+                                .foregroundColor(theme.tertiaryText)
+                                .lineLimit(2)
+                        }
+                        Spacer(minLength: 8)
+                        Button {
+                            reviewingProposal = proposal
+                        } label: {
+                            Text("Review", bundle: .module)
+                                .font(.system(size: 11, weight: .medium))
+                        }
+                    }
+                    .padding(10)
+                    .background(RoundedRectangle(cornerRadius: 8).fill(theme.secondaryBackground))
+                }
+
+                ForEach(openTickets) { ticket in
+                    HStack(spacing: 10) {
+                        Image(systemName: "exclamationmark.bubble")
+                            .font(.system(size: 13))
+                            .foregroundColor(.orange)
+                        VStack(alignment: .leading, spacing: 1) {
+                            Text("Ticket #\(ticket.id): \(ticket.relPath)")
+                                .font(.system(size: 12, weight: .medium))
+                                .foregroundColor(theme.primaryText)
+                            Text(ticket.reason)
+                                .font(.system(size: 11))
+                                .foregroundColor(theme.tertiaryText)
+                                .lineLimit(2)
+                        }
+                        Spacer(minLength: 8)
+                        Button {
+                            Task.detached(priority: .userInitiated) {
+                                try? await KnowledgeCurationService.shared.dismissTicket(ticketId: ticket.id)
+                            }
+                        } label: {
+                            Text("Dismiss", bundle: .module)
+                                .font(.system(size: 11, weight: .medium))
+                        }
+                    }
+                    .padding(10)
+                    .background(RoundedRectangle(cornerRadius: 8).fill(theme.secondaryBackground))
+                }
+            }
+            .padding(.horizontal, 24)
+            .padding(.top, 20)
+        }
+    }
+
+    /// Load open tickets + pending proposals off the main thread (the
+    /// database serializes on its own queue).
+    private func reloadCuration() {
+        Task.detached(priority: .utility) {
+            if !KnowledgeDatabase.shared.isOpen {
+                try? KnowledgeDatabase.shared.open()
+            }
+            guard KnowledgeDatabase.shared.isOpen else { return }
+            let tickets = (try? KnowledgeDatabase.shared.listTickets(collectionIds: nil, status: .open)) ?? []
+            let proposals = (try? KnowledgeDatabase.shared.listProposals(status: .pending)) ?? []
+            await MainActor.run {
+                openTickets = tickets
+                pendingProposals = proposals
             }
         }
     }
@@ -395,5 +521,102 @@ private struct KnowledgeCollectionEditorSheet: View {
         if panel.runModal() == .OK, let url = panel.url {
             folderPath = url.path
         }
+    }
+}
+
+// MARK: - Proposal Review Sheet
+
+private struct KnowledgeProposalReviewSheet: View {
+    @ObservedObject private var themeManager = ThemeManager.shared
+    private var theme: ThemeProtocol { themeManager.currentTheme }
+
+    let proposal: KnowledgeProposal
+    let collectionName: String
+    let onApprove: () -> Void
+    let onDismissProposal: () -> Void
+    let onCancel: () -> Void
+
+    init(
+        proposal: KnowledgeProposal,
+        collectionName: String,
+        onApprove: @escaping () -> Void,
+        onDismissProposal: @escaping () -> Void,
+        onCancel: @escaping () -> Void
+    ) {
+        self.proposal = proposal
+        self.collectionName = collectionName
+        self.onApprove = onApprove
+        self.onDismissProposal = onDismissProposal
+        self.onCancel = onCancel
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Proposal #\(proposal.id)")
+                .font(.system(size: 15, weight: .semibold))
+                .foregroundColor(theme.primaryText)
+
+            VStack(alignment: .leading, spacing: 4) {
+                Text("[\(collectionName)] \(proposal.relPath)")
+                    .font(.system(size: 12, design: .monospaced))
+                    .foregroundColor(theme.secondaryText)
+                if let ticketId = proposal.ticketId {
+                    Text("Answers ticket #\(ticketId)")
+                        .font(.system(size: 11))
+                        .foregroundColor(theme.tertiaryText)
+                }
+                Text(proposal.rationale)
+                    .font(.system(size: 12))
+                    .foregroundColor(theme.primaryText)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            Text("Proposed content", bundle: .module)
+                .font(.system(size: 11, weight: .medium))
+                .foregroundColor(theme.secondaryText)
+            ScrollView {
+                Text(proposal.newContent)
+                    .font(.system(size: 11, design: .monospaced))
+                    .foregroundColor(theme.primaryText)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(10)
+                    .textSelection(.enabled)
+            }
+            .frame(minHeight: 220, maxHeight: 360)
+            .background(RoundedRectangle(cornerRadius: 8).fill(theme.secondaryBackground))
+
+            Text(
+                "Approving writes this content into the collection folder and re-indexes it. Dismissing reopens the linked ticket.",
+                bundle: .module
+            )
+            .font(.system(size: 10))
+            .foregroundColor(theme.tertiaryText)
+
+            HStack {
+                Button {
+                    onDismissProposal()
+                } label: {
+                    Text("Dismiss Proposal", bundle: .module)
+                        .foregroundColor(.red)
+                }
+                Spacer()
+                Button {
+                    onCancel()
+                } label: {
+                    Text("Cancel", bundle: .module)
+                }
+                .keyboardShortcut(.cancelAction)
+                Button {
+                    onApprove()
+                } label: {
+                    Text("Approve", bundle: .module)
+                }
+                .keyboardShortcut(.defaultAction)
+            }
+        }
+        .padding(20)
+        .frame(width: 620)
+        .background(theme.primaryBackground)
+        .environment(\.theme, themeManager.currentTheme)
     }
 }
