@@ -2514,6 +2514,9 @@ public actor ModelRuntime {
         topK: Int = 0,
         minP: Float = 0,
         repetitionPenalty: Float?,
+        presencePenalty: Float? = nil,
+        frequencyPenalty: Float? = nil,
+        randomSeed: UInt64? = nil,
         stopSequences: [String] = [],
         draftStrategy: MLXLMCommon.DraftStrategy? = nil,
         enableCompiledBatchDecode: Bool = true,
@@ -2540,6 +2543,20 @@ public actor ModelRuntime {
             repetitionContextSize: resolvedRepetitionContextSize,
             extraStopStrings: stopSequences
         )
+        // OpenAI additive penalties: vmlx implements both natively
+        // (PresencePenaltyContext / FrequencyPenaltyContext). 0 is the
+        // OpenAI "no penalty" default — treat as unset; negative values
+        // (valid OpenAI range -2...2) pass through.
+        if let presencePenalty, presencePenalty != 0 {
+            params.presencePenalty = presencePenalty
+        }
+        if let frequencyPenalty, frequencyPenalty != 0 {
+            params.frequencyPenalty = frequencyPenalty
+        }
+        // Deterministic sampling: the client seed must reach the engine's
+        // per-request sampler RandomState. vmlx samplers never consult
+        // MLXRandom's global state, so global seeding cannot substitute.
+        params.randomSeed = randomSeed
         params.draftStrategy = draftStrategy
         if let prefillStepSize, prefillStepSize > 0 {
             params.prefillStepSize = prefillStepSize

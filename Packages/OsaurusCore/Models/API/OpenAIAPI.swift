@@ -698,6 +698,10 @@ struct ChatCompletionRequest: Codable, Sendable {
     let stream: Bool?
     let top_p: Float?
     var top_k: Int? = nil
+    /// Extension sampling knob (mlx/llama.cpp ecosystems): minimum
+    /// probability cutoff relative to the top token. Mapped to
+    /// `GenerationParameters.minPOverride`.
+    var min_p: Float? = nil
     let frequency_penalty: Float?
     let presence_penalty: Float?
     let stop: [String]?
@@ -777,6 +781,7 @@ struct ChatCompletionRequest: Codable, Sendable {
 
     private enum CodingKeys: String, CodingKey {
         case model, messages, temperature, max_tokens, max_completion_tokens, stream, top_p, top_k
+        case min_p
         case frequency_penalty, presence_penalty, stop, n
         case tools, tool_choice, session_id
         case seed, response_format, stream_options
@@ -804,6 +809,7 @@ struct ChatCompletionRequest: Codable, Sendable {
             stream_options: stream_options
         )
         copy.max_completion_tokens = max_completion_tokens
+        copy.min_p = min_p
         copy.modelOptions = modelOptions
         copy.ttftTrace = ttftTrace
         copy.turnId = turnId
@@ -843,6 +849,7 @@ struct ChatCompletionRequest: Codable, Sendable {
             stream_options: stream_options
         )
         copy.max_completion_tokens = max_completion_tokens
+        copy.min_p = min_p
         copy.modelOptions = modelOptions
         copy.ttftTrace = ttftTrace
         copy.turnId = turnId
@@ -855,6 +862,45 @@ struct ChatCompletionRequest: Codable, Sendable {
         copy.remoteAgentLogModel = remoteAgentLogModel
         copy.remoteAgentProviderId = remoteAgentProviderId
         return copy
+    }
+}
+
+extension ChatCompletionRequest {
+    /// Custom decode so `stop` accepts the OpenAI-legal single string as
+    /// well as an array of strings — a bare string used to fail the whole
+    /// request decode and surface as a generic 400 "Invalid request
+    /// format". Declared in an extension so the synthesized memberwise
+    /// initializer (used by HTTPHandler/ChatEngine sub-request builders)
+    /// survives. Decodes exactly the `CodingKeys` set; local-only fields
+    /// keep their defaults.
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        model = try container.decode(String.self, forKey: .model)
+        messages = try container.decode([ChatMessage].self, forKey: .messages)
+        temperature = try container.decodeIfPresent(Float.self, forKey: .temperature)
+        max_tokens = try container.decodeIfPresent(Int.self, forKey: .max_tokens)
+        max_completion_tokens = try container.decodeIfPresent(
+            Int.self, forKey: .max_completion_tokens)
+        stream = try container.decodeIfPresent(Bool.self, forKey: .stream)
+        top_p = try container.decodeIfPresent(Float.self, forKey: .top_p)
+        top_k = try container.decodeIfPresent(Int.self, forKey: .top_k)
+        min_p = try container.decodeIfPresent(Float.self, forKey: .min_p)
+        frequency_penalty = try container.decodeIfPresent(Float.self, forKey: .frequency_penalty)
+        presence_penalty = try container.decodeIfPresent(Float.self, forKey: .presence_penalty)
+        if let singleStop = try? container.decode(String.self, forKey: .stop) {
+            stop = [singleStop]
+        } else {
+            stop = try container.decodeIfPresent([String].self, forKey: .stop)
+        }
+        n = try container.decodeIfPresent(Int.self, forKey: .n)
+        tools = try container.decodeIfPresent([Tool].self, forKey: .tools)
+        tool_choice = try container.decodeIfPresent(ToolChoiceOption.self, forKey: .tool_choice)
+        session_id = try container.decodeIfPresent(String.self, forKey: .session_id)
+        seed = try container.decodeIfPresent(Int.self, forKey: .seed)
+        response_format = try container.decodeIfPresent(ResponseFormat.self, forKey: .response_format)
+        stream_options = try container.decodeIfPresent(StreamOptions.self, forKey: .stream_options)
+        enable_thinking = try container.decodeIfPresent(Bool.self, forKey: .enable_thinking)
+        reasoning_effort = try container.decodeIfPresent(String.self, forKey: .reasoning_effort)
     }
 }
 

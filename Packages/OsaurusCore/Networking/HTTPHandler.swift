@@ -5022,6 +5022,8 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                         max_tokens: effectiveMaxTokens,
                         stream: true,
                         top_p: req.top_p,
+                        top_k: req.top_k,
+                        min_p: req.min_p,
                         frequency_penalty: req.frequency_penalty,
                         presence_penalty: req.presence_penalty,
                         stop: req.stop,

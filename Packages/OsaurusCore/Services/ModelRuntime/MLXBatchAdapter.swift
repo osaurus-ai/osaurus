@@ -1080,6 +1080,9 @@ struct MLXBatchAdapter {
             topK: effective.topK,
             minP: effective.minP,
             repetitionPenalty: effective.repetitionPenalty,
+            presencePenalty: generation.presencePenalty,
+            frequencyPenalty: generation.frequencyPenalty,
+            randomSeed: generation.seed,
             stopSequences: stopSequences,
             draftStrategy: effectiveDraftStrategy,
             enableCompiledBatchDecode: effective.compiledBatchDecode,
@@ -1102,15 +1105,12 @@ struct MLXBatchAdapter {
             mlxParams.kvMode = effectiveKVMode
         }
 
-        // Best-effort per-request determinism: seed the MLX global random
-        // state immediately before submission. Note: vmlx's `Sampler`
-        // constructs its own `RandomState()` from time-of-day inside the
-        // engine, so concurrent seeded requests against the same model
-        // are NOT guaranteed reproducible. Single-request seeding still
-        // benefits any MLX code path that consults `MLXRandom.globalState`.
-        if let seed = generation.seed {
-            MLXRandom.seed(seed)
-        }
+        // Per-request determinism now rides `GenerateParameters.randomSeed`
+        // (set above): vmlx builds each request's sampler around its own
+        // seeded `RandomState`, which is the only state sampling consults.
+        // The previous global `MLXRandom.seed()` call was a sampling no-op
+        // AND leaked deterministic state into unrelated global-RNG
+        // consumers (diffusion decode, image latents), so it is gone.
 
         await MainActor.run {
             InferenceProgressManager.shared.prefillWillStart(

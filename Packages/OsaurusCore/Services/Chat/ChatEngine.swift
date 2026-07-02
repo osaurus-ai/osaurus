@@ -106,15 +106,15 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
     ) async -> Dispatch {
         let temperature = request.temperature
         let maxTokens = request.resolvedMaxTokens ?? 16384
-        // Map only OpenAI `frequency_penalty` to repetition_penalty here.
-        // `presence_penalty` has no MLX analog — leaving the previous
-        // "either-or" mapping in place silently collapsed two distinct
-        // knobs. Both raw values are forwarded on `GenerationParameters`
-        // so remote services can pass them through natively.
-        let repPenalty: Float? = {
-            if let fp = request.frequency_penalty, fp > 0 { return 1.0 + fp }
-            return nil
-        }()
+        // OpenAI `frequency_penalty` / `presence_penalty` ride
+        // `GenerationParameters` verbatim: vmlx natively implements both as
+        // additive count-scaled penalties (`GenerateParameters
+        // .frequencyPenalty`/`.presencePenalty`), so the old lossy mapping
+        // of frequency_penalty onto a multiplicative repetition penalty
+        // (which also silently dropped negative values) is gone. A
+        // per-request repetition_penalty is not an OpenAI field; model
+        // bundle / server defaults still apply downstream.
+        let repPenalty: Float? = nil
         let seedBits: UInt64? = request.seed.map { UInt64(bitPattern: Int64($0)) }
         let isJSONObject = (request.response_format?.type == "json_object")
         var modelOptions = Self.normalizedModelOptions(
@@ -157,6 +157,7 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
             maxTokensExplicit: request.resolvedMaxTokens != nil,
             topPOverride: request.top_p,
             topKOverride: request.top_k,
+            minPOverride: request.min_p,
             repetitionPenalty: repPenalty,
             samplingParametersAreImplicit: request.samplingParametersAreImplicit,
             frequencyPenalty: request.frequency_penalty,
