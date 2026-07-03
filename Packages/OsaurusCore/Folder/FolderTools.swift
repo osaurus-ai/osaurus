@@ -955,6 +955,15 @@ struct FileReadTool: OsaurusTool {
             "truncated": outputTruncated || lastLineIncluded < validEnd
                 || content.rawRead?.truncatedByByteLimit == true,
         ]
+        // The numbered gutter cannot express whether the file's last line is
+        // terminated — a byte-exact reconstruction (backup copies, `equals`
+        // contracts) needs to know if a final `\n` belongs at the end
+        // (observed live: a model rebuilt a config from the gutter text and
+        // dropped the trailing newline, failing a byte-for-byte check by one
+        // byte). Only stated when the read actually reached the end of file.
+        if content.rawRead?.truncatedByByteLimit != true {
+            result["ends_with_newline"] = content.text.hasSuffix("\n")
+        }
         if let partialLine {
             result["partial_line"] = partialLine
         }
@@ -1760,6 +1769,48 @@ struct FileEditTool: OsaurusTool, PermissionedTool {
             }
         }
 
+        // 2b. Blank-line-count drift: same as check 2 but comparing only the
+        // NON-empty trimmed lines. Models routinely collapse a `\n\n\n` run
+        // to `\n\n` (observed live: a model normalized two blank lines
+        // between functions to one and re-issued the identical failing edit
+        // until its budget ran out, because check 2 requires equal line
+        // counts and check 3's single-line anchor was useless). On a unique
+        // match, quote the true file region — including its real blank
+        // lines — verbatim.
+        let oldNonEmpty = trimmedOldLines.filter { !$0.isEmpty }
+        if oldNonEmpty.count >= 2 {
+            // Indices of non-empty file lines, in file order.
+            var fileNonEmpty: [(index: Int, text: String)] = []
+            for (index, line) in contentLines.enumerated() {
+                let trimmed = line.trimmingCharacters(in: .whitespaces)
+                if !trimmed.isEmpty { fileNonEmpty.append((index, trimmed)) }
+            }
+            if oldNonEmpty.count <= fileNonEmpty.count {
+                var matchStarts: [Int] = []
+                for start in 0 ... (fileNonEmpty.count - oldNonEmpty.count) {
+                    var all = true
+                    for offset in 0 ..< oldNonEmpty.count
+                    where fileNonEmpty[start + offset].text != oldNonEmpty[offset] {
+                        all = false
+                        break
+                    }
+                    if all {
+                        matchStarts.append(start)
+                        if matchStarts.count > 1 { break }
+                    }
+                }
+                if matchStarts.count == 1, let start = matchStarts.first {
+                    let firstLine = fileNonEmpty[start].index
+                    let lastLine = fileNonEmpty[start + oldNonEmpty.count - 1].index
+                    let exact = contentLines[firstLine ... lastLine].joined(separator: "\n")
+                    return "Found the same non-blank lines at line \(firstLine + 1), but the "
+                        + "blank lines between them differ from your `old_string`. The exact "
+                        + "file content there is:\n\(Self.boundedQuote(exact))\n"
+                        + "Use that exact text (including its blank lines) as `old_string`."
+                }
+            }
+        }
+
         // 3. Closest-line anchor: score every file line against the first
         // non-empty trimmed old_string line (containment either way, or
         // shared prefix — cheap but catches the common "the line changed
@@ -2384,9 +2435,15 @@ struct FileSearchTool: OsaurusTool {
             guard resourceValues?.isRegularFile == true else { continue }
             if FolderToolHelpers.shouldRefuseSecret(fileURL: fileURL) { continue }
             let entryName = fileURL.lastPathComponent
-            guard entryName.range(of: regex, options: [.regularExpression, .caseInsensitive]) != nil
-            else { continue }
             let relativePath = FolderToolHelpers.displayPath(for: fileURL, under: rootPath)
+            // A query carrying a path separator ("orders/", "src/main.py")
+            // can never match a basename — match it against the relative
+            // path instead (observed live: a model searched the perfectly
+            // reasonable "orders/", got zero hits for three existing files,
+            // and asked the user instead of finishing the task).
+            let haystack = glob.contains("/") ? relativePath : entryName
+            guard haystack.range(of: regex, options: [.regularExpression, .caseInsensitive]) != nil
+            else { continue }
             entries.append(["name": entryName, "path": relativePath, "type": "file"])
         }
         return (entries, budgetTruncated)

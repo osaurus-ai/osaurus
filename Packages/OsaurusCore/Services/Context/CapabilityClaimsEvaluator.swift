@@ -362,6 +362,46 @@ public enum CapabilityClaimsEvaluator {
                     }
                 }
                 if iterations >= maxIterations { hitCap = true }
+                if hitCap {
+                    // Production parity (ChatView): a cap-hit run gets ONE
+                    // final tool-free request so the user still sees a
+                    // wrap-up answer. Score what production shows, not the
+                    // empty string the loop was cut off with.
+                    let wrapUpRequest = ChatCompletionRequest(
+                        model: resolvedModel,
+                        messages: [ChatMessage(role: "system", content: firstTurnPrompt)] + history,
+                        temperature: 0.0,
+                        max_tokens: 2048,
+                        stream: false,
+                        top_p: nil,
+                        frequency_penalty: nil,
+                        presence_penalty: nil,
+                        stop: nil,
+                        n: nil,
+                        tools: nil,
+                        tool_choice: nil,
+                        session_id: runSessionId
+                    )
+                    // Same non-streaming call shape as this evaluator's own
+                    // loop steps. A wrap-up failure must not sink the whole
+                    // case (the loop itself succeeded) — but it must be
+                    // visible, so it lands in the transcript's finalText
+                    // rather than being silently swallowed.
+                    do {
+                        let response = try await engine.completeChat(request: wrapUpRequest)
+                        let usage = response.usage
+                        if let tps = usage.tokens_per_second, tps > 0, usage.completion_tokens > 0 {
+                            decodeTpsWeightedSum += tps * Double(usage.completion_tokens)
+                            decodeTpsTokenWeight += usage.completion_tokens
+                        }
+                        completionTokensTotal += max(0, usage.completion_tokens)
+                        let text = (response.choices.first?.message.content ?? "")
+                            .trimmingCharacters(in: .whitespacesAndNewlines)
+                        if !text.isEmpty { finalText = text }
+                    } catch {
+                        finalText = "[post-cap wrap-up failed: \(error)]"
+                    }
+                }
                 return (finalText, toolCalls, loadedToolNames, iterations, hitCap, firstTurnPrompt, nil)
             }
         } catch {

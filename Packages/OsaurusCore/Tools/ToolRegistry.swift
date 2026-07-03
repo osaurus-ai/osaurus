@@ -646,9 +646,18 @@ public final class ToolRegistry: ObservableObject {
                     retryable: true
                 ).toJSONString()
             }
+            // No "did you mean" list on purpose (names trigger invention of
+            // siblings) — but a bare dead-end leaves small models apologizing
+            // and giving up ("the tool to delete X is not available") when the
+            // REAL tool is sitting in their schema under a name they didn't
+            // guess. Point back at the ground truth they already have.
             return ToolErrorEnvelope(
                 kind: .toolNotFound,
-                reason: "Tool '\(name)' is not available in this session.",
+                reason:
+                    "Tool '\(name)' is not available in this session. Do not guess "
+                    + "tool names: use exactly the names in your tool schema and "
+                    + "instructions (check them for the tool covering this task "
+                    + "before answering that it can't be done).",
                 toolName: name
             ).toJSONString()
         }

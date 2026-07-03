@@ -436,7 +436,11 @@ public enum AgentLoopEvaluator {
             )
         }
 
-        func makeRequest(_ messages: [ChatMessage], stream: Bool) -> ChatCompletionRequest {
+        func makeRequest(
+            _ messages: [ChatMessage],
+            stream: Bool,
+            includeTools: Bool = true
+        ) -> ChatCompletionRequest {
             ChatCompletionRequest(
                 model: resolvedModel,
                 messages: messages,
@@ -448,8 +452,8 @@ public enum AgentLoopEvaluator {
                 presence_penalty: nil,
                 stop: nil,
                 n: nil,
-                tools: toolSpecs.isEmpty ? nil : toolSpecs,
-                tool_choice: toolSpecs.isEmpty ? nil : .auto,
+                tools: (includeTools && !toolSpecs.isEmpty) ? toolSpecs : nil,
+                tool_choice: (includeTools && !toolSpecs.isEmpty) ? .auto : nil,
                 session_id: sessionId
             )
         }
@@ -818,6 +822,54 @@ public enum AgentLoopEvaluator {
                     state: state,
                     hooks: hooks
                 )
+            }
+            // Production parity (ChatView): when the iteration budget is
+            // exhausted mid-task, chat sends ONE final tool-free request over
+            // the same trimmed history and streams that as the visible
+            // answer. Without this, a cap-hitting eval run scores an empty
+            // finalText that no production user would ever see. The exit
+            // label stays `iterationCapReached` — cases can still assert the
+            // cap — but the transcript carries the wrap-up text.
+            if case .iterationCapReached = runResult.exit {
+                var msgs: [ChatMessage] = [ChatMessage(role: "system", content: systemPrompt)]
+                msgs.append(contentsOf: history)
+                let trimmed = AgentLoopBudget.trimPreservingSystemPrefix(
+                    msgs,
+                    with: budgetManager,
+                    watermark: watermark
+                )
+                // No tool schema on the wrap-up call (mirrors chat's
+                // `tools: nil`), so the token estimate excludes toolTokens.
+                promptTokensTotal += ContextBudgetManager.estimateTokens(for: trimmed)
+                modelStepCount += 1
+                // STREAMING, like ChatView's post-cap call (`stream: true`,
+                // `tools: nil`): the non-streaming local path is not what
+                // production drives here, and a failure must be visible in
+                // the transcript notices — not silently swallowed.
+                do {
+                    var content = ""
+                    let stream = try await engine.streamChat(
+                        request: makeRequest(trimmed, stream: true, includeTools: false)
+                    )
+                    for try await delta in stream {
+                        if StreamingReasoningHint.decode(delta) != nil { continue }
+                        if let stats = StreamingStatsHint.decode(delta) {
+                            if stats.tokensPerSecond > 0, stats.tokenCount > 0 {
+                                decodeTpsWeightedSum +=
+                                    stats.tokensPerSecond * Double(stats.tokenCount)
+                                decodeTpsTokenWeight += stats.tokenCount
+                            }
+                            completionTokensTotal += max(0, stats.tokenCount)
+                            continue
+                        }
+                        if StreamingToolHint.isSentinel(delta) { continue }
+                        content += delta
+                    }
+                    let text = content.trimmingCharacters(in: .whitespacesAndNewlines)
+                    if !text.isEmpty { finalText = text }
+                } catch {
+                    noticesSeen.append("[post-cap wrap-up failed: \(error)]")
+                }
             }
             // A run ended by a successful `complete` intercept IS the
             // model's final response (the summary), not a surface

@@ -1411,12 +1411,15 @@ private struct SandboxSearchFilesTool: OsaurusTool, @unchecked Sendable {
         case "files":
             // A bare word becomes a case-insensitive substring (`*word*`); a
             // pattern with `*`/`?` is passed through as a case-insensitive
-            // glob. Mirrors the host `findFilesByName` matching rule.
+            // glob. Mirrors the host `findFilesByName` matching rule. A
+            // pattern carrying `/` can never match a basename, so it matches
+            // the path instead (`-ipath`) — same rule as the host route.
             let namePattern =
                 FolderToolHelpers.patternHasGlobMetacharacters(pattern) ? pattern : "*\(pattern)*"
             let escapedPattern = shellEscapeSingleQuoted(namePattern)
+            let findPredicate = pattern.contains("/") ? "-ipath" : "-iname"
             let cmd =
-                "find '\(resolved)' -type f -iname '\(escapedPattern)' 2>/dev/null | head -\(cappedMax)"
+                "find '\(resolved)' -type f \(findPredicate) '\(escapedPattern)' 2>/dev/null | head -\(cappedMax)"
             let result = try await SandboxToolCommandRunnerRegistry.shared.execAsAgent(
                 agentName,
                 command: cmd

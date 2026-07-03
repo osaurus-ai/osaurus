@@ -98,6 +98,36 @@ struct HarnessStabilityFixesTests {
         #expect(diagnosis == "Make sure it exactly matches the file content.")
     }
 
+    @Test func fileEditDiagnosis_blankLineCountDrift() {
+        // Regression (E4B loop, ordered-procedure): the file has TWO blank
+        // lines between sections, the model sent ONE. Check 2 (equal line
+        // counts) can't fire and the old check-3 anchor pointed at a line
+        // that looked identical — the model re-sent the same failing edit
+        // until its budget died. Check 2b must quote the real region with
+        // its real blank lines.
+        let content = "step one\n\n\nstep two\ntail\n"
+        let diagnosis = FileEditTool.noMatchDiagnosis(
+            oldString: "step one\n\nstep two",
+            content: content
+        )
+        #expect(diagnosis.contains("blank lines between them differ"))
+        #expect(diagnosis.contains("line 1"))
+        // The quoted region carries BOTH real blank lines verbatim.
+        #expect(diagnosis.contains("step one\n\n\nstep two"))
+    }
+
+    @Test func fileEditDiagnosis_blankLineDriftNotFiredOnAmbiguousMatch() {
+        // Two candidate regions share the same non-blank lines — quoting
+        // one would be a coin flip, so check 2b must stay silent and let
+        // the later checks (or the fallback) speak instead.
+        let content = "a\n\nb\nx\na\n\n\nb\n"
+        let diagnosis = FileEditTool.noMatchDiagnosis(
+            oldString: "a\n\n\n\nb",
+            content: content
+        )
+        #expect(!diagnosis.contains("blank lines between them differ"))
+    }
+
     @Test func fileEdit_endToEnd_noMatchEnvelopeCarriesDiagnosis() async throws {
         let root = tmpRoot()
         try "item 042 value=42\n".write(
@@ -393,6 +423,55 @@ struct HarnessStabilityFixesTests {
         #expect(warnings(result).contains(where: { $0.contains("skipped") }))
     }
 
+    @Test func fileSearch_filesTargetMatchesPathPrefix() async throws {
+        // Regression (E4B loop, kitchen-sink): `pattern: "orders/"` in files
+        // mode matched NOTHING for three existing orders/*.txt files (the
+        // matcher only saw basenames) — the model then asked the user
+        // instead of finishing. Slash-bearing queries must match the
+        // relative path.
+        let root = tmpRoot()
+        let ordersDir = root.appendingPathComponent("orders")
+        try FileManager.default.createDirectory(at: ordersDir, withIntermediateDirectories: true)
+        for i in 1 ... 3 {
+            try "id=A\(i)\namount=\(i)\n".write(
+                to: ordersDir.appendingPathComponent("order\(i).txt"),
+                atomically: true,
+                encoding: .utf8
+            )
+        }
+        try "other\n".write(
+            to: root.appendingPathComponent("readme.md"),
+            atomically: true,
+            encoding: .utf8
+        )
+        let tool = FileSearchTool(rootPath: root)
+        let result = try await tool.execute(
+            argumentsJSON: #"{"pattern": "orders/", "target": "files"}"#
+        )
+        #expect(ToolEnvelope.isSuccess(result))
+        // Files-mode returns structured `entries[]`, not prose text —
+        // assert against the raw envelope.
+        #expect(result.contains("order1.txt"))
+        #expect(result.contains("order2.txt"))
+        #expect(result.contains("order3.txt"))
+        #expect(!result.contains("readme.md"))
+    }
+
+    @Test func fileSearch_filesTargetBasenameStillWorks() async throws {
+        let root = tmpRoot()
+        try "x\n".write(
+            to: root.appendingPathComponent("quarterly_q4.csv"),
+            atomically: true,
+            encoding: .utf8
+        )
+        let tool = FileSearchTool(rootPath: root)
+        let result = try await tool.execute(
+            argumentsJSON: #"{"pattern": "q4", "target": "files"}"#
+        )
+        #expect(ToolEnvelope.isSuccess(result))
+        #expect(result.contains("quarterly_q4.csv"))
+    }
+
     @Test func fileSearch_structuredTruncationWarning() async throws {
         let root = tmpRoot()
         let body = (1 ... 20).map { "match line \($0)" }.joined(separator: "\n")
@@ -505,5 +584,38 @@ struct HarnessStabilityFixesTests {
         let payload = EnvelopeAssertions.successPayload(result)
         #expect(payload?["partial_line"] == nil)
         #expect(payload?["end_line"] as? Int == 50)
+    }
+
+    // MARK: - 7. file_read trailing-newline metadata
+
+    // Regression (E4B loop, ordered-procedure): the numbered gutter can't
+    // express whether the last line is `\n`-terminated, so a byte-exact
+    // copy reconstructed from a read was one byte short. The payload now
+    // states it outright.
+
+    @Test func fileRead_reportsTrailingNewlinePresent() async throws {
+        let root = tmpRoot()
+        try "alpha\nbeta\n".write(
+            to: root.appendingPathComponent("terminated.txt"),
+            atomically: true,
+            encoding: .utf8
+        )
+        let tool = FileReadTool(rootPath: root)
+        let result = try await tool.execute(argumentsJSON: #"{"path": "terminated.txt"}"#)
+        let payload = EnvelopeAssertions.successPayload(result)
+        #expect(payload?["ends_with_newline"] as? Bool == true)
+    }
+
+    @Test func fileRead_reportsTrailingNewlineAbsent() async throws {
+        let root = tmpRoot()
+        try "alpha\nbeta".write(
+            to: root.appendingPathComponent("unterminated.txt"),
+            atomically: true,
+            encoding: .utf8
+        )
+        let tool = FileReadTool(rootPath: root)
+        let result = try await tool.execute(argumentsJSON: #"{"path": "unterminated.txt"}"#)
+        let payload = EnvelopeAssertions.successPayload(result)
+        #expect(payload?["ends_with_newline"] as? Bool == false)
     }
 }

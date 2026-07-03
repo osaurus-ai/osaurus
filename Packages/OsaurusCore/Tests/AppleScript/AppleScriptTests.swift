@@ -271,6 +271,41 @@ struct AppleScriptExecutorMappingTests {
         )
         #expect(good == nil)
     }
+
+    // The heartbeat keeps the MAIN run loop turning while any script is in
+    // flight — headless hosts otherwise never deliver AE replies (observed
+    // live: a Finder probe "timed out" 15s+ on a granted machine, wedging
+    // the eval suite's main actor afterwards). The refcount must return to
+    // zero (timer removed) after every completion path, including a
+    // watchdog-abandoned run, or the process would wake 4×/s forever.
+    @Test("heartbeat: armed during a run, disarmed after it completes")
+    func heartbeatLifecycleAroundRun() async {
+        _ = await AppleScriptExecutor.run(source: "return 1", timeout: 15)
+        #expect(AppleScriptExecutor.isHeartbeatActiveForTesting == false)
+    }
+
+    @Test("heartbeat: a watchdog-abandoned run still disarms once the worker finishes")
+    func heartbeatDisarmsAfterAbandonedRun() async {
+        // 1-second busy script vs a 0.05s timeout: the caller resumes via
+        // the watchdog (timedOut) while the worker is still running. The
+        // heartbeat must stay armed for the in-flight worker, then clear.
+        let result = await AppleScriptExecutor.run(
+            source: "delay 1\nreturn 2",
+            timeout: 0.05
+        )
+        #expect(result.status == .timedOut)
+        // Worker still holds its heartbeat ref while `delay 1` runs.
+        #expect(AppleScriptExecutor.isHeartbeatActiveForTesting == true)
+        // After the abandoned worker completes, the ref drains to zero.
+        try? await Task.sleep(nanoseconds: 2_500_000_000)
+        #expect(AppleScriptExecutor.isHeartbeatActiveForTesting == false)
+    }
+
+    @Test("heartbeat: compileCheck arms and disarms it too")
+    func heartbeatLifecycleAroundCompileCheck() async {
+        _ = await AppleScriptExecutor.compileCheck(source: "return 1 + 1", timeout: 15)
+        #expect(AppleScriptExecutor.isHeartbeatActiveForTesting == false)
+    }
 }
 
 // MARK: - Literal placeholders (deterministic substitution)

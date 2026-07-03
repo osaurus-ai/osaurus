@@ -42,6 +42,16 @@ struct OsaurusEvalsCLI {
         // real Keychain (remote providers are ephemeral and env-keyed).
         setenv("OSAURUS_DISABLE_KEYCHAIN_FOR_TESTS", "1", 1)
 
+        // The sandbox secrets pipeline (sandbox_secret_set → exec env
+        // injection → SecretScrubber redaction) is a scored surface
+        // (SandboxFrontier secrets-roundtrip), but the Keychain-free gate
+        // above turns every AgentSecretsKeychain call into a no-op — the
+        // model stores a secret, gets `stored:true`… and `$KEY` is empty in
+        // the VM. A process-lifetime in-memory store keeps the pipeline
+        // real (same code path, same scrubbing) without touching the
+        // login Keychain; per-case cleanup purges it.
+        setenv("OSAURUS_AGENT_SECRETS_IN_MEMORY", "1", 1)
+
         // Eval isolation: to drive a remote model the harness connects an
         // in-memory provider (`EvalRemoteProviderBootstrap`), which lands in
         // `configuration.providers`. Without this, a `default_agent` honesty

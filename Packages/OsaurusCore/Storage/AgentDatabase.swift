@@ -607,10 +607,32 @@ public final class AgentDatabase: @unchecked Sendable {
                 )
             }
 
+            // A user-declared `id` column becomes the primary-key slot when
+            // no explicit PK was marked. The host otherwise auto-adds
+            // `id INTEGER PRIMARY KEY AUTOINCREMENT`, and blindly adding it
+            // next to a declared `id TEXT` produced SQLite's raw
+            // "duplicate column name: id" (observed live: a model declaring
+            // string order-ids retried the identical failing call until the
+            // budget ran out). Honoring the declared column preserves the
+            // model's intent; SQLite still enforces single-PK rules.
+            var columns = columns
             let hasPK = columns.contains(where: { $0.primaryKey })
+            if !hasPK,
+                let idIndex = columns.firstIndex(where: { $0.name.lowercased() == "id" })
+            {
+                let declared = columns[idIndex]
+                columns[idIndex] = AgentColumnSpec(
+                    name: declared.name,
+                    type: declared.type,
+                    nullable: declared.nullable,
+                    defaultValue: declared.defaultValue,
+                    primaryKey: true
+                )
+            }
+            let hasExplicitOrPromotedPK = columns.contains(where: { $0.primaryKey })
             var defs: [String] = []
 
-            if !hasPK {
+            if !hasExplicitOrPromotedPK {
                 defs.append("id INTEGER PRIMARY KEY AUTOINCREMENT")
             }
 
@@ -983,7 +1005,10 @@ public final class AgentDatabase: @unchecked Sendable {
             let whereSQL = whereCols.enumerated().map { i, c in
                 "\(c) = ?\(setCols.count + i + 1)"
             }.joined(separator: " AND ")
-            let softDeleteSQL = includeDeleted ? "" : " AND _deleted_at IS NULL"
+            // Soft-delete filtering only applies to tables that actually
+            // carry the column (raw-SQL-created tables don't).
+            let hasSoftDelete = try self.tableHasColumnUnlocked(table, column: "_deleted_at")
+            let softDeleteSQL = (includeDeleted || !hasSoftDelete) ? "" : " AND _deleted_at IS NULL"
             let sql = "UPDATE \(table) SET \(setSQL) WHERE \(whereSQL)\(softDeleteSQL)"
 
             try self.transactionalStep(sql) { stmt in
@@ -1029,6 +1054,18 @@ public final class AgentDatabase: @unchecked Sendable {
         for key in whereClause.keys { try Self.validateIdentifier(key) }
 
         return try inTransaction { _ in
+            // Soft delete REQUIRES the marker column. A raw-SQL-created table
+            // has no `_deleted_at`; the old code let SQLite fail the prepare
+            // with a bare "no such column" — precise but unactionable. Tell
+            // the model what the real situation is and which path works.
+            guard try self.tableHasColumnUnlocked(table, column: "_deleted_at") else {
+                throw AgentDatabaseError.invalidArgument(
+                    "table '\(table)' has no `_deleted_at` column (it was created "
+                        + "with raw SQL, not db_create_table), so soft delete isn't "
+                        + "available. Use `db_execute` with a DELETE statement to "
+                        + "remove rows from this table."
+                )
+            }
             let beforeRows = try self.selectMatchingRowsUnlocked(
                 table: table,
                 whereClause: whereClause,
@@ -1078,6 +1115,15 @@ public final class AgentDatabase: @unchecked Sendable {
         for key in whereClause.keys { try Self.validateIdentifier(key) }
 
         return try inTransaction { _ in
+            // Same schema requirement as softDelete: no marker column means
+            // there is nothing to restore from.
+            guard try self.tableHasColumnUnlocked(table, column: "_deleted_at") else {
+                throw AgentDatabaseError.invalidArgument(
+                    "table '\(table)' has no `_deleted_at` column (it was created "
+                        + "with raw SQL, not db_create_table), so it has no "
+                        + "soft-deleted rows to restore."
+                )
+            }
             let beforeRows = try self.selectMatchingRowsUnlocked(
                 table: table,
                 whereClause: whereClause,
@@ -1906,6 +1952,34 @@ public final class AgentDatabase: @unchecked Sendable {
         return found
     }
 
+    /// Whether `table` actually has a column named `column`.
+    ///
+    /// The typed mutation/read paths historically assumed every user table
+    /// carries the host-managed `_deleted_at` column — true for tables made
+    /// via `createTable`, false for tables created through raw SQL
+    /// (`db_execute` CREATE TABLE, eval `seedSql`). Blindly appending the
+    /// soft-delete predicate to those tables produced
+    /// "no such column: _deleted_at" prepare failures on perfectly valid
+    /// typed calls (observed live: `db_update`/`db_delete` on an
+    /// execute-created table). Callers use this to apply soft-delete
+    /// semantics only where the schema actually supports them.
+    private func tableHasColumnUnlocked(_ table: String, column: String) throws -> Bool {
+        // `table` is validated upstream (identifier charset), so direct
+        // interpolation into PRAGMA is safe — PRAGMA cannot bind parameters.
+        var found = false
+        try executeRaw("PRAGMA table_info(\(table))") { stmt in
+            while sqlite3_step(stmt) == SQLITE_ROW {
+                if let namePtr = sqlite3_column_text(stmt, 1),
+                    String(cString: namePtr) == column
+                {
+                    found = true
+                    break
+                }
+            }
+        }
+        return found
+    }
+
     /// Reads matching rows into `[column: value]` dictionaries. Used by
     /// mutation methods to capture before/after JSON for the changelog.
     private func selectMatchingRowsUnlocked(
@@ -1918,7 +1992,8 @@ public final class AgentDatabase: @unchecked Sendable {
             cols.isEmpty
             ? "1 = 1"
             : cols.enumerated().map { i, c in "\(c) = ?\(i + 1)" }.joined(separator: " AND ")
-        let softDeleteSQL = includeDeleted ? "" : " AND _deleted_at IS NULL"
+        let hasSoftDelete = try tableHasColumnUnlocked(table, column: "_deleted_at")
+        let softDeleteSQL = (includeDeleted || !hasSoftDelete) ? "" : " AND _deleted_at IS NULL"
         let sql = "SELECT * FROM \(table) WHERE \(whereSQL)\(softDeleteSQL)"
 
         var rows: [[String: AgentSQLValue]] = []

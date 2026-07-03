@@ -197,9 +197,12 @@ final class DBCreateTableTool: OsaurusTool, @unchecked Sendable {
         "Create a new table in your private database. `purpose` is required "
         + "and surfaced to the user — make it a clear, single-sentence "
         + "description of what the table is for. Host-managed columns "
-        + "(`id`, `_created_at`, `_updated_at`, `_deleted_at`) are added "
-        + "automatically; do not redeclare them. Call `db_schema` first to "
-        + "confirm there isn't already a table with this name."
+        + "(`_created_at`, `_updated_at`, `_deleted_at`) are added "
+        + "automatically; do not redeclare them. An `id INTEGER PRIMARY KEY` "
+        + "is added too unless you declare your own `id` column or mark a "
+        + "column `primary_key` — a declared `id` becomes the primary key "
+        + "with the type you give it. Call `db_schema` first to confirm "
+        + "there isn't already a table with this name."
 
     let parameters: JSONValue? = .object([
         "type": .string("object"),
@@ -517,8 +520,10 @@ final class DBInsertTool: OsaurusTool, @unchecked Sendable {
         + "(an array of objects) to insert many in one call — prefer `rows` "
         + "for batches so you don't spend a tool call per row. For data that "
         + "already lives in a file, use `db_import` instead. Host-managed "
-        + "columns (`id`, `_created_at`, `_updated_at`, `_deleted_at`) are "
-        + "filled in automatically — do not include them."
+        + "columns (`_created_at`, `_updated_at`, `_deleted_at`) are filled "
+        + "in automatically — do not include them. An auto-added integer "
+        + "`id` fills itself too; include `id` only when the table declares "
+        + "its own `id` column."
 
     let parameters: JSONValue? = .object([
         "type": .string("object"),

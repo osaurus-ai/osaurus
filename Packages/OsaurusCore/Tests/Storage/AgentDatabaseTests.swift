@@ -460,4 +460,146 @@ struct AgentDatabaseTests {
         #expect(page3.rows.last?[0] == .integer(25))
         #expect(page3.truncated == false)
     }
+
+    // MARK: - Typed tools on raw-SQL tables (no host-managed columns)
+
+    // Regression (E4B loop): tables created via `db_execute` CREATE TABLE
+    // (or fixture seed SQL) have no `_deleted_at`, and the typed tools used
+    // to hard-fail with SQLite's bare "no such column: _deleted_at" on
+    // every update/delete/select against them.
+
+    @Test
+    func updateWorksOnRawSqlTableWithoutSoftDeleteColumn() throws {
+        let db = try makeDB()
+        _ = try db.execute(
+            sql:
+                "CREATE TABLE expenses (id INTEGER PRIMARY KEY, note TEXT, amount INTEGER); "
+                + "INSERT INTO expenses (note, amount) VALUES ('lunch', 12);",
+            actor: .agent,
+            runId: nil
+        )
+        let changed = try db.update(
+            table: "expenses",
+            set: ["amount": .integer(15)],
+            whereClause: ["note": .text("lunch")],
+            actor: .agent,
+            runId: nil
+        )
+        #expect(changed == 1)
+        let amount = try db.query(sql: "SELECT amount FROM expenses WHERE note = 'lunch'")
+        #expect(amount.rows[0][0] == .integer(15))
+    }
+
+    @Test
+    func softDeleteOnRawSqlTableThrowsActionableError() throws {
+        let db = try makeDB()
+        _ = try db.execute(
+            sql:
+                "CREATE TABLE expenses (id INTEGER PRIMARY KEY, note TEXT); "
+                + "INSERT INTO expenses (note) VALUES ('stale');",
+            actor: .agent,
+            runId: nil
+        )
+        do {
+            _ = try db.softDelete(
+                table: "expenses",
+                whereClause: ["note": .text("stale")],
+                actor: .agent,
+                runId: nil
+            )
+            Issue.record("softDelete should throw on a table without _deleted_at")
+        } catch let AgentDatabaseError.invalidArgument(message) {
+            // The error must steer the model to the working alternative,
+            // not just repeat SQLite's "no such column".
+            #expect(message.contains("_deleted_at"))
+            #expect(message.contains("db_execute"))
+        }
+        // The row is untouched.
+        let count = try db.query(sql: "SELECT COUNT(*) FROM expenses")
+        #expect(count.rows[0][0] == .integer(1))
+    }
+
+    @Test
+    func restoreOnRawSqlTableThrowsActionableError() throws {
+        let db = try makeDB()
+        _ = try db.execute(
+            sql: "CREATE TABLE plain (id INTEGER PRIMARY KEY, note TEXT);",
+            actor: .agent,
+            runId: nil
+        )
+        do {
+            _ = try db.restore(
+                table: "plain",
+                whereClause: ["note": .text("x")],
+                actor: .agent,
+                runId: nil
+            )
+            Issue.record("restore should throw on a table without _deleted_at")
+        } catch let AgentDatabaseError.invalidArgument(message) {
+            #expect(message.contains("_deleted_at"))
+        }
+    }
+
+    // MARK: - createTable with a model-declared `id` column
+
+    // Regression (E4B loop): declaring an explicit `id` column without
+    // `primary_key` used to collide with the auto-added
+    // `id INTEGER PRIMARY KEY AUTOINCREMENT` -> "duplicate column name: id".
+
+    @Test
+    func createTableWithDeclaredIdColumnPromotesItToPrimaryKey() throws {
+        let db = try makeDB()
+        try db.createTable(
+            name: "tickets",
+            purpose: "declared-id regression",
+            columns: [
+                AgentColumnSpec(name: "id", type: "TEXT", nullable: false),
+                AgentColumnSpec(name: "title", type: "TEXT", nullable: false),
+            ],
+            indexes: [],
+            actor: .agent,
+            runId: nil
+        )
+        // Insert with an explicit TEXT id — the declared column, not the
+        // auto-added integer one, must be the primary key.
+        _ = try db.insert(
+            table: "tickets",
+            row: ["id": .text("T-1"), "title": .text("first")],
+            actor: .agent,
+            runId: nil
+        )
+        let info = try db.query(sql: "PRAGMA table_info(tickets)")
+        // Columns: id TEXT pk, title, _created_at, _updated_at, _deleted_at —
+        // exactly ONE column named id.
+        let idRows = info.rows.filter { $0[1] == .text("id") }
+        #expect(idRows.count == 1)
+        #expect(idRows.first?[2] == .text("TEXT"))
+        // pk flag is the 6th column of table_info output.
+        #expect(idRows.first?[5] == .integer(1))
+        let row = try db.query(sql: "SELECT title FROM tickets WHERE id = 'T-1'")
+        #expect(row.rows.count == 1)
+    }
+
+    @Test
+    func createTableWithExplicitPrimaryKeyStillWins() throws {
+        let db = try makeDB()
+        // A non-id primary key declared by the model: no id column is
+        // auto-added on top of it, and the declared PK is honored.
+        try db.createTable(
+            name: "slugs",
+            purpose: "explicit pk regression",
+            columns: [
+                AgentColumnSpec(name: "slug", type: "TEXT", nullable: false, primaryKey: true),
+                AgentColumnSpec(name: "label", type: "TEXT", nullable: true),
+            ],
+            indexes: [],
+            actor: .agent,
+            runId: nil
+        )
+        let info = try db.query(sql: "PRAGMA table_info(slugs)")
+        let pkRows = info.rows.filter { $0[5] == .integer(1) }
+        #expect(pkRows.count == 1)
+        #expect(pkRows.first?[1] == .text("slug"))
+        #expect(info.rows.contains { $0[1] == .text("id") } == false)
+    }
 }
