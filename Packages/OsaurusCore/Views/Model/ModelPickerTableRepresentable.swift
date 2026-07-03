@@ -68,6 +68,12 @@ struct ModelPickerRow: Equatable, Identifiable {
     }
 
     var id: String { "model-\(sourceKey)-\(modelId)" }
+
+    /// Cross-provider key this row is stored under in the favourites list —
+    /// matches `ModelPickerItem.favoriteKey` for the same model.
+    var favoriteKey: String {
+        FavoriteModelsStore.key(sourceKey: sourceKey, modelId: modelId)
+    }
 }
 
 /// Pre-converted NSColors from the SwiftUI theme, built once per theme change
