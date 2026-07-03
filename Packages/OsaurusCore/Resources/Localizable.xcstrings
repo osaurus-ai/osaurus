@@ -11750,6 +11750,34 @@
         }
       }
     },
+    "Answer Mac queries with the loaded chat model when possible." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Mac-Abfragen nach Möglichkeit mit dem geladenen Chat-Modell beantworten."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "가능하면 로드된 채팅 모델로 Mac 질의에 답합니다."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Отвечать на запросы к Mac загруженной моделью чата, когда это возможно."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "尽可能使用已加载的聊天模型回答 Mac 查询。"
+          }
+        }
+      }
+    },
     "Anthropic" : {
       "localizations" : {
         "de" : {
@@ -37711,6 +37739,34 @@
         }
       }
     },
+    "Each script that changes anything is shown for your approval before it runs. Read-only scripts run automatically." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Jedes Skript, das etwas ändert, wird dir vor dem Ausführen zur Bestätigung angezeigt. Rein lesende Skripte laufen automatisch."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "무언가를 변경하는 스크립트는 실행 전에 승인하도록 표시됩니다. 읽기 전용 스크립트는 자동으로 실행됩니다."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Каждый скрипт, который что-то изменяет, показывается вам на подтверждение перед запуском. Скрипты только для чтения запускаются автоматически."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "任何会做出更改的脚本都会在运行前显示，等待你的确认。只读脚本会自动运行。"
+          }
+        }
+      }
+    },
     "Edit" : {
       "localizations" : {
         "de" : {
@@ -44066,6 +44122,34 @@
         }
       }
     },
+    "Fast reads on the chat model" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Schnelle Lesevorgänge über das Chat-Modell"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "채팅 모델로 빠른 읽기"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Быстрое чтение на модели чата"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "用聊天模型快速读取"
+          }
+        }
+      }
+    },
     "Favourites" : {
       "localizations" : {
         "de" : {
@@ -50040,6 +50124,34 @@
         }
       }
     },
+    "How the AppleScript model is kept loaded between runs." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Wie das AppleScript-Modell zwischen Läufen geladen bleibt."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "실행 사이에 AppleScript 모델을 유지하는 방식입니다."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Как модель AppleScript остаётся загруженной между запусками."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "AppleScript 模型在两次运行之间的保留方式。"
+          }
+        }
+      }
+    },
     "How the chat looks before your first message." : {
       "localizations" : {
         "de" : {
@@ -55263,6 +55375,34 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "保持此聊天继续运行？"
+          }
+        }
+      }
+    },
+    "Keep Warm After Job" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Nach Auftrag warmhalten"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "작업 후 웜 유지"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Сохранять в памяти после задачи"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "任务后保持预热"
           }
         }
       }
@@ -64194,6 +64334,34 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "模型已就绪"
+          }
+        }
+      }
+    },
+    "Model residency" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Modell-Residenz"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "모델 상주 방식"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Резиденция модели"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "模型驻留"
           }
         }
       }
@@ -87917,6 +88085,34 @@
         }
       }
     },
+    "Read-only Mac queries run on the already-loaded chat model when it supports tools, skipping the model swap. Automation tasks always use the AppleScript model, and queries still can't change anything." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Schreibgeschützte Mac-Abfragen laufen auf dem bereits geladenen Chat-Modell, wenn es Tools unterstützt — der Modellwechsel entfällt. Automationsaufgaben verwenden immer das AppleScript-Modell, und Abfragen können weiterhin nichts ändern."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "읽기 전용 Mac 질의는 채팅 모델이 도구를 지원하면 이미 로드된 채팅 모델에서 실행되어 모델 교체를 건너뜁니다. 자동화 작업은 항상 AppleScript 모델을 사용하며, 질의는 여전히 아무것도 변경할 수 없습니다."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Запросы к Mac только на чтение выполняются на уже загруженной модели чата, если она поддерживает инструменты, — без смены модели. Задачи автоматизации всегда используют модель AppleScript, а запросы по-прежнему ничего не изменяют."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "当聊天模型支持工具时，只读 Mac 查询会在已加载的聊天模型上运行，跳过模型切换。自动化任务始终使用 AppleScript 模型，查询仍然无法更改任何内容。"
+          }
+        }
+      }
+    },
     "Read-only snapshot of the cached permission and consent state Computer Use already uses." : {
       "shouldTranslate" : false
     },
@@ -95986,6 +96182,34 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "为智能体插件和自主执行运行隔离的 Linux 容器。"
+          }
+        }
+      }
+    },
+    "Run JXA script" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "JXA-Skript ausführen"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "JXA 스크립트 실행"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Запустить скрипт JXA"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "运行 JXA 脚本"
           }
         }
       }
@@ -112557,6 +112781,34 @@
         }
       }
     },
+    "The AppleScript model stays loaded briefly after a run so back-to-back automations are faster." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Das AppleScript-Modell bleibt nach einem Lauf kurz geladen, damit direkt aufeinanderfolgende Automationen schneller starten."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "실행 후에도 AppleScript 모델을 잠시 유지해 연속 자동화가 더 빠르게 시작됩니다."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Модель AppleScript ненадолго остаётся загруженной после запуска, поэтому последовательные автоматизации выполняются быстрее."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "AppleScript 模型在运行后会短暂保持加载，让连续的自动化更快。"
+          }
+        }
+      }
+    },
     "The bundle declares a tool-call parser (%@), but Osaurus still needs a live tool-call proof before marking it proven." : {
 
     },
@@ -112593,6 +112845,34 @@
     },
     "The bundle still needs a live tool-call proof before Osaurus should call it tool-use capable." : {
 
+    },
+    "The chat model reloads right after each AppleScript run." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Das Chat-Modell wird direkt nach jedem AppleScript-Lauf neu geladen."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "AppleScript 실행이 끝나면 즉시 채팅 모델을 다시 불러옵니다."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Модель чата перезагружается сразу после каждого запуска AppleScript."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "每次 AppleScript 运行后立即重新加载聊天模型。"
+          }
+        }
+      }
     },
     "The config file is invalid JSON or has an incompatible shape." : {
       "localizations" : {
