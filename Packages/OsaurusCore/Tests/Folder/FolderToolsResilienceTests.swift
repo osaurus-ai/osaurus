@@ -166,7 +166,7 @@ struct FolderToolsResilienceTests {
         #expect(ToolEnvelope.isSuccess(result))
         let payload = try #require(EnvelopeAssertions.successPayload(result))
         let text = EnvelopeAssertions.successText(result) ?? ""
-        #expect(text.hasPrefix("     1| "), "got: \(text.prefix(40))")
+        #expect(text.hasPrefix("     1|"), "got: \(text.prefix(40))")
         #expect(text.contains("(empty file)") == false)
         // The char cap cut line 1 mid-way: it is reported as PARTIAL, not
         // counted as an included line (honest partial-line accounting).
@@ -236,7 +236,7 @@ struct FolderToolsResilienceTests {
         #expect(payload["truncated"] as? Bool == false)
         #expect(payload["raw_bytes_truncated"] as? Bool == false)
         let text = try #require(payload["text"] as? String)
-        #expect(text.contains("1| #!/usr/bin/env python3"))
+        #expect(text.contains("1|#!/usr/bin/env python3"))
         #expect(text.contains(#"\/"#) == false)
     }
 
@@ -492,6 +492,83 @@ struct FolderToolsResilienceTests {
         #expect(failureKind(result) == "unavailable")
     }
 
+    // MARK: - file_undo
+
+    /// Models routinely echo `path` alongside the `operation_id` they got
+    /// from the write result (observed live: gemma-4-12B sent both, got the
+    /// old blanket "Pass `operation_id` OR `path`, not both." rejection, and
+    /// spiralled into a blind full-file rewrite). Agreeing arguments are
+    /// redundant, not ambiguous — the undo must run.
+    @Test func fileUndo_operationIdWithAgreeingPathUndoes() async throws {
+        await FileOperationLog.shared.clearAll()
+        let root = tmpRoot()
+        // performUndo resolves relative paths against the log's root (set by
+        // folder-context activation in the app).
+        await FileOperationLog.shared.setRootPath(root)
+        let file = root.appendingPathComponent("CHANGELOG.md")
+        try "original\n".write(to: file, atomically: true, encoding: .utf8)
+
+        try await withSession { _ in
+            let write = FileWriteTool(rootPath: root)
+            let writeResult = try await write.execute(
+                argumentsJSON: #"{"path": "CHANGELOG.md", "content": "clobbered\n"}"#
+            )
+            let opId = try #require(
+                EnvelopeAssertions.successPayload(writeResult)?["operation_id"] as? String
+            )
+
+            let undo = FileUndoTool(rootPath: root)
+            let result = try await undo.execute(
+                argumentsJSON: #"{"operation_id": "\#(opId)", "path": "CHANGELOG.md"}"#
+            )
+            #expect(ToolEnvelope.isSuccess(result), "got: \(result)")
+            let payload = try #require(EnvelopeAssertions.successPayload(result))
+            #expect(payload["undone_count"] as? Int == 1)
+            let after = try String(contentsOf: file, encoding: .utf8)
+            #expect(after == "original\n")
+        }
+        await FileOperationLog.shared.setRootPath(nil)
+    }
+
+    /// A genuine DISAGREEMENT (id belongs to one file, path names another)
+    /// stays refused — but with a message that names the real file so the
+    /// model can pick the right argument on the next call.
+    @Test func fileUndo_operationIdWithConflictingPathIsRefusedWithDiagnosis() async throws {
+        await FileOperationLog.shared.clearAll()
+        let root = tmpRoot()
+        try "keep\n".write(
+            to: root.appendingPathComponent("a.txt"),
+            atomically: true,
+            encoding: .utf8
+        )
+
+        try await withSession { _ in
+            let write = FileWriteTool(rootPath: root)
+            let writeResult = try await write.execute(
+                argumentsJSON: #"{"path": "a.txt", "content": "changed\n"}"#
+            )
+            let opId = try #require(
+                EnvelopeAssertions.successPayload(writeResult)?["operation_id"] as? String
+            )
+
+            let undo = FileUndoTool(rootPath: root)
+            let result = try await undo.execute(
+                argumentsJSON: #"{"operation_id": "\#(opId)", "path": "other.txt"}"#
+            )
+            #expect(ToolEnvelope.isError(result))
+            #expect(failureKind(result) == "invalid_args")
+            let message = EnvelopeAssertions.failureMessage(result) ?? ""
+            #expect(message.contains("a.txt"))
+            #expect(message.contains("other.txt"))
+            // The operation must NOT have been undone by the refused call.
+            let after = try String(
+                contentsOf: root.appendingPathComponent("a.txt"),
+                encoding: .utf8
+            )
+            #expect(after == "changed\n")
+        }
+    }
+
     // MARK: - file_tree
 
     /// A wide directory (many sibling files) must not dump the whole listing
@@ -526,6 +603,79 @@ struct FolderToolsResilienceTests {
         let result = try await tool.execute(argumentsJSON: "{}")
         #expect(ToolEnvelope.isError(result))
         #expect(failureField(result) == "pattern")
+    }
+
+    @Test func fileSearch_contentPathsStayRootRelativeUnderSymlinkedRoot() async throws {
+        // The gemma-4-12B `search-then-multi-file-edit` failure: eval (and
+        // chat) workspaces live under `FileManager.temporaryDirectory` =
+        // `/var/folders/...`, a macOS firmlink onto `/private/var/...`. The
+        // enumerator returns REAL (`/private/var`) urls, the old naive
+        // `hasPrefix(rootPath.path)` missed, and every nested match was
+        // flattened to its basename — `src/client.py` reported as
+        // `client.py:1: ...`. The model then fed `client.py` into
+        // `file_edit`/`file_read` and got "File not found" for a file the
+        // search itself had just reported, looping until the iteration cap.
+        let root = tmpRoot()  // under temporaryDirectory → firmlinked path
+        defer { try? FileManager.default.removeItem(at: root) }
+        let src = root.appendingPathComponent("src")
+        try FileManager.default.createDirectory(at: src, withIntermediateDirectories: true)
+        try "from api import fetchDataV1\n".write(
+            to: src.appendingPathComponent("client.py"),
+            atomically: true,
+            encoding: .utf8
+        )
+
+        let tool = FileSearchTool(rootPath: root)
+
+        // Content mode: matched lines must carry the root-relative path.
+        let content = try await tool.execute(
+            argumentsJSON: #"{"pattern": "fetchDataV1"}"#
+        )
+        #expect(content.contains("src/client.py:1:"))
+        #expect(!content.contains("\"client.py:1:"))
+
+        // Files mode: the structured `path` field must be root-relative too.
+        let files = try await tool.execute(
+            argumentsJSON: #"{"pattern": "client.py", "target": "files"}"#
+        )
+        #expect(files.contains(#""path":"src\/client.py""#) || files.contains(#""path":"src/client.py""#))
+    }
+
+    @Test func fileRead_directoryListingPathsStayRootRelativeUnderSymlinkedRoot() async throws {
+        // Same firmlink flattening as the search case, via the directory
+        // listing route (`file_read` on a directory): nested entry `path`s
+        // must be copy-pasteable into the next tool call.
+        let root = tmpRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let src = root.appendingPathComponent("src")
+        try FileManager.default.createDirectory(at: src, withIntermediateDirectories: true)
+        try "x = 1\n".write(
+            to: src.appendingPathComponent("client.py"),
+            atomically: true,
+            encoding: .utf8
+        )
+
+        let tool = FileReadTool(rootPath: root)
+        let listing = try await tool.execute(argumentsJSON: #"{"path": "."}"#)
+        #expect(listing.contains(#""path":"src\/client.py""#) || listing.contains(#""path":"src/client.py""#))
+    }
+
+    @Test func fileRead_payloadCarriesLineFormatContract() async throws {
+        // `duplicate-call-avoidance`: given `     1|41`, gemma-4-12B read
+        // "1" as the first data value — the only gutter explanation lived
+        // in the tool schema, far from the payload. Every file read result
+        // must carry the one-line `line_format` self-description.
+        let root = tmpRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        try "41\n7\n".write(
+            to: root.appendingPathComponent("numbers.txt"),
+            atomically: true,
+            encoding: .utf8
+        )
+        let tool = FileReadTool(rootPath: root)
+        let result = try await tool.execute(argumentsJSON: #"{"path": "numbers.txt"}"#)
+        #expect(result.contains("line_format"))
+        #expect(result.contains("content starts after the first"))
     }
 
     // MARK: - shell_run

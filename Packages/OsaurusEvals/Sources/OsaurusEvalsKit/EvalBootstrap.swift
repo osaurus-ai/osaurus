@@ -10,6 +10,12 @@ import Darwin
 import Foundation
 import OsaurusCore
 
+/// Path of this process's isolated root, published for the `atexit` hook.
+/// A C `atexit` handler cannot capture context, so the path lives in a
+/// file-scope global; single assignment before registration, read once at
+/// exit — no concurrent mutation in practice.
+nonisolated(unsafe) private var isolatedRootCleanupPath: String?
+
 /// Caller preference for loading installed native plugins before an eval run.
 /// This is separate from index bootstrapping because index-only suites should
 /// not pay the `dlopen` cost or inherit a bad local plugin's startup hang.
@@ -207,8 +213,27 @@ public enum EvalBootstrap {
     /// storage key. Returns the temp root, or nil when the root is ALREADY
     /// overridden — the first isolation owns the symlinks; a second caller
     /// must not clobber them with a fresh (symlink-less) root.
+    ///
+    /// Lifecycle: the root is a THROWAWAY, and each one can grow to ~10 GB
+    /// (the KV regime override points `cache/kv_v2` inside it). Left behind,
+    /// they accumulate until the disk itself degrades decode speed — a
+    /// 20260702 optimization-loop marathon leaked 11 roots / ~100 GB into
+    /// `$TMPDIR` and drove free space to 11 GiB. Two collection paths:
+    ///   1. `atexit` removal for normal process exit.
+    ///   2. A startup sweep (`sweepOrphanedIsolatedRoots`) for roots whose
+    ///      owner died without running atexit — watchdog trips use `_exit`
+    ///      BY DESIGN (a wedged MLX/Metal teardown must not block the
+    ///      report), and SIGKILL/crashes skip teardown too. Ownership is a
+    ///      `.owner.pid` marker written at creation; a sibling root is
+    ///      collected when its recorded pid no longer exists. Concurrent
+    ///      eval processes (the optimization loop's parallel remote lane)
+    ///      are safe: their pids are alive, so their roots are skipped.
     private static func isolateRootWithExternalModelsManifest(symlinkTools: Bool) -> URL? {
         guard OsaurusPaths.overrideRoot == nil else { return nil }
+
+        // Collect roots leaked by dead eval processes BEFORE adding our own.
+        // Best-effort: a sweep failure must never block bootstrap.
+        sweepOrphanedIsolatedRoots()
 
         // Resolve the REAL plugin install dir before overriding the root —
         // `OsaurusPaths.tools()` is `root()/Tools`, so we have to capture it
@@ -232,6 +257,21 @@ public enum EvalBootstrap {
             at: root,
             withIntermediateDirectories: true
         )
+
+        // Ownership marker + exit cleanup (see lifecycle note above). The
+        // atexit hook only covers plain `exit()` paths (usage errors, help,
+        // scorecard); the CLI's normal completion goes through
+        // `shutdownAndExit` → `_exit`, which skips atexit BY DESIGN, so that
+        // path calls `cleanupIsolatedRootForExit()` explicitly.
+        try? String(ProcessInfo.processInfo.processIdentifier).write(
+            to: root.appendingPathComponent(ownerPidMarkerName),
+            atomically: true,
+            encoding: .utf8
+        )
+        isolatedRootCleanupPath = root.path
+        atexit {
+            EvalBootstrap.cleanupIsolatedRootForExit()
+        }
 
         // Plugin discovery scans `root()/Tools`. When this run loads
         // installed plugins, symlink the real Tools dir into the isolated
@@ -274,6 +314,70 @@ public enum EvalBootstrap {
         #endif
 
         return root
+    }
+
+    /// Name of the pid marker each isolated root carries so a later process
+    /// can tell a leak (owner dead) from a neighbor (owner alive).
+    static let ownerPidMarkerName = ".owner.pid"
+
+    /// Remove this process's own isolated root. Idempotent; safe from any
+    /// isolation domain (pure filesystem work on an immutable global path).
+    /// Called from the atexit hook AND explicitly from the CLI's
+    /// `shutdownAndExit` (`_exit` skips atexit). The watchdog's `_exit` path
+    /// deliberately does NOT call this: it must stay allocation-light and
+    /// never risk blocking on a wedged filesystem — the next run's orphan
+    /// sweep collects that root instead.
+    nonisolated public static func cleanupIsolatedRootForExit() {
+        guard let path = isolatedRootCleanupPath else { return }
+        try? FileManager.default.removeItem(atPath: path)
+    }
+
+    /// Prefix every isolated root shares under `temporaryDirectory`.
+    static let isolatedRootPrefix = "osaurus-evals-"
+
+    /// How old a MARKER-LESS root must be before the sweep may collect it.
+    /// Marker-less roots can only come from binaries predating the marker
+    /// scheme; one could belong to a still-running old-binary lane, and
+    /// deleting a live process's config root mid-run corrupts that run. No
+    /// eval run approaches 24h, so age is a safe liveness proxy there.
+    static let markerlessRootMaxAge: TimeInterval = 24 * 60 * 60
+
+    /// Remove sibling `osaurus-evals-*` roots whose owning process is gone.
+    /// Covers the two exits that skip `atexit`: the case-watchdog's
+    /// deliberate `_exit` and outright kills/crashes.
+    static func sweepOrphanedIsolatedRoots(
+        in directory: URL = FileManager.default.temporaryDirectory,
+        now: Date = Date()
+    ) {
+        let fm = FileManager.default
+        guard
+            let entries = try? fm.contentsOfDirectory(
+                at: directory,
+                includingPropertiesForKeys: [.contentModificationDateKey],
+                options: [.skipsSubdirectoryDescendants]
+            )
+        else { return }
+
+        for entry in entries where entry.lastPathComponent.hasPrefix(isolatedRootPrefix) {
+            let marker = entry.appendingPathComponent(ownerPidMarkerName)
+            if let raw = try? String(contentsOf: marker, encoding: .utf8),
+                let pid = Int32(raw.trimmingCharacters(in: .whitespacesAndNewlines))
+            {
+                // `kill(pid, 0)` = liveness probe (no signal delivered).
+                // ESRCH → owner is gone → orphan. EPERM → some process with
+                // that pid exists (not ours to kill) → conservatively keep.
+                if kill(pid, 0) == 0 || errno == EPERM { continue }
+            } else {
+                // Marker-less (pre-marker binary): collect only once it is
+                // old enough that no live run can still own it.
+                let modified =
+                    (try? entry.resourceValues(forKeys: [.contentModificationDateKey]))?
+                    .contentModificationDate
+                guard let modified, now.timeIntervalSince(modified) > markerlessRootMaxAge
+                else { continue }
+            }
+            try? fm.removeItem(at: entry)
+        }
     }
 
     public static func run(_ plan: EvalBootstrapPlan) async {

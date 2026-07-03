@@ -152,6 +152,24 @@ public enum AppleScriptEvaluator {
         public var executor: Executor
         /// Result returned for a script the mock world doesn't recognize.
         public var mockDefault: AppleScriptExecutionResult
+        /// Real-executor readiness probe (liveProof): a tiny READ-ONLY script
+        /// against the same app the task automates, run with a short bound
+        /// BEFORE the model loop. On an unattended machine the first Apple
+        /// event to an ungrantable app parks the OSA queue thread inside the
+        /// TCC consent send — observed live as a 600s per-case watchdog trip
+        /// that terminated the suite and skipped every scripted case queued
+        /// behind it, identically for local and remote models. The probe
+        /// converts that environment into an honest ≤`probeTimeout` SKIP
+        /// ("permission not grantable here") while a granted machine pays
+        /// <1s and runs the real case unchanged.
+        public var automationProbeScript: String?
+        /// Wall-clock bound for the probe. A pending consent dialog never
+        /// returns, so this is the entire cost of skipping on an unattended
+        /// host. 15s absorbs a cold target-app launch on a granted machine.
+        public var automationProbeTimeout: TimeInterval
+        /// Test seam for the probe execution (nil → the real bounded
+        /// `AppleScriptExecutor.run`). Never used for the scored run itself.
+        public var automationProbeRunner: AppleScriptRunner?
 
         public init(
             lane: AppleScriptEvalLane,
@@ -174,7 +192,10 @@ public enum AppleScriptEvaluator {
                 output: nil,
                 errorNumber: nil,
                 errorMessage: nil
-            )
+            ),
+            automationProbeScript: String? = nil,
+            automationProbeTimeout: TimeInterval = 15,
+            automationProbeRunner: AppleScriptRunner? = nil
         ) {
             self.lane = lane
             self.task = task
@@ -192,6 +213,9 @@ public enum AppleScriptEvaluator {
             self.scriptedCalls = scriptedCalls
             self.executor = executor
             self.mockDefault = mockDefault
+            self.automationProbeScript = automationProbeScript
+            self.automationProbeTimeout = automationProbeTimeout
+            self.automationProbeRunner = automationProbeRunner
         }
     }
 
@@ -200,6 +224,50 @@ public enum AppleScriptEvaluator {
     /// none is installed. `liveProof` always uses the real executor regardless
     /// of the configured one.
     public static func run(_ config: Config) async -> AppleScriptEvalTranscript {
+        // liveProof forces the real executor; other lanes honor the config.
+        let effectiveExecutor: Executor = config.lane == .liveProof ? .real : config.executor
+
+        // Real-executor readiness probe, FIRST — before model resolution, so
+        // an unattended machine yields a fast honest SKIP without touching
+        // the model catalog or burning tokens, instead of parking the suite
+        // on an Automation consent dialog nobody can click.
+        if case .real = effectiveExecutor, let probeScript = config.automationProbeScript {
+            let probe: AppleScriptExecutionResult
+            if let probeRunner = config.automationProbeRunner {
+                probe = await probeRunner(probeScript, .appleScript)
+            } else {
+                probe = await AppleScriptExecutor.run(
+                    source: probeScript,
+                    timeout: config.automationProbeTimeout
+                )
+            }
+            if !probe.isSuccess {
+                let detail: String
+                switch probe.status {
+                case .timedOut:
+                    detail =
+                        "the probe did not answer within \(Int(config.automationProbeTimeout))s "
+                        + "— usually a pending macOS Automation consent dialog no one can "
+                        + "approve in an unattended run"
+                case .permissionRequired:
+                    detail =
+                        "Automation permission is denied for this process "
+                        + "(error \(probe.errorNumber.map(String.init) ?? "-1743"))"
+                default:
+                    detail =
+                        "probe \(probe.status.rawValue)"
+                        + (probe.errorMessage.map { ": \($0)" } ?? "")
+                }
+                return .skippedRun(
+                    lane: config.lane,
+                    reason:
+                        "liveProof environment not ready — \(detail). Grant Osaurus access to "
+                        + "the target app under System Settings → Privacy & Security → "
+                        + "Automation, then re-run locally."
+                )
+            }
+        }
+
         // Resolve the model + model-step seam per lane.
         var ranModel = false
         var resolvedModelId: String?
@@ -221,9 +289,6 @@ public enum AppleScriptEvaluator {
             resolvedModelId = modelId
             ranModel = true
         }
-
-        // liveProof forces the real executor; other lanes honor the config.
-        let effectiveExecutor: Executor = config.lane == .liveProof ? .real : config.executor
 
         // Executor seam + a script log that records every executed script for
         // regex / effect assertions across all lanes.

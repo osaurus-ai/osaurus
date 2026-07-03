@@ -52,7 +52,9 @@ struct HarnessStabilityFixesTests {
     }
 
     @Test func fileEditDiagnosis_whitespaceOnlyMismatchQuotesExactBytes() {
-        // Leading space copied from the `%6d| ` read format.
+        // Leading space the file doesn't have (historically copied from the
+        // old `N| ` read gutter; the gutter is now `N|` with no space, but
+        // whitespace-only mismatches still happen and must stay diagnosed).
         let content = "alpha\nitem 042 value=42\nomega\n"
         let diagnosis = FileEditTool.noMatchDiagnosis(
             oldString: " item 042 value=42",

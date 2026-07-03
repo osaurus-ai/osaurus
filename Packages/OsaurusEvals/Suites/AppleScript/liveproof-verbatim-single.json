@@ -10,7 +10,10 @@
       "lane": "liveProof",
       "mode": "automate",
       "content": "Osaurus verbatim proof:\n- alpha bravo charlie\n- \"quoted\" — dashed\n- 100% done",
-      "executor": { "kind": "real" },
+      "executor": {
+        "kind": "real",
+        "probe": "tell application \"Notes\" to count notes"
+      },
       "expectOutcome": ["done"],
       "mustUsePlaceholders": ["content"],
       "valuesContain": ["alpha bravo charlie"],

@@ -2268,15 +2268,25 @@ public struct EvalCase: Sendable, Codable, Identifiable {
             /// writes and answers reads, for `finalState` assertions. Takes
             /// precedence over `mockResults` when present.
             public let mockWorld: WorldSeed?
+            /// Real executor only: a tiny READ-ONLY probe script against the
+            /// same app the task automates, run with a short bound before the
+            /// model loop. If it can't answer (pending/denied Automation
+            /// consent on an unattended host) the case SKIPs honestly instead
+            /// of parking the suite on the consent dialog until the per-case
+            /// watchdog kills the whole process (observed live: 600s trip +
+            /// 14 downstream cases lost, for every model).
+            public let probe: String?
 
             public init(
                 kind: String? = nil,
                 mockResults: [ResultSpec]? = nil,
-                mockWorld: WorldSeed? = nil
+                mockWorld: WorldSeed? = nil,
+                probe: String? = nil
             ) {
                 self.kind = kind
                 self.mockResults = mockResults
                 self.mockWorld = mockWorld
+                self.probe = probe
             }
 
             /// One canned execution result the mock hands back.

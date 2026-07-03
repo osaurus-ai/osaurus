@@ -67,6 +67,18 @@ final class ResourceSampler: @unchecked Sendable {
         timer.resume()
     }
 
+    /// Instantaneous CPU rates are only trusted over a window at least this
+    /// long. Under heavy system load the sampler thread can be preempted
+    /// between reading the CPU clock and the wall clock, skewing one tick's
+    /// anchors; the next tick then divides a real multi-core CPU delta by a
+    /// near-zero wall delta (observed live: a 123,571% "peak" in the matrix).
+    private static let minRateWindowSeconds: TimeInterval = 0.05
+
+    /// Hard physical ceiling for an instantaneous per-process CPU reading:
+    /// every core at 100%. Anything above it is read-skew, not load.
+    private static let maxCpuPercent =
+        Double(ProcessInfo.processInfo.activeProcessorCount) * 100.0
+
     private func tick() {
         let mb = ProcessMemoryProbe.currentPhysFootprintMB()
         let cpu = ProcessCpuProbe.cumulativeCpuSeconds()
@@ -75,8 +87,8 @@ final class ResourceSampler: @unchecked Sendable {
         if let mb, mb > peakMb { peakMb = mb }
         if let cpu, let prev = lastCpuSeconds {
             let dt = now - lastWall
-            if dt > 0 {
-                let pct = (cpu - prev) / dt * 100.0
+            if dt >= Self.minRateWindowSeconds {
+                let pct = min((cpu - prev) / dt * 100.0, Self.maxCpuPercent)
                 if pct > peakCpuPercent { peakCpuPercent = pct }
             }
         }

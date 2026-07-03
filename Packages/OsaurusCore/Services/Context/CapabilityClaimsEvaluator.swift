@@ -189,6 +189,15 @@ public enum CapabilityClaimsEvaluator {
         var firstTurnPrompt = ""
         var iterations = 0
         var hitCap = false
+        // Empty-turn recovery, mirroring the production driver
+        // (`AgentToolLoop.emptyResponse`): a 0-token / EOS-first turn is a
+        // recoverable local-model failure mode, not a final answer. The
+        // production chat surface nudges-and-retries a bounded number of
+        // times before giving up; without the same policy here the eval
+        // lane is HARSHER than production and scores a one-off blank turn
+        // as an instant empty-final failure.
+        var emptyTurnRetries = 0
+        var pendingEmptyTurnNotice: String?
         // Decode speed, token-weighted across model steps so a long final
         // answer dominates a 2-token tool-call turn (same weighting as the
         // agent-loop evaluator). Only the no-tool answer step carries an
@@ -229,6 +238,16 @@ public enum CapabilityClaimsEvaluator {
                         ChatMessage(role: "system", content: firstTurnPrompt)
                     ]
                     requestMessages.append(contentsOf: history)
+                    if let notice = pendingEmptyTurnNotice {
+                        // Same transient-notice contract as the production
+                        // loop: the nudge rides once and is not persisted
+                        // into `history`, so the transcript stays clean.
+                        requestMessages = AgentLoopBudget.appendingTransientNotices(
+                            [notice],
+                            to: requestMessages
+                        )
+                        pendingEmptyTurnNotice = nil
+                    }
 
                     let request = ChatCompletionRequest(
                         model: resolvedModel,
@@ -265,9 +284,21 @@ public enum CapabilityClaimsEvaluator {
                     }
 
                     guard let calls = message.tool_calls, !calls.isEmpty else {
+                        let visible = (message.content ?? "")
+                            .trimmingCharacters(in: .whitespacesAndNewlines)
+                        if visible.isEmpty, emptyTurnRetries < AgentToolLoop.maxEmptyTurnRetries {
+                            // Empty turn (no text, no tool call): nudge and
+                            // retry without charging the iteration budget —
+                            // production-parity recovery, not coercion (the
+                            // model still writes its own answer).
+                            emptyTurnRetries += 1
+                            pendingEmptyTurnNotice = AgentToolLoop.emptyTurnNotice
+                            continue
+                        }
                         // Tool-call-free answer → the loop is done.
                         break
                     }
+                    emptyTurnRetries = 0
 
                     iterations += 1
 

@@ -166,6 +166,32 @@ enum FolderToolHelpers {
         return "^\(body)$"
     }
 
+    /// Root-relative display path for `url`, symlink-safe. FileManager
+    /// enumerators return REAL paths (`/private/var/...`) even when the
+    /// root handle was created through a symlink/firmlink (`/var/...`,
+    /// `/tmp/...`), so a naive `hasPrefix(root.path)` misses and callers
+    /// used to fall back to `lastPathComponent` — silently flattening
+    /// `src/client.py` to `client.py`. The model then feeds that wrong
+    /// path into its next tool call and gets "File not found" for a file
+    /// the search itself just reported. Resolve symlinks on BOTH sides
+    /// before prefix-matching; fall back to the basename only when the
+    /// url genuinely isn't under the root.
+    static func displayPath(for url: URL, under rootPath: URL) -> String {
+        let root = rootPath.standardized.path
+        let path = url.standardized.path
+        if path == root { return "." }
+        if path.hasPrefix(root + "/") {
+            return String(path.dropFirst(root.count + 1))
+        }
+        let realRoot = rootPath.resolvingSymlinksInPath().standardized.path
+        let realPath = url.resolvingSymlinksInPath().standardized.path
+        if realPath == realRoot { return "." }
+        if realPath.hasPrefix(realRoot + "/") {
+            return String(realPath.dropFirst(realRoot.count + 1))
+        }
+        return url.lastPathComponent
+    }
+
     /// Check if pattern matches filename
     static func matchesPattern(_ name: String, pattern: String) -> Bool {
         if pattern.contains("*") {
@@ -482,15 +508,9 @@ struct FileTreeTool: OsaurusTool {
         let maxFiles = Self.maxFiles
         let maxFilesPerDir = Self.maxFilesPerDir
         let ignorePatterns = FolderToolHelpers.detectProjectType(rootPath).ignorePatterns
-        let rootStandardized = rootPath.standardized.path
 
         func relativePath(_ url: URL) -> String {
-            let p = url.standardized.path
-            if p == rootStandardized { return "." }
-            if p.hasPrefix(rootStandardized + "/") {
-                return String(p.dropFirst(rootStandardized.count + 1))
-            }
-            return url.lastPathComponent
+            FolderToolHelpers.displayPath(for: url, under: rootPath)
         }
 
         func traverse(_ currentURL: URL, depth: Int) {
@@ -863,7 +883,14 @@ struct FileReadTool: OsaurusTool {
         // model actually saw by one line.
         var partialLine: Int? = nil
         for i in (validStart - 1) ..< validEnd {
-            let line = String(format: "%6d| %@\n", i + 1, lines[i])
+            // Gutter format is `N|content` with NO space after the pipe:
+            // everything after the first `|` is byte-exact file content.
+            // The earlier `N| content` form made a leading gutter space
+            // indistinguishable from real leading whitespace — models
+            // (gemma-4-12B live, grok-4.3 historically) copied it into
+            // `file_write` content / `file_edit` old_string and corrupted
+            // whitespace or whiffed the match.
+            let line = String(format: "%6d|%@\n", i + 1, lines[i])
             if output.count + line.count > charCap {
                 let remaining = charCap - output.count
                 if remaining > 0 {
@@ -914,6 +941,12 @@ struct FileReadTool: OsaurusTool {
         var result: [String: Any] = [
             "kind": "file",
             "text": text,
+            // Self-describing gutter contract, carried WITH the payload:
+            // models (gemma-4-12B live) have read `     1|41` as "first
+            // number is 1" when the only explanation lived back in the
+            // tool schema. One short field per read is cheaper than one
+            // wrong-answer retry loop.
+            "line_format": "each line is `<line number>|<content>`; content starts after the first `|`",
             "path": relativePath,
             "start_line": validStart,
             "end_line": lastLineIncluded,
@@ -1696,7 +1729,7 @@ struct FileEditTool: OsaurusTool, PermissionedTool {
         let fallback = "Make sure it exactly matches the file content."
         let oldLines = oldString.components(separatedBy: "\n")
 
-        // 1. Line-number prefix contamination (`   42| item 042 ...`).
+        // 1. Line-number prefix contamination (`   42|item 042 ...`).
         let prefixPattern = #"^\s*\d+\|"#
         if oldLines.contains(where: { $0.range(of: prefixPattern, options: .regularExpression) != nil }) {
             return "Your `old_string` contains `N|` line-number prefixes from file_read output — "
@@ -1845,13 +1878,7 @@ struct FileOperationHistoryTool: OsaurusTool {
     }
 
     fileprivate static func relativePath(for url: URL, rootPath: URL) -> String {
-        let root = rootPath.standardized.path
-        let path = url.standardized.path
-        if path == root { return "." }
-        if path.hasPrefix(root + "/") {
-            return String(path.dropFirst(root.count + 1))
-        }
-        return url.lastPathComponent
+        FolderToolHelpers.displayPath(for: url, under: rootPath)
     }
 }
 
@@ -1863,8 +1890,9 @@ struct FileUndoTool: OsaurusTool, PermissionedTool {
         "Revert file operations made by this chat session. With no arguments it undoes the most "
         + "recent operation; pass `operation_id` (from `file_operation_history` or a write "
         + "result) to undo one specific operation, or `path` to revert every logged operation "
-        + "on one file. Only operations whose history entry shows `can_undo: true` can be "
-        + "reverted. Check `file_operation_history` first when unsure what would be undone."
+        + "on one file. If both are given, `operation_id` wins (path is checked against that "
+        + "operation's file). Only operations whose history entry shows `can_undo: true` can "
+        + "be reverted. Check `file_operation_history` first when unsure what would be undone."
     let parameters: JSONValue? = .object([
         "type": .string("object"),
         "additionalProperties": .bool(false),
@@ -1911,14 +1939,6 @@ struct FileUndoTool: OsaurusTool, PermissionedTool {
             .trimmingCharacters(in: .whitespacesAndNewlines)
         let rawPath = (args["path"] as? String)?
             .trimmingCharacters(in: .whitespacesAndNewlines)
-        if let operationIdRaw, !operationIdRaw.isEmpty, let rawPath, !rawPath.isEmpty {
-            return ToolEnvelope.failure(
-                kind: .invalidArgs,
-                message: "Pass `operation_id` OR `path`, not both.",
-                expected: "one of `operation_id` / `path`, or neither (undo last)",
-                tool: name
-            )
-        }
 
         do {
             let undone: [FileOperation]
@@ -1931,6 +1951,34 @@ struct FileUndoTool: OsaurusTool, PermissionedTool {
                         expected: "UUID from `file_operation_history`",
                         tool: name
                     )
+                }
+                // Both args together are fine when they AGREE — models
+                // routinely echo the path alongside the id (observed live:
+                // gemma-4-12B sent `{"operation_id": …, "path":
+                // "CHANGELOG.md"}`, got the old "not both" rejection, and
+                // spiralled into a blind rewrite instead of the undo).
+                // Only an actual DISAGREEMENT is ambiguous and refused.
+                if let rawPath, !rawPath.isEmpty {
+                    let target = try? FolderToolHelpers.resolvePath(rawPath, rootPath: rootPath)
+                    let relative = target.map {
+                        FileOperationHistoryTool.relativePath(for: $0, rootPath: rootPath)
+                    }
+                    let op = await FileOperationLog.shared
+                        .operations(for: sessionId)
+                        .first(where: { $0.id == operationId })
+                    if let op, let relative, op.path != relative, op.destinationPath != relative {
+                        return ToolEnvelope.failure(
+                            kind: .invalidArgs,
+                            message:
+                                "`operation_id` \(operationIdRaw) is an operation on "
+                                + "`\(op.path)`, not `\(relative)`. Pass just the "
+                                + "`operation_id`, or just `path` to undo all "
+                                + "operations on that file.",
+                            field: "path",
+                            expected: "arguments that refer to the same file",
+                            tool: name
+                        )
+                    }
                 }
                 let op = try await FileOperationLog.shared.undo(
                     sessionId: sessionId,
@@ -2338,10 +2386,7 @@ struct FileSearchTool: OsaurusTool {
             let entryName = fileURL.lastPathComponent
             guard entryName.range(of: regex, options: [.regularExpression, .caseInsensitive]) != nil
             else { continue }
-            let relativePath =
-                fileURL.path.hasPrefix(rootPath.path)
-                ? String(fileURL.path.dropFirst(rootPath.path.count + 1))
-                : entryName
+            let relativePath = FolderToolHelpers.displayPath(for: fileURL, under: rootPath)
             entries.append(["name": entryName, "path": relativePath, "type": "file"])
         }
         return (entries, budgetTruncated)
@@ -2473,10 +2518,7 @@ struct FileSearchTool: OsaurusTool {
         }
         guard let content = try? String(contentsOf: url, encoding: .utf8) else { return .skipped }
 
-        let relativePath =
-            url.path.hasPrefix(rootPath.path)
-            ? String(url.path.dropFirst(rootPath.path.count + 1))
-            : url.lastPathComponent
+        let relativePath = FolderToolHelpers.displayPath(for: url, under: rootPath)
 
         let lines = content.components(separatedBy: .newlines)
         var matches: [String] = []

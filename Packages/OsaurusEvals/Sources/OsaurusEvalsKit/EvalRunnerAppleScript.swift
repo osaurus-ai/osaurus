@@ -67,7 +67,8 @@ extension EvalRunner {
             environmentContext: exp.environmentContext,
             confirmApproves: exp.confirmApproves ?? true,
             scriptedCalls: exp.scriptedCalls ?? [],
-            executor: resolveExecutor(exp.executor)
+            executor: resolveExecutor(exp.executor),
+            automationProbeScript: exp.executor?.probe
         )
 
         let transcript = await AppleScriptEvaluator.run(config)

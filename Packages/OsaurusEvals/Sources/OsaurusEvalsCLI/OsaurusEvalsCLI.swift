@@ -109,6 +109,11 @@ struct OsaurusEvalsCLI {
         _ = await runWithDeadline(seconds: 8) {
             await ModelRuntime.shutdownForOutOfProcessExit()
         }
+        // `_exit` below skips atexit hooks, so the isolated config root
+        // (up to ~10 GB of throwaway kv_v2 with the KV regime override)
+        // must be removed explicitly — leaked roots piled up to ~100 GB
+        // across a marathon and induced disk-pressure decode collapse.
+        EvalBootstrap.cleanupIsolatedRootForExit()
         fflush(stdout)
         fflush(stderr)
         Darwin._exit(code)

@@ -77,6 +77,24 @@ public struct SchemaValidator {
                 return nil
             }()
             if obj[key] == nil || (obj[key] is NSNull && propertySchema.map(permitsNull) != true) {
+                // Near-miss diagnosis: quantized local models routinely emit
+                // the right key in the wrong spelling (`Pattern`, `chart_type`).
+                // `coerceArguments` rescues the unambiguous cases before
+                // validation; when a mismatch still reaches here (coercion
+                // bypassed, or the fold was ambiguous), name the offending key
+                // so the model can fix its next call instead of re-sending the
+                // same arguments against a "Missing required property" it
+                // believes it satisfied (observed live: an 18-call retry
+                // spiral on `file_search {"Pattern": …}`).
+                if let nearMiss = obj.keys.first(where: {
+                    properties[$0] == nil && foldKey($0) == foldKey(key)
+                }) {
+                    return .fail(
+                        "Missing required property: \(key) (you sent `\(nearMiss)` — "
+                            + "JSON keys are exact; use `\(key)`)",
+                        field: key
+                    )
+                }
                 return .fail("Missing required property: \(key)", field: key)
             }
         }
@@ -507,12 +525,60 @@ public struct SchemaValidator {
     ) -> [String: Any] {
         guard case .object(let propsDict)? = schemaObject["properties"] else { return obj }
         var out = unwrapPropertiesWrapper(in: obj, propsDict: propsDict)
+        out = normalizeKeySpelling(in: out, propsDict: propsDict)
         out = dropEmptyOptionalStrings(in: out, propsDict: propsDict, required: requiredKeys(schemaObject))
         for (key, value) in out {
             guard case .object(let propSchema)? = propsDict[key] else { continue }
             out[key] = coerceValue(value, schemaObject: propSchema)
         }
         return out
+    }
+
+    /// Rename argument keys to their declared schema spelling when the
+    /// match is unambiguous. Quantized local models routinely emit
+    /// `{"Pattern": …}` for a schema declaring `pattern`, or
+    /// `{"chart_type": …}` for `chartType` — the value is right, only the
+    /// key spelling drifted, and the strict validator then reports
+    /// "Missing required property" for a key the model believes it sent
+    /// (observed live: an 18-call identical-retry spiral on `file_search`).
+    /// Same rescue class as `normalizeStringEnumCase` (enum VALUE case) and
+    /// `unwrapPropertiesWrapper` (schema-body confusion), extended to keys.
+    ///
+    /// A key is renamed only when ALL of:
+    ///   1. it is not itself a declared property (verbatim keys always win),
+    ///   2. exactly one declared property has the same alphanumeric fold
+    ///      (lowercased, `_`/`-` stripped — covers case drift AND
+    ///      snake/camel drift in one rule; declared keys whose folds
+    ///      collide with each other are excluded as ambiguous),
+    ///   3. the declared spelling is not already present in the arguments
+    ///      (a double-emit keeps the verbatim key; the stray one falls
+    ///      through to the validator's unknown-key / near-miss report).
+    static func normalizeKeySpelling(
+        in obj: [String: Any],
+        propsDict: [String: JSONValue]
+    ) -> [String: Any] {
+        var declaredByFold: [String: String?] = [:]  // fold → key (nil = ambiguous)
+        for declared in propsDict.keys {
+            let fold = foldKey(declared)
+            declaredByFold[fold] = declaredByFold[fold] == nil ? declared : .some(nil)
+        }
+        var out = obj
+        for key in obj.keys {
+            guard propsDict[key] == nil,
+                let foldEntry = declaredByFold[foldKey(key)],
+                let declared = foldEntry,
+                declared != key,
+                out[declared] == nil
+            else { continue }
+            out[declared] = out.removeValue(forKey: key)
+        }
+        return out
+    }
+
+    /// Alphanumeric fold used for key-spelling rescue: lowercase, keep
+    /// only letters and digits (drops `_`, `-`, and other separators).
+    static func foldKey(_ key: String) -> String {
+        String(key.lowercased().unicodeScalars.filter { CharacterSet.alphanumerics.contains($0) })
     }
 
     /// Quantized models occasionally emit `{"properties": {chartType:

@@ -266,12 +266,23 @@ public enum EvalRunner {
     static var caseTimeoutSeconds: Double {
         let env = ProcessInfo.processInfo.environment["OSAURUS_EVALS_CASE_TIMEOUT_SEC"]
         if let env, let v = Double(env) { return max(0, v) }
-        // 10 minutes: comfortably above the slowest legitimate case (a long
-        // multi-iteration agentic loop on a slow local model can run several
-        // minutes), so only a true hang trips it. A trip writes a complete
-        // report and force-exits the suite process, so it must never fire on a
-        // merely-slow case.
-        return 600
+        // 30 minutes. A trip writes a complete report and force-exits the
+        // suite process, so it must never fire on a merely-slow case — and
+        // both prior defaults did exactly that on gemma-4-12B compaction
+        // cases (repeated ~24K-token re-prefill after every compaction step
+        // at local decode speed):
+        //   - 600s tripped on `frontier.compaction-under-load` (483s idle,
+        //     >600s with the remote lane + judge sharing the host) in the
+        //     20260702 baseline, skipping the 24 cases queued behind it.
+        //   - 1200s tripped on `agent_loop.compaction-stress` in the
+        //     20260702 verify rounds: the same case PASSED round 2 just
+        //     under 1200s, then tripped in round 3 and solo re-runs (a live
+        //     stack sample mid-case showed active Metal compute dispatch —
+        //     slow prefill, not a wedge), skipping 18 queued cases. Its
+        //     honest wall-clock straddles 1200s, so that default flapped.
+        // True hangs (the only intended audience) still trip — 30 minutes
+        // later at worst — while honest slow local cases finish and score.
+        return 1800
     }
 
     /// `runOne` guarded by a wall-clock watchdog on a dedicated **OS thread**

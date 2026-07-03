@@ -787,6 +787,17 @@ public enum AgentLoopEvaluator {
                 }
                 return executions
             },
+            // Production parity: chat wires the todo-staleness nudge
+            // (unchecked items + N iterations without a `todo` call →
+            // one-line notice). Without it the eval lane silently drops a
+            // production behavior that exists precisely for multi-step
+            // discipline — the thing todo-discipline cases measure.
+            pendingTodoCount: {
+                guard let todo = await AgentTodoStore.shared.todo(for: sessionId) else {
+                    return 0
+                }
+                return todo.totalCount - todo.doneCount
+            },
             emitFallbackText: { text in
                 // Empty-turn recovery exhausted: surface a visible answer so a
                 // run never resolves to silent empty text.
