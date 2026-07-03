@@ -86,11 +86,11 @@ public struct TranscriptionOverlayView: View {
             // Stop / Cancel controls share the waveform's horizontal axis,
             // pinned to the card's left and right edges.
             HStack(spacing: 0) {
+                cancelButton
+                Spacer(minLength: 0)
                 if showsStopButton && !isProcessing {
                     stopButton
                 }
-                Spacer(minLength: 0)
-                cancelButton
             }
         }
         .frame(height: 30)
