@@ -41,7 +41,7 @@ let package = Package(
         // producers are off the GPU; restores can't race input tokenization).
         .package(
             url: "https://github.com/osaurus-ai/vmlx-swift",
-            revision: "cee0f8e234a352fcc6d09fba9a78dd24c0b15238"
+            revision: "8dffa0a8e69d7617d68f0843635158684120a3dc"
         ),
         // FluidAudio 0.14.3 added a breaking `language:` parameter to TTS
         // calls that osaurus's `TTSService` doesn't pass. Pinning to the
