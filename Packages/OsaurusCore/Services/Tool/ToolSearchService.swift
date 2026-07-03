@@ -229,6 +229,11 @@ public actor ToolSearchService {
         }
     }
 
+    public func addEntryIfReady(_ entry: ToolIndexEntry, parameters: JSONValue? = nil) async {
+        guard isInitialized else { return }
+        await indexEntry(entry, parameters: parameters)
+    }
+
     public func removeEntry(id: String) async {
         guard let db = vectorDB else { return }
         do {

@@ -132,7 +132,7 @@ public actor ToolIndexService {
             }
         }
         if didUpsert && stillIndexable {
-            await ToolSearchService.shared.indexEntry(entry, parameters: parameters)
+            await ToolSearchService.shared.addEntryIfReady(entry, parameters: parameters)
         }
     }
 
