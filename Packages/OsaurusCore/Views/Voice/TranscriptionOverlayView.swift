@@ -116,29 +116,30 @@ private struct OverlayGlassBackground: ViewModifier {
     let cornerRadius: CGFloat
 
     func body(content: Content) -> some View {
+        let shape = RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
         if #available(macOS 26.0, *) {
             content
-                .glassEffect(
-                    .clear,
-                    in: RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                // A translucent themed fill sits behind the glass so the overlay
+                // stays clearly legible on bright or busy backgrounds, instead of
+                // the near-invisible `.clear` glass it used before.
+                .background(
+                    shape.fill(theme.cardBackground.opacity(theme.isDark ? 0.72 : 0.82))
                 )
+                .glassEffect(.regular, in: shape)
                 .overlay(
-                    RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-                        .strokeBorder(theme.cardBorder, lineWidth: 1)
+                    shape.strokeBorder(theme.accentColor.opacity(0.55), lineWidth: 1)
                 )
-                .shadow(color: .black.opacity(0.22), radius: 16, x: 0, y: 6)
+                .shadow(color: .black.opacity(0.38), radius: 22, x: 0, y: 8)
         } else {
             content
                 .background(
-                    RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-                        .fill(theme.cardBackground.opacity(theme.isDark ? 0.95 : 0.98))
+                    shape.fill(theme.cardBackground.opacity(theme.isDark ? 0.95 : 0.98))
                 )
-                .clipShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
+                .clipShape(shape)
                 .overlay(
-                    RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-                        .strokeBorder(theme.cardBorder, lineWidth: 1)
+                    shape.strokeBorder(theme.accentColor.opacity(0.55), lineWidth: 1)
                 )
-                .shadow(color: theme.shadowColor.opacity(0.15), radius: 12, x: 0, y: 4)
+                .shadow(color: theme.shadowColor.opacity(0.25), radius: 18, x: 0, y: 6)
         }
     }
 }
