@@ -247,6 +247,7 @@ struct NotchView: View {
                     )
             }
         }
+        .padding(.top, windowController.alertContentTopPadding)
         .animation(swingSpring, value: expansion)
         .animation(swingSpring, value: sortedTasks.map(\.id))
         .animation(swingSpring, value: activeTaskIndex)
@@ -379,8 +380,6 @@ struct NotchView: View {
 
     private var expandedContent: some View {
         VStack(alignment: .leading, spacing: 0) {
-            Color.clear.frame(height: metrics.notchHeight)
-
             VStack(alignment: .leading, spacing: 8) {
                 expandedHeader
 
@@ -571,14 +570,6 @@ struct NotchView: View {
                     endPoint: .bottom
                 ),
                 lineWidth: 1
-            )
-            .mask(
-                VStack(spacing: 0) {
-                    Color.clear.frame(height: max(metrics.notchHeight - 6, 0))
-                    LinearGradient(colors: [Color.white.opacity(0), .white], startPoint: .top, endPoint: .bottom)
-                        .frame(height: 10)
-                    Color.white
-                }
             )
     }
 
