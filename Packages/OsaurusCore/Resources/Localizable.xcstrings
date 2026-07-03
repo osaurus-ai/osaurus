@@ -1211,7 +1211,7 @@
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "%1$@ · %2$lld линии"
+            "value" : "%1$@ · строк: %2$lld"
           }
         },
         "zh-Hans" : {
@@ -3063,7 +3063,7 @@
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "%lld линии"
+            "value" : "Строк: %lld"
           }
         },
         "zh-Hans" : {
@@ -3225,9 +3225,33 @@
           }
         },
         "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "%1$lld модель%2$@ готова"
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%1$lld модель готова"
+                }
+              },
+              "few" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%1$lld модели готовы"
+                }
+              },
+              "many" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%1$lld моделей готово"
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%1$lld модели готовы"
+                }
+              }
+            }
           }
         },
         "zh-Hans" : {
@@ -3259,9 +3283,33 @@
           }
         },
         "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "%1$lld модели"
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld модель"
+                }
+              },
+              "few" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld модели"
+                }
+              },
+              "many" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld моделей"
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld модели"
+                }
+              }
+            }
           }
         },
         "zh-Hans" : {
@@ -3305,9 +3353,33 @@
           }
         },
         "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "%1$lld модели • %2$@"
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%1$lld модель • %2$@"
+                }
+              },
+              "few" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%1$lld модели • %2$@"
+                }
+              },
+              "many" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%1$lld моделей • %2$@"
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%1$lld модели • %2$@"
+                }
+              }
+            }
           }
         },
         "zh-Hans" : {
@@ -4067,7 +4139,7 @@
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "%lld магазины не удалось преобразовать, поскольку ключ шифрования недоступен."
+            "value" : "Не удалось преобразовать хранилищ: %lld — ключ шифрования недоступен."
           }
         },
         "zh-Hans" : {
@@ -4417,7 +4489,7 @@
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "%1$lld инструменты и %2$lld навыки включены · %3$@"
+            "value" : "Включено: инструментов — %1$lld, навыков — %2$lld · %3$@"
           }
         },
         "zh-Hans" : {
@@ -4475,7 +4547,7 @@
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "%lld поворотов"
+            "value" : "Ходов: %lld"
           }
         },
         "zh-Hans" : {
@@ -5360,7 +5432,7 @@
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "~%d элементы будут замаскированы перед отправкой в ​​облако."
+            "value" : "Перед отправкой в облако будет замаскировано примерно %d элементов."
           }
         },
         "zh-Hans" : {
@@ -5454,7 +5526,7 @@
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "~1 элемент будет замаскирован перед отправкой в ​​облако."
+            "value" : "Перед отправкой в облако будет замаскирован примерно 1 элемент."
           }
         },
         "zh-Hans" : {
@@ -6650,7 +6722,7 @@
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Краткий тур"
+            "value" : "Краткий обзор"
           }
         },
         "zh-Hans" : {
@@ -8930,7 +9002,7 @@
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Настройте чувствительность обнаружения голоса"
+            "value" : "Настройте чувствительность к голосу"
           }
         },
         "zh-Hans" : {
@@ -9641,7 +9713,33 @@
     },
     "Agents & Automation" : {
       "comment" : "Title for the section that includes tabs related to agents and automation features.",
-      "isCommentAutoGenerated" : true
+      "isCommentAutoGenerated" : true,
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Agents & Automation"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Agents & Automation"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Агенты и автоматизация"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Agents & Automation"
+          }
+        }
+      }
     },
     "Agents execute commands safely" : {
       "localizations" : {
@@ -10068,7 +10166,7 @@
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Все изменения сохранёны"
+            "value" : "Все изменения сохранены"
           }
         },
         "zh-Hans" : {
@@ -10251,7 +10349,7 @@
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Все по желанию. Добавляйте или удаляйте в любое время."
+            "value" : "Всё необязательно. Добавлять и удалять инструменты можно в любое время."
           }
         },
         "zh-Hans" : {
@@ -11328,7 +11426,7 @@
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Позволяет транскрипцию голоса с помощью микрофона для преобразования речи в текст."
+            "value" : "Позволяет распознавать речь с микрофона."
           }
         },
         "zh-Hans" : {
@@ -11478,7 +11576,7 @@
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Уже платите за ИИ? Используйте свой ключ"
+            "value" : "Уже платите за ИИ? Подключите свой ключ"
           }
         },
         "zh-Hans" : {
@@ -11654,7 +11752,7 @@
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Всегда прислушиваюсь к словам пробуждения"
+            "value" : "Постоянно слушает фразы активации"
           }
         },
         "zh-Hans" : {
@@ -12010,7 +12108,7 @@
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "API Конечные точки"
+            "value" : "Эндпоинты API"
           }
         },
         "zh-Hans" : {
@@ -12805,7 +12903,7 @@
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Применяется ко всем голосовым режимам: обнаружение паузы, слово пробуждения и голосовая активность."
+            "value" : "Применяется ко всем голосовым режимам: распознаванию пауз, фразам активации и голосовой активности."
           }
         },
         "zh-Hans" : {
@@ -13462,7 +13560,7 @@
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Попросите что-нибудь настоящее. Он использует Интернет, ваши файлы и приложения для завершения задания, а затем дважды проверяет, прежде чем ответить."
+            "value" : "Попросите выполнить реальную задачу. Он использует интернет, файлы и приложения, чтобы довести её до конца, а перед ответом проверяет всё ещё раз."
           }
         },
         "zh-Hans" : {
@@ -13490,7 +13588,7 @@
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Попросите агента в чате что-нибудь запомнить — он позвонит `db_create_table`, чтобы построить нужную ему схему. Вы можете просмотреть, что он создает здесь."
+            "value" : "Попросите агента в чате что-нибудь запомнить — он вызовет `db_create_table`, чтобы создать нужную схему. Здесь можно посмотреть, что он создаёт."
           }
         },
         "zh-Hans" : {
@@ -16355,7 +16453,7 @@
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Сбалансирован для нормального разговора"
+            "value" : "Подходит для обычного разговора"
           }
         },
         "zh-Hans" : {
@@ -17247,7 +17345,7 @@
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Пусто = использовать провайдери/mcp.json"
+            "value" : "Пусто = использовать providers/mcp.json"
           }
         },
         "zh-Hans" : {
@@ -18228,7 +18326,7 @@
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Полный каталог просмотрите в «Настройки» → «Плагины»."
+            "value" : "Полный каталог доступен в «Настройках» → «Плагины»."
           }
         },
         "zh-Hans" : {
@@ -19384,9 +19482,7 @@
         }
       }
     },
-    "Cancel (Esc)" : {
-
-    },
+    "Cancel (Esc)" : {},
     "Cancel a running task" : {
       "localizations" : {
         "de" : {
@@ -20484,7 +20580,7 @@
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Изменять"
+            "value" : "Изменить"
           }
         },
         "zh-Hans" : {
@@ -21344,7 +21440,7 @@
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Чаты, файлы и ключи остаются на вашем устройстве. Никаких серверов, никакой аккаунта, никто не читает через ваше плечо."
+            "value" : "Чаты, файлы и ключи остаются на вашем устройстве. Без серверов и аккаунта; никто не просматривает ваши данные."
           }
         },
         "zh-Hans" : {
@@ -21491,7 +21587,7 @@
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Проверьте наличие обновлений"
+            "value" : "Проверить обновления"
           }
         },
         "zh-Hans" : {
@@ -22694,9 +22790,7 @@
       },
       "shouldTranslate" : false
     },
-    "Clean Up Transcription" : {
-
-    },
+    "Clean Up Transcription" : {},
     "Clear" : {
       "localizations" : {
         "de" : {
@@ -26430,7 +26524,7 @@
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Подключено! (%lld инструменты)"
+            "value" : "Подключено: инструментов — %lld"
           }
         },
         "zh-Hans" : {
@@ -27290,7 +27384,7 @@
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Продолжать"
+            "value" : "Продолжить"
           }
         },
         "zh-Hans" : {
@@ -28503,9 +28597,7 @@
         }
       }
     },
-    "core model" : {
-
-    },
+    "core model" : {},
     "Core model" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -36199,9 +36291,7 @@
         }
       }
     },
-    "Download or import the model before Osaurus can inspect or prove local tool use." : {
-
-    },
+    "Download or import the model before Osaurus can inspect or prove local tool use." : {},
     "Download required" : {
       "localizations" : {
         "de" : {
@@ -36517,7 +36607,7 @@
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Скачиваем ядро ​​Linux"
+            "value" : "Скачиваем ядро Linux"
           }
         },
         "zh-Hans" : {
@@ -39677,7 +39767,33 @@
     },
     "Enable Transcription Mode" : {
       "comment" : "Title of a toggle switch in the Transcription Mode settings tab, enabling or disabling the feature.",
-      "isCommentAutoGenerated" : true
+      "isCommentAutoGenerated" : true,
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Enable Transcription Mode"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Enable Transcription Mode"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Включить режим транскрипции"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Enable Transcription Mode"
+          }
+        }
+      }
     },
     "Enable Tunnel" : {
       "localizations" : {
@@ -39709,7 +39825,33 @@
     },
     "Enable VAD Mode" : {
       "comment" : "Title of a toggle switch in the VAD Mode settings tab, enabling or disabling VAD mode.",
-      "isCommentAutoGenerated" : true
+      "isCommentAutoGenerated" : true,
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Enable VAD Mode"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Enable VAD Mode"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Включить режим VAD"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Enable VAD Mode"
+          }
+        }
+      }
     },
     "Enable Voice Detection" : {
       "extractionState" : "stale",
@@ -39742,7 +39884,33 @@
     },
     "Enable Voice Input" : {
       "comment" : "Title of a toggle switch in the Voice Input in Chat section that allows the user to enable or disable the voice input feature in the chat.",
-      "isCommentAutoGenerated" : true
+      "isCommentAutoGenerated" : true,
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Enable Voice Input"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Enable Voice Input"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Включить голосовой ввод"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Enable Voice Input"
+          }
+        }
+      }
     },
     "Enabled" : {
       "localizations" : {
@@ -43613,7 +43781,7 @@
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Не удалось – нажмите, чтобы повторить попытку"
+            "value" : "Не удалось — нажмите, чтобы повторить попытку"
           }
         },
         "zh-Hans" : {
@@ -45512,7 +45680,7 @@
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Бесплатно, конфиденциально и работает в автономном режиме."
+            "value" : "Бесплатно и конфиденциально; работает без интернета."
           }
         },
         "zh-Hans" : {
@@ -45570,7 +45738,7 @@
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Зафиксируйте текстовый снимок экрана в начале каждого чата и поделитесь им в качестве фонового контекста. Нет скриншотов; очищается фильтром конфиденциальности перед отправкой в ​​облако."
+            "value" : "Создавайте текстовый снимок экрана в начале каждого чата и передавайте его как фоновый контекст. Без скриншотов; перед отправкой в облако данные очищаются фильтром конфиденциальности."
           }
         },
         "zh-Hans" : {
@@ -46110,7 +46278,7 @@
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Общий"
+            "value" : "Основные"
           }
         },
         "zh-Hans" : {
@@ -46656,7 +46824,7 @@
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Создать промпт"
+            "value" : "Создать приглашение"
           }
         },
         "zh-Hans" : {
@@ -47527,7 +47695,7 @@
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Дайте своему динозавру модель"
+            "value" : "Выберите модель для динозавра"
           }
         },
         "zh-Hans" : {
@@ -53031,7 +53199,7 @@
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Источник входного сигнала"
+            "value" : "Источник звука"
           }
         },
         "zh-Hans" : {
@@ -53730,9 +53898,33 @@
           }
         },
         "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Установить %lld Инструменты"
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "Установить %lld инструмент"
+                }
+              },
+              "few" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "Установить %lld инструмента"
+                }
+              },
+              "many" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "Установить %lld инструментов"
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "Установить %lld инструмента"
+                }
+              }
+            }
           }
         },
         "zh-Hans" : {
@@ -54767,7 +54959,7 @@
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Неверное промпт"
+            "value" : "Недействительное приглашение"
           }
         },
         "zh-Hans" : {
@@ -55148,7 +55340,7 @@
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Он работает, а не только говорит"
+            "value" : "Он не только говорит, но и делает"
           }
         },
         "zh-Hans" : {
@@ -55361,9 +55553,7 @@
         }
       }
     },
-    "Keep the natural transcription, including filler words" : {
-
-    },
+    "Keep the natural transcription, including filler words" : {},
     "Keep this chat running?" : {
       "localizations" : {
         "de" : {
@@ -59802,9 +59992,7 @@
         }
       }
     },
-    "Looking for image models?" : {
-
-    },
+    "Looking for image models?" : {},
     "Low" : {
       "localizations" : {
         "de" : {
@@ -59907,7 +60095,7 @@
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Сделано, чтобы чувствовать себя твоим"
+            "value" : "Настраивается под вас"
           }
         },
         "zh-Hans" : {
@@ -61492,7 +61680,7 @@
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Макс поворотов"
+            "value" : "Максимум ходов"
           }
         },
         "zh-Hans" : {
@@ -62056,7 +62244,7 @@
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Середина"
+            "value" : "Средний"
           }
         },
         "zh-Hans" : {
@@ -63917,9 +64105,7 @@
         }
       }
     },
-    "Model capability detection reports local tool calling as unsupported for this bundle." : {
-
-    },
+    "Model capability detection reports local tool calling as unsupported for this bundle." : {},
     "Model Card" : {
       "comment" : "The title of a section that displays detailed information about a machine learning model.",
       "isCommentAutoGenerated" : true,
@@ -65916,7 +66102,7 @@
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Отрицательная промпт"
+            "value" : "Негативный промпт"
           }
         },
         "zh-Hans" : {
@@ -66555,7 +66741,7 @@
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Следующий"
+            "value" : "Далее"
           }
         },
         "zh-Hans" : {
@@ -67125,7 +67311,7 @@
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Никаких буферизованных поворотов и эпизодов — проверьте память каждого агента."
+            "value" : "Нет буферизованных ходов и эпизодов — проверьте память агента."
           }
         },
         "zh-Hans" : {
@@ -67357,7 +67543,7 @@
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Для этого провайдера не сохранёны токены Codex OAuth."
+            "value" : "Для этого провайдера не сохранены токены Codex OAuth."
           }
         },
         "zh-Hans" : {
@@ -67626,9 +67812,7 @@
         }
       }
     },
-    "no dispatch" : {
-
-    },
+    "no dispatch" : {},
     "No downloaded models" : {
       "localizations" : {
         "de" : {
@@ -68284,9 +68468,7 @@
         }
       }
     },
-    "No live tool-call proof is recorded for this exact bundle yet." : {
-
-    },
+    "No live tool-call proof is recorded for this exact bundle yet." : {},
     "No local benchmark proof is recorded here yet. A passing row needs visible output, token/s, RAM status, cancellation, and cache evidence." : {
       "localizations" : {
         "de" : {
@@ -72519,7 +72701,7 @@
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Выкл.: срок действия доступа истекает через 90 дней. Включено: срок действия доступа никогда не истекает, пока его не отзовут."
+            "value" : "Выкл.: доступ истекает через 90 дней. Вкл.: доступ не истекает, пока его не отзовут."
           }
         },
         "zh-Hans" : {
@@ -73823,7 +74005,7 @@
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Открывайте страницы и извлекайте текст из Интернета."
+            "value" : "Открывает страницы и извлекает текст из интернета."
           }
         },
         "zh-Hans" : {
@@ -73853,7 +74035,7 @@
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Открытые удалённые провайдери"
+            "value" : "Открыть удалённых провайдеров"
           }
         },
         "zh-Hans" : {
@@ -74610,7 +74792,7 @@
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Запрос токена открытияИИ не выполнен: %@"
+            "value" : "Не удалось запросить токен OpenAI: %@"
           }
         },
         "zh-Hans" : {
@@ -79627,7 +79809,7 @@
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Выберите, что может сделать ваш динозавр"
+            "value" : "Выберите, что умеет ваш динозавр"
           }
         },
         "zh-Hans" : {
@@ -79832,7 +80014,7 @@
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Подхватывает тихую речь, дольше ждет пауз"
+            "value" : "Улавливает тихую речь и дольше ждёт паузы"
           }
         },
         "zh-Hans" : {
@@ -81094,7 +81276,7 @@
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "КарманTTS Модель"
+            "value" : "Модель PocketTTS"
           }
         },
         "zh-Hans" : {
@@ -81210,7 +81392,7 @@
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Работает на платформе FluidAudio PocketTTS. Только английский. Потоковая передача звука в том виде, в каком он синтезируется."
+            "value" : "На базе FluidAudio PocketTTS. Только английский. Звук воспроизводится по мере синтеза."
           }
         },
         "zh-Hans" : {
@@ -84766,7 +84948,7 @@
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Переопределения фильтров для каждого провайдера появятся здесь после настройки провайдера облачных услуг на вкладке «Удаленные провайдери»"
+            "value" : "Переопределения фильтров для каждого провайдера появятся здесь после настройки облачного провайдера на вкладке «Удалённые провайдеры»."
           }
         },
         "zh-Hans" : {
@@ -85934,7 +86116,7 @@
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Быстрый"
+            "value" : "Промпт"
           }
         },
         "zh-Hans" : {
@@ -87884,7 +88066,7 @@
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Чтение и запись файлов в ваших проектах."
+            "value" : "Читает и изменяет файлы в ваших проектах."
           }
         },
         "zh-Hans" : {
@@ -88906,7 +89088,7 @@
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Рекомендуется"
+            "value" : "Советуем"
           }
         },
         "zh-Hans" : {
@@ -89886,7 +90068,7 @@
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "зарегистрированный инструмент %@; уже в активной базовой линии"
+            "value" : "Зарегистрирован инструмент %@; он уже в активном базовом наборе"
           }
         },
         "zh-Hans" : {
@@ -89914,7 +90096,7 @@
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "зарегистрированный инструмент %@; загрузить с помощью Permission_load"
+            "value" : "Зарегистрирован инструмент %@; загрузите через capabilities_load"
           }
         },
         "zh-Hans" : {
@@ -92693,7 +92875,7 @@
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Требуется более громкая речь и более быстрая реакция"
+            "value" : "Нужна более громкая речь; отклик быстрее"
           }
         },
         "zh-Hans" : {
@@ -95842,7 +96024,7 @@
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Запустите модель на Mac или подключите модель, за которую уже платите. Переключаться можно в любой момент, а чаты сохранятся."
+            "value" : "Запустите модель на Mac или подключите уже оплаченный сервис. Модель можно сменить в любой момент — чаты сохранятся."
           }
         },
         "zh-Hans" : {
@@ -96328,7 +96510,7 @@
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Запускайте на своем Mac"
+            "value" : "Запуск на Mac"
           }
         },
         "zh-Hans" : {
@@ -96440,7 +96622,7 @@
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Запустите Set Up Sandbox, чтобы Osaurus мог создать или загрузить %@."
+            "value" : "Запустите «Настроить песочницу», чтобы Osaurus мог создать или загрузить %@."
           }
         },
         "zh-Hans" : {
@@ -96497,7 +96679,7 @@
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Запускайте команды терминала внутри сети безопасности."
+            "value" : "Запускает команды терминала в защищённой среде."
           }
         },
         "zh-Hans" : {
@@ -97098,7 +97280,7 @@
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Работает на вашем Mac. Ваши чаты, файлы и ключи останутся с вами. Никакой аккаунта, никакого облака не требуется."
+            "value" : "Работает на вашем Mac. Чаты, файлы и ключи остаются у вас. Аккаунт и облако не требуются."
           }
         },
         "zh-Hans" : {
@@ -97229,9 +97411,7 @@
         }
       }
     },
-    "Runtime preflight blocks this bundle, so Osaurus cannot run a tool-call proof." : {
-
-    },
+    "Runtime preflight blocks this bundle, so Osaurus cannot run a tool-call proof." : {},
     "Runtime socket path exists." : {
       "localizations" : {
         "de" : {
@@ -97260,9 +97440,7 @@
         }
       }
     },
-    "Runtime support is incomplete; a live tool-call proof is not meaningful until the runtime blocker is resolved." : {
-
-    },
+    "Runtime support is incomplete; a live tool-call proof is not meaningful until the runtime blocker is resolved." : {},
     "Runtime Tools" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -99817,9 +99995,7 @@
         }
       }
     },
-    "Script" : {
-
-    },
+    "Script" : {},
     "Script execution" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -100385,7 +100561,7 @@
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Настройки поиска"
+            "value" : "Поиск по настройкам"
           }
         },
         "zh-Hans" : {
@@ -101844,7 +102020,7 @@
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Выберите устройство ввода"
+            "value" : "Устройство ввода"
           }
         },
         "zh-Hans" : {
@@ -102936,7 +103112,7 @@
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Установите горячую клавишу для включения режима транскрипции"
+            "value" : "Задайте сочетание клавиш для режима транскрипции"
           }
         },
         "zh-Hans" : {
@@ -102993,7 +103169,7 @@
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Настройте динозавр для каждого вида работы. Он запоминает ваш контекст, поэтому вы перестаете объяснять себя заново."
+            "value" : "Настройте отдельного динозавра для каждого типа работы. Он запоминает контекст, поэтому не нужно каждый раз объяснять всё заново."
           }
         },
         "zh-Hans" : {
@@ -103309,7 +103485,7 @@
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Настройки успешно сохранёны"
+            "value" : "Настройки успешно сохранены"
           }
         },
         "zh-Hans" : {
@@ -103366,7 +103542,7 @@
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Настраивать"
+            "value" : "Настройка"
           }
         },
         "zh-Hans" : {
@@ -107592,7 +107768,7 @@
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Кнопка громкой связи появляется в сообщениях помощника"
+            "value" : "В сообщениях ассистента появляется кнопка озвучивания"
           }
         },
         "zh-Hans" : {
@@ -107761,7 +107937,7 @@
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Речь в текст"
+            "value" : "Распознавание речи"
           }
         },
         "zh-Hans" : {
@@ -109100,9 +109276,7 @@
         }
       }
     },
-    "Stop and insert" : {
-
-    },
+    "Stop and insert" : {},
     "Stop Mode" : {
       "localizations" : {
         "de" : {
@@ -111062,7 +111236,7 @@
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Системные настройки по умолчанию"
+            "value" : "По умолчанию в системе"
           }
         },
         "zh-Hans" : {
@@ -111146,7 +111320,7 @@
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Системная промпт"
+            "value" : "Системный промпт"
           }
         },
         "zh-Hans" : {
@@ -112416,7 +112590,7 @@
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Текст в речь"
+            "value" : "Озвучивание"
           }
         },
         "zh-Hans" : {
@@ -112825,9 +112999,7 @@
         }
       }
     },
-    "The bundle declares a tool-call parser (%@), but Osaurus still needs a live tool-call proof before marking it proven." : {
-
-    },
+    "The bundle declares a tool-call parser (%@), but Osaurus still needs a live tool-call proof before marking it proven." : {},
     "The bundle has the required local files. Runtime quality still depends on model-family support and live generation proof." : {
       "localizations" : {
         "de" : {
@@ -112856,12 +113028,8 @@
         }
       }
     },
-    "The bundle is incomplete, so Osaurus cannot run a tool-call proof." : {
-
-    },
-    "The bundle still needs a live tool-call proof before Osaurus should call it tool-use capable." : {
-
-    },
+    "The bundle is incomplete, so Osaurus cannot run a tool-call proof." : {},
+    "The bundle still needs a live tool-call proof before Osaurus should call it tool-use capable." : {},
     "The chat model reloads right after each AppleScript run." : {
       "localizations" : {
         "de" : {
@@ -112946,9 +113114,7 @@
         }
       }
     },
-    "The core model removes filler words like \"uh\" and \"mm\"" : {
-
-    },
+    "The core model removes filler words like \"uh\" and \"mm\"" : {},
     "The current model is text-only." : {
       "localizations" : {
         "de" : {
@@ -116505,7 +116671,7 @@
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Выбросьте его и начните заново со вкладки «Песочница» — ваш Mac останется нетронутым."
+            "value" : "Удалите песочницу и начните заново на вкладке «Песочница» — Mac не будет затронут."
           }
         },
         "zh-Hans" : {
@@ -116889,7 +117055,7 @@
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Маленький и быстрый. Перехватывает имена, адреса и IDs/секреты. Нет определения даты."
+            "value" : "Компактная и быстрая модель. Находит имена, адреса, идентификаторы и секреты. Даты не распознаёт."
           }
         },
         "zh-Hans" : {
@@ -117812,21 +117978,11 @@
         }
       }
     },
-    "Tool use" : {
-
-    },
-    "Tool use blocked" : {
-
-    },
-    "Tool use proof required" : {
-
-    },
-    "Tool use unproven" : {
-
-    },
-    "Tool use unsupported" : {
-
-    },
+    "Tool use" : {},
+    "Tool use blocked" : {},
+    "Tool use proof required" : {},
+    "Tool use unproven" : {},
+    "Tool use unsupported" : {},
     "Tools" : {
       "localizations" : {
         "de" : {
@@ -117929,7 +118085,7 @@
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Инструменты — это небольшие возможности, которые может использовать ваш динозавр, например, чтение Интернета или получение файла. Добавьте пару сейчас, меняйте их местами в любое время в настройках."
+            "value" : "Инструменты — это небольшие возможности вашего динозавра: например, читать веб-страницы или получать файлы. Добавьте пару сейчас, а позже меняйте набор в настройках."
           }
         },
         "zh-Hans" : {
@@ -118560,7 +118716,7 @@
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Транскрипционное поведение"
+            "value" : "Поведение транскрипции"
           }
         },
         "zh-Hans" : {
@@ -119481,7 +119637,7 @@
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Выключать"
+            "value" : "Выключить"
           }
         },
         "zh-Hans" : {
@@ -120910,7 +121066,7 @@
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Обновлена ​​структура таблицы"
+            "value" : "Структура таблицы обновлена"
           }
         },
         "zh-Hans" : {
@@ -120938,7 +121094,7 @@
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Обновлена ​​база данных"
+            "value" : "База данных обновлена"
           }
         },
         "zh-Hans" : {
@@ -121317,7 +121473,7 @@
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "высококлассный"
+            "value" : "Увеличить разрешение"
           }
         },
         "zh-Hans" : {
@@ -121461,7 +121617,7 @@
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "URLс"
+            "value" : "URL-адреса"
           }
         },
         "zh-Hans" : {
@@ -121676,7 +121832,7 @@
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Используйте клавишу AtlasCloud API из консоли AtlasCloud."
+            "value" : "Используйте API-ключ AtlasCloud из консоли AtlasCloud."
           }
         },
         "zh-Hans" : {
@@ -121877,7 +122033,7 @@
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Используйте модели защитных датчиков из вашей библиотеки LM Studio."
+            "value" : "Используйте модели safetensors из библиотеки LM Studio."
           }
         },
         "zh-Hans" : {
@@ -122666,7 +122822,7 @@
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Использует вашу аккаунт OpenRouter."
+            "value" : "Использует ваш аккаунт OpenRouter."
           }
         },
         "zh-Hans" : {
@@ -122872,7 +123028,7 @@
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "VAD Режим"
+            "value" : "Режим VAD"
           }
         },
         "zh-Hans" : {
@@ -123295,7 +123451,7 @@
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Посмотреть все серии %lld"
+            "value" : "Посмотреть все эпизоды (%lld)"
           }
         },
         "zh-Hans" : {
@@ -124100,7 +124256,7 @@
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Обнаружение голоса: Starting…"
+            "value" : "Обнаружение голоса: запуск…"
           }
         },
         "zh-Hans" : {
@@ -124246,7 +124402,7 @@
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Голосовая чувствительность"
+            "value" : "Чувствительность к голосу"
           }
         },
         "zh-Hans" : {
@@ -124331,7 +124487,7 @@
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Голосовое переключение агента"
+            "value" : "Переключение агентов голосом"
           }
         },
         "zh-Hans" : {
@@ -124502,7 +124658,7 @@
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Ожидание выкупа"
+            "value" : "Ожидает активации"
           }
         },
         "zh-Hans" : {
@@ -124646,7 +124802,7 @@
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Вдали от вашего Mac"
+            "value" : "Изолировано от Mac"
           }
         },
         "zh-Hans" : {
@@ -124763,7 +124919,7 @@
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "WARNING: доступ не определен"
+            "value" : "ПРЕДУПРЕЖДЕНИЕ: доступ не определён"
           }
         },
         "zh-Hans" : {
@@ -125690,7 +125846,7 @@
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Когда включено, нажмите горячую клавишу, чтобы начать расшифровку. Речь будет введена прямо в активное текстовое поле любого приложения."
+            "value" : "Когда режим включён, нажмите сочетание клавиш, чтобы начать транскрипцию. Речь будет вводиться прямо в активное текстовое поле любого приложения."
           }
         },
         "zh-Hans" : {
@@ -125921,7 +126077,7 @@
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Когда ваш динозавр устанавливает пакеты, запускает сценарии или работает с файлами, он делает это в крошечном, огороженном рабочем месте — отдельно от вашего Mac."
+            "value" : "Когда динозавр устанавливает пакеты, запускает сценарии или работает с файлами, всё происходит в небольшой изолированной рабочей области отдельно от Mac."
           }
         },
         "zh-Hans" : {
@@ -126157,7 +126313,7 @@
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Кто может позвонить на ваш API и насколько агрессивно."
+            "value" : "Кто может вызывать ваш API и с какой интенсивностью."
           }
         },
         "zh-Hans" : {
@@ -127087,7 +127243,7 @@
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Токены аутентификации xAI OA присутствуют и обновляются перед обнаружением модели."
+            "value" : "Токены xAI OAuth есть и обновляются перед поиском моделей."
           }
         },
         "zh-Hans" : {
@@ -127641,7 +127797,7 @@
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Вы уже настроены"
+            "value" : "Всё уже настроено"
           }
         },
         "zh-Hans" : {
@@ -127842,7 +127998,7 @@
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Ваш баланс. %@ провел эту сессию. Нажмите, чтобы добавить кредиты."
+            "value" : "Ваш баланс. За этот сеанс потрачено %@. Нажмите, чтобы пополнить."
           }
         },
         "zh-Hans" : {
@@ -128128,7 +128284,7 @@
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Ваш динозавр работает на вашем Mac. Добавляйте больше мощности, когда захотите."
+            "value" : "Динозавр работает на вашем Mac. Больше мощности можно добавить в любой момент."
           }
         },
         "zh-Hans" : {
@@ -128474,13 +128630,259 @@
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Почтовый пакет"
+            "value" : "ZIP-архив"
           }
         },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "Zip 捆绑包"
+          }
+        }
+      }
+    },
+    "Shell" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Shell"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Shell"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Shell"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Терминал"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Shell"
+          }
+        }
+      },
+      "comment" : "Onboarding plugin picker display name for terminal command access."
+    },
+    "See and create events on your Mac." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "See and create events on your Mac."
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "See and create events on your Mac."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "See and create events on your Mac."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Просматривает и создаёт события на вашем Mac."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "See and create events on your Mac."
+          }
+        }
+      },
+      "comment" : "Onboarding plugin picker blurb for Calendar."
+    },
+    "Make and check off your Reminders." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Make and check off your Reminders."
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Make and check off your Reminders."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Make and check off your Reminders."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Создаёт напоминания и отмечает их выполненными."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Make and check off your Reminders."
+          }
+        }
+      },
+      "comment" : "Onboarding plugin picker blurb for Reminders."
+    },
+    "Send iMessages from your Mac." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Send iMessages from your Mac."
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Send iMessages from your Mac."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Send iMessages from your Mac."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Отправляет сообщения iMessage с вашего Mac."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Send iMessages from your Mac."
+          }
+        }
+      },
+      "comment" : "Onboarding plugin picker blurb for Messages."
+    },
+    "%lld models ready" : {
+      "localizations" : {
+        "de" : {
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "needs_review",
+                  "value" : "%lld Modell bereit"
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "needs_review",
+                  "value" : "%lld Modelle bereit"
+                }
+              }
+            }
+          }
+        },
+        "en" : {
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld model ready"
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld models ready"
+                }
+              }
+            }
+          }
+        },
+        "ko" : {
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld개의 모델 준비됨"
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld개의 모델 준비됨"
+                }
+              }
+            }
+          }
+        },
+        "ru" : {
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld модель готова"
+                }
+              },
+              "few" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld модели готовы"
+                }
+              },
+              "many" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld моделей готово"
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld модели готовы"
+                }
+              }
+            }
+          }
+        },
+        "zh-Hans" : {
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld 个模型已就绪"
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld 个模型已就绪"
+                }
+              }
+            }
           }
         }
       }
