@@ -160,12 +160,12 @@ public final class TranscriptionOverlayWindowService: ObservableObject {
 
         guard let screen = activeScreen else { return }
 
-        // Position at top-center of the screen, below menu bar
+        // Position at bottom-center of the screen, above the Dock.
         let visibleFrame = screen.visibleFrame
         let panelSize = panel.frame.size
 
         let x = visibleFrame.origin.x + (visibleFrame.width - panelSize.width) / 2
-        let y = visibleFrame.origin.y + visibleFrame.height - panelSize.height - 20
+        let y = visibleFrame.origin.y + 20
 
         panel.setFrameOrigin(NSPoint(x: x, y: y))
     }
