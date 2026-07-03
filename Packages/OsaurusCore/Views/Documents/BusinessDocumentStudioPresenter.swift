@@ -52,8 +52,10 @@ final class BusinessDocumentStudioPresenter: ObservableObject {
 
         do {
             let document = try await service.parse(url: url)
+            guard !Task.isCancelled else { return }
             try load(document: document, sourceURL: url, policy: policy)
         } catch {
+            guard !Task.isCancelled else { return }
             self.document = nil
             inspection = nil
             loadState = .failed(BusinessDocumentStudioLoadFailure(url: url, error: error))
@@ -330,6 +332,7 @@ struct BusinessDocumentStudioPresentation: Equatable {
     let fieldRows: [BusinessDocumentStudioInfoRow]
     let tableRows: [BusinessDocumentStudioInfoRow]
     let handoffRows: [BusinessDocumentStudioInfoRow]
+    let isAttachmentHandoffAvailable: Bool
     let previewSections: [BusinessDocumentStudioPreviewSection]
     let warnings: [BusinessDocumentStudioWarning]
     let exportOptions: [BusinessDocumentStudioExportOptionPresentation]
@@ -349,6 +352,7 @@ struct BusinessDocumentStudioPresentation: Equatable {
         fieldRows = Self.fieldRows(for: inspection.extractionSummary.fields)
         tableRows = Self.tableRows(for: inspection.extractionSummary.tables)
         handoffRows = Self.handoffRows(for: inspection.extractionSummary.attachmentHandoff)
+        isAttachmentHandoffAvailable = inspection.extractionSummary.attachmentHandoff.isAvailable
         previewSections = Self.previewSections(for: inspection.preview)
         warnings = Self.warnings(for: inspection)
         exportOptions = inspection.exportOptions.map(BusinessDocumentStudioExportOptionPresentation.init(option:))

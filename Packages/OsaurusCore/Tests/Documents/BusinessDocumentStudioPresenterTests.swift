@@ -157,6 +157,9 @@ struct BusinessDocumentStudioPresenterTests {
 
         try presenter.load(document: Self.pdfDocument())
 
+        let presentation = try Self.loadedPresentation(from: presenter)
+        #expect(presentation.isAttachmentHandoffAvailable)
+
         let attachment = try presenter.makeWorkspaceAttachment()
 
         #expect(attachment.filename == "report.pdf")
@@ -175,6 +178,7 @@ struct BusinessDocumentStudioPresenterTests {
         let presentation = try Self.loadedPresentation(from: presenter)
         #expect(presentation.businessRows.contains(.init(label: "Workspace handoff", value: "Unavailable")))
         #expect(presentation.handoffRows.contains(.init(label: "Status", value: "Unavailable")))
+        #expect(!presentation.isAttachmentHandoffAvailable)
         let fallbackRow = try #require(presentation.handoffRows.first { $0.label == "Text fallback" })
         #expect(fallbackRow.value.contains("0") || fallbackRow.value.lowercased().contains("zero"))
 

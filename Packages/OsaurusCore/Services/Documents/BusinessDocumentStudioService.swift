@@ -381,7 +381,8 @@ public enum BusinessDocumentStudioError: LocalizedError, Sendable {
         case .unsafeTextPackageTarget(let fileExtension):
             return "Text fallback export cannot write structured package target .\(fileExtension)."
         case .packageTargetExtensionMismatch(let targetFormatId, let fileExtension):
-            return "Export target '\(targetFormatId)' cannot write package extension .\(fileExtension)."
+            let displayExtension = fileExtension.isEmpty ? "without an extension" : ".\(fileExtension)"
+            return "Export target '\(targetFormatId)' cannot write \(displayExtension). Use an allowed package extension for that target."
         case .textExportTooLarge(let actual, let limit):
             return "Text fallback export is \(actual) bytes, limit is \(limit) bytes."
         case .attachmentHandoffUnavailable(let message):
@@ -744,8 +745,8 @@ public struct BusinessDocumentStudioService: Sendable {
         targetFormatId: String
     ) throws {
         let extensionName = url.pathExtension.lowercased()
-        guard Self.structuredPackageExtensions.contains(extensionName) else { return }
         guard let allowedExtensions = Self.structuredTargetExtensions[targetFormatId] else {
+            guard Self.structuredPackageExtensions.contains(extensionName) else { return }
             throw BusinessDocumentStudioError.unsafeTextPackageTarget(fileExtension: extensionName)
         }
         guard allowedExtensions.contains(extensionName) else {

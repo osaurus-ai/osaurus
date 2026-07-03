@@ -14,6 +14,7 @@ struct BusinessDocumentStudioView: View {
     @StateObject private var presenter: BusinessDocumentStudioPresenter
     private let sourceURL: URL?
     @State private var currentSourceURL: URL?
+    @State private var workspaceAttachmentStatus: WorkspaceAttachmentStatus?
 
     init(
         sourceURL: URL? = nil,
@@ -32,11 +33,13 @@ struct BusinessDocumentStudioView: View {
         }
         .frame(minWidth: 720, minHeight: 520)
         .task(id: currentSourceURL) {
+            workspaceAttachmentStatus = nil
             guard let currentSourceURL else { return }
             await presenter.load(url: currentSourceURL)
         }
         .onChange(of: sourceURL) { _, newValue in
             currentSourceURL = newValue
+            workspaceAttachmentStatus = nil
         }
     }
 
@@ -147,7 +150,7 @@ struct BusinessDocumentStudioView: View {
                         }
                     }
                     StudioSection(title: "Workspace Attachment Handoff") {
-                        infoGrid(presentation.handoffRows)
+                        handoffView(presentation)
                     }
                     if !presenter.artifactStatuses.isEmpty {
                         StudioSection(title: "Artifact Status") {
@@ -426,6 +429,48 @@ struct BusinessDocumentStudioView: View {
         }
     }
 
+    private func handoffView(_ presentation: BusinessDocumentStudioPresentation) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            infoGrid(presentation.handoffRows)
+
+            HStack(alignment: .center, spacing: 10) {
+                Button {
+                    prepareWorkspaceAttachment()
+                } label: {
+                    Label {
+                        Text(verbatim: "Check Attachment")
+                    } icon: {
+                        Image(systemName: "paperclip")
+                    }
+                        .labelStyle(.titleAndIcon)
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+                .disabled(!presentation.isAttachmentHandoffAvailable)
+                .help(
+                    presentation.isAttachmentHandoffAvailable
+                        ? "Validate that this document can become a structured attachment payload"
+                        : "Attachment handoff is unavailable for this document"
+                )
+
+                if let workspaceAttachmentStatus {
+                    Label {
+                        Text(verbatim: workspaceAttachmentStatus.message)
+                            .lineLimit(2)
+                    } icon: {
+                        Image(
+                            systemName: workspaceAttachmentStatus.isFailure
+                                ? "xmark.octagon"
+                                : "checkmark.circle"
+                        )
+                    }
+                        .font(.system(size: 12))
+                        .foregroundStyle(workspaceAttachmentStatus.isFailure ? Color.red : Color.secondary)
+                }
+            }
+        }
+    }
+
     private func exportOptionRow(
         _ option: BusinessDocumentStudioExportOptionPresentation,
         presentation: BusinessDocumentStudioPresentation
@@ -489,6 +534,7 @@ struct BusinessDocumentStudioView: View {
         if let contentType = UTType(filenameExtension: option.fileExtension) {
             panel.allowedContentTypes = [contentType]
         }
+        panel.allowsOtherFileTypes = false
 
         Task { @MainActor in
             guard await panel.beginModal() == .OK, let url = panel.url else { return }
@@ -514,6 +560,22 @@ struct BusinessDocumentStudioView: View {
         Task { @MainActor in
             guard await panel.beginModal() == .OK, let url = panel.url else { return }
             currentSourceURL = url.standardizedFileURL
+        }
+    }
+
+    private func prepareWorkspaceAttachment() {
+        do {
+            let attachment = try presenter.makeWorkspaceAttachment()
+            let filename = attachment.filename ?? "structured document"
+            workspaceAttachmentStatus = WorkspaceAttachmentStatus(
+                message: "Attachment payload validated for \(filename); no chat or workspace state changed.",
+                isFailure: false
+            )
+        } catch {
+            workspaceAttachmentStatus = WorkspaceAttachmentStatus(
+                message: error.localizedDescription,
+                isFailure: true
+            )
         }
     }
 
@@ -580,6 +642,11 @@ struct BusinessDocumentStudioView: View {
         case .failed: return .red
         }
     }
+}
+
+private struct WorkspaceAttachmentStatus: Equatable {
+    let message: String
+    let isFailure: Bool
 }
 
 private struct StudioSection<Content: View>: View {

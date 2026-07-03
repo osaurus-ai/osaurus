@@ -181,6 +181,37 @@ struct BusinessDocumentStudioServiceTests {
         }
     }
 
+    @Test func exportStructuredPackageRejectsNonPackageExtension() async throws {
+        let registry = DocumentFormatRegistry()
+        registry.register(emitter: XLSXEmitter())
+        let service = BusinessDocumentStudioService(registry: registry)
+        let document = Self.workbookDocument()
+        let outputDirectory = try Self.temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: outputDirectory) }
+
+        for filename in ["workbook.txt", "workbook"] {
+            let target = outputDirectory.appendingPathComponent(filename)
+            do {
+                _ = try await service.export(
+                    document,
+                    as: "xlsx",
+                    to: target,
+                    policy: BusinessDocumentStudioExportPolicy(allowedDirectory: outputDirectory)
+                )
+                Issue.record("Expected non-package extension to be rejected for \(filename)")
+            } catch BusinessDocumentStudioError.packageTargetExtensionMismatch(
+                let targetFormatId,
+                let fileExtension
+            ) {
+                #expect(targetFormatId == "xlsx")
+                #expect(fileExtension == target.pathExtension.lowercased())
+                #expect(!FileManager.default.fileExists(atPath: target.path))
+            } catch {
+                Issue.record("Expected packageTargetExtensionMismatch, got \(error)")
+            }
+        }
+    }
+
     @Test func exportRegisteredEmitterCanOwnStructuredPackageExtension() async throws {
         let registry = DocumentFormatRegistry()
         registry.register(emitter: StubPackageEmitter(formatId: "pptm"))
