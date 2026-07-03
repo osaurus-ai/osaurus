@@ -654,8 +654,12 @@ struct RuntimePolicySourceTests {
         // (vmlx-swift#107) that honors the bundle's longest_edge instead of
         // crushing images to 336px, and the stop-string fix (vmlx-swift#109)
         // that discards post-stop buffers at end-of-stream so text after a
-        // matched stop string can no longer leak into responses.
-        let expectedRuntimeHardenedRevision = "cee0f8e234a352fcc6d09fba9a78dd24c0b15238"
+        // matched stop string can no longer leak into responses,
+        // plus the orphan tool-call closer strip (vmlx-swift#115) that
+        // removes stray `</parameter></function></zyphra_tool_call>`
+        // closer runs from the visible stream in ZAYA / Gemma-4
+        // AppleScript agent-loop rows.
+        let expectedRuntimeHardenedRevision = "8dffa0a8e69d7617d68f0843635158684120a3dc"
         let manifestRevision = try Self.vmlxPinRevision(in: manifest)
         let workspaceRevision = try Self.vmlxPinRevision(in: workspaceResolved)
         let appRevision = try Self.vmlxPinRevision(in: appResolved)
