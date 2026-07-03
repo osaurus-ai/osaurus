@@ -7,6 +7,27 @@
 
 import Foundation
 
+struct TelegramWebhookDiagnostic: Equatable, Sendable {
+    let registered: Bool
+    let redactedURL: String
+    let pendingUpdateCount: Int?
+    let probeError: String?
+
+    var dictionary: [String: Any] {
+        var result: [String: Any] = [
+            "registered": registered,
+            "url": redactedURL,
+        ]
+        if let pendingUpdateCount {
+            result["pending_update_count"] = pendingUpdateCount
+        }
+        if let probeError {
+            result["probe_error"] = probeError
+        }
+        return result
+    }
+}
+
 struct TelegramConnectionDiagnostics: Equatable, Sendable {
     let tokenSaved: Bool
     let bot: TelegramUser?
@@ -14,8 +35,41 @@ struct TelegramConnectionDiagnostics: Equatable, Sendable {
     let writableChatIds: [String]
     let senderAllowlist: [String]
     let writeEnabled: Bool
+    let receiveStorageEnabled: Bool
+    let longPollingEnabled: Bool
+    let webhook: TelegramWebhookDiagnostic?
     let status: String
     let failures: [String]
+    /// Non-failure operator guidance, e.g. why reads may be empty.
+    let notes: [String]
+
+    init(
+        tokenSaved: Bool,
+        bot: TelegramUser?,
+        readableChatIds: [String],
+        writableChatIds: [String],
+        senderAllowlist: [String],
+        writeEnabled: Bool,
+        receiveStorageEnabled: Bool = false,
+        longPollingEnabled: Bool = false,
+        webhook: TelegramWebhookDiagnostic? = nil,
+        status: String,
+        failures: [String],
+        notes: [String] = []
+    ) {
+        self.tokenSaved = tokenSaved
+        self.bot = bot
+        self.readableChatIds = readableChatIds
+        self.writableChatIds = writableChatIds
+        self.senderAllowlist = senderAllowlist
+        self.writeEnabled = writeEnabled
+        self.receiveStorageEnabled = receiveStorageEnabled
+        self.longPollingEnabled = longPollingEnabled
+        self.webhook = webhook
+        self.status = status
+        self.failures = failures
+        self.notes = notes
+    }
 
     var dictionary: [String: Any] {
         var result: [String: Any] = [
@@ -24,9 +78,14 @@ struct TelegramConnectionDiagnostics: Equatable, Sendable {
             "writable_chat_ids": writableChatIds,
             "sender_allowlist": senderAllowlist,
             "write_enabled": writeEnabled,
+            "receive_storage_enabled": receiveStorageEnabled,
+            "long_polling_enabled": longPollingEnabled,
             "status": status,
             "failures": failures,
         ]
+        if !notes.isEmpty {
+            result["notes"] = notes
+        }
         if let bot {
             result["bot"] = [
                 "id": "\(bot.id)",
@@ -34,6 +93,9 @@ struct TelegramConnectionDiagnostics: Equatable, Sendable {
                 "display_name": bot.displayName,
                 "is_bot": bot.isBot,
             ]
+        }
+        if let webhook {
+            result["webhook"] = webhook.dictionary
         }
         return result
     }
@@ -262,6 +324,8 @@ final class TelegramConnectionService: @unchecked Sendable {
                 writableChatIds: config.writableChatIds,
                 senderAllowlist: config.senderAllowlist,
                 writeEnabled: config.writeEnabled,
+                receiveStorageEnabled: config.receiveStorageEnabled,
+                longPollingEnabled: config.longPollingEnabled,
                 status: "not_configured",
                 failures: ["No Telegram bot token is saved."]
             )
@@ -276,16 +340,41 @@ final class TelegramConnectionService: @unchecked Sendable {
             failures.append(redacted(error, token: token))
         }
 
+        var webhook: TelegramWebhookDiagnostic?
+        if bot != nil {
+            do {
+                let info = try await client.getWebhookInfo(token: token)
+                webhook = TelegramWebhookDiagnostic(
+                    registered: info.isRegistered,
+                    redactedURL: TelegramSecurity.redact(info.url, token: token),
+                    pendingUpdateCount: info.pendingUpdateCount,
+                    probeError: nil
+                )
+            } catch {
+                webhook = TelegramWebhookDiagnostic(
+                    registered: false,
+                    redactedURL: "",
+                    pendingUpdateCount: nil,
+                    probeError: redacted(error, token: token)
+                )
+            }
+        }
+
         let receiveNeedsSenderAllowlist = config.receiveStorageEnabled
             && config.longPollingEnabled
             && !config.readableChatIds.isEmpty
             && config.senderAllowlist.isEmpty
+        let webhookBlocksLongPolling = config.receiveStorageEnabled
+            && config.longPollingEnabled
+            && webhook?.registered == true
 
         let status: String
         if bot == nil {
             status = "token_invalid_or_unavailable"
         } else if config.readableChatIds.isEmpty {
             status = "connected_needs_allowlist"
+        } else if webhookBlocksLongPolling {
+            status = "connected_long_poll_webhook_conflict"
         } else if receiveNeedsSenderAllowlist {
             status = "connected_receive_needs_sender_allowlist"
         } else if config.writeEnabled && config.writableChatIds.isEmpty {
@@ -301,6 +390,24 @@ final class TelegramConnectionService: @unchecked Sendable {
                 "Telegram long polling is enabled with readable chats but no authorized sender IDs; inbound updates will be denied before storage or dispatch."
             )
         }
+        if webhookBlocksLongPolling, let webhook {
+            failures.append(
+                "A Telegram webhook is registered for this bot (\(webhook.redactedURL)); getUpdates long polling will fail with 409 conflicts until the webhook is removed. Use “Remove webhook” in Telegram settings or disable long polling."
+            )
+        }
+
+        var notes: [String] = []
+        if bot != nil {
+            if !config.receiveStorageEnabled {
+                notes.append(
+                    "Receive storage is disabled: inbound Telegram updates are not stored, so read/search tools return only messages stored before it was turned off."
+                )
+            } else if !config.longPollingEnabled {
+                notes.append(
+                    "Telegram reads serve messages stored in the local inbox, and long polling is disabled: new Telegram activity is not being fetched, so read/search results stay empty until long polling is enabled."
+                )
+            }
+        }
 
         return TelegramConnectionDiagnostics(
             tokenSaved: true,
@@ -309,9 +416,47 @@ final class TelegramConnectionService: @unchecked Sendable {
             writableChatIds: config.writableChatIds,
             senderAllowlist: config.senderAllowlist,
             writeEnabled: config.writeEnabled,
+            receiveStorageEnabled: config.receiveStorageEnabled,
+            longPollingEnabled: config.longPollingEnabled,
+            webhook: webhook,
             status: status,
-            failures: failures
+            failures: failures,
+            notes: notes
         )
+    }
+
+    /// Probes the registered webhook for the saved bot token. Used by settings UI.
+    func webhookInfo() async throws -> TelegramWebhookInfo {
+        let token = try requireToken()
+        do {
+            return try await client.getWebhookInfo(token: token)
+        } catch {
+            throw TelegramConnectionServiceError.api(redacted(error, token: token))
+        }
+    }
+
+    /// Deletes the registered webhook (consent-gated: only called from an explicit
+    /// user action in settings). Pending updates are preserved for long polling.
+    @discardableResult
+    func clearWebhook() async throws -> TelegramWebhookInfo {
+        let token = try requireToken()
+        do {
+            _ = try await client.deleteWebhook(token: token)
+            return try await client.getWebhookInfo(token: token)
+        } catch {
+            throw TelegramConnectionServiceError.api(redacted(error, token: token))
+        }
+    }
+
+    /// Enriches a getUpdates 409 conflict with the most likely root cause so the
+    /// transport health detail tells the user how to fix it.
+    func longPollConflictAdvice() async -> String? {
+        guard let token = credentialStore.botToken() else { return nil }
+        guard let info = try? await client.getWebhookInfo(token: token) else { return nil }
+        if info.isRegistered {
+            return "A webhook is registered for this bot (\(TelegramSecurity.redact(info.url, token: token))). Remove the webhook in Telegram settings or disable long polling."
+        }
+        return "Another getUpdates consumer is polling this bot token (for example a plugin or a second Osaurus instance). Stop the other consumer and retry."
     }
 
     func messageStoreDiagnostics() -> [String: Any] {
@@ -675,6 +820,12 @@ final class TelegramConnectionService: @unchecked Sendable {
         TelegramSecurity.redact(error.localizedDescription, token: token)
     }
 
+    /// Redacts saved credentials from arbitrary text before it reaches
+    /// user-visible or model-visible surfaces (for example transport health).
+    func redactSecrets(in text: String) -> String {
+        TelegramSecurity.redact(text, token: credentialStore.botToken())
+    }
+
     private func recordMessages(_ messages: [AgentChannelStoredMessage]) {
         guard let messageStore, !messages.isEmpty else { return }
         if recordMessageSnapshotsInline {
@@ -915,6 +1066,10 @@ actor TelegramLongPollTransportRuntime {
         } catch TelegramAPIError.conflict(let message) {
             consecutiveFailures += 1
             let delay = backoffPolicy.delay(consecutiveFailures: consecutiveFailures, jitter: jitter)
+            var detail = message
+            if let advice = await service.longPollConflictAdvice() {
+                detail = "\(message) \(advice)"
+            }
             let health = await publish(
                 AgentChannelTransportHealthState(
                     connectionId: TelegramConnectionService.nativeConnectionId,
@@ -923,7 +1078,7 @@ actor TelegramLongPollTransportRuntime {
                     status: .conflict,
                     severity: .error,
                     summary: "Telegram long polling has a competing consumer.",
-                    detail: message,
+                    detail: service.redactSecrets(in: detail),
                     isRunning: worker != nil,
                     receiveEnabled: true,
                     lastFailureAt: now,
@@ -934,6 +1089,37 @@ actor TelegramLongPollTransportRuntime {
             )
             return AgentChannelTransportStepResult(
                 disposition: .conflict,
+                health: health,
+                retryDelay: delay
+            )
+        } catch TelegramAPIError.rateLimited(let message, let retryAfter) {
+            consecutiveFailures += 1
+            let backoffDelay = backoffPolicy.delay(consecutiveFailures: consecutiveFailures, jitter: jitter)
+            // Honor Telegram's requested retry_after when it is longer than our
+            // computed backoff, bounded to the sleeper's clamp window.
+            let delay = min(
+                max(backoffDelay, retryAfter.map(TimeInterval.init) ?? 0),
+                3_600
+            )
+            let health = await publish(
+                AgentChannelTransportHealthState(
+                    connectionId: TelegramConnectionService.nativeConnectionId,
+                    transportId: Self.transportId,
+                    provider: .telegram,
+                    status: .degraded,
+                    severity: .warning,
+                    summary: "Telegram is rate limiting long polling.",
+                    detail: service.redactSecrets(in: message),
+                    isRunning: worker != nil,
+                    receiveEnabled: true,
+                    lastFailureAt: now,
+                    nextRetryAt: now.addingTimeInterval(delay),
+                    consecutiveFailures: consecutiveFailures,
+                    updatedAt: now
+                )
+            )
+            return AgentChannelTransportStepResult(
+                disposition: .failed,
                 health: health,
                 retryDelay: delay
             )
@@ -948,7 +1134,7 @@ actor TelegramLongPollTransportRuntime {
                     status: .failed,
                     severity: .warning,
                     summary: "Telegram long polling failed.",
-                    detail: error.localizedDescription,
+                    detail: service.redactSecrets(in: error.localizedDescription),
                     isRunning: worker != nil,
                     receiveEnabled: true,
                     lastFailureAt: now,

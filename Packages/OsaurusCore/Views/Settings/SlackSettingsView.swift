@@ -26,6 +26,7 @@ struct SlackSettingsView: View {
     @State private var statusMessage: String?
     @State private var statusIsError = false
     @State private var isTesting = false
+    @State private var healthRefreshToken = 0
 
     private var theme: ThemeProtocol { themeManager.currentTheme }
 
@@ -43,10 +44,35 @@ struct SlackSettingsView: View {
                 SettingsDivider()
                 allowlistSection
                 SettingsDivider()
+                receiveSection
+                SettingsDivider()
                 actionsSection
             }
         }
         .onAppear(perform: loadConfiguration)
+    }
+
+    private var receiveSection: some View {
+        SettingsSubsection(label: "Receive") {
+            VStack(alignment: .leading, spacing: 12) {
+                Text(
+                    "Slack Socket Mode receive starts automatically when a bot token, a Socket Mode app token, readable channels, and authorized sender IDs are all configured. Incoming authorized messages are stored in the local Agent Channel inbox for read/search tools.",
+                    bundle: .module
+                )
+                .font(.system(size: 11))
+                .foregroundColor(theme.tertiaryText)
+                .fixedSize(horizontal: false, vertical: true)
+
+                AgentChannelTransportHealthView(
+                    connectionId: AgentChannelConnection.nativeSlackConnectionId,
+                    transportId: SlackSocketModeTransportRuntime.transportId,
+                    title: "Socket Mode receive",
+                    notRunningHint:
+                        "Socket Mode is not running. Save a bot token, a Socket Mode app token, readable channels, and authorized sender IDs to start it.",
+                    refreshToken: healthRefreshToken
+                )
+            }
+        }
     }
 
     private var credentialsSection: some View {
@@ -232,9 +258,7 @@ struct SlackSettingsView: View {
             try SlackConnectionService.shared.saveBotToken(botToken)
             botToken = ""
             botTokenSaved = true
-            Task {
-                await AgentChannelTransportSupervisor.shared.refreshSlackRuntime()
-            }
+            refreshReceiveRuntime()
             showStatus("Slack bot token saved", isError: false)
         } catch {
             showStatus(error.localizedDescription, isError: true)
@@ -245,9 +269,7 @@ struct SlackSettingsView: View {
         _ = SlackConnectionService.shared.deleteBotToken()
         botToken = ""
         botTokenSaved = false
-        Task {
-            await AgentChannelTransportSupervisor.shared.refreshSlackRuntime()
-        }
+        refreshReceiveRuntime()
         showStatus("Slack bot token removed", isError: false)
     }
 
@@ -274,9 +296,7 @@ struct SlackSettingsView: View {
             try SlackConnectionService.shared.saveAppToken(appToken)
             appToken = ""
             appTokenSaved = true
-            Task {
-                await AgentChannelTransportSupervisor.shared.refreshSlackRuntime()
-            }
+            refreshReceiveRuntime()
             showStatus("Slack Socket Mode app token saved", isError: false)
         } catch {
             showStatus(error.localizedDescription, isError: true)
@@ -287,9 +307,7 @@ struct SlackSettingsView: View {
         _ = SlackConnectionService.shared.deleteAppToken()
         appToken = ""
         appTokenSaved = false
-        Task {
-            await AgentChannelTransportSupervisor.shared.refreshSlackRuntime()
-        }
+        refreshReceiveRuntime()
         showStatus("Slack Socket Mode app token removed", isError: false)
     }
 
@@ -306,9 +324,7 @@ struct SlackSettingsView: View {
         do {
             try SlackConnectionService.shared.saveConfiguration(configuration)
             loadConfiguration()
-            Task {
-                await AgentChannelTransportSupervisor.shared.refreshSlackRuntime()
-            }
+            refreshReceiveRuntime()
             showStatus("Slack settings saved", isError: false)
         } catch {
             showStatus(error.localizedDescription, isError: true)
@@ -321,12 +337,22 @@ struct SlackSettingsView: View {
             let diagnostics = await SlackConnectionService.shared.diagnostics()
             await MainActor.run {
                 isTesting = false
+                healthRefreshToken += 1
                 if diagnostics.failures.isEmpty {
                     showStatus("Slack connection status: \(diagnostics.status)", isError: false)
                 } else {
                     showStatus(diagnostics.failures.joined(separator: " "), isError: true)
                 }
             }
+        }
+    }
+
+    /// Restart the Socket Mode runtime after a config change, then refresh the
+    /// inline health card once the supervisor has re-evaluated.
+    private func refreshReceiveRuntime() {
+        Task {
+            await AgentChannelTransportSupervisor.shared.refreshSlackRuntime()
+            await MainActor.run { healthRefreshToken += 1 }
         }
     }
 

@@ -26,6 +26,9 @@ struct TelegramSettingsView: View {
     @State private var statusMessage: String?
     @State private var statusIsError = false
     @State private var isTesting = false
+    @State private var healthRefreshToken = 0
+    @State private var isCheckingWebhook = false
+    @State private var webhookRegistered = false
 
     private var theme: ThemeProtocol { themeManager.currentTheme }
 
@@ -174,7 +177,56 @@ struct TelegramSettingsView: View {
                         help: "Telegram long-poll timeout. Clamped to 1-50 seconds."
                     )
                 }
+
+                Text(
+                    "Telegram read tools serve messages already stored in the local Agent Channel inbox. Long polling is off by default; until it is enabled (with a saved token and sender allowlist), new Telegram activity is not fetched and reads stay empty.",
+                    bundle: .module
+                )
+                .font(.system(size: 11))
+                .foregroundColor(theme.tertiaryText)
+                .fixedSize(horizontal: false, vertical: true)
+
+                AgentChannelTransportHealthView(
+                    connectionId: TelegramConnectionService.nativeConnectionId,
+                    transportId: TelegramLongPollTransportRuntime.transportId,
+                    title: "Long polling receive",
+                    notRunningHint:
+                        "Long polling is not running. Save a bot token, enable long polling, and add authorized sender IDs to start it.",
+                    refreshToken: healthRefreshToken
+                )
+
+                webhookTools
             }
+        }
+    }
+
+    private var webhookTools: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 12) {
+                Button(action: checkWebhook) {
+                    Text(isCheckingWebhook ? "Checking..." : "Check Webhook", bundle: .module)
+                }
+                .buttonStyle(SettingsButtonStyle())
+                .disabled(isCheckingWebhook || !tokenSaved)
+
+                if webhookRegistered {
+                    Button(action: removeWebhook) {
+                        Text("Remove Webhook", bundle: .module)
+                    }
+                    .buttonStyle(SettingsButtonStyle(isDestructive: true))
+                    .disabled(isCheckingWebhook)
+                }
+
+                Spacer(minLength: 0)
+            }
+
+            Text(
+                "A registered webhook blocks long polling with 409 conflicts. Removing the webhook keeps pending updates and hands receive back to long polling.",
+                bundle: .module
+            )
+            .font(.system(size: 11))
+            .foregroundColor(theme.tertiaryText)
+            .fixedSize(horizontal: false, vertical: true)
         }
     }
 
@@ -222,9 +274,7 @@ struct TelegramSettingsView: View {
             try TelegramConnectionService.shared.saveBotToken(botToken)
             botToken = ""
             tokenSaved = true
-            Task {
-                await AgentChannelTransportSupervisor.shared.refreshTelegramRuntime()
-            }
+            refreshReceiveRuntime()
             showStatus("Telegram bot token saved", isError: false)
         } catch {
             showStatus(error.localizedDescription, isError: true)
@@ -235,9 +285,8 @@ struct TelegramSettingsView: View {
         _ = TelegramConnectionService.shared.deleteBotToken()
         botToken = ""
         tokenSaved = false
-        Task {
-            await AgentChannelTransportSupervisor.shared.refreshTelegramRuntime()
-        }
+        webhookRegistered = false
+        refreshReceiveRuntime()
         showStatus("Telegram bot token removed", isError: false)
     }
 
@@ -258,9 +307,7 @@ struct TelegramSettingsView: View {
         do {
             try TelegramConnectionService.shared.saveConfiguration(configuration)
             loadConfiguration()
-            Task {
-                await AgentChannelTransportSupervisor.shared.refreshTelegramRuntime()
-            }
+            refreshReceiveRuntime()
             showStatus("Telegram settings saved", isError: false)
         } catch {
             showStatus(error.localizedDescription, isError: true)
@@ -273,12 +320,90 @@ struct TelegramSettingsView: View {
             let diagnostics = await TelegramConnectionService.shared.diagnostics()
             await MainActor.run {
                 isTesting = false
+                healthRefreshToken += 1
+                webhookRegistered = diagnostics.webhook?.registered ?? webhookRegistered
                 if diagnostics.failures.isEmpty {
-                    showStatus("Telegram connection status: \(diagnostics.status)", isError: false)
+                    var message = "Telegram connection status: \(diagnostics.status)"
+                    if !diagnostics.notes.isEmpty {
+                        message += " — " + diagnostics.notes.joined(separator: " ")
+                    }
+                    showStatus(message, isError: false)
                 } else {
                     showStatus(diagnostics.failures.joined(separator: " "), isError: true)
                 }
             }
+        }
+    }
+
+    private func checkWebhook() {
+        isCheckingWebhook = true
+        Task {
+            do {
+                let info = try await TelegramConnectionService.shared.webhookInfo()
+                let redactedURL = TelegramConnectionService.shared.redactSecrets(in: info.url)
+                await MainActor.run {
+                    isCheckingWebhook = false
+                    webhookRegistered = info.isRegistered
+                    if info.isRegistered {
+                        var message =
+                            "A webhook is registered (\(redactedURL)). Long polling conflicts with it (409) until the webhook is removed."
+                        if let pending = info.pendingUpdateCount {
+                            message += " Pending updates: \(pending)."
+                        }
+                        showStatus(message, isError: true)
+                    } else {
+                        showStatus(
+                            "No webhook is registered for this bot. Long polling is safe to enable.",
+                            isError: false
+                        )
+                    }
+                }
+            } catch {
+                await MainActor.run {
+                    isCheckingWebhook = false
+                    showStatus(error.localizedDescription, isError: true)
+                }
+            }
+        }
+    }
+
+    private func removeWebhook() {
+        isCheckingWebhook = true
+        Task {
+            do {
+                let info = try await TelegramConnectionService.shared.clearWebhook()
+                await AgentChannelTransportSupervisor.shared.refreshTelegramRuntime()
+                await MainActor.run {
+                    isCheckingWebhook = false
+                    webhookRegistered = info.isRegistered
+                    healthRefreshToken += 1
+                    if info.isRegistered {
+                        showStatus(
+                            "Telegram still reports a registered webhook. Wait a moment and check again.",
+                            isError: true
+                        )
+                    } else {
+                        showStatus(
+                            "Webhook removed. Long polling can receive updates now.",
+                            isError: false
+                        )
+                    }
+                }
+            } catch {
+                await MainActor.run {
+                    isCheckingWebhook = false
+                    showStatus(error.localizedDescription, isError: true)
+                }
+            }
+        }
+    }
+
+    /// Restart the long-poll runtime after a config change, then refresh the
+    /// inline health card once the supervisor has re-evaluated.
+    private func refreshReceiveRuntime() {
+        Task {
+            await AgentChannelTransportSupervisor.shared.refreshTelegramRuntime()
+            await MainActor.run { healthRefreshToken += 1 }
         }
     }
 

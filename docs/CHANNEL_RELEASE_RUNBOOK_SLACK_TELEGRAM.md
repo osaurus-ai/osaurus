@@ -28,6 +28,13 @@ Artifacts are written under `build/live-proof/channel-smoke/<timestamp>/`:
 The script redacts known Slack and Telegram token env values and token-shaped
 strings before writing artifacts.
 
+Read row statuses honestly: `pass` rows are executed proof (focused Swift
+fixtures actually ran); `source` rows are rg source-string assertions only;
+`documented` rows are documentation claims; `provider_curl` rows are raw
+provider API calls that never exercise Osaurus runtimes or `agent_channel_*`
+tools. Per repo standards, only the app-surface lane below plus fixture `pass`
+rows count as runtime proof.
+
 ## Live Provider Pass
 
 Use disposable credentials and no-send mode first:
@@ -68,6 +75,12 @@ scripts/live-proof/run-slack-telegram-channel-smoke.sh
 
 ## App-Surface Proof Checklist
 
+This is the lane that counts as runtime proof. Launch the app with
+`scripts/live-proof/launch-keychain-free-osaurus.sh`, configure the disposable
+credentials in Settings → Agent Channels (Slack and Telegram panes), and drive
+the checks through the live app surface (`agent_channel_*` tools plus the
+settings UI), not raw curl.
+
 Record each item in the release artifact:
 
 | Area | Required proof |
@@ -79,9 +92,10 @@ Record each item in the release artifact:
 | Draft no-send | `agent_channel_draft_message` returns a local preview with `requires_send_confirmation` and no provider dispatch. |
 | No unapproved send | `agent_channel_send_message` and `agent_channel_reply_thread` with omitted or false `confirm_send` fail before provider dispatch. |
 | Approved send | A single disposable send succeeds only when the operator explicitly sets the approval flag and the tool args include `confirm_send: true`. |
+| Kill switch | With the global channel write switch off, the same approved send is denied; toggling it back on restores the confirmed-send path. |
 | Unauthorized room/chat | Slack denied channel and Telegram denied chat return rejected/not-allowlisted results and do not write message snapshots. |
 | Unauthorized user | Slack and Telegram denied senders return `sender_not_allowlisted` before storage or dispatch. |
-| External MCP denial | `/mcp/tools` does not expose `agent_channel_*`, `/mcp/call` returns `403 tool_not_exposable`, and non-loopback dispatch binds the external-surface denial. |
+| External MCP denial | Over live HTTP: `/mcp/tools` does not expose `agent_channel_*`, `/mcp/call` returns `403 tool_not_exposable`, and non-loopback dispatch binds the external-surface denial. |
 
 ## Transport Proof
 
@@ -89,6 +103,16 @@ Primary desktop proof uses:
 
 - Slack Socket Mode for inbound desktop receive.
 - Telegram long-poll for inbound desktop receive.
+
+Required live receive rows (observe via the Receive health card in Slack and
+Telegram settings and `agent_channel_diagnostics` `transport_health`):
+
+| Area | Required proof |
+| --- | --- |
+| Slack Socket Mode receive | With app token, readable channels, and sender allowlist saved, an authorized sender's message in an allowlisted channel is stored and readable via `agent_channel_read_messages`; a denied sender and a denied channel are dropped (receive counters and store confirm). |
+| Telegram long-poll receive | With long polling enabled, an authorized message is stored and readable; the Receive health card reports healthy with received/stored counts. |
+| Telegram 409 recovery | Register a webhook for the disposable bot (or start a second poller), observe the conflict health state and remediation advice, use Check Webhook / Remove Webhook in Telegram settings, and confirm long polling recovers. |
+| Sleep-wake / network flap (manual) | Put the machine to sleep or drop the network for ~2 minutes mid-session; after wake/reconnect, both receive runtimes must return to healthy on their own and a fresh inbound message must land in the store. |
 
 Public webhooks are advanced/future for both providers. If a webhook path is
 tested anyway, verify the provider secret/signature before parsing content and

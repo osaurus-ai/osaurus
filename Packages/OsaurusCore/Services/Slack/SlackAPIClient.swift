@@ -120,6 +120,40 @@ struct SlackMessage: Codable, Equatable, Sendable {
     }
 }
 
+/// One page of `conversations.list` results plus the cursor for the next page.
+struct SlackConversationPage: Equatable, Sendable {
+    let conversations: [SlackConversation]
+    /// Cursor for the next page; nil when Slack reported no further pages.
+    let nextCursor: String?
+
+    init(conversations: [SlackConversation], nextCursor: String? = nil) {
+        self.conversations = conversations
+        self.nextCursor = Self.normalizedCursor(nextCursor)
+    }
+
+    static func normalizedCursor(_ cursor: String?) -> String? {
+        guard let trimmed = cursor?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !trimmed.isEmpty
+        else { return nil }
+        return trimmed
+    }
+}
+
+/// One page of `conversations.history` / `conversations.replies` results.
+struct SlackMessagePage: Equatable, Sendable {
+    let messages: [SlackMessage]
+    /// True when Slack reported more messages beyond this page.
+    let hasMore: Bool
+    /// Cursor for the next page; nil when Slack reported no further pages.
+    let nextCursor: String?
+
+    init(messages: [SlackMessage], hasMore: Bool = false, nextCursor: String? = nil) {
+        self.messages = messages
+        self.nextCursor = SlackConversationPage.normalizedCursor(nextCursor)
+        self.hasMore = hasMore || self.nextCursor != nil
+    }
+}
+
 struct SlackOutboundMessageRequest: Equatable, Sendable {
     let channelId: String
     let content: String
@@ -171,7 +205,7 @@ enum SlackAPIError: LocalizedError, Equatable, Sendable {
     case invalidToken
     case missingPermissions(String)
     case notFound(String)
-    case rateLimited(String)
+    case rateLimited(String, retryAfter: TimeInterval?)
     case invalidResponse(String)
     case requestFailed(String)
 
@@ -183,7 +217,7 @@ enum SlackAPIError: LocalizedError, Equatable, Sendable {
             return message
         case .notFound(let message):
             return message
-        case .rateLimited(let message):
+        case .rateLimited(let message, _):
             return message
         case .invalidResponse(let message):
             return message
@@ -196,9 +230,15 @@ enum SlackAPIError: LocalizedError, Equatable, Sendable {
 protocol SlackAPIClientProtocol: Sendable {
     func authTest(token: String) async throws -> SlackAuthIdentity
     func openSocketModeConnection(appToken: String) async throws -> URL
-    func conversations(token: String, limit: Int) async throws -> [SlackConversation]
-    func messages(channelId: String, token: String, limit: Int) async throws -> [SlackMessage]
-    func threadMessages(channelId: String, threadTs: String, token: String, limit: Int) async throws -> [SlackMessage]
+    func conversations(token: String, limit: Int, cursor: String?) async throws -> SlackConversationPage
+    func messages(channelId: String, token: String, limit: Int, cursor: String?) async throws -> SlackMessagePage
+    func threadMessages(
+        channelId: String,
+        threadTs: String,
+        token: String,
+        limit: Int,
+        cursor: String?
+    ) async throws -> SlackMessagePage
     func sendMessage(_ request: SlackOutboundMessageRequest, token: String) async throws -> SlackMessage
 }
 
@@ -207,12 +247,44 @@ final class SlackAPIClient: SlackAPIClientProtocol, @unchecked Sendable {
         let url: String
     }
 
+    private struct ResponseMetadataPayload: Decodable {
+        let nextCursor: String?
+
+        enum CodingKeys: String, CodingKey {
+            case nextCursor = "next_cursor"
+        }
+    }
+
     private struct ConversationListPayload: Decodable {
         let channels: [SlackConversation]
+        let responseMetadata: ResponseMetadataPayload?
+
+        enum CodingKeys: String, CodingKey {
+            case channels
+            case responseMetadata = "response_metadata"
+        }
     }
 
     private struct MessageListPayload: Decodable {
         let messages: [SlackMessage]
+        let hasMore: Bool
+        let responseMetadata: ResponseMetadataPayload?
+
+        enum CodingKeys: String, CodingKey {
+            case messages
+            case hasMore = "has_more"
+            case responseMetadata = "response_metadata"
+        }
+
+        init(from decoder: Decoder) throws {
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            messages = try container.decode([SlackMessage].self, forKey: .messages)
+            hasMore = try container.decodeIfPresent(Bool.self, forKey: .hasMore) ?? false
+            responseMetadata = try container.decodeIfPresent(
+                ResponseMetadataPayload.self,
+                forKey: .responseMetadata
+            )
+        }
     }
 
     private struct PostMessagePayload: Decodable {
@@ -250,49 +322,78 @@ final class SlackAPIClient: SlackAPIClientProtocol, @unchecked Sendable {
         return url
     }
 
-    func conversations(token: String, limit: Int) async throws -> [SlackConversation] {
+    func conversations(token: String, limit: Int, cursor: String?) async throws -> SlackConversationPage {
         let safeLimit = SlackConnectionConfiguration.clampReadLimit(limit)
+        var form = [
+            "exclude_archived": "true",
+            "limit": "\(safeLimit)",
+            "types": "public_channel,private_channel,mpim,im",
+        ]
+        if let cursor = SlackConversationPage.normalizedCursor(cursor) {
+            form["cursor"] = cursor
+        }
         let payload: ConversationListPayload = try await postForm(
             method: "conversations.list",
             token: token,
-            form: [
-                "exclude_archived": "true",
-                "limit": "\(safeLimit)",
-                "types": "public_channel,private_channel,mpim,im",
-            ]
+            form: form
         )
-        return payload.channels
+        return SlackConversationPage(
+            conversations: payload.channels,
+            nextCursor: payload.responseMetadata?.nextCursor
+        )
     }
 
-    func messages(channelId: String, token: String, limit: Int) async throws -> [SlackMessage] {
+    func messages(channelId: String, token: String, limit: Int, cursor: String?) async throws -> SlackMessagePage {
         try validateSlackId(channelId, label: "channel_id")
         let safeLimit = SlackConnectionConfiguration.clampReadLimit(limit)
+        var form = [
+            "channel": channelId,
+            "inclusive": "true",
+            "limit": "\(safeLimit)",
+        ]
+        if let cursor = SlackConversationPage.normalizedCursor(cursor) {
+            form["cursor"] = cursor
+        }
         let payload: MessageListPayload = try await postForm(
             method: "conversations.history",
             token: token,
-            form: [
-                "channel": channelId,
-                "inclusive": "true",
-                "limit": "\(safeLimit)",
-            ]
+            form: form
         )
-        return payload.messages
+        return SlackMessagePage(
+            messages: payload.messages,
+            hasMore: payload.hasMore,
+            nextCursor: payload.responseMetadata?.nextCursor
+        )
     }
 
-    func threadMessages(channelId: String, threadTs: String, token: String, limit: Int) async throws -> [SlackMessage] {
+    func threadMessages(
+        channelId: String,
+        threadTs: String,
+        token: String,
+        limit: Int,
+        cursor: String?
+    ) async throws -> SlackMessagePage {
         try validateSlackId(channelId, label: "channel_id")
         let safeLimit = SlackConnectionConfiguration.clampReadLimit(limit)
+        var form = [
+            "channel": channelId,
+            "inclusive": "true",
+            "limit": "\(safeLimit)",
+            "ts": threadTs,
+        ]
+        if let cursor = SlackConversationPage.normalizedCursor(cursor) {
+            form["cursor"] = cursor
+        }
         let payload: MessageListPayload = try await postForm(
             method: "conversations.replies",
             token: token,
-            form: [
-                "channel": channelId,
-                "inclusive": "true",
-                "limit": "\(safeLimit)",
-                "ts": threadTs,
-            ]
+            form: form
         )
-        return payload.messages
+        return SlackMessagePage(
+            messages: payload.messages,
+            hasMore: payload.hasMore,
+            nextCursor: payload.responseMetadata?.nextCursor
+        )
     }
 
     func sendMessage(_ request: SlackOutboundMessageRequest, token: String) async throws -> SlackMessage {
@@ -366,9 +467,16 @@ final class SlackAPIClient: SlackAPIClientProtocol, @unchecked Sendable {
                 throw SlackAPIError.invalidResponse("Slack returned a non-HTTP response.")
             }
             guard http.statusCode != 429 else {
-                let retryAfter = http.value(forHTTPHeaderField: "Retry-After")
-                let suffix = retryAfter.map { " Retry after \($0) seconds." } ?? ""
-                throw SlackAPIError.rateLimited("Slack rate limited this request.\(suffix)")
+                let retryAfterHeader = http.value(forHTTPHeaderField: "Retry-After")
+                let retryAfter = retryAfterHeader
+                    .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+                    .flatMap(TimeInterval.init)
+                    .map { max(0, $0) }
+                let suffix = retryAfterHeader.map { " Retry after \($0) seconds." } ?? ""
+                throw SlackAPIError.rateLimited(
+                    "Slack rate limited this request.\(suffix)",
+                    retryAfter: retryAfter
+                )
             }
             guard (200 ..< 300).contains(http.statusCode) else {
                 throw mapHTTPError(status: http.statusCode, data: data, token: token)
@@ -419,7 +527,7 @@ final class SlackAPIClient: SlackAPIClientProtocol, @unchecked Sendable {
         case "channel_not_found", "user_not_found", "team_not_found", "thread_not_found":
             return .notFound(message)
         case "ratelimited":
-            return .rateLimited(message)
+            return .rateLimited(message, retryAfter: nil)
         default:
             return .requestFailed(message)
         }

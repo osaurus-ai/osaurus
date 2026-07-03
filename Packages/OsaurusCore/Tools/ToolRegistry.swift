@@ -405,22 +405,26 @@ public final class ToolRegistry: ObservableObject {
 
     // MARK: - External surface deny list
 
+    /// Host-mutation tool classes that must never be invocable from EXTERNAL
+    /// surfaces. Kept separate from `agentChannelToolNames` so the full deny
+    /// list below stays a derived union with a single source of truth per
+    /// tool family.
+    nonisolated static let externallyDeniedHostToolNames: Set<String> = [
+        "file_write", "file_edit", "shell_run", "git_commit", "file_undo",
+    ]
+
     /// Tool classes that must never be invocable from EXTERNAL surfaces
     /// (the HTTP `/agents/{id}/run` loop and the `/mcp/call` bridge).
     /// With a working folder open, folder tools register process-wide
     /// with policy `.auto`; an external caller — loopback skips Bearer
     /// auth entirely — could otherwise rewrite the user's files or run
-    /// arbitrary shell commands. These names refuse with a structured
-    /// envelope regardless of registration state and are hidden from
-    /// `/mcp/tools` listings.
-    nonisolated public static let externallyDeniedToolNames: Set<String> = [
-        "file_write", "file_edit", "shell_run", "git_commit", "file_undo",
-        "agent_channel_list_connections", "agent_channel_diagnostics",
-        "agent_channel_list_spaces", "agent_channel_list_rooms",
-        "agent_channel_read_messages", "agent_channel_read_thread",
-        "agent_channel_search_messages", "agent_channel_draft_message",
-        "agent_channel_send_message", "agent_channel_reply_thread",
-    ]
+    /// arbitrary shell commands. Agent-channel tools are denied as a family:
+    /// the deny list is derived from `agentChannelToolNames`, so adding a new
+    /// `agent_channel_*` tool automatically keeps it off external surfaces.
+    /// These names refuse with a structured envelope regardless of
+    /// registration state and are hidden from `/mcp/tools` listings.
+    nonisolated public static let externallyDeniedToolNames: Set<String> =
+        externallyDeniedHostToolNames.union(agentChannelToolNames)
 
     /// Subset of `externallyDeniedToolNames` that an AUTHENTICATED,
     /// folder-bounded remote agent run may use (gated on

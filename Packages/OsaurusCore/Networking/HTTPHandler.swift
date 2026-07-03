@@ -5695,7 +5695,8 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 title: title,
                 showToast: true,
                 source: .http,
-                externalSessionKey: externalSessionKey
+                externalSessionKey: externalSessionKey,
+                externalSurface: Self.shouldBindExternalSurfaceForDispatch(isLoopback: isLoopback)
             )
 
             let handle: DispatchHandle?

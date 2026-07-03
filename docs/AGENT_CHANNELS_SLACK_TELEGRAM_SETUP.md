@@ -145,11 +145,20 @@ Non-secret native configuration shape:
 }
 ```
 
+`longPollingEnabled` defaults to `false`; the example above turns it on because
+smoke proof needs the receive path. `receiveStorageEnabled` defaults to `true`.
+
 Telegram reads come from the local Agent Channel message store. Populate the
 store through the long-poll or webhook receive path before proving
-`read_messages`/`search_messages`. Long polling starts from the app lifecycle
-when both `receiveStorageEnabled` and `longPollingEnabled` are true; Telegram
-returns a 409 conflict if another consumer is polling the same bot token.
+`read_messages`/`search_messages`. With long polling left at its default
+(disabled) and no webhook ingress wired, a fresh Telegram setup returns empty
+read/search results: nothing fetches new updates into the store. Enable
+"Enable Long Polling" in Telegram settings (with a saved token and sender
+allowlist) to fill the inbox. Long polling starts from the app lifecycle when
+both `receiveStorageEnabled` and `longPollingEnabled` are true; Telegram
+returns a 409 conflict if another consumer (a registered webhook or a second
+poller) is consuming the same bot token. Use "Check Webhook" / "Remove
+Webhook" in Telegram settings to detect and clear a leftover webhook.
 
 ## Reference Links
 
