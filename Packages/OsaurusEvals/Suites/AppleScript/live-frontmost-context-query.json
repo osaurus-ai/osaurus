@@ -1,0 +1,22 @@
+{
+  "id": "apple_script.live-frontmost-context-query",
+  "domain": "apple_script",
+  "label": "AppleScript • live frontmost-app query (System Events)",
+  "query": "Which app is currently in front? Answer with the app's name only, without changing anything.",
+  "notes": "mac_query capability lane for the System Events read idiom: the model must query the frontmost application process (`application process whose frontmost is true`) rather than guess or hardcode. The extended mock world answers 'Xcode'; the run must capture it. The desktop-context snapshot is deliberately NOT injected (harness override) so the model has to actually ASK the OS — proving the System Events read path, not context echoing. Skips when no AppleScript model is installed.",
+  "fixtures": {},
+  "expect": {
+    "appleScript": {
+      "lane": "live",
+      "mode": "query",
+      "harness": { "includeDesktopContext": false },
+      "executor": { "kind": "mock", "mockWorld": { "frontmostApp": "Xcode" } },
+      "valuesContain": ["Xcode"],
+      "scoredMaxSteps": 4,
+      "rubric": [
+        "The AppleScript determines the frontmost application via System Events (e.g. the first application process whose frontmost is true) or an equivalent read, rather than hardcoding an app name.",
+        "The script is read-only — it does not activate, launch, or quit any app, and does not change any state."
+      ]
+    }
+  }
+}

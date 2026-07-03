@@ -81,6 +81,26 @@ struct AppleScriptActionDecodeTests {
         }
         #expect(reason == "script must be a string")
     }
+
+    @Test("the language discriminator decodes leniently and defaults to AppleScript")
+    func languageDecodes() {
+        // Absent → AppleScript.
+        #expect(
+            AppleScriptAction.decode(argumentsJSON: #"{"script":"return 1"}"#)
+                == .script("return 1", .appleScript)
+        )
+        // Explicit JXA spellings.
+        #expect(
+            AppleScriptAction.decode(
+                argumentsJSON: #"{"script":"6*7","language":"javascript"}"#
+            ) == .script("6*7", .javascript)
+        )
+        #expect(AppleScriptLanguage(callValue: "jxa") == .javascript)
+        #expect(AppleScriptLanguage(callValue: "JS") == .javascript)
+        // Unrecognized → the AppleScript default, not a rejection.
+        #expect(AppleScriptLanguage(callValue: "garbage") == .appleScript)
+        #expect(AppleScriptLanguage(callValue: nil) == .appleScript)
+    }
 }
 
 // MARK: - Executor (real NSAppleScript, no automation)
@@ -148,6 +168,108 @@ struct AppleScriptExecutorMappingTests {
         let result = await AppleScriptExecutor.run(source: "return {\"a\", \"b\"}", timeout: 15)
         #expect(result.status == .success)
         #expect(result.output == "a, b")
+    }
+
+    @Test("a user record surfaces its REAL keys as key: value pairs")
+    func userRecordOutput() async {
+        // AE regroups record fields: RESERVED labels (name, locked) become
+        // coded keyword fields ahead of the user-label block (battery), so
+        // the rendered order is grouped, not source order.
+        let result = await AppleScriptExecutor.run(
+            source: "return {name:\"Front Door\", battery:87, locked:true}",
+            timeout: 15
+        )
+        #expect(result.status == .success)
+        #expect(result.output == "name: Front Door, locked: true, battery: 87")
+    }
+
+    @Test("a nested user record renders recursively with its keys")
+    func nestedRecordOutput() async {
+        let result = await AppleScriptExecutor.run(
+            source: "return {device:{name:\"Hub\", port:8080}, ok:true}",
+            timeout: 15
+        )
+        #expect(result.status == .success)
+        #expect(result.output == "device: {name: Hub, port: 8080}, ok: true")
+    }
+
+    @Test("a JXA script runs via the JavaScript OSA component and returns its value")
+    func jxaSuccess() async {
+        let result = await AppleScriptExecutor.run(
+            source: "(function () { return 6 * 7; })()",
+            language: .javascript,
+            timeout: 15
+        )
+        #expect(result.status == .success)
+        #expect(result.output == "42")
+    }
+
+    @Test("a JXA syntax error maps to compileError")
+    func jxaCompileError() async {
+        let result = await AppleScriptExecutor.run(
+            source: "function ( { nope",
+            language: .javascript,
+            timeout: 15
+        )
+        #expect(result.status == .compileError)
+        #expect(result.errorMessage != nil)
+    }
+
+    @Test("a JXA thrown error maps to runtimeError with the real message")
+    func jxaRuntimeError() async {
+        let result = await AppleScriptExecutor.run(
+            source: "throw new Error(\"boom\")",
+            language: .javascript,
+            timeout: 15
+        )
+        #expect(result.status == .runtimeError)
+        #expect(result.errorMessage?.contains("boom") == true)
+    }
+
+    @Test("compileCheck: a compiling script returns nil (no objection)")
+    func compileCheckPasses() async {
+        let result = await AppleScriptExecutor.compileCheck(
+            source: "return 1 + 1",
+            timeout: 15
+        )
+        #expect(result == nil)
+    }
+
+    @Test("compileCheck: a syntax error returns the real compileError, without executing")
+    func compileCheckCatchesSyntaxError() async {
+        let result = await AppleScriptExecutor.compileCheck(
+            source: "return \"unterminated",
+            timeout: 15
+        )
+        #expect(result?.status == .compileError)
+        #expect(result?.errorMessage?.isEmpty == false)
+    }
+
+    @Test("compileCheck: a runtime error is NOT a compile objection (returns nil)")
+    func compileCheckIgnoresRuntimeError() async {
+        // Compiles fine; would only fail when run. The dry run must not
+        // block it — runtime truth belongs to the executor.
+        let result = await AppleScriptExecutor.compileCheck(
+            source: "error \"boom\" number 42",
+            timeout: 15
+        )
+        #expect(result == nil)
+    }
+
+    @Test("compileCheck: JXA syntax errors are caught via the JavaScript component")
+    func compileCheckJXA() async {
+        let bad = await AppleScriptExecutor.compileCheck(
+            source: "function ( { nope",
+            language: .javascript,
+            timeout: 15
+        )
+        #expect(bad?.status == .compileError)
+        let good = await AppleScriptExecutor.compileCheck(
+            source: "(function () { return 6 * 7; })()",
+            language: .javascript,
+            timeout: 15
+        )
+        #expect(good == nil)
     }
 }
 
@@ -341,13 +463,170 @@ struct AppleScriptEffectClassifierTests {
             AppleScriptEffectClassifier.classify("tell application \"Music\" to quit") == .consequential
         )
     }
+
+    @Test("a read-only `do shell script` classifies as .read so mac_query can run it")
+    func shellReadIsRead() {
+        #expect(
+            AppleScriptEffectClassifier.classify("do shell script \"pmset -g batt\"") == .read
+        )
+        #expect(
+            AppleScriptEffectClassifier.classify("do shell script \"system_profiler SPHardwareDataType\"")
+                == .read
+        )
+        // A pipe is common in reads and must not escalate on its own.
+        #expect(
+            AppleScriptEffectClassifier.classify(
+                "do shell script \"system_profiler SPHardwareDataType | grep Memory\""
+            ) == .read
+        )
+        #expect(AppleScriptEffectClassifier.classify("do shell script \"sw_vers\"") == .read)
+    }
+
+    @Test("a destructive / writing `do shell script` classifies as .consequential")
+    func shellWriteIsConsequential() {
+        #expect(
+            AppleScriptEffectClassifier.classify("do shell script \"rm -rf /tmp/x\"") == .consequential
+        )
+        #expect(
+            AppleScriptEffectClassifier.classify("do shell script \"sudo pmset -a hibernatemode 0\"")
+                == .consequential
+        )
+        // Output redirection is a write even with an otherwise benign command.
+        #expect(
+            AppleScriptEffectClassifier.classify("do shell script \"echo hi > /tmp/x\"") == .consequential
+        )
+        #expect(
+            AppleScriptEffectClassifier.classify("do shell script \"defaults write com.x k v\"")
+                == .consequential
+        )
+        #expect(
+            AppleScriptEffectClassifier.classify("do shell script \"killall Dock\"") == .consequential
+        )
+    }
+
+    @Test("a `do shell script` never lowers a mutating AppleScript verb")
+    func shellDoesNotLowerVerb() {
+        // The AppleScript `delete` is consequential; a benign shell read in the
+        // same script can't demote it (max wins).
+        #expect(
+            AppleScriptEffectClassifier.classify(
+                "tell application \"Finder\" to delete folder \"x\"\ndo shell script \"sw_vers\""
+            ) == .consequential
+        )
+    }
+
+    @Test("running a user Shortcut classifies as .consequential (opaque effect)")
+    func runShortcutIsConsequential() {
+        #expect(
+            AppleScriptEffectClassifier.classify(
+                "tell application \"Shortcuts Events\" to run shortcut \"Morning Routine\""
+            ) == .consequential
+        )
+        #expect(
+            AppleScriptEffectClassifier.classify(
+                "tell application \"Shortcuts Events\" to run shortcut \"Log Water\" with input \"12\""
+            ) == .consequential
+        )
+        // The shell route escalates the same way.
+        #expect(
+            AppleScriptEffectClassifier.classify(
+                "do shell script \"shortcuts run 'Morning Routine'\""
+            ) == .consequential
+        )
+        // Listing shortcuts is a plain read — only RUNNING one is a commit.
+        #expect(
+            AppleScriptEffectClassifier.classify(
+                "tell application \"Shortcuts Events\" to get name of every shortcut"
+            ) == .read
+        )
+        #expect(
+            AppleScriptEffectClassifier.classify("do shell script \"shortcuts list\"") == .read
+        )
+    }
+
+    @Test("a JXA script floors at .edit and still escalates on destructive names")
+    func jxaFloorsAtEdit() {
+        // A read-looking JXA script is statically opaque → never `.read`.
+        #expect(
+            AppleScriptEffectClassifier.classify(
+                "Application('Safari').windows[0].currentTab.url()",
+                language: .javascript
+            ) == .edit
+        )
+        // Destructive tokens still escalate.
+        #expect(
+            AppleScriptEffectClassifier.classify(
+                "Application('Finder').delete(item)",
+                language: .javascript
+            ) == .consequential
+        )
+        // The AppleScript path is unchanged by the overload.
+        #expect(
+            AppleScriptEffectClassifier.classify(
+                "return 1 + 1",
+                language: .appleScript
+            ) == .read
+        )
+    }
+}
+
+// MARK: - Target-app extraction (scoped approve)
+
+@Suite("AppleScriptLoop.targetAppName")
+struct AppleScriptTargetAppNameTests {
+    @Test("extracts the app from `tell application \"Name\"`")
+    func extractsTellApplication() {
+        #expect(
+            AppleScriptLoop.targetAppName("tell application \"Safari\" to activate") == "Safari"
+        )
+        #expect(
+            AppleScriptLoop.targetAppName(
+                "tell application \"System Events\"\n  keystroke \"a\"\nend tell"
+            ) == "System Events"
+        )
+    }
+
+    @Test("matches case-insensitively and the short `tell app` form")
+    func caseInsensitiveAndShortForm() {
+        #expect(AppleScriptLoop.targetAppName("TELL APPLICATION \"Notes\"") == "Notes")
+        #expect(AppleScriptLoop.targetAppName("tell app \"Music\" to play") == "Music")
+    }
+
+    @Test("returns the FIRST targeted app when several are addressed")
+    func firstAppWins() {
+        #expect(
+            AppleScriptLoop.targetAppName(
+                "tell application \"Finder\"\nend tell\ntell application \"Safari\"\nend tell"
+            ) == "Finder"
+        )
+    }
+
+    @Test("returns nil for a script that targets no named app")
+    func nilWhenNoApp() {
+        #expect(AppleScriptLoop.targetAppName("set volume output volume 40") == nil)
+        #expect(AppleScriptLoop.targetAppName("return 1 + 1") == nil)
+    }
+
+    @Test("extracts the app from the JXA Application('Name') form")
+    func extractsJXAApplication() {
+        #expect(
+            AppleScriptLoop.targetAppName("Application('Safari').windows[0].name()") == "Safari"
+        )
+        #expect(
+            AppleScriptLoop.targetAppName("Application(\"Notes\").notes.length") == "Notes"
+        )
+    }
 }
 
 // MARK: - Loop (injected seams)
 
 @Suite("AppleScriptLoop gate + termination")
 struct AppleScriptLoopTests {
-    private static let validArgs = #"{"script":"do something"}"#
+    // A MUTATING script so the confirm / deny / auto-run-with-warning gate
+    // tests below exercise the gate: a pure read now auto-runs in automate mode
+    // (see `automateReadAutoRuns`), so the shared "valid" script must be an edit
+    // for the confirmation paths to fire.
+    private static let validArgs = #"{"script":"set volume output volume 30"}"#
     private static let invalidArgs = "{}"
 
     private func validCall(_ id: String = "c") -> ModelActionCall {
@@ -373,7 +652,7 @@ struct AppleScriptLoopTests {
             executionMode: .confirmEach,
             confirm: { _ in await confirm.confirm() },
             sessionId: "s",
-            execute: { await exec.run($0) },
+            execute: { script, _ in await exec.run(script) },
             nextScript: { _ in await seq.next() }
         )
 
@@ -400,7 +679,7 @@ struct AppleScriptLoopTests {
             executionMode: .confirmEach,
             confirm: { _ in await confirm.confirm() },
             sessionId: "s",
-            execute: { await exec.run($0) },
+            execute: { script, _ in await exec.run(script) },
             nextScript: { _ in await seq.next() }
         )
 
@@ -408,6 +687,196 @@ struct AppleScriptLoopTests {
         #expect(await exec.count == 0)
         #expect(await confirm.count == 1)
         #expect(feed.currentEvents().contains { $0.kind == .denied })
+    }
+
+    @Test("automate confirm-each auto-runs a classified READ without prompting")
+    func automateReadAutoRuns() async {
+        let feed = SubagentFeed(toolCallId: "t-read", kindId: "applescript", title: "task")
+        let exec = ExecRecorder(result: successResult("Song X"))
+        let confirm = ConfirmCounter(approve: true)
+        // A pure read (get + return) in a state-changing `applescript` run.
+        let seq = ScriptSequencer([call("get name of current track"), nil])
+
+        let result = await AppleScriptLoop.run(
+            task: "what track is playing",
+            modelId: "applescript-test",
+            feed: feed,
+            interrupt: InterruptToken(),
+            executionMode: .confirmEach,
+            confirm: { _ in await confirm.confirm() },
+            sessionId: "s",
+            mode: .automate,
+            execute: { script, _ in await exec.run(script) },
+            nextScript: { _ in await seq.next() }
+        )
+
+        #expect(result.scriptsExecuted == 1)
+        #expect(result.lastOutput == "Song X")
+        // The read ran without a confirmation prompt.
+        #expect(await confirm.count == 0)
+    }
+
+    @Test("automate confirm-each still confirms a mutating (edit) script")
+    func automateEditConfirms() async {
+        let feed = SubagentFeed(toolCallId: "t-edit", kindId: "applescript", title: "task")
+        let exec = ExecRecorder(result: successResult(nil))
+        let confirm = ConfirmCounter(approve: true)
+        let seq = ScriptSequencer([call("set volume output volume 40"), nil])
+
+        let result = await AppleScriptLoop.run(
+            task: "set the volume to 40",
+            modelId: "applescript-test",
+            feed: feed,
+            interrupt: InterruptToken(),
+            executionMode: .confirmEach,
+            confirm: { _ in await confirm.confirm() },
+            sessionId: "s",
+            mode: .automate,
+            execute: { script, _ in await exec.run(script) },
+            nextScript: { _ in await seq.next() }
+        )
+
+        #expect(result.scriptsExecuted == 1)
+        // A mutation still pauses for approval.
+        #expect(await confirm.count == 1)
+    }
+
+    private static let uiScriptingScript =
+        #"tell application "System Events" to tell process "Safari" to click menu item "Save" of menu "File" of menu bar 1"#
+
+    @Test("accessibility preflight: a UI script is stopped before the gate, recovery fired once")
+    func accessibilityPreflightBlocks() async {
+        let feed = SubagentFeed(toolCallId: "t-ax", kindId: "applescript", title: "task")
+        let exec = ExecRecorder(result: successResult())
+        let confirm = ConfirmCounter(approve: true)
+        let prompts = SyncCounter()
+        let seq = ScriptSequencer([call(Self.uiScriptingScript), nil])
+
+        let result = await AppleScriptLoop.run(
+            task: "save via the menu",
+            modelId: "applescript-test",
+            feed: feed,
+            interrupt: InterruptToken(),
+            executionMode: .confirmEach,
+            confirm: { _ in await confirm.confirm() },
+            sessionId: "s",
+            mode: .automate,
+            execute: { script, _ in await exec.run(script) },
+            nextScript: { _ in await seq.next() },
+            accessibilityGranted: { false },
+            requestAccessibility: { prompts.increment() }
+        )
+
+        // Never executed and never surfaced for approval: the user must not be
+        // asked to approve a script that cannot run.
+        #expect(await exec.count == 0)
+        #expect(await confirm.count == 0)
+        // The OS grant dialog (first-class recovery) fired exactly once.
+        #expect(prompts.value == 1)
+        #expect(result.steps.contains { $0.status == "permission_required" })
+        #expect(
+            feed.currentEvents().contains { $0.title == "Accessibility permission needed" }
+        )
+    }
+
+    @Test("repeated accessibility blocks terminate naming the missing permission")
+    func accessibilityPreflightTerminates() async {
+        let feed = SubagentFeed(toolCallId: "t-ax-term", kindId: "applescript", title: "task")
+        let exec = ExecRecorder(result: successResult())
+        let prompts = SyncCounter()
+        let seq = ScriptSequencer(repeating: call(Self.uiScriptingScript))
+
+        let result = await AppleScriptLoop.run(
+            task: "save via the menu",
+            modelId: "applescript-test",
+            feed: feed,
+            interrupt: InterruptToken(),
+            executionMode: .confirmEach,
+            confirm: { _ in true },
+            sessionId: "s",
+            mode: .automate,
+            execute: { script, _ in await exec.run(script) },
+            nextScript: { _ in await seq.next() },
+            accessibilityGranted: { false },
+            requestAccessibility: { prompts.increment() }
+        )
+
+        guard case .failed(let reason) = result.outcome else {
+            Issue.record("expected a failed outcome, got \(result.outcome)")
+            return
+        }
+        #expect(reason.contains("Accessibility"))
+        #expect(await exec.count == 0)
+        // Still only one grant dialog across the repeats.
+        #expect(prompts.value == 1)
+    }
+
+    @Test("accessibility granted: the UI script proceeds to the normal confirm gate")
+    func accessibilityGrantedProceeds() async {
+        let feed = SubagentFeed(toolCallId: "t-ax-ok", kindId: "applescript", title: "task")
+        let exec = ExecRecorder(result: successResult())
+        let confirm = ConfirmCounter(approve: true)
+        let prompts = SyncCounter()
+        let seq = ScriptSequencer([call(Self.uiScriptingScript), nil])
+
+        let result = await AppleScriptLoop.run(
+            task: "save via the menu",
+            modelId: "applescript-test",
+            feed: feed,
+            interrupt: InterruptToken(),
+            executionMode: .confirmEach,
+            confirm: { _ in await confirm.confirm() },
+            sessionId: "s",
+            mode: .automate,
+            execute: { script, _ in await exec.run(script) },
+            nextScript: { _ in await seq.next() },
+            accessibilityGranted: { true },
+            requestAccessibility: { prompts.increment() }
+        )
+
+        #expect(result.scriptsExecuted == 1)
+        // A UI-scripting mutation still pauses at the normal gate.
+        #expect(await confirm.count == 1)
+        #expect(prompts.value == 0)
+    }
+
+    @Test("a JXA call gates as an edit (confirms) and the executor receives the language")
+    func jxaCallGatesAndRoutesLanguage() async {
+        let feed = SubagentFeed(toolCallId: "t-jxa", kindId: "applescript", title: "task")
+        let exec = ExecRecorder(result: successResult("Safari"))
+        let confirm = ConfirmCounter(approve: true)
+        let languages = LanguageLog()
+        // A read-LOOKING JXA script: were it AppleScript it would auto-run as a
+        // read; as JXA it must floor at .edit and pause for approval.
+        let args = try! JSONSerialization.data(
+            withJSONObject: [
+                "script": "Application('Safari').windows[0].name()",
+                "language": "javascript",
+            ]
+        )
+        let call = ModelActionCall(id: "c", arguments: String(data: args, encoding: .utf8)!)
+        let seq = ScriptSequencer([call, nil])
+
+        let result = await AppleScriptLoop.run(
+            task: "front window name",
+            modelId: "applescript-test",
+            feed: feed,
+            interrupt: InterruptToken(),
+            executionMode: .confirmEach,
+            confirm: { _ in await confirm.confirm() },
+            sessionId: "s",
+            mode: .automate,
+            execute: { script, language in
+                languages.append(language)
+                return await exec.run(script)
+            },
+            nextScript: { _ in await seq.next() }
+        )
+
+        #expect(result.scriptsExecuted == 1)
+        // JXA never auto-runs as a read — the gate paused for approval.
+        #expect(await confirm.count == 1)
+        #expect(languages.all() == [.javascript])
     }
 
     @Test("auto-run-with-warning never asks to confirm and emits a warning event")
@@ -425,7 +894,7 @@ struct AppleScriptLoopTests {
             executionMode: .autoRunWithWarning,
             confirm: { _ in await confirm.confirm() },
             sessionId: "s",
-            execute: { await exec.run($0) },
+            execute: { script, _ in await exec.run(script) },
             nextScript: { _ in await seq.next() }
         )
 
@@ -435,6 +904,121 @@ struct AppleScriptLoopTests {
         #expect(
             feed.currentEvents().contains { $0.kind == .error && $0.title.contains("Auto-running") }
         )
+    }
+
+    @Test("a consequential script still confirms under auto-run-with-warning")
+    func consequentialAlwaysConfirms() async {
+        let feed = SubagentFeed(toolCallId: "t-conseq", kindId: "applescript", title: "task")
+        let exec = ExecRecorder(result: successResult())
+        let confirm = ConfirmCounter(approve: true)
+        // `delete` classifies .consequential — auto-run-with-warning must NOT
+        // run it on a warning banner alone; the gate pauses for approval.
+        let call = ModelActionCall(
+            id: "c",
+            arguments:
+                #"{"script":"tell application \"Finder\" to delete folder \"x\""}"#
+        )
+        let seq = ScriptSequencer([call, nil])
+
+        let result = await AppleScriptLoop.run(
+            task: "delete the folder",
+            modelId: "applescript-test",
+            feed: feed,
+            interrupt: InterruptToken(),
+            executionMode: .autoRunWithWarning,
+            confirm: { _ in await confirm.confirm() },
+            sessionId: "s",
+            execute: { script, _ in await exec.run(script) },
+            nextScript: { _ in await seq.next() }
+        )
+
+        #expect(result.scriptsExecuted == 1)
+        #expect(await confirm.count == 1)
+        #expect(
+            !feed.currentEvents().contains { $0.kind == .error && $0.title.contains("Auto-running") }
+        )
+    }
+
+    @Test("compile-before-confirm: a syntax error is fed back, the user is never asked")
+    func compileFailureSkipsConfirm() async {
+        let feed = SubagentFeed(toolCallId: "t-dryc", kindId: "applescript", title: "task")
+        let exec = ExecRecorder(result: successResult())
+        let confirm = ConfirmCounter(approve: true)
+        // First proposal "fails to compile" (per the injected checker), the
+        // corrected second one compiles and is confirmed + executed.
+        let badCall = ModelActionCall(
+            id: "c1",
+            arguments: #"{"script":"set volume output volume"}"#
+        )
+        let seq = ScriptSequencer([badCall, validCall("c2"), nil])
+        let compileFailure = AppleScriptExecutionResult(
+            status: .compileError,
+            output: nil,
+            errorNumber: -2741,
+            errorMessage: "Expected expression but found end of script."
+        )
+        let checked = MutableTexts()
+
+        let result = await AppleScriptLoop.run(
+            task: "set the volume",
+            modelId: "applescript-test",
+            feed: feed,
+            interrupt: InterruptToken(),
+            executionMode: .confirmEach,
+            confirm: { _ in await confirm.confirm() },
+            sessionId: "s",
+            execute: { script, _ in await exec.run(script) },
+            nextScript: { _ in await seq.next() },
+            compileCheck: { script, _ in
+                checked.append(script)
+                return script.hasSuffix("volume") ? compileFailure : nil
+            }
+        )
+
+        #expect(result.outcome.isSuccess)
+        // The broken script never reached the user or the executor.
+        #expect(await confirm.count == 1)
+        #expect(result.scriptsExecuted == 1)
+        #expect(checked.all().count == 2)
+        #expect(result.steps.contains { $0.status == "compile_error" })
+        #expect(
+            feed.currentEvents().contains {
+                $0.kind == .retry && $0.title.contains("did not compile")
+            }
+        )
+    }
+
+    @Test("compile-before-confirm: repeated syntax failures terminate with the real reason")
+    func compileFailureBudgetTerminates() async {
+        let feed = SubagentFeed(toolCallId: "t-dryc2", kindId: "applescript", title: "task")
+        let exec = ExecRecorder(result: successResult())
+        let seq = ScriptSequencer(repeating: validCall())
+        let compileFailure = AppleScriptExecutionResult(
+            status: .compileError,
+            output: nil,
+            errorNumber: -2741,
+            errorMessage: "Expected expression but found end of script."
+        )
+
+        let result = await AppleScriptLoop.run(
+            task: "set the volume",
+            modelId: "applescript-test",
+            feed: feed,
+            interrupt: InterruptToken(),
+            executionMode: .confirmEach,
+            confirm: { _ in true },
+            sessionId: "s",
+            execute: { script, _ in await exec.run(script) },
+            nextScript: { _ in await seq.next() },
+            compileCheck: { _, _ in compileFailure }
+        )
+
+        guard case .failed(let reason) = result.outcome else {
+            Issue.record("expected .failed, got \(result.outcome)")
+            return
+        }
+        #expect(reason.contains("compile"))
+        #expect(await exec.count == 0)
     }
 
     @Test("an invalid call is re-asked, then the model completes")
@@ -452,7 +1036,7 @@ struct AppleScriptLoopTests {
             executionMode: .confirmEach,
             confirm: { _ in await confirm.confirm() },
             sessionId: "s",
-            execute: { await exec.run($0) },
+            execute: { script, _ in await exec.run(script) },
             nextScript: { _ in await seq.next() }
         )
 
@@ -479,7 +1063,7 @@ struct AppleScriptLoopTests {
             confirm: { _ in await confirm.confirm() },
             limits: RunLimits(maxSteps: 1),
             sessionId: "s",
-            execute: { await exec.run($0) },
+            execute: { script, _ in await exec.run(script) },
             nextScript: { _ in await seq.next() }
         )
 
@@ -512,7 +1096,7 @@ struct AppleScriptLoopTests {
             executionMode: .autoRunWithWarning,
             confirm: { _ in true },
             sessionId: "s",
-            execute: { await exec.run($0) },
+            execute: { script, _ in await exec.run(script) },
             nextScript: { _ in await seq.next() }
         )
 
@@ -548,7 +1132,7 @@ struct AppleScriptLoopTests {
             executionMode: .autoRunWithWarning,
             confirm: { _ in true },
             sessionId: "s",
-            execute: { await exec.run($0) },
+            execute: { script, _ in await exec.run(script) },
             nextScript: { _ in await seq.next() }
         )
 
@@ -578,7 +1162,7 @@ struct AppleScriptLoopTests {
             confirm: { _ in await confirm.confirm() },
             sessionId: "s",
             mode: .query,
-            execute: { await exec.run($0) },
+            execute: { script, _ in await exec.run(script) },
             nextScript: { _ in await seq.next() }
         )
 
@@ -606,7 +1190,7 @@ struct AppleScriptLoopTests {
             confirm: { _ in await confirm.confirm() },
             sessionId: "s",
             mode: .query,
-            execute: { await exec.run($0) },
+            execute: { script, _ in await exec.run(script) },
             nextScript: { _ in await seq.next() }
         )
 
@@ -638,7 +1222,7 @@ struct AppleScriptLoopTests {
             confirm: { _ in true },
             sessionId: "s",
             literals: AppleScriptLiterals(["content": content]),
-            execute: { await exec.run($0) },
+            execute: { script, _ in await exec.run(script) },
             nextScript: { _ in await seq.next() }
         )
 
@@ -670,7 +1254,7 @@ struct AppleScriptLoopTests {
             confirm: { _ in true },
             sessionId: "s",
             literals: AppleScriptLiterals(["content": "hi"]),
-            execute: { await exec.run($0) },
+            execute: { script, _ in await exec.run(script) },
             nextScript: { _ in await seq.next() }
         )
 
@@ -706,7 +1290,7 @@ struct AppleScriptLoopTests {
             confirm: { _ in true },
             sessionId: "s",
             literals: AppleScriptLiterals(["subject": subject, "body": body]),
-            execute: { await exec.run($0) },
+            execute: { script, _ in await exec.run(script) },
             nextScript: { _ in await seq.next() }
         )
 
@@ -739,7 +1323,7 @@ struct AppleScriptLoopTests {
             executionMode: .autoRunWithWarning,
             confirm: { _ in true },
             sessionId: "s",
-            execute: { await exec.run($0) },
+            execute: { script, _ in await exec.run(script) },
             nextScript: { _ in await seq.next() }
         )
 
@@ -826,6 +1410,150 @@ struct AppleScriptMapOutcomeTests {
         #expect(mapped.payload["mode"] as? String == "query")
         #expect(mapped.payload["values"] as? String == "100")
         #expect(mapped.payload["failed"] as? Int == 0)
+    }
+
+    @Test("token/s + elapsed are reported when measured, never fabricated")
+    func tokensPerSecondReported() throws {
+        // A live-model run: tokens + model time measured → token/s present.
+        let live = AppleScriptRunResult(
+            outcome: .done(summary: "Done."),
+            scriptsExecuted: 1,
+            succeeded: 1,
+            failed: 0,
+            modelTokens: 300,
+            elapsedSeconds: 12.5,
+            modelSeconds: 10.0,
+            lastOutput: nil,
+            steps: [step(1, "success")]
+        )
+        let mapped = try AppleScriptKind.mapOutcome(live, model: "m", mode: .automate)
+        #expect(mapped.payload["elapsed_seconds"] as? Double == 12.5)
+        #expect(mapped.payload["model_tokens"] as? Int == 300)
+        #expect(mapped.payload["tokens_per_second"] as? Double == 30.0)
+
+        // A scripted/injected run (no tokens, no model time) → NO token/s key.
+        let scripted = AppleScriptRunResult(
+            outcome: .done(summary: "Done."),
+            scriptsExecuted: 1,
+            succeeded: 1,
+            failed: 0,
+            modelTokens: 0,
+            elapsedSeconds: 0.4,
+            modelSeconds: 0,
+            lastOutput: nil,
+            steps: [step(1, "success")]
+        )
+        let scriptedMapped = try AppleScriptKind.mapOutcome(scripted, model: "m", mode: .automate)
+        #expect(scriptedMapped.payload["tokens_per_second"] == nil)
+    }
+
+    @Test("the engine's decode rate wins over counter division (tool-call turns count 0)")
+    func engineDecodeRatePreferred() throws {
+        // Tool-call-only turns report completion_tokens == 0 by contract, so
+        // the counter division would understate; the engine's own per-step
+        // decode hint is authoritative.
+        let live = AppleScriptRunResult(
+            outcome: .done(summary: "Done."),
+            scriptsExecuted: 1,
+            succeeded: 1,
+            failed: 0,
+            modelTokens: 300,
+            elapsedSeconds: 12.5,
+            modelSeconds: 10.0,
+            engineDecodeTokensPerSecond: 8.4,
+            lastOutput: nil,
+            steps: [step(1, "success")]
+        )
+        #expect(live.tokensPerSecond == 8.4)
+        let mapped = try AppleScriptKind.mapOutcome(live, model: "m", mode: .automate)
+        #expect(mapped.payload["tokens_per_second"] as? Double == 8.4)
+    }
+}
+
+// MARK: - Keep-warm residency coordinator
+
+@Suite("AppleScriptWarmResidencyCoordinator")
+struct AppleScriptWarmResidencyCoordinatorTests {
+    private func lease(_ names: String...) -> ChatResidencyLease {
+        ChatResidencyLease(unloadedModelNames: names)
+    }
+
+    /// A never-firing sleep so the deferred restore stays parked for the
+    /// adopt/replace/flush tests (each cancels or supersedes it explicitly).
+    private let parkedSleep: @Sendable (Int) async -> Void = { _ in
+        try? await Task.sleep(nanoseconds: 100 * 1_000_000_000)
+    }
+
+    @Test("a follow-up run for the SAME model adopts the held lease and skips restore")
+    func adoptsSameModel() async {
+        let restored = RestoreCollector()
+        let coord = AppleScriptWarmResidencyCoordinator(
+            restore: { await restored.record($0) },
+            sleep: parkedSleep
+        )
+        let held = lease("chat-A")
+        await coord.endRun(lease: held, model: "AS-16B", keepWarmSeconds: 90)
+        #expect(await coord.heldModelForTesting() == "AS-16B")
+
+        let adopted = await coord.beginRun(model: "AS-16B")
+        #expect(adopted == held)
+        // Adopting reuses the unloaded lease — nothing is restored.
+        #expect(await restored.all().isEmpty)
+        #expect(await coord.heldModelForTesting() == nil)
+    }
+
+    @Test("a run for a DIFFERENT model restores the held lease and does not adopt")
+    func replacesDifferentModel() async {
+        let restored = RestoreCollector()
+        let coord = AppleScriptWarmResidencyCoordinator(
+            restore: { await restored.record($0) },
+            sleep: parkedSleep
+        )
+        let held = lease("chat-A")
+        await coord.endRun(lease: held, model: "AS-16B", keepWarmSeconds: 90)
+
+        let adopted = await coord.beginRun(model: "AS-Other")
+        #expect(adopted == nil)
+        #expect(await restored.all() == [held])
+    }
+
+    @Test("flush restores the held lease immediately")
+    func flushRestores() async {
+        let restored = RestoreCollector()
+        let coord = AppleScriptWarmResidencyCoordinator(
+            restore: { await restored.record($0) },
+            sleep: parkedSleep
+        )
+        await coord.endRun(lease: lease("chat-A"), model: "AS-16B", keepWarmSeconds: 90)
+        await coord.flush()
+        #expect(await restored.all() == [lease("chat-A")])
+        #expect(await coord.heldModelForTesting() == nil)
+    }
+
+    @Test("keepWarmSeconds == 0 restores immediately (single-residency policy)")
+    func zeroWindowRestoresNow() async {
+        let restored = RestoreCollector()
+        let coord = AppleScriptWarmResidencyCoordinator(
+            restore: { await restored.record($0) },
+            sleep: parkedSleep
+        )
+        await coord.endRun(lease: lease("chat-A"), model: "AS-16B", keepWarmSeconds: 0)
+        #expect(await restored.all() == [lease("chat-A")])
+        #expect(await coord.heldModelForTesting() == nil)
+    }
+
+    @Test("the deferred restore fires when the keep-warm window elapses")
+    func deferredRestoreFires() async {
+        let restored = RestoreCollector()
+        // Immediate sleep → the window "elapses" at once, so the deferred
+        // restore runs on the scheduled task.
+        let coord = AppleScriptWarmResidencyCoordinator(
+            restore: { await restored.record($0) },
+            sleep: { _ in }
+        )
+        await coord.endRun(lease: lease("chat-A"), model: "AS-16B", keepWarmSeconds: 90)
+        let fired = await restored.waitForOne()
+        #expect(fired == lease("chat-A"))
     }
 }
 
@@ -925,6 +1653,439 @@ struct AppleScriptCapabilityGatingTests {
     }
 }
 
+// MARK: - Mock app world (evals executor double)
+
+@Suite("MockAppleScriptWorld")
+struct MockAppleScriptWorldTests {
+    /// Distinctive fallback so "the mock didn't recognize it" is observable.
+    private let fallback = AppleScriptExecutionResult(
+        status: .success,
+        output: "FALLBACK",
+        errorNumber: nil,
+        errorMessage: nil
+    )
+
+    @Test("Safari: open location records the URL; the read answers it verbatim")
+    func safariRoundTrip() {
+        var world = MockAppleScriptWorld()
+        _ = world.handle(
+            "tell application \"Safari\" to open location \"https://example.com/osaurus\"",
+            fallback: fallback
+        )
+        #expect(world.snapshot()["safari:url"] == "https://example.com/osaurus")
+        let read = world.handle(
+            "tell application \"Safari\" to return URL of front document",
+            fallback: fallback
+        )
+        #expect(read.output == "https://example.com/osaurus")
+    }
+
+    @Test("Safari: `set URL of front document to …` is the write form")
+    func safariSetURLWrite() {
+        var world = MockAppleScriptWorld(safariURL: "about:blank")
+        _ = world.handle(
+            "tell application \"Safari\" to set URL of front document to \"https://osaurus.ai\"",
+            fallback: fallback
+        )
+        #expect(world.snapshot()["safari:url"] == "https://osaurus.ai")
+    }
+
+    @Test("Mail: `unread count of inbox` answers the seeded count")
+    func mailUnreadRead() {
+        var world = MockAppleScriptWorld(mailUnread: 6)
+        let read = world.handle(
+            "tell application \"Mail\" to return unread count of inbox",
+            fallback: fallback
+        )
+        #expect(read.output == "6")
+    }
+
+    @Test("System Events: the frontmost READ answers; `set frontmost` does not")
+    func frontmostReadNotWrite() {
+        var world = MockAppleScriptWorld(frontmostApp: "Xcode")
+        let read = world.handle(
+            "tell application \"System Events\" to get name of first application process "
+                + "whose frontmost is true",
+            fallback: fallback
+        )
+        #expect(read.output == "Xcode")
+        // `set frontmost to true` is an (unmodeled) write — the mock must NOT
+        // answer it with the stored name; it falls back.
+        let write = world.handle(
+            "tell application \"System Events\" to tell process \"Notes\" to set frontmost to true",
+            fallback: fallback
+        )
+        #expect(write.output == "FALLBACK")
+    }
+
+    @Test("Finder: exists reads false, create records, exists reads true")
+    func folderCreateAndExists() {
+        var world = MockAppleScriptWorld()
+        let missing = world.handle(
+            "tell application \"Finder\" to exists folder \"Osaurus Drops\" of desktop",
+            fallback: fallback
+        )
+        #expect(missing.output == "false")
+        _ = world.handle(
+            "tell application \"Finder\" to make new folder at desktop "
+                + "with properties {name:\"Osaurus Drops\"}",
+            fallback: fallback
+        )
+        #expect(world.snapshot()["folder:Osaurus Drops"] == "true")
+        let exists = world.handle(
+            "tell application \"Finder\" to exists folder \"Osaurus Drops\" of desktop",
+            fallback: fallback
+        )
+        #expect(exists.output == "true")
+    }
+
+    @Test("a create-if-missing compound script resolves as the CREATE")
+    func createIfMissingCompound() {
+        var world = MockAppleScriptWorld()
+        let script = """
+            tell application "Finder"
+                if not (exists folder "Osaurus Drops" of desktop) then
+                    make new folder at desktop with properties {name:"Osaurus Drops"}
+                end if
+            end tell
+            """
+        _ = world.handle(script, fallback: fallback)
+        #expect(world.snapshot()["folder:Osaurus Drops"] == "true")
+    }
+
+    @Test("a MULTI-APP combined script records every recognized write")
+    func multiAppCombinedScriptRecordsAllWrites() {
+        // The live 16B emits exactly this hoisted-identifier, two-app shape —
+        // both writes must land, not just the first parser's.
+        var world = MockAppleScriptWorld()
+        let script = """
+            set targetURL to "https://example.com/osaurus"
+            set folderName to "Osaurus Drops"
+
+            tell application "Safari"
+                activate
+                if (count of windows) is 0 then
+                    make new document with properties {URL:targetURL}
+                else
+                    set URL of current tab of front window to targetURL
+                end if
+            end tell
+
+            tell application "Finder"
+                if not (exists folder folderName of desktop) then
+                    make new folder at desktop with properties {name:folderName}
+                end if
+            end tell
+            """
+        _ = world.handle(script, fallback: fallback)
+        #expect(world.snapshot()["safari:url"] == "https://example.com/osaurus")
+        #expect(world.snapshot()["folder:Osaurus Drops"] == "true")
+    }
+
+    @Test("`set URL of current tab of front window to <identifier>` resolves the binding")
+    func safariCurrentTabIdentifierWrite() {
+        var world = MockAppleScriptWorld(safariURL: "about:blank")
+        let script = """
+            set targetURL to "https://osaurus.ai/docs"
+            tell application "Safari"
+                set URL of current tab of front window to targetURL
+            end tell
+            """
+        _ = world.handle(script, fallback: fallback)
+        #expect(world.snapshot()["safari:url"] == "https://osaurus.ai/docs")
+    }
+
+    @Test("Mail: the manual `read status is false` filter answers the unread count")
+    func mailManualUnreadFilterRead() {
+        var world = MockAppleScriptWorld(mailUnread: 6)
+        let read = world.handle(
+            """
+            tell application "Mail"
+                set unreadCount to count of messages of inbox whose read status is false
+            end tell
+            return unreadCount
+            """,
+            fallback: fallback
+        )
+        #expect(read.output == "6")
+    }
+
+    @Test("an unrecognized script falls back — the mock never invents an answer")
+    func unrecognizedFallsBack() {
+        var world = MockAppleScriptWorld(mailUnread: 3)
+        let result = world.handle(
+            "tell application \"Music\" to playpause",
+            fallback: fallback
+        )
+        #expect(result.output == "FALLBACK")
+        // And the seeded state is untouched.
+        #expect(world.snapshot()["mail:unread"] == "3")
+    }
+}
+
+// MARK: - Accessibility preflight (System Events UI scripting)
+
+@Suite("AppleScriptAccessibility")
+struct AppleScriptAccessibilityTests {
+    @Test("System Events UI scripting is detected; plain scripting is not")
+    func requiresAccessibilityDetection() {
+        // UI scripting forms → need the grant.
+        #expect(
+            AppleScriptAccessibility.requiresAccessibility(
+                #"tell application "System Events" to keystroke "v" using command down"#
+            )
+        )
+        #expect(
+            AppleScriptAccessibility.requiresAccessibility(
+                #"tell application "System Events" to tell process "Safari" to click menu item "Save" of menu "File" of menu bar 1"#
+            )
+        )
+        #expect(
+            AppleScriptAccessibility.requiresAccessibility(
+                #"tell application "System Events" to get value of text field 1 of window 1 of process "Notes""#
+            )
+        )
+        // Process-level reads via System Events work WITHOUT Accessibility.
+        #expect(
+            !AppleScriptAccessibility.requiresAccessibility(
+                #"tell application "System Events" to return name of first process whose frontmost is true"#
+            )
+        )
+        // Plain app scripting (no System Events) never needs the grant — even
+        // when an app's own dictionary has a `click` verb.
+        #expect(
+            !AppleScriptAccessibility.requiresAccessibility(
+                #"tell application "Safari" to return URL of front document"#
+            )
+        )
+        #expect(!AppleScriptAccessibility.requiresAccessibility("set volume output volume 30"))
+    }
+
+    @Test("assistive-access denials map by number and by message; -1743 does not")
+    func denialMapping() {
+        #expect(
+            AppleScriptAccessibility.isAccessibilityDenial(
+                errorNumber: -25211,
+                errorMessage: nil
+            )
+        )
+        #expect(
+            AppleScriptAccessibility.isAccessibilityDenial(errorNumber: 1002, errorMessage: nil)
+        )
+        #expect(
+            AppleScriptAccessibility.isAccessibilityDenial(
+                errorNumber: nil,
+                errorMessage: "osascript is not allowed assistive access."
+            )
+        )
+        #expect(
+            AppleScriptAccessibility.isAccessibilityDenial(
+                errorNumber: nil,
+                errorMessage: "Osaurus is not allowed to send keystrokes."
+            )
+        )
+        // The Automation denial has its own recovery path.
+        #expect(
+            !AppleScriptAccessibility.isAccessibilityDenial(
+                errorNumber: -1743,
+                errorMessage: "Not authorized to send Apple events to Safari."
+            )
+        )
+        #expect(
+            !AppleScriptAccessibility.isAccessibilityDenial(
+                errorNumber: -1728,
+                errorMessage: "Can't get window 1."
+            )
+        )
+    }
+}
+
+// MARK: - App knowledge (dictionary distill + recipes + target detection)
+
+@Suite("AppleScriptDictionaryService.distill")
+struct AppleScriptDictionaryDistillTests {
+    /// A miniature sdef exercising every element the distiller renders:
+    /// a skipped Standard Suite, a class with typed/read-only properties and
+    /// elements, an `application` class-extension, and a command with a direct
+    /// parameter, named parameters (one optional), and a result.
+    private var sdef: Data {
+        """
+        <?xml version="1.0" encoding="UTF-8"?>
+        <dictionary title="TestApp Terminology">
+          <suite name="Standard Suite" code="core" description="Generic verbs.">
+            <command name="open" code="aevtodoc"/>
+            <class name="window" code="cwin">
+              <property name="bounds" code="pbnd" type="rectangle"/>
+            </class>
+          </suite>
+          <suite name="TestApp Suite" code="test" description="App-specific.">
+            <class name="track" code="trck">
+              <property name="name" code="pnam" type="text"/>
+              <property name="duration" code="durn" type="real" access="r"/>
+              <element type="artwork"/>
+            </class>
+            <class-extension extends="application">
+              <property name="player state" code="pPlS" type="player state"/>
+            </class-extension>
+            <command name="refresh" code="testrfsh">
+              <direct-parameter type="track"/>
+              <parameter name="force" code="frce" type="boolean" optional="yes"/>
+              <result type="boolean"/>
+            </command>
+          </suite>
+        </dictionary>
+        """.data(using: .utf8)!
+    }
+
+    @Test("app-specific classes, extensions, and commands are rendered; Standard Suite is skipped")
+    func distillsAppSpecificVocabulary() {
+        let summary = AppleScriptDictionaryService.distill(sdefData: sdef, appName: "TestApp")
+        let text = try! #require(summary)
+        #expect(text.hasPrefix("TestApp scripting dictionary (app-specific):"))
+        #expect(text.contains("class track — properties: name (text), duration (real, r/o); elements: artwork"))
+        #expect(text.contains("class application (extended) — properties: player state (player state)"))
+        #expect(text.contains("command refresh — direct: track; params: force (boolean)?; returns boolean"))
+        // Standard Suite content must NOT leak in.
+        #expect(!text.contains("class window"))
+        #expect(!text.contains("command open"))
+    }
+
+    @Test("the summary is truncated at the char budget on line boundaries")
+    func truncatesAtBudget() {
+        // Budget fits the header + first class line but not the extension line.
+        let summary = AppleScriptDictionaryService.distill(
+            sdefData: sdef,
+            appName: "TestApp",
+            maxChars: 140
+        )
+        let text = try! #require(summary)
+        #expect(text.count <= 140)
+        #expect(text.contains("class track"))
+        #expect(!text.contains("class application"))
+
+        // A budget too small for even one line yields nil, not a bare header.
+        #expect(
+            AppleScriptDictionaryService.distill(sdefData: sdef, appName: "TestApp", maxChars: 50)
+                == nil
+        )
+    }
+
+    @Test("a dictionary with only Standard Suite distills to nil")
+    func standardOnlyIsNil() {
+        let standardOnly = """
+            <?xml version="1.0" encoding="UTF-8"?>
+            <dictionary>
+              <suite name="Standard Suite" code="core">
+                <command name="open" code="aevtodoc"/>
+              </suite>
+            </dictionary>
+            """.data(using: .utf8)!
+        #expect(
+            AppleScriptDictionaryService.distill(sdefData: standardOnly, appName: "X") == nil
+        )
+    }
+
+    @Test("malformed XML distills to nil")
+    func malformedIsNil() {
+        let junk = Data("not xml at all".utf8)
+        #expect(AppleScriptDictionaryService.distill(sdefData: junk, appName: "X") == nil)
+    }
+}
+
+@Suite("AppleScriptAppKnowledge")
+struct AppleScriptAppKnowledgeTests {
+    @Test("apps named in the task are detected in task order, capped at the limit")
+    func detectsNamedApps() {
+        let apps = AppleScriptAppKnowledge.detectTargetApps(
+            task: "Copy the URL from Safari into a new note in Notes, then open Mail",
+            frontmost: "Finder",
+            runningAppNames: ["Safari", "Finder"]
+        )
+        #expect(apps == ["Safari", "Notes"])
+    }
+
+    @Test("matching is word-bounded: 'take notes' should not target the Notes app twice-removed")
+    func wordBoundedMatch() {
+        // "Notes" appears only inside "Keynotes" — no word-boundary match.
+        let apps = AppleScriptAppKnowledge.detectTargetApps(
+            task: "Summarize my Keynotes deck",
+            frontmost: nil,
+            runningAppNames: []
+        )
+        #expect(apps.isEmpty)
+    }
+
+    @Test("catalog apps match even when not running (the model may launch them)")
+    func catalogAppsMatchWhenNotRunning() {
+        let apps = AppleScriptAppKnowledge.detectTargetApps(
+            task: "Create a reminder in Reminders for tomorrow 9am",
+            frontmost: nil,
+            runningAppNames: []
+        )
+        #expect(apps == ["Reminders"])
+    }
+
+    @Test("frontmost fallback applies only when the task refers to the frontmost app")
+    func frontmostFallback() {
+        let withCue = AppleScriptAppKnowledge.detectTargetApps(
+            task: "What is the frontmost app doing?",
+            frontmost: "Safari",
+            runningAppNames: ["Safari"]
+        )
+        #expect(withCue == ["Safari"])
+
+        let withoutCue = AppleScriptAppKnowledge.detectTargetApps(
+            task: "What is the battery percentage?",
+            frontmost: "Safari",
+            runningAppNames: ["Safari"]
+        )
+        #expect(withoutCue.isEmpty)
+    }
+
+    @Test("recipe catalog matches by app name, case-insensitively")
+    func recipeMatching() {
+        #expect(!AppleScriptRecipeCatalog.recipes(for: "safari").isEmpty)
+        #expect(!AppleScriptRecipeCatalog.recipes(for: "Shortcuts Events").isEmpty)
+        #expect(AppleScriptRecipeCatalog.recipes(for: "NoSuchApp").isEmpty)
+    }
+
+    @Test("a task phrased 'run my … shortcut' surfaces the Shortcuts recipe")
+    func shortcutTaskGetsShortcutsRecipe() {
+        let apps = AppleScriptAppKnowledge.detectTargetApps(
+            task: "Run my Morning Routine shortcut",
+            frontmost: nil,
+            runningAppNames: []
+        )
+        #expect(apps == ["Shortcut"])
+        let sections = AppleScriptAppKnowledge.compose(apps: apps, runningApps: [])
+        let recipes = try! #require(sections.recipes)
+        #expect(recipes.contains("run shortcut"))
+        #expect(recipes.contains("Shortcuts Events"))
+    }
+
+    @Test("compose emits recipe tips for a matched app and nothing for empty targets")
+    func composeSections() {
+        let sections = AppleScriptAppKnowledge.compose(apps: ["Safari"], runningApps: [])
+        let recipes = try! #require(sections.recipes)
+        #expect(recipes.hasPrefix("Safari AppleScript tips:"))
+        #expect(recipes.contains("URL of front document"))
+
+        #expect(AppleScriptAppKnowledge.compose(apps: [], runningApps: []) == .empty)
+    }
+
+    @Test("environment context parses back into frontmost + running names")
+    func parseEnvironmentContext() {
+        let context = "Frontmost app: Safari\nRunning apps: Safari, Notes, Finder"
+        let parsed = AppleScriptAppKnowledge.parseEnvironmentContext(context)
+        #expect(parsed.frontmost == "Safari")
+        #expect(parsed.runningNames == ["Safari", "Notes", "Finder"])
+
+        let empty = AppleScriptAppKnowledge.parseEnvironmentContext(nil)
+        #expect(empty.frontmost == nil)
+        #expect(empty.runningNames.isEmpty)
+    }
+}
+
 // MARK: - Test doubles
 
 /// Hands the loop a scripted sequence of model calls. `nil` signals the model
@@ -991,6 +2152,63 @@ private actor ScriptedExec {
     }
 }
 
+/// Lock-guarded log of strings recorded from `@Sendable` seams (e.g. the
+/// scripts handed to the compile checker).
+private final class MutableTexts: @unchecked Sendable {
+    private let lock = NSLock()
+    private var items: [String] = []
+
+    func append(_ text: String) {
+        lock.lock()
+        items.append(text)
+        lock.unlock()
+    }
+
+    func all() -> [String] {
+        lock.lock()
+        defer { lock.unlock() }
+        return items
+    }
+}
+
+/// Lock-guarded log of the languages the loop handed the executor seam.
+private final class LanguageLog: @unchecked Sendable {
+    private let lock = NSLock()
+    private var items: [AppleScriptLanguage] = []
+
+    func append(_ language: AppleScriptLanguage) {
+        lock.lock()
+        items.append(language)
+        lock.unlock()
+    }
+
+    func all() -> [AppleScriptLanguage] {
+        lock.lock()
+        defer { lock.unlock() }
+        return items
+    }
+}
+
+/// Lock-guarded synchronous counter for the loop's `@Sendable () -> Void`
+/// seams (the accessibility grant prompt), where an actor's async API can't
+/// be called from the synchronous closure.
+private final class SyncCounter: @unchecked Sendable {
+    private let lock = NSLock()
+    private var count = 0
+
+    func increment() {
+        lock.lock()
+        count += 1
+        lock.unlock()
+    }
+
+    var value: Int {
+        lock.lock()
+        defer { lock.unlock() }
+        return count
+    }
+}
+
 /// Counts confirm prompts and answers with a fixed decision.
 private actor ConfirmCounter {
     private(set) var count = 0
@@ -1001,5 +2219,29 @@ private actor ConfirmCounter {
     func confirm() -> Bool {
         count += 1
         return approve
+    }
+}
+
+/// Collects the leases the warm-residency coordinator restores, and lets a test
+/// suspend until the first (deferred) restore fires.
+private actor RestoreCollector {
+    private var items: [ChatResidencyLease] = []
+    private var waiter: CheckedContinuation<ChatResidencyLease, Never>?
+
+    func record(_ lease: ChatResidencyLease) {
+        items.append(lease)
+        if let waiter {
+            self.waiter = nil
+            waiter.resume(returning: lease)
+        }
+    }
+
+    func all() -> [ChatResidencyLease] { items }
+
+    func waitForOne() async -> ChatResidencyLease {
+        if let first = items.first { return first }
+        return await withCheckedContinuation { continuation in
+            waiter = continuation
+        }
     }
 }

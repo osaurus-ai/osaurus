@@ -2181,6 +2181,18 @@ public struct EvalCase: Sendable, Codable, Identifiable {
         public let confirmApproves: Bool?
         /// Productive-step budget for the loop. nil → 12.
         public let maxSteps: Int?
+        /// Wall-clock budget for the whole run, seconds. nil → 240. Long
+        /// multi-step cases (slow models, 6+ sequential scripts) need more.
+        public let wallClockSeconds: Double?
+        /// Per-model-step inference budget, seconds. nil → the loop default
+        /// (90). A slow model's step gets cancelled + retried at this bound,
+        /// so multi-step cases against slow models must raise it.
+        public let modelStepTimeoutSeconds: Double?
+        /// EXPLICIT sampling-temperature override (e.g. `0` for a greedy
+        /// isolation A/B). nil → the model bundle's own generation defaults.
+        /// This is a case-declared override recorded with the run — never a
+        /// hidden synthetic default.
+        public let samplingTemperature: Double?
         /// Scripted lane only: `run_applescript` arguments-JSON strings, one per
         /// step, that drive the loop with no model call. Ignored on live lanes.
         public let scriptedCalls: [String]?
@@ -2296,10 +2308,29 @@ public struct EvalCase: Sendable, Codable, Identifiable {
                 public let notes: [String: String]?
                 /// Seeded system output volume (0–100).
                 public let volume: Int?
+                /// Seeded front Safari document URL.
+                public let safariURL: String?
+                /// Seeded Mail inbox unread count.
+                public let mailUnread: Int?
+                /// Seeded frontmost application process name (System Events).
+                public let frontmostApp: String?
+                /// Seeded Finder folder names (each reads as existing).
+                public let folders: [String]?
 
-                public init(notes: [String: String]? = nil, volume: Int? = nil) {
+                public init(
+                    notes: [String: String]? = nil,
+                    volume: Int? = nil,
+                    safariURL: String? = nil,
+                    mailUnread: Int? = nil,
+                    frontmostApp: String? = nil,
+                    folders: [String]? = nil
+                ) {
                     self.notes = notes
                     self.volume = volume
+                    self.safariURL = safariURL
+                    self.mailUnread = mailUnread
+                    self.frontmostApp = frontmostApp
+                    self.folders = folders
                 }
             }
         }
@@ -2310,6 +2341,10 @@ public struct EvalCase: Sendable, Codable, Identifiable {
         public struct HarnessSpec: Sendable, Codable {
             public let verifyReadBack: Bool?
             public let includeDesktopContext: Bool?
+            /// Inject the target app's distilled scripting dictionary (sdef).
+            public let includeDictionaryContext: Bool?
+            /// Inject the curated per-app AppleScript idiom tips.
+            public let includeAppRecipes: Bool?
             /// `"standard"` | `"concise"`.
             public let promptVariant: String?
             /// `"namePreview"` | `"nameOnly"` | `"minimal"`.
@@ -2318,11 +2353,15 @@ public struct EvalCase: Sendable, Codable, Identifiable {
             public init(
                 verifyReadBack: Bool? = nil,
                 includeDesktopContext: Bool? = nil,
+                includeDictionaryContext: Bool? = nil,
+                includeAppRecipes: Bool? = nil,
                 promptVariant: String? = nil,
                 literalAnnouncementStyle: String? = nil
             ) {
                 self.verifyReadBack = verifyReadBack
                 self.includeDesktopContext = includeDesktopContext
+                self.includeDictionaryContext = includeDictionaryContext
+                self.includeAppRecipes = includeAppRecipes
                 self.promptVariant = promptVariant
                 self.literalAnnouncementStyle = literalAnnouncementStyle
             }
@@ -2350,6 +2389,9 @@ public struct EvalCase: Sendable, Codable, Identifiable {
             contents: [String: String]? = nil,
             confirmApproves: Bool? = nil,
             maxSteps: Int? = nil,
+            wallClockSeconds: Double? = nil,
+            modelStepTimeoutSeconds: Double? = nil,
+            samplingTemperature: Double? = nil,
             scriptedCalls: [String]? = nil,
             environmentContext: String? = nil,
             executor: ExecutorSpec? = nil,
@@ -2376,6 +2418,9 @@ public struct EvalCase: Sendable, Codable, Identifiable {
             self.contents = contents
             self.confirmApproves = confirmApproves
             self.maxSteps = maxSteps
+            self.wallClockSeconds = wallClockSeconds
+            self.modelStepTimeoutSeconds = modelStepTimeoutSeconds
+            self.samplingTemperature = samplingTemperature
             self.scriptedCalls = scriptedCalls
             self.environmentContext = environmentContext
             self.executor = executor

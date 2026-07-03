@@ -35,6 +35,60 @@ enum SubagentImageLoadPolicy: String, Codable, CaseIterable, Sendable {
     }
 }
 
+/// How the AppleScript subagent's model is kept resident across calls. The
+/// AppleScript bundle is always a DIFFERENT model than the chat model, so a
+/// run must unload chat, load the AppleScript model, run, and reload chat
+/// (single-GPU residency). Back-to-back `applescript` / `mac_query` calls pay
+/// that whole round-trip each time under `.singleResidency`. `.keepWarmAfterJob`
+/// instead keeps the AppleScript model resident for a short window after a run
+/// (deferring the chat reload), so a follow-up call reuses it and skips the
+/// swap — the biggest everyday latency win. Modeled on `SubagentImageLoadPolicy`.
+public enum AppleScriptLoadPolicy: String, Codable, CaseIterable, Sendable {
+    /// Restore the chat model immediately after every AppleScript run (the
+    /// original behavior; one resident model at all times).
+    case singleResidency = "single_residency"
+    /// Keep the AppleScript model resident for `keepWarmSeconds` after a run so
+    /// a follow-up AppleScript call reuses it. The chat model reload is deferred
+    /// until the window elapses or a chat turn reloads it on demand.
+    case keepWarmAfterJob = "keep_warm_after_job"
+
+    public var displayName: String {
+        switch self {
+        case .singleResidency: return L("Single Residency")
+        case .keepWarmAfterJob: return L("Keep Warm After Job")
+        }
+    }
+
+    public var caption: String {
+        switch self {
+        case .singleResidency:
+            return L("The chat model reloads right after each AppleScript run.")
+        case .keepWarmAfterJob:
+            return L(
+                "The AppleScript model stays loaded briefly after a run so back-to-back automations are faster."
+            )
+        }
+    }
+
+    public static var `default`: AppleScriptLoadPolicy { .keepWarmAfterJob }
+
+    /// How long the AppleScript model is kept resident after a run under
+    /// `.keepWarmAfterJob` before the chat model is restored. Bounded so a warm
+    /// hold can't strand the chat model unloaded indefinitely.
+    public static let keepWarmSeconds = 90
+
+    /// Tolerant decode so a malformed/legacy stored value resolves to the
+    /// default rather than discarding the config.
+    public init(storedValue raw: String?) {
+        self = raw.flatMap(AppleScriptLoadPolicy.init(rawValue:)) ?? .default
+    }
+
+    /// The keep-warm window in seconds for this policy (`0` disables it).
+    public var keepWarmSeconds: Int {
+        self == .keepWarmAfterJob ? Self.keepWarmSeconds : 0
+    }
+}
+
 /// The model-bundle kinds the Agent Delegation model pickers resolve. Only the
 /// two image kinds remain — text `spawn` uses the spawnable agent's own model,
 /// so there is no separate text-delegate model to pick.
@@ -207,6 +261,19 @@ struct SubagentConfiguration: Codable, Equatable, Sendable {
     /// script vs auto-run with a warning). Custom agents use their own
     /// `AgentSettings.appleScriptExecutionMode`.
     var defaultAppleScriptExecutionMode: AppleScriptExecutionMode
+    /// How the AppleScript model is kept resident across calls (single residency
+    /// vs keep-warm-after-job). Global for every agent's AppleScript runs — the
+    /// warm hold is a process-wide, single-GPU residency behavior, so it isn't
+    /// per-agent. Defaults to keep-warm for the back-to-back latency win.
+    var appleScriptLoadPolicy: AppleScriptLoadPolicy
+    /// Read-model split: when true (default), a `mac_query` READ runs on the
+    /// already-resident, tool-capable local chat model instead of swapping in
+    /// the dedicated AppleScript model — skipping the multi-GB unload/reload
+    /// round-trip on the most common path. Automation (`applescript`) always
+    /// uses the dedicated model, and the query gate still blocks any mutation,
+    /// so this trades only model quality (simple reads) for latency. The
+    /// resolved model is always recorded in the run payload — never hidden.
+    var appleScriptQueryPrefersResidentModel: Bool
     var permissionDefaults: SubagentPermissionDefaults
     var budgets: SubagentBudgets
     /// When true (default), a subagent/image job runs a refuse-before-evict RAM
@@ -253,6 +320,8 @@ struct SubagentConfiguration: Codable, Equatable, Sendable {
         appleScriptDelegationEnabled: Bool = false,
         defaultAppleScriptModelId: String? = nil,
         defaultAppleScriptExecutionMode: AppleScriptExecutionMode = .default,
+        appleScriptLoadPolicy: AppleScriptLoadPolicy = .default,
+        appleScriptQueryPrefersResidentModel: Bool = true,
         permissionDefaults: SubagentPermissionDefaults = SubagentPermissionDefaults(),
         budgets: SubagentBudgets = SubagentBudgets(),
         ramSafetyPreflightEnabled: Bool = true,
@@ -271,6 +340,8 @@ struct SubagentConfiguration: Codable, Equatable, Sendable {
         self.appleScriptDelegationEnabled = appleScriptDelegationEnabled
         self.defaultAppleScriptModelId = Self.normalizedModelId(defaultAppleScriptModelId)
         self.defaultAppleScriptExecutionMode = defaultAppleScriptExecutionMode
+        self.appleScriptLoadPolicy = appleScriptLoadPolicy
+        self.appleScriptQueryPrefersResidentModel = appleScriptQueryPrefersResidentModel
         self.permissionDefaults = permissionDefaults
         self.budgets = budgets.normalized
         self.ramSafetyPreflightEnabled = ramSafetyPreflightEnabled
@@ -363,6 +434,8 @@ struct SubagentConfiguration: Codable, Equatable, Sendable {
             appleScriptDelegationEnabled: appleScriptDelegationEnabled,
             defaultAppleScriptModelId: Self.normalizedModelId(defaultAppleScriptModelId),
             defaultAppleScriptExecutionMode: defaultAppleScriptExecutionMode,
+            appleScriptLoadPolicy: appleScriptLoadPolicy,
+            appleScriptQueryPrefersResidentModel: appleScriptQueryPrefersResidentModel,
             permissionDefaults: permissionDefaults,
             budgets: budgets.normalized,
             // Preserve the user's RAM-safety choice across the save/load round-trip.
@@ -389,6 +462,8 @@ struct SubagentConfiguration: Codable, Equatable, Sendable {
         case appleScriptDelegationEnabled
         case defaultAppleScriptModelId
         case defaultAppleScriptExecutionMode
+        case appleScriptLoadPolicy
+        case appleScriptQueryPrefersResidentModel
         case permissionDefaults
         case budgets
         case ramSafetyPreflightEnabled
@@ -435,6 +510,18 @@ struct SubagentConfiguration: Codable, Equatable, Sendable {
                 AppleScriptExecutionMode.self,
                 forKey: .defaultAppleScriptExecutionMode
             )) ?? .default,
+            // Enum field: lenient like the other enums (absent or unparseable →
+            // the keep-warm default) so an old config gains the latency win.
+            appleScriptLoadPolicy: (try? container.decodeIfPresent(
+                AppleScriptLoadPolicy.self,
+                forKey: .appleScriptLoadPolicy
+            )) ?? .default,
+            // Absent (old config) → true: the read-model split is a pure
+            // latency win with the query gate still blocking mutations.
+            appleScriptQueryPrefersResidentModel: try container.decodeIfPresent(
+                Bool.self,
+                forKey: .appleScriptQueryPrefersResidentModel
+            ) ?? true,
             permissionDefaults: (try? container.decodeIfPresent(
                 SubagentPermissionDefaults.self,
                 forKey: .permissionDefaults

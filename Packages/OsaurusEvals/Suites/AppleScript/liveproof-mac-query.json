@@ -1,0 +1,21 @@
+{
+  "id": "apple_script.liveproof-mac-query",
+  "domain": "apple_script",
+  "label": "AppleScript • liveProof read-only mac_query",
+  "query": "What is the POSIX path of the current user's home folder? Return just the path, and don't change anything.",
+  "notes": "Ground-truth lane for the mac_query read path: the REAL model + the REAL AppleScriptExecutor answer a deterministic, machine-portable read (`POSIX path of (path to home folder)` starts with /Users/ on every macOS user account). Read-only and side-effect free, needs no per-app Automation permission — the safe always-runnable liveProof anchor. Query mode blocks any write the model might propose. Skips when no AppleScript model is installed.",
+  "fixtures": {},
+  "expect": {
+    "appleScript": {
+      "lane": "liveProof",
+      "mode": "query",
+      "executor": { "kind": "real" },
+      "valuesContain": ["/Users/"],
+      "scoredMaxSteps": 4,
+      "rubric": [
+        "The AppleScript reads the current user's home folder path (e.g. `POSIX path of (path to home folder)`) and yields it as the script's result.",
+        "The script is read-only — it does not create, modify, move, or delete anything."
+      ]
+    }
+  }
+}

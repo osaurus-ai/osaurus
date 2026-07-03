@@ -1,0 +1,30 @@
+{
+  "id": "apple_script.live-permission-recovery",
+  "domain": "apple_script",
+  "label": "AppleScript • live permission-error recovery",
+  "query": "Set the body of the note 'Draft' to 'Approved'.",
+  "notes": "Model-driven counterpart of scripted-permission-recovery: the FIRST script the real model runs gets a genuine macOS Automation-permission error (-1743 'not allowed to control Notes'), the retry gets success. Scores whether the model actually RECOVERS — retries after the permission error instead of giving up or hallucinating success. The aggregate is honestly 'partial' (one permission-blocked attempt, one success). Real-TCC recovery can't be deterministically staged in a suite (it would need a revoked permission on the host), so the canned error IS the honest lane for this behavior. Known capability gap at authoring time: the 16B explains the permission and ends the task without retrying (exec=1, status=failed) — an honest FAIL row until the model follows the prompt's retry instruction. Skips when no AppleScript model is installed.",
+  "fixtures": {},
+  "expect": {
+    "appleScript": {
+      "lane": "live",
+      "mode": "automate",
+      "harness": { "verifyReadBack": false },
+      "executor": {
+        "kind": "mock",
+        "mockResults": [
+          { "status": "permissionRequired", "errorMessage": "Osaurus is not allowed to control Notes. Grant access in System Settings > Privacy & Security > Automation." },
+          { "status": "success" }
+        ]
+      },
+      "expectStatus": "partial",
+      "expectOutcome": ["done"],
+      "expectEffects": ["edit"],
+      "scoredMaxSteps": 3,
+      "rubric": [
+        "After the first attempt fails with a permission error, the model retries the operation (or an equivalent script) instead of abandoning the task or claiming success without running anything.",
+        "The final script targets the Notes application and sets the body of the note named 'Draft' to 'Approved'."
+      ]
+    }
+  }
+}

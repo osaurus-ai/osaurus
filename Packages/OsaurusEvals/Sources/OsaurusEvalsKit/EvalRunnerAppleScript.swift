@@ -60,7 +60,10 @@ extension EvalRunner {
             literals: mergedLiterals(content: exp.content, contents: exp.contents),
             harness: resolveHarness(exp.harness),
             maxSteps: exp.maxSteps ?? 12,
+            wallClockSeconds: exp.wallClockSeconds ?? 240,
+            modelStepTimeoutSeconds: exp.modelStepTimeoutSeconds ?? 90,
             model: lane == .scripted ? nil : modelId,
+            samplingTemperature: exp.samplingTemperature,
             environmentContext: exp.environmentContext,
             confirmApproves: exp.confirmApproves ?? true,
             scriptedCalls: exp.scriptedCalls ?? [],
@@ -283,10 +286,13 @@ extension EvalRunner {
 
         // Run summary + the generated scripts, echoed last so `--verbose` shows
         // exactly what the model produced (the tuning signal).
+        let tokensPerSecond =
+            transcript.tokensPerSecond.map { String(format: " tok/s=%.1f", $0) } ?? ""
         notes.append(
             "summary: lane=\(lane.rawValue) status=\(transcript.status) "
                 + "outcome=\(transcript.outcome) exec=\(transcript.scriptsExecuted) "
-                + "ok=\(transcript.succeeded) fail=\(transcript.failed) tokens=\(transcript.modelTokens)"
+                + "ok=\(transcript.succeeded) fail=\(transcript.failed) "
+                + "tokens=\(transcript.modelTokens)\(tokensPerSecond)"
         )
         if let value = transcript.lastOutput, !value.isEmpty {
             notes.append("value: \(value.replacingOccurrences(of: "\n", with: " "))")
@@ -307,6 +313,7 @@ extension EvalRunner {
             judgeLatencyMs: judgeElapsed,
             telemetry: transcript.ranModel
                 ? EvalCaseTelemetry(
+                    decodeTokensPerSecond: transcript.tokensPerSecond,
                     totalModelTokens: transcript.modelTokens,
                     modelSteps: transcript.proposals.count
                 )
@@ -349,6 +356,8 @@ extension EvalRunner {
 
         var verify = spec?.verifyReadBack ?? base.verifyReadBack
         var desktop = spec?.includeDesktopContext ?? base.includeDesktopContext
+        var dictionary = spec?.includeDictionaryContext ?? base.includeDictionaryContext
+        var recipes = spec?.includeAppRecipes ?? base.includeAppRecipes
         var promptVariant =
             spec?.promptVariant.flatMap(AppleScriptHarnessOptions.PromptVariant.init(rawValue:))
             ?? base.promptVariant
@@ -359,6 +368,8 @@ extension EvalRunner {
 
         if let v = boolEnv(env["OSAURUS_AS_VERIFY_READBACK"]) { verify = v }
         if let v = boolEnv(env["OSAURUS_AS_DESKTOP_CONTEXT"]) { desktop = v }
+        if let v = boolEnv(env["OSAURUS_AS_DICTIONARY_CONTEXT"]) { dictionary = v }
+        if let v = boolEnv(env["OSAURUS_AS_APP_RECIPES"]) { recipes = v }
         if let raw = env["OSAURUS_AS_PROMPT_VARIANT"],
             let p = AppleScriptHarnessOptions.PromptVariant(rawValue: raw)
         {
@@ -373,6 +384,8 @@ extension EvalRunner {
         return AppleScriptHarnessOptions(
             verifyReadBack: verify,
             includeDesktopContext: desktop,
+            includeDictionaryContext: dictionary,
+            includeAppRecipes: recipes,
             promptVariant: promptVariant,
             literalAnnouncementStyle: announce
         )
@@ -394,7 +407,18 @@ extension EvalRunner {
         guard let spec else { return .mockResults([]) }
         if (spec.kind ?? "mock").lowercased() == "real" { return .real }
         if let world = spec.mockWorld {
-            return .mockWorld(MockAppleScriptWorld(notes: world.notes ?? [:], volume: world.volume))
+            return .mockWorld(
+                MockAppleScriptWorld(
+                    notes: world.notes ?? [:],
+                    volume: world.volume,
+                    safariURL: world.safariURL,
+                    mailUnread: world.mailUnread,
+                    frontmostApp: world.frontmostApp,
+                    folders: Dictionary(
+                        uniqueKeysWithValues: (world.folders ?? []).map { ($0, true) }
+                    )
+                )
+            )
         }
         return .mockResults((spec.mockResults ?? []).map(executionResult(from:)))
     }

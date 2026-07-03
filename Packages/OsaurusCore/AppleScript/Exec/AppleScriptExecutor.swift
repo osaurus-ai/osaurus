@@ -24,8 +24,13 @@
 //  permitted" status) back to the model. There is no output coercion or fake
 //  success — a failing script returns its actual error so the model can correct.
 //
+//  JXA (JavaScript for Automation) runs through the same serial queue and
+//  watchdog via OSAKit's `OSAScript` with the JavaScript OSA component —
+//  identical outcome mapping, different language runtime.
+//
 
 import Foundation
+import OSAKit
 
 /// Structured outcome of one `NSAppleScript` execution. `output` is the
 /// coerced textual result on success; the error fields carry the real
@@ -92,6 +97,7 @@ enum AppleScriptExecutor {
     /// the caller never has a script execute after it gave up.
     static func run(
         source: String,
+        language: AppleScriptLanguage = .appleScript,
         timeout: TimeInterval = defaultTimeoutSeconds
     ) async -> AppleScriptExecutionResult {
         await withCheckedContinuation {
@@ -106,7 +112,12 @@ enum AppleScriptExecutor {
                 // Fresh autorelease pool per run: the OSA components and AE
                 // descriptors are autoreleased, and this queue's thread is
                 // long-lived across many runs.
-                let result = autoreleasepool { executeSynchronously(source: source) }
+                let result = autoreleasepool {
+                    switch language {
+                    case .appleScript: return executeSynchronously(source: source)
+                    case .javascript: return executeJavaScriptSynchronously(source: source)
+                    }
+                }
                 resumer.resume(result)
             }
 
@@ -123,6 +134,103 @@ enum AppleScriptExecutor {
                     )
                 }
             }
+        }
+    }
+
+    /// Compile `source` WITHOUT executing it — the confirm-gate dry run. A
+    /// compile sends no Apple Events and mutates nothing; it only proves the
+    /// syntax. Returns the `.compileError` result to feed back to the model
+    /// when the script cannot compile, and `nil` when it compiles fine — or
+    /// when the check couldn't complete inside `timeout` (never block or fail
+    /// the flow on the checker itself; the executor still reports the real
+    /// compile outcome at run time).
+    static func compileCheck(
+        source: String,
+        language: AppleScriptLanguage = .appleScript,
+        timeout: TimeInterval = 10
+    ) async -> AppleScriptExecutionResult? {
+        let result: AppleScriptExecutionResult = await withCheckedContinuation { continuation in
+            let resumer = AppleScriptSingleResume(continuation)
+            executionQueue.async {
+                guard !resumer.isResumed else { return }
+                let outcome = autoreleasepool { compileSynchronously(source: source, language: language) }
+                resumer.resume(outcome)
+            }
+            if timeout > 0, timeout.isFinite {
+                DispatchQueue.global(qos: .userInitiated).asyncAfter(deadline: .now() + timeout) {
+                    resumer.resume(
+                        AppleScriptExecutionResult(
+                            status: .timedOut,
+                            output: nil,
+                            errorNumber: nil,
+                            errorMessage: nil
+                        )
+                    )
+                }
+            }
+        }
+        return result.status == .compileError ? result : nil
+    }
+
+    /// Synchronous compile-only pass for either OSA language. `.success` when
+    /// the source compiles, `.compileError` (with the real error fields) when
+    /// it doesn't, `.runtimeError` when the OSA component itself is missing.
+    private static func compileSynchronously(
+        source: String,
+        language: AppleScriptLanguage
+    ) -> AppleScriptExecutionResult {
+        let ok = AppleScriptExecutionResult(
+            status: .success,
+            output: nil,
+            errorNumber: nil,
+            errorMessage: nil
+        )
+        switch language {
+        case .appleScript:
+            guard let script = NSAppleScript(source: source) else {
+                return AppleScriptExecutionResult(
+                    status: .compileError,
+                    output: nil,
+                    errorNumber: nil,
+                    errorMessage: "The AppleScript could not be initialized."
+                )
+            }
+            var compileError: NSDictionary?
+            if !script.compileAndReturnError(&compileError) {
+                let fields = errorFields(compileError)
+                return AppleScriptExecutionResult(
+                    status: .compileError,
+                    output: nil,
+                    errorNumber: fields.number,
+                    errorMessage: fields.message ?? "The AppleScript failed to compile."
+                )
+            }
+            return ok
+        case .javascript:
+            guard
+                let osaLanguage = OSALanguage(
+                    forName: AppleScriptLanguage.javascript.osaLanguageName
+                )
+            else {
+                return AppleScriptExecutionResult(
+                    status: .runtimeError,
+                    output: nil,
+                    errorNumber: nil,
+                    errorMessage: nil
+                )
+            }
+            let script = OSAScript(source: source, language: osaLanguage)
+            var compileError: NSDictionary?
+            if !script.compileAndReturnError(&compileError) {
+                let fields = errorFields(compileError)
+                return AppleScriptExecutionResult(
+                    status: .compileError,
+                    output: nil,
+                    errorNumber: fields.number,
+                    errorMessage: fields.message ?? "The JXA script failed to compile."
+                )
+            }
+            return ok
         }
     }
 
@@ -154,10 +262,19 @@ enum AppleScriptExecutor {
         let descriptor = script.executeAndReturnError(&executeError)
         if let executeError {
             let fields = errorFields(executeError)
-            let status: AppleScriptExecutionResult.Status =
-                fields.number == permissionDeniedErrorNumber ? .permissionRequired : .runtimeError
+            // Two permission shapes map to `.permissionRequired`: the -1743
+            // Automation denial, and System Events' assistive-access denials
+            // (UI scripting without the Accessibility grant) — both are user
+            // grants, not script bugs, so the loop routes them to permission
+            // recovery instead of a rewrite.
+            let isPermission =
+                fields.number == permissionDeniedErrorNumber
+                || AppleScriptAccessibility.isAccessibilityDenial(
+                    errorNumber: fields.number,
+                    errorMessage: fields.message
+                )
             return AppleScriptExecutionResult(
-                status: status,
+                status: isPermission ? .permissionRequired : .runtimeError,
                 output: nil,
                 errorNumber: fields.number,
                 errorMessage: fields.message ?? "The AppleScript failed while running."
@@ -172,11 +289,77 @@ enum AppleScriptExecutor {
         )
     }
 
+    /// Synchronous compile + execute for a JXA (JavaScript for Automation)
+    /// source via OSAKit's `OSAScript` with the JavaScript OSA component. Same
+    /// outcome mapping as the AppleScript path: real compile error, real
+    /// runtime error (with the permission statuses recognized), or the coerced
+    /// return-value descriptor on success.
+    private static func executeJavaScriptSynchronously(source: String) -> AppleScriptExecutionResult {
+        guard let language = OSALanguage(forName: AppleScriptLanguage.javascript.osaLanguageName)
+        else {
+            // The JavaScript OSA component ships with macOS; its absence is an
+            // environment fault worth reporting honestly, not a script bug.
+            return AppleScriptExecutionResult(
+                status: .runtimeError,
+                output: nil,
+                errorNumber: nil,
+                errorMessage:
+                    "JavaScript for Automation is not available on this system (no JavaScript OSA "
+                    + "component)."
+            )
+        }
+        let script = OSAScript(source: source, language: language)
+
+        var compileError: NSDictionary?
+        if !script.compileAndReturnError(&compileError) {
+            let fields = errorFields(compileError)
+            return AppleScriptExecutionResult(
+                status: .compileError,
+                output: nil,
+                errorNumber: fields.number,
+                errorMessage: fields.message ?? "The JXA script failed to compile."
+            )
+        }
+
+        var executeError: NSDictionary?
+        let descriptor = script.executeAndReturnError(&executeError)
+        if let executeError {
+            let fields = errorFields(executeError)
+            let isPermission =
+                fields.number == permissionDeniedErrorNumber
+                || AppleScriptAccessibility.isAccessibilityDenial(
+                    errorNumber: fields.number,
+                    errorMessage: fields.message
+                )
+            return AppleScriptExecutionResult(
+                status: isPermission ? .permissionRequired : .runtimeError,
+                output: nil,
+                errorNumber: fields.number,
+                errorMessage: fields.message ?? "The JXA script failed while running."
+            )
+        }
+
+        return AppleScriptExecutionResult(
+            status: .success,
+            output: coerceOutput(descriptor),
+            errorNumber: nil,
+            errorMessage: nil
+        )
+    }
+
+    /// Extract the error number + message from either error-dictionary shape:
+    /// `NSAppleScript` keys (`NSAppleScriptErrorNumber`/`…Message`) or OSAKit's
+    /// `OSAScript` keys (`OSAScriptErrorNumberKey`/`OSAScriptErrorMessageKey`).
     private static func errorFields(_ dict: NSDictionary?) -> (number: Int?, message: String?) {
         guard let dict else { return (nil, nil) }
-        let number = dict[NSAppleScript.errorNumber] as? Int
-        let message = (dict[NSAppleScript.errorMessage] as? String)?
-            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let number =
+            (dict[NSAppleScript.errorNumber] as? Int)
+            ?? (dict[OSAScriptErrorNumberKey] as? Int)
+        let rawMessage =
+            (dict[NSAppleScript.errorMessage] as? String)
+            ?? (dict[OSAScriptErrorMessageKey] as? String)
+            ?? (dict[OSAScriptErrorBriefMessageKey] as? String)
+        let message = rawMessage?.trimmingCharacters(in: .whitespacesAndNewlines)
         return (number, (message?.isEmpty ?? true) ? nil : message)
     }
 
@@ -200,6 +383,27 @@ enum AppleScriptExecutor {
     private static let aeBooleanTypes: Set<DescType> = [
         fourCharCode("bool"), fourCharCode("true"), fourCharCode("fals"),
     ]
+    /// `keyASUserRecordFields` — the keyword under which a user-defined
+    /// AppleScript record carries its NON-reserved label/value pairs as a
+    /// flat alternating list (`{battery:87}` → `usrf: ["battery", 87]`).
+    /// These labels are real, resolvable names rather than four-char codes.
+    private static let aeUserRecordFields: AEKeyword = fourCharCode("usrf")
+    /// AppleScript RESERVED record labels compile to coded keyword fields
+    /// directly on the record (not into `usrf`); map the ubiquitous ones back
+    /// to their source names so `{name:"Front Door", locked:true}` reads back
+    /// as written. Codes outside the map fall back to their raw four-char tag.
+    private static let aeReservedRecordKeys: [AEKeyword: String] = [
+        fourCharCode("pnam"): "name",
+        fourCharCode("ID  "): "id",
+        fourCharCode("pidx"): "index",
+        fourCharCode("pcls"): "class",
+        fourCharCode("aslk"): "locked",
+        fourCharCode("vers"): "version",
+        fourCharCode("pcnt"): "contents",
+        fourCharCode("ppor"): "port",
+        fourCharCode("psiz"): "size",
+        fourCharCode("pALL"): "properties",
+    ]
 
     /// Pack a (≤4 char) ASCII tag into a `DescType` (FourCharCode) without
     /// importing the Carbon headers that declare `typeAEList` & friends.
@@ -215,20 +419,10 @@ enum AppleScriptExecutor {
     private static func render(_ descriptor: NSAppleEventDescriptor) -> String? {
         let type = descriptor.descriptorType
         if aeBooleanTypes.contains(type) { return descriptor.booleanValue ? "true" : "false" }
-        // A list (`{1, 2, 3}` / `{"a", "b"}`) renders element-wise. A record's
-        // keys are opaque four-char AE codes (or user-field blobs), so try a
-        // text coercion first and otherwise surface its VALUES joined — enough
-        // for the parent to read. (The system prompt steers the model to return
-        // strings/lists for clean multi-value output, avoiding records anyway.)
+        // A list (`{1, 2, 3}` / `{"a", "b"}`) renders element-wise; a record
+        // renders as `key: value` pairs with its REAL keys where resolvable.
         if type == aeListType { return joinItems(descriptor) }
-        if type == aeRecordType {
-            if let coerced = descriptor.coerce(toDescriptorType: aeUnicodeType)?.stringValue,
-                !coerced.isEmpty
-            {
-                return coerced
-            }
-            return joinItems(descriptor)
-        }
+        if type == aeRecordType { return renderRecord(descriptor) }
         if let value = descriptor.stringValue, !value.isEmpty { return value }
         if let coerced = descriptor.coerce(toDescriptorType: aeUnicodeType)?.stringValue,
             !coerced.isEmpty
@@ -248,6 +442,66 @@ enum AppleScriptExecutor {
             if let item = descriptor.atIndex(index), let text = render(item) { parts.append(text) }
         }
         return parts.isEmpty ? nil : parts.joined(separator: ", ")
+    }
+
+    /// Render a record descriptor as `key: value` pairs with REAL keys where
+    /// resolvable. Two field shapes coexist on one record: user-defined labels
+    /// arrive as an alternating key/value list under `usrf`, while RESERVED
+    /// labels (`name`, `id`, …) arrive as coded keyword fields directly on the
+    /// record — mapped back via `aeReservedRecordKeys`, with unknown codes
+    /// surfacing their four-char tag (still actionable). Nested containers are
+    /// braced so pair boundaries stay readable. Falls back to text coercion,
+    /// then value-joining, when nothing renders as a pair.
+    private static func renderRecord(_ descriptor: NSAppleEventDescriptor) -> String? {
+        let count = descriptor.numberOfItems
+        guard count > 0 else { return nil }
+        var parts: [String] = []
+        for index in 1 ... count {
+            guard let item = descriptor.atIndex(index) else { continue }
+            let keyword = descriptor.keywordForDescriptor(at: index)
+            if keyword == aeUserRecordFields {
+                var fieldIndex = 1
+                while fieldIndex + 1 <= item.numberOfItems {
+                    if let key = item.atIndex(fieldIndex)?.stringValue, !key.isEmpty,
+                        let value = item.atIndex(fieldIndex + 1).flatMap(renderFieldValue)
+                    {
+                        parts.append("\(key): \(value)")
+                    }
+                    fieldIndex += 2
+                }
+            } else if let value = renderFieldValue(item) {
+                parts.append("\(recordKeyName(for: keyword)): \(value)")
+            }
+        }
+        if !parts.isEmpty { return parts.joined(separator: ", ") }
+        if let coerced = descriptor.coerce(toDescriptorType: aeUnicodeType)?.stringValue,
+            !coerced.isEmpty
+        {
+            return coerced
+        }
+        return joinItems(descriptor)
+    }
+
+    /// Render one record-field value, bracing nested containers so a nested
+    /// record/list doesn't blur into the parent's `key: value` sequence.
+    private static func renderFieldValue(_ descriptor: NSAppleEventDescriptor) -> String? {
+        guard let text = render(descriptor) else { return nil }
+        let type = descriptor.descriptorType
+        return (type == aeRecordType || type == aeListType) ? "{\(text)}" : text
+    }
+
+    /// Readable name for a coded record keyword: known reserved labels map to
+    /// their AppleScript source names; anything else surfaces its raw
+    /// four-char tag rather than being dropped.
+    private static func recordKeyName(for keyword: AEKeyword) -> String {
+        if let name = aeReservedRecordKeys[keyword] { return name }
+        let bytes = [
+            UInt8((keyword >> 24) & 0xFF), UInt8((keyword >> 16) & 0xFF),
+            UInt8((keyword >> 8) & 0xFF), UInt8(keyword & 0xFF),
+        ]
+        let tag = (String(bytes: bytes, encoding: .macOSRoman) ?? "")
+            .trimmingCharacters(in: .whitespaces)
+        return tag.isEmpty ? "?" : tag
     }
 }
 

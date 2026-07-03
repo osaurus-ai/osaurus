@@ -4,10 +4,12 @@
 //
 //  A minimal, deterministic simulation of the tiny slice of "app world" the
 //  AppleScript capability evals need to assert outcomes WITHOUT touching the
-//  real desktop: Notes bodies and the system output volume. It records writes
-//  and answers the matching read-back so a `live` case can prove the model's
-//  script actually set the right state, then read it back — the same
-//  write-then-verify shape the loop encourages — with zero side effects.
+//  real desktop: Notes bodies, the system output volume, the front Safari
+//  page's URL, Mail's inbox unread count, Finder folders, and the frontmost
+//  process (System Events). It records writes and answers the matching
+//  read-back so a `live` case can prove the model's script actually set the
+//  right state, then read it back — the same write-then-verify shape the loop
+//  encourages — with zero side effects.
 //
 //  It is a TEST DOUBLE, not production behavior: it simulates the OS, it never
 //  inspects, coerces, or repairs the model's output. A script it can't
@@ -28,49 +30,108 @@ public struct MockAppleScriptWorld: Sendable, Equatable {
     public private(set) var notes: [String: String]
     /// System output volume (0–100), if set/seeded.
     public private(set) var volume: Int?
+    /// The front Safari document's URL, if seeded/set.
+    public private(set) var safariURL: String?
+    /// Mail inbox unread count, if seeded.
+    public private(set) var mailUnread: Int?
+    /// The frontmost application process name (System Events), if seeded.
+    public private(set) var frontmostApp: String?
+    /// Finder folder name → exists. Seeded folders read as existing; a
+    /// `make new folder` records the new name.
+    public private(set) var folders: [String: Bool]
     /// Canonical keys written, in order (e.g. `note:Quotes`, `volume`).
     public private(set) var writeLog: [String] = []
 
-    public init(notes: [String: String] = [:], volume: Int? = nil) {
+    public init(
+        notes: [String: String] = [:],
+        volume: Int? = nil,
+        safariURL: String? = nil,
+        mailUnread: Int? = nil,
+        frontmostApp: String? = nil,
+        folders: [String: Bool] = [:]
+    ) {
         self.notes = notes
         self.volume = volume
+        self.safariURL = safariURL
+        self.mailUnread = mailUnread
+        self.frontmostApp = frontmostApp
+        self.folders = folders
     }
 
-    /// Canonical final state: `note:<name>` → body, `volume` → number.
+    /// Canonical final state: `note:<name>` → body, `volume` → number,
+    /// `safari:url` → URL, `mail:unread` → count, `frontmost` → app name,
+    /// `folder:<name>` → "true"/"false".
     public func snapshot() -> [String: String] {
         var out: [String: String] = [:]
         for (name, body) in notes { out["note:\(name)"] = body }
         if let volume { out["volume"] = String(volume) }
+        if let safariURL { out["safari:url"] = safariURL }
+        if let mailUnread { out["mail:unread"] = String(mailUnread) }
+        if let frontmostApp { out["frontmost"] = frontmostApp }
+        for (name, exists) in folders { out["folder:\(name)"] = exists ? "true" : "false" }
         return out
     }
 
     /// Simulate running `script`. Writes update state and return a bare
     /// success; a recognized read returns the stored value; anything else
     /// returns `fallback` (so harness ignorance never scores against the model).
+    /// A multi-app script (e.g. Safari + Finder in one `run_applescript`)
+    /// records EVERY recognized write, not just the first — otherwise a
+    /// well-formed combined script would be scored as if half of it never ran.
     public mutating func handle(
         _ script: String,
         fallback: AppleScriptExecutionResult
     ) -> AppleScriptExecutionResult {
+        // Simple `set name to "literal"` bindings, so idiomatic scripts that
+        // hoist their values (`set folderName to "Osaurus Drops"` … `{name:
+        // folderName}`) resolve to the same literal a direct form would.
+        let bindings = Self.parseStringBindings(script)
+
+        var wroteAny = false
         if let write = Self.parseNoteBodyWrite(script) {
             notes[write.name] = write.value
             writeLog.append("note:\(write.name)")
-            return .success(nil)
+            wroteAny = true
         }
         if let create = Self.parseNoteCreate(script) {
             notes[create.name] = create.value
             writeLog.append("note:\(create.name)")
-            return .success(nil)
+            wroteAny = true
         }
         if let newVolume = Self.parseVolumeWrite(script) {
             volume = newVolume
             writeLog.append("volume")
-            return .success(nil)
+            wroteAny = true
         }
+        if let url = Self.parseSafariURLWrite(script, bindings: bindings) {
+            safariURL = url
+            writeLog.append("safari:url")
+            wroteAny = true
+        }
+        if let folder = Self.parseFolderCreate(script, bindings: bindings) {
+            folders[folder] = true
+            writeLog.append("folder:\(folder)")
+            wroteAny = true
+        }
+        if wroteAny { return .success(nil) }
+
         if let name = Self.parseNoteBodyRead(script), let body = notes[name] {
             return .success(body)
         }
         if Self.isVolumeRead(script), let volume {
             return .success(String(volume))
+        }
+        if Self.isSafariURLRead(script), let safariURL {
+            return .success(safariURL)
+        }
+        if Self.isMailUnreadRead(script), let mailUnread {
+            return .success(String(mailUnread))
+        }
+        if Self.isFrontmostRead(script), let frontmostApp {
+            return .success(frontmostApp)
+        }
+        if let folder = Self.parseFolderExistsRead(script, bindings: bindings) {
+            return .success(folders[folder] == true ? "true" : "false")
         }
         return fallback
     }
@@ -147,6 +208,155 @@ public struct MockAppleScriptWorld: Sendable, Equatable {
         let lower = script.lowercased()
         guard lower.contains("volume"), !lower.contains("set volume") else { return false }
         return lower.contains("get") || lower.contains("return") || lower.contains("output volume")
+    }
+
+    /// A Safari URL WRITE in any of the idiomatic forms — `set URL of front
+    /// document to …`, `set URL of current tab of front window to …`,
+    /// `open location …`, `make new document with properties {URL:…}` — where
+    /// the value is a string literal or a bound identifier. Returns the URL.
+    static func parseSafariURLWrite(
+        _ script: String,
+        bindings: [String: String] = [:]
+    ) -> String? {
+        let writeMarkers = [
+            #"set\s+(the\s+)?url\s+of\s+(the\s+)?front\s+document\s+to"#,
+            #"set\s+(the\s+)?url\s+of\s+(the\s+)?current\s+tab\s+of\s+(the\s+)?front\s+window\s+to"#,
+            #"open\s+location"#,
+            #"make\s+new\s+document\s+with\s+properties\s*\{\s*url\s*:"#,
+        ]
+        for marker in writeMarkers {
+            if let range = script.range(
+                of: marker,
+                options: [.regularExpression, .caseInsensitive]
+            ),
+                let value = stringValue(after: range.upperBound, in: script, bindings: bindings)
+            {
+                return value
+            }
+        }
+        return nil
+    }
+
+    /// A Safari front-document URL READ (`URL of front document` /
+    /// `URL of current tab of front window`) that is not the write form.
+    static func isSafariURLRead(_ script: String) -> Bool {
+        guard parseSafariURLWrite(script) == nil else { return false }
+        let lower = script.lowercased()
+        return lower.range(
+            of: #"url\s+of\s+(the\s+)?(front\s+document|current\s+tab)"#,
+            options: .regularExpression
+        ) != nil
+    }
+
+    /// A Mail inbox unread-count READ: the canonical `unread count of inbox`
+    /// property, or the equivalent manual filter `(count of) messages of
+    /// inbox whose read status is false`. Both unambiguously ask for the
+    /// same number the world seeds.
+    static func isMailUnreadRead(_ script: String) -> Bool {
+        let lower = script.lowercased()
+        if lower.contains("unread count") { return true }
+        return lower.range(
+            of: #"messages\s+of\s+(the\s+)?inbox\s+whose\s+read\s+status\s+is\s+false"#,
+            options: .regularExpression
+        ) != nil
+    }
+
+    /// A System Events frontmost-process READ (`… application process whose
+    /// frontmost is true`). Must not be a write (`set frontmost …`).
+    static func isFrontmostRead(_ script: String) -> Bool {
+        let lower = script.lowercased()
+        guard !lower.contains("set frontmost") else { return false }
+        return lower.range(
+            of: #"(application\s+)?process(es)?\s+whose\s+frontmost\s+is\s+true"#,
+            options: .regularExpression
+        ) != nil
+    }
+
+    /// A Finder folder CREATE (`make new folder … {name:"NAME"}` or
+    /// `{name:boundIdentifier}`) → NAME.
+    static func parseFolderCreate(
+        _ script: String,
+        bindings: [String: String] = [:]
+    ) -> String? {
+        guard
+            let makeRange = script.range(
+                of: "make new folder",
+                options: .caseInsensitive
+            )
+        else { return nil }
+        guard
+            let nameKey = script.range(
+                of: #"name\s*:"#,
+                options: [.regularExpression, .caseInsensitive],
+                range: makeRange.upperBound ..< script.endIndex
+            )
+        else { return nil }
+        return stringValue(after: nameKey.upperBound, in: script, bindings: bindings)
+    }
+
+    /// A Finder folder-existence READ (`exists folder "NAME"` /
+    /// `exists folder boundIdentifier`) → NAME. The write is handled first, so
+    /// a create-if-missing COMPOUND script (both forms in one script) resolves
+    /// as the create.
+    static func parseFolderExistsRead(
+        _ script: String,
+        bindings: [String: String] = [:]
+    ) -> String? {
+        guard
+            let existsRange = script.range(
+                of: #"exists\s+folder"#,
+                options: [.regularExpression, .caseInsensitive]
+            )
+        else { return nil }
+        return stringValue(after: existsRange.upperBound, in: script, bindings: bindings)
+    }
+
+    // MARK: - Identifier bindings
+
+    /// Collect `set <identifier> to "literal"` bindings so parsers can resolve
+    /// an idiomatic hoisted value (`set folderName to "Osaurus Drops"`).
+    /// Only DIRECT string-literal assignments bind; anything computed stays
+    /// unresolved (→ fallback), never guessed.
+    static func parseStringBindings(_ script: String) -> [String: String] {
+        var bindings: [String: String] = [:]
+        var searchStart = script.startIndex
+        while let setRange = script.range(
+            of: #"\bset\s+([A-Za-z_][A-Za-z0-9_]*)\s+to\s+""#,
+            options: [.regularExpression, .caseInsensitive],
+            range: searchStart ..< script.endIndex
+        ) {
+            let clause = script[setRange]
+            // The identifier sits between "set" and "to" in the matched clause.
+            let afterSet = clause.dropFirst(3).drop(while: \.isWhitespace)
+            let identifier = String(afterSet.prefix(while: { $0.isLetter || $0.isNumber || $0 == "_" }))
+            if !identifier.isEmpty,
+                let literal = firstStringLiteral(script[setRange.lowerBound...])
+            {
+                bindings[identifier.lowercased()] = literal.value
+                searchStart = literal.end
+            } else {
+                searchStart = setRange.upperBound
+            }
+        }
+        return bindings
+    }
+
+    /// Resolve the value expression at `index`: a direct string literal, or a
+    /// bare identifier previously bound to one. Anything else (computed
+    /// expressions, parenthesized forms) stays unresolved — the caller falls
+    /// back rather than guessing.
+    private static func stringValue(
+        after index: String.Index,
+        in script: String,
+        bindings: [String: String]
+    ) -> String? {
+        let head = script[index...].drop(while: { $0 == " " || $0 == "\t" })
+        if head.first == "\"" {
+            return firstStringLiteral(head)?.value
+        }
+        let identifier = String(head.prefix(while: { $0.isLetter || $0.isNumber || $0 == "_" }))
+        guard !identifier.isEmpty else { return nil }
+        return bindings[identifier.lowercased()]
     }
 
     // MARK: - AppleScript string-literal scanner

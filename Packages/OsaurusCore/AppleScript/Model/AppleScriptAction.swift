@@ -13,13 +13,55 @@
 
 import Foundation
 
+/// Which OSA language a proposed script is written in. AppleScript is the
+/// default and the primary surface; JXA (JavaScript for Automation) is the
+/// opt-in alternative for apps better served by their JS bridge. Executed via
+/// the matching OSA component in `AppleScriptExecutor`.
+public enum AppleScriptLanguage: String, Sendable, Equatable, CaseIterable {
+    case appleScript = "applescript"
+    case javascript = "javascript"
+
+    /// Lenient parse of the model-provided `language` string: common JXA
+    /// spellings map to `.javascript`; anything else (absent, blank, or
+    /// unrecognized) defaults to AppleScript rather than failing the call.
+    public init(callValue raw: String?) {
+        switch raw?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
+        case "javascript", "jxa", "js", "javascript for automation":
+            self = .javascript
+        default:
+            self = .appleScript
+        }
+    }
+
+    /// The OSA component name `OSALanguage(forName:)` resolves.
+    public var osaLanguageName: String {
+        switch self {
+        case .appleScript: return "AppleScript"
+        case .javascript: return "JavaScript"
+        }
+    }
+
+    /// Short human label for feed / confirm surfaces.
+    public var displayLabel: String {
+        switch self {
+        case .appleScript: return "AppleScript"
+        case .javascript: return "JXA (JavaScript)"
+        }
+    }
+}
+
 /// Outcome of decoding a model-emitted `run_applescript` call.
 public enum AppleScriptActionDecode: Sendable, Equatable {
-    /// A non-empty script to compile + run.
-    case script(String)
+    /// A non-empty script to compile + run, in the given OSA language.
+    case script(String, AppleScriptLanguage)
     /// The shape was wrong (or the script was blank). `reason` is fed back to
     /// the model as a tool result for a bounded re-ask.
     case invalid(reason: String)
+
+    /// Convenience for the default-language (AppleScript) form.
+    public static func script(_ source: String) -> AppleScriptActionDecode {
+        .script(source, .appleScript)
+    }
 }
 
 /// Namespace for the `run_applescript` tool contract: name, JSON schema, the
@@ -28,8 +70,9 @@ public enum AppleScriptAction {
     /// The tool name the AppleScript model calls inside the loop.
     public static let toolName = "run_applescript"
 
-    /// Strict JSON schema: one required `script` string. `additionalProperties:
-    /// false` keeps the contract tight, the same posture as `agent_action`.
+    /// Strict JSON schema: one required `script` string plus an optional
+    /// `language` discriminator. `additionalProperties: false` keeps the
+    /// contract tight, the same posture as `agent_action`.
     public static let schema: JSONValue = .object([
         "type": .string("object"),
         "additionalProperties": .bool(false),
@@ -37,12 +80,21 @@ public enum AppleScriptAction {
             "script": .object([
                 "type": .string("string"),
                 "description": .string(
-                    "The complete, executable AppleScript to run. Provide the entire script as one "
+                    "The complete, executable script to run. Provide the entire script as one "
                         + "string (use \\n for newlines). Do not wrap it in Markdown code fences. If the "
                         + "task provided content as a {{name}} placeholder, write that token where the "
                         + "text value goes instead of re-typing it — it expands to the exact text."
                 ),
-            ])
+            ]),
+            "language": .object([
+                "type": .string("string"),
+                "enum": .array([.string("applescript"), .string("javascript")]),
+                "description": .string(
+                    "Optional. The script's language: \"applescript\" (default) or \"javascript\" "
+                        + "for JXA (JavaScript for Automation), when an app is better served by its "
+                        + "JS bridge."
+                ),
+            ]),
         ]),
         "required": .array([.string("script")]),
     ])
@@ -60,7 +112,8 @@ public enum AppleScriptAction {
                     + "the requested value(s) (build a string or list for several values). If the task "
                     + "provided verbatim content as a {{name}} placeholder, insert that token where the "
                     + "text goes rather than re-typing it. You will receive its return value (or a "
-                    + "compile/runtime error) and can correct and call again. When the task is done, "
+                    + "compile/runtime error) and can correct and call again. Scripts are AppleScript "
+                    + "unless you set `language` to \"javascript\" (JXA). When the task is done, "
                     + "reply with a short plain-text summary that includes the value(s) and no tool call.",
                 parameters: schema
             )
@@ -117,7 +170,8 @@ public enum AppleScriptAction {
                 reason: "`script` was empty. Provide the complete AppleScript to run."
             )
         }
-        return .script(normalized)
+        let language = AppleScriptLanguage(callValue: dict["language"] as? String)
+        return .script(normalized, language)
     }
 
     /// Strip a surrounding Markdown code fence (```applescript … ```), which

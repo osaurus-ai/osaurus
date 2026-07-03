@@ -46,6 +46,18 @@ final class AppleScriptKind: SubagentKind, @unchecked Sendable {
     /// Residency plan resolved up front (reject-before-evict), run by
     /// `makeHandoff()`. `.none` when nothing else is resident.
     private var residencyPlan: ResidencyPlan = .none
+    /// Keep-warm policy snapshotted in `resolveModel`, consumed by
+    /// `makeHandoff()`. Under keep-warm the chat restore is deferred so a
+    /// back-to-back AppleScript call reuses the resident model.
+    private var loadPolicy: AppleScriptLoadPolicy = .default
+    /// The resolved model id, captured for the warm handoff (which keys the
+    /// deferred restore on the model kept resident).
+    private var resolvedModelId: String = ""
+    /// Read-model split: true when this `mac_query` run generates on the
+    /// ALREADY-RESIDENT chat model instead of the dedicated AppleScript model.
+    /// Nothing is swapped, so `makeHandoff()` must stay a passthrough (no
+    /// residency handoff and no warm hold to schedule).
+    private var usingResidentChatModel = false
 
     /// Idle-wait budget (seconds) for the residency unload to wait for chat to
     /// go idle before giving up. Bounds only the pre-unload wait; the run itself
@@ -105,6 +117,25 @@ final class AppleScriptKind: SubagentKind, @unchecked Sendable {
             config: config,
             settings: settings
         )
+        self.loadPolicy = config.appleScriptLoadPolicy
+        self.resolvedModelId = modelId
+
+        // Read-model split: a `mac_query` READ is simpler than automation, so
+        // when a tool-capable local chat model is ALREADY resident, run the
+        // query on it and skip the multi-GB dedicated-model handoff entirely —
+        // the most common path costs no swap at all. `applescript` automation
+        // always uses the dedicated model, and a query still prefers the
+        // dedicated model whenever IT is the resident one (a keep-warm hold).
+        // The query gate blocks any mutation regardless of which model writes
+        // the script, so this trades only read-script quality for latency.
+        if mode == .query, config.appleScriptQueryPrefersResidentModel,
+            let resident = await Self.residentQueryModel(dedicatedModelId: modelId)
+        {
+            self.resolvedModelId = resident
+            self.usingResidentChatModel = true
+            self.residencyPlan = .none
+            return ResolvedModel(name: resident, id: resident, isLocal: true)
+        }
 
         // Single-GPU residency: the AppleScript bundle differs from any resident
         // chat model, so force the handoff (independent of the global toggle).
@@ -122,11 +153,75 @@ final class AppleScriptKind: SubagentKind, @unchecked Sendable {
     }
 
     func makeHandoff() -> SubagentHandoff {
-        SubagentResidency.handoff(for: residencyPlan)
+        // Read path on the resident chat model: nothing was swapped and the
+        // model must stay exactly where it is — plain passthrough, and the
+        // warm coordinator must NOT adopt or schedule anything.
+        if usingResidentChatModel {
+            return SubagentResidency.handoff(for: residencyPlan)
+        }
+        // Keep-warm: route the chat restore through the warm coordinator so a
+        // back-to-back AppleScript call reuses the resident model. A run whose
+        // model is already resident (a warm hold from the previous run) resolves
+        // to `.none`, but the warm handoff still adopts + re-arms the hold, so
+        // route through it whenever keep-warm is on and this is a local run.
+        let keepWarmSeconds = loadPolicy.keepWarmSeconds
+        if keepWarmSeconds > 0, !resolvedModelId.isEmpty {
+            return AppleScriptWarmResidencyHandoff.production(
+                plan: residencyPlan,
+                model: resolvedModelId,
+                keepWarmSeconds: keepWarmSeconds
+            )
+        }
+        return SubagentResidency.handoff(for: residencyPlan)
     }
 
     func admissionClass(_ resolved: ResolvedModel) -> SubagentAdmissionClass {
-        SubagentResidency.admissionClass(isLocal: resolved.isLocal, plan: residencyPlan)
+        // An AppleScript model is always a local MLX graph, so its run always
+        // generates on the GPU and must own it exclusively — including a
+        // keep-warm run whose model is ALREADY resident (residency plan `.none`),
+        // which the plan-based mapping would otherwise treat as a shareable
+        // in-place run. Exclusive admission keeps a concurrent subagent from
+        // loading a second graph alongside the warm AppleScript model.
+        if resolved.isLocal { return .localExclusive }
+        return SubagentResidency.admissionClass(isLocal: resolved.isLocal, plan: residencyPlan)
+    }
+
+    /// The resident local chat model a `mac_query` read can reuse, or `nil` to
+    /// fall back to the dedicated-model path. `nil` when nothing is resident,
+    /// when the DEDICATED AppleScript model is itself resident (a keep-warm
+    /// hold — that path is then already swap-free and better tuned), or when
+    /// no resident model is tool-capable (the loop needs a real
+    /// `run_applescript` tool call; a model that can't emit one would burn the
+    /// step budget producing nothing).
+    private static func residentQueryModel(dedicatedModelId: String) async -> String? {
+        let summaries = await ModelRuntime.shared.cachedModelSummaries()
+        guard !summaries.isEmpty else { return nil }
+        // Compare on canonical installed-bundle names, same as
+        // `SubagentResidency.resolve` (runtime records canonical names; the
+        // catalog id is a full repo id).
+        let dedicatedCanonical =
+            ModelManager.findInstalledModel(named: dedicatedModelId)?.name ?? dedicatedModelId
+        let residentCanonical = summaries.map { summary in
+            ModelManager.findInstalledModel(named: summary.name)?.name ?? summary.name
+        }
+        if residentCanonical.contains(where: {
+            $0.caseInsensitiveCompare(dedicatedCanonical) == .orderedSame
+        }) {
+            return nil
+        }
+        // Prefer the CURRENT model (the one chat actively uses) over other
+        // residents under a flexible multi-model policy.
+        let ordered = summaries.sorted { $0.isCurrent && !$1.isCurrent }
+        for summary in ordered {
+            guard let found = ModelManager.findInstalledModel(named: summary.name) else {
+                continue
+            }
+            guard
+                MLXService.supportsLocalToolCalling(modelName: found.name, modelId: found.id)
+            else { continue }
+            return found.name
+        }
+        return nil
     }
 
     /// `.allow` at the host level: the consent surface is the per-script
@@ -151,7 +246,19 @@ final class AppleScriptKind: SubagentKind, @unchecked Sendable {
             }
         }
 
-        let environment = await Self.desktopContext()
+        let desktop = await Self.desktopSnapshot()
+        // App knowledge for the app(s) the task targets: the distilled
+        // scripting dictionary (sdef) + curated idiom tips. Composed off the
+        // main actor (disk/XML work); the loop injects it harness-gated.
+        let targetApps = AppleScriptAppKnowledge.detectTargetApps(
+            task: task,
+            frontmost: desktop.frontmost,
+            runningAppNames: desktop.running.map(\.name)
+        )
+        let knowledge = AppleScriptAppKnowledge.compose(
+            apps: targetApps,
+            runningApps: desktop.running
+        )
         let result = await AppleScriptLoop.run(
             task: task,
             modelId: resolved.name,
@@ -167,31 +274,46 @@ final class AppleScriptKind: SubagentKind, @unchecked Sendable {
             limits: limits,
             sessionId: scope.sessionId,
             mode: mode,
-            environmentContext: environment,
+            environmentContext: desktop.contextText,
+            dictionaryContext: knowledge.dictionary,
+            recipeContext: knowledge.recipes,
             literals: literals
         )
         return try Self.mapOutcome(result, model: resolved.name, mode: mode)
     }
 
-    /// A compact snapshot of the desktop (frontmost + running apps) injected
-    /// into the subagent prompt so it scripts apps that are actually open
-    /// (cutting a class of "the app wasn't running" failures). Best-effort:
-    /// returns `nil` on any failure so the loop simply omits it.
-    private static func desktopContext() async -> String? {
+    /// A compact snapshot of the desktop: the prompt text (frontmost + running
+    /// apps, cutting a class of "the app wasn't running" failures) plus the
+    /// structured app list (with bundle URLs) the dictionary lookup uses.
+    /// Best-effort: empty on any failure so the loop simply omits it.
+    private static func desktopSnapshot() async -> (
+        contextText: String?, frontmost: String?, running: [AppleScriptAppKnowledge.RunningApp]
+    ) {
         await MainActor.run {
             let workspace = NSWorkspace.shared
             let running =
                 workspace.runningApplications
                 .filter { $0.activationPolicy == .regular }
-                .compactMap { $0.localizedName }
-            guard !running.isEmpty else { return nil }
-            let unique = NSOrderedSet(array: running).array.compactMap { $0 as? String }
-            var lines: [String] = []
-            if let frontmost = workspace.frontmostApplication?.localizedName {
-                lines.append("Frontmost app: \(frontmost)")
+                .compactMap { app -> AppleScriptAppKnowledge.RunningApp? in
+                    guard let name = app.localizedName, !name.isEmpty else { return nil }
+                    return AppleScriptAppKnowledge.RunningApp(
+                        name: name,
+                        bundleURL: app.bundleURL
+                    )
+                }
+            guard !running.isEmpty else { return (nil, nil, []) }
+            var unique: [AppleScriptAppKnowledge.RunningApp] = []
+            var seen = Set<String>()
+            for app in running where seen.insert(app.name.lowercased()).inserted {
+                unique.append(app)
             }
-            lines.append("Running apps: \(unique.prefix(40).joined(separator: ", "))")
-            return lines.joined(separator: "\n")
+            let frontmost = workspace.frontmostApplication?.localizedName
+            var lines: [String] = []
+            if let frontmost { lines.append("Frontmost app: \(frontmost)") }
+            lines.append(
+                "Running apps: \(unique.prefix(40).map(\.name).joined(separator: ", "))"
+            )
+            return (lines.joined(separator: "\n"), frontmost, unique)
         }
     }
 
@@ -243,6 +365,17 @@ final class AppleScriptKind: SubagentKind, @unchecked Sendable {
             "succeeded": result.succeeded,
             "failed": result.failed,
         ]
+        // Runtime-proof telemetry (AGENTS.md: every generation row records
+        // token/s). `tokens_per_second` is generation throughput over the time
+        // spent in model steps only; omitted (never fabricated) when the run
+        // generated nothing.
+        if result.elapsedSeconds > 0 {
+            payload["elapsed_seconds"] = round(result.elapsedSeconds * 100) / 100
+        }
+        payload["model_tokens"] = result.modelTokens
+        if let tps = result.tokensPerSecond {
+            payload["tokens_per_second"] = round(tps * 10) / 10
+        }
         if let values = result.lastOutput, !values.isEmpty {
             payload["values"] = cap(values, 2_000)
         }
