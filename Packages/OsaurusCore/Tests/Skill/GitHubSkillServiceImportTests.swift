@@ -17,6 +17,7 @@ struct GitHubSkillServiceImportTests {
             log: log,
             tokenProvider: GitHubImportTokenProvider(
                 explicitToken: { "explicit-token" },
+                savedToken: { nil },
                 environment: { ["GH_TOKEN": "env-token"] }
             )
         ) { request in
@@ -38,12 +39,41 @@ struct GitHubSkillServiceImportTests {
         #expect(requests.allSatisfy { $0.value(forHTTPHeaderField: "Authorization") == "Bearer explicit-token" })
     }
 
+    @Test func authenticatedRequestsUseSavedImporterTokenWhenExplicitTokenIsAbsent() async throws {
+        let log = RequestLog()
+        let service = makeService(
+            log: log,
+            tokenProvider: GitHubImportTokenProvider(
+                explicitToken: { nil },
+                savedToken: { "saved-token" },
+                environment: { ["GH_TOKEN": "env-token"] }
+            )
+        ) { request in
+            switch request.url?.path {
+            case "/repos/acme/widgets":
+                return .json(#"{"default_branch":"main"}"#)
+            case "/repos/acme/widgets/contents/.claude-plugin/marketplace.json":
+                return .text(githubImportMarketplaceJSON)
+            default:
+                return .notFound()
+            }
+        }
+        defer { service.invalidateForTests() }
+
+        _ = try await service.fetchMarketplaceCatalog(from: "acme/widgets")
+
+        let requests = log.requests()
+        #expect(requests.count == 2)
+        #expect(requests.allSatisfy { $0.value(forHTTPHeaderField: "Authorization") == "Bearer saved-token" })
+    }
+
     @Test func unauthenticatedRequestsOmitAuthorizationHeader() async throws {
         let log = RequestLog()
         let service = makeService(
             log: log,
             tokenProvider: GitHubImportTokenProvider(
                 explicitToken: { nil },
+                savedToken: { nil },
                 environment: { [:] }
             )
         ) { request in
@@ -765,6 +795,7 @@ struct GitHubSkillServiceImportTests {
         log: RequestLog = RequestLog(),
         tokenProvider: any GitHubAuthTokenProviding = GitHubImportTokenProvider(
             explicitToken: { nil },
+            savedToken: { nil },
             environment: { [:] }
         ),
         checkpointStore: GitHubImportCheckpointStore = GitHubImportCheckpointStore(

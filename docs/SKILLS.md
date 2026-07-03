@@ -250,7 +250,7 @@ No per-agent skill configuration is needed. The system automatically matches the
 - Ensure the repository is public or you have access
 - Verify the repo contains `.claude-plugin/marketplace.json`
 - Check your network connection
-- If you see "GitHub rate-limited this app", wait for the reset time shown in the error and retry — unauthenticated requests are capped at 60/hour. See [Claude Plugins → Rate Limiting](CLAUDE_PLUGINS.md#rate-limiting).
+- If you see "GitHub rate-limited this app", wait for the reset time shown in the error and retry — unauthenticated requests are capped at 60/hour. For private or higher-quota imports, use the import sheet's **Advanced** section to save or clear an importer-only Keychain token. See [Claude Plugins → Rate Limiting](CLAUDE_PLUGINS.md#rate-limiting).
 
 ### Skill instructions not being followed
 

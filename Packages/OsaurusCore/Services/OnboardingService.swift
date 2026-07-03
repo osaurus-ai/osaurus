@@ -126,6 +126,9 @@ public final class OnboardingService: ObservableObject {
 
             // RemoteProviderKeychain
             "ai.osaurus.remote",
+
+            // GitHubImportTokenKeychain
+            GitHubImportTokenKeychain.keychainService,
         ]
 
         for service in services {
