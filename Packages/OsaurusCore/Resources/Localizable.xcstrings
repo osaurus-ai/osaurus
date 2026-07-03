@@ -19356,6 +19356,9 @@
         }
       }
     },
+    "Cancel (Esc)" : {
+
+    },
     "Cancel a running task" : {
       "localizations" : {
         "de" : {
@@ -35877,6 +35880,7 @@
       }
     },
     "Done (Esc)" : {
+      "extractionState" : "stale",
       "localizations" : {
         "de" : {
           "stringUnit" : {
@@ -108871,6 +108875,9 @@
           }
         }
       }
+    },
+    "Stop and insert" : {
+
     },
     "Stop Mode" : {
       "localizations" : {

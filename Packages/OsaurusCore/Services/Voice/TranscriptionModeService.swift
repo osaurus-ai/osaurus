@@ -134,7 +134,9 @@ public final class TranscriptionModeService: ObservableObject {
         }
     }
 
-    public func stopTranscription() {
+    /// Stops transcription. When `discard` is true the captured text is thrown
+    /// away (cancel); otherwise it is cleaned up and inserted (done).
+    public func stopTranscription(discard: Bool = false) {
         guard state == .transcribing || state == .starting else { return }
 
         state = .stopping
@@ -149,7 +151,7 @@ public final class TranscriptionModeService: ObservableObject {
             let rawText = speechService.confirmedTranscription
             speechService.clearTranscription()
 
-            if !rawText.isEmpty {
+            if !discard, !rawText.isEmpty {
                 let finalText =
                     SpeechConfigurationStore.load().postProcessTranscription
                     ? await TranscriptionCleanupService.shared.clean(rawText)
@@ -159,7 +161,7 @@ public final class TranscriptionModeService: ObservableObject {
 
             overlayService.hide()
             state = .idle
-            print("[TranscriptionMode] Stopped transcription")
+            print("[TranscriptionMode] Stopped transcription (discard: \(discard))")
         }
     }
 
@@ -190,7 +192,7 @@ public final class TranscriptionModeService: ObservableObject {
             self?.stopTranscription()
         }
         overlayService.onCancel = { [weak self] in
-            self?.stopTranscription()
+            self?.stopTranscription(discard: true)
         }
     }
 
@@ -278,7 +280,7 @@ public final class TranscriptionModeService: ObservableObject {
         escKeyMonitor = NSEvent.addGlobalMonitorForEvents(matching: .keyDown) { [weak self] event in
             if event.keyCode == 53 {  // Esc
                 Task { @MainActor in
-                    self?.stopTranscription()
+                    self?.stopTranscription(discard: true)
                 }
             }
         }
