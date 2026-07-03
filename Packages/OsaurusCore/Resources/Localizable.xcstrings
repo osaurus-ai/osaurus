@@ -22663,6 +22663,9 @@
       },
       "shouldTranslate" : false
     },
+    "Clean Up Transcription" : {
+
+    },
     "Clear" : {
       "localizations" : {
         "de" : {
@@ -28468,6 +28471,9 @@
           }
         }
       }
+    },
+    "core model" : {
+
     },
     "Core model" : {
       "extractionState" : "manual",
@@ -55238,6 +55244,9 @@
           }
         }
       }
+    },
+    "Keep the natural transcription, including filler words" : {
+
     },
     "Keep this chat running?" : {
       "localizations" : {
@@ -112649,6 +112658,9 @@
           }
         }
       }
+    },
+    "The core model removes filler words like \"uh\" and \"mm\"" : {
+
     },
     "The current model is text-only." : {
       "localizations" : {

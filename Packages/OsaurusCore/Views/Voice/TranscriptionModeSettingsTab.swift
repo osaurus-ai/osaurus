@@ -83,6 +83,8 @@ struct TranscriptionModeSettingsTab: View {
         var text = AttributedString(L("The core model removes filler words like \"uh\" and \"mm\""))
         text.foregroundColor = theme.tertiaryText
         if let range = text.range(of: L("core model")) {
+            text[range].foregroundColor = theme.accentColor
+            text[range].underlineColor = theme.accentColor
             text[range].underlineStyle = .single
             text[range].link = URL(string: "osaurus-settings://core-model")
         }
