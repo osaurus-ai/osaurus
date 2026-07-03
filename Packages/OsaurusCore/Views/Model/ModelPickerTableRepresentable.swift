@@ -332,7 +332,7 @@ private enum RowAccessoryKind: Equatable {
 
 /// Model row cell with hover/selection background.
 @MainActor
-private final class ModelRowCellView: NSTableCellView {
+private final class ModelRowCellView: NSTableCellView, NSGestureRecognizerDelegate {
     private let bgLayer = CALayer()
     private let nameLabel = makeLabel()
     private let vlmBadge = PickerBadgeView()
@@ -405,7 +405,9 @@ private final class ModelRowCellView: NSTableCellView {
         addSubview(quantBadge)
         addSubview(checkmarkView)
         addSubview(accessoryButton)
-        addGestureRecognizer(NSClickGestureRecognizer(target: self, action: #selector(didClick)))
+        let click = NSClickGestureRecognizer(target: self, action: #selector(didClick))
+        click.delegate = self
+        addGestureRecognizer(click)
     }
 
     @available(*, unavailable)
@@ -413,6 +415,19 @@ private final class ModelRowCellView: NSTableCellView {
 
     @objc private func didClick() { onSelect?() }
     @objc private func didClickAccessory() { onAccessory?() }
+
+    /// Keep the whole-row select gesture from firing when the click lands on the
+    /// visible favourite control — otherwise toggling a favourite would also
+    /// select the model and dismiss the picker. The button's own action still
+    /// runs.
+    func gestureRecognizer(
+        _ gestureRecognizer: NSGestureRecognizer,
+        shouldAttemptToRecognizeWith event: NSEvent
+    ) -> Bool {
+        guard !accessoryButton.isHidden else { return true }
+        let point = accessoryButton.convert(event.locationInWindow, from: nil)
+        return !accessoryButton.bounds.contains(point)
+    }
 
     func configure(
         id: String,
