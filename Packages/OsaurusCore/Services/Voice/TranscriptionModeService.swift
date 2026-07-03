@@ -122,6 +122,14 @@ public final class TranscriptionModeService: ObservableObject {
         Task {
             do {
                 try await speechService.startStreamingTranscription()
+                // The user may have cancelled while the stream was starting up.
+                // If we're no longer in `.starting`, a stop is already in flight
+                // (or done) — don't resurrect the session by subscribing again,
+                // which would leave the audio stream and timers running.
+                guard state == .starting else {
+                    _ = await speechService.stopStreamingTranscription()
+                    return
+                }
                 state = .transcribing
                 subscribeToAudioLevel()
                 print("[TranscriptionMode] Started transcription")
