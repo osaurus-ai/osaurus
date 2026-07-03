@@ -1689,8 +1689,15 @@ extension FloatingInputCard {
             // the whole row for the image config controls instead so they sit
             // right beside the model that owns them.
             if isImageComposerActive {
-                imageComposerChips
-                Spacer()
+                // Scroll the config chips horizontally so a narrow (minimum-size)
+                // window can't compress them below their ideal width — that
+                // compression is what made the labels wrap character-by-character.
+                // The ScrollView fills the free space, leaving the negative-prompt
+                // button pinned to the right where the token meter normally sits.
+                ScrollView(.horizontal, showsIndicators: false) {
+                    imageComposerChips
+                        .padding(.vertical, 1)
+                }
                 // The negative prompt sits where the token meter normally would,
                 // as a compact button that opens a themed editor on tap.
                 if imageCapabilities?.negativePrompt == true {
