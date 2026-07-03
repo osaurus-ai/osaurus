@@ -199,7 +199,7 @@ public actor ToolIndexService {
             let registeredNames: Set<String>
             let enabledNames: Set<String>
             let runtimeManagedNames: Set<String>
-            let capabilityToolNames: Set<String>
+            let capabilitySearchExcludedNames: Set<String>
             let entriesByName: [String: ToolRegistry.ToolEntry]
             let sourcesByName: [String: ToolExposureSource]
             let availabilityByName: [String: ToolAvailability]
@@ -221,7 +221,7 @@ public actor ToolIndexService {
                 registeredNames: Set(tools.map(\.name)),
                 enabledNames: Set(tools.filter(\.enabled).map(\.name)),
                 runtimeManagedNames: registry.runtimeManagedToolNames,
-                capabilityToolNames: ToolRegistry.capabilityToolNames,
+                capabilitySearchExcludedNames: registry.capabilitySearchExcludedToolNames,
                 entriesByName: entriesByName,
                 sourcesByName: sourcesByName,
                 availabilityByName: Dictionary(
@@ -265,11 +265,10 @@ public actor ToolIndexService {
             if !registered {
                 append(.notRegistered)
             }
-            if snapshot.capabilityToolNames.contains(name) {
-                append(.excludedCapabilityInfrastructure)
-            }
             if snapshot.runtimeManagedNames.contains(name) {
                 append(.runtimeManaged)
+            } else if snapshot.capabilitySearchExcludedNames.contains(name) {
+                append(.excludedCapabilityInfrastructure)
             }
             if registered, !globallyEnabled {
                 append(.globallyDisabled)
@@ -379,15 +378,18 @@ public actor ToolIndexService {
             ToolRegistry.shared.listTools().filter { $0.enabled }
         }
         let enabledNames = Set(enabledTools.map { $0.name })
+        let excludedNames = await MainActor.run {
+            ToolRegistry.shared.capabilitySearchExcludedToolNames
+        }
         let entries: [ToolIndexEntry]
         if ToolDatabase.shared.isOpen {
-            entries = try ToolDatabase.shared.loadAllEntries().filter { enabledNames.contains($0.name) }
+            entries = try ToolDatabase.shared.loadAllEntries()
+                .filter { enabledNames.contains($0.name) && !excludedNames.contains($0.name) }
         } else {
             entries = await MainActor.run {
-                let excluded = ToolRegistry.shared.capabilitySearchExcludedToolNames
                 return
                     enabledTools
-                    .filter { !excluded.contains($0.name) }
+                    .filter { !excludedNames.contains($0.name) }
                     .map { tool -> ToolIndexEntry in
                         let runtime: ToolRuntime
                         if ToolRegistry.shared.isSandboxTool(tool.name) {

@@ -158,6 +158,26 @@ struct SkillStoreFileContainmentTests {
         }
     }
 
+    @Test func companionFilesListOnlyScriptsAndSkipSymlinks() async throws {
+        try await Self.withTempSkill { _, skill in
+            let skillDir = SkillStore.skillDirectory(for: skill)
+            let scriptsDir = skillDir.appendingPathComponent("scripts", isDirectory: true)
+            let outsideScript = OsaurusPaths.skills().appendingPathComponent("outside-script.sh")
+
+            try FileManager.default.createDirectory(at: scriptsDir, withIntermediateDirectories: true)
+            try Data("visible".utf8).write(to: scriptsDir.appendingPathComponent("visible.sh"))
+            try Data("root secret".utf8).write(to: skillDir.appendingPathComponent("root-secret.env"))
+            try Data("outside secret".utf8).write(to: outsideScript)
+            try FileManager.default.createSymbolicLink(
+                at: scriptsDir.appendingPathComponent("linked-secret.sh"),
+                withDestinationURL: outsideScript
+            )
+
+            let paths = Set(SkillStore.companionFiles(for: skill).map(\.relativePath))
+            #expect(paths == ["scripts/visible.sh"])
+        }
+    }
+
     private static func withTempSkill<T: Sendable>(
         _ body: @Sendable (URL, Skill) async throws -> T
     ) async throws -> T {

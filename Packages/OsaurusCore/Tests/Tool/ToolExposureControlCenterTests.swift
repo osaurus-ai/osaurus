@@ -214,6 +214,16 @@ struct ToolExposureControlCenterTests {
         }
     }
 
+    @Test @MainActor
+    func exposureDiagnosticMarksNonDiscoverableBuiltInsSearchExcluded() async throws {
+        let exposure = await ToolIndexService.shared.exposureDiagnostic(
+            forToolNames: [ComputerUseTool.toolName]
+        )
+        let row = try #require(exposure.rows.first)
+        #expect(row.searchReasonCodes.contains(.excludedCapabilityInfrastructure))
+        #expect(!row.searchableByCapabilitiesDiscover)
+    }
+
     private static func uniqueName(_ suffix: String) -> String {
         "tool_exposure_\(suffix)_\(UUID().uuidString.replacingOccurrences(of: "-", with: "_"))"
     }

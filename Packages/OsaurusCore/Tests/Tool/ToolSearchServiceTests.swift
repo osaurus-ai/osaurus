@@ -338,6 +338,10 @@ struct ToolSearchServiceTests {
             try ToolDatabase.shared.upsertEntry(staleEntry)
             await ToolSearchService.shared.indexEntry(staleEntry)
 
+            let compactIndex = try await ToolIndexService.shared.buildCompactIndex()
+            #expect(!compactIndex.contains(ComputerUseTool.toolName))
+            #expect(!compactIndex.contains("browser form fill automation"))
+
             let (results, diagnostic) = await ToolSearchService.shared.searchHybridWithDiagnostic(
                 query: "computer use browser form fill automation",
                 topK: 5,
