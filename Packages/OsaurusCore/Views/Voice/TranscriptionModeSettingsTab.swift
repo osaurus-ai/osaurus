@@ -84,7 +84,6 @@ struct TranscriptionModeSettingsTab: View {
         text.foregroundColor = theme.tertiaryText
         if let range = text.range(of: L("core model")) {
             text[range].foregroundColor = theme.accentColor
-            text[range].underlineColor = theme.accentColor
             text[range].underlineStyle = .single
             text[range].link = URL(string: "osaurus-settings://core-model")
         }
