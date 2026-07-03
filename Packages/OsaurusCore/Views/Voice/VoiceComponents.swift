@@ -134,7 +134,11 @@ private struct WaveformBars: View {
 
     @ViewBuilder
     private func singleBar(index: Int, timestamp: TimeInterval) -> some View {
-        let phaseOffset = phaseOffsets.indices.contains(index) ? phaseOffsets[index] : 0
+        // Before `onAppear` seeds random offsets, fall back to a per-index phase
+        // so bars start desynced. A shared 0 offset would render every bar at the
+        // same height on the first frame — a full-height flash before they settle.
+        let phaseOffset =
+            phaseOffsets.indices.contains(index) ? phaseOffsets[index] : Double(index) * 0.7
 
         // use the raw level for animation intensity
         let effectiveLevel = CGFloat(max(0.0, min(1.0, level)))
