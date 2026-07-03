@@ -73,11 +73,11 @@ public struct TranscriptionOverlayView: View {
             WaveformView(
                 level: audioLevel,
                 style: .bars,
-                barCount: 14,
+                barCount: 18,
                 primaryColor: .white,
                 isActive: isActive && !isProcessing
             )
-            .frame(width: 150, height: 26)
+            .frame(width: 200, height: 26)
             .opacity(isProcessing ? 0 : 1)
 
             // Stop / Cancel controls share the waveform's horizontal axis,
@@ -95,7 +95,7 @@ public struct TranscriptionOverlayView: View {
         // Push the row below the badge that straddles the top border.
         .padding(.top, badgeHeight / 2 + 14)
         .padding(.bottom, 16)
-        .frame(width: 264)
+        .frame(width: 320)
         .modifier(OverlayGlassBackground(cornerRadius: cornerRadius))
         // The status badge straddles the top border like a notch.
         .overlay(alignment: .top) {
