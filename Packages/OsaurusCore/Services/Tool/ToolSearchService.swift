@@ -442,8 +442,11 @@ public actor ToolSearchService {
 
         // Map names back to live `ToolIndexEntry` rows + apply the
         // enabled-name filter (mirrors `search(...)` lines 153–159).
-        let enabledNames = await MainActor.run {
-            Set(ToolRegistry.shared.listTools().filter { $0.enabled }.map { $0.name })
+        let (enabledNames, excludedNames): (Set<String>, Set<String>) = await MainActor.run {
+            (
+                Set(ToolRegistry.shared.listTools().filter { $0.enabled }.map { $0.name }),
+                ToolRegistry.shared.capabilitySearchExcludedToolNames
+            )
         }
         let entriesByName: [String: ToolIndexEntry]
         do {
@@ -473,10 +476,20 @@ public actor ToolSearchService {
             )
         }
 
-        // `allHits`: every candidate sorted by fusedScore desc, before
-        // the threshold and topK cuts — forensics needs to see what
-        // the embedder + BM25 surfaced even when nothing was accepted.
-        let allHits = fused.map { makeHit(name: $0.name, score: $0.score) }
+        // `allHits`: every indexed candidate before threshold/topK cuts, plus
+        // live registry fallback candidates at the end. Keep the lanes in that
+        // order because RRF fused scores and registry lexical scores live on
+        // different scales.
+        let registryFallbackScored: [(entry: ToolIndexEntry, score: Float)] =
+            await registryFallbackScoresForMissingIndexEntries(
+                query: query,
+                indexedNames: Set(entriesByName.keys)
+            )
+        let registryFallbackHits = registryFallbackScored.map {
+            makeRegistryFallbackHit(name: $0.entry.name, score: $0.score)
+        }
+
+        let allHits = fused.map { makeHit(name: $0.name, score: $0.score) } + registryFallbackHits
 
         let effectiveMinFusedScore = Self.effectiveMinFusedScore(
             requested: minFusedScore,
@@ -493,16 +506,51 @@ public actor ToolSearchService {
         var acceptedResults: [ToolSearchResult] = []
         var acceptedHits: [ToolSearchHybridDiagnostic.Hit] = []
         var filteredByAllowlist: [String] = []
+        var acceptedNames: Set<String> = []
+        let registryFallbackMinScore = max(effectiveMinFusedScore, Self.registryFallbackMinimumScore)
         for (name, score) in fused {
             if acceptedResults.count >= topK { break }
             guard score >= effectiveMinFusedScore else { continue }
-            guard let entry = entriesByName[name], enabledNames.contains(name) else { continue }
+            guard let entry = entriesByName[name],
+                enabledNames.contains(name),
+                !excludedNames.contains(name)
+            else {
+                continue
+            }
             if let allowedNames, !allowedNames.contains(name) {
                 filteredByAllowlist.append(name)
                 continue
             }
             acceptedResults.append(ToolSearchResult(entry: entry, searchScore: score))
             acceptedHits.append(makeHit(name: name, score: score))
+            acceptedNames.insert(name)
+        }
+
+        for item in registryFallbackScored {
+            if acceptedResults.count >= topK { break }
+            let name = item.entry.name
+            guard !acceptedNames.contains(name),
+                item.score >= registryFallbackMinScore,
+                enabledNames.contains(name),
+                !excludedNames.contains(name)
+            else {
+                continue
+            }
+            if let allowedNames, !allowedNames.contains(name) {
+                filteredByAllowlist.append(name)
+                continue
+            }
+            acceptedResults.append(ToolSearchResult(entry: item.entry, searchScore: item.score))
+            acceptedHits.append(makeRegistryFallbackHit(name: name, score: item.score))
+            acceptedNames.insert(name)
+        }
+
+        if acceptedHits.contains(where: { $0.bm25Rank == nil && $0.embedRank == nil })
+            && !registryFallbackScored.isEmpty
+        {
+            ToolIndexLogger.search.notice(
+                "Hybrid search used registry fallback for missing index rows; missingCandidates=\(registryFallbackScored.count, privacy: .public) accepted=\(acceptedHits.filter { $0.bm25Rank == nil && $0.embedRank == nil }.count, privacy: .public)"
+            )
         }
 
         let diagnostic = ToolSearchHybridDiagnostic(
@@ -515,6 +563,39 @@ public actor ToolSearchService {
             filteredByAllowlist: filteredByAllowlist
         )
         return (acceptedResults, diagnostic)
+    }
+
+    private func makeRegistryFallbackHit(
+        name: String,
+        score: Float
+    ) -> ToolSearchHybridDiagnostic.Hit {
+        ToolSearchHybridDiagnostic.Hit(
+            name: name,
+            bm25Rank: nil,
+            bm25Score: nil,
+            embedRank: nil,
+            embedScore: nil,
+            fusedScore: score
+        )
+    }
+
+    /// Recover enabled registered tools that are missing from the SQL index.
+    /// Normal hybrid search remains authoritative for indexed rows; this path
+    /// only scores the registry/index delta so a stale index cannot make a
+    /// granted capability undiscoverable.
+    private func registryFallbackScoresForMissingIndexEntries(
+        query: String,
+        indexedNames: Set<String>
+    ) async -> [(entry: ToolIndexEntry, score: Float)] {
+        let entries = await registryEntries(missingFrom: indexedNames)
+        guard !entries.isEmpty else { return [] }
+        let scored = Self.scoreRegistryEntries(entries, query: query)
+        if !scored.isEmpty {
+            ToolIndexLogger.search.notice(
+                "Hybrid search scored \(scored.count, privacy: .public) live registry tool(s) missing from tool_index"
+            )
+        }
+        return scored
     }
 
     /// Registry fallback for local chat when encrypted tool storage is closed
@@ -532,24 +613,7 @@ public actor ToolSearchService {
         let bm25Available = ToolDatabase.sanitizeFTS5Query(query) != nil
         let entries = await registryEntries()
 
-        let scored: [(entry: ToolIndexEntry, score: Float)] =
-            entries
-            .compactMap { entry in
-                let score = Self.registryLexicalScore(
-                    query: query,
-                    name: entry.name,
-                    description: entry.description,
-                    toolsJSON: entry.toolsJSON
-                )
-                guard score > 0 else { return nil }
-                return (entry, score)
-            }
-            .sorted {
-                if $0.score == $1.score {
-                    return $0.entry.name.localizedCaseInsensitiveCompare($1.entry.name) == .orderedAscending
-                }
-                return $0.score > $1.score
-            }
+        let scored = Self.scoreRegistryEntries(entries, query: query)
 
         let allHits = scored.map {
             ToolSearchHybridDiagnostic.Hit(
@@ -600,12 +664,12 @@ public actor ToolSearchService {
         return (acceptedResults, diagnostic)
     }
 
-    private func registryEntries() async -> [ToolIndexEntry] {
+    private func registryEntries(missingFrom indexedNames: Set<String>? = nil) async -> [ToolIndexEntry] {
         await MainActor.run {
-            let excluded = ToolRegistry.capabilityToolNames
-                .union(ToolRegistry.shared.runtimeManagedToolNames)
+            let excluded = ToolRegistry.shared.capabilitySearchExcludedToolNames
             return ToolRegistry.shared.listTools()
                 .filter { $0.enabled && !excluded.contains($0.name) }
+                .filter { indexedNames?.contains($0.name) != true }
                 .map { tool -> ToolIndexEntry in
                     let runtime: ToolRuntime
                     if ToolRegistry.shared.isSandboxTool(tool.name) {
@@ -628,6 +692,29 @@ public actor ToolSearchService {
                     )
                 }
         }
+    }
+
+    private static func scoreRegistryEntries(
+        _ entries: [ToolIndexEntry],
+        query: String
+    ) -> [(entry: ToolIndexEntry, score: Float)] {
+        entries
+            .compactMap { entry in
+                let score = registryLexicalScore(
+                    query: query,
+                    name: entry.name,
+                    description: entry.description,
+                    toolsJSON: entry.toolsJSON
+                )
+                guard score > 0 else { return nil }
+                return (entry, score)
+            }
+            .sorted {
+                if $0.score == $1.score {
+                    return $0.entry.name.localizedCaseInsensitiveCompare($1.entry.name) == .orderedAscending
+                }
+                return $0.score > $1.score
+            }
     }
 
     private static func registryLexicalScore(
@@ -659,6 +746,14 @@ public actor ToolSearchService {
         return score
     }
 
+    private static let registryFallbackMinimumScore: Float = 0.05
+
+    private static let registryLexicalStopwords: Set<String> = [
+        "a", "an", "and", "are", "as", "at", "be", "by", "for", "from",
+        "how", "in", "into", "is", "it", "of", "on", "or", "that", "the",
+        "this", "to", "use", "with", "you", "your",
+    ]
+
     private static func lexicalTokens(_ text: String) -> [String] {
         let raw =
             text
@@ -667,7 +762,9 @@ public actor ToolSearchService {
             .map(String.init)
         var seen = Set<String>()
         return raw.filter { token in
-            token.count >= 2 && seen.insert(token).inserted
+            token.count >= 2
+                && !registryLexicalStopwords.contains(token)
+                && seen.insert(token).inserted
         }
     }
 

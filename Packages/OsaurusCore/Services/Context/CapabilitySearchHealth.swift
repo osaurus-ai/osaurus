@@ -189,8 +189,7 @@ public enum CapabilitySearchDiagnostics {
     /// that don't need the name array.
     private static func registrySnapshotNames() -> (names: [String], count: Int) {
         let all = ToolRegistry.shared.listTools()
-        let excluded = ToolRegistry.capabilityToolNames
-            .union(ToolRegistry.shared.runtimeManagedToolNames)
+        let excluded = ToolRegistry.shared.capabilitySearchExcludedToolNames
         let indexable = all.filter { $0.enabled && !excluded.contains($0.name) }
         return (indexable.map(\.name), indexable.count)
     }

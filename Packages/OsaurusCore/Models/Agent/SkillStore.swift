@@ -236,6 +236,24 @@ public enum SkillStore {
         return skillsDirectory().appendingPathComponent(dirName)
     }
 
+    /// List companion script files without reading their contents so loaded
+    /// skill instructions can reference sibling executables without expanding
+    /// them into prompt context or exposing arbitrary filenames from the skill
+    /// root.
+    public static func companionFiles(for skill: Skill) -> [SkillFile] {
+        let skillDir = skillDirectory(for: skill)
+        var remaining = 80
+        var files: [SkillFile] = []
+        files.append(
+            contentsOf: loadCompanionFiles(
+                in: skillDir.appendingPathComponent("scripts", isDirectory: true),
+                relativeTo: skillDir,
+                remaining: &remaining
+            )
+        )
+        return files
+    }
+
     // MARK: - File Operations
 
     /// Add a reference file to a skill
@@ -441,6 +459,64 @@ public enum SkillStore {
                     size: Int64(values.fileSize ?? 0)
                 )
             )
+        }
+        return files
+    }
+
+    private static func loadCompanionFiles(
+        in directory: URL,
+        relativeTo skillDir: URL,
+        depth: Int = 0,
+        remaining: inout Int
+    ) -> [SkillFile] {
+        guard remaining > 0, depth <= 4 else { return [] }
+        guard
+            let entries = try? FileManager.default.contentsOfDirectory(
+                at: directory,
+                includingPropertiesForKeys: [.fileSizeKey, .isDirectoryKey, .isRegularFileKey, .isSymbolicLinkKey],
+                options: [.skipsHiddenFiles]
+            )
+        else {
+            return []
+        }
+
+        var files: [SkillFile] = []
+        for entry in entries.sorted(by: { $0.path < $1.path }) where remaining > 0 {
+            guard
+                let values = try? entry.resourceValues(
+                    forKeys: [.fileSizeKey, .isDirectoryKey, .isRegularFileKey, .isSymbolicLinkKey]
+                ),
+                values.isSymbolicLink != true
+            else {
+                continue
+            }
+
+            if values.isDirectory == true {
+                files.append(
+                    contentsOf: loadCompanionFiles(
+                        in: entry,
+                        relativeTo: skillDir,
+                        depth: depth + 1,
+                        remaining: &remaining
+                    )
+                )
+                continue
+            }
+
+            guard values.isRegularFile == true,
+                let relativePath = relativePath(for: entry, in: skillDir)
+            else {
+                continue
+            }
+
+            files.append(
+                SkillFile(
+                    name: entry.lastPathComponent,
+                    relativePath: relativePath,
+                    size: Int64(values.fileSize ?? 0)
+                )
+            )
+            remaining -= 1
         }
         return files
     }

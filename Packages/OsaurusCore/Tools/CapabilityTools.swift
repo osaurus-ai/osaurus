@@ -781,14 +781,14 @@ final class CapabilitiesLoadTool: OsaurusTool, @unchecked Sendable {
             }
 
             if !method.skillsUsed.isEmpty {
-                let skills: [(String, String)] = await MainActor.run {
+                let skills: [(String, Skill)] = await MainActor.run {
                     method.skillsUsed.compactMap { name in
-                        SkillManager.shared.skill(named: name).map { (name, $0.instructions) }
+                        SkillManager.shared.skill(named: name).map { (name, $0) }
                     }
                 }
-                for (name, instructions) in skills {
+                for (name, skill) in skills {
                     output += "\n## Skill: \(name)\n"
-                    output += instructions
+                    output += await lightweightSkillInstructions(for: skill)
                     output += "\n\n"
                 }
             }
@@ -1005,6 +1005,17 @@ final class CapabilitiesLoadTool: OsaurusTool, @unchecked Sendable {
         return output
     }
 
+    private func lightweightSkillInstructions(for skill: Skill) async -> String {
+        var output = skill.instructions
+        let fileContext = await MainActor.run {
+            SkillManager.shared.skillLocationContext(for: skill)
+        }
+        if let fileContext {
+            output += "\n\n\(fileContext)"
+        }
+        return output
+    }
+
     private func loadSkill(_ skillName: String) async -> LoadOutcome {
         if ChatExecutionContext.currentAgentId == Agent.defaultId {
             return .failure(
@@ -1029,7 +1040,7 @@ final class CapabilitiesLoadTool: OsaurusTool, @unchecked Sendable {
         if !skill.description.isEmpty {
             output += "*\(skill.description)*\n\n"
         }
-        output += skill.instructions
+        output += await SkillManager.shared.buildFullInstructions(for: skill)
         output += "\n\n"
 
         // A plugin skill governs its sibling tools, so auto-load the plugin's

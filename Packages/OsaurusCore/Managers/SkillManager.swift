@@ -713,6 +713,10 @@ public final class SkillManager {
     public func buildFullInstructions(for skill: Skill) async -> String {
         var sections = [skill.instructions]
 
+        if let locationContext = skillLocationContext(for: skill) {
+            sections.append("\n\(locationContext)")
+        }
+
         if !skill.references.isEmpty {
             let refs = await loadReferenceContents(for: skill)
             if !refs.isEmpty {
@@ -723,6 +727,25 @@ public final class SkillManager {
         return sections.joined(separator: "\n")
     }
 
+    public func skillLocationContext(for skill: Skill) -> String? {
+        guard !skill.isBuiltIn else { return nil }
+
+        let files = SkillStore.companionFiles(for: skill)
+        guard !files.isEmpty else { return nil }
+
+        var lines = [
+            "## Skill Files",
+            "Companion script files are listed relative to this skill's private directory.",
+        ]
+        for file in files.prefix(40) {
+            lines.append("- \(file.relativePath) (\(formatSize(file.size)))")
+        }
+        if files.count > 40 {
+            lines.append("- at least \(files.count - 40) more file(s)")
+        }
+        return lines.joined(separator: "\n")
+    }
+
     private func loadReferenceContents(for skill: Skill) async -> String {
         let textExtensions: Set<String> = [
             "md", "txt", "json", "yaml", "yml", "xml", "html", "css", "js", "ts",
@@ -731,6 +754,9 @@ public final class SkillManager {
         ]
 
         var contents: [String] = []
+        var loadedCount = 0
+        var omittedCount = 0
+        var remainingBytes = 200_000
         for file in skill.references {
             let ext = (file.name as NSString).pathExtension.lowercased()
             guard textExtensions.contains(ext) || ext.isEmpty else { continue }
@@ -738,15 +764,24 @@ public final class SkillManager {
                 contents.append("### \(file.name)\n*File too large (>\(formatSize(file.size)))*\n")
                 continue
             }
+            guard loadedCount < 20, remainingBytes > 0, file.size <= Int64(remainingBytes) else {
+                omittedCount += 1
+                continue
+            }
 
             do {
                 let data = try await SkillStore.readFile(from: skill, relativePath: file.relativePath)
                 if let text = String(data: data, encoding: .utf8) {
                     contents.append("### \(file.name)\n\n```\n\(text)\n```\n")
+                    loadedCount += 1
+                    remainingBytes = max(0, remainingBytes - data.count)
                 }
             } catch {
                 // Skip unreadable files
             }
+        }
+        if omittedCount > 0 {
+            contents.append("*\(omittedCount) reference file(s) omitted due to skill reference budget.*\n")
         }
         return contents.joined(separator: "\n")
     }

@@ -212,12 +212,172 @@ struct ToolSearchServiceTests {
             #expect(compactIndex?.contains(fixture.description) == true)
         }
     }
+
+    @Test @MainActor
+    func hybridSearchFallsBackToRegistryForEnabledToolsMissingFromOpenIndex() async throws {
+        try await DynamicCatalogTestLock.shared.run {
+            let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent(
+                "osaurus-tool-stale-index-fallback-\(UUID().uuidString)",
+                isDirectory: true
+            )
+            let previousOverride = ToolConfigurationStore.overrideDirectory
+            ToolConfigurationStore.overrideDirectory = tempDir
+            try? FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+            defer { ToolConfigurationStore.overrideDirectory = previousOverride }
+
+            let dbWasOpen = ToolDatabase.shared.isOpen
+            if !dbWasOpen {
+                try ToolDatabase.shared.openInMemory()
+            }
+            defer {
+                try? ToolDatabase.shared.deleteEntry(id: RegistryFallbackFixtureTool.allowedName)
+                try? ToolDatabase.shared.deleteEntry(id: RegistryFallbackFixtureTool.deniedName)
+                if !dbWasOpen {
+                    ToolDatabase.shared.close()
+                }
+            }
+
+            let allowed = RegistryFallbackFixtureTool(
+                name: RegistryFallbackFixtureTool.allowedName
+            )
+            let denied = RegistryFallbackFixtureTool(
+                name: RegistryFallbackFixtureTool.deniedName
+            )
+            ToolRegistry.shared.registerPluginTool(allowed)
+            ToolRegistry.shared.registerPluginTool(denied)
+            ToolRegistry.shared.setEnabled(true, for: allowed.name)
+            ToolRegistry.shared.setEnabled(true, for: denied.name)
+            defer { ToolRegistry.shared.unregister(names: [allowed.name, denied.name]) }
+
+            await ToolIndexService.shared.onToolRegistered(
+                name: allowed.name,
+                description: allowed.description,
+                runtime: .native,
+                tokenCount: 12,
+                parameters: allowed.parameters
+            )
+            await ToolIndexService.shared.onToolRegistered(
+                name: denied.name,
+                description: denied.description,
+                runtime: .native,
+                tokenCount: 12,
+                parameters: denied.parameters
+            )
+            try? ToolDatabase.shared.deleteEntry(id: allowed.name)
+            try? ToolDatabase.shared.deleteEntry(id: denied.name)
+            #expect((try? ToolDatabase.shared.loadEntry(id: allowed.name)) == nil)
+            #expect((try? ToolDatabase.shared.loadEntry(id: denied.name)) == nil)
+
+            let (results, diagnostic) = await ToolSearchService.shared.searchHybridWithDiagnostic(
+                query: "current headline web search",
+                topK: 5,
+                minFusedScore: CapabilitySearch.minimumFusedScore,
+                allowedNames: [allowed.name]
+            )
+
+            #expect(results.map(\.entry.name) == [allowed.name])
+            #expect(diagnostic.acceptedHits.contains { $0.name == allowed.name })
+            #expect(diagnostic.acceptedHits.first { $0.name == allowed.name }?.bm25Score == nil)
+            #expect(diagnostic.acceptedHits.first { $0.name == allowed.name }?.embedScore == nil)
+            #expect(diagnostic.filteredByAllowlist.contains(denied.name))
+
+            let junk = await ToolSearchService.shared.searchHybridWithDiagnostic(
+                query: "unrelated small talk",
+                topK: 5,
+                minFusedScore: CapabilitySearch.minimumFusedScore
+            )
+            #expect(!junk.results.contains { $0.entry.name == allowed.name })
+            #expect(!junk.results.contains { $0.entry.name == denied.name })
+
+            let stopwords = await ToolSearchService.shared.searchHybridWithDiagnostic(
+                query: "the and for with",
+                topK: 5,
+                minFusedScore: CapabilitySearch.minimumFusedScore
+            )
+            #expect(!stopwords.results.contains { $0.entry.name == allowed.name })
+            #expect(!stopwords.results.contains { $0.entry.name == denied.name })
+        }
+    }
+
+    @Test @MainActor
+    func hybridSearchDoesNotAcceptStaleNonDiscoverableBuiltInIndexRows() async throws {
+        try await DynamicCatalogTestLock.shared.run {
+            let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent(
+                "osaurus-tool-stale-nondiscoverable-\(UUID().uuidString)",
+                isDirectory: true
+            )
+            let previousOverride = ToolConfigurationStore.overrideDirectory
+            ToolConfigurationStore.overrideDirectory = tempDir
+            try? FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+            defer { ToolConfigurationStore.overrideDirectory = previousOverride }
+
+            let dbWasOpen = ToolDatabase.shared.isOpen
+            if !dbWasOpen {
+                try ToolDatabase.shared.openInMemory()
+            }
+            defer {
+                try? ToolDatabase.shared.deleteEntry(id: ComputerUseTool.toolName)
+                if !dbWasOpen {
+                    ToolDatabase.shared.close()
+                }
+            }
+
+            let previousComputerUseEnabled =
+                ToolRegistry.shared.listTools().first { $0.name == ComputerUseTool.toolName }?.enabled ?? false
+            ToolRegistry.shared.setEnabled(true, for: ComputerUseTool.toolName)
+            defer { ToolRegistry.shared.setEnabled(previousComputerUseEnabled, for: ComputerUseTool.toolName) }
+            let staleEntry = ToolIndexEntry(
+                id: ComputerUseTool.toolName,
+                name: ComputerUseTool.toolName,
+                description: "Operate computer use browser form fill automation with accessibility",
+                runtime: .builtin,
+                toolsJSON: "{}",
+                source: .system,
+                tokenCount: 80
+            )
+            try ToolDatabase.shared.upsertEntry(staleEntry)
+            await ToolSearchService.shared.indexEntry(staleEntry)
+
+            let (results, diagnostic) = await ToolSearchService.shared.searchHybridWithDiagnostic(
+                query: "computer use browser form fill automation",
+                topK: 5,
+                minFusedScore: 0
+            )
+
+            #expect(diagnostic.allHits.contains { $0.name == ComputerUseTool.toolName })
+            #expect(!results.contains { $0.entry.name == ComputerUseTool.toolName })
+            #expect(!diagnostic.acceptedHits.contains { $0.name == ComputerUseTool.toolName })
+            await ToolSearchService.shared.removeEntry(id: ComputerUseTool.toolName)
+        }
+    }
 }
 
 private struct SearchExposureFixtureTool: OsaurusTool {
     static let nameStatic = "lane_b_search_fixture"
 
     let name = Self.nameStatic
+    let description = "Search the web for current headline news and online results"
+    let parameters: JSONValue? = .object([
+        "type": .string("object"),
+        "properties": .object([
+            "query": .object([
+                "type": .string("string"),
+                "description": .string("Search query for current web results"),
+            ])
+        ]),
+        "required": .array([.string("query")]),
+    ])
+
+    func execute(argumentsJSON: String) async throws -> String {
+        argumentsJSON
+    }
+}
+
+private struct RegistryFallbackFixtureTool: OsaurusTool {
+    static let allowedName = "lane_b_registry_fallback_allowed"
+    static let deniedName = "lane_b_registry_fallback_denied"
+
+    let name: String
     let description = "Search the web for current headline news and online results"
     let parameters: JSONValue? = .object([
         "type": .string("object"),

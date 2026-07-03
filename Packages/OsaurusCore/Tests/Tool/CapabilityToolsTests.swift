@@ -327,8 +327,8 @@ struct CapabilitiesDiscoverToolTests {
                 )
                 #expect(rawResults.contains { $0.entry.name == allowed.name })
                 #expect(!rawResults.contains { $0.entry.name == denied.name })
-                #expect(diagnostic.filteredByAllowlist.count == 1)
                 #expect(diagnostic.filteredByAllowlist.contains(denied.name))
+                #expect(diagnostic.filteredByAllowlist.filter { $0 == denied.name }.count == 1)
 
                 let tool = CapabilitiesDiscoverTool(agentId: agent.id)
                 let result = try await tool.execute(
@@ -352,6 +352,54 @@ struct CapabilitiesDiscoverToolTests {
 
                 _ = await AgentManager.shared.delete(id: agent.id)
             }
+        }
+    }
+
+    @Test @MainActor
+    func discoverRecoversEnabledToolMissingFromOpenIndex() async throws {
+        try await DynamicCatalogTestLock.shared.run {
+            let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent(
+                "osaurus-capability-discover-stale-index-\(UUID().uuidString)",
+                isDirectory: true
+            )
+            let previousOverride = ToolConfigurationStore.overrideDirectory
+            ToolConfigurationStore.overrideDirectory = tempDir
+            try? FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+            defer { ToolConfigurationStore.overrideDirectory = previousOverride }
+
+            let dbWasOpen = ToolDatabase.shared.isOpen
+            if !dbWasOpen {
+                try ToolDatabase.shared.openInMemory()
+            }
+            defer {
+                try? ToolDatabase.shared.deleteEntry(id: StaleIndexCapabilityFixtureTool.nameStatic)
+                if !dbWasOpen {
+                    ToolDatabase.shared.close()
+                }
+            }
+
+            let fixture = StaleIndexCapabilityFixtureTool()
+            ToolRegistry.shared.registerPluginTool(fixture)
+            ToolRegistry.shared.setEnabled(true, for: fixture.name)
+            defer { ToolRegistry.shared.unregister(names: [fixture.name]) }
+
+            await ToolIndexService.shared.onToolRegistered(
+                name: fixture.name,
+                description: fixture.description,
+                runtime: .native,
+                tokenCount: 12,
+                parameters: fixture.parameters
+            )
+            try? ToolDatabase.shared.deleteEntry(id: fixture.name)
+            #expect((try? ToolDatabase.shared.loadEntry(id: fixture.name)) == nil)
+
+            let result = try await CapabilitiesDiscoverTool().execute(
+                argumentsJSON: "{\"query\": \"current headline web search\"}"
+            )
+
+            #expect(!ToolEnvelope.isError(result))
+            #expect(result.contains("tool/\(fixture.name)"))
+            #expect(result.contains("availability: loadable_via_capabilities_load"))
         }
     }
 }
@@ -665,6 +713,78 @@ struct CapabilitiesLoadToolTests {
     }
 
     @Test @MainActor
+    func skillLoadIncludesRelativeCompanionScriptsWithoutPrivatePaths() async throws {
+        try await StoragePathsTestLock.shared.run {
+            let root = FileManager.default.temporaryDirectory.appendingPathComponent(
+                "osaurus-skill-load-files-\(UUID().uuidString)",
+                isDirectory: true
+            )
+            try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+
+            let previousRoot = OsaurusPaths.overrideRoot
+            OsaurusPaths.overrideRoot = root
+            await SkillManager.shared.refresh()
+
+            func restoreRoot() async {
+                OsaurusPaths.overrideRoot = previousRoot
+                await SkillManager.shared.refresh()
+                try? FileManager.default.removeItem(at: root)
+            }
+
+            do {
+                let skill = Skill(
+                    name: "Script Skill",
+                    description: "Runs a companion script",
+                    enabled: true,
+                    instructions: "Run `python3 scripts/main.py` from this skill."
+                )
+                await SkillStore.save(skill)
+                let skillDir = SkillStore.skillDirectory(for: skill)
+                let scriptsDir = skillDir.appendingPathComponent("scripts", isDirectory: true)
+                try FileManager.default.createDirectory(at: scriptsDir, withIntermediateDirectories: true)
+                try Data("print('hello')\n".utf8).write(to: scriptsDir.appendingPathComponent("main.py"))
+                try Data("token=secret\n".utf8).write(to: skillDir.appendingPathComponent("secrets.env"))
+                await SkillManager.shared.refresh()
+
+                let loadedSkill = await SkillManager.shared.skill(named: "Script Skill")
+                let loaded = try #require(loadedSkill)
+
+                let instructions = await SkillManager.shared.buildFullInstructions(for: loaded)
+                #expect(!instructions.contains(skillDir.path))
+                #expect(instructions.contains("scripts/main.py"))
+                #expect(!instructions.contains("secrets.env"))
+
+                let tool = CapabilitiesLoadTool()
+                let result = try await tool.execute(
+                    argumentsJSON: "{\"ids\": [\"skill/\(loaded.name)\"]}"
+                )
+
+                #expect(!ToolEnvelope.isError(result))
+                #expect(!result.contains(skillDir.path))
+                #expect(result.contains("scripts/main.py"))
+                #expect(!result.contains("secrets.env"))
+
+                let plainSkill = Skill(
+                    name: "Plain Skill",
+                    description: "No companion scripts",
+                    enabled: true,
+                    instructions: "Use the skill instructions only."
+                )
+                await SkillStore.save(plainSkill)
+                await SkillManager.shared.refresh()
+                let plainLoadedSkill = await SkillManager.shared.skill(named: "Plain Skill")
+                let plainLoaded = try #require(plainLoadedSkill)
+                let plainInstructions = await SkillManager.shared.buildFullInstructions(for: plainLoaded)
+                #expect(!plainInstructions.contains("## Skill Files"))
+                await restoreRoot()
+            } catch {
+                await restoreRoot()
+                throw error
+            }
+        }
+    }
+
+    @Test @MainActor
     func toolLoadReportsDisabledAvailability() async throws {
         try await DynamicCatalogTestLock.shared.run {
             let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent(
@@ -819,6 +939,27 @@ private struct MalformedSchemaFixtureTool: OsaurusTool {
     let name: String
     let description = "Fixture with a malformed schema"
     let parameters: JSONValue? = .string("not an object")
+
+    func execute(argumentsJSON: String) async throws -> String {
+        argumentsJSON
+    }
+}
+
+private struct StaleIndexCapabilityFixtureTool: OsaurusTool {
+    static let nameStatic = "lane_b_stale_index_search_tool"
+
+    let name = Self.nameStatic
+    let description = "Search the web for current headline news and online results"
+    let parameters: JSONValue? = .object([
+        "type": .string("object"),
+        "properties": .object([
+            "query": .object([
+                "type": .string("string"),
+                "description": .string("Search query for current web results"),
+            ])
+        ]),
+        "required": .array([.string("query")]),
+    ])
 
     func execute(argumentsJSON: String) async throws -> String {
         argumentsJSON

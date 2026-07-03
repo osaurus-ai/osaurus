@@ -1780,6 +1780,12 @@ public final class ToolRegistry: ObservableObject {
         ComputerUseTool.toolName
     ]
 
+    var capabilitySearchExcludedToolNames: Set<String> {
+        Self.capabilityToolNames
+            .union(runtimeManagedToolNames)
+            .union(Self.nonDiscoverableBuiltInToolNames)
+    }
+
     /// Always-loaded tool specs: built-in + runtime-managed tools.
     /// These are always included when registered — mode exclusions handle
     /// which runtime tools are relevant. Plugin/MCP/sandbox-plugin tools

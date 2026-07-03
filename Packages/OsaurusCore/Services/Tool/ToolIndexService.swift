@@ -31,9 +31,7 @@ public actor ToolIndexService {
                 // prompt composer when the owning agent flag is on and have no
                 // capabilities_load carve-out, so discovery would only surface a capability
                 // the model can never load.
-                let excluded = ToolRegistry.capabilityToolNames
-                    .union(ToolRegistry.shared.runtimeManagedToolNames)
-                    .union(ToolRegistry.nonDiscoverableBuiltInToolNames)
+                let excluded = ToolRegistry.shared.capabilitySearchExcludedToolNames
                 return (all, sandbox, mcp, builtIn, excluded)
             }
 
@@ -101,6 +99,15 @@ public actor ToolIndexService {
         tokenCount: Int = 0,
         parameters: JSONValue? = nil
     ) async {
+        let excludedNames: Set<String> = await MainActor.run {
+            ToolRegistry.shared.capabilitySearchExcludedToolNames
+        }
+        guard !excludedNames.contains(name) else {
+            try? ToolDatabase.shared.deleteEntry(id: name)
+            await ToolSearchService.shared.removeEntry(id: name)
+            return
+        }
+
         let entry = ToolIndexEntry(
             id: name,
             name: name,
@@ -110,10 +117,22 @@ public actor ToolIndexService {
             source: .system,
             tokenCount: tokenCount
         )
+        var didUpsert = false
         do {
             try ToolDatabase.shared.upsertEntry(entry)
+            didUpsert = true
         } catch {
             ToolIndexLogger.service.error("Failed to index registered tool '\(name)': \(error)")
+        }
+        let stillIndexable = await MainActor.run {
+            ToolRegistry.shared.listTools().contains { tool in
+                tool.name == name
+                    && tool.enabled
+                    && !ToolRegistry.shared.capabilitySearchExcludedToolNames.contains(name)
+            }
+        }
+        if didUpsert && stillIndexable {
+            await ToolSearchService.shared.indexEntry(entry, parameters: parameters)
         }
     }
 
@@ -365,8 +384,7 @@ public actor ToolIndexService {
             entries = try ToolDatabase.shared.loadAllEntries().filter { enabledNames.contains($0.name) }
         } else {
             entries = await MainActor.run {
-                let excluded = ToolRegistry.capabilityToolNames
-                    .union(ToolRegistry.shared.runtimeManagedToolNames)
+                let excluded = ToolRegistry.shared.capabilitySearchExcludedToolNames
                 return
                     enabledTools
                     .filter { !excluded.contains($0.name) }
