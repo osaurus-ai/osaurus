@@ -139,6 +139,12 @@ public final class TranscriptionModeService: ObservableObject {
     public func stopTranscription(discard: Bool = false) {
         guard state == .transcribing || state == .starting else { return }
 
+        // A cancel has nothing to clean up, so dismiss the overlay right away
+        // instead of showing a "Processing" state while the stream tears down.
+        if discard {
+            overlayService.hide()
+        }
+
         state = .stopping
         stopEscKeyMonitoring()
         stopSilenceMonitoring()
