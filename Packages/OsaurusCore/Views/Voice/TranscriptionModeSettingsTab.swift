@@ -303,6 +303,7 @@ struct TranscriptionModeSettingsTab: View {
                 }
             }
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     // MARK: - Test Area Card
