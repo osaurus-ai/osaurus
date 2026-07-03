@@ -5,9 +5,9 @@
 //  Guardrails for the management sidebar's information architecture:
 //  every tab must belong to exactly one labeled section, the flattened
 //  section order must cover every tab, and legacy deep-link raw values
-//  (`"dashboard"`, `"channels"`) must keep resolving after their cases
-//  were removed. These pin the Settings IA cleanup so a future tab
-//  addition can't silently fall out of the sidebar.
+//  (`"dashboard"`, `"channels"`) must keep resolving as their destinations
+//  move. These pin the Settings IA cleanup so a future tab addition can't
+//  silently fall out of the sidebar.
 //
 
 import Foundation
@@ -59,7 +59,9 @@ struct ManagementTabTests {
 
     @Test func resolvedMapsLegacyRawValues() {
         #expect(ManagementTab.resolved(from: "dashboard") == .credits)
-        #expect(ManagementTab.resolved(from: "channels") == .agents)
+        #expect(ManagementTab.resolved(from: "channels") == .agentChannels)
+        #expect(ManagementTab.resolved(from: "integrations") == .agentChannels)
+        #expect(ManagementTab.resolved(from: "agent-channels") == .agentChannels)
     }
 
     @Test func resolvedRoundTripsCurrentRawValues() {

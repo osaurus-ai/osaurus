@@ -102,8 +102,8 @@ public enum ManagementTab: String, CaseIterable, Identifiable, Sendable {
         }
     }
 
-    /// Resolves a sidebar tab id, including legacy raw values that no longer
-    /// exist as cases (`"dashboard"` → Credits, `"channels"` → Agents).
+    /// Resolves a sidebar tab id, including legacy raw values whose destination
+    /// has moved (`"dashboard"` → Credits, `"channels"` → Agent Channels).
     public static func resolved(from rawValue: String) -> ManagementTab? {
         switch rawValue {
         case "dashboard": .credits
