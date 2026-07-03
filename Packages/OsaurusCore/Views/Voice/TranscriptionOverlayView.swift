@@ -73,11 +73,11 @@ public struct TranscriptionOverlayView: View {
             WaveformView(
                 level: audioLevel,
                 style: .bars,
-                barCount: 18,
+                barCount: 22,
                 primaryColor: .white,
                 isActive: isActive && !isProcessing
             )
-            .frame(width: 200, height: 26)
+            .frame(width: 240, height: 26)
             .opacity(isProcessing ? 0 : 1)
 
             // Stop / Cancel controls share the waveform's horizontal axis,
