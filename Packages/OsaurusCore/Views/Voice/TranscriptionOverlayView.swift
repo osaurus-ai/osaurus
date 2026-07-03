@@ -39,6 +39,9 @@ public struct TranscriptionOverlayView: View {
     /// Hover state for close button
     @State private var isCloseHovered = false
 
+    /// Hover state for stop button
+    @State private var isStopHovered = false
+
     /// Pulsing state for the status dot
     @State private var dotPulse = false
 
@@ -140,18 +143,21 @@ public struct TranscriptionOverlayView: View {
     /// Stop & insert — only shown when transcription won't stop on its own.
     private var stopButton: some View {
         Button(action: { onDone?() }) {
-            HStack(spacing: 6) {
-                Image(systemName: "stop.fill")
-                    .font(.system(size: 9, weight: .bold))
-                Text("Stop", bundle: .module)
-                    .font(.system(size: 11, weight: .semibold))
-            }
-            .foregroundColor(.white)
-            .padding(.horizontal, 12)
-            .padding(.vertical, 6)
-            .background(Capsule().fill(theme.accentColor))
+            Image(systemName: "stop.fill")
+                .font(.system(size: 10, weight: .bold))
+                .foregroundColor(.white.opacity(isStopHovered ? 1.0 : 0.7))
+                .frame(width: 24, height: 24)
+                .background(
+                    Circle()
+                        .fill(Color.white.opacity(isStopHovered ? 0.22 : 0.12))
+                )
         }
         .buttonStyle(.plain)
+        .scaleEffect(isStopHovered ? 1.05 : 1.0)
+        .animation(.easeOut(duration: 0.15), value: isStopHovered)
+        .onHover { hovering in
+            isStopHovered = hovering
+        }
         .localizedHelp("Stop and insert")
     }
 
