@@ -150,7 +150,10 @@ public final class TranscriptionModeService: ObservableObject {
             speechService.clearTranscription()
 
             if !rawText.isEmpty {
-                let finalText = await TranscriptionCleanupService.shared.clean(rawText)
+                let finalText =
+                    SpeechConfigurationStore.load().postProcessTranscription
+                    ? await TranscriptionCleanupService.shared.clean(rawText)
+                    : rawText
                 keyboardService.pasteText(finalText)
             }
 

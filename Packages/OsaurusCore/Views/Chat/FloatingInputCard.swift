@@ -1260,7 +1260,10 @@ extension FloatingInputCard {
             logVoiceState(trigger: "sendVoiceMessage-afterStop")
 
             print("[FloatingInputCard] Invoking cleanup for voice message (\(message.count) chars)")
-            let cleanedMessage = await TranscriptionCleanupService.shared.clean(message)
+            let cleanedMessage =
+                SpeechConfigurationStore.load().postProcessTranscription
+                ? await TranscriptionCleanupService.shared.clean(message)
+                : message
             print("[FloatingInputCard] Cleanup done. Original: \(message) | Cleaned: \(cleanedMessage)")
             await finalPreencodeTask?.value
 
@@ -1329,7 +1332,10 @@ extension FloatingInputCard {
             _ = await speechService.stopStreamingTranscription()
             speechService.clearTranscription()
 
-            let cleaned = await TranscriptionCleanupService.shared.clean(transcribedText)
+            let cleaned =
+                SpeechConfigurationStore.load().postProcessTranscription
+                ? await TranscriptionCleanupService.shared.clean(transcribedText)
+                : transcribedText
 
             await MainActor.run {
                 voiceInputState = .idle
