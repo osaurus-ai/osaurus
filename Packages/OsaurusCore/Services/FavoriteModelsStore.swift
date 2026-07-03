@@ -40,7 +40,7 @@ final class FavoriteModelsStore: ObservableObject {
     /// Stable cross-provider favourite key: the source's unique key joined to
     /// the model id. Both `ModelPickerItem` and `ModelPickerRow` route through
     /// this so a favourite added from one surface is recognised on the other.
-    static func key(sourceKey: String, modelId: String) -> String {
+    nonisolated static func key(sourceKey: String, modelId: String) -> String {
         // Unit-separator join so the two components can never be confused with
         // literal characters in either the source key or the model id.
         "\(sourceKey)\u{1F}\(modelId)"
