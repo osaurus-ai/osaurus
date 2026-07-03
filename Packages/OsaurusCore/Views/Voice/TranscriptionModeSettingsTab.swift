@@ -29,6 +29,7 @@ struct TranscriptionModeSettingsTab: View {
     @State private var pauseDuration: Double = 1.5
     @State private var confirmationDelay: Double = 2.0
     @State private var silenceTimeoutSeconds: Double = 30.0
+    @State private var postProcessTranscription: Bool = true
 
     /// Polls accessibility permission while the tab is visible, since
     /// `AXIsProcessTrusted()` won't notify us when the user grants it externally.
@@ -55,6 +56,7 @@ struct TranscriptionModeSettingsTab: View {
         pauseDuration = config.pauseDuration
         confirmationDelay = config.confirmationDelay
         silenceTimeoutSeconds = config.silenceTimeoutSeconds
+        postProcessTranscription = config.postProcessTranscription
     }
 
     private func saveVoiceSettings() {
@@ -64,6 +66,7 @@ struct TranscriptionModeSettingsTab: View {
         config.pauseDuration = pauseDuration
         config.confirmationDelay = confirmationDelay
         config.silenceTimeoutSeconds = silenceTimeoutSeconds
+        config.postProcessTranscription = postProcessTranscription
         SpeechConfigurationStore.save(config)
 
         NotificationCenter.default.post(name: .voiceConfigurationChanged, object: nil)
@@ -419,6 +422,18 @@ struct TranscriptionModeSettingsTab: View {
                 Text("Applies to both chat voice input and Transcription Mode", bundle: .module)
                     .font(.system(size: 12))
                     .foregroundColor(theme.secondaryText)
+
+                // Post-processing toggle
+                SettingsToggle(
+                    title: L("Clean Up Transcription"),
+                    description: postProcessTranscription
+                        ? L("The core model removes filler words like \"uh\" and \"mm\"")
+                        : L("Keep the natural transcription, including filler words"),
+                    isOn: $postProcessTranscription
+                )
+                .onChange(of: postProcessTranscription) { _, _ in
+                    saveVoiceSettings()
+                }
 
                 // Voice Stop Mode Picker
                 VStack(alignment: .leading, spacing: 10) {
