@@ -622,9 +622,17 @@ struct ModelPickerView: View {
                         .foregroundColor(isActive ? theme.accentColor : theme.secondaryText)
                 }
 
-                Text(tab.title)
-                    .font(.system(size: 11, weight: isActive ? .semibold : .medium))
-                    .foregroundColor(isActive ? theme.accentColor : theme.secondaryText)
+                Group {
+                    // The Favourites tab has a fixed, translatable title; every
+                    // other tab shows a provider name rendered verbatim.
+                    if isFavorites {
+                        Text("Favourites", bundle: .module)
+                    } else {
+                        Text(tab.title)
+                    }
+                }
+                .font(.system(size: 11, weight: isActive ? .semibold : .medium))
+                .foregroundColor(isActive ? theme.accentColor : theme.secondaryText)
 
                 Text("\(tab.models.count)")
                     .font(.system(size: 9, weight: .medium))
