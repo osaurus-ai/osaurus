@@ -127,6 +127,19 @@ public struct NextRunPanelView: View {
                             .foregroundColor(theme.secondaryText.opacity(0.85))
                             .lineLimit(1)
                     }
+                    // A due row with a dead dispatch loop would otherwise
+                    // look like a working "Now" state forever (e.g. the
+                    // storage key wasn't unlocked at launch). Tell the user
+                    // why nothing fired and that Run now is the escape hatch.
+                    if entry.scheduledAt <= nowTick, !NextRunScheduler.shared.isRunning {
+                        Label(
+                            "Scheduler inactive — waiting for storage unlock. Use Run now to start manually.",
+                            systemImage: "exclamationmark.triangle.fill"
+                        )
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundColor(theme.warningColor)
+                        .lineLimit(2)
+                    }
                 }
                 Spacer(minLength: 8)
 
@@ -397,14 +410,11 @@ public struct NextRunPanelView: View {
         // then dispatch with `selfSchedule` so the audit trail still shows
         // the run was triggered by the next-run plumbing.
         try? LocalAgentBridge.shared.cancelNextRun(agentId: agentId)
-        let request = DispatchRequest(
-            prompt: entry.instructions,
-            agentId: agentId,
-            title: "Self-scheduled run",
-            source: .selfSchedule,
-            externalSessionKey: agentId.uuidString
-        )
         Task {
+            // Same builder as the automatic path: fresh chat per run,
+            // preamble prompt with the previous-run pointer, timestamped
+            // session title.
+            let request = await NextRunScheduler.makeDispatchRequest(for: entry)
             _ = await TaskDispatcher.shared.dispatch(request)
             await reload()
             onRunNow()

@@ -486,6 +486,10 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
         Task { @MainActor in
             guard StorageKeyManager.shared.isStorageReadyForWrites else {
                 NSLog("[Osaurus] Scheduler disabled: storage key is not already unlocked")
+                // Arm a one-shot start for when the key becomes resident,
+                // so slots persisted from a previous session still fire
+                // once the user unlocks encrypted storage.
+                NextRunScheduler.shared.startWhenStorageBecomesReady()
                 return
             }
             NextRunScheduler.shared.start()

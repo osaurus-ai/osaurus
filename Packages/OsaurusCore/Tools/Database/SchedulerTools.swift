@@ -62,7 +62,10 @@ final class ScheduleNextRunTool: OsaurusTool, @unchecked Sendable {
     let name = "schedule_next_run"
     let description =
         "Ask the host to wake you again at a future time, with a short "
-        + "instruction describing what to do then. The host clamps your "
+        + "instruction describing what to do then. The wake runs in a "
+        + "FRESH chat with no prior conversation context, so make "
+        + "`instructions` self-contained (persist any state you'll need "
+        + "in your agent database first). The host clamps your "
         + "request against the agent's schedule bounds (min interval, "
         + "max horizon, quiet hours, daily cap); the result tells you "
         + "the actual scheduled time and whether any clamp applied. "

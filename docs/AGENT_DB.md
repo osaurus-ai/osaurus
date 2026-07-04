@@ -192,6 +192,10 @@ Writes use SQLite `ON CONFLICT` upsert — **last write wins**. The runtime [`Ne
 
 Because the slot is cleared on wake, **wakeups are single-shot**. If an agent wants to wake again it has to call `schedule_next_run` from inside the run. This is intentional — it's how the agent expresses "keep me alive" vs. "I'm done".
 
+**Every wake runs in a fresh chat session.** The dispatcher does not reattach to the chat from a previous self-scheduled run, so the context window never accretes across wakes. Continuity is the agent's job: carry state forward through the `instructions` on the next `schedule_next_run` call and through the agent DB. The dispatched prompt carries a host-composed preamble — who scheduled the wake, when, and a pointer to the previous run's completion time/status from `agent_runs` — followed by the stored instructions verbatim (see `NextRunScheduler.composeDispatchPrompt`).
+
+If dispatch fails after the slot is cleared (e.g. host concurrency is saturated), the scheduler records a `cancelled` row in `agent_runs` (`dispatch-failed`) so the miss is visible in the Activity tab instead of vanishing.
+
 Every slot carries `NextRunScheduledBy` (`.agent` / `.user` / `.system`) so the audit trail and the Next Run banner can show "scheduled by you" vs. "scheduled by the agent".
 
 ---
@@ -204,7 +208,7 @@ From [`SchedulerTools.swift`](../Packages/OsaurusCore/Tools/Database/SchedulerTo
 | ---------------- | --------------- | -------- | ----------------------------------------------------------------------------- |
 | `scheduled_at`   | ISO-8601 string | one of   | Absolute wake-up time.                                                        |
 | `in_seconds`     | integer         | one of   | Relative offset from now.                                                     |
-| `instructions`   | string          | yes      | The "wake-up brief" the agent reads when it fires. Becomes the user turn.     |
+| `instructions`   | string          | yes      | The "wake-up brief" the agent reads when it fires. Becomes the user turn in a fresh chat session, prefixed by the host's wake preamble. |
 | `context_views`  | string[]        | no       | Saved-view names to prefetch into the system prompt before the run starts.    |
 | `priority`       | `normal` \| `low` | no     | `low` means "skip if the user is mid-conversation when due". Default `normal`. |
 | `on_miss`        | `skip` \| `run_once` \| `run_catchup` | no | What to do when the wake-up time has already passed (e.g. laptop was asleep). Default `skip`. |
