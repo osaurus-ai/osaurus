@@ -154,11 +154,7 @@ actor AgentChannelTransportSupervisor {
 
     func refreshTelegramRuntime(now: Date = Date()) async {
         let configuration = telegramConfiguration()
-        if configuration.receiveStorageEnabled
-            && configuration.longPollingEnabled
-            && telegramHasBotToken()
-            && !configuration.readableChatIds.isEmpty
-            && !configuration.senderAllowlist.isEmpty {
+        if configuration.canStartLongPolling(hasBotToken: telegramHasBotToken()) {
             guard !telegramStarted else { return }
             telegramStarted = true
             await telegramRuntime.start(pollInterval: 0)

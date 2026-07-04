@@ -47,7 +47,7 @@ struct TelegramSettingsView: View {
         ) {
             VStack(alignment: .leading, spacing: 20) {
                 Text(
-                    "Connect a Telegram bot so agents can read allowlisted chats and post only to write-allowlisted destinations.",
+                    "Connect a Telegram bot, then enable long polling and allowlist readable chats plus authorized senders before expecting new messages to arrive.",
                     bundle: .module
                 )
                 .font(.system(size: 12))
@@ -198,7 +198,7 @@ struct TelegramSettingsView: View {
                 }
 
                 Text(
-                    "Reads serve messages from the local inbox; without long polling, new activity is not fetched.",
+                    "Reads serve messages from the local inbox; a token alone does not fetch new activity until long polling, readable chats, and authorized senders are configured.",
                     bundle: .module
                 )
                 .font(.system(size: 11))
@@ -210,7 +210,7 @@ struct TelegramSettingsView: View {
                     transportId: TelegramLongPollTransportRuntime.transportId,
                     title: L("Long polling receive"),
                     notRunningHint: L(
-                        "Long polling is not running. Save a bot token, enable long polling, and add authorized sender IDs to start it."
+                        "Long polling is not running. Save a bot token, enable long polling, then add readable chat IDs and authorized sender IDs to start it."
                     ),
                     refreshToken: healthRefreshToken
                 )
@@ -345,17 +345,39 @@ struct TelegramSettingsView: View {
         }
     }
 
-    /// Persist the configuration, hold the Save button busy until the receive
-    /// supervisor has re-evaluated the runtime, then close the sheet.
+    /// Persist the configuration, hold the Save button busy until diagnostics
+    /// prove whether receive is active, then either close or show next steps.
     private func saveAndDismiss() {
         guard persistPendingSecrets(), saveConfiguration() else { return }
         isSaving = true
         Task {
             await AgentChannelTransportSupervisor.shared.refreshTelegramRuntime()
+            let diagnostics = await TelegramConnectionService.shared.diagnostics()
             await MainActor.run {
                 isSaving = false
-                _ = ToastManager.shared.success(L("Telegram settings saved"))
-                dismiss()
+                healthRefreshToken += 1
+                webhookRegistered = diagnostics.webhook?.registered ?? webhookRegistered
+
+                let presentation = AgentChannelStatusPresentation.diagnostics(
+                    status: diagnostics.status
+                )
+                if TelegramSettingsSavePolicy.shouldDismissAfterSave(diagnostics) {
+                    if diagnostics.receiveReady,
+                        diagnostics.failures.isEmpty,
+                        presentation.tone == .success {
+                        _ = ToastManager.shared.success(L("Telegram settings saved"))
+                    } else {
+                        _ = ToastManager.shared.warning(
+                            presentation.label,
+                            message: diagnostics.failures.first,
+                            timeout: 8
+                        )
+                    }
+                    clearStatus()
+                    dismiss()
+                } else {
+                    showDiagnostics(diagnostics, presentation: presentation)
+                }
             }
         }
     }
@@ -372,18 +394,7 @@ struct TelegramSettingsView: View {
                 isTesting = false
                 healthRefreshToken += 1
                 webhookRegistered = diagnostics.webhook?.registered ?? webhookRegistered
-                let presentation = AgentChannelStatusPresentation.diagnostics(
-                    status: diagnostics.status
-                )
-                if diagnostics.failures.isEmpty {
-                    showStatus(presentation.label, details: diagnostics.notes, isError: false)
-                } else {
-                    showStatus(
-                        presentation.label,
-                        details: diagnostics.failures + diagnostics.notes,
-                        isError: true
-                    )
-                }
+                showDiagnostics(diagnostics)
             }
         }
     }
@@ -469,6 +480,19 @@ struct TelegramSettingsView: View {
         statusMessage = message
         statusDetails = details
         statusIsError = isError
+    }
+
+    private func showDiagnostics(
+        _ diagnostics: TelegramConnectionDiagnostics,
+        presentation suppliedPresentation: AgentChannelStatusPresentation? = nil
+    ) {
+        let presentation = suppliedPresentation
+            ?? AgentChannelStatusPresentation.diagnostics(status: diagnostics.status)
+        showStatus(
+            presentation.label,
+            details: diagnostics.failures + diagnostics.notes,
+            isError: !diagnostics.failures.isEmpty || presentation.tone == .error
+        )
     }
 
     private func clearStatus() {

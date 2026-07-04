@@ -74,6 +74,7 @@ struct TelegramConnectionDiagnostics: Equatable, Sendable {
     var dictionary: [String: Any] {
         var result: [String: Any] = [
             "token_saved": tokenSaved,
+            "receive_ready": receiveReady,
             "readable_chat_ids": readableChatIds,
             "writable_chat_ids": writableChatIds,
             "sender_allowlist": senderAllowlist,
@@ -98,6 +99,45 @@ struct TelegramConnectionDiagnostics: Equatable, Sendable {
             result["webhook"] = webhook.dictionary
         }
         return result
+    }
+
+    /// True only when the desktop receive path has every prerequisite needed
+    /// for Telegram updates to reach the local Agent Channel inbox.
+    var receiveReady: Bool {
+        tokenSaved
+            && bot != nil
+            && receiveStorageEnabled
+            && longPollingEnabled
+            && !readableChatIds.isEmpty
+            && !senderAllowlist.isEmpty
+            && webhook?.registered != true
+    }
+}
+
+enum TelegramSettingsSavePolicy {
+    static func shouldDismissAfterSave(_ diagnostics: TelegramConnectionDiagnostics) -> Bool {
+        switch diagnostics.status {
+        case "not_configured", "token_invalid_or_unavailable", "connected_long_poll_webhook_conflict":
+            return false
+        default:
+            break
+        }
+
+        if diagnostics.writeEnabled && diagnostics.writableChatIds.isEmpty {
+            return false
+        }
+        if diagnostics.receiveReady {
+            return true
+        }
+
+        let writeOnlyReady = diagnostics.writeEnabled
+            && !diagnostics.writableChatIds.isEmpty
+            && !diagnostics.longPollingEnabled
+        let storedReadConfigured = diagnostics.receiveStorageEnabled
+            && !diagnostics.readableChatIds.isEmpty
+            && !diagnostics.senderAllowlist.isEmpty
+            && !diagnostics.longPollingEnabled
+        return writeOnlyReady || storedReadConfigured
     }
 }
 
@@ -360,9 +400,14 @@ final class TelegramConnectionService: @unchecked Sendable {
             }
         }
 
+        let receiveStorageDisabled = !config.receiveStorageEnabled
+        let receiveLongPollingDisabled = config.receiveStorageEnabled
+            && !config.longPollingEnabled
+        let receiveNeedsReadableChats = config.receiveStorageEnabled
+            && config.longPollingEnabled
+            && config.readableChatIds.isEmpty
         let receiveNeedsSenderAllowlist = config.receiveStorageEnabled
             && config.longPollingEnabled
-            && !config.readableChatIds.isEmpty
             && config.senderAllowlist.isEmpty
         let webhookBlocksLongPolling = config.receiveStorageEnabled
             && config.longPollingEnabled
@@ -371,8 +416,12 @@ final class TelegramConnectionService: @unchecked Sendable {
         let status: String
         if bot == nil {
             status = "token_invalid_or_unavailable"
-        } else if config.readableChatIds.isEmpty {
-            status = "connected_needs_allowlist"
+        } else if receiveStorageDisabled {
+            status = "connected_receive_storage_disabled"
+        } else if receiveLongPollingDisabled {
+            status = "connected_receive_long_poll_disabled"
+        } else if receiveNeedsReadableChats {
+            status = "connected_receive_needs_readable_chats"
         } else if webhookBlocksLongPolling {
             status = "connected_long_poll_webhook_conflict"
         } else if receiveNeedsSenderAllowlist {
@@ -385,10 +434,27 @@ final class TelegramConnectionService: @unchecked Sendable {
             status = "connected_read_only"
         }
 
-        if receiveNeedsSenderAllowlist {
-            failures.append(
-                "Telegram long polling is enabled with readable chats but no authorized sender IDs; inbound updates will be denied before storage or dispatch."
-            )
+        if bot != nil {
+            if receiveStorageDisabled {
+                failures.append(
+                    "Telegram receive is not active: enable Store Incoming Messages so authorized updates can be written to the local inbox."
+                )
+            }
+            if !config.longPollingEnabled {
+                failures.append(
+                    "Telegram receive is not active: enable Long Polling to fetch new updates on this Mac."
+                )
+            }
+            if config.readableChatIds.isEmpty {
+                failures.append(
+                    "Telegram receive is not active: add at least one Readable Chat ID for the chat, group, or channel the bot should read."
+                )
+            }
+            if config.senderAllowlist.isEmpty {
+                failures.append(
+                    "Telegram receive is not active: add at least one Authorized Sender ID so group messages are accepted only from trusted users."
+                )
+            }
         }
         if webhookBlocksLongPolling, let webhook {
             failures.append(

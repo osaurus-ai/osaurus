@@ -32622,6 +32622,40 @@
         }
       }
     },
+    "Connect a Telegram bot, then enable long polling and allowlist readable chats plus authorized senders before expecting new messages to arrive." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Connect a Telegram bot, then enable long polling and allowlist readable chats plus authorized senders before expecting new messages to arrive."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Connect a Telegram bot, then enable long polling and allowlist readable chats plus authorized senders before expecting new messages to arrive."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Connect a Telegram bot, then enable long polling and allowlist readable chats plus authorized senders before expecting new messages to arrive."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Connect a Telegram bot, then enable long polling and allowlist readable chats plus authorized senders before expecting new messages to arrive."
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Connect a Telegram bot, then enable long polling and allowlist readable chats plus authorized senders before expecting new messages to arrive."
+          }
+        }
+      }
+    },
     "Connect automatically when app starts" : {
       "localizations" : {
         "de" : {
@@ -33101,6 +33135,74 @@
         }
       }
     },
+    "Connected — add readable chat IDs to finish Telegram receive" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Connected — add readable chat IDs to finish Telegram receive"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Connected — add readable chat IDs to finish Telegram receive"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Connected — add readable chat IDs to finish Telegram receive"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Connected — add readable chat IDs to finish Telegram receive"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Connected — add readable chat IDs to finish Telegram receive"
+          }
+        }
+      }
+    },
+    "Connected — enable long polling to receive Telegram messages" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Connected — enable long polling to receive Telegram messages"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Connected — enable long polling to receive Telegram messages"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Connected — enable long polling to receive Telegram messages"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Connected — enable long polling to receive Telegram messages"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Connected — enable long polling to receive Telegram messages"
+          }
+        }
+      }
+    },
     "Connected — read-only" : {
       "localizations" : {
         "de" : {
@@ -33131,6 +33233,40 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "已連線 — 唯讀"
+          }
+        }
+      }
+    },
+    "Connected — receive storage is off" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Connected — receive storage is off"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Connected — receive storage is off"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Connected — receive storage is off"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Connected — receive storage is off"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Connected — receive storage is off"
           }
         }
       }
@@ -74576,6 +74712,40 @@
         }
       }
     },
+    "Long polling is not running. Save a bot token, enable long polling, then add readable chat IDs and authorized sender IDs to start it." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Long polling is not running. Save a bot token, enable long polling, then add readable chat IDs and authorized sender IDs to start it."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Long polling is not running. Save a bot token, enable long polling, then add readable chat IDs and authorized sender IDs to start it."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Long polling is not running. Save a bot token, enable long polling, then add readable chat IDs and authorized sender IDs to start it."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Long polling is not running. Save a bot token, enable long polling, then add readable chat IDs and authorized sender IDs to start it."
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Long polling is not running. Save a bot token, enable long polling, then add readable chat IDs and authorized sender IDs to start it."
+          }
+        }
+      }
+    },
     "Long polling receive" : {
       "localizations" : {
         "de" : {
@@ -109818,6 +109988,40 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "讀取從本機收件匣提供訊息；沒有長輪詢，則不會擷取新活動。"
+          }
+        }
+      }
+    },
+    "Reads serve messages from the local inbox; a token alone does not fetch new activity until long polling, readable chats, and authorized senders are configured." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Reads serve messages from the local inbox; a token alone does not fetch new activity until long polling, readable chats, and authorized senders are configured."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Reads serve messages from the local inbox; a token alone does not fetch new activity until long polling, readable chats, and authorized senders are configured."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Reads serve messages from the local inbox; a token alone does not fetch new activity until long polling, readable chats, and authorized senders are configured."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Reads serve messages from the local inbox; a token alone does not fetch new activity until long polling, readable chats, and authorized senders are configured."
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Reads serve messages from the local inbox; a token alone does not fetch new activity until long polling, readable chats, and authorized senders are configured."
           }
         }
       }

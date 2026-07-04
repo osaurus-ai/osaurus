@@ -163,9 +163,83 @@ struct TelegramConnectionTests {
             let diagnostics = await service.diagnostics()
 
             #expect(diagnostics.status == "connected_receive_needs_sender_allowlist")
+            #expect(!diagnostics.receiveReady)
             #expect(diagnostics.failures.contains {
-                $0.localizedCaseInsensitiveContains("no authorized sender IDs")
+                $0.localizedCaseInsensitiveContains("authorized sender")
             })
+            #expect(!TelegramSettingsSavePolicy.shouldDismissAfterSave(diagnostics))
+        }
+    }
+
+    @Test func diagnosticsExplainTokenOnlySetupDoesNotStartReceive() async throws {
+        try await withIsolatedTelegramStores { credentials in
+            let token = "123456:telegram-bot-token-super-secret"
+            let service = TelegramConnectionService(client: FakeTelegramAPIClient(), credentialStore: credentials)
+            try service.saveBotToken(token)
+
+            let diagnostics = await service.diagnostics()
+
+            #expect(diagnostics.status == "connected_receive_long_poll_disabled")
+            #expect(!diagnostics.receiveReady)
+            #expect(diagnostics.failures.contains {
+                $0.localizedCaseInsensitiveContains("long polling")
+            })
+            #expect(diagnostics.failures.contains {
+                $0.localizedCaseInsensitiveContains("readable chat")
+            })
+            #expect(diagnostics.failures.contains {
+                $0.localizedCaseInsensitiveContains("authorized sender")
+            })
+            #expect(diagnostics.failures.allSatisfy { !$0.contains(token) })
+            #expect(diagnostics.dictionary["receive_ready"] as? Bool == false)
+            #expect(!TelegramSettingsSavePolicy.shouldDismissAfterSave(diagnostics))
+        }
+    }
+
+    @Test func diagnosticsWarnWhenLongPollingHasNoReadableChats() async throws {
+        try await withIsolatedTelegramStores { credentials in
+            let service = TelegramConnectionService(client: FakeTelegramAPIClient(), credentialStore: credentials)
+            try service.saveBotToken("123456:telegram-bot-token-super-secret")
+            try service.saveConfiguration(
+                TelegramConnectionConfiguration(
+                    senderAllowlist: ["7"],
+                    receiveStorageEnabled: true,
+                    longPollingEnabled: true
+                )
+            )
+
+            let diagnostics = await service.diagnostics()
+
+            #expect(diagnostics.status == "connected_receive_needs_readable_chats")
+            #expect(!diagnostics.receiveReady)
+            #expect(diagnostics.failures.contains {
+                $0.localizedCaseInsensitiveContains("readable chat")
+            })
+            #expect(!TelegramSettingsSavePolicy.shouldDismissAfterSave(diagnostics))
+        }
+    }
+
+    @Test func diagnosticsWarnWhenReceiveStorageIsOff() async throws {
+        try await withIsolatedTelegramStores { credentials in
+            let service = TelegramConnectionService(client: FakeTelegramAPIClient(), credentialStore: credentials)
+            try service.saveBotToken("123456:telegram-bot-token-super-secret")
+            try service.saveConfiguration(
+                TelegramConnectionConfiguration(
+                    readableChatIds: ["-100111222333"],
+                    senderAllowlist: ["7"],
+                    receiveStorageEnabled: false,
+                    longPollingEnabled: true
+                )
+            )
+
+            let diagnostics = await service.diagnostics()
+
+            #expect(diagnostics.status == "connected_receive_storage_disabled")
+            #expect(!diagnostics.receiveReady)
+            #expect(diagnostics.failures.contains {
+                $0.localizedCaseInsensitiveContains("store incoming")
+            })
+            #expect(!TelegramSettingsSavePolicy.shouldDismissAfterSave(diagnostics))
         }
     }
 
@@ -387,6 +461,7 @@ struct TelegramConnectionTests {
             let diagnostics = await service.diagnostics()
 
             #expect(diagnostics.status == "connected_long_poll_webhook_conflict")
+            #expect(!diagnostics.receiveReady)
             #expect(diagnostics.webhook?.registered == true)
             #expect(diagnostics.webhook?.pendingUpdateCount == 12)
             #expect(diagnostics.webhook?.redactedURL.contains("[REDACTED:TELEGRAM_BOT_TOKEN]") == true)
@@ -398,6 +473,7 @@ struct TelegramConnectionTests {
             #expect(!failure.contains(token))
             let row = try #require(diagnostics.dictionary["webhook"] as? [String: Any])
             #expect(row["registered"] as? Bool == true)
+            #expect(!TelegramSettingsSavePolicy.shouldDismissAfterSave(diagnostics))
         }
     }
 
@@ -418,9 +494,11 @@ struct TelegramConnectionTests {
 
             let diagnostics = await service.diagnostics()
 
-            #expect(diagnostics.status == "connected_read_only")
+            #expect(diagnostics.status == "connected_receive_long_poll_disabled")
+            #expect(!diagnostics.receiveReady)
             #expect(diagnostics.webhook?.registered == true)
             #expect(!diagnostics.failures.contains { $0.localizedCaseInsensitiveContains("webhook") })
+            #expect(diagnostics.failures.contains { $0.localizedCaseInsensitiveContains("long polling") })
         }
     }
 
@@ -440,8 +518,9 @@ struct TelegramConnectionTests {
 
             let diagnostics = await service.diagnostics()
 
-            #expect(diagnostics.status == "connected_read_only")
-            #expect(diagnostics.failures.isEmpty)
+            #expect(diagnostics.status == "connected_receive_long_poll_disabled")
+            #expect(!diagnostics.receiveReady)
+            #expect(!diagnostics.failures.isEmpty)
             let note = try #require(
                 diagnostics.notes.first { $0.localizedCaseInsensitiveContains("long polling") }
             )
@@ -468,8 +547,73 @@ struct TelegramConnectionTests {
             let diagnostics = await service.diagnostics()
 
             #expect(diagnostics.status == "connected_read_only")
+            #expect(diagnostics.receiveReady)
             #expect(diagnostics.notes.isEmpty)
             #expect(diagnostics.dictionary["notes"] == nil)
+            #expect(TelegramSettingsSavePolicy.shouldDismissAfterSave(diagnostics))
+        }
+    }
+
+    @Test func savePolicyAllowsIntentionalWriteOnlyTelegramSetup() async throws {
+        try await withIsolatedTelegramStores { credentials in
+            let service = TelegramConnectionService(client: FakeTelegramAPIClient(), credentialStore: credentials)
+            try service.saveBotToken("123456:telegram-bot-token-super-secret")
+            try service.saveConfiguration(
+                TelegramConnectionConfiguration(
+                    writableChatIds: ["-100111222333"],
+                    writeEnabled: true,
+                    receiveStorageEnabled: true,
+                    longPollingEnabled: false
+                )
+            )
+
+            let diagnostics = await service.diagnostics()
+
+            #expect(diagnostics.status == "connected_receive_long_poll_disabled")
+            #expect(!diagnostics.receiveReady)
+            #expect(TelegramSettingsSavePolicy.shouldDismissAfterSave(diagnostics))
+        }
+    }
+
+    @Test func savePolicyAllowsStoredReadSetupWhenLongPollingIsOff() async throws {
+        try await withIsolatedTelegramStores { credentials in
+            let service = TelegramConnectionService(client: FakeTelegramAPIClient(), credentialStore: credentials)
+            try service.saveBotToken("123456:telegram-bot-token-super-secret")
+            try service.saveConfiguration(
+                TelegramConnectionConfiguration(
+                    readableChatIds: ["-100111222333"],
+                    senderAllowlist: ["7"],
+                    receiveStorageEnabled: true,
+                    longPollingEnabled: false
+                )
+            )
+
+            let diagnostics = await service.diagnostics()
+
+            #expect(diagnostics.status == "connected_receive_long_poll_disabled")
+            #expect(!diagnostics.receiveReady)
+            #expect(TelegramSettingsSavePolicy.shouldDismissAfterSave(diagnostics))
+        }
+    }
+
+    @Test func savePolicyKeepsStorageDisabledStoredReadSetupOpen() async throws {
+        try await withIsolatedTelegramStores { credentials in
+            let service = TelegramConnectionService(client: FakeTelegramAPIClient(), credentialStore: credentials)
+            try service.saveBotToken("123456:telegram-bot-token-super-secret")
+            try service.saveConfiguration(
+                TelegramConnectionConfiguration(
+                    readableChatIds: ["-100111222333"],
+                    senderAllowlist: ["7"],
+                    receiveStorageEnabled: false,
+                    longPollingEnabled: false
+                )
+            )
+
+            let diagnostics = await service.diagnostics()
+
+            #expect(diagnostics.status == "connected_receive_storage_disabled")
+            #expect(!diagnostics.receiveReady)
+            #expect(!TelegramSettingsSavePolicy.shouldDismissAfterSave(diagnostics))
         }
     }
 
@@ -808,6 +952,75 @@ struct TelegramConnectionTests {
             )
             #expect(stored.direction == .inbound)
             #expect(stored.content == "store only")
+        }
+    }
+
+    @Test func transportSupervisorUsesTelegramLongPollingReadinessGate() async {
+        let ready = TelegramConnectionConfiguration(
+            readableChatIds: ["-100111222333"],
+            senderAllowlist: ["7"],
+            receiveStorageEnabled: true,
+            longPollingEnabled: true
+        )
+        let cases: [(configuration: TelegramConnectionConfiguration, hasToken: Bool, shouldStart: Bool)] = [
+            (ready, true, true),
+            (ready, false, false),
+            (
+                TelegramConnectionConfiguration(
+                    senderAllowlist: ["7"],
+                    receiveStorageEnabled: true,
+                    longPollingEnabled: true
+                ),
+                true,
+                false
+            ),
+            (
+                TelegramConnectionConfiguration(
+                    readableChatIds: ["-100111222333"],
+                    receiveStorageEnabled: true,
+                    longPollingEnabled: true
+                ),
+                true,
+                false
+            ),
+            (
+                TelegramConnectionConfiguration(
+                    readableChatIds: ["-100111222333"],
+                    senderAllowlist: ["7"],
+                    receiveStorageEnabled: true,
+                    longPollingEnabled: false
+                ),
+                true,
+                false
+            ),
+            (
+                TelegramConnectionConfiguration(
+                    readableChatIds: ["-100111222333"],
+                    senderAllowlist: ["7"],
+                    receiveStorageEnabled: false,
+                    longPollingEnabled: true
+                ),
+                true,
+                false
+            ),
+        ]
+
+        for testCase in cases {
+            #expect(
+                testCase.configuration.canStartLongPolling(hasBotToken: testCase.hasToken)
+                    == testCase.shouldStart
+            )
+            let runtime = SpyReceiveTransportRuntime()
+            let supervisor = AgentChannelTransportSupervisor(
+                telegramConfiguration: { testCase.configuration },
+                telegramHasBotToken: { testCase.hasToken },
+                telegramRuntime: runtime
+            )
+
+            await supervisor.startFromLaunch()
+
+            #expect(await runtime.startCount() == (testCase.shouldStart ? 1 : 0))
+            #expect(await runtime.stopCount() == 0)
         }
     }
 

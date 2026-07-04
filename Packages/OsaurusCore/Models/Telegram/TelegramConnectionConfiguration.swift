@@ -126,6 +126,14 @@ struct TelegramConnectionConfiguration: Codable, Equatable, Sendable {
         Self.normalizedIds(readableChatIds + writableChatIds)
     }
 
+    func canStartLongPolling(hasBotToken: Bool) -> Bool {
+        receiveStorageEnabled
+            && longPollingEnabled
+            && hasBotToken
+            && !readableChatIds.isEmpty
+            && !senderAllowlist.isEmpty
+    }
+
     static func normalizedIds(_ ids: [String]) -> [String] {
         var seen = Set<String>()
         return

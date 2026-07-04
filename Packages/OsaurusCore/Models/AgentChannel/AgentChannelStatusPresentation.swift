@@ -60,6 +60,21 @@ extension AgentChannelStatusPresentation {
                 label: L("Connected — add readable channel or chat IDs to finish setup"),
                 tone: .warning
             )
+        case "connected_receive_storage_disabled":
+            return .init(
+                label: L("Connected — receive storage is off"),
+                tone: .warning
+            )
+        case "connected_receive_long_poll_disabled":
+            return .init(
+                label: L("Connected — enable long polling to receive Telegram messages"),
+                tone: .warning
+            )
+        case "connected_receive_needs_readable_chats":
+            return .init(
+                label: L("Connected — add readable chat IDs to finish Telegram receive"),
+                tone: .warning
+            )
         case "connected_receive_needs_sender_allowlist":
             return .init(
                 label: L("Connected — add authorized sender IDs to enable receive"),

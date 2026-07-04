@@ -123,6 +123,26 @@ Use BotFather to create a disposable bot:
 7. Use `getUpdates` long-poll for desktop proof. If a webhook was configured
    during experimentation, delete it before long-poll proof.
 
+Saving a bot token only proves that Osaurus can store credentials. It does not
+start Telegram receive by itself. For new messages to arrive in the local inbox,
+all of these must be true:
+
+- `Store Incoming Messages` is enabled.
+- `Enable Long Polling` is enabled.
+- At least one readable chat id is allowlisted.
+- At least one authorized sender id is allowlisted.
+- No Telegram webhook is registered for the same bot token.
+
+If a user reports that they pasted a token and nothing happened, open Telegram
+settings, press **Test Connection**, and follow the setup blockers shown there.
+Use **Check Webhook** if long polling reports a conflict or no updates arrive
+after the allowlists are complete.
+
+The diagnostics field `receive_ready` is the authoritative signal that the local
+inbox should fill from Telegram. A long-poll transport can still start and then
+report conflict health if Telegram rejects `getUpdates` because a webhook or
+another consumer owns the same bot token.
+
 Webhook setup is advanced/future. When it is used, set a random webhook secret
 token and verify the `X-Telegram-Bot-Api-Secret-Token` header before decoding
 message text.
