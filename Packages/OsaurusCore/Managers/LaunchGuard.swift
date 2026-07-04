@@ -104,7 +104,6 @@ enum LaunchGuard {
         let defaults = UserDefaults.standard
         defaults.set(false, forKey: startupInProgressKey)
         defaults.set(0, forKey: crashCountKey)
-        disabledFeatures = []
     }
 
     /// Called when the running app serves a clean `/health`. Treats the

@@ -33,6 +33,9 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
     private var activityDot: NSView?
     private var vadDot: NSView?
     private var pendingPopoverAction: (@MainActor () -> Void)?
+    private var shouldLoadPluginsAfterFirstServerStart = false
+    private var hasCompletedFirstServerStartWork = false
+    private var launchEmbeddingInitTask: Task<Void, Never>?
     private var keychainDisabledTestMode: Bool {
         StorageKeyManager.disablesKeychainForProcess
     }
@@ -272,26 +275,18 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
         // Initialize directory access early so security-scoped bookmark is active
         _ = DirectoryPickerService.shared
 
+        let shouldLoadPluginsAtStartup = !keychainDisabledTestMode && !LaunchGuard.shouldSkip(.plugins)
+        shouldLoadPluginsAfterFirstServerStart = shouldLoadPluginsAtStartup
         if keychainDisabledTestMode {
             log.warning(
                 "Keychain disabled by OSAURUS_DISABLE_KEYCHAIN_FOR_TESTS=1; stored secrets will not be readable in this process"
             )
             LaunchGuard.markStartupComplete()
-        } else if LaunchGuard.shouldSkip(.plugins) {
+        } else if !shouldLoadPluginsAtStartup {
             // Tiered safe mode: plugins are the first subsystem we drop. Other
             // tiers (sandbox / distillation / auto model-load) are gated at
             // their own start sites below via `LaunchGuard.shouldSkip(...)`.
             NotificationService.shared.postSafeModeActive()
-            LaunchGuard.markStartupComplete()
-        } else {
-            // Load external tool plugins at launch (after core is initialized)
-            Task { @MainActor in
-                await PluginManager.shared.loadAll()
-                LaunchGuard.markStartupComplete()
-            }
-
-            // Start plugin repository background refresh for update checking
-            PluginRepositoryService.shared.startBackgroundRefresh()
         }
 
         // Pre-warm cheap caches immediately for instant first window.
@@ -310,13 +305,11 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
         // emission would otherwise restart the server mid-launch (hang audit).
         Task { @MainActor in
             await serverStartupTask.value
-            serverController.markLaunchComplete()
-            // The unified prewarm builds the picker with whatever is currently
-            // available; once remote providers finish connecting below they post
-            // .remoteProviderModelsChanged and the cache rebuilds automatically.
-            // Keep this after server bind so very large local bundles cannot
-            // block `/health` and API startup while their config is inspected.
-            ModelPickerItemCache.shared.prewarm()
+            if serverController.isRunning {
+                completeFirstSuccessfulServerStart()
+            } else {
+                LaunchGuard.markStartupComplete()
+            }
         }
 
         // Only warm the storage key when the user opted in to encryption.
@@ -430,6 +423,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
 
             await ToolIndexService.shared.syncFromRegistry(rebuildVectorIndex: false)
         }
+        launchEmbeddingInitTask = embeddingInitTask
         // Start activity tracking, drain any pending sessions left over from
         // the previous launch, and arm the periodic consolidator.
         Task { @MainActor in
@@ -1349,8 +1343,11 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
             .store(in: &cancellables)
         serverController.$isRunning
             .receive(on: RunLoop.main)
-            .sink { [weak self] _ in
+            .sink { [weak self] isRunning in
                 self?.updateStatusItemAndMenu()
+                if isRunning {
+                    self?.completeFirstSuccessfulServerStart()
+                }
             }
             .store(in: &cancellables)
         serverController.$configuration
@@ -1390,6 +1387,30 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
             )
         }
         .store(in: &cancellables)
+    }
+
+    @MainActor
+    private func completeFirstSuccessfulServerStart() {
+        guard serverController.isRunning else { return }
+        guard !hasCompletedFirstServerStartWork else { return }
+        hasCompletedFirstServerStartWork = true
+
+        serverController.markLaunchComplete()
+        LaunchGuard.markStartupComplete()
+        // The unified prewarm builds the picker with whatever is currently
+        // available; once remote providers finish connecting below they post
+        // .remoteProviderModelsChanged and the cache rebuilds automatically.
+        // Keep this after server bind so very large local bundles cannot
+        // block `/health` and API startup while their config is inspected.
+        ModelPickerItemCache.shared.prewarm()
+        if shouldLoadPluginsAfterFirstServerStart {
+            // Keep plugin and repository work off the initial bind path;
+            // crashes here are handled by the plugin loading marker.
+            Task { @MainActor in
+                await PluginManager.shared.loadAll()
+            }
+            PluginRepositoryService.shared.startBackgroundRefresh()
+        }
     }
 
     private func updateStatusItemAndMenu() {
@@ -1629,9 +1650,11 @@ extension AppDelegate {
             forName: .safeModeRecoveryRequested,
             object: nil,
             queue: .main
-        ) { [weak self] _ in
+        ) { [weak self] note in
+            let rawFeatures = note.userInfo?["recoveredFeatures"] as? Int ?? 0
             Task { @MainActor in
-                self?.recoverFromSafeMode()
+                let recoveredFeatures = LaunchGuard.Feature(rawValue: rawFeatures)
+                self?.recoverFromSafeMode(recoveredFeatures: recoveredFeatures)
             }
         }
     }
@@ -1639,21 +1662,36 @@ extension AppDelegate {
     /// Bring subsystems skipped by a degraded launch online after the running
     /// app proved healthy via `/health`. Idempotent and only ever runs once.
     @MainActor
-    private func recoverFromSafeMode() {
+    private func recoverFromSafeMode(recoveredFeatures: LaunchGuard.Feature) {
+        guard !recoveredFeatures.isEmpty else { return }
         guard !hasRecoveredFromSafeMode else { return }
         guard !keychainDisabledTestMode else { return }
         hasRecoveredFromSafeMode = true
         log.warning("Safe-mode recovery: starting previously skipped subsystems after clean /health")
 
-        Task { @MainActor in
-            await PluginManager.shared.loadAll()
+        if recoveredFeatures.contains(.plugins) {
+            Task { @MainActor in
+                await PluginManager.shared.loadAll()
+            }
+            PluginRepositoryService.shared.startBackgroundRefresh()
         }
-        PluginRepositoryService.shared.startBackgroundRefresh()
-        SandboxToolRegistrar.shared.start()
 
-        Task { @MainActor in
-            if MemoryDatabase.shared.isOpen {
-                await MemoryConsolidator.shared.start()
+        if recoveredFeatures.contains(.sandbox) {
+            SandboxToolRegistrar.shared.start()
+        }
+
+        if recoveredFeatures.contains(.distillation) {
+            Task { @MainActor [weak self] in
+                await self?.launchEmbeddingInitTask?.value
+                if MemoryDatabase.shared.isOpen {
+                    await MemoryConsolidator.shared.start()
+                }
+            }
+        }
+
+        if recoveredFeatures.contains(.autoModelLoad) {
+            Task { @MainActor in
+                await SpeechService.shared.autoLoadIfNeeded()
             }
         }
     }

@@ -1812,6 +1812,134 @@ struct RuntimePolicySourceTests {
         )
     }
 
+    @Test("startup completion is tied to server bind, not plugin loading")
+    func startupCompletionIsTiedToServerBindNotPluginLoading() throws {
+        let appDelegate = try Self.source("AppDelegate.swift")
+        let launchBody = try Self.functionBody(
+            "public func applicationDidFinishLaunching(_ notification: Notification)",
+            in: appDelegate
+        )
+        let observerBody = try Self.functionBody("private func setupObservers()", in: appDelegate)
+        let successfulStartBody = try Self.functionBody(
+            "private func completeFirstSuccessfulServerStart()",
+            in: appDelegate
+        )
+
+        let startupCompleteCall = "LaunchGuard.markStartupComplete()"
+        let startupCompleteCount = appDelegate.components(separatedBy: startupCompleteCall).count - 1
+        #expect(
+            startupCompleteCount == 3,
+            "startup completion should only be cleared by the test-host branch, handled startup-error branch, and first-successful-server-start hook"
+        )
+
+        let serverBind = try #require(launchBody.range(of: "await serverStartupTask.value"))
+        let keychainBranch = try #require(launchBody.range(of: "if keychainDisabledTestMode {"))
+        let safeModeBranch = try #require(
+            launchBody.range(of: "} else if !shouldLoadPluginsAtStartup {", range: keychainBranch.upperBound ..< launchBody.endIndex)
+        )
+        let keychainStartupComplete = try #require(
+            launchBody.range(of: startupCompleteCall, range: keychainBranch.upperBound ..< safeModeBranch.lowerBound)
+        )
+        let runningCheck = try #require(launchBody.range(of: "if serverController.isRunning {"))
+        let completionHook = try #require(launchBody.range(of: "completeFirstSuccessfulServerStart()"))
+        let handledStartupErrorComplete = try #require(
+            launchBody.range(of: "LaunchGuard.markStartupComplete()", range: completionHook.upperBound ..< launchBody.endIndex)
+        )
+        let isRunningSink = try #require(observerBody.range(of: "serverController.$isRunning"))
+        let runningObserverHook = try #require(
+            observerBody.range(of: "if isRunning {\n                    self?.completeFirstSuccessfulServerStart()")
+        )
+        let configurationSink = try #require(observerBody.range(of: "serverController.$configuration"))
+        let successfulBindGuard = try #require(
+            successfulStartBody.range(of: "guard serverController.isRunning else { return }")
+        )
+        let firstSuccessGuard = try #require(
+            successfulStartBody.range(of: "guard !hasCompletedFirstServerStartWork else { return }")
+        )
+        let startupComplete = try #require(successfulStartBody.range(of: startupCompleteCall))
+        let pluginLoad = try #require(successfulStartBody.range(of: "await PluginManager.shared.loadAll()"))
+        let pluginRepositoryRefresh = try #require(
+            successfulStartBody.range(of: "PluginRepositoryService.shared.startBackgroundRefresh()")
+        )
+
+        #expect(
+            keychainBranch.lowerBound < keychainStartupComplete.lowerBound
+                && keychainStartupComplete.lowerBound < safeModeBranch.lowerBound,
+            "keychain-disabled test hosts must clear LaunchGuard without requiring a successful local bind"
+        )
+        #expect(
+            serverBind.lowerBound < runningCheck.lowerBound && runningCheck.lowerBound < completionHook.lowerBound,
+            "the initial server startup task must feed the first-successful-server-start hook only after checking bind success"
+        )
+        #expect(
+            completionHook.lowerBound < handledStartupErrorComplete.lowerBound,
+            "handled startup errors must clear LaunchGuard without running plugin or repository startup work"
+        )
+        #expect(
+            isRunningSink.lowerBound < runningObserverHook.lowerBound
+                && runningObserverHook.lowerBound < configurationSink.lowerBound,
+            "later successful starts must also feed the first-successful-server-start hook"
+        )
+        #expect(
+            successfulBindGuard.lowerBound < startupComplete.lowerBound,
+            "LaunchGuard must mark startup complete only after successful server startup"
+        )
+        #expect(
+            firstSuccessGuard.lowerBound < startupComplete.lowerBound,
+            "first-successful-server-start work must be idempotent across initial and later start notifications"
+        )
+        #expect(
+            startupComplete.lowerBound < pluginLoad.lowerBound,
+            "plugin loading must start after startup completion"
+        )
+        #expect(
+            startupComplete.lowerBound < pluginRepositoryRefresh.lowerBound,
+            "plugin repository refresh must start after startup completion"
+        )
+    }
+
+    @Test("safe-mode recovery restores all launch-skipped subsystems")
+    func safeModeRecoveryRestoresSkippedSubsystems() throws {
+        let appDelegate = try Self.source("AppDelegate.swift")
+        let observerBody = try Self.functionBody("private func setupSafeModeRecovery()", in: appDelegate)
+        let recoveryBody = try Self.functionBody(
+            "private func recoverFromSafeMode(recoveredFeatures: LaunchGuard.Feature)",
+            in: appDelegate
+        )
+
+        #expect(observerBody.contains("LaunchGuard.Feature(rawValue: rawFeatures)"))
+        #expect(
+            recoveryBody.contains("guard !recoveredFeatures.isEmpty else { return }"),
+            "safe-mode recovery must not burn its one-shot guard on a missing or empty recoveredFeatures payload"
+        )
+        #expect(
+            recoveryBody.contains(
+                "if recoveredFeatures.contains(.plugins)"
+            ) && recoveryBody.contains("await PluginManager.shared.loadAll()")
+        )
+        #expect(
+            recoveryBody.contains(
+                "if recoveredFeatures.contains(.plugins)"
+            ) && recoveryBody.contains("PluginRepositoryService.shared.startBackgroundRefresh()")
+        )
+        #expect(
+            recoveryBody.contains(
+                "if recoveredFeatures.contains(.sandbox)"
+            ) && recoveryBody.contains("SandboxToolRegistrar.shared.start()")
+        )
+        #expect(
+            recoveryBody.contains(
+                "if recoveredFeatures.contains(.distillation)"
+            ) && recoveryBody.contains("await MemoryConsolidator.shared.start()")
+                && recoveryBody.contains("await self?.launchEmbeddingInitTask?.value")
+        )
+        #expect(
+            recoveryBody.contains(
+                "if recoveredFeatures.contains(.autoModelLoad)"
+            ) && recoveryBody.contains("await SpeechService.shared.autoLoadIfNeeded()")
+        )
+    }
+
     @Test("live proof keychain-disabled mode keeps app startup off user Keychain")
     func liveProofKeychainDisabledModeKeepsStartupOffUserKeychain() throws {
         let paths = try Self.source("Utils/OsaurusPaths.swift")
@@ -1832,7 +1960,6 @@ struct RuntimePolicySourceTests {
         #expect(appDelegate.contains("OSAURUS_KEYCHAIN_FREE_SHOW_UI"))
         #expect(appDelegate.contains("Keychain disabled by OSAURUS_DISABLE_KEYCHAIN_FOR_TESTS=1"))
         #expect(appDelegate.contains("if keychainDisabledTestMode {"))
-        #expect(appDelegate.contains("LaunchGuard.markStartupComplete()"))
         #expect(
             appDelegate.contains(
                 "if !keychainDisabledTestMode {\n                await MCPProviderManager.shared.connectEnabledProviders()"
