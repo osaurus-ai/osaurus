@@ -2435,6 +2435,43 @@ struct RuntimePolicySourceTests {
         )
     }
 
+    @Test("Tools settings caps expanded tool groups to avoid eager scroll layout")
+    func toolsSettingsCapsExpandedToolGroups() throws {
+        let toolsView = try Self.source("Views/Plugin/ToolsManagerView.swift")
+
+        #expect(
+            toolsView.contains("let toolGroupRenderCapValue = 20"),
+            "Tools settings must keep a shared per-group render cap so large plugin/provider catalogs do not eagerly lay out every row while scrolling."
+        )
+        #expect(
+            toolsView.contains("private func cappedGroup<Row: View>"),
+            "Flat built-in/runtime tool groups should use the shared capped renderer."
+        )
+        #expect(
+            toolsView.contains("private var visibleTools: [ToolRegistry.ToolEntry]")
+                && toolsView.contains("ShowAllToolsButton("),
+            "Plugin and remote provider cards should cap expanded rows and expose an explicit show-all control."
+        )
+
+        let sandboxCardStart = try #require(toolsView.range(of: "private struct SandboxPluginToolCard"))
+        let hoverBackgroundStart = try #require(
+            toolsView.range(
+                of: "private struct HoverableCardBackground",
+                range: sandboxCardStart.upperBound ..< toolsView.endIndex
+            )
+        )
+        let sandboxCard = String(toolsView[sandboxCardStart.lowerBound ..< hoverBackgroundStart.lowerBound])
+
+        #expect(
+            sandboxCard.contains("@State private var showAllTools = false")
+                && sandboxCard.contains("private var visibleToolSpecs: [SandboxToolSpec]")
+                && sandboxCard.contains("toolGroupRenderCapValue")
+                && sandboxCard.contains("ForEach(visibleToolSpecs, id: \\.id)")
+                && sandboxCard.contains("ShowAllToolsButton("),
+            "Sandbox plugin cards must use the same capped expansion path as other tool cards; otherwise a large JSON tool recipe can freeze the Tools page."
+        )
+    }
+
     @Test("local decode loop keeps tool schemas for parser-side argument validation")
     func localDecodeLoopKeepsToolSchemasForParserValidation() throws {
         let chatEngine = try Self.source("Services/Chat/ChatEngine.swift")
