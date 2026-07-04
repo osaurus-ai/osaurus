@@ -761,23 +761,25 @@ public final class SkillManager {
 extension FileManager {
     func unzipItem(at sourceURL: URL, to destinationURL: URL) async throws {
         try await Task.detached(priority: .userInitiated) {
-            let process = Process()
-            process.executableURL = URL(fileURLWithPath: "/usr/bin/unzip")
-            process.arguments = ["-o", "-q", sourceURL.path, "-d", destinationURL.path]
+            let result = try SkillArchiveProcessRunner.run(
+                executablePath: "/usr/bin/unzip",
+                arguments: ["-o", "-q", sourceURL.path, "-d", destinationURL.path],
+                timeoutSeconds: 60
+            )
 
-            let pipe = Pipe()
-            process.standardOutput = pipe
-            process.standardError = pipe
-
-            try process.run()
-            process.waitUntilExit()
-
-            if process.terminationStatus != 0 {
-                let output = String(data: pipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
+            if result.timedOut {
                 throw NSError(
                     domain: "FileManager",
-                    code: Int(process.terminationStatus),
-                    userInfo: [NSLocalizedDescriptionKey: "Unzip failed: \(output)"]
+                    code: -1,
+                    userInfo: [NSLocalizedDescriptionKey: "Unzip timed out after 60 seconds"]
+                )
+            }
+
+            if result.terminationStatus != 0 {
+                throw NSError(
+                    domain: "FileManager",
+                    code: Int(result.terminationStatus),
+                    userInfo: [NSLocalizedDescriptionKey: "Unzip failed: \(result.output)"]
                 )
             }
         }.value
@@ -785,24 +787,26 @@ extension FileManager {
 
     func zipItem(at sourceURL: URL, to destinationURL: URL) async throws {
         try await Task.detached(priority: .userInitiated) {
-            let process = Process()
-            process.executableURL = URL(fileURLWithPath: "/usr/bin/zip")
-            process.currentDirectoryURL = sourceURL.deletingLastPathComponent()
-            process.arguments = ["-r", "-q", destinationURL.path, sourceURL.lastPathComponent]
+            let result = try SkillArchiveProcessRunner.run(
+                executablePath: "/usr/bin/zip",
+                arguments: ["-r", "-q", destinationURL.path, sourceURL.lastPathComponent],
+                currentDirectoryURL: sourceURL.deletingLastPathComponent(),
+                timeoutSeconds: 120
+            )
 
-            let pipe = Pipe()
-            process.standardOutput = pipe
-            process.standardError = pipe
-
-            try process.run()
-            process.waitUntilExit()
-
-            if process.terminationStatus != 0 {
-                let output = String(data: pipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
+            if result.timedOut {
                 throw NSError(
                     domain: "FileManager",
-                    code: Int(process.terminationStatus),
-                    userInfo: [NSLocalizedDescriptionKey: "Zip failed: \(output)"]
+                    code: -1,
+                    userInfo: [NSLocalizedDescriptionKey: "Zip timed out after 120 seconds"]
+                )
+            }
+
+            if result.terminationStatus != 0 {
+                throw NSError(
+                    domain: "FileManager",
+                    code: Int(result.terminationStatus),
+                    userInfo: [NSLocalizedDescriptionKey: "Zip failed: \(result.output)"]
                 )
             }
         }.value

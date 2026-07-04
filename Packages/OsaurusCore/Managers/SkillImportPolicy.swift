@@ -6,6 +6,7 @@
 //  persisted skill store.
 //
 
+import Darwin
 import Foundation
 
 /// Import limits for a third-party skill bundle. The defaults are intentionally
@@ -177,23 +178,29 @@ public struct SkillImportPolicy: Sendable, Equatable {
     }
 
     private static func listArchiveEntries(in zipURL: URL) throws -> [SkillArchiveEntry] {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/unzip")
-        process.arguments = ["-l", zipURL.path]
-
-        let pipe = Pipe()
-        process.standardOutput = pipe
-        process.standardError = pipe
-
-        try process.run()
-        process.waitUntilExit()
-
-        let output = String(data: pipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
-        guard process.terminationStatus == 0 else {
-            throw SkillFileError.archiveListingFailed(output.trimmingCharacters(in: .whitespacesAndNewlines))
+        let result: SkillArchiveProcessResult
+        do {
+            result = try SkillArchiveProcessRunner.run(
+                executablePath: "/usr/bin/unzip",
+                arguments: ["-l", zipURL.path],
+                timeoutSeconds: 30
+            )
+        } catch {
+            throw SkillFileError.archiveListingFailed(error.localizedDescription)
         }
 
-        return output.split(separator: "\n").compactMap { line -> SkillArchiveEntry? in
+        if result.timedOut {
+            throw SkillFileError.archiveListingFailed(L("inspection timed out after 30 seconds"))
+        }
+
+        guard result.terminationStatus == 0 else {
+            throw SkillFileError.archiveListingFailed(result.output.trimmingCharacters(in: .whitespacesAndNewlines))
+        }
+        if result.outputTruncated {
+            throw SkillFileError.archiveListingFailed(L("inspection output exceeded the supported limit"))
+        }
+
+        return result.output.split(separator: "\n").compactMap { line -> SkillArchiveEntry? in
             let parts = line.split(separator: " ", omittingEmptySubsequences: true)
             guard parts.count >= 4, let size = Int64(parts[0]) else {
                 return nil
@@ -223,4 +230,152 @@ public struct SkillImportPlan: Sendable, Equatable {
 public struct SkillImportResult: Sendable, Equatable {
     public let skill: Skill
     public let notes: [String]
+}
+
+struct SkillArchiveProcessResult: Sendable, Equatable {
+    let terminationStatus: Int32
+    let output: String
+    let outputTruncated: Bool
+    let timedOut: Bool
+}
+
+enum SkillArchiveProcessRunner {
+    private static let outputLimitBytes = 256 * 1024
+    private static let chunkBytes = 16 * 1024
+    private static let forcedKillGraceSeconds: TimeInterval = 2
+
+    static func run(
+        executablePath: String,
+        arguments: [String],
+        currentDirectoryURL: URL? = nil,
+        timeoutSeconds: TimeInterval
+    ) throws -> SkillArchiveProcessResult {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: executablePath)
+        process.arguments = arguments
+        process.currentDirectoryURL = currentDirectoryURL
+
+        let pipe = Pipe()
+        process.standardOutput = pipe
+        process.standardError = pipe
+
+        let terminated = DispatchSemaphore(value: 0)
+        process.terminationHandler = { _ in
+            terminated.signal()
+        }
+
+        try process.run()
+
+        let reader = SkillArchiveProcessOutputReader(
+            fileHandle: pipe.fileHandleForReading,
+            maxBytes: outputLimitBytes,
+            chunkBytes: chunkBytes
+        )
+        reader.start()
+
+        let deadline = DispatchTime.now() + .nanoseconds(Self.nanoseconds(timeoutSeconds))
+        let timedOut = terminated.wait(timeout: deadline) == .timedOut
+        if timedOut {
+            process.terminate()
+            let graceDeadline = DispatchTime.now() + .nanoseconds(Self.nanoseconds(forcedKillGraceSeconds))
+            if terminated.wait(timeout: graceDeadline) == .timedOut {
+                Darwin.kill(process.processIdentifier, SIGKILL)
+                _ = terminated.wait(timeout: DispatchTime.now() + .nanoseconds(Self.nanoseconds(forcedKillGraceSeconds)))
+            }
+        }
+
+        _ = reader.waitForEnd(timeoutSeconds: forcedKillGraceSeconds)
+
+        let status = process.isRunning ? Int32(-1) : process.terminationStatus
+        return SkillArchiveProcessResult(
+            terminationStatus: status,
+            output: reader.outputString,
+            outputTruncated: reader.outputWasTruncated,
+            timedOut: timedOut
+        )
+    }
+
+    private static func nanoseconds(_ seconds: TimeInterval) -> Int {
+        guard seconds.isFinite, seconds > 0 else { return 0 }
+        let maxSafeSeconds = TimeInterval(Int.max / 1_000_000_000)
+        if seconds >= maxSafeSeconds { return Int.max }
+        return Int(seconds * 1_000_000_000)
+    }
+}
+
+private final class SkillArchiveProcessOutputReader: @unchecked Sendable {
+    private let fileHandle: FileHandle
+    private let maxBytes: Int
+    private let chunkBytes: Int
+    private let lock = NSLock()
+    private let done = DispatchSemaphore(value: 0)
+    private var data = Data()
+    private var truncated = false
+
+    init(fileHandle: FileHandle, maxBytes: Int, chunkBytes: Int) {
+        self.fileHandle = fileHandle
+        self.maxBytes = maxBytes
+        self.chunkBytes = chunkBytes
+    }
+
+    func start() {
+        DispatchQueue.global(qos: .utility).async {
+            defer { self.done.signal() }
+            while true {
+                let chunk = (try? self.fileHandle.read(upToCount: self.chunkBytes)) ?? Data()
+                if chunk.isEmpty { return }
+                self.append(chunk)
+            }
+        }
+    }
+
+    func waitForEnd(timeoutSeconds: TimeInterval) -> Bool {
+        let deadline = DispatchTime.now() + .nanoseconds(Self.nanoseconds(timeoutSeconds))
+        return done.wait(timeout: deadline) == .success
+    }
+
+    var outputString: String {
+        lock.lock()
+        let snapshot = data
+        let wasTruncated = truncated
+        lock.unlock()
+
+        var output = String(data: snapshot, encoding: .utf8) ?? ""
+        if wasTruncated {
+            output += "\n[output truncated]"
+        }
+        return output
+    }
+
+    var outputWasTruncated: Bool {
+        lock.lock()
+        let wasTruncated = truncated
+        lock.unlock()
+        return wasTruncated
+    }
+
+    private func append(_ chunk: Data) {
+        lock.lock()
+        defer { lock.unlock() }
+
+        let remaining = maxBytes - data.count
+        if remaining <= 0 {
+            truncated = true
+            return
+        }
+
+        if chunk.count <= remaining {
+            data.append(chunk)
+        } else {
+            data.append(contentsOf: chunk.prefix(remaining))
+            truncated = true
+        }
+    }
+
+    private static func nanoseconds(_ seconds: TimeInterval) -> Int {
+        guard seconds.isFinite, seconds > 0 else { return 0 }
+        let maxSafeSeconds = TimeInterval(Int.max / 1_000_000_000)
+        if seconds >= maxSafeSeconds { return Int.max }
+        return Int(seconds * 1_000_000_000)
+    }
 }

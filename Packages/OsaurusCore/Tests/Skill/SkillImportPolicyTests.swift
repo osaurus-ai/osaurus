@@ -133,6 +133,81 @@ struct SkillImportPolicyTests {
         }
     }
 
+    @Test func archiveEntryLimitRejectsHighEntryListingWithoutStalling() async throws {
+        try await Self.withTempRoot { root in
+            let source = try Self.makeSkillBundle(
+                in: root,
+                directoryName: "many-entry-bundle",
+                skillName: "Many Entry Skill"
+            )
+            let references = source.appendingPathComponent("references", isDirectory: true)
+            try FileManager.default.createDirectory(at: references, withIntermediateDirectories: true)
+
+            for index in 0..<2_000 {
+                _ = FileManager.default.createFile(
+                    atPath: references.appendingPathComponent("entry-\(index).txt").path,
+                    contents: Data(),
+                    attributes: nil
+                )
+            }
+
+            let zipURL = try Self.makeZip(from: source, in: root)
+            let startedAt = Date()
+
+            try Self.expectSkillFileError(matching: { error in
+                if case .archiveEntryLimitExceeded(40) = error { return true }
+                return false
+            }) {
+                try SkillImportPolicy.test.validateArchiveBeforeExtraction(zipURL)
+            }
+
+            #expect(Date().timeIntervalSince(startedAt) < 10)
+        }
+    }
+
+    @Test func archiveListingFailsClosedWhenOutputIsTruncated() async throws {
+        try await Self.withTempRoot { root in
+            let source = try Self.makeSkillBundle(
+                in: root,
+                directoryName: "long-listing-bundle",
+                skillName: "Long Listing Skill"
+            )
+            var longDirectory = source.appendingPathComponent("references", isDirectory: true)
+            for segment in 0..<4 {
+                longDirectory = longDirectory.appendingPathComponent(
+                    "segment-\(segment)-" + String(repeating: "x", count: 120),
+                    isDirectory: true
+                )
+            }
+            try FileManager.default.createDirectory(at: longDirectory, withIntermediateDirectories: true)
+
+            for index in 0..<700 {
+                _ = FileManager.default.createFile(
+                    atPath: longDirectory.appendingPathComponent("entry-\(index).txt").path,
+                    contents: Data(),
+                    attributes: nil
+                )
+            }
+
+            let zipURL = try Self.makeZip(from: source, in: root)
+            let policy = SkillImportPolicy(
+                maxArchiveBytes: 10_000_000,
+                maxEntryBytes: 1_000_000,
+                maxEntryCount: 512,
+                maxPathDepth: 8
+            )
+
+            try Self.expectSkillFileError(matching: { error in
+                if case .archiveListingFailed(let details) = error {
+                    return details.contains("exceeded the supported limit")
+                }
+                return false
+            }) {
+                try policy.validateArchiveBeforeExtraction(zipURL)
+            }
+        }
+    }
+
     @Test func extractedTreeRejectsSymlinksAndOversizedFiles() async throws {
         try await Self.withTempRoot { root in
             let symlinkBundle = try Self.makeSkillBundle(
