@@ -19,9 +19,27 @@ import Combine
 import SwiftUI
 
 /// Bridges a Combine-backed `SubagentFeed` into SwiftUI observation.
+///
+/// The bridge is deliberately lossy in two ways, both hang guards: the
+/// event stream is throttled (a chatty run can emit many events per
+/// second, and every published snapshot invalidates the whole `ForEach`),
+/// and only a bounded tail of the history is exposed to the view — the
+/// feed itself is unbounded, and laying out thousands of rows in the
+/// pane's `LazyVStack` (each one a glass card the auto-scroll forces to
+/// materialize) is a multi-second main-thread layout pass.
 @MainActor
 final class SubagentFeedObserver: ObservableObject {
+    /// Upper bound on rows handed to the view. Old events beyond the tail
+    /// are dropped from RENDERING only; `SubagentFeed` keeps the full log.
+    static let maxRenderedEvents = 200
+
+    /// Interval snapshots are coalesced to before touching SwiftUI.
+    static let publishInterval: TimeInterval = 0.1
+
     @Published private(set) var events: [SubagentActivityEvent] = []
+    /// How many older events were trimmed from `events`, so the view can
+    /// say "N earlier steps" instead of silently starting mid-run.
+    @Published private(set) var truncatedEventCount = 0
     @Published private(set) var status: SubagentRunStatus = .running
     /// Wall-clock the run finished at, captured the moment status flips to
     /// `.finished`, so the header timer freezes on a stable final duration.
@@ -42,7 +60,7 @@ final class SubagentFeedObserver: ObservableObject {
         self.startedAt = feed.startedAt
         let initialEvents = feed.currentEvents()
         let initialStatus = feed.currentStatus()
-        self.events = initialEvents
+        self.apply(initialEvents)
         self.status = initialStatus
         if case .finished = initialStatus {
             // Mounted after the run already finished (grace-tail replay):
@@ -51,8 +69,12 @@ final class SubagentFeedObserver: ObservableObject {
             self.finishedAt = initialEvents.last?.timestamp ?? feed.startedAt
         }
         feed.eventsPublisher
-            .receive(on: RunLoop.main)
-            .sink { [weak self] in self?.events = $0 }
+            .throttle(
+                for: .seconds(Self.publishInterval),
+                scheduler: RunLoop.main,
+                latest: true
+            )
+            .sink { [weak self] in self?.apply($0) }
             .store(in: &cancellables)
         feed.statusPublisher
             .receive(on: RunLoop.main)
@@ -64,6 +86,18 @@ final class SubagentFeedObserver: ObservableObject {
                 }
             }
             .store(in: &cancellables)
+    }
+
+    /// Window a full-history snapshot down to the rendered tail.
+    private func apply(_ snapshot: [SubagentActivityEvent]) {
+        let overflow = snapshot.count - Self.maxRenderedEvents
+        if overflow > 0 {
+            truncatedEventCount = overflow
+            events = Array(snapshot.suffix(Self.maxRenderedEvents))
+        } else {
+            truncatedEventCount = 0
+            events = snapshot
+        }
     }
 
     var isRunning: Bool {
@@ -99,17 +133,23 @@ struct SubagentFeedView: View {
             ScrollViewReader { proxy in
                 ScrollView {
                     LazyVStack(alignment: .leading, spacing: 6) {
+                        if observer.truncatedEventCount > 0 {
+                            truncationRow(observer.truncatedEventCount)
+                        }
                         ForEach(observer.events) { event in
                             eventRow(event).id(event.id)
                         }
                     }
                     .padding(10)
                 }
+                // Follow the tail WITHOUT animation: an animated scroll runs
+                // inside a SwiftUI transaction, forcing the lazy stack to lay
+                // out every row between here and the target on the main
+                // thread — with a long feed that's a visible hang, and a new
+                // event can land every publish tick.
                 .onChange(of: observer.events.count) { _, _ in
                     if let last = observer.events.last {
-                        withAnimation(.easeOut(duration: 0.15)) {
-                            proxy.scrollTo(last.id, anchor: .bottom)
-                        }
+                        proxy.scrollTo(last.id, anchor: .bottom)
                     }
                 }
             }
@@ -206,6 +246,21 @@ struct SubagentFeedView: View {
         switch observer.status {
         case .running: return observer.title
         case .finished(_, let summary): return summary.isEmpty ? observer.title : summary
+        }
+    }
+
+    /// Placeholder for history trimmed by the observer's render window, so a
+    /// long run doesn't silently appear to start mid-flight.
+    private func truncationRow(_ count: Int) -> some View {
+        HStack(alignment: .top, spacing: 8) {
+            Image(systemName: "ellipsis")
+                .font(.system(size: 11))
+                .foregroundColor(theme.tertiaryText)
+                .frame(width: 16)
+            Text("\(count) earlier steps", bundle: .module)
+                .font(.system(size: 10))
+                .foregroundColor(theme.tertiaryText)
+            Spacer(minLength: 0)
         }
     }
 
