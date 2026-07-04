@@ -633,38 +633,31 @@ final class CapabilitiesLoadTool: OsaurusTool, @unchecked Sendable {
         var failures: [LoadFailure] = []
 
         for id in ids {
-            guard let slashIdx = id.firstIndex(of: "/") else {
-                failures.append(
-                    LoadFailure(
-                        kind: .invalidArgs,
-                        message:
-                            "Invalid ID format '\(id)' — expected `<type>/<id>` "
-                            + "(e.g. `tool/sandbox_exec`, `skill/plot-data`). Use IDs from the Enabled capabilities list or `capabilities_discover`.",
-                        field: "ids"
-                    )
-                )
+            let resolvedId: LoadId
+            switch await resolveLoadId(id) {
+            case .resolved(let value):
+                resolvedId = value
+            case .failed(let failure):
+                failures.append(failure)
                 continue
             }
 
-            let typePrefix = String(id[id.startIndex ..< slashIdx])
-            let rawId = String(id[id.index(after: slashIdx)...])
-
             let outcome: LoadOutcome
-            switch typePrefix {
+            switch resolvedId.typePrefix {
             case "method":
-                outcome = await loadMethod(rawId)
+                outcome = await loadMethod(resolvedId.rawId)
             case "tool":
-                outcome = await loadTool(rawId)
+                outcome = await loadTool(resolvedId.rawId)
             case "skill":
-                outcome = await loadSkill(rawId)
+                outcome = await loadSkill(resolvedId.rawId)
             case "plugin":
-                outcome = await loadPlugin(rawId)
+                outcome = await loadPlugin(resolvedId.rawId)
             default:
                 outcome = .failure(
                     LoadFailure(
                         kind: .invalidArgs,
                         message:
-                            "Unknown type '\(typePrefix)' in ID '\(id)' "
+                            "Unknown type '\(resolvedId.typePrefix)' in ID '\(id)' "
                             + "(expected `tool`, `skill`, `plugin`, or `method`)."
                     )
                 )
@@ -718,6 +711,125 @@ final class CapabilitiesLoadTool: OsaurusTool, @unchecked Sendable {
     private enum LoadOutcome {
         case success(String)
         case failure(LoadFailure)
+    }
+
+    private struct LoadId {
+        let typePrefix: String
+        let rawId: String
+
+        var canonical: String { "\(typePrefix)/\(rawId)" }
+    }
+
+    private enum LoadIdResolution {
+        case resolved(LoadId)
+        case failed(LoadFailure)
+    }
+
+    private func resolveLoadId(_ id: String) async -> LoadIdResolution {
+        let trimmed = id.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            return .failed(
+                LoadFailure(
+                    kind: .invalidArgs,
+                    message:
+                        "Invalid ID format '\(id)' — expected `<type>/<id>` "
+                        + "(e.g. `tool/sandbox_exec`, `skill/plot-data`). Use IDs from the Enabled capabilities list or `capabilities_discover`.",
+                    field: "ids",
+                    expected: "non-empty `<type>/<id>` capability id"
+                )
+            )
+        }
+        if let slashIdx = trimmed.firstIndex(of: "/") {
+            return .resolved(
+                LoadId(
+                    typePrefix: String(trimmed[trimmed.startIndex ..< slashIdx]),
+                    rawId: String(trimmed[trimmed.index(after: slashIdx)...])
+                )
+            )
+        }
+        return await resolveBareLoadId(trimmed)
+    }
+
+    /// Tolerate the most common model/user copy error: passing a bare registered
+    /// capability name (`search`) instead of its manifest id (`tool/search`).
+    /// The closed vocabulary remains intact: only a single clear live match is
+    /// accepted; ambiguous names are rejected with exact ids to retry.
+    @MainActor
+    private func resolveBareLoadId(_ id: String) async -> LoadIdResolution {
+        let toolNames = ToolRegistry.shared.listTools().map(\.name)
+        let skillNames = SkillManager.shared.skills.map(\.name)
+        let pluginIds = Array(
+            Set(
+                ToolRegistry.shared.listDynamicTools()
+                    .compactMap { ToolRegistry.shared.groupName(for: $0.name) }
+                    .filter { !$0.isEmpty }
+            )
+        )
+
+        func pluginDisplayNameMatches(_ pluginId: String, _ candidate: String, exact: Bool) -> Bool {
+            guard let display = PluginManager.shared.loadedPlugin(for: pluginId)?.plugin.manifest.name else {
+                return false
+            }
+            if exact { return display == candidate }
+            return display.caseInsensitiveCompare(candidate) == .orderedSame
+        }
+
+        func matches(exact: Bool) -> [LoadId] {
+            var result: [LoadId] = []
+
+            func same(_ lhs: String, _ rhs: String) -> Bool {
+                exact ? lhs == rhs : lhs.caseInsensitiveCompare(rhs) == .orderedSame
+            }
+
+            result.append(
+                contentsOf: toolNames
+                    .filter { same($0, id) }
+                    .map { LoadId(typePrefix: "tool", rawId: $0) }
+            )
+            result.append(
+                contentsOf: skillNames
+                    .filter { same($0, id) }
+                    .map { LoadId(typePrefix: "skill", rawId: $0) }
+            )
+            result.append(
+                contentsOf: pluginIds
+                    .filter { same($0, id) || pluginDisplayNameMatches($0, id, exact: exact) }
+                    .map { LoadId(typePrefix: "plugin", rawId: $0) }
+            )
+
+            var seen: Set<String> = []
+            return result.filter { seen.insert($0.canonical).inserted }
+        }
+
+        let exactMatches = matches(exact: true)
+        let candidates = exactMatches.isEmpty ? matches(exact: false) : exactMatches
+
+        guard !candidates.isEmpty else {
+            return .failed(
+                LoadFailure(
+                    kind: .invalidArgs,
+                    message:
+                        "Invalid ID format '\(id)' — expected `<type>/<id>` "
+                        + "(e.g. `tool/sandbox_exec`, `skill/plot-data`). No registered tool, skill, or plugin matched this bare id. Use IDs from the Enabled capabilities list or `capabilities_discover`.",
+                    field: "ids",
+                    expected: "full capability id such as `tool/\(id)`, `skill/<name>`, or `plugin/<id>`"
+                )
+            )
+        }
+        guard candidates.count == 1, let candidate = candidates.first else {
+            let choices = candidates.map(\.canonical).sorted().joined(separator: ", ")
+            return .failed(
+                LoadFailure(
+                    kind: .invalidArgs,
+                    message:
+                        "Ambiguous bare capability id '\(id)' matched multiple capabilities: \(choices). "
+                        + "Use the full id exactly as shown in the Enabled capabilities list or `capabilities_discover`.",
+                    field: "ids",
+                    expected: "one of: \(choices)"
+                )
+            )
+        }
+        return .resolved(candidate)
     }
 
     // MARK: - Loaders
@@ -1023,6 +1135,11 @@ final class CapabilitiesLoadTool: OsaurusTool, @unchecked Sendable {
         guard let skill = skill else {
             return .failure(
                 LoadFailure(kind: .notFound, message: "Skill '\(skillName)' not found.")
+            )
+        }
+        guard skill.enabled else {
+            return .failure(
+                LoadFailure(kind: .rejected, message: "Skill '\(skill.name)' is disabled.")
             )
         }
         var output = "## Skill: \(skill.name)\n"

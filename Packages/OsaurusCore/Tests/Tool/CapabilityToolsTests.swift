@@ -262,7 +262,10 @@ struct CapabilitiesDiscoverToolTests {
                 let previousOverride = ToolConfigurationStore.overrideDirectory
                 ToolConfigurationStore.overrideDirectory = tempDir
                 try? FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
-                defer { ToolConfigurationStore.overrideDirectory = previousOverride }
+                defer {
+                    ToolConfigurationStore.overrideDirectory = previousOverride
+                    try? FileManager.default.removeItem(at: tempDir)
+                }
 
                 let dbWasOpen = ToolDatabase.shared.isOpen
                 if !dbWasOpen {
@@ -422,15 +425,289 @@ struct CapabilitiesLoadToolTests {
     }
 
     @Test func handlesInvalidIdFormat() async throws {
-        // All-failed contract: a load where NOTHING succeeded returns a
-        // real failure envelope (kind: invalid_args, field: ids), not
-        // "Warning" prose inside a success envelope.
-        let tool = CapabilitiesLoadTool()
-        let result = try await tool.execute(argumentsJSON: "{\"ids\": [\"no-slash\"]}")
-        #expect(ToolEnvelope.isError(result))
-        #expect(EnvelopeAssertions.failureKind(result) == "invalid_args")
-        #expect(EnvelopeAssertions.failureField(result) == "ids")
-        #expect(result.contains("Invalid ID format"))
+        try await StoragePathsTestLock.shared.run {
+            try await DynamicCatalogTestLock.shared.run {
+                // All-failed contract: a load where NOTHING succeeded returns a
+                // real failure envelope (kind: invalid_args, field: ids), not
+                // "Warning" prose inside a success envelope.
+                let tool = CapabilitiesLoadTool()
+                let result = try await tool.execute(argumentsJSON: "{\"ids\": [\"no-slash\"]}")
+                #expect(ToolEnvelope.isError(result))
+                #expect(EnvelopeAssertions.failureKind(result) == "invalid_args")
+                #expect(EnvelopeAssertions.failureField(result) == "ids")
+                #expect(result.contains("Invalid ID format"))
+            }
+        }
+    }
+
+    @Test @MainActor
+    func bareRegisteredToolIdLoadsAsToolId() async throws {
+        try await DynamicCatalogTestLock.shared.run {
+            let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent(
+                "osaurus-capability-load-bare-id-\(UUID().uuidString)",
+                isDirectory: true
+            )
+            let previousOverride = ToolConfigurationStore.overrideDirectory
+            ToolConfigurationStore.overrideDirectory = tempDir
+            try? FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+            defer {
+                ToolConfigurationStore.overrideDirectory = previousOverride
+                try? FileManager.default.removeItem(at: tempDir)
+            }
+
+            let toolName =
+                "bare_search_tool_\(UUID().uuidString.replacingOccurrences(of: "-", with: "_"))"
+            let fixture = CapabilityPolicyFixtureTool(
+                name: toolName,
+                description: "Search the web for current headlines and online results"
+            )
+            ToolRegistry.shared.registerPluginTool(fixture)
+            ToolRegistry.shared.setEnabled(true, for: fixture.name)
+            defer { ToolRegistry.shared.unregister(names: [fixture.name]) }
+
+            _ = await CapabilityLoadBuffer.shared.drain()
+
+            let tool = CapabilitiesLoadTool()
+            let result = try await ChatExecutionContext.$currentAgentId.withValue(UUID()) {
+                try await tool.execute(argumentsJSON: "{\"ids\": [\"\(toolName)\"]}")
+            }
+
+            #expect(!ToolEnvelope.isError(result))
+            #expect(result.contains("Tool '\(toolName)' loaded"))
+            #expect(result.contains("Schema for `\(toolName)`"))
+            let buffered = await CapabilityLoadBuffer.shared.drain()
+            #expect(buffered.map(\.function.name) == [toolName])
+        }
+    }
+
+    @Test @MainActor
+    func bareToolIdResolutionPreservesRegisteredCasingAndTrimsFullIds() async throws {
+        try await DynamicCatalogTestLock.shared.run {
+            let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent(
+                "osaurus-capability-load-bare-id-fallback-\(UUID().uuidString)",
+                isDirectory: true
+            )
+            let previousOverride = ToolConfigurationStore.overrideDirectory
+            ToolConfigurationStore.overrideDirectory = tempDir
+            try? FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+            defer {
+                ToolConfigurationStore.overrideDirectory = previousOverride
+                try? FileManager.default.removeItem(at: tempDir)
+            }
+
+            let toolName =
+                "Bare_Case_Tool_\(UUID().uuidString.replacingOccurrences(of: "-", with: "_"))"
+            let fixture = CapabilityPolicyFixtureTool(
+                name: toolName,
+                description: "Search the web for current headlines and online results"
+            )
+            ToolRegistry.shared.registerPluginTool(fixture)
+            ToolRegistry.shared.setEnabled(true, for: fixture.name)
+            defer { ToolRegistry.shared.unregister(names: [fixture.name]) }
+
+            _ = await CapabilityLoadBuffer.shared.drain()
+
+            let tool = CapabilitiesLoadTool()
+            let lowercasedResult = try await ChatExecutionContext.$currentAgentId.withValue(UUID()) {
+                try await tool.execute(argumentsJSON: "{\"ids\": [\"\(toolName.lowercased())\"]}")
+            }
+            #expect(!ToolEnvelope.isError(lowercasedResult))
+            #expect(lowercasedResult.contains("Tool '\(toolName)' loaded"))
+            #expect(await CapabilityLoadBuffer.shared.drain().map(\.function.name) == [toolName])
+
+            let trimmedResult = try await ChatExecutionContext.$currentAgentId.withValue(UUID()) {
+                try await tool.execute(argumentsJSON: "{\"ids\": [\"  tool/\(toolName)  \"]}")
+            }
+            #expect(!ToolEnvelope.isError(trimmedResult))
+            #expect(trimmedResult.contains("Tool '\(toolName)' loaded"))
+            #expect(await CapabilityLoadBuffer.shared.drain().map(\.function.name) == [toolName])
+        }
+    }
+
+    @Test @MainActor
+    func barePluginGroupIdLoadsPluginTools() async throws {
+        try await StoragePathsTestLock.shared.run {
+            try await DynamicCatalogTestLock.shared.run {
+                try await withTemporaryOsaurusRoot("osaurus-capability-load-bare-plugin-root") {
+                    let plugin = SandboxPlugin(
+                        name: "Bare Plugin \(UUID().uuidString.prefix(6))",
+                        description: "Bare plugin load fixture"
+                    )
+                    let groupTool = SandboxPluginTool(
+                        spec: SandboxToolSpec(
+                            id: "probe",
+                            description: "Probe tool loaded through a bare plugin id",
+                            parameters: [
+                                "query": SandboxParameterSpec(
+                                    type: "string",
+                                    description: "Search query"
+                                )
+                            ],
+                            run: "echo hi"
+                        ),
+                        plugin: plugin
+                    )
+                    ToolRegistry.shared.registerPluginTool(groupTool)
+                    ToolRegistry.shared.setEnabled(true, for: groupTool.name)
+                    defer { ToolRegistry.shared.unregister(names: [groupTool.name]) }
+
+                    let agent = Agent(
+                        name: "BarePluginLoad-\(UUID().uuidString.prefix(6))",
+                        agentAddress: "bare-plugin-load-\(UUID().uuidString)",
+                        manualToolNames: [groupTool.name]
+                    )
+                    AgentManager.shared.add(agent)
+                    _ = await CapabilityLoadBuffer.shared.drain()
+
+                    do {
+                        let tool = CapabilitiesLoadTool()
+                        let result = try await ChatExecutionContext.$currentAgentId.withValue(agent.id) {
+                            try await tool.execute(argumentsJSON: "{\"ids\": [\"\(plugin.id)\"]}")
+                        }
+
+                        #expect(!ToolEnvelope.isError(result))
+                        #expect(result.contains("Auto-loaded tools"))
+                        #expect(result.contains(groupTool.name))
+                        let buffered = await CapabilityLoadBuffer.shared.drain()
+                        #expect(buffered.contains(where: { $0.function.name == groupTool.name }))
+
+                        _ = await AgentManager.shared.delete(id: agent.id)
+                    } catch {
+                        _ = await AgentManager.shared.delete(id: agent.id)
+                        throw error
+                    }
+                }
+            }
+        }
+    }
+
+    @Test @MainActor
+    func bareRegisteredSkillIdLoadsAsSkillId() async throws {
+        try await StoragePathsTestLock.shared.run {
+            try await withTemporaryOsaurusRoot("osaurus-capability-load-bare-skill-root") {
+                let suffix = String(UUID().uuidString.prefix(8)).lowercased()
+                let titleSuffix = suffix.prefix(1).uppercased() + suffix.dropFirst()
+                let skillName = "Bare Skill \(titleSuffix)"
+                let skill = Skill(
+                    id: UUID(),
+                    name: skillName,
+                    description: "Bare skill fixture",
+                    version: "1.0.0",
+                    keywords: [],
+                    enabled: true,
+                    instructions: "Use the bare skill fixture.",
+                    isBuiltIn: false,
+                    pluginId: nil
+                )
+                await SkillStore.save(skill)
+                await SkillManager.shared.refresh()
+
+                let tool = CapabilitiesLoadTool()
+                let result = try await ChatExecutionContext.$currentAgentId.withValue(UUID()) {
+                    try await tool.execute(argumentsJSON: "{\"ids\": [\"\(skillName)\"]}")
+                }
+
+                #expect(!ToolEnvelope.isError(result))
+                #expect(result.contains("## Skill: \(skillName)"))
+                #expect(result.contains("Bare skill fixture"))
+                #expect(result.contains("Use the bare skill fixture."))
+            }
+        }
+    }
+
+    @Test @MainActor
+    func bareDisabledSkillIdReportsDisabled() async throws {
+        try await StoragePathsTestLock.shared.run {
+            try await withTemporaryOsaurusRoot("osaurus-capability-load-disabled-skill-root") {
+                let suffix = String(UUID().uuidString.prefix(8)).lowercased()
+                let titleSuffix = suffix.prefix(1).uppercased() + suffix.dropFirst()
+                let skillName = "Disabled Skill \(titleSuffix)"
+                let skill = Skill(
+                    id: UUID(),
+                    name: skillName,
+                    description: "Disabled skill fixture",
+                    version: "1.0.0",
+                    keywords: [],
+                    enabled: false,
+                    instructions: "Do not load this disabled skill.",
+                    isBuiltIn: false,
+                    pluginId: nil
+                )
+                await SkillStore.save(skill)
+                await SkillManager.shared.refresh()
+
+                let tool = CapabilitiesLoadTool()
+                let result = try await ChatExecutionContext.$currentAgentId.withValue(UUID()) {
+                    try await tool.execute(argumentsJSON: "{\"ids\": [\"\(skillName)\"]}")
+                }
+
+                #expect(ToolEnvelope.isError(result))
+                #expect(EnvelopeAssertions.failureKind(result) == "rejected")
+                #expect(result.contains("Skill '\(skillName)' is disabled"))
+                #expect(!result.contains("No registered tool, skill, or plugin matched"))
+            }
+        }
+    }
+
+    @Test @MainActor
+    func ambiguousBareIdRequiresFullCapabilityId() async throws {
+        try await StoragePathsTestLock.shared.run {
+            try await DynamicCatalogTestLock.shared.run {
+                try await withTemporaryOsaurusRoot("osaurus-capability-load-ambiguous-root") {
+                    let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent(
+                        "osaurus-capability-load-ambiguous-\(UUID().uuidString)",
+                        isDirectory: true
+                    )
+                    let previousOverride = ToolConfigurationStore.overrideDirectory
+                    ToolConfigurationStore.overrideDirectory = tempDir
+                    try? FileManager.default.createDirectory(
+                        at: tempDir,
+                        withIntermediateDirectories: true
+                    )
+                    defer {
+                        ToolConfigurationStore.overrideDirectory = previousOverride
+                        try? FileManager.default.removeItem(at: tempDir)
+                    }
+
+                    let suffix = String(UUID().uuidString.prefix(8)).lowercased()
+                    let titleSuffix = suffix.prefix(1).uppercased() + suffix.dropFirst()
+                    let sharedName = "Ambiguous Capability \(titleSuffix)"
+                    let fixture = CapabilityPolicyFixtureTool(
+                        name: sharedName,
+                        description: "Search the web for current headlines and online results"
+                    )
+                    ToolRegistry.shared.registerPluginTool(fixture)
+                    ToolRegistry.shared.setEnabled(true, for: fixture.name)
+                    defer { ToolRegistry.shared.unregister(names: [fixture.name]) }
+
+                    let skill = Skill(
+                        id: UUID(),
+                        name: sharedName,
+                        description: "Ambiguous skill fixture",
+                        version: "1.0.0",
+                        keywords: [],
+                        enabled: true,
+                        instructions: "Use the ambiguous skill.",
+                        isBuiltIn: false,
+                        pluginId: nil
+                    )
+                    await SkillStore.save(skill)
+                    await SkillManager.shared.refresh()
+
+                    let tool = CapabilitiesLoadTool()
+                    let result = try await ChatExecutionContext.$currentAgentId.withValue(UUID()) {
+                        try await tool.execute(argumentsJSON: "{\"ids\": [\"\(sharedName)\"]}")
+                    }
+
+                    #expect(ToolEnvelope.isError(result))
+                    #expect(EnvelopeAssertions.failureKind(result) == "invalid_args")
+                    #expect(EnvelopeAssertions.failureField(result) == "ids")
+                    #expect(result.contains("Ambiguous bare capability id"))
+                    #expect(result.contains("tool/\(sharedName)"))
+                    #expect(result.contains("skill/\(sharedName)"))
+                }
+            }
+        }
     }
 
     @Test func handlesUnknownTypePrefix() async throws {
@@ -790,6 +1067,39 @@ struct CapabilitiesLoadToolTests {
             #expect(result.contains("non-object parameter schema"))
             #expect(await CapabilityLoadBuffer.shared.drain().isEmpty)
         }
+    }
+}
+
+@MainActor
+private func withTemporaryOsaurusRoot<T>(
+    _ prefix: String,
+    operation: () async throws -> T
+) async throws -> T {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(
+        "\(prefix)-\(UUID().uuidString)",
+        isDirectory: true
+    )
+    try? FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+
+    let previousRoot = OsaurusPaths.overrideRoot
+    OsaurusPaths.overrideRoot = root
+    AgentManager.shared.refresh()
+    await SkillManager.shared.refresh()
+
+    func cleanup() async {
+        OsaurusPaths.overrideRoot = previousRoot
+        AgentManager.shared.refresh()
+        try? FileManager.default.removeItem(at: root)
+        await SkillManager.shared.refresh()
+    }
+
+    do {
+        let result = try await operation()
+        await cleanup()
+        return result
+    } catch {
+        await cleanup()
+        throw error
     }
 }
 
