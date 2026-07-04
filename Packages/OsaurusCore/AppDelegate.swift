@@ -603,6 +603,19 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
                 }
             }
         }
+
+        // Start Sparkle at launch so update checks run whenever the app is
+        // open, not only when the settings window is first shown. First access
+        // instantiates the lazy updater controller, which also arms Sparkle's
+        // own 24h scheduled check cycle for long-running sessions. Delayed a
+        // few seconds so it stays clear of the busy launch window (server
+        // bind, prewarms, database opens).
+        if !keychainDisabledTestMode {
+            Task { @MainActor [weak self] in
+                try? await Task.sleep(for: .seconds(5))
+                self?.updater.checkForUpdatesInBackground()
+            }
+        }
     }
 
     /// Fire-and-forget launch prewarm. Skipped when the last-active
