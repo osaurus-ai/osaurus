@@ -66,6 +66,9 @@ final class PluginRepositoryService: ObservableObject {
     /// Error from last refresh attempt
     @Published private(set) var lastError: String?
 
+    /// Structured diagnostic from the last repository refresh attempt.
+    @Published private(set) var lastRefreshResult: CentralRepositoryRefreshResult?
+
     /// Plugin ID that needs secrets configuration after installation (triggers secrets sheet in UI)
     @Published var pendingSecretsPlugin: String?
 
@@ -124,13 +127,14 @@ final class PluginRepositoryService: ObservableObject {
             await loadInstalledPluginsFromDisk()
         }
 
-        // Run git operations on background thread
-        let gitSuccess = await Task.detached(priority: .utility) {
-            CentralRepositoryManager.shared.refresh()
+        // Run repository I/O on a background thread.
+        let refreshResult = await Task.detached(priority: .utility) {
+            CentralRepositoryManager.shared.refreshWithDiagnostics()
         }.value
+        lastRefreshResult = refreshResult
 
-        if !gitSuccess {
-            lastError = "Unable to reach plugin repository"
+        if !refreshResult.succeeded {
+            lastError = refreshResult.userMessage ?? "Unable to reach plugin repository"
         }
 
         // Parse specs and resolve installed state on background threads (both read
