@@ -218,6 +218,26 @@ struct ChatSessionQueuedSendTests {
     }
 
     @Test
+    func send_plainTextPersistsBeforeAssistantCompletes() async throws {
+        try await ChatHistoryTestStorage.run {
+            let session = ChatSession()
+            session.chatEngineFactory = { SlowFinishingChatEngine(delayMs: 500) }
+
+            session.send("persist while streaming")
+            try await waitUntil(timeout: .seconds(1)) { session.isStreaming }
+
+            let sessionId = try #require(session.sessionId)
+            let persisted = try #require(ChatSessionStore.load(id: sessionId))
+            #expect(persisted.turns.count == 1)
+            #expect(persisted.turns[0].role == .user)
+            #expect(persisted.turns[0].content == "persist while streaming")
+
+            session.stop()
+            try await waitUntil(timeout: .seconds(1)) { !session.isStreaming }
+        }
+    }
+
+    @Test
     func privacyCancelRemovesPersistedTransientUserTurn() async throws {
         try await ChatHistoryTestStorage.run {
             let session = ChatSession()
@@ -292,6 +312,7 @@ struct ChatSessionQueuedSendTests {
 
             session.send("review will cancel")
             try await waitUntil(timeout: .seconds(1)) { session.isStreaming }
+            let transientId = try #require(session.sessionId)
 
             let queuedAttachment = Attachment.document(
                 filename: "follow-up.txt",
@@ -308,6 +329,8 @@ struct ChatSessionQueuedSendTests {
             #expect(session.input == "review will cancel")
             #expect(session.queuedSend?.text == "queued follow-up")
             #expect(session.queuedSend?.attachments.first?.filename == "follow-up.txt")
+            #expect(ChatSessionStore.load(id: transientId) == nil)
+            #expect(ChatSessionsManager.shared.session(for: transientId) == nil)
         }
     }
 

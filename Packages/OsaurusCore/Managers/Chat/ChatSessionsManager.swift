@@ -109,8 +109,8 @@ final class ChatSessionsManager: ObservableObject {
     /// Rename a session.
     ///
     /// Pulls from the in-memory list first because new sessions are only
-    /// flushed to `ChatSessionStore` after their first turn writes, so a
-    /// rename issued before that flush would otherwise be dropped.
+    /// discoverable there until the pre-stream first-turn save reaches
+    /// `ChatSessionStore`; otherwise an early rename could be dropped.
     func rename(id: UUID, title: String) {
         guard
             var session = sessions.first(where: { $0.id == id })

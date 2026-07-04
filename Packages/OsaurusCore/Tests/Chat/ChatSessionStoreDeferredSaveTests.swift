@@ -104,6 +104,22 @@ struct ChatSessionStoreDeferredSaveTests {
         }
     }
 
+    @Test func pendingDeleteRejectsDeferredSaveWhileDatabaseClosed() throws {
+        let session = ChatSessionData(
+            id: UUID(),
+            title: "Cancelled while closed",
+            turns: [ChatTurnData(role: .user, content: "do not queue")]
+        )
+        ChatSessionStore._resetForTesting()
+        defer { ChatSessionStore._resetForTesting() }
+
+        ChatSessionStore._enqueuePendingDeleteForTesting(session.id)
+        ChatSessionStore.save(session)
+
+        #expect(ChatSessionStore._pendingSaveCountForTesting == 0)
+        #expect(ChatSessionStore._pendingDeleteCountForTesting == 1)
+    }
+
     @Test func loadHealsOrphanedTurnsBackToDisk() throws {
         try withOpenStores(memory: true) {
             let sessionId = UUID(uuidString: "44444444-5555-6666-7777-888888888888")!
