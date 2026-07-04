@@ -272,6 +272,9 @@ public struct ProcessingStats: Sendable {
     public var avgDurationMs: Int = 0
     public var successCount: Int = 0
     public var errorCount: Int = 0
+    public var skippedCount: Int = 0
+    public var emptyCount: Int = 0
+    public var deadLetterCount: Int = 0
 }
 
 /// Structured result of a single `MemoryService.distillSession` /
@@ -371,23 +374,31 @@ public struct ProcessingLogRow: Sendable, Identifiable {
 /// anything at all?" is the fastest way to localise a memory-not-building
 /// bug to the buffer step vs the distill step.
 ///
-/// `totalSignals` / `distinctConversations` are **pending** rows only
-/// (status='pending'). `allTimeSignals` is the full count regardless of
-/// status — when `allTimeSignals == 0` the chat code never reached
-/// `bufferTurn` at all; when it's non-zero but `totalSignals == 0`
-/// every signal has been distilled.
+/// `totalSignals` / `distinctConversations` are pending rows only
+/// (status='pending'). `processedSignals` and `deadLetteredSignals`
+/// count retained signal rows in those statuses. `allTimeSignals` is the
+/// full count regardless of status: when `allTimeSignals == 0` the chat
+/// code never reached `bufferTurn` at all; when it's non-zero but
+/// `totalSignals == 0` every signal has either been distilled, purged, or
+/// dead-lettered.
 public struct PendingSignalsSummary: Sendable {
     public var totalSignals: Int
     public var distinctConversations: Int
+    public var processedSignals: Int
+    public var deadLetteredSignals: Int
     public var allTimeSignals: Int
 
     public init(
         totalSignals: Int = 0,
         distinctConversations: Int = 0,
+        processedSignals: Int = 0,
+        deadLetteredSignals: Int = 0,
         allTimeSignals: Int = 0
     ) {
         self.totalSignals = totalSignals
         self.distinctConversations = distinctConversations
+        self.processedSignals = processedSignals
+        self.deadLetteredSignals = deadLetteredSignals
         self.allTimeSignals = allTimeSignals
     }
 }

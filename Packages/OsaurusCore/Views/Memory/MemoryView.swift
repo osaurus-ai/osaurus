@@ -62,7 +62,7 @@ struct MemoryView: View {
     // resorting to a view-model wrapper.
     @State var config = MemoryConfiguration.default
     @State private var identity: Identity?
-    @State private var processingStats = ProcessingStats()
+    @State var processingStats = ProcessingStats()
     @State private var dbSizeBytes: Int64 = 0
     @State private var agentMemoryCounts: [(agent: Agent, count: Int)] = []
     @State private var defaultAgentPinned: [PinnedFact] = []
@@ -724,6 +724,8 @@ struct MemoryView: View {
                 statBlock(label: "Success", value: "\(processingStats.successCount)")
                 Divider().frame(height: 36).opacity(0.5)
                 statBlock(label: "Errors", value: "\(processingStats.errorCount)")
+                Divider().frame(height: 36).opacity(0.5)
+                statBlock(label: "Skipped", value: "\(processingStats.skippedCount)")
                 Divider().frame(height: 36).opacity(0.5)
                 statBlock(label: "Database", value: formatBytes(dbSizeBytes))
             }
