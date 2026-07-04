@@ -9,6 +9,32 @@ import Foundation
 
 @MainActor
 public enum AgentStore {
+    public struct RecoverableAgentBackup: Equatable, Sendable {
+        public let url: URL
+        public let agent: Agent
+        public let conflictsWithExistingAgent: Bool
+    }
+
+    public enum RecoveryError: Error, Equatable, LocalizedError {
+        case unreadableBackup(String)
+        case builtInAgent(String)
+        case restoreSaveFailed(String)
+        case backupConsumedFailed(String)
+
+        public var errorDescription: String? {
+            switch self {
+            case .unreadableBackup(let name):
+                return "Could not read agent backup \(name)."
+            case .builtInAgent(let name):
+                return "Built-in agent backups cannot be restored: \(name)."
+            case .restoreSaveFailed(let name):
+                return "Could not save recovered agent \(name)."
+            case .backupConsumedFailed(let name):
+                return "Recovered agent backup could not be marked restored: \(name)."
+            }
+        }
+    }
+
     // MARK: - Public API
 
     /// Load all agents sorted by name, including built-ins
@@ -60,6 +86,81 @@ public enum AgentStore {
                 return a.name.localizedCaseInsensitiveCompare(b.name) == .orderedAscending
             }
         }
+    }
+
+    /// Preserved legacy migration conflict copies (`<uuid>.json.bak`,
+    /// `<uuid>.json.1.bak`, ...). These are intentionally ignored by
+    /// `loadAll()` so a conflict never overwrites the canonical agent, but the
+    /// user still needs a recovery surface for the saved legacy copy.
+    public static func recoverableBackups() -> [RecoverableAgentBackup] {
+        OsaurusPaths.migrateLegacyPersonasIfNeeded()
+        let directory = OsaurusPaths.agents()
+        guard
+            let files = try? FileManager.default.contentsOfDirectory(
+                at: directory,
+                includingPropertiesForKeys: nil
+            )
+        else { return [] }
+
+        return files
+            .filter(isRecoverableBackupURL)
+            .compactMap { url -> RecoverableAgentBackup? in
+                guard let agent = try? decodeAgentBackup(at: url), !agent.isBuiltIn else {
+                    return nil
+                }
+                return RecoverableAgentBackup(
+                    url: url,
+                    agent: agent,
+                    conflictsWithExistingAgent: exists(id: agent.id)
+                        || identityConflicts(with: agent)
+                )
+            }
+            .sorted { lhs, rhs in
+                lhs.url.lastPathComponent.localizedCaseInsensitiveCompare(rhs.url.lastPathComponent)
+                    == .orderedAscending
+            }
+    }
+
+    /// Restore a preserved agent backup into the canonical `agents/` store.
+    ///
+    /// If the backup's original UUID is free, the agent is restored as-is. If a
+    /// current agent already owns that UUID, the recovered copy is imported as a
+    /// new agent with a fresh UUID and cleared crypto identity so existing
+    /// agent-scoped tokens / addresses are never duplicated.
+    @discardableResult
+    public static func restoreRecoverableBackup(
+        at url: URL,
+        recoveredId: UUID = UUID(),
+        recoveredAt: Date = Date()
+    ) throws -> Agent {
+        let backup = try decodeAgentBackup(at: url)
+        guard !backup.isBuiltIn else {
+            throw RecoveryError.builtInAgent(backup.name)
+        }
+
+        let restored: Agent
+        if exists(id: backup.id) {
+            let safeRecoveredId = uniqueRecoveredId(preferred: recoveredId)
+            restored = backup.recoveredConflictCopy(id: safeRecoveredId, recoveredAt: recoveredAt)
+        } else if identityConflicts(with: backup) {
+            restored = backup.clearingRecoveredIdentity(recoveredAt: recoveredAt)
+        } else {
+            restored = backup
+        }
+        let createdRestoredAgent = !exists(id: restored.id)
+        save(restored)
+        guard exists(id: restored.id) else {
+            throw RecoveryError.restoreSaveFailed(restored.name)
+        }
+        do {
+            try consumeRecoveredBackup(at: url)
+        } catch {
+            if createdRestoredAgent {
+                removeAgentRecord(id: restored.id)
+            }
+            throw error
+        }
+        return restored
     }
 
     /// Load a specific agent by ID
@@ -197,5 +298,152 @@ public enum AgentStore {
 
     private static func avatarsDirectory() -> URL {
         OsaurusPaths.agents().appendingPathComponent("avatars", isDirectory: true)
+    }
+
+    private static func isRecoverableBackupURL(_ url: URL) -> Bool {
+        url.pathExtension.lowercased() == "bak"
+            && url.lastPathComponent.localizedCaseInsensitiveContains(".json")
+    }
+
+    private static func decodeAgentBackup(at url: URL) throws -> Agent {
+        do {
+            let data = try Data(contentsOf: url)
+            let decoder = JSONDecoder()
+            decoder.dateDecodingStrategy = .iso8601
+            return try decoder.decode(Agent.self, from: data)
+        } catch {
+            throw RecoveryError.unreadableBackup(url.lastPathComponent)
+        }
+    }
+
+    private static func identityConflicts(with agent: Agent) -> Bool {
+        let candidateAddress = agent.agentAddress?.lowercased()
+        return loadAll().contains { existing in
+            guard !existing.isBuiltIn else { return false }
+            if let index = agent.agentIndex, existing.agentIndex == index {
+                return true
+            }
+            if let candidateAddress,
+                existing.agentAddress?.lowercased() == candidateAddress
+            {
+                return true
+            }
+            return false
+        }
+    }
+
+    private static func consumeRecoveredBackup(at url: URL) throws {
+        let fm = FileManager.default
+        guard fm.fileExists(atPath: url.path) else { return }
+        let consumedURL = uniqueConsumedBackupURL(for: url, fileManager: fm)
+        do {
+            try fm.moveItem(at: url, to: consumedURL)
+        } catch {
+            throw RecoveryError.backupConsumedFailed(url.lastPathComponent)
+        }
+    }
+
+    private static func uniqueRecoveredId(preferred: UUID) -> UUID {
+        var candidate = preferred
+        while exists(id: candidate) {
+            candidate = UUID()
+        }
+        return candidate
+    }
+
+    private static func removeAgentRecord(id: UUID) {
+        let url = agentFileURL(for: id)
+        guard FileManager.default.fileExists(atPath: url.path) else { return }
+        do {
+            try FileManager.default.removeItem(at: url)
+        } catch {
+            print("[Osaurus] Failed to roll back recovered agent record \(id): \(error)")
+        }
+    }
+
+    private static func uniqueConsumedBackupURL(for url: URL, fileManager fm: FileManager) -> URL {
+        var candidate = url.appendingPathExtension("restored")
+        var counter = 1
+        while fm.fileExists(atPath: candidate.path) {
+            candidate = url.appendingPathExtension("restored.\(counter)")
+            counter += 1
+        }
+        return candidate
+    }
+}
+
+private extension Agent {
+    func clearingRecoveredIdentity(recoveredAt: Date) -> Agent {
+        Agent(
+            id: id,
+            name: name,
+            description: description,
+            systemPrompt: systemPrompt,
+            themeId: themeId,
+            defaultModel: defaultModel,
+            temperature: temperature,
+            maxTokens: maxTokens,
+            chatQuickActions: chatQuickActions,
+            chatGreeting: chatGreeting,
+            chatSubtitle: chatSubtitle,
+            isBuiltIn: false,
+            createdAt: createdAt,
+            updatedAt: recoveredAt,
+            agentIndex: nil,
+            agentAddress: nil,
+            autonomousExec: autonomousExec,
+            pluginInstructions: pluginInstructions,
+            bonjourEnabled: bonjourEnabled,
+            toolSelectionMode: toolSelectionMode,
+            manualToolNames: manualToolNames,
+            manualSkillNames: manualSkillNames,
+            toolsEnabled: toolsEnabled,
+            memoryEnabled: memoryEnabled,
+            avatar: avatar,
+            customAvatarFilename: customAvatarFilename,
+            autoSpeak: autoSpeak,
+            ttsVoice: ttsVoice,
+            settings: settings,
+            order: order,
+            hostWorkspaceBookmark: hostWorkspaceBookmark,
+            hostWorkspacePath: hostWorkspacePath
+        )
+    }
+
+    func recoveredConflictCopy(id: UUID, recoveredAt: Date) -> Agent {
+        Agent(
+            id: id,
+            name: "\(name) (Recovered)",
+            description: description,
+            systemPrompt: systemPrompt,
+            themeId: themeId,
+            defaultModel: defaultModel,
+            temperature: temperature,
+            maxTokens: maxTokens,
+            chatQuickActions: chatQuickActions,
+            chatGreeting: chatGreeting,
+            chatSubtitle: chatSubtitle,
+            isBuiltIn: false,
+            createdAt: createdAt,
+            updatedAt: recoveredAt,
+            agentIndex: nil,
+            agentAddress: nil,
+            autonomousExec: autonomousExec,
+            pluginInstructions: pluginInstructions,
+            bonjourEnabled: bonjourEnabled,
+            toolSelectionMode: toolSelectionMode,
+            manualToolNames: manualToolNames,
+            manualSkillNames: manualSkillNames,
+            toolsEnabled: toolsEnabled,
+            memoryEnabled: memoryEnabled,
+            avatar: avatar,
+            customAvatarFilename: nil,
+            autoSpeak: autoSpeak,
+            ttsVoice: ttsVoice,
+            settings: settings,
+            order: nil,
+            hostWorkspaceBookmark: hostWorkspaceBookmark,
+            hostWorkspacePath: hostWorkspacePath
+        )
     }
 }
