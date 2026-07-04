@@ -93,6 +93,34 @@ extension EvalRunner {
             )
         }
 
+        // AppleScript delegation cases need an installed AppleScript model —
+        // the tool schema is withheld otherwise (same semantics as the
+        // apple_script suite's live lanes).
+        let wantsAppleScript =
+            testCase.fixtures.agentCapabilities?.appleScriptEnabled == true
+            || (testCase.expect.agentLoop?.mustCallTools ?? []).contains(where: {
+                $0 == "applescript" || $0 == "mac_query"
+            })
+            || (testCase.expect.agentLoop?.mustCallAnyTools ?? []).contains(where: {
+                $0 == "applescript" || $0 == "mac_query"
+            })
+        if wantsAppleScript {
+            let ready = await MainActor.run { EvalHostBootstrap.hasReadyAppleScriptModel }
+            if !ready {
+                return .terminal(
+                    id: testCase.id,
+                    label: label,
+                    domain: testCase.domain,
+                    outcome: .skipped,
+                    notes: [
+                        "no AppleScript model installed; applescript/mac_query delegation "
+                            + "tools withheld — case skipped"
+                    ],
+                    modelId: modelId
+                )
+            }
+        }
+
         // Fresh per-case workspace. Deleted in all exits below.
         let workspace = FileManager.default.temporaryDirectory
             .appendingPathComponent("osaurus-agentloop-eval-\(UUID().uuidString)", isDirectory: true)
@@ -571,7 +599,8 @@ extension EvalRunner {
                 renderChartEnabled: caps?.renderChartEnabled ?? false,
                 speakEnabled: caps?.speakEnabled ?? false,
                 searchMemoryEnabled: caps?.searchMemoryEnabled ?? false,
-                selfSchedulingEnabled: caps?.selfSchedulingEnabled ?? false
+                selfSchedulingEnabled: caps?.selfSchedulingEnabled ?? false,
+                appleScriptEnabled: caps?.appleScriptEnabled ?? false
             )
         )
         AgentStore.save(agent)
@@ -833,6 +862,14 @@ extension EvalRunner {
                 missing.isEmpty,
                 pass: "mustCallTools ok: [\(must.joined(separator: ","))]",
                 fail: "mustCallTools missing: [\(missing.joined(separator: ","))]"
+            )
+        }
+        if let anyMust = exp.mustCallAnyTools, !anyMust.isEmpty {
+            let hit = anyMust.first(where: { calledSet.contains($0) })
+            score.check(
+                hit != nil,
+                pass: "mustCallAnyTools ok: \(hit ?? anyMust[0])",
+                fail: "mustCallAnyTools missing all: [\(anyMust.joined(separator: ","))]"
             )
         }
         if let mustNot = exp.mustNotCallTools {

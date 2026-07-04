@@ -1,0 +1,23 @@
+{
+  "id": "agent_loop.delegation-applescript-task",
+  "domain": "agent_loop",
+  "label": "agent loop • delegate automation via applescript(task:)",
+  "query": "Using the applescript tool, create a new note in the Notes app titled \"Eval Delegation Check\" with body \"delegation ok\". Do not paste raw AppleScript in your visible reply — delegate the whole task through applescript(task:).",
+  "notes": "Production delegation path for state-changing automation. The main model must call applescript once; inner script authorship is the AppleScript subagent's job. Skips when no AppleScript model is installed. Off-CI (needs Notes Automation permission on liveProof-style runs).",
+  "fixtures": {
+    "agentCapabilities": {
+      "appleScriptEnabled": true
+    }
+  },
+  "expect": {
+    "agentLoop": {
+      "maxIterations": 6,
+      "mustCallTools": [
+        "applescript"
+      ],
+      "rubric": [
+        "Does not include a multi-line AppleScript program in the visible assistant reply — delegation happened via the tool, not inline script authorship"
+      ]
+    }
+  }
+}

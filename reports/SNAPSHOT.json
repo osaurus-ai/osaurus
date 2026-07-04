@@ -19,9 +19,11 @@
     "subagent",
     "tool_envelope"
   ],
-  "generatedAt" : "2026-07-04T01:38:41.320Z",
+  "generatedAt" : "2026-07-04T06:45:20.841Z",
   "models" : [
     {
+      "chatModelPassed" : 211,
+      "chatModelScored" : 228,
       "environment" : {
         "caseCount" : 12,
         "catalogHash" : "137408f3cdba4838",
@@ -35,20 +37,20 @@
         "thermalState" : "fair",
         "totalRamMb" : 49152
       },
-      "meanCpuPercent" : 62.39552143457505,
-      "meanDecodeTokensPerSecond" : 14.99986299553308,
-      "meanPromptTokensPerTask" : 23717.483516483517,
-      "meanTotalTokensPerTask" : 20518.69090909091,
-      "meanTtftMs" : 79.93302446730594,
+      "meanCpuPercent" : 66.84375354583517,
+      "meanDecodeTokensPerSecond" : 13.46734269025956,
+      "meanPromptTokensPerTask" : 25350.417582417584,
+      "meanTotalTokensPerTask" : 21928.645454545454,
+      "meanTtftMs" : 87.38914322345815,
       "modelId" : "OsaurusAI/gemma-4-12B-it-MXFP8",
-      "peakCpuPercent" : 523.1130830370012,
-      "peakPhysFootprintMb" : 19666.148887634277,
+      "peakCpuPercent" : 524.7043178852887,
+      "peakPhysFootprintMb" : 20535.99245452881,
       "perDomain" : {
         "agent_loop" : {
           "errored" : 0,
-          "passed" : 73,
+          "passed" : 79,
           "scored" : 92,
-          "skipped" : 0
+          "skipped" : 3
         },
         "apple_script" : {
           "errored" : 0,
@@ -82,19 +84,23 @@
         },
         "subagent" : {
           "errored" : 0,
-          "passed" : 47,
-          "scored" : 47,
-          "skipped" : 0
+          "passed" : 43,
+          "scored" : 45,
+          "skipped" : 2
         }
       },
-      "startedAt" : "2026-07-03T06:08:57Z",
-      "totalPassed" : 221,
-      "totalScored" : 249
+      "startedAt" : "2026-07-04T03:35:10Z",
+      "subsystemPassed" : 12,
+      "subsystemScored" : 19,
+      "totalPassed" : 223,
+      "totalScored" : 247
     },
     {
+      "chatModelPassed" : 11,
+      "chatModelScored" : 11,
       "environment" : {
         "caseCount" : 11,
-        "catalogHash" : "2598627c7daaaba7",
+        "catalogHash" : "47bc36714bbf8db1",
         "chip" : "Apple M4 Pro",
         "cpuCores" : 14,
         "judge" : "xai/grok-4.3",
@@ -105,36 +111,44 @@
         "thermalState" : "nominal",
         "totalRamMb" : 49152
       },
-      "meanCpuPercent" : 83.32660719058167,
-      "meanDecodeTokensPerSecond" : 23.7663017049929,
-      "meanPromptTokensPerTask" : 19834.395604395606,
-      "meanTotalTokensPerTask" : 17234.47272727273,
-      "meanTtftMs" : 37.32621669769287,
       "modelId" : "OsaurusAI/gemma-4-E4B-it-4bit",
-      "peakCpuPercent" : 525.9935178914649,
-      "peakPhysFootprintMb" : 20519.195350646973,
       "perDomain" : {
-        "agent_loop" : {
-          "errored" : 0,
-          "passed" : 77,
-          "scored" : 92,
-          "skipped" : 0
-        },
-        "apple_script" : {
-          "errored" : 0,
-          "passed" : 27,
-          "scored" : 35,
-          "skipped" : 0
-        },
-        "argument_coercion" : {
+        "judge_calibration" : {
           "errored" : 0,
           "passed" : 11,
           "scored" : 11,
           "skipped" : 0
-        },
-        "capability_claims" : {
+        }
+      },
+      "startedAt" : "2026-07-04T03:34:12Z",
+      "subsystemPassed" : 0,
+      "subsystemScored" : 0,
+      "totalPassed" : 11,
+      "totalScored" : 11
+    },
+    {
+      "chatModelPassed" : 129,
+      "chatModelScored" : 130,
+      "environment" : {
+        "caseCount" : 11,
+        "catalogHash" : "2598627c7daaaba7",
+        "chip" : "Apple M4 Pro",
+        "cpuCores" : 14,
+        "judge" : "xai/grok-4.3",
+        "lowPowerMode" : false,
+        "osVersion" : "26.2.0",
+        "powerSource" : "AC",
+        "runModel" : "foundation",
+        "thermalState" : "nominal",
+        "totalRamMb" : 49152
+      },
+      "meanCpuPercent" : 106.23505228725399,
+      "modelId" : "foundation",
+      "peakPhysFootprintMb" : 156.6729507446289,
+      "perDomain" : {
+        "argument_coercion" : {
           "errored" : 0,
-          "passed" : 9,
+          "passed" : 11,
           "scored" : 11,
           "skipped" : 0
         },
@@ -148,24 +162,6 @@
           "errored" : 0,
           "passed" : 21,
           "scored" : 21,
-          "skipped" : 0
-        },
-        "computer_use_loop" : {
-          "errored" : 0,
-          "passed" : 22,
-          "scored" : 23,
-          "skipped" : 0
-        },
-        "default_agent" : {
-          "errored" : 0,
-          "passed" : 13,
-          "scored" : 38,
-          "skipped" : 0
-        },
-        "micro_perf" : {
-          "errored" : 0,
-          "passed" : 3,
-          "scored" : 3,
           "skipped" : 0
         },
         "prefix_hash" : {
@@ -204,12 +200,6 @@
           "scored" : 9,
           "skipped" : 0
         },
-        "subagent" : {
-          "errored" : 0,
-          "passed" : 47,
-          "scored" : 47,
-          "skipped" : 0
-        },
         "tool_envelope" : {
           "errored" : 0,
           "passed" : 10,
@@ -217,38 +207,15 @@
           "skipped" : 0
         }
       },
-      "startedAt" : "2026-07-03T19:08:07Z",
-      "totalPassed" : 327,
-      "totalScored" : 379
+      "startedAt" : "2026-07-04T03:33:35Z",
+      "subsystemPassed" : 0,
+      "subsystemScored" : 0,
+      "totalPassed" : 129,
+      "totalScored" : 130
     },
     {
-      "environment" : {
-        "caseCount" : 11,
-        "catalogHash" : "47bc36714bbf8db1",
-        "chip" : "Apple M4 Pro",
-        "cpuCores" : 14,
-        "judge" : "xai/grok-4.3",
-        "lowPowerMode" : false,
-        "osVersion" : "26.2.0",
-        "powerSource" : "AC",
-        "runModel" : "foundation",
-        "thermalState" : "nominal",
-        "totalRamMb" : 49152
-      },
-      "modelId" : "foundation",
-      "perDomain" : {
-        "judge_calibration" : {
-          "errored" : 0,
-          "passed" : 11,
-          "scored" : 11,
-          "skipped" : 0
-        }
-      },
-      "startedAt" : "2026-07-03T23:54:51Z",
-      "totalPassed" : 11,
-      "totalScored" : 11
-    },
-    {
+      "chatModelPassed" : 224,
+      "chatModelScored" : 228,
       "environment" : {
         "caseCount" : 12,
         "catalogHash" : "137408f3cdba4838",
@@ -262,20 +229,20 @@
         "thermalState" : "fair",
         "totalRamMb" : 49152
       },
-      "meanCpuPercent" : 31.10935369736971,
-      "meanDecodeTokensPerSecond" : 22.365760263157892,
-      "meanPromptTokensPerTask" : 31260.43956043956,
-      "meanTotalTokensPerTask" : 26543.00909090909,
-      "meanTtftMs" : 729.1559830625007,
+      "meanCpuPercent" : 30.3770762092881,
+      "meanDecodeTokensPerSecond" : 8.197090789473684,
+      "meanPromptTokensPerTask" : 32181.604395604394,
+      "meanTotalTokensPerTask" : 27331.672727272726,
+      "meanTtftMs" : 703.709991688424,
       "modelId" : "xai/grok-4.3",
-      "peakCpuPercent" : 531.8650223806318,
-      "peakPhysFootprintMb" : 36578.74048614502,
+      "peakCpuPercent" : 505.82801147704185,
+      "peakPhysFootprintMb" : 19822.71083831787,
       "perDomain" : {
         "agent_loop" : {
           "errored" : 0,
-          "passed" : 87,
+          "passed" : 90,
           "scored" : 92,
-          "skipped" : 0
+          "skipped" : 3
         },
         "apple_script" : {
           "errored" : 0,
@@ -291,7 +258,7 @@
         },
         "computer_use_loop" : {
           "errored" : 0,
-          "passed" : 22,
+          "passed" : 21,
           "scored" : 23,
           "skipped" : 0
         },
@@ -309,14 +276,16 @@
         },
         "subagent" : {
           "errored" : 0,
-          "passed" : 47,
-          "scored" : 47,
-          "skipped" : 0
+          "passed" : 45,
+          "scored" : 45,
+          "skipped" : 2
         }
       },
-      "startedAt" : "2026-07-03T20:59:53Z",
+      "startedAt" : "2026-07-04T03:35:10Z",
+      "subsystemPassed" : 14,
+      "subsystemScored" : 19,
       "totalPassed" : 238,
-      "totalScored" : 249
+      "totalScored" : 247
     }
   ]
 }
