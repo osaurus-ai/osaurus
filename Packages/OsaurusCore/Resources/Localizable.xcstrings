@@ -4,6 +4,9 @@
     "" : {
       "shouldTranslate" : false
     },
+    "%@ %@ \"%@\"" : {
+      "shouldTranslate" : false
+    },
     " — %@" : {
       "localizations" : {
         "de" : {
@@ -68859,6 +68862,24 @@
           }
         }
       }
+    },
+    "JANGTQ sidecar label mismatch" : {
+      "shouldTranslate" : false
+    },
+    "JANGTQ sidecar missing" : {
+      "shouldTranslate" : false
+    },
+    "Unsupported OCR model family" : {
+      "shouldTranslate" : false
+    },
+    "model id contains \"jangtq\"" : {
+      "shouldTranslate" : false
+    },
+    "model name contains \"jangtq\"" : {
+      "shouldTranslate" : false
+    },
+    "no JANGTQ routing stamp" : {
+      "shouldTranslate" : false
     },
     "JSON object keyed by standard action names. Values define method, path, optional query, headers, and bodyTemplate." : {
       "comment" : "Help text for the \"Action Map JSON\" field in the custom HTTP section of the agent channel custom connection sheet.",

@@ -3693,20 +3693,23 @@ public actor ModelRuntime {
         let normalizedStamp = (probe.weight_format ?? "")
             .trimmingCharacters(in: .whitespacesAndNewlines)
             .lowercased()
-        let isMxtq = normalizedStamp == "mxtq"
         let normalizedFormat = (probe.format ?? "")
             .trimmingCharacters(in: .whitespacesAndNewlines)
             .lowercased()
-        let declaresJANGTQFormat = normalizedFormat == "jangtq"
+        let declaresJANGTQ =
+            normalizedStamp == "mxtq"
+            || normalizedStamp.contains("jangtq")
+            || normalizedFormat == "mxtq"
+            || normalizedFormat.contains("jangtq")
 
         // Forward mismatch: declared JANGTQ, sidecar missing.
-        if isMxtq && !sidecarPresent {
+        if declaresJANGTQ && !sidecarPresent {
             throw NSError(
                 domain: "ModelRuntime",
                 code: 2,
                 userInfo: [
                     NSLocalizedDescriptionKey:
-                        "Model '\(name)' declares JANGTQ (weight_format: \"mxtq\") but is missing "
+                        "Model '\(name)' declares JANGTQ but is missing "
                         + "required sidecar file 'jangtq_runtime.safetensors'. "
                         + "Re-download the full model or obtain the sidecar from the original publisher."
                 ]
@@ -3716,8 +3719,15 @@ public actor ModelRuntime {
         // Inverse mismatch: sidecar present but stamp says non-JANGTQ. The
         // safetensors carry `tq_norms` / `tq_packed` keys vmlx's base class
         // can't decode → "Unhandled keys" runtime error. Catch it here.
-        if sidecarPresent && !isMxtq && !declaresJANGTQFormat {
-            let actualStamp = (probe.weight_format?.isEmpty == false) ? probe.weight_format! : "absent"
+        if sidecarPresent && !declaresJANGTQ {
+            let actualStamp: String
+            if probe.weight_format?.isEmpty == false {
+                actualStamp = "weight_format: \"\(probe.weight_format!)\""
+            } else if probe.format?.isEmpty == false {
+                actualStamp = "format: \"\(probe.format!)\""
+            } else {
+                actualStamp = "absent"
+            }
             throw NSError(
                 domain: "ModelRuntime",
                 code: 3,
@@ -3725,10 +3735,10 @@ public actor ModelRuntime {
                     NSLocalizedDescriptionKey:
                         "Model '\(name)' ships the JANGTQ runtime sidecar "
                         + "('jangtq_runtime.safetensors') but its jang_config.json "
-                        + "declares weight_format: \"\(actualStamp)\". This is a mislabeled "
+                        + "declares \(actualStamp). This is a mislabeled "
                         + "bundle — the safetensors carry TurboQuant tensors (tq_norms / "
                         + "tq_packed) that vmlx's base model class cannot decode. "
-                        + "Fix: set weight_format to \"mxtq\" in jang_config.json, "
+                        + "Fix: set weight_format to \"mxtq\" or format to \"jangtq\" in jang_config.json, "
                         + "or re-download from a corrected source."
                 ]
             )

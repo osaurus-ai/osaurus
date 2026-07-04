@@ -477,6 +477,23 @@ struct ModelRuntimeFindDirectoryTests {
         try ModelRuntime.validateJANGTQSidecarIfRequired(at: dir, name: "MiniMax-JANGTQ-OK")
     }
 
+    @Test("Sidecar present on variant JANGTQ stamp passes")
+    func jangtq_variantStampWithSidecar_passes() throws {
+        let dir = try makeIsolatedDir()
+        try writeJangConfig(weightFormat: "jangtq4", at: dir)
+        try Data("dummy".utf8).write(to: dir.appendingPathComponent("jangtq_runtime.safetensors"))
+        try ModelRuntime.validateJANGTQSidecarIfRequired(at: dir, name: "Nemotron-JANGTQ4")
+    }
+
+    @Test("Missing sidecar on variant JANGTQ stamp throws")
+    func jangtq_variantStampMissingSidecar_throws() throws {
+        let dir = try makeIsolatedDir()
+        try writeJangConfig(weightFormat: "jangtq4", at: dir)
+        #expect(throws: Error.self) {
+            try ModelRuntime.validateJANGTQSidecarIfRequired(at: dir, name: "Nemotron-JANGTQ4")
+        }
+    }
+
     @Test("MiMo and N2 JANGTQ app load preflight requires sidecar without reading bundle JSON")
     func mimoAndN2JANGTQSidecarFastPathAvoidsBundleJSONRead() async throws {
         for name in ["MiMo-V2.5-JANGTQ_2", "Nex-N2-Pro-JANGTQ2"] {
