@@ -122819,6 +122819,12 @@
         }
       }
     },
+    "inspection output exceeded the supported limit" : {
+      "shouldTranslate" : false
+    },
+    "inspection timed out after 30 seconds" : {
+      "shouldTranslate" : false
+    },
     "Preparing…" : {
       "localizations" : {
         "de" : {
