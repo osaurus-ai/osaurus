@@ -1214,7 +1214,11 @@ extension EvalRunner {
                 : (false, "\(labelPrefix) '\(assertion.path)' contents differ from expected")
         }
         if let needle = assertion.contains {
-            return contents.contains(needle)
+            let hit =
+                assertion.caseInsensitive == true
+                ? contents.range(of: needle, options: .caseInsensitive) != nil
+                : contents.contains(needle)
+            return hit
                 ? (true, "\(labelPrefix) '\(assertion.path)' contains '\(needle)'")
                 : (false, "\(labelPrefix) '\(assertion.path)' missing '\(needle)'")
         }

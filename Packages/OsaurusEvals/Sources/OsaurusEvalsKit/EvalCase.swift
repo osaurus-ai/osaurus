@@ -965,17 +965,24 @@ public struct EvalCase: Sendable, Codable, Identifiable {
             public let exists: Bool?
             public let contains: String?
             public let equals: String?
+            /// When true, `contains` matches case-insensitively — for
+            /// natural-language contracts ("include the word 'killed'")
+            /// where sentence-position capitalization is not a defect.
+            /// Default false: exact-content contracts stay strict.
+            public let caseInsensitive: Bool?
 
             public init(
                 path: String,
                 exists: Bool? = nil,
                 contains: String? = nil,
-                equals: String? = nil
+                equals: String? = nil,
+                caseInsensitive: Bool? = nil
             ) {
                 self.path = path
                 self.exists = exists
                 self.contains = contains
                 self.equals = equals
+                self.caseInsensitive = caseInsensitive
             }
         }
 

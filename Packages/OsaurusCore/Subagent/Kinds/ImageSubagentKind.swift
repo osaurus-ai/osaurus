@@ -411,7 +411,17 @@ final class ImageSubagentKind: SubagentKind, @unchecked Sendable {
             guard ["png", "jpg", "jpeg", "webp", "heic"].contains(ext) else {
                 throw NativeImageToolInputError.unsupportedExtension(path)
             }
-            let values = try url.resourceValues(forKeys: [.fileSizeKey, .isRegularFileKey])
+            // A missing file makes `resourceValues` throw NSCocoaErrorDomain 260
+            // BEFORE the isRegularFile guard can run — without this mapping a
+            // bad source path surfaced as `execution_error` ("the edit
+            // subsystem broke") instead of `invalid_args` ("fix your path"),
+            // pointing the calling model away from the actual repair.
+            let values: URLResourceValues
+            do {
+                values = try url.resourceValues(forKeys: [.fileSizeKey, .isRegularFileKey])
+            } catch {
+                throw NativeImageToolInputError.notAFile(path)
+            }
             guard values.isRegularFile == true else {
                 throw NativeImageToolInputError.notAFile(path)
             }

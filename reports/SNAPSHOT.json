@@ -19,7 +19,7 @@
     "subagent",
     "tool_envelope"
   ],
-  "generatedAt" : "2026-07-03T21:37:18.141Z",
+  "generatedAt" : "2026-07-04T01:38:41.320Z",
   "models" : [
     {
       "environment" : {
@@ -27,7 +27,7 @@
         "catalogHash" : "137408f3cdba4838",
         "chip" : "Apple M4 Pro",
         "cpuCores" : 14,
-        "judge" : "self-judge",
+        "judge" : "xai/grok-4.3",
         "lowPowerMode" : false,
         "osVersion" : "26.2.0",
         "powerSource" : "AC",
@@ -35,25 +35,25 @@
         "thermalState" : "fair",
         "totalRamMb" : 49152
       },
-      "meanCpuPercent" : 65.69027759298186,
-      "meanDecodeTokensPerSecond" : 14.103161371942466,
-      "meanPromptTokensPerTask" : 22620.22972972973,
-      "meanTotalTokensPerTask" : 20112.46511627907,
-      "meanTtftMs" : 77.3075633234792,
+      "meanCpuPercent" : 62.39552143457505,
+      "meanDecodeTokensPerSecond" : 14.99986299553308,
+      "meanPromptTokensPerTask" : 23717.483516483517,
+      "meanTotalTokensPerTask" : 20518.69090909091,
+      "meanTtftMs" : 79.93302446730594,
       "modelId" : "OsaurusAI/gemma-4-12B-it-MXFP8",
-      "peakCpuPercent" : 519.3024473151632,
-      "peakPhysFootprintMb" : 20449.945602416992,
+      "peakCpuPercent" : 523.1130830370012,
+      "peakPhysFootprintMb" : 19666.148887634277,
       "perDomain" : {
         "agent_loop" : {
           "errored" : 0,
-          "passed" : 62,
-          "scored" : 75,
-          "skipped" : 17
+          "passed" : 73,
+          "scored" : 92,
+          "skipped" : 0
         },
         "apple_script" : {
           "errored" : 0,
-          "passed" : 24,
-          "scored" : 26,
+          "passed" : 28,
+          "scored" : 35,
           "skipped" : 0
         },
         "capability_claims" : {
@@ -82,14 +82,14 @@
         },
         "subagent" : {
           "errored" : 0,
-          "passed" : 40,
-          "scored" : 41,
-          "skipped" : 6
+          "passed" : 47,
+          "scored" : 47,
+          "skipped" : 0
         }
       },
       "startedAt" : "2026-07-03T06:08:57Z",
-      "totalPassed" : 199,
-      "totalScored" : 217
+      "totalPassed" : 221,
+      "totalScored" : 249
     },
     {
       "environment" : {
@@ -105,18 +105,18 @@
         "thermalState" : "nominal",
         "totalRamMb" : 49152
       },
-      "meanCpuPercent" : 83.41097129120193,
-      "meanDecodeTokensPerSecond" : 23.74697145338252,
-      "meanPromptTokensPerTask" : 19836.24175824176,
-      "meanTotalTokensPerTask" : 17236.954545454544,
-      "meanTtftMs" : 37.41423880800288,
+      "meanCpuPercent" : 83.32660719058167,
+      "meanDecodeTokensPerSecond" : 23.7663017049929,
+      "meanPromptTokensPerTask" : 19834.395604395606,
+      "meanTotalTokensPerTask" : 17234.47272727273,
+      "meanTtftMs" : 37.32621669769287,
       "modelId" : "OsaurusAI/gemma-4-E4B-it-4bit",
       "peakCpuPercent" : 525.9935178914649,
       "peakPhysFootprintMb" : 20519.195350646973,
       "perDomain" : {
         "agent_loop" : {
           "errored" : 0,
-          "passed" : 75,
+          "passed" : 77,
           "scored" : 92,
           "skipped" : 0
         },
@@ -160,12 +160,6 @@
           "errored" : 0,
           "passed" : 13,
           "scored" : 38,
-          "skipped" : 0
-        },
-        "judge_calibration" : {
-          "errored" : 0,
-          "passed" : 11,
-          "scored" : 11,
           "skipped" : 0
         },
         "micro_perf" : {
@@ -212,9 +206,9 @@
         },
         "subagent" : {
           "errored" : 0,
-          "passed" : 45,
-          "scored" : 45,
-          "skipped" : 2
+          "passed" : 47,
+          "scored" : 47,
+          "skipped" : 0
         },
         "tool_envelope" : {
           "errored" : 0,
@@ -224,8 +218,35 @@
         }
       },
       "startedAt" : "2026-07-03T19:08:07Z",
-      "totalPassed" : 334,
-      "totalScored" : 388
+      "totalPassed" : 327,
+      "totalScored" : 379
+    },
+    {
+      "environment" : {
+        "caseCount" : 11,
+        "catalogHash" : "47bc36714bbf8db1",
+        "chip" : "Apple M4 Pro",
+        "cpuCores" : 14,
+        "judge" : "xai/grok-4.3",
+        "lowPowerMode" : false,
+        "osVersion" : "26.2.0",
+        "powerSource" : "AC",
+        "runModel" : "foundation",
+        "thermalState" : "nominal",
+        "totalRamMb" : 49152
+      },
+      "modelId" : "foundation",
+      "perDomain" : {
+        "judge_calibration" : {
+          "errored" : 0,
+          "passed" : 11,
+          "scored" : 11,
+          "skipped" : 0
+        }
+      },
+      "startedAt" : "2026-07-03T23:54:51Z",
+      "totalPassed" : 11,
+      "totalScored" : 11
     },
     {
       "environment" : {
@@ -241,18 +262,18 @@
         "thermalState" : "fair",
         "totalRamMb" : 49152
       },
-      "meanCpuPercent" : 21.300325471364648,
+      "meanCpuPercent" : 31.10935369736971,
       "meanDecodeTokensPerSecond" : 22.365760263157892,
-      "meanPromptTokensPerTask" : 31234.263736263736,
-      "meanTotalTokensPerTask" : 26521.29090909091,
-      "meanTtftMs" : 725.435067998602,
+      "meanPromptTokensPerTask" : 31260.43956043956,
+      "meanTotalTokensPerTask" : 26543.00909090909,
+      "meanTtftMs" : 729.1559830625007,
       "modelId" : "xai/grok-4.3",
-      "peakCpuPercent" : 288.84081557102587,
-      "peakPhysFootprintMb" : 19594.976440429688,
+      "peakCpuPercent" : 531.8650223806318,
+      "peakPhysFootprintMb" : 36578.74048614502,
       "perDomain" : {
         "agent_loop" : {
           "errored" : 0,
-          "passed" : 85,
+          "passed" : 87,
           "scored" : 92,
           "skipped" : 0
         },
@@ -285,11 +306,17 @@
           "passed" : 3,
           "scored" : 3,
           "skipped" : 0
+        },
+        "subagent" : {
+          "errored" : 0,
+          "passed" : 47,
+          "scored" : 47,
+          "skipped" : 0
         }
       },
       "startedAt" : "2026-07-03T20:59:53Z",
-      "totalPassed" : 189,
-      "totalScored" : 202
+      "totalPassed" : 238,
+      "totalScored" : 249
     }
   ]
 }
