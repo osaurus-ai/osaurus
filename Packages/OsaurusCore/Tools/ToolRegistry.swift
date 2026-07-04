@@ -1111,6 +1111,15 @@ public final class ToolRegistry: ObservableObject {
         )
     }
 
+    /// Resolve an unqualified tool name without building the full `ToolEntry`
+    /// list. Exact registry matches win; otherwise a single case-insensitive
+    /// match is treated as the canonical tool name.
+    func canonicalToolName(matchingBareId id: String) -> String? {
+        if toolsByName.keys.contains(id) { return id }
+        let matches = toolsByName.keys.filter { $0.caseInsensitiveCompare(id) == .orderedSame }
+        return matches.count == 1 ? matches[0] : nil
+    }
+
     /// Set enablement for a tool and persist.
     func setEnabled(_ enabled: Bool, for name: String) {
         configuration.setEnabled(enabled, for: name)

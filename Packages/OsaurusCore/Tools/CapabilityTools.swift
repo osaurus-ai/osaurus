@@ -632,22 +632,46 @@ final class CapabilitiesLoadTool: OsaurusTool, @unchecked Sendable {
         var sections: [String] = []
         var failures: [LoadFailure] = []
 
-        for id in ids {
-            guard let slashIdx = id.firstIndex(of: "/") else {
+        for rawInputId in ids {
+            let id = rawInputId.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !id.isEmpty else {
                 failures.append(
                     LoadFailure(
                         kind: .invalidArgs,
                         message:
-                            "Invalid ID format '\(id)' — expected `<type>/<id>` "
-                            + "(e.g. `tool/sandbox_exec`, `skill/plot-data`). Use IDs from the Enabled capabilities list or `capabilities_discover`.",
-                        field: "ids"
+                            "Invalid empty capability ID — expected `<type>/<id>` "
+                            + "(e.g. `tool/sandbox_exec`, `skill/plot-data`).",
+                        field: "ids",
+                        expected: "non-empty capability ID"
                     )
                 )
                 continue
             }
 
-            let typePrefix = String(id[id.startIndex ..< slashIdx])
-            let rawId = String(id[id.index(after: slashIdx)...])
+            let typePrefix: String
+            let rawId: String
+            if let slashIdx = id.firstIndex(of: "/") {
+                typePrefix = String(id[id.startIndex ..< slashIdx])
+                rawId = String(id[id.index(after: slashIdx)...])
+            } else if let toolName = await Self.resolveBareToolName(id) {
+                typePrefix = "tool"
+                rawId = toolName
+            } else {
+                failures.append(
+                    LoadFailure(
+                        kind: .invalidArgs,
+                        message:
+                            "Invalid ID format '\(id)' — expected `<type>/<id>` "
+                            + "(e.g. `tool/sandbox_exec`, `skill/plot-data`). "
+                            + "Bare tool name '\(id)' is not registered. "
+                            + "If this is a skill, plugin, or method, include the type prefix; "
+                            + "otherwise call `capabilities_discover` and use a returned ID.",
+                        field: "ids",
+                        expected: "tool/<name>, skill/<name>, plugin/<id>, or method/<id>"
+                    )
+                )
+                continue
+            }
 
             let outcome: LoadOutcome
             switch typePrefix {
@@ -703,6 +727,12 @@ final class CapabilitiesLoadTool: OsaurusTool, @unchecked Sendable {
             text: text,
             warnings: warnings.isEmpty ? nil : warnings
         )
+    }
+
+    private static func resolveBareToolName(_ id: String) async -> String? {
+        await MainActor.run {
+            ToolRegistry.shared.canonicalToolName(matchingBareId: id)
+        }
     }
 
     /// Structured per-id failure: the `kind` drives the all-failed
