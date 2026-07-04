@@ -1194,6 +1194,9 @@ struct HTTPHandlerChatStreamingTests {
             let defaultNames = Set(requests[0].tools?.map(\.function.name) ?? [])
             #expect(defaultNames == ToolRegistry.defaultAgentAllowedToolNames)
 
+            let customSystemMessage = requests[1].messages.first { $0.role == "system" }
+            #expect(customSystemMessage?.content?.contains("Test identity") == true)
+
             let customNames = Set(requests[1].tools?.map(\.function.name) ?? [])
             for configure in ToolRegistry.configureToolNames {
                 #expect(
