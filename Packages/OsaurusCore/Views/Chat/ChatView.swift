@@ -203,6 +203,19 @@ final class ChatSession: ObservableObject {
 
     /// Tracks if session has unsaved content changes
     private var isDirty: Bool = false
+    /// Session id whose first persisted turn belongs to the active send.
+    /// Used to undo transient rows on privacy-review cancels, including
+    /// pre-minted empty session ids.
+    private var transientSessionIdForCurrentRun: UUID?
+    /// Whether this run appended a new user turn. Regeneration sends reuse
+    /// historical user turns and must not pop one during privacy-cancel rollback.
+    private var appendedUserTurnForCurrentRun = false
+    /// Full transcript snapshot to restore when privacy review cancels a
+    /// regeneration/edit-regeneration before the request leaves the device.
+    private var turnsRollbackOnCancel: [ChatTurn]?
+    /// Privacy review cancel restores the draft instead of committing the run;
+    /// it must not auto-dispatch a queued follow-up during cleanup.
+    private var suppressQueuedSendFlushForCurrentRun = false
 
     // MARK: - Memoization Cache
     private let blockMemoizer = BlockMemoizer()
@@ -1530,6 +1543,10 @@ final class ChatSession: ObservableObject {
         queuedSend = nil
         voiceInputState = .idle
         showVoiceOverlay = false
+        transientSessionIdForCurrentRun = nil
+        appendedUserTurnForCurrentRun = false
+        turnsRollbackOnCancel = nil
+        suppressQueuedSendFlushForCurrentRun = false
         // Clear session identity for new chat
         if let prev = sessionId {
             let key = sessionStateKey(prev)
@@ -1865,6 +1882,10 @@ final class ChatSession: ObservableObject {
         showVoiceOverlay = false
         input = ""
         pendingAttachments = []
+        transientSessionIdForCurrentRun = nil
+        appendedUserTurnForCurrentRun = false
+        turnsRollbackOnCancel = nil
+        suppressQueuedSendFlushForCurrentRun = false
         isDirty = false  // Fresh load, not dirty
         // Clear caches to force a clean block rebuild for the new session
         blockMemoizer.clear()
@@ -2027,6 +2048,8 @@ final class ChatSession: ObservableObject {
         guard let index = turns.firstIndex(where: { $0.id == turnId }) else { return }
         guard turns[index].role == .user else { return }
 
+        turnsRollbackOnCancel = snapshotTurnsForCancelRollback()
+
         // Update the content
         turns[index].content = newContent
 
@@ -2053,6 +2076,8 @@ final class ChatSession: ObservableObject {
     func regenerate(turnId: UUID) {
         guard let index = turns.firstIndex(where: { $0.id == turnId }) else { return }
         guard turns[index].role == .assistant else { return }
+
+        turnsRollbackOnCancel = snapshotTurnsForCancelRollback()
 
         // Remove this turn and all subsequent turns
         turns = Array(turns.prefix(index))
@@ -2475,6 +2500,9 @@ final class ChatSession: ObservableObject {
         // unrelated cancel doesn't accidentally repopulate the input
         // with a turn the user already sent.
         savedDraftOnCancel = nil
+        transientSessionIdForCurrentRun = nil
+        appendedUserTurnForCurrentRun = false
+        turnsRollbackOnCancel = nil
         budgetTracker.clear()
         ServerController.signalGenerationEnd()
         // Finalize ledger outcomes before trimming so the classification sees
@@ -2485,7 +2513,10 @@ final class ChatSession: ObservableObject {
         markUnfinishedToolCallsInterrupted()
         rebuildVisibleBlocks()
         save()
-        flushQueuedSendIfEligible()
+        if !suppressQueuedSendFlushForCurrentRun {
+            flushQueuedSendIfEligible()
+        }
+        suppressQueuedSendFlushForCurrentRun = false
     }
 
     /// A stopped (or errored) run can leave an assistant tool call that never
@@ -3255,7 +3286,10 @@ final class ChatSession: ObservableObject {
         let hasContent = !trimmed.isEmpty || !attachments.isEmpty
         let isRegeneration = !hasContent && !turns.isEmpty
         guard hasContent || isRegeneration else { return }
-        guard activeRunId == nil, !isStreaming else { return }
+        guard activeRunId == nil, !isStreaming else {
+            restoreTurnsRollbackAfterAbortedRegeneration()
+            return
+        }
 
         // Authoritative guard for every send path (interactive, regeneration,
         // queued, VAD, programmatic): never start a local generation while
@@ -3263,13 +3297,20 @@ final class ChatSession: ObservableObject {
         // first so the draft survives; this backstops the rest.
         if localModelBusyInOtherWindow {
             windowState?.showLocalModelBusyAlert = true
+            restoreTurnsRollbackAfterAbortedRegeneration()
             return
+        }
+        if hasContent {
+            turnsRollbackOnCancel = nil
         }
 
         // Fresh run: a previous stop() may have left the flag true. The
         // auto-flush in completeRunCleanup keys off this, so clear it
         // before the new run can finalize.
         stopRequested = false
+        transientSessionIdForCurrentRun = nil
+        appendedUserTurnForCurrentRun = false
+        suppressQueuedSendFlushForCurrentRun = false
 
         // Any new user input clears a prior completion banner — we're
         // moving on to a follow-up. Clarify prompts (when active) live
@@ -3291,12 +3332,14 @@ final class ChatSession: ObservableObject {
         awaitingClarify = nil
 
         if hasContent {
+            let sendIntroducesFirstTurn = turns.isEmpty
             // One-shot activation signal — the install's first ever chat-UI
             // message. Inside the `hasContent` branch so a contentless
             // regeneration doesn't count as "used".
             FeatureTelemetry.firstTimeChatUsed()
 
             turns.append(ChatTurn(role: .user, content: trimmed, attachments: attachments))
+            appendedUserTurnForCurrentRun = true
             // Stash the draft so we can put it back if the user cancels
             // out of the privacy review sheet. The text and attachments
             // arrive cleared (the input bar wipes them as part of its
@@ -3306,18 +3349,12 @@ final class ChatSession: ObservableObject {
             isDirty = true
             rebuildVisibleBlocks()
 
-            // Immediately save new session so it appears in sidebar
-            if sessionId == nil {
-                sessionId = UUID()
-                createdAt = Date()
-                updatedAt = Date()
-                isDirty = false  // Already set updatedAt
-                // Auto-generate title from first user message
-                let turnData = turns.map { ChatTurnData(from: $0) }
-                title = ChatSessionData.generateTitle(from: turnData)
-                let data = toSessionData()
-                ChatSessionsManager.shared.save(data)
-                onSessionChanged?()
+            // Persist the user turn before inference starts. Final cleanup will
+            // save the assistant turn, but the user's text/attachments must
+            // survive a crash, quit, or long-running stream too.
+            save()
+            if sendIntroducesFirstTurn {
+                transientSessionIdForCurrentRun = sessionId
             }
         }
 
@@ -3354,8 +3391,12 @@ final class ChatSession: ObservableObject {
                 lastStreamError = nil
                 isStreaming = true
                 ServerController.signalGenerationStart()
+                var shouldPersistConversationArtifacts = true
                 defer {
-                    finalizeRun(runId: runId, persistConversationArtifacts: true)
+                    finalizeRun(
+                        runId: runId,
+                        persistConversationArtifacts: shouldPersistConversationArtifacts
+                    )
                 }
 
                 var assistantTurn = ChatTurn(role: .assistant, content: "")
@@ -4657,6 +4698,8 @@ final class ChatSession: ObservableObject {
                         debugLog("send: stop() cancelled mid-prepare — keeping user turn")
                     } else {
                         debugLog("send: cancelled before any delta — restoring draft")
+                        shouldPersistConversationArtifacts = false
+                        suppressQueuedSendFlushForCurrentRun = true
                         handleCancelledBeforeFirstDelta()
                     }
                 } catch let pfError as PrivacyFilterPipelineError {
@@ -4711,13 +4754,23 @@ final class ChatSession: ObservableObject {
         if let last = turns.last, last.role == .assistant, last.contentIsEmpty {
             turns.removeLast()
         }
+        if let rollback = turnsRollbackOnCancel {
+            turns = rollback
+            turnsRollbackOnCancel = nil
+            appendedUserTurnForCurrentRun = false
+            rebuildVisibleBlocks()
+            savedDraftOnCancel = nil
+            persistAfterCancelledBeforeFirstDelta()
+            return
+        }
         // Remove the user turn this run was attached to, if it's the
         // current trailing turn. Don't blindly drop the last turn —
         // queued sends or auxiliary turns might have landed between
         // the append and the cancel.
-        if let last = turns.last, last.role == .user {
+        if appendedUserTurnForCurrentRun, let last = turns.last, last.role == .user {
             turns.removeLast()
         }
+        appendedUserTurnForCurrentRun = false
         rebuildVisibleBlocks()
         // Restore the typed draft. Concatenating onto whatever the
         // user has half-typed since hitting Send would be surprising,
@@ -4729,6 +4782,44 @@ final class ChatSession: ObservableObject {
             pendingAttachments = draft.attachments
         }
         savedDraftOnCancel = nil
+        persistAfterCancelledBeforeFirstDelta()
+    }
+
+    private func snapshotTurnsForCancelRollback() -> [ChatTurn] {
+        turns.map { ChatTurn(from: ChatTurnData(from: $0)) }
+    }
+
+    private func restoreTurnsRollbackAfterAbortedRegeneration() {
+        guard let rollback = turnsRollbackOnCancel else { return }
+        turns = rollback
+        turnsRollbackOnCancel = nil
+        appendedUserTurnForCurrentRun = false
+        transientSessionIdForCurrentRun = nil
+        rebuildVisibleBlocks()
+        isDirty = false
+        save()
+    }
+
+    private func persistAfterCancelledBeforeFirstDelta() {
+        let transientId = transientSessionIdForCurrentRun
+        transientSessionIdForCurrentRun = nil
+
+        if turns.isEmpty, let id = transientId, sessionId == id {
+            sessionId = nil
+            title = "New Chat"
+            createdAt = Date()
+            updatedAt = createdAt
+            isDirty = false
+            ChatSessionsManager.shared.delete(id: id)
+            let key = sessionStateKey(id)
+            Task { await SessionToolStateStore.shared.invalidate(key) }
+            Task { await SessionRedactionStore.shared.invalidate(id.uuidString) }
+            onSessionChanged?()
+            return
+        }
+
+        guard !turns.isEmpty else { return }
+        save()
     }
 }
 

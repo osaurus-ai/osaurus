@@ -50,6 +50,60 @@ struct ChatSessionStoreDeferredSaveTests {
         }
     }
 
+    @Test func deleteDropsQueuedSaveForSession() throws {
+        try withOpenStores {
+            let session = ChatSessionData(
+                id: UUID(),
+                title: "Cancelled deferred chat",
+                turns: [ChatTurnData(role: .user, content: "cancelled before review")]
+            )
+            ChatSessionStore._enqueuePendingSaveForTesting(session)
+            #expect(ChatSessionStore._pendingSaveCountForTesting == 1)
+
+            ChatSessionStore.delete(id: session.id)
+            ChatSessionStore.flushPendingSaves()
+
+            #expect(ChatSessionStore._pendingSaveCountForTesting == 0)
+            #expect(ChatHistoryDatabase.shared.loadSession(id: session.id) == nil)
+        }
+    }
+
+    @Test func flushDeletesQueuedDeleteFromDatabase() throws {
+        try withOpenStores {
+            let session = ChatSessionData(
+                id: UUID(),
+                title: "Persisted before deferred delete",
+                turns: [ChatTurnData(role: .user, content: "remove me later")]
+            )
+            try ChatHistoryDatabase.shared.saveSession(session)
+            ChatSessionStore._enqueuePendingDeleteForTesting(session.id)
+            #expect(ChatSessionStore._pendingDeleteCountForTesting == 1)
+
+            ChatSessionStore.flushPendingSaves()
+
+            #expect(ChatSessionStore._pendingDeleteCountForTesting == 0)
+            #expect(ChatHistoryDatabase.shared.loadSession(id: session.id) == nil)
+        }
+    }
+
+    @Test func pendingDeleteWinsOverQueuedSaveForSession() throws {
+        try withOpenStores {
+            let session = ChatSessionData(
+                id: UUID(),
+                title: "Cancelled deferred chat",
+                turns: [ChatTurnData(role: .user, content: "do not restore")]
+            )
+            ChatSessionStore._enqueuePendingSaveForTesting(session)
+            ChatSessionStore._enqueuePendingDeleteForTesting(session.id)
+
+            ChatSessionStore.flushPendingSaves()
+
+            #expect(ChatSessionStore._pendingSaveCountForTesting == 0)
+            #expect(ChatSessionStore._pendingDeleteCountForTesting == 0)
+            #expect(ChatHistoryDatabase.shared.loadSession(id: session.id) == nil)
+        }
+    }
+
     @Test func loadHealsOrphanedTurnsBackToDisk() throws {
         try withOpenStores(memory: true) {
             let sessionId = UUID(uuidString: "44444444-5555-6666-7777-888888888888")!
