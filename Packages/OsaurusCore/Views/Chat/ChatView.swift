@@ -1131,10 +1131,8 @@ final class ChatSession: ObservableObject {
 
         var parts: [String] = []
         for doc in docs {
-            if let name = doc.filename, let text = doc.documentContent {
-                let attributes = attachedDocumentAttributes(for: doc, rawName: name)
-                let safeText = xmlEscape(text)
-                parts.append("<attached_document \(attributes)>\n\(safeText)\n</attached_document>")
+            if let rendered = renderedAttachedDocument(for: doc) {
+                parts.append(rendered)
             }
         }
 
@@ -1143,6 +1141,39 @@ final class ChatSession: ObservableObject {
         }
 
         return parts.joined(separator: "\n\n")
+    }
+
+    private static let attachedDocumentPromptCache: NSCache<NSString, NSString> = {
+        let cache = NSCache<NSString, NSString>()
+        cache.countLimit = 64
+        cache.totalCostLimit = 32 * 1024 * 1024
+        return cache
+    }()
+
+    private static func renderedAttachedDocument(for doc: Attachment) -> String? {
+        guard let name = doc.filename else { return nil }
+        let key = attachedDocumentPromptCacheKey(for: doc)
+        if let cached = attachedDocumentPromptCache.object(forKey: key) {
+            return cached as String
+        }
+        guard let text = doc.loadDocumentContent() else { return nil }
+
+        let attributes = attachedDocumentAttributes(for: doc, rawName: name)
+        let safeText = xmlEscape(text)
+        let rendered = "<attached_document \(attributes)>\n\(safeText)\n</attached_document>"
+        attachedDocumentPromptCache.setObject(rendered as NSString, forKey: key, cost: rendered.utf8.count)
+        return rendered
+    }
+
+    private static func attachedDocumentPromptCacheKey(for doc: Attachment) -> NSString {
+        switch doc.kind {
+        case .document(let filename, _, let fileSize):
+            return "document:\(doc.id.uuidString):\(filename):\(fileSize)" as NSString
+        case .documentRef(let filename, let hash, let fileSize):
+            return "documentRef:\(doc.id.uuidString):\(filename):\(hash):\(fileSize)" as NSString
+        default:
+            return "nonDocument:\(doc.id.uuidString)" as NSString
+        }
     }
 
     static func buildUserChatMessage(
@@ -1177,6 +1208,24 @@ final class ChatSession: ObservableObject {
         }
 
         return ChatMessage(role: "user", content: messageText)
+    }
+
+    private static func attachmentsRenderAsMultimodalParts(
+        _ attachments: [Attachment],
+        supportsImages: Bool,
+        supportsAudio: Bool,
+        supportsVideo: Bool
+    ) -> Bool {
+        if supportsImages, attachments.contains(where: { $0.isImage && $0.loadImageData() != nil }) {
+            return true
+        }
+        if supportsAudio, attachments.contains(where: { audioPayload(from: $0) != nil }) {
+            return true
+        }
+        if supportsVideo, attachments.contains(where: { videoPayload(from: $0) != nil }) {
+            return true
+        }
+        return false
     }
 
     /// Prepend a user turn's frozen memory / screen-context prefix to its
@@ -3261,15 +3310,13 @@ final class ChatSession: ObservableObject {
         guard turn.injectedContextPrefix == nil else { return }
         // Parity with the legacy injector guard: a turn that renders as a
         // multimodal parts message never carries an injected prefix.
-        if !turn.attachments.isEmpty {
-            let rendered = Self.buildUserChatMessage(
-                content: turn.content,
-                attachments: turn.attachments,
-                supportsImages: selectedModelSupportsImages,
-                supportsAudio: selectedModelSupportsAudio,
-                supportsVideo: selectedModelSupportsVideo
-            )
-            if rendered.contentParts != nil { return }
+        if Self.attachmentsRenderAsMultimodalParts(
+            turn.attachments,
+            supportsImages: selectedModelSupportsImages,
+            supportsAudio: selectedModelSupportsAudio,
+            supportsVideo: selectedModelSupportsVideo
+        ) {
+            return
         }
         guard
             let prefix = SystemPromptComposer.composeInjectedUserPrefix(
