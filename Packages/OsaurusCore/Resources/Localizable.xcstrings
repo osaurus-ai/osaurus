@@ -23753,6 +23753,16 @@
         }
       }
     },
+    "Cache or model folder path" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Cache or model folder path"
+          }
+        }
+      }
+    },
     "Cache directory" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -27984,6 +27994,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "選擇 Hugging Face 緩存文件夾"
+          }
+        }
+      }
+    },
+    "Choose Hugging Face cache or model folder" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Choose Hugging Face cache or model folder"
           }
         }
       }
@@ -63002,6 +63022,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Hugging Face 緩存"
+          }
+        }
+      }
+    },
+    "Hugging Face cache and model folder" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Hugging Face cache and model folder"
           }
         }
       }
@@ -152217,6 +152247,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "使用來自 ~/.cache/huggingface（以及 HF_HOME / HF_HUB_CACHE）的 MLX 模型。"
+          }
+        }
+      }
+    },
+    "Use MLX models from ~/.cache/huggingface, HF_HOME / HF_HUB_CACHE, or a custom folder." : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Use MLX models from ~/.cache/huggingface, HF_HOME / HF_HUB_CACHE, or a custom folder."
           }
         }
       }

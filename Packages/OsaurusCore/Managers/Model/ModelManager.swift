@@ -255,7 +255,7 @@ final class ModelManager: NSObject, ObservableObject {
         if !Self.skipBackgroundOrgFetchForTests {
             Task { [weak self] in await self?.loadOsaurusAIOrgModels() }
 
-            // Discover external bundles (HF cache, LM Studio) off the main
+            // Discover external bundles (HF cache, LM Studio, custom folders) off the main
             // thread. `rescan()` posts `.localModelsChanged` when the set
             // changes, which re-runs `refreshDownloadStates()` to merge them.
             Task.detached(priority: .utility) {
@@ -1770,7 +1770,7 @@ extension ModelManager {
     }
 
     private nonisolated static func mergeExternalModels(into scanned: [MLXModel]) -> [MLXModel] {
-        // Append externally-discovered bundles (HF cache, LM Studio). Read
+        // Append externally-discovered bundles (HF cache, LM Studio, custom folders). Read
         // fresh from the locator's in-memory registry each call (cheap) so a
         // background rescan is reflected without invalidating the disk-scan
         // cache above. Locally-present models win on id collision.
