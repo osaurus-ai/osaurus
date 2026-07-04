@@ -83,6 +83,35 @@ struct SubagentFeedTests {
         #expect(registry.feed(for: id) == nil)
     }
 
+    @Test("the feed observer windows a long history down to the rendered tail")
+    @MainActor
+    func observerWindowsLongHistory() {
+        let feed = SubagentFeed(toolCallId: "call-window", kindId: "spawn", title: "long run")
+        let total = SubagentFeedObserver.maxRenderedEvents + 50
+        for i in 0 ..< total {
+            feed.emit(SubagentActivityEvent(kind: .narrate, title: "step \(i)"))
+        }
+        // The feed itself keeps the full log; only rendering is windowed.
+        #expect(feed.currentEvents().count == total)
+
+        let observer = SubagentFeedObserver(feed: feed)
+        #expect(observer.events.count == SubagentFeedObserver.maxRenderedEvents)
+        #expect(observer.truncatedEventCount == 50)
+        #expect(observer.events.first?.title == "step 50")
+        #expect(observer.events.last?.title == "step \(total - 1)")
+    }
+
+    @Test("the feed observer passes a short history through untrimmed")
+    @MainActor
+    func observerKeepsShortHistory() {
+        let feed = SubagentFeed(toolCallId: "call-short", kindId: "spawn", title: "short run")
+        feed.emitPhase("resolving model")
+        feed.emitPhase("running")
+        let observer = SubagentFeedObserver(feed: feed)
+        #expect(observer.events.count == 2)
+        #expect(observer.truncatedEventCount == 0)
+    }
+
     @Test("the interrupt center trips the right token")
     func interruptCenter() {
         let center = SubagentInterruptCenter.shared
