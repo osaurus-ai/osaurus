@@ -148,7 +148,7 @@ public enum ManagementTab: String, CaseIterable, Identifiable, Sendable {
         case .models: L("Models")
         case .providers: L("Providers")
         case .agents: L("Agents")
-        case .agentChannels: L("Agent Channels")
+        case .agentChannels: L("Channels")
         case .plugins: L("Plugins")
         case .sandbox: L("Sandbox")
         case .tools: L("Tools")

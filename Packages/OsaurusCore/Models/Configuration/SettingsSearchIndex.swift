@@ -451,13 +451,13 @@ public enum SettingsSearchIndex {
             keywords: ["screen control", "cursor", "automation", "accessibility", "per-app"]
         ),
 
-        // MARK: Agent Channels / Integrations
+        // MARK: Channels / Integrations
         .init(
             id: "agentChannels.overview",
             tab: .agentChannels,
-            title: "Agent Channels",
+            title: "Channels",
             keywords: [
-                "integrations", "channels", "discord", "slack", "telegram",
+                "agent channels", "integrations", "channels", "discord", "slack", "telegram",
                 "custom json", "custom http", "remote channel",
             ]
         ),

@@ -36,20 +36,20 @@ struct AgentChannelTransportHealthView: View {
                 Text(LocalizedStringKey(title), bundle: .module)
                     .font(.system(size: 12, weight: .medium))
                     .foregroundColor(theme.primaryText)
-                Text(statusLabel)
-                    .font(.system(size: 11, weight: .semibold, design: .monospaced))
-                    .foregroundColor(statusColor)
-                    .padding(.horizontal, 6)
-                    .padding(.vertical, 2)
-                    .background(
-                        Capsule().fill(statusColor.opacity(0.12))
-                    )
+                AgentChannelStatusBadge(presentation: statusPresentation)
                 Spacer(minLength: 0)
                 Button {
                     Task { await refresh() }
                 } label: {
-                    Image(systemName: "arrow.clockwise")
-                        .font(.system(size: 11, weight: .medium))
+                    if isRefreshing {
+                        ProgressView()
+                            .controlSize(.small)
+                            .scaleEffect(0.55)
+                            .frame(width: 12, height: 12)
+                    } else {
+                        Image(systemName: "arrow.clockwise")
+                            .font(.system(size: 11, weight: .medium))
+                    }
                 }
                 .buttonStyle(.plain)
                 .foregroundColor(theme.secondaryText)
@@ -129,22 +129,13 @@ struct AgentChannelTransportHealthView: View {
         return formatter.localizedString(for: date, relativeTo: now)
     }
 
-    private var statusLabel: String {
-        state?.status.rawValue ?? "not_running"
+    private var statusPresentation: AgentChannelStatusPresentation {
+        guard let state else { return .transportNotRunning }
+        return .transport(status: state.status)
     }
 
     private var statusColor: Color {
-        guard let state else { return theme.tertiaryText }
-        switch state.status {
-        case .healthy:
-            return theme.successColor
-        case .degraded:
-            return theme.warningColor
-        case .conflict, .failed:
-            return theme.errorColor
-        case .disabled, .idle:
-            return theme.tertiaryText
-        }
+        statusPresentation.tone.color(theme)
     }
 
     @discardableResult

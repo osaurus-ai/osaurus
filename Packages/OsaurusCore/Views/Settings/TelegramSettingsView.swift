@@ -2,13 +2,14 @@
 //  TelegramSettingsView.swift
 //  osaurus
 //
-//  Manual configuration for the native Telegram connection.
+//  Configuration sheet for the native Telegram channel.
 //
 
 import SwiftUI
 
 struct TelegramSettingsView: View {
     @ObservedObject private var themeManager = ThemeManager.shared
+    @Environment(\.dismiss) private var dismiss
 
     @State private var botToken: String = ""
     @State private var readableChatIdsText: String = ""
@@ -24,162 +25,180 @@ struct TelegramSettingsView: View {
     @State private var longPollingTimeoutSeconds: String = "20"
     @State private var tokenSaved: Bool = false
     @State private var statusMessage: String?
+    @State private var statusDetails: [String] = []
     @State private var statusIsError = false
     @State private var isTesting = false
+    @State private var isSaving = false
     @State private var healthRefreshToken = 0
     @State private var isCheckingWebhook = false
+    @State private var isRemovingWebhook = false
     @State private var webhookRegistered = false
 
     private var theme: ThemeProtocol { themeManager.currentTheme }
 
+    private var isWebhookBusy: Bool { isCheckingWebhook || isRemovingWebhook }
+
     var body: some View {
-        SettingsSubsection(label: "Telegram") {
-            VStack(alignment: .leading, spacing: 16) {
+        AgentChannelSheetScaffold(
+            icon: AgentChannelKind.telegram.icon,
+            gradient: AgentChannelKind.telegram.brandGradient,
+            title: AgentChannelKind.telegram.displayName,
+            subtitle: L("Read and reply in allowlisted chats")
+        ) {
+            VStack(alignment: .leading, spacing: 20) {
                 Text(
-                    "Connect a Telegram bot so Osaurus can read allowlisted chats and post only to write-allowlisted destinations.",
+                    "Connect a Telegram bot so agents can read allowlisted chats and post only to write-allowlisted destinations.",
                     bundle: .module
                 )
                 .font(.system(size: 12))
                 .foregroundColor(theme.secondaryText)
+                .fixedSize(horizontal: false, vertical: true)
 
                 credentialsSection
                 SettingsDivider()
-                allowlistSection
+                accessSection
+                SettingsDivider()
+                sendingSection
                 SettingsDivider()
                 receiveSection
                 SettingsDivider()
-                actionsSection
+                advancedSection
+            }
+        } footer: {
+            if let statusMessage {
+                AgentChannelInlineStatusMessage(
+                    message: statusMessage,
+                    details: statusDetails,
+                    isError: statusIsError,
+                    onAutoClear: { clearStatus() }
+                )
+            }
+
+            HStack(spacing: 10) {
+                AgentChannelSheetActionButton(
+                    title: L("Test Connection"),
+                    busyTitle: L("Testing..."),
+                    isBusy: isTesting,
+                    action: testConnection
+                )
+                .disabled(isTesting || isSaving || (!tokenSaved && !hasPendingToken))
+
+                Spacer()
+
+                AgentChannelSheetActionButton(
+                    title: L("Save"),
+                    busyTitle: L("Saving..."),
+                    isBusy: isSaving,
+                    isPrimary: true,
+                    action: saveAndDismiss
+                )
+                .disabled(isSaving)
             }
         }
         .onAppear(perform: loadConfiguration)
     }
 
     private var credentialsSection: some View {
-        SettingsSubsection(label: "Credentials") {
+        SettingsSubsection(label: L("Credentials")) {
             VStack(alignment: .leading, spacing: 12) {
-                HStack(spacing: 10) {
-                    SecureField("Telegram bot token", text: $botToken)
-                        .textFieldStyle(.plain)
-                        .font(.system(size: 13, design: .monospaced))
-                        .foregroundColor(theme.primaryText)
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 10)
-                        .background(
-                            RoundedRectangle(cornerRadius: 10)
-                                .fill(theme.inputBackground)
-                                .overlay(
-                                    RoundedRectangle(cornerRadius: 10)
-                                        .stroke(theme.inputBorder, lineWidth: 1)
-                                )
-                        )
+                AgentChannelSetupLink(
+                    title: L("Create a bot with @BotFather, then paste its token"),
+                    url: URL(string: "https://t.me/botfather")!
+                )
 
-                    Button(action: saveToken) {
-                        Text("Save Token", bundle: .module)
-                    }
-                    .buttonStyle(SettingsButtonStyle(isPrimary: true))
-                    .disabled(botToken.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-
-                    Button(action: removeToken) {
-                        Text("Remove", bundle: .module)
-                    }
-                    .buttonStyle(SettingsButtonStyle(isDestructive: true))
-                    .disabled(!tokenSaved)
-                }
-
-                AgentChannelSecretStatusRow(
+                AgentChannelSecretField(
+                    label: L("Bot Token"),
+                    requirementHint: L("Required"),
+                    placeholder: L("123456789:ABC..."),
+                    text: $botToken,
                     saved: tokenSaved,
-                    savedMessage: "Bot token saved in Keychain",
-                    missingMessage: "No Telegram bot token saved"
+                    onRemove: removeToken
                 )
 
-                Text(
-                    "The token is stored in Keychain and is never written to the Telegram configuration file.",
-                    bundle: .module
-                )
-                .font(.system(size: 11))
-                .foregroundColor(theme.tertiaryText)
+                Text("Saved to the macOS Keychain when you press Save.", bundle: .module)
+                    .font(.system(size: 11))
+                    .foregroundColor(theme.tertiaryText)
             }
         }
     }
 
-    private var allowlistSection: some View {
-        SettingsSubsection(label: "Access") {
+    private var accessSection: some View {
+        SettingsSubsection(label: L("Access")) {
             VStack(alignment: .leading, spacing: 12) {
                 AgentChannelMultilineSettingsField(
-                    title: "Readable Chat IDs",
+                    title: L("Readable Chat IDs"),
                     text: $readableChatIdsText,
-                    help:
-                        "Telegram chat IDs, supergroup IDs, or public @channel usernames Osaurus may read. Example: -1001234567890 or @release_notes."
+                    placeholder: L("-1001234567890 or @channelname — one per line"),
+                    help: L("Chats, supergroups, or public channels agents may read.")
                 )
                 AgentChannelMultilineSettingsField(
-                    title: "Sender Allowlist",
+                    title: L("Authorized Sender IDs"),
                     text: $senderAllowlistText,
-                    help:
-                        "Telegram user IDs allowed to trigger inbound handling. Required for inbound receive when message storage or long polling is enabled."
+                    placeholder: L("123456789 — one per line"),
+                    help: L("Only these Telegram users can trigger inbound handling; required for receive.")
                 )
+            }
+        }
+    }
+
+    private var sendingSection: some View {
+        SettingsSubsection(label: L("Sending")) {
+            VStack(alignment: .leading, spacing: 12) {
                 SettingsToggle(
-                    title: "Enable Telegram Writes",
-                    description:
-                        "Allow send tools for write-allowlisted Telegram chats. The global channel write switch must also be on.",
-                    isOn: $writeEnabled
+                    title: L("Allow Sending on Telegram"),
+                    description: L("Let agents post to write-allowlisted Telegram chats. Channel writes must also be on globally."),
+                    isOn: $writeEnabled.animation(.easeOut(duration: 0.2))
                 )
-                AgentChannelMultilineSettingsField(
-                    title: "Writable Chat IDs",
-                    text: $writableChatIdsText,
-                    help: "Telegram chats Osaurus may post to when Telegram writes are enabled."
-                )
-                StyledSettingsTextField(
-                    label: "Default Read Limit",
-                    text: $defaultReadLimit,
-                    placeholder: "50",
-                    help: "Default recent-message count for Telegram reads. Clamped to 1-100."
-                )
-                SettingsToggle(
-                    title: "Ignore Self Messages",
-                    description: "Ignore updates sent by this bot identity when inbound updates are handled.",
-                    isOn: $ignoreSelfMessages
-                )
-                SettingsToggle(
-                    title: "Ignore Bot Messages",
-                    description: "Ignore Telegram updates from bot accounts unless you explicitly trust bot senders.",
-                    isOn: $ignoreBotMessages
-                )
+
+                if writeEnabled {
+                    AgentChannelMultilineSettingsField(
+                        title: L("Writable Chat IDs"),
+                        text: $writableChatIdsText,
+                        placeholder: L("-1001234567890 — one per line"),
+                        help: L("Chats agents may post to.")
+                    )
+                    .transition(.opacity.combined(with: .move(edge: .top)))
+                }
             }
         }
     }
 
     private var receiveSection: some View {
-        SettingsSubsection(label: "Receive") {
+        SettingsSubsection(label: L("Receive")) {
             VStack(alignment: .leading, spacing: 12) {
                 SettingsToggle(
-                    title: "Store Incoming Messages",
-                    description:
-                        "Persist authorized Telegram updates in the local Agent Channel inbox for read/search and audit proof.",
+                    title: L("Store Incoming Messages"),
+                    description: L("Keep authorized Telegram updates in the local inbox so agents can read and search them."),
                     isOn: $receiveStorageEnabled
                 )
                 SettingsToggle(
-                    title: "Enable Long Polling",
-                    description:
-                        "Use Telegram getUpdates as the local desktop receive path. Only enable this when no other consumer is polling the same bot.",
-                    isOn: $longPollingEnabled
+                    title: L("Enable Long Polling"),
+                    description: L(
+                        "Use Telegram getUpdates as the local desktop receive path. Only enable this when no other consumer is polling the same bot."
+                    ),
+                    isOn: $longPollingEnabled.animation(.easeOut(duration: 0.2))
                 )
-                HStack(alignment: .top, spacing: 12) {
-                    StyledSettingsTextField(
-                        label: "Long Poll Limit",
-                        text: $longPollingLimit,
-                        placeholder: "100",
-                        help: "Maximum updates per poll. Clamped to 1-100."
-                    )
-                    StyledSettingsTextField(
-                        label: "Long Poll Timeout Seconds",
-                        text: $longPollingTimeoutSeconds,
-                        placeholder: "20",
-                        help: "Telegram long-poll timeout. Clamped to 1-50 seconds."
-                    )
+
+                if longPollingEnabled {
+                    HStack(alignment: .top, spacing: 12) {
+                        StyledSettingsTextField(
+                            label: L("Long Poll Limit"),
+                            text: $longPollingLimit,
+                            placeholder: "100",
+                            help: L("Maximum updates per poll. Clamped to 1-100.")
+                        )
+                        StyledSettingsTextField(
+                            label: L("Long Poll Timeout Seconds"),
+                            text: $longPollingTimeoutSeconds,
+                            placeholder: "20",
+                            help: L("Telegram long-poll timeout. Clamped to 1-50 seconds.")
+                        )
+                    }
+                    .transition(.opacity.combined(with: .move(edge: .top)))
                 }
 
                 Text(
-                    "Telegram read tools serve messages already stored in the local Agent Channel inbox. Long polling is off by default; until it is enabled (with a saved token and sender allowlist), new Telegram activity is not fetched and reads stay empty.",
+                    "Reads serve messages from the local inbox; without long polling, new activity is not fetched.",
                     bundle: .module
                 )
                 .font(.system(size: 11))
@@ -189,9 +208,10 @@ struct TelegramSettingsView: View {
                 AgentChannelTransportHealthView(
                     connectionId: TelegramConnectionService.nativeConnectionId,
                     transportId: TelegramLongPollTransportRuntime.transportId,
-                    title: "Long polling receive",
-                    notRunningHint:
-                        "Long polling is not running. Save a bot token, enable long polling, and add authorized sender IDs to start it.",
+                    title: L("Long polling receive"),
+                    notRunningHint: L(
+                        "Long polling is not running. Save a bot token, enable long polling, and add authorized sender IDs to start it."
+                    ),
                     refreshToken: healthRefreshToken
                 )
 
@@ -202,26 +222,31 @@ struct TelegramSettingsView: View {
 
     private var webhookTools: some View {
         VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 12) {
-                Button(action: checkWebhook) {
-                    Text(isCheckingWebhook ? "Checking..." : "Check Webhook", bundle: .module)
-                }
-                .buttonStyle(SettingsButtonStyle())
-                .disabled(isCheckingWebhook || !tokenSaved)
+            HStack(spacing: 10) {
+                AgentChannelSheetActionButton(
+                    title: L("Check Webhook"),
+                    busyTitle: L("Checking..."),
+                    isBusy: isCheckingWebhook,
+                    action: checkWebhook
+                )
+                .disabled(isWebhookBusy || !tokenSaved)
 
                 if webhookRegistered {
-                    Button(action: removeWebhook) {
-                        Text("Remove Webhook", bundle: .module)
-                    }
-                    .buttonStyle(SettingsButtonStyle(isDestructive: true))
-                    .disabled(isCheckingWebhook)
+                    AgentChannelSheetActionButton(
+                        title: L("Remove Webhook"),
+                        busyTitle: L("Removing..."),
+                        isBusy: isRemovingWebhook,
+                        isDestructive: true,
+                        action: removeWebhook
+                    )
+                    .disabled(isWebhookBusy)
                 }
 
                 Spacer(minLength: 0)
             }
 
             Text(
-                "A registered webhook blocks long polling with 409 conflicts. Removing the webhook keeps pending updates and hands receive back to long polling.",
+                "A registered webhook blocks long polling; removing it hands receive back to long polling.",
                 bundle: .module
             )
             .font(.system(size: 11))
@@ -230,25 +255,25 @@ struct TelegramSettingsView: View {
         }
     }
 
-    private var actionsSection: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(spacing: 12) {
-                Button(action: saveConfiguration) {
-                    Text("Save Telegram Settings", bundle: .module)
-                }
-                .buttonStyle(SettingsButtonStyle(isPrimary: true))
-
-                Button(action: testConnection) {
-                    Text(isTesting ? "Testing..." : "Test Connection", bundle: .module)
-                }
-                .buttonStyle(SettingsButtonStyle())
-                .disabled(isTesting || !tokenSaved)
-
-                Spacer(minLength: 0)
-            }
-
-            if let statusMessage {
-                AgentChannelInlineStatusMessage(message: statusMessage, isError: statusIsError)
+    private var advancedSection: some View {
+        AgentChannelAdvancedSection {
+            VStack(alignment: .leading, spacing: 12) {
+                StyledSettingsTextField(
+                    label: L("Default Read Limit"),
+                    text: $defaultReadLimit,
+                    placeholder: "50",
+                    help: L("Default recent-message count for Telegram reads. Clamped to 1-100.")
+                )
+                SettingsToggle(
+                    title: L("Ignore Self Messages"),
+                    description: L("Ignore updates sent by this bot identity when inbound updates are handled."),
+                    isOn: $ignoreSelfMessages
+                )
+                SettingsToggle(
+                    title: L("Ignore Bot Messages"),
+                    description: L("Ignore Telegram updates from bot accounts unless you explicitly trust bot senders."),
+                    isOn: $ignoreBotMessages
+                )
             }
         }
     }
@@ -269,15 +294,21 @@ struct TelegramSettingsView: View {
         tokenSaved = TelegramConnectionService.shared.hasBotToken()
     }
 
-    private func saveToken() {
+    private var hasPendingToken: Bool {
+        !botToken.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    /// Persist a pasted bot token to Keychain before the configuration save.
+    private func persistPendingSecrets() -> Bool {
+        guard hasPendingToken else { return true }
         do {
             try TelegramConnectionService.shared.saveBotToken(botToken)
             botToken = ""
             tokenSaved = true
-            refreshReceiveRuntime()
-            showStatus("Telegram bot token saved", isError: false)
+            return true
         } catch {
             showStatus(error.localizedDescription, isError: true)
+            return false
         }
     }
 
@@ -287,10 +318,11 @@ struct TelegramSettingsView: View {
         tokenSaved = false
         webhookRegistered = false
         refreshReceiveRuntime()
-        showStatus("Telegram bot token removed", isError: false)
+        showStatus(L("Telegram bot token removed"), isError: false)
     }
 
-    private func saveConfiguration() {
+    @discardableResult
+    private func saveConfiguration() -> Bool {
         let configuration = TelegramConnectionConfiguration(
             readableChatIds: parseIds(readableChatIdsText),
             writableChatIds: parseIds(writableChatIdsText),
@@ -306,30 +338,51 @@ struct TelegramSettingsView: View {
         )
         do {
             try TelegramConnectionService.shared.saveConfiguration(configuration)
-            loadConfiguration()
-            refreshReceiveRuntime()
-            showStatus("Telegram settings saved", isError: false)
+            return true
         } catch {
             showStatus(error.localizedDescription, isError: true)
+            return false
         }
     }
 
+    /// Persist the configuration, hold the Save button busy until the receive
+    /// supervisor has re-evaluated the runtime, then close the sheet.
+    private func saveAndDismiss() {
+        guard persistPendingSecrets(), saveConfiguration() else { return }
+        isSaving = true
+        Task {
+            await AgentChannelTransportSupervisor.shared.refreshTelegramRuntime()
+            await MainActor.run {
+                isSaving = false
+                _ = ToastManager.shared.success(L("Telegram settings saved"))
+                dismiss()
+            }
+        }
+    }
+
+    /// Persist the current draft first so diagnostics always test what the
+    /// user sees in the form, not a stale save.
     private func testConnection() {
+        guard persistPendingSecrets(), saveConfiguration() else { return }
         isTesting = true
         Task {
+            await AgentChannelTransportSupervisor.shared.refreshTelegramRuntime()
             let diagnostics = await TelegramConnectionService.shared.diagnostics()
             await MainActor.run {
                 isTesting = false
                 healthRefreshToken += 1
                 webhookRegistered = diagnostics.webhook?.registered ?? webhookRegistered
+                let presentation = AgentChannelStatusPresentation.diagnostics(
+                    status: diagnostics.status
+                )
                 if diagnostics.failures.isEmpty {
-                    var message = "Telegram connection status: \(diagnostics.status)"
-                    if !diagnostics.notes.isEmpty {
-                        message += " — " + diagnostics.notes.joined(separator: " ")
-                    }
-                    showStatus(message, isError: false)
+                    showStatus(presentation.label, details: diagnostics.notes, isError: false)
                 } else {
-                    showStatus(diagnostics.failures.joined(separator: " "), isError: true)
+                    showStatus(
+                        presentation.label,
+                        details: diagnostics.failures + diagnostics.notes,
+                        isError: true
+                    )
                 }
             }
         }
@@ -345,15 +398,20 @@ struct TelegramSettingsView: View {
                     isCheckingWebhook = false
                     webhookRegistered = info.isRegistered
                     if info.isRegistered {
-                        var message =
-                            "A webhook is registered (\(redactedURL)). Long polling conflicts with it (409) until the webhook is removed."
+                        var details = [
+                            L("Registered webhook: \(redactedURL)")
+                        ]
                         if let pending = info.pendingUpdateCount {
-                            message += " Pending updates: \(pending)."
+                            details.append(L("Pending updates: \(pending)"))
                         }
-                        showStatus(message, isError: true)
+                        showStatus(
+                            L("A webhook is registered. Long polling conflicts with it (409) until the webhook is removed."),
+                            details: details,
+                            isError: true
+                        )
                     } else {
                         showStatus(
-                            "No webhook is registered for this bot. Long polling is safe to enable.",
+                            L("No webhook is registered for this bot. Long polling is safe to enable."),
                             isError: false
                         )
                     }
@@ -368,30 +426,30 @@ struct TelegramSettingsView: View {
     }
 
     private func removeWebhook() {
-        isCheckingWebhook = true
+        isRemovingWebhook = true
         Task {
             do {
                 let info = try await TelegramConnectionService.shared.clearWebhook()
                 await AgentChannelTransportSupervisor.shared.refreshTelegramRuntime()
                 await MainActor.run {
-                    isCheckingWebhook = false
+                    isRemovingWebhook = false
                     webhookRegistered = info.isRegistered
                     healthRefreshToken += 1
                     if info.isRegistered {
                         showStatus(
-                            "Telegram still reports a registered webhook. Wait a moment and check again.",
+                            L("Telegram still reports a registered webhook. Wait a moment and check again."),
                             isError: true
                         )
                     } else {
                         showStatus(
-                            "Webhook removed. Long polling can receive updates now.",
+                            L("Webhook removed. Long polling can receive updates now."),
                             isError: false
                         )
                     }
                 }
             } catch {
                 await MainActor.run {
-                    isCheckingWebhook = false
+                    isRemovingWebhook = false
                     showStatus(error.localizedDescription, isError: true)
                 }
             }
@@ -407,9 +465,15 @@ struct TelegramSettingsView: View {
         }
     }
 
-    private func showStatus(_ message: String, isError: Bool) {
+    private func showStatus(_ message: String, details: [String] = [], isError: Bool) {
         statusMessage = message
+        statusDetails = details
         statusIsError = isError
+    }
+
+    private func clearStatus() {
+        statusMessage = nil
+        statusDetails = []
     }
 
     private func parseIds(_ text: String) -> [String] {
