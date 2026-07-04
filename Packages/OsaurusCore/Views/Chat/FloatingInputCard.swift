@@ -737,7 +737,7 @@ struct FloatingInputCard: View {
             .onChange(of: speechService.currentTranscription) { _, newValue in
                 // When new transcription arrives, user is speaking
                 // Only reset silence timer if there is also active audio detection or meaningful level
-                if voiceInputState == .recording && !newValue.isEmpty {
+                if voiceInputState == .recording && TranscriptionTextNormalizer.hasVisibleText(newValue) {
                     if speechService.isSpeechDetected || speechService.audioLevel > 0.05 {
                         hasDetectedSpeechThisTurn = true
                         lastSpeechTime = Date()
@@ -746,7 +746,7 @@ struct FloatingInputCard: View {
             }
             .onChange(of: speechService.confirmedTranscription) { _, newValue in
                 // When confirmed transcription changes, user was speaking
-                if voiceInputState == .recording && !newValue.isEmpty {
+                if voiceInputState == .recording && TranscriptionTextNormalizer.hasVisibleText(newValue) {
                     if speechService.isSpeechDetected || speechService.audioLevel > 0.05 {
                         hasDetectedSpeechThisTurn = true
                         lastSpeechTime = Date()
@@ -1123,7 +1123,8 @@ extension FloatingInputCard {
             voiceConfig.pauseDuration > 0
         else { return }
 
-        let hasContent = !speechService.currentTranscription.isEmpty || !speechService.confirmedTranscription.isEmpty
+        let hasContent = TranscriptionTextNormalizer.hasVisibleText(speechService.currentTranscription)
+            || TranscriptionTextNormalizer.hasVisibleText(speechService.confirmedTranscription)
         let silenceDuration = Date().timeIntervalSince(lastSpeechTime)
 
         guard hasContent else {
@@ -1159,13 +1160,15 @@ extension FloatingInputCard {
         }
 
         // Reset timer when there's real-time voice activity (not cumulative text)
-        let currentConfirmedLen = speechService.confirmedTranscription.count
+        let confirmedText = TranscriptionTextNormalizer.visibleText(speechService.confirmedTranscription)
+        let currentText = TranscriptionTextNormalizer.visibleText(speechService.currentTranscription)
+        let currentConfirmedLen = confirmedText.count
         let hasNewConfirmedText = currentConfirmedLen > lastConfirmedLength
         if hasNewConfirmedText {
             lastConfirmedLength = currentConfirmedLen
         }
 
-        if speechService.isSpeechDetected || hasNewConfirmedText || !speechService.currentTranscription.isEmpty {
+        if speechService.isSpeechDetected || hasNewConfirmedText || !currentText.isEmpty {
             lastVoiceActivityTime = Date()
         }
 
@@ -1176,7 +1179,8 @@ extension FloatingInputCard {
         // Check if timeout exceeded
         if silenceDuration >= voiceConfig.silenceTimeoutSeconds {
             let hasContent =
-                !speechService.currentTranscription.isEmpty || !speechService.confirmedTranscription.isEmpty
+                !currentText.isEmpty
+                || !confirmedText.isEmpty
 
             if hasContent && voiceConfig.transcriptionStopMode == .automatic {
                 print("[FloatingInputCard] Silence timeout with content - triggering auto-send")
@@ -1196,17 +1200,19 @@ extension FloatingInputCard {
 
         if newRemaining <= 0 {
             // Countdown finished, send message
-            let transcribedText = [
+            let transcribedText = TranscriptionTextNormalizer.combined([
                 speechService.confirmedTranscription,
                 speechService.currentTranscription,
-            ]
-            .filter { !$0.isEmpty }
-            .joined(separator: " ")
+            ])
 
             if !transcribedText.isEmpty {
                 sendVoiceMessage(transcribedText)
             } else {
                 stopVoiceInputFromTimeout()
+                ToastManager.shared.infoLocalized(
+                    "No Speech Detected",
+                    message: "Nothing was sent."
+                )
             }
         } else {
             // Update remaining time
@@ -1227,6 +1233,22 @@ extension FloatingInputCard {
     private func sendVoiceMessage(_ message: String) {
         print("[FloatingInputCard] Sending voice message. Continuous mode: \(isContinuousVoiceMode)")
         logVoiceState(trigger: "sendVoiceMessage-start")
+        let visibleInputMessage = TranscriptionTextNormalizer.visibleText(message)
+        guard !visibleInputMessage.isEmpty else {
+            cancelLiveVoicePreencodeSession(removeRegistryEntry: true)
+            Task {
+                _ = await speechService.stopStreamingTranscription()
+                speechService.clearTranscription()
+            }
+            voiceInputState = .idle
+            showVoiceOverlay = false
+            ToastManager.shared.infoLocalized(
+                "No Speech Detected",
+                message: "Nothing was sent."
+            )
+            return
+        }
+
         let voiceCaptureStart = CFAbsoluteTimeGetCurrent()
         let voiceSnapshot = mediaCapabilities.supportsAudio ? speechService.currentLiveAudioSnapshot() : nil
         let snapshotMs = Int((CFAbsoluteTimeGetCurrent() - voiceCaptureStart) * 1000)
@@ -1259,12 +1281,27 @@ extension FloatingInputCard {
             speechService.clearTranscription()
             logVoiceState(trigger: "sendVoiceMessage-afterStop")
 
-            print("[FloatingInputCard] Invoking cleanup for voice message (\(message.count) chars)")
+            print("[FloatingInputCard] Invoking cleanup for voice message (\(visibleInputMessage.count) chars)")
             let cleanedMessage =
                 SpeechConfigurationStore.load().postProcessTranscription
-                ? await TranscriptionCleanupService.shared.clean(message)
-                : message
+                ? await TranscriptionCleanupService.shared.clean(visibleInputMessage)
+                : visibleInputMessage
+            let visibleMessage = TranscriptionTextNormalizer.visibleText(cleanedMessage)
             print("[FloatingInputCard] Cleanup done. Original: \(message) | Cleaned: \(cleanedMessage)")
+
+            guard !visibleMessage.isEmpty else {
+                await MainActor.run {
+                    voiceInputState = .idle
+                    showVoiceOverlay = false
+                    cancelLiveVoicePreencodeSession(removeRegistryEntry: true)
+                    ToastManager.shared.infoLocalized(
+                        "No Speech Detected",
+                        message: "Nothing was sent."
+                    )
+                }
+                return
+            }
+
             await finalPreencodeTask?.value
 
             await MainActor.run {
@@ -1272,7 +1309,7 @@ extension FloatingInputCard {
                 showVoiceOverlay = false
 
                 let existing = localText.trimmingCharacters(in: .whitespacesAndNewlines)
-                let fullMessage = existing.isEmpty ? cleanedMessage : "\(existing) \(cleanedMessage)"
+                let fullMessage = TranscriptionTextNormalizer.merged(existing: existing, transcript: visibleMessage)
 
                 if let voiceAudioData {
                     let voiceAttachment = Attachment(
@@ -1293,7 +1330,7 @@ extension FloatingInputCard {
                 }
 
                 // try to paste. if it fails (permissions), we fall back to direct text setting
-                if KeyboardSimulationService.shared.pasteText(cleanedMessage) {
+                if KeyboardSimulationService.shared.pasteText(visibleMessage) {
                     // success: clear UI state immediately
                     localText = ""
                     text = ""
@@ -1317,12 +1354,10 @@ extension FloatingInputCard {
     private func transferToTextInput() {
         print("[FloatingInputCard] Transferring to text input - disabling continuous mode")
         // Transfer transcription to text input and close overlay
-        let transcribedText = [
+        let transcribedText = TranscriptionTextNormalizer.combined([
             speechService.confirmedTranscription,
             speechService.currentTranscription,
-        ]
-        .filter { !$0.isEmpty }
-        .joined(separator: " ")
+        ])
 
         voiceInputState = .sending
         // exit continuous mode when switching to text
@@ -1336,15 +1371,24 @@ extension FloatingInputCard {
                 SpeechConfigurationStore.load().postProcessTranscription
                 ? await TranscriptionCleanupService.shared.clean(transcribedText)
                 : transcribedText
+            let visibleText = TranscriptionTextNormalizer.visibleText(cleaned)
 
             await MainActor.run {
                 voiceInputState = .idle
                 showVoiceOverlay = false
 
-                let existing = localText.trimmingCharacters(in: .whitespacesAndNewlines)
-                let fullCombined = existing.isEmpty ? cleaned : "\(existing) \(cleaned)"
+                guard !visibleText.isEmpty else {
+                    ToastManager.shared.infoLocalized(
+                        "No Speech Detected",
+                        message: "Nothing was inserted."
+                    )
+                    return
+                }
 
-                if KeyboardSimulationService.shared.pasteText(cleaned) {
+                let existing = localText.trimmingCharacters(in: .whitespacesAndNewlines)
+                let fullCombined = TranscriptionTextNormalizer.merged(existing: existing, transcript: visibleText)
+
+                if KeyboardSimulationService.shared.pasteText(visibleText) {
                     isFocused = true
                 } else {
                     // Fallback if paste fails
