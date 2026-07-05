@@ -1067,6 +1067,19 @@ struct MLXBatchAdapterTests {
             )
         )
         #expect(
+            !MLXBatchAdapter.shouldEnableCompiledBatchDecode(
+                modelName: "OsaurusAI/Ornith-1.0-9B-MXFP4",
+                maxBatchSize: 1
+            ),
+            "Ornith is the qwen3_5 family under a different bundle id; the same hybrid compiled-trace opt-out must apply"
+        )
+        #expect(
+            !MLXBatchAdapter.shouldEnableCompiledBatchDecode(
+                modelName: "ornith-1.0-35b-mxfp4",
+                maxBatchSize: 1
+            )
+        )
+        #expect(
             MLXBatchAdapter.shouldEnableCompiledBatchDecode(
                 modelName: "mlx-community/Llama-3.2-3B-Instruct-4bit",
                 maxBatchSize: 1
