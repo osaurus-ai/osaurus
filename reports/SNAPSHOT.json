@@ -19,10 +19,10 @@
     "subagent",
     "tool_envelope"
   ],
-  "generatedAt" : "2026-07-04T06:45:20.841Z",
+  "generatedAt" : "2026-07-05T22:57:01.018Z",
   "models" : [
     {
-      "chatModelPassed" : 211,
+      "chatModelPassed" : 177,
       "chatModelScored" : 228,
       "environment" : {
         "caseCount" : 12,
@@ -33,28 +33,28 @@
         "lowPowerMode" : false,
         "osVersion" : "26.2.0",
         "powerSource" : "AC",
-        "runModel" : "OsaurusAI/gemma-4-12B-it-MXFP8",
+        "runModel" : "OsaurusAI/Ornith-1.0-9B-MXFP4",
         "thermalState" : "fair",
         "totalRamMb" : 49152
       },
-      "meanCpuPercent" : 66.84375354583517,
-      "meanDecodeTokensPerSecond" : 13.46734269025956,
-      "meanPromptTokensPerTask" : 25350.417582417584,
-      "meanTotalTokensPerTask" : 21928.645454545454,
-      "meanTtftMs" : 87.38914322345815,
-      "modelId" : "OsaurusAI/gemma-4-12B-it-MXFP8",
-      "peakCpuPercent" : 524.7043178852887,
-      "peakPhysFootprintMb" : 20535.99245452881,
+      "meanCpuPercent" : 71.09949791595085,
+      "meanDecodeTokensPerSecond" : 22.848566486530114,
+      "meanPromptTokensPerTask" : 23136.604395604394,
+      "meanTotalTokensPerTask" : 20617.336363636365,
+      "meanTtftMs" : 133.6290696833996,
+      "modelId" : "OsaurusAI/Ornith-1.0-9B-MXFP4",
+      "peakCpuPercent" : 512.5216682496348,
+      "peakPhysFootprintMb" : 20613.585746765137,
       "perDomain" : {
         "agent_loop" : {
           "errored" : 0,
-          "passed" : 79,
+          "passed" : 66,
           "scored" : 92,
           "skipped" : 3
         },
         "apple_script" : {
           "errored" : 0,
-          "passed" : 28,
+          "passed" : 27,
           "scored" : 35,
           "skipped" : 0
         },
@@ -66,13 +66,13 @@
         },
         "computer_use_loop" : {
           "errored" : 0,
-          "passed" : 23,
+          "passed" : 13,
           "scored" : 23,
           "skipped" : 0
         },
         "default_agent" : {
           "errored" : 0,
-          "passed" : 37,
+          "passed" : 26,
           "scored" : 38,
           "skipped" : 0
         },
@@ -89,10 +89,10 @@
           "skipped" : 2
         }
       },
-      "startedAt" : "2026-07-04T03:35:10Z",
-      "subsystemPassed" : 12,
+      "startedAt" : "2026-07-05T18:46:28Z",
+      "subsystemPassed" : 11,
       "subsystemScored" : 19,
-      "totalPassed" : 223,
+      "totalPassed" : 188,
       "totalScored" : 247
     },
     {
@@ -120,14 +120,14 @@
           "skipped" : 0
         }
       },
-      "startedAt" : "2026-07-04T03:34:12Z",
+      "startedAt" : "2026-07-05T18:45:56Z",
       "subsystemPassed" : 0,
       "subsystemScored" : 0,
       "totalPassed" : 11,
       "totalScored" : 11
     },
     {
-      "chatModelPassed" : 129,
+      "chatModelPassed" : 128,
       "chatModelScored" : 130,
       "environment" : {
         "caseCount" : 11,
@@ -142,9 +142,9 @@
         "thermalState" : "nominal",
         "totalRamMb" : 49152
       },
-      "meanCpuPercent" : 106.23505228725399,
+      "meanCpuPercent" : 103.4900877877663,
       "modelId" : "foundation",
-      "peakPhysFootprintMb" : 156.6729507446289,
+      "peakPhysFootprintMb" : 139.7666778564453,
       "perDomain" : {
         "argument_coercion" : {
           "errored" : 0,
@@ -190,7 +190,7 @@
         },
         "screen_context" : {
           "errored" : 0,
-          "passed" : 22,
+          "passed" : 21,
           "scored" : 22,
           "skipped" : 0
         },
@@ -207,14 +207,14 @@
           "skipped" : 0
         }
       },
-      "startedAt" : "2026-07-04T03:33:35Z",
+      "startedAt" : "2026-07-05T18:45:39Z",
       "subsystemPassed" : 0,
       "subsystemScored" : 0,
-      "totalPassed" : 129,
+      "totalPassed" : 128,
       "totalScored" : 130
     },
     {
-      "chatModelPassed" : 224,
+      "chatModelPassed" : 218,
       "chatModelScored" : 228,
       "environment" : {
         "caseCount" : 12,
@@ -229,24 +229,24 @@
         "thermalState" : "fair",
         "totalRamMb" : 49152
       },
-      "meanCpuPercent" : 30.3770762092881,
-      "meanDecodeTokensPerSecond" : 8.197090789473684,
-      "meanPromptTokensPerTask" : 32181.604395604394,
-      "meanTotalTokensPerTask" : 27331.672727272726,
-      "meanTtftMs" : 703.709991688424,
+      "meanCpuPercent" : 32.995194582527496,
+      "meanDecodeTokensPerSecond" : 10.33938140350877,
+      "meanPromptTokensPerTask" : 32286.923076923078,
+      "meanTotalTokensPerTask" : 27458.045454545456,
+      "meanTtftMs" : 675.729790900616,
       "modelId" : "xai/grok-4.3",
-      "peakCpuPercent" : 505.82801147704185,
-      "peakPhysFootprintMb" : 19822.71083831787,
+      "peakCpuPercent" : 517.2388282920834,
+      "peakPhysFootprintMb" : 19637.49208831787,
       "perDomain" : {
         "agent_loop" : {
           "errored" : 0,
-          "passed" : 90,
+          "passed" : 89,
           "scored" : 92,
           "skipped" : 3
         },
         "apple_script" : {
           "errored" : 0,
-          "passed" : 30,
+          "passed" : 26,
           "scored" : 35,
           "skipped" : 0
         },
@@ -258,13 +258,13 @@
         },
         "computer_use_loop" : {
           "errored" : 0,
-          "passed" : 21,
+          "passed" : 22,
           "scored" : 23,
           "skipped" : 0
         },
         "default_agent" : {
           "errored" : 0,
-          "passed" : 38,
+          "passed" : 34,
           "scored" : 38,
           "skipped" : 0
         },
@@ -276,15 +276,15 @@
         },
         "subagent" : {
           "errored" : 0,
-          "passed" : 45,
+          "passed" : 43,
           "scored" : 45,
           "skipped" : 2
         }
       },
-      "startedAt" : "2026-07-04T03:35:10Z",
-      "subsystemPassed" : 14,
+      "startedAt" : "2026-07-05T18:46:28Z",
+      "subsystemPassed" : 10,
       "subsystemScored" : 19,
-      "totalPassed" : 238,
+      "totalPassed" : 228,
       "totalScored" : 247
     }
   ]
