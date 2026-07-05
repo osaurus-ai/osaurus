@@ -521,14 +521,14 @@ extension JSONEncoder {
 extension AgentChannelAction {
     var displayName: String {
         switch self {
-        case .diagnostics: "Diagnostics"
-        case .listSpaces: "List spaces"
-        case .listRooms: "List rooms"
-        case .readMessages: "Read messages"
-        case .searchMessages: "Search messages"
-        case .draftMessage: "Draft message"
-        case .sendMessage: "Send message"
-        case .replyThread: "Reply thread"
+        case .diagnostics: L("Diagnostics")
+        case .listSpaces: L("List spaces")
+        case .listRooms: L("List rooms")
+        case .readMessages: L("Read messages")
+        case .searchMessages: L("Search messages")
+        case .draftMessage: L("Draft message")
+        case .sendMessage: L("Send message")
+        case .replyThread: L("Reply thread")
         }
     }
 }

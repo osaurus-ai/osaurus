@@ -18,17 +18,17 @@ enum AgentChannelConnectionServiceError: LocalizedError, Equatable, Sendable {
     var errorDescription: String? {
         switch self {
         case .connectionNotFound(let connectionId):
-            return "Agent channel connection `\(connectionId)` is not configured."
+            return L("Agent channel connection `\(connectionId)` is not configured.")
         case .connectionDisabled(let connectionId):
-            return "Agent channel connection `\(connectionId)` is disabled."
+            return L("Agent channel connection `\(connectionId)` is disabled.")
         case .globalWritesDisabled(let generation):
-            return "Global Agent Channel writes are disabled by the write kill switch (generation \(generation))."
+            return L("Global Agent Channel writes are disabled by the write kill switch (generation \(generation)).")
         case .unsupportedKind(let kind):
-            return "Agent channel kind `\(kind.rawValue)` is not executable yet."
+            return L("Agent channel kind `\(kind.rawValue)` is not executable yet.")
         case .unsupportedAction(let action, let connectionId):
-            return "Agent channel connection `\(connectionId)` does not support `\(action.rawValue)`."
+            return L("Agent channel connection `\(connectionId)` does not support `\(action.rawValue)`.")
         case .customExecutionNotImplemented(let connectionId):
-            return "Custom JSON channel `\(connectionId)` is configured, but custom HTTP execution is not enabled yet."
+            return L("Custom JSON channel `\(connectionId)` is configured, but custom HTTP execution is not enabled yet.")
         }
     }
 }
