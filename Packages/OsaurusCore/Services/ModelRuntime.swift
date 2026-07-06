@@ -1990,6 +1990,15 @@ public actor ModelRuntime {
         {
             return true
         }
+        // Ornith 1.0 (OsaurusAI) — same qwen3_5 / qwen3_5_moe model_type as
+        // the block above (hybrid linear+full attention, `ArraysCache`
+        // companion slots for the linear-attention layers) but the bundle
+        // ids carry no "qwen" substring. 9B is the dense qwen3_5 variant,
+        // 35B the qwen3_5_moe variant; both need the eager setHybrid flip
+        // and the compiled-B=1-trace opt-out that the family already gets.
+        if lower.contains("ornith") {
+            return true
+        }
         // Qwen3-Next (qwen3_next model_type) — newer hybrid MoE that vmlx
         // dispatches via `Qwen3Next.swift`. Same `ArraysCache` companion
         // pattern as the 3.5 / 3.6 family.

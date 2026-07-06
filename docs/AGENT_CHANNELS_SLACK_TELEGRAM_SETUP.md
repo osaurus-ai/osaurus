@@ -123,6 +123,26 @@ Use BotFather to create a disposable bot:
 7. Use `getUpdates` long-poll for desktop proof. If a webhook was configured
    during experimentation, delete it before long-poll proof.
 
+Saving a bot token only proves that Osaurus can store credentials. It does not
+start Telegram receive by itself. For new messages to arrive in the local inbox,
+all of these must be true:
+
+- `Store Incoming Messages` is enabled.
+- `Enable Long Polling` is enabled.
+- At least one readable chat id is allowlisted.
+- At least one authorized sender id is allowlisted.
+- No Telegram webhook is registered for the same bot token.
+
+If a user reports that they pasted a token and nothing happened, open Telegram
+settings, press **Test Connection**, and follow the setup blockers shown there.
+Use **Check Webhook** if long polling reports a conflict or no updates arrive
+after the allowlists are complete.
+
+The diagnostics field `receive_ready` is the authoritative signal that the local
+inbox should fill from Telegram. A long-poll transport can still start and then
+report conflict health if Telegram rejects `getUpdates` because a webhook or
+another consumer owns the same bot token.
+
 Webhook setup is advanced/future. When it is used, set a random webhook secret
 token and verify the `X-Telegram-Bot-Api-Secret-Token` header before decoding
 message text.
@@ -145,11 +165,20 @@ Non-secret native configuration shape:
 }
 ```
 
+`longPollingEnabled` defaults to `false`; the example above turns it on because
+smoke proof needs the receive path. `receiveStorageEnabled` defaults to `true`.
+
 Telegram reads come from the local Agent Channel message store. Populate the
 store through the long-poll or webhook receive path before proving
-`read_messages`/`search_messages`. Long polling starts from the app lifecycle
-when both `receiveStorageEnabled` and `longPollingEnabled` are true; Telegram
-returns a 409 conflict if another consumer is polling the same bot token.
+`read_messages`/`search_messages`. With long polling left at its default
+(disabled) and no webhook ingress wired, a fresh Telegram setup returns empty
+read/search results: nothing fetches new updates into the store. Enable
+"Enable Long Polling" in Telegram settings (with a saved token and sender
+allowlist) to fill the inbox. Long polling starts from the app lifecycle when
+both `receiveStorageEnabled` and `longPollingEnabled` are true; Telegram
+returns a 409 conflict if another consumer (a registered webhook or a second
+poller) is consuming the same bot token. Use "Check Webhook" / "Remove
+Webhook" in Telegram settings to detect and clear a leftover webhook.
 
 ## Reference Links
 

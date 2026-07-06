@@ -3,8 +3,8 @@
 //  osaurus
 //
 //  Read-only discovery of MLX/safetensors model bundles that live outside
-//  Osaurus's own models directory — the Hugging Face Hub cache and LM
-//  Studio. Discovered bundles are surfaced in the catalog and made
+//  Osaurus's own models directory — the Hugging Face Hub cache, LM
+//  Studio, and user-selected model folders. Discovered bundles are surfaced in the catalog and made
 //  runnable in place via an id -> absolute-path registry the runtime path
 //  resolvers consult; nothing is ever copied, symlinked, or mutated in the
 //  source location.
@@ -35,7 +35,8 @@ enum ExternalModelLocator {
         let bundlePath: String
         /// Source revision when known (HF commit hash from `refs/main`).
         let revision: String?
-        /// Human-readable provenance ("Hugging Face cache", "LM Studio").
+        /// Human-readable provenance ("Hugging Face cache", "LM Studio",
+        /// "Custom model folder").
         let source: String
     }
 
@@ -142,6 +143,7 @@ enum ExternalModelLocator {
     enum Source: String {
         case huggingFaceCache = "Hugging Face cache"
         case lmStudio = "LM Studio"
+        case customModelFolder = "Custom model folder"
     }
 
     // MARK: - Public read API (hot path)
@@ -293,6 +295,8 @@ enum ExternalModelLocator {
                     reports.append(scanHuggingFaceCacheReport(root: root))
                 case .lmStudio:
                     reports.append(scanReport(root: root, source: .lmStudio))
+                case .customModelFolder:
+                    reports.append(scanCustomModelFolderReport(root: root))
                 }
             }
             return ScanReport(sources: reports)
@@ -302,6 +306,11 @@ enum ExternalModelLocator {
             reports.append(
                 contentsOf: huggingFaceCacheRoots().map(scanHuggingFaceCacheReport(root:))
             )
+            if let customRoot = customModelFolderRoot(),
+                FileManager.default.fileExists(atPath: customRoot.path)
+            {
+                reports.append(scanCustomModelFolderReport(root: customRoot))
+            }
         }
         if isLMStudioImportEnabled {
             reports.append(contentsOf: lmStudioRoots().map { scanReport(root: $0, source: .lmStudio) })
@@ -310,6 +319,14 @@ enum ExternalModelLocator {
     }
 
     // MARK: - Roots
+
+    static func customModelFolderRoot(
+        homeDirectory: URL = FileManager.default.homeDirectoryForCurrentUser,
+        customPath: String? = ExternalModelLocator.customHFCachePath
+    ) -> URL? {
+        guard let customPath else { return nil }
+        return Self.fileURL(fromUserPath: customPath, homeDirectory: homeDirectory)
+    }
 
     static func huggingFaceCacheRoots(
         environment: [String: String] = ProcessInfo.processInfo.environment,
@@ -514,6 +531,48 @@ enum ExternalModelLocator {
 
     // MARK: - Generic nested-layout scanner (LM Studio + tests)
 
+    static func scanCustomModelFolderReport(root: URL) -> SourceScanReport {
+        let rootDiagnostic = bundleDiagnostic(at: root, root: root)
+        if rootDiagnostic.isValid {
+            return SourceScanReport(
+                source: .customModelFolder,
+                rootPath: root.path,
+                discovered: [
+                    Discovered(
+                        id: root.lastPathComponent,
+                        bundlePath: root.standardizedFileURL.path,
+                        revision: nil,
+                        source: Source.customModelFolder.rawValue
+                    )
+                ],
+                skipped: []
+            )
+        }
+
+        var report = scanReport(
+            root: root,
+            source: .customModelFolder,
+            skipTopLevelHuggingFaceCacheFolders: true
+        )
+        if rootDiagnostic.isCandidate, let reason = rootDiagnostic.reason {
+            report = SourceScanReport(
+                source: report.source,
+                rootPath: report.rootPath,
+                discovered: report.discovered,
+                skipped: [
+                    Skipped(
+                        repoId: root.lastPathComponent,
+                        path: root.path,
+                        reason: reason,
+                        detail: rootDiagnostic.detail
+                            ?? "The selected folder is not a complete MLX safetensors bundle."
+                    )
+                ] + report.skipped
+            )
+        }
+        return report
+    }
+
     /// Scan a root with a nested `publisher/repo/` layout, registering any
     /// directory that validates as an MLX bundle. Bounded depth keeps the
     /// scan cheap on large model libraries.
@@ -521,7 +580,11 @@ enum ExternalModelLocator {
         scanReport(root: root, source: source).discovered
     }
 
-    static func scanReport(root: URL, source: Source) -> SourceScanReport {
+    static func scanReport(
+        root: URL,
+        source: Source,
+        skipTopLevelHuggingFaceCacheFolders: Bool = false
+    ) -> SourceScanReport {
         let fm = FileManager.default
         var results: [Discovered] = []
         var skipped: [Skipped] = []
@@ -535,6 +598,11 @@ enum ExternalModelLocator {
                 )
             else { return }
             for entry in entries {
+                if skipTopLevelHuggingFaceCacheFolders, prefix.isEmpty,
+                    entry.lastPathComponent.hasPrefix("models--")
+                {
+                    continue
+                }
                 let resolved = entry.resolvingSymlinksInPath()
                 var isDir: ObjCBool = false
                 guard fm.fileExists(atPath: resolved.path, isDirectory: &isDir), isDir.boolValue

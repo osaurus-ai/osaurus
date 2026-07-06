@@ -19,6 +19,15 @@
 //  queued when its caller times out is skipped. The continuation is resumed
 //  exactly once.
 //
+//  Every in-flight script also arms a main-runloop HEARTBEAT timer (see
+//  `beginMainRunLoopHeartbeat`): AppleScript's Apple-event reply delivery and
+//  post-send main-actor scheduling both depend on the MAIN run loop turning,
+//  which a headless CLI parked in `CFRunLoopRun` does not do on its own.
+//  Without it, sends from background threads stall for tens of seconds (or
+//  forever) and the process's main actor wedges — observed live as eval-suite
+//  watchdog kills attributed to "TCC consent" that were really a sleeping
+//  run loop.
+//
 //  Per the model-runtime non-negotiables: this reports the REAL outcome
 //  (success output, compile error, runtime error, or the -1743 "automation not
 //  permitted" status) back to the model. There is no output coercion or fake
@@ -90,6 +99,69 @@ enum AppleScriptExecutor {
         qos: .userInitiated
     )
 
+    /// Main-runloop heartbeat, armed for the duration of every Apple event
+    /// send. An off-main `executeAndReturnError` needs the MAIN run loop to
+    /// turn for its reply to be delivered: AppleScript's send path parks the
+    /// reply delivery on main-runloop wakeups. A GUI app gets those wakeups
+    /// for free (events, timers); a CLI whose main thread sits inside
+    /// `swift_task_asyncMainDrainQueue` → `CFRunLoopRun` does NOT — the loop
+    /// stays asleep in `mach_msg`, the reply is never serviced, and (worse)
+    /// main-actor jobs enqueued AFTER the send get stranded too: the whole
+    /// process wedges until an unrelated wakeup arrives. Verified in
+    /// isolation: a successful `tell app "Finder" to count windows` took 32s
+    /// with a sleeping main loop and 1s with a heartbeat; a task hopping to
+    /// the MainActor after an abandoned send never ran at all without one.
+    /// The timer's tick does no work — the WAKEUP is the point. Refcounted
+    /// so overlapping compile checks / runs share one timer; removed when
+    /// the last in-flight script finishes. `CFRunLoop` add/remove is
+    /// thread-safe, so worker threads can arm it directly.
+    private static let heartbeatLock = NSLock()
+    nonisolated(unsafe) private static var heartbeatTimer: CFRunLoopTimer?
+    nonisolated(unsafe) private static var heartbeatRefCount = 0
+
+    private static func beginMainRunLoopHeartbeat() {
+        heartbeatLock.lock()
+        defer { heartbeatLock.unlock() }
+        heartbeatRefCount += 1
+        guard heartbeatTimer == nil else { return }
+        let timer = CFRunLoopTimerCreateWithHandler(
+            kCFAllocatorDefault,
+            CFAbsoluteTimeGetCurrent() + 0.25,
+            0.25,
+            0,
+            0
+        ) { _ in
+            // Intentionally empty: the wakeup itself drains stranded
+            // main-queue / main-actor work and lets AE replies deliver.
+        }
+        heartbeatTimer = timer
+        CFRunLoopAddTimer(CFRunLoopGetMain(), timer, .commonModes)
+        CFRunLoopWakeUp(CFRunLoopGetMain())
+    }
+
+    private static func endMainRunLoopHeartbeat() {
+        heartbeatLock.lock()
+        defer { heartbeatLock.unlock() }
+        heartbeatRefCount -= 1
+        guard heartbeatRefCount <= 0 else { return }
+        heartbeatRefCount = 0
+        if let timer = heartbeatTimer {
+            CFRunLoopTimerInvalidate(timer)
+            heartbeatTimer = nil
+        }
+    }
+
+    /// Test seam: whether the main-runloop heartbeat timer is currently
+    /// armed. The begin/end pairing (including the abandoned-worker and
+    /// skipped-worker paths) is what regression tests pin — a leaked ref
+    /// would keep the main loop waking forever; a missing ref re-introduces
+    /// the headless-host AE-reply wedge.
+    static var isHeartbeatActiveForTesting: Bool {
+        heartbeatLock.lock()
+        defer { heartbeatLock.unlock() }
+        return heartbeatTimer != nil
+    }
+
     /// Compile + execute `source` on the serial execution queue, bounded by
     /// `timeout`. Always returns a structured result (never throws); a timeout
     /// yields `.timedOut` and the in-flight (or not-yet-started) work is
@@ -104,7 +176,13 @@ enum AppleScriptExecutor {
             (continuation: CheckedContinuation<AppleScriptExecutionResult, Never>) in
             let resumer = AppleScriptSingleResume(continuation)
 
+            // Heartbeat spans enqueue → worker completion (NOT caller resume):
+            // an abandoned run keeps its ref so the parked send can still
+            // receive its reply, finish, and release the serial queue instead
+            // of blocking every later script.
+            beginMainRunLoopHeartbeat()
             executionQueue.async {
+                defer { endMainRunLoopHeartbeat() }
                 // If the watchdog already resumed the caller (timed out while
                 // this was queued behind another script), skip the work — don't
                 // run a script the caller no longer wants.
@@ -151,7 +229,13 @@ enum AppleScriptExecutor {
     ) async -> AppleScriptExecutionResult? {
         let result: AppleScriptExecutionResult = await withCheckedContinuation { continuation in
             let resumer = AppleScriptSingleResume(continuation)
+            // Compiles send no Apple events themselves, but they share the
+            // serial queue with runs — the heartbeat keeps a compile queued
+            // behind a parked send from waiting on a reply that can only be
+            // delivered by main-runloop wakeups.
+            beginMainRunLoopHeartbeat()
             executionQueue.async {
+                defer { endMainRunLoopHeartbeat() }
                 guard !resumer.isResumed else { return }
                 let outcome = autoreleasepool { compileSynchronously(source: source, language: language) }
                 resumer.resume(outcome)

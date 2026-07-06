@@ -90,4 +90,36 @@ struct EvalMatrixTests {
         let warnings = m.comparabilityWarnings
         #expect(warnings.contains { $0.contains("self-judged column(s): b") })
     }
+
+    @Test func chatModelAndSubsystemTotalsSplit() {
+        let cases: [EvalCaseReport] = [
+            .init(
+                id: "agent_loop.ok", label: "ok", domain: "agent_loop", query: nil,
+                outcome: .passed, notes: [], modelId: "m", latencyMs: 0
+            ),
+            .init(
+                id: "apple_script.live-value-query", label: "live", domain: "apple_script",
+                query: nil, outcome: .failed, notes: [], modelId: "m", latencyMs: 0
+            ),
+            .init(
+                id: "subagent.image-generate-live", label: "image", domain: "subagent",
+                query: nil, outcome: .passed, notes: [], modelId: "m", latencyMs: 0
+            ),
+        ]
+        let col = EvalMatrixBuilder.build(from: [
+            EvalReport(
+                modelId: "m",
+                startedAt: "2026-06-19T00:00:00Z",
+                cases: cases,
+                environment: nil
+            ),
+        ]).models[0]
+        #expect(col.chatModelPassed == 1)
+        #expect(col.chatModelScored == 1)
+        #expect(col.subsystemPassed == 1)
+        #expect(col.subsystemScored == 2)
+        #expect(EvalMatrixBuilder.isSubsystemCase(id: "apple_script.live-value-query", domain: "apple_script"))
+        #expect(EvalMatrixBuilder.isSubsystemCase(id: "subagent.image-generate-live", domain: "subagent"))
+        #expect(!EvalMatrixBuilder.isSubsystemCase(id: "apple_script.scripted-value-query", domain: "apple_script"))
+    }
 }

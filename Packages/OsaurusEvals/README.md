@@ -509,6 +509,7 @@ Field notes:
 - `expect.agentLoop.files` — `{ path, exists?, contains?, equals? }` assertions on the workspace after the loop ends. `exists` defaults to true; set `false` to pin that a file was NOT created.
 - `expect.agentLoop.commands` — `{ command, expectExitCode }` verification commands run in the workspace after the loop ends (e.g. `grep`, a test runner).
 - `expect.agentLoop.mustCallTools` / `mustNotCallTools` / `maxToolCalls` — deterministic transcript assertions. `maxToolCalls` counts processed calls (executed + deduped) and pins navigation discipline.
+- `expect.agentLoop.mustCallAnyTools` — OR semantics: at least one of the listed tools must be called. Use when several tools legitimately satisfy the same contract (e.g. `shell_run` curl vs `browser_navigate` for a fetch attempt) so the case doesn't over-pin one surface.
 - `expect.agentLoop.noDuplicateExecutedCalls` — no identical `(name, arguments)` pair may *execute* twice; dedupe replays are fine (that's the loop's dedupe working). Duplicate keys use the loop's own argument canonicalisation (sorted-key JSON), so the scorer and the dedupe agree on what "identical" means.
 - `expect.agentLoop.minDedupedReplays` — minimum number of dedupe replays (`wasDeduped`) the transcript must contain. Asserts the replay mechanism actually FIRED, not just that nothing executed twice.
 - `expect.agentLoop.noToolErrors` — opt-in: no processed call may return an error envelope. Off by default; recovery cases legitimately route through tool errors.

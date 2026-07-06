@@ -123,9 +123,15 @@ struct SandboxPluginRegisterTool: OsaurusTool, @unchecked Sendable {
             decoder.dateDecodingStrategy = .iso8601
             plugin = try decoder.decode(SandboxPlugin.self, from: data)
         } catch {
+            // `localizedDescription` on a DecodingError is the generic "The
+            // data couldn't be read because it isn't in the correct format."
+            // — observed live driving a model into four identical blind
+            // retries. Name the actual defect (bad JSON syntax with the
+            // parser's position detail, or the missing/mistyped key and its
+            // path) so a single fixed rewrite is possible.
             return failure(
                 kind: .invalidArgs,
-                message: "Invalid plugin.json: \(error.localizedDescription)"
+                message: "Invalid plugin.json: \(Self.decodeFailureDetail(error))"
             )
         }
 
@@ -166,6 +172,38 @@ struct SandboxPluginRegisterTool: OsaurusTool, @unchecked Sendable {
                 retryable: false
             )
         )
+    }
+
+    /// Actionable text for a `plugin.json` decode failure. `DecodingError`
+    /// cases name the offending key/type and its coding path; anything else
+    /// (typically `NSCocoaErrorDomain` 3840 for malformed JSON) carries the
+    /// parser's position detail in `debugDescription`/`userInfo` — e.g.
+    /// "Badly formed object around line 20, column 26" for an unescaped
+    /// quote inside a string value.
+    static func decodeFailureDetail(_ error: Error) -> String {
+        func path(_ codingPath: [CodingKey]) -> String {
+            let joined = codingPath.map { key in
+                key.intValue.map { "[\($0)]" } ?? key.stringValue
+            }.joined(separator: ".")
+            return joined.isEmpty ? "(root)" : joined
+        }
+        switch error {
+        case let DecodingError.keyNotFound(key, context):
+            return "missing required key `\(key.stringValue)` at \(path(context.codingPath))."
+        case let DecodingError.typeMismatch(type, context):
+            return "wrong type at \(path(context.codingPath)) — expected \(type)."
+        case let DecodingError.valueNotFound(type, context):
+            return "null/missing value at \(path(context.codingPath)) — expected \(type)."
+        case let DecodingError.dataCorrupted(context):
+            let underlying = (context.underlyingError as NSError?)?
+                .userInfo[NSDebugDescriptionErrorKey] as? String
+            let detail = underlying ?? context.debugDescription
+            return "malformed JSON — \(detail) Check for unescaped quotes/newlines in string values."
+        default:
+            let ns = error as NSError
+            let debug = ns.userInfo[NSDebugDescriptionErrorKey] as? String
+            return debug ?? ns.localizedDescription
+        }
     }
 
     /// Recursively collects regular files under `directory`. Text files are

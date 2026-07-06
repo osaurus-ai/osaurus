@@ -101,6 +101,13 @@ struct FloatingInputCard: View {
     /// sandbox, working folder, screen-context, and the thinking / model-option
     /// chips — because none of them are sent to (or honored by) the remote peer.
     var isRemoteAgentRun: Bool = false
+    /// Terminal-style input history (Up/Down arrows recall previously sent
+    /// messages). Returns the current conversation's sent inputs, newest
+    /// first; nil disables the feature.
+    var inputHistoryProvider: (() -> [String])?
+    /// Identity of the conversation backing the history. Navigation state
+    /// resets when it changes so a recalled index can't leak across chats.
+    var inputHistoryKey: UUID?
 
     init(
         text: Binding<String>,
@@ -138,7 +145,9 @@ struct FloatingInputCard: View {
         isModelPinned: Bool = false,
         pinnedModelLabel: String? = nil,
         remoteConnectionPending: Bool = false,
-        isRemoteAgentRun: Bool = false
+        isRemoteAgentRun: Bool = false,
+        inputHistoryProvider: (() -> [String])? = nil,
+        inputHistoryKey: UUID? = nil
     ) {
         self._text = text
         self._selectedModel = selectedModel
@@ -176,6 +185,8 @@ struct FloatingInputCard: View {
         self.pinnedModelLabel = pinnedModelLabel
         self.remoteConnectionPending = remoteConnectionPending
         self.isRemoteAgentRun = isRemoteAgentRun
+        self.inputHistoryProvider = inputHistoryProvider
+        self.inputHistoryKey = inputHistoryKey
     }
 
     // Observe managers for reactive updates
@@ -197,6 +208,11 @@ struct FloatingInputCard: View {
 
     private var slashRegistry = SlashCommandRegistry.shared
     @State private var slashSelectedIndex: Int = 0
+
+    // MARK: - Input History State
+
+    /// Terminal-style history navigation position + stashed draft.
+    @State private var inputHistoryState = ChatInputHistoryState()
 
     /// Non-nil when the cursor is inside a slash command token (e.g. "/tr" or "hello /tr").
     /// The slash must be at the start of text or immediately after whitespace.
@@ -737,7 +753,7 @@ struct FloatingInputCard: View {
             .onChange(of: speechService.currentTranscription) { _, newValue in
                 // When new transcription arrives, user is speaking
                 // Only reset silence timer if there is also active audio detection or meaningful level
-                if voiceInputState == .recording && !newValue.isEmpty {
+                if voiceInputState == .recording && TranscriptionTextNormalizer.hasVisibleText(newValue) {
                     if speechService.isSpeechDetected || speechService.audioLevel > 0.05 {
                         hasDetectedSpeechThisTurn = true
                         lastSpeechTime = Date()
@@ -746,7 +762,7 @@ struct FloatingInputCard: View {
             }
             .onChange(of: speechService.confirmedTranscription) { _, newValue in
                 // When confirmed transcription changes, user was speaking
-                if voiceInputState == .recording && !newValue.isEmpty {
+                if voiceInputState == .recording && TranscriptionTextNormalizer.hasVisibleText(newValue) {
                     if speechService.isSpeechDetected || speechService.audioLevel > 0.05 {
                         hasDetectedSpeechThisTurn = true
                         lastSpeechTime = Date()
@@ -1123,7 +1139,8 @@ extension FloatingInputCard {
             voiceConfig.pauseDuration > 0
         else { return }
 
-        let hasContent = !speechService.currentTranscription.isEmpty || !speechService.confirmedTranscription.isEmpty
+        let hasContent = TranscriptionTextNormalizer.hasVisibleText(speechService.currentTranscription)
+            || TranscriptionTextNormalizer.hasVisibleText(speechService.confirmedTranscription)
         let silenceDuration = Date().timeIntervalSince(lastSpeechTime)
 
         guard hasContent else {
@@ -1159,13 +1176,15 @@ extension FloatingInputCard {
         }
 
         // Reset timer when there's real-time voice activity (not cumulative text)
-        let currentConfirmedLen = speechService.confirmedTranscription.count
+        let confirmedText = TranscriptionTextNormalizer.visibleText(speechService.confirmedTranscription)
+        let currentText = TranscriptionTextNormalizer.visibleText(speechService.currentTranscription)
+        let currentConfirmedLen = confirmedText.count
         let hasNewConfirmedText = currentConfirmedLen > lastConfirmedLength
         if hasNewConfirmedText {
             lastConfirmedLength = currentConfirmedLen
         }
 
-        if speechService.isSpeechDetected || hasNewConfirmedText || !speechService.currentTranscription.isEmpty {
+        if speechService.isSpeechDetected || hasNewConfirmedText || !currentText.isEmpty {
             lastVoiceActivityTime = Date()
         }
 
@@ -1176,7 +1195,8 @@ extension FloatingInputCard {
         // Check if timeout exceeded
         if silenceDuration >= voiceConfig.silenceTimeoutSeconds {
             let hasContent =
-                !speechService.currentTranscription.isEmpty || !speechService.confirmedTranscription.isEmpty
+                !currentText.isEmpty
+                || !confirmedText.isEmpty
 
             if hasContent && voiceConfig.transcriptionStopMode == .automatic {
                 print("[FloatingInputCard] Silence timeout with content - triggering auto-send")
@@ -1196,17 +1216,19 @@ extension FloatingInputCard {
 
         if newRemaining <= 0 {
             // Countdown finished, send message
-            let transcribedText = [
+            let transcribedText = TranscriptionTextNormalizer.combined([
                 speechService.confirmedTranscription,
                 speechService.currentTranscription,
-            ]
-            .filter { !$0.isEmpty }
-            .joined(separator: " ")
+            ])
 
             if !transcribedText.isEmpty {
                 sendVoiceMessage(transcribedText)
             } else {
                 stopVoiceInputFromTimeout()
+                ToastManager.shared.infoLocalized(
+                    "No Speech Detected",
+                    message: "Nothing was sent."
+                )
             }
         } else {
             // Update remaining time
@@ -1227,6 +1249,22 @@ extension FloatingInputCard {
     private func sendVoiceMessage(_ message: String) {
         print("[FloatingInputCard] Sending voice message. Continuous mode: \(isContinuousVoiceMode)")
         logVoiceState(trigger: "sendVoiceMessage-start")
+        let visibleInputMessage = TranscriptionTextNormalizer.visibleText(message)
+        guard !visibleInputMessage.isEmpty else {
+            cancelLiveVoicePreencodeSession(removeRegistryEntry: true)
+            Task {
+                _ = await speechService.stopStreamingTranscription()
+                speechService.clearTranscription()
+            }
+            voiceInputState = .idle
+            showVoiceOverlay = false
+            ToastManager.shared.infoLocalized(
+                "No Speech Detected",
+                message: "Nothing was sent."
+            )
+            return
+        }
+
         let voiceCaptureStart = CFAbsoluteTimeGetCurrent()
         let voiceSnapshot = mediaCapabilities.supportsAudio ? speechService.currentLiveAudioSnapshot() : nil
         let snapshotMs = Int((CFAbsoluteTimeGetCurrent() - voiceCaptureStart) * 1000)
@@ -1259,12 +1297,27 @@ extension FloatingInputCard {
             speechService.clearTranscription()
             logVoiceState(trigger: "sendVoiceMessage-afterStop")
 
-            print("[FloatingInputCard] Invoking cleanup for voice message (\(message.count) chars)")
+            print("[FloatingInputCard] Invoking cleanup for voice message (\(visibleInputMessage.count) chars)")
             let cleanedMessage =
                 SpeechConfigurationStore.load().postProcessTranscription
-                ? await TranscriptionCleanupService.shared.clean(message)
-                : message
+                ? await TranscriptionCleanupService.shared.clean(visibleInputMessage)
+                : visibleInputMessage
+            let visibleMessage = TranscriptionTextNormalizer.visibleText(cleanedMessage)
             print("[FloatingInputCard] Cleanup done. Original: \(message) | Cleaned: \(cleanedMessage)")
+
+            guard !visibleMessage.isEmpty else {
+                await MainActor.run {
+                    voiceInputState = .idle
+                    showVoiceOverlay = false
+                    cancelLiveVoicePreencodeSession(removeRegistryEntry: true)
+                    ToastManager.shared.infoLocalized(
+                        "No Speech Detected",
+                        message: "Nothing was sent."
+                    )
+                }
+                return
+            }
+
             await finalPreencodeTask?.value
 
             await MainActor.run {
@@ -1272,7 +1325,7 @@ extension FloatingInputCard {
                 showVoiceOverlay = false
 
                 let existing = localText.trimmingCharacters(in: .whitespacesAndNewlines)
-                let fullMessage = existing.isEmpty ? cleanedMessage : "\(existing) \(cleanedMessage)"
+                let fullMessage = TranscriptionTextNormalizer.merged(existing: existing, transcript: visibleMessage)
 
                 if let voiceAudioData {
                     let voiceAttachment = Attachment(
@@ -1293,7 +1346,7 @@ extension FloatingInputCard {
                 }
 
                 // try to paste. if it fails (permissions), we fall back to direct text setting
-                if KeyboardSimulationService.shared.pasteText(cleanedMessage) {
+                if KeyboardSimulationService.shared.pasteText(visibleMessage) {
                     // success: clear UI state immediately
                     localText = ""
                     text = ""
@@ -1317,12 +1370,10 @@ extension FloatingInputCard {
     private func transferToTextInput() {
         print("[FloatingInputCard] Transferring to text input - disabling continuous mode")
         // Transfer transcription to text input and close overlay
-        let transcribedText = [
+        let transcribedText = TranscriptionTextNormalizer.combined([
             speechService.confirmedTranscription,
             speechService.currentTranscription,
-        ]
-        .filter { !$0.isEmpty }
-        .joined(separator: " ")
+        ])
 
         voiceInputState = .sending
         // exit continuous mode when switching to text
@@ -1336,15 +1387,24 @@ extension FloatingInputCard {
                 SpeechConfigurationStore.load().postProcessTranscription
                 ? await TranscriptionCleanupService.shared.clean(transcribedText)
                 : transcribedText
+            let visibleText = TranscriptionTextNormalizer.visibleText(cleaned)
 
             await MainActor.run {
                 voiceInputState = .idle
                 showVoiceOverlay = false
 
-                let existing = localText.trimmingCharacters(in: .whitespacesAndNewlines)
-                let fullCombined = existing.isEmpty ? cleaned : "\(existing) \(cleaned)"
+                guard !visibleText.isEmpty else {
+                    ToastManager.shared.infoLocalized(
+                        "No Speech Detected",
+                        message: "Nothing was inserted."
+                    )
+                    return
+                }
 
-                if KeyboardSimulationService.shared.pasteText(cleaned) {
+                let existing = localText.trimmingCharacters(in: .whitespacesAndNewlines)
+                let fullCombined = TranscriptionTextNormalizer.merged(existing: existing, transcript: visibleText)
+
+                if KeyboardSimulationService.shared.pasteText(visibleText) {
                     isFocused = true
                 } else {
                     // Fallback if paste fails
@@ -1366,7 +1426,73 @@ extension FloatingInputCard {
         textViewFocusController.lockFocus(for: 0.3)
         localText = ""
         text = ""
+        // Sending resets history navigation; the sent text becomes the
+        // newest history entry once its turn lands.
+        inputHistoryState = ChatInputHistoryState()
         onSend(message)
+    }
+
+    // MARK: - Input History (terminal-style Up/Down recall)
+
+    private func handleHistoryArrowUp() -> Bool {
+        guard let provider = inputHistoryProvider, caretIsOnFirstLine else { return false }
+        guard
+            let result = ChatInputHistory.recall(
+                state: inputHistoryState,
+                entries: provider(),
+                currentDraft: localText
+            )
+        else { return false }
+        inputHistoryState = result.state
+        applyHistoryText(result.text)
+        return true
+    }
+
+    private func handleHistoryArrowDown() -> Bool {
+        guard inputHistoryState.index != nil, caretIsOnLastLine else { return false }
+        guard
+            let result = ChatInputHistory.advance(
+                state: inputHistoryState,
+                entries: inputHistoryProvider?() ?? []
+            )
+        else { return false }
+        inputHistoryState = result.state
+        applyHistoryText(result.text)
+        return true
+    }
+
+    /// Replace the composer text with a recalled entry and put the caret at
+    /// the end, matching terminal behavior.
+    private func applyHistoryText(_ newText: String) {
+        localText = newText
+        text = newText
+        DispatchQueue.main.async {
+            guard let tv = textViewFocusController.textView else { return }
+            let end = (tv.string as NSString).length
+            tv.setSelectedRange(NSRange(location: end, length: 0))
+            tv.scrollRangeToVisible(NSRange(location: end, length: 0))
+        }
+    }
+
+    /// True when the caret is a plain insertion point on the first line of
+    /// the composer. History recall only triggers there, so Up still moves
+    /// the caret inside a multi-line draft.
+    private var caretIsOnFirstLine: Bool {
+        guard let tv = textViewFocusController.textView else { return false }
+        let range = tv.selectedRange()
+        guard range.length == 0 else { return false }
+        let ns = tv.string as NSString
+        return !ns.substring(to: min(range.location, ns.length)).contains("\n")
+    }
+
+    /// True when the caret is a plain insertion point on the last line of
+    /// the composer. Walking history forward only triggers there.
+    private var caretIsOnLastLine: Bool {
+        guard let tv = textViewFocusController.textView else { return false }
+        let range = tv.selectedRange()
+        guard range.length == 0 else { return false }
+        let ns = tv.string as NSString
+        return !ns.substring(from: min(range.location, ns.length)).contains("\n")
     }
 
     // MARK: - Slash Commands
@@ -4026,13 +4152,13 @@ extension FloatingInputCard {
                 ? {
                     slashSelectedIndex = max(0, slashSelectedIndex - 1)
                     return true
-                } : nil,
+                } : { handleHistoryArrowUp() },
             onArrowDown: showSlashPopup
                 ? {
                     let maxIndex = slashFilteredCommands.count - 1
                     slashSelectedIndex = min(maxIndex, slashSelectedIndex + 1)
                     return true
-                } : nil,
+                } : { handleHistoryArrowDown() },
             onEscape: showSlashPopup
                 ? {
                     // Dismiss popup by clearing the slash prefix
@@ -4049,6 +4175,12 @@ extension FloatingInputCard {
             }
         )
         .frame(maxHeight: maxHeight)
+        // A different conversation now backs the composer — drop any
+        // in-flight history navigation so its index can't recall entries
+        // from the previous chat.
+        .onChange(of: inputHistoryKey) { _, _ in
+            inputHistoryState = ChatInputHistoryState()
+        }
         .overlay(alignment: .topLeading) {
             // Placeholder - uses theme body size
             if showPlaceholder {

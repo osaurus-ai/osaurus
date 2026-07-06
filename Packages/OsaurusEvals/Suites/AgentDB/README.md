@@ -23,6 +23,9 @@ the flow is reachable end-to-end from existing tools.
 | `sql-guardrails` | Destructive SQL is rejected and data survives | `forbiddenReason` (`DROP TABLE`) | table still holds its 3 rows after a rejected `DROP` |
 | `softdelete-restore` | The soft-delete contract round-trips | `db_delete` → `db_restore` | delete-before-restore ordering, 3 active / 3 total rows |
 | `daily-github-analyst` | The full reference flow, from existing tools | `db_import` → `db_define_view` → `db_run_view` → `share_artifact` | `repo_stats` has 4 rows, today total 175, trend view (day,total) rows, artifact named `*trend*` shared |
+| `export-csv` | A full result set lands on disk in **one** host-mediated call | `db_export` (streamed file write) | CSV header + last row on disk, `file_write` **not** called, source table untouched |
+| `execute-sql-script` | A `.sql` script runs from disk, its SQL never entering tokens | `db_execute` path mode | args contain `transform.sql` but **no** `select`, `file_read` **not** called, derived table shape + busiest-day row |
+| `sandbox-import` | A file generated **inside the sandbox** bulk-loads (the original gap) | dual-root path resolution (`DatabaseFilePathResolver`) | rowCount 6, `SUM(additions)=105`, `db_insert`/`db_upsert` **not** called; SKIPs on hosts without a sandbox |
 
 Fixtures live in [`../../Fixtures/AgentDB`](../../Fixtures/AgentDB):
 `commits-500.csv` (500 deterministic commit rows) and `stars-today.csv`
@@ -91,6 +94,12 @@ there is no local generation rate to record (that metric belongs to local-MLX
 runtime proof). The meaningful frontier metrics are wall latency, model
 round-trips (`steps`), and total model tokens (prompt + completion across
 steps), pulled from each case's `telemetry`.
+
+The three file-surface cases added with the Agent DB file-tool upgrade
+(`export-csv`, `execute-sql-script`, `sandbox-import`) postdate this recorded
+run; they pass on the local baseline (`mlx-community/Qwen3.5-4B-OptiQ-4bit`,
+2026-07-05 — `sandbox-import` SKIPs on hosts whose container can't boot) and
+still need a frontier row recorded when an `XAI_API_KEY` is next available.
 
 | Case | Result | Latency | Steps | Model tokens |
 |------|--------|---------|-------|--------------|

@@ -73,6 +73,11 @@ final class ChatWindowState: ObservableObject {
     /// no view re-renders.
     var cancelInlineEdit: (() -> Void)?
 
+    /// Drives the in-conversation find bar (Cmd+F). Set by the window-level
+    /// key monitor (which cannot touch `ChatView`'s `@State`) and cleared by
+    /// the bar's close button or the Esc dismissal chain.
+    @Published var isFindBarVisible: Bool = false
+
     // MARK: - Agent State
 
     @Published var agentId: UUID

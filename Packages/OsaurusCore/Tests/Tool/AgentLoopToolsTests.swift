@@ -77,17 +77,33 @@ struct AgentLoopToolsTests {
     }
 
     @Test
-    func todo_noChecklistLinesWarns() async throws {
-        try await withSession { _ in
+    func todo_noChecklistLinesRejected() async throws {
+        try await withSession { sessionId in
             let result = try await TodoTool().execute(
                 argumentsJSON: #"{"markdown": "Just prose, no checkboxes"}"#
             )
-            // Stored — but the response warns the model the format is wrong.
-            // Tool envelopes use the canonical JSON encoder, which keeps
-            // slash-bearing progress/path text readable for model replay.
-            #expect(ToolEnvelope.isSuccess(result))
+            // Regression (E4B loop): a checkbox-less list used to be stored
+            // as a zero-item todo — `todoUpdatedBeforeComplete` could never
+            // pass and the staleness nudge went dark, all silently. The
+            // contract is now enforced: invalidArgs + resend instructions,
+            // and nothing is stored.
+            #expect(ToolEnvelope.isError(result))
             #expect(result.contains("- [ ]") && result.contains("- [x]"))
-            #expect(result.contains("lines were found"))
+            let stored = await AgentTodoStore.shared.todo(for: sessionId)
+            #expect(stored == nil)
+        }
+    }
+
+    @Test
+    func todo_numberedListWithoutBoxesRejected() async throws {
+        try await withSession { _ in
+            // The exact live-run shape from the E4B baseline: a numbered
+            // plan with no checkbox syntax.
+            let result = try await TodoTool().execute(
+                argumentsJSON: #"{"markdown": "1. Create table\n2. Insert rows\n3. Verify"}"#
+            )
+            #expect(ToolEnvelope.isError(result))
+            #expect(result.contains("Re-send"))
         }
     }
 

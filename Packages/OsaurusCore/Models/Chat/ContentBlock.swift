@@ -382,8 +382,7 @@ extension ContentBlock {
         from turns: [ChatTurn],
         streamingTurnId: UUID?,
         agentName: String,
-        previousTurn: ChatTurn? = nil,
-        thinkingEnabled: Bool = false
+        previousTurn: ChatTurn? = nil
     ) -> [ContentBlock] {
         var blocks: [ContentBlock] = []
         var previousRole: MessageRole? = previousTurn?.role
@@ -501,24 +500,14 @@ extension ContentBlock {
                 && !hasSharedArtifacts && (turn.toolCalls ?? []).isEmpty && turn.pendingToolName == nil
                 && !turn.hasRemoteToolActivity
             {
-                // During prefill (no content/thinking/tools yet), always show the typing
+                // During prefill (no content/thinking/tools yet), show the typing
                 // indicator so the interface doesn't appear frozen. Skipped once a
                 // Mode 2 remote tool is running — the running tool chip already
                 // signals progress, so a typing indicator on top would be noise.
-                // Only add the thinking placeholder when thinking is actually enabled for
-                // this model — non-thinking models don't need it.
-                if thinkingEnabled {
-                    turnBlocks.append(
-                        .thinking(
-                            turnId: turn.id,
-                            index: 0,
-                            text: "",
-                            isStreaming: true,
-                            duration: nil,
-                            position: .middle
-                        )
-                    )
-                }
+                // Deliberately no "Thinking" placeholder here: the model hasn't
+                // produced reasoning yet, so labeling load/prefill as thinking
+                // misstates the phase. The real thinking block above appears on
+                // the first reasoning delta via `hasRenderableThinking`.
                 turnBlocks.append(.typingIndicator(turnId: turn.id, position: .middle))
             }
 

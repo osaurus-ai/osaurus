@@ -33,6 +33,7 @@
         private let stdinBridge: SandboxStdioInputStream
         private let stdoutWriter: SandboxStdioWriter
         private let stderrWriter: SandboxStdioWriter
+        private let stderrCapture = MCPStdioStderrCapture()
 
         /// Public transport the `MCP.Client` connects to. Created upfront so
         /// callers can hold onto it before `start()` resolves.
@@ -41,6 +42,13 @@
         /// Linux process handle once `start()` has run. Used to terminate the
         /// subprocess on `stop()`.
         private var process: LinuxProcess?
+        private var exitWatchTask: Task<Void, Never>?
+        private var onProcessExitHandler: (@Sendable (Int32) -> Void)?
+
+        /// Called once when the sandbox subprocess exits while the runner is alive.
+        public func setProcessExitHandler(_ handler: @escaping @Sendable (Int32) -> Void) {
+            onProcessExitHandler = handler
+        }
 
         public init(provider: MCPProvider) throws {
             guard provider.transport == .stdio else {
@@ -65,7 +73,7 @@
 
             let stdinBridge = SandboxStdioInputStream()
             let stdoutWriter = SandboxStdioWriter()
-            let stderrWriter = SandboxStdioWriter(discard: true)
+            let stderrWriter = SandboxStdioWriter(capture: stderrCapture)
             self.stdinBridge = stdinBridge
             self.stdoutWriter = stdoutWriter
             self.stderrWriter = stderrWriter
@@ -90,7 +98,7 @@
             try? await SandboxManager.shared.ensureAgentUser("default")
 
             do {
-                self.process = try await SandboxManager.shared.execInteractive(
+                let proc = try await SandboxManager.shared.execInteractive(
                     user: agentUser,
                     command: command,
                     env: env,
@@ -99,6 +107,8 @@
                     stdout: stdoutWriter,
                     stderr: stderrWriter
                 )
+                self.process = proc
+                startExitWatch(for: proc)
             } catch {
                 await MCPChildSpawnLimiter.shared.release()
                 spawnSlotHeld = false
@@ -108,13 +118,45 @@
             }
         }
 
-        public func stop() async {
+        private func startExitWatch(for process: LinuxProcess) {
+            exitWatchTask = Task { [weak self] in
+                do {
+                    let status = try await process.wait()
+                    await self?.handleProcessExit(exitCode: status.exitCode)
+                } catch {
+                    await self?.handleProcessExit(exitCode: -1)
+                }
+            }
+        }
+
+        private func handleProcessExit(exitCode: Int32) {
+            exitWatchTask?.cancel()
+            onProcessExitHandler?(exitCode)
+        }
+
+        public func lastStderrTail() -> String {
+            stderrCapture.tail()
+        }
+
+        public func stop(forceKillGraceSeconds: Int64 = 2) async {
+            // Intentional teardown: never route through the "unexpected exit"
+            // handler, which would mark the provider as crashed.
+            onProcessExitHandler = nil
+            exitWatchTask?.cancel()
             await transport.disconnect()
             stdinBridge.finish()
             try? stdoutWriter.close()
             try? stderrWriter.close()
             if let proc = process {
                 try? await proc.kill(SIGTERM)
+                // Bounded wait; escalate to SIGKILL only if the child ignores
+                // SIGTERM past the grace period. `wait` returns immediately
+                // when the process exits, so the fast path stays fast.
+                do {
+                    _ = try await proc.wait(timeoutInSeconds: forceKillGraceSeconds)
+                } catch {
+                    try? await proc.kill(SIGKILL)
+                }
                 try? await proc.delete()
                 self.process = nil
             }
@@ -205,18 +247,20 @@
     }
 
     /// `Writer` adapter that fans every chunk out to an `AsyncStream<Data>`
-    /// the MCP transport consumes. `discard == true` is the stderr branch:
-    /// MCP clients don't read stderr so we drop bytes on the floor.
+    /// the MCP transport consumes. When `capture` is set, stderr bytes are
+    /// retained for diagnostics even if not forwarded to a consumer.
     final class SandboxStdioWriter: Writer, @unchecked Sendable {
         private let channel = SandboxStdioByteChannel()
-        private let discard: Bool
+        private let capture: MCPStdioStderrCapture?
 
-        init(discard: Bool = false) { self.discard = discard }
+        init(capture: MCPStdioStderrCapture? = nil) {
+            self.capture = capture
+        }
 
         func makeOutputStream() -> AsyncStream<Data> { channel.subscribe() }
 
         func write(_ data: Data) throws {
-            guard !discard else { return }
+            capture?.append(data)
             channel.push(data)
         }
 

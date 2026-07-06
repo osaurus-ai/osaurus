@@ -9,7 +9,7 @@
     "appleScript": {
       "lane": "liveProof",
       "mode": "automate",
-      "executor": { "kind": "real" },
+      "executor": { "kind": "real", "probe": "tell application \"Notes\" to count notes" },
       "expectStatus": "succeeded",
       "expectOutcome": ["done"],
       "scriptMustContain": ["volume"],

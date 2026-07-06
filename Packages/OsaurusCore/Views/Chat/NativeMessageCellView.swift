@@ -50,6 +50,10 @@ struct CellRenderingContext {
     /// bubbles. Empty dict means no privacy redactions in this
     /// session yet (the highlight pass short-circuits).
     var sessionRedactions: [String: String] = [:]
+    /// Active in-conversation find query (Cmd+F). Empty when the find bar is
+    /// closed. Message cells paint every case-insensitive occurrence in
+    /// their body text via `NativeMarkdownView.setSearchHighlight`.
+    var searchHighlightQuery: String = ""
     /// Coordinator-scoped predicate: has the chart with this block id ever
     /// been drawn (and thus already played its entry animation) in the
     /// current chat? Used by `configureAsChart` to suppress the animation
@@ -1807,6 +1811,7 @@ final class NativeMessageCellView: NSTableCellView {
             Self.buildHighlights(from: context.sessionRedactions, direction: .inbound),
             theme: context.theme
         )
+        mv.setSearchHighlight(query: context.searchHighlightQuery, theme: context.theme)
 
         // Apply assistant bubble background only when the target value actually changes —
         // configure() runs on every streaming token, so unconditional CGColor assignment
@@ -2211,6 +2216,7 @@ final class NativeMessageCellView: NSTableCellView {
                 Self.buildHighlights(from: context.sessionRedactions, direction: .outbound),
                 theme: theme
             )
+            mv.setSearchHighlight(query: context.searchHighlightQuery, theme: theme)
         }
 
         if let stack = userImageStack {

@@ -255,7 +255,7 @@ final class ModelManager: NSObject, ObservableObject {
         if !Self.skipBackgroundOrgFetchForTests {
             Task { [weak self] in await self?.loadOsaurusAIOrgModels() }
 
-            // Discover external bundles (HF cache, LM Studio) off the main
+            // Discover external bundles (HF cache, LM Studio, custom folders) off the main
             // thread. `rescan()` posts `.localModelsChanged` when the set
             // changes, which re-runs `refreshDownloadStates()` to merge them.
             Task.detached(priority: .utility) {
@@ -834,6 +834,36 @@ extension ModelManager {
                 "Qwen 3.6 35B MoE vision model. MXFP4 quantization — best quality per byte. 256K context.",
             modelType: "qwen3_5_moe",
             releasedAt: date("2026-04-16"),
+            useCase: .vision
+        ),
+
+        // MARK: Ornith 1.0 (DeepReinforce, Qwen 3.5 hybrid backbone)
+        //
+        // Vision-language agentic-coding models on the Qwen 3.5 hybrid
+        // architecture (Gated-DeltaNet linear attention + full attention),
+        // so they reuse the existing `qwen3_5` / `qwen3_5_moe` runtime
+        // classes. MXFP8 is the curated Top Pick representative per family
+        // (precision-first, matching the Qwen 3.6 convention); the MXFP4 and
+        // JANG_4M siblings stay auto-fetched and collapse into each family
+        // card's Versions picker.
+
+        curated(
+            id: "OsaurusAI/Ornith-1.0-9B-MXFP8",
+            description:
+                "Ornith 1.0 9B vision-language model, tuned for agentic coding on a Qwen 3.5 hybrid backbone. MXFP8 — near-lossless precision. 256K context.",
+            isTopSuggestion: true,
+            modelType: "qwen3_5",
+            releasedAt: date("2026-06-26"),
+            useCase: .vision
+        ),
+
+        curated(
+            id: "OsaurusAI/Ornith-1.0-35B-MXFP8",
+            description:
+                "Ornith 1.0 35B vision-language MoE, state-of-the-art open agentic coding for its size. MXFP8 — near-lossless precision. 256K context.",
+            isTopSuggestion: true,
+            modelType: "qwen3_5_moe",
+            releasedAt: date("2026-06-26"),
             useCase: .vision
         ),
 
@@ -1770,7 +1800,7 @@ extension ModelManager {
     }
 
     private nonisolated static func mergeExternalModels(into scanned: [MLXModel]) -> [MLXModel] {
-        // Append externally-discovered bundles (HF cache, LM Studio). Read
+        // Append externally-discovered bundles (HF cache, LM Studio, custom folders). Read
         // fresh from the locator's in-memory registry each call (cheap) so a
         // background rescan is reflected without invalidating the disk-scan
         // cache above. Locally-present models win on id collision.

@@ -350,7 +350,14 @@ struct MemoryManagementConsoleView: View {
                     footnote: "\(health.disabledEpisodeCount) disabled"
                 )
                 healthTile("Transcript", "\(health.transcriptCount)", footnote: "stored turns")
-                healthTile("Pending", "\(health.pendingSignals.totalSignals)", footnote: "signals")
+                healthTile(
+                    "Pending",
+                    "\(health.pendingSignals.totalSignals)",
+                    footnote:
+                        health.pendingSignals.deadLetteredSignals > 0
+                            ? "\(health.pendingSignals.deadLetteredSignals) dead"
+                            : "signals"
+                )
                 healthTile(
                     "Schema",
                     health.schemaVersion.map(String.init) ?? "-",
@@ -365,7 +372,9 @@ struct MemoryManagementConsoleView: View {
                 healthTile(
                     "Logs",
                     "\(health.processingStats.totalCalls)",
-                    footnote: "\(health.processingStats.errorCount) errors"
+                    footnote:
+                        "\(health.processingStats.errorCount) err · "
+                        + "\(health.processingStats.skippedCount) skipped"
                 )
             }
 

@@ -5695,7 +5695,8 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 title: title,
                 showToast: true,
                 source: .http,
-                externalSessionKey: externalSessionKey
+                externalSessionKey: externalSessionKey,
+                externalSurface: Self.shouldBindExternalSurfaceForDispatch(isLoopback: isLoopback)
             )
 
             let handle: DispatchHandle?
@@ -8918,9 +8919,14 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         let logSelf = self
 
         runRequestTask(priority: .userInitiated) {
-            // Get local models
-            var models = MLXService.getAvailableModels().map { OpenAIModel(modelName: $0) }
-            if FoundationModelService.isDefaultModelAvailable() {
+            // Get local models (filtered by the per-model exposure settings)
+            let exposure = ModelExposureStore.shared
+            var models = MLXService.getAvailableModels()
+                .filter { exposure.isExposed(id: $0, kind: .local) }
+                .map { OpenAIModel(modelName: $0) }
+            if FoundationModelService.isDefaultModelAvailable(),
+                exposure.isExposed(id: "foundation", kind: .local)
+            {
                 models.insert(OpenAIModel(modelName: "foundation"), at: 0)
             }
 
@@ -8975,19 +8981,24 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         runRequestTask(priority: .userInitiated) {
             let now = Date().ISO8601Format()
 
-            // Get local models
-            var models = MLXService.getAvailableModels().map { name -> OpenAIModel in
-                var m = OpenAIModel(from: name)
-                m.name = name
-                m.model = name
-                m.modified_at = now
-                m.size = 0
-                m.digest = ""
-                m.details = ModelDetails.localMLXModelDetails(for: name)
-                return m
-            }
+            // Get local models (filtered by the per-model exposure settings)
+            let exposure = ModelExposureStore.shared
+            var models = MLXService.getAvailableModels()
+                .filter { exposure.isExposed(id: $0, kind: .local) }
+                .map { name -> OpenAIModel in
+                    var m = OpenAIModel(from: name)
+                    m.name = name
+                    m.model = name
+                    m.modified_at = now
+                    m.size = 0
+                    m.digest = ""
+                    m.details = ModelDetails.localMLXModelDetails(for: name)
+                    return m
+                }
 
-            if FoundationModelService.isDefaultModelAvailable() {
+            if FoundationModelService.isDefaultModelAvailable(),
+                exposure.isExposed(id: "foundation", kind: .local)
+            {
                 var fm = OpenAIModel(modelName: "foundation")
                 fm.name = "foundation"
                 fm.model = "foundation"
@@ -9559,8 +9570,46 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 // Belt-and-braces: the registry re-checks the external deny
                 // list under this flag even if a new entry point forgets
                 // the name-based preflight above.
+                let isEnabled = await MainActor.run {
+                    ToolRegistry.shared.isGlobalEnabled(toolName)
+                }
+                if !isEnabled {
+                    let message = "Tool '\(toolName)' is disabled in Osaurus settings."
+                    let payload: [String: Any] = [
+                        "content": [["type": "text", "text": message]],
+                        "isError": true,
+                    ]
+                    let data =
+                        (try? JSONSerialization.data(withJSONObject: payload, options: .osaurusCanonical))
+                        ?? Data("{}".utf8)
+                    let body = String(decoding: data, as: UTF8.self)
+                    hop {
+                        var headers = [("Content-Type", "application/json; charset=utf-8")]
+                        headers.append(contentsOf: cors)
+                        self.sendResponse(
+                            context: ctx.value,
+                            version: head.version,
+                            status: .ok,
+                            headers: headers,
+                            body: body
+                        )
+                    }
+                    logSelf.logRequest(
+                        method: "POST",
+                        path: "/mcp/call",
+                        userAgent: logUserAgent,
+                        requestBody: logRequestBody,
+                        responseStatus: 200,
+                        startTime: logStartTime,
+                        errorMessage: message
+                    )
+                    return
+                }
+
                 let result = try await ChatExecutionContext.$isExternalSurface.withValue(true) {
-                    try await ToolRegistry.shared.execute(name: toolName, argumentsJSON: argsJSON)
+                    try await ChatExecutionContext.$denyUnapprovedToolPrompts.withValue(true) {
+                        try await ToolRegistry.shared.execute(name: toolName, argumentsJSON: argsJSON)
+                    }
                 }
                 let payload: [String: Any] = [
                     "content": [["type": "text", "text": result]],

@@ -549,6 +549,7 @@ struct TranscriptionModeSettingsTab: View {
                             pauseDuration == 0
                                 ? "Auto-stop disabled. You must stop transcription manually."
                                 : "Stops after \(String(format: "%.1f", pauseDuration)) seconds of silence"
+                            , bundle: .module
                         )
                         .font(.system(size: 11))
                         .foregroundColor(theme.tertiaryText)

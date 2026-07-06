@@ -39,9 +39,14 @@ let package = Package(
         // serialized disk-restore evals (#113) — together closing the
         // client-disconnect crash train (engine teardown returns only after
         // producers are off the GPU; restores can't race input tokenization).
+        // Now also carries #116 (serialize GPU-stream drivers — re-locks
+        // eval/asyncEval/item + synchronize/clearCache to kill the Metal
+        // concurrent-encoder crash class) and #117 (NormConventionResolver:
+        // an unrecognized norm_convention defers to the vote instead of
+        // silently disabling the (1+weight) shift).
         .package(
             url: "https://github.com/osaurus-ai/vmlx-swift",
-            revision: "8dffa0a8e69d7617d68f0843635158684120a3dc"
+            revision: "53840914f693e9e1305fbbacb1ecc8e5c1e9625f"
         ),
         // FluidAudio 0.14.3 added a breaking `language:` parameter to TTS
         // calls that osaurus's `TTSService` doesn't pass. Pinning to the

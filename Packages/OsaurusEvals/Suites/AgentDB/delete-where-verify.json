@@ -3,7 +3,7 @@
   "domain": "agent_loop",
   "label": "agentdb • conditional DELETE then report remaining rows",
   "query": "Your agent database has a table logs(level TEXT). In a single statement, delete every row whose level is 'info'. Then tell me how many rows remain.",
-  "notes": "Destructive WHERE-scoped write: only the 'info' rows should go. dbState pins the post-run table (2 rows remain, 0 info, 2 error) so an unscoped DELETE (wiping the whole table) or a no-op fails; finalTextContains pins the remaining count.",
+  "notes": "Destructive WHERE-scoped write: only the 'info' rows should go. dbState pins the post-run table (2 rows remain, 0 info, 2 error) so an unscoped DELETE (wiping the whole table) or a no-op fails; finalTextContains pins the remaining count. The mutation surface is the model's choice (db_execute DELETE or the typed db_delete both express one WHERE-scoped statement); toolUsageAudit caps per-surface calls so a row-at-a-time loop still fails the 'single statement' contract.",
   "fixtures": {
     "agentCapabilities": { "dbEnabled": true },
     "seedSql": [
@@ -13,7 +13,10 @@
   "expect": {
     "agentLoop": {
       "maxIterations": 10,
-      "mustCallTools": ["db_execute"],
+      "toolUsageAudit": [
+        { "tool": "db_execute", "maxCalls": 2 },
+        { "tool": "db_delete", "maxCalls": 1 }
+      ],
       "finalTextContains": ["2"],
       "dbState": [
         { "sql": "SELECT COUNT(*) FROM logs", "expectFirstValue": "2" },

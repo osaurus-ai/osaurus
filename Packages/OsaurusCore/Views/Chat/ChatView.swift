@@ -155,6 +155,13 @@ final class ChatSession: ObservableObject {
     /// than force-expanding in the cell) lets the user collapse the block
     /// afterward; this set stops us re-expanding it on the next rebuild.
     private var autoExpandedReasoningBlockIds: Set<String> = []
+
+    /// Thinking-block ids auto-expanded while their turn was actively
+    /// streaming reasoning (opt-in "Expand Thinking While Streaming"
+    /// setting). Each id is expanded at most once so a manual collapse
+    /// mid-stream sticks, and collapsed exactly once when the thinking
+    /// phase ends.
+    private var streamingAutoExpandedThinkingBlockIds: Set<String> = []
     @Published var input: String = ""
     @Published var pendingAttachments: [Attachment] = []
     @Published var selectedModel: String? = nil
@@ -203,6 +210,19 @@ final class ChatSession: ObservableObject {
 
     /// Tracks if session has unsaved content changes
     private var isDirty: Bool = false
+    /// Session id whose first persisted turn belongs to the active send.
+    /// Used to undo transient rows on privacy-review cancels, including
+    /// pre-minted empty session ids.
+    private var transientSessionIdForCurrentRun: UUID?
+    /// Whether this run appended a new user turn. Regeneration sends reuse
+    /// historical user turns and must not pop one during privacy-cancel rollback.
+    private var appendedUserTurnForCurrentRun = false
+    /// Full transcript snapshot to restore when privacy review cancels a
+    /// regeneration/edit-regeneration before the request leaves the device.
+    private var turnsRollbackOnCancel: [ChatTurn]?
+    /// Privacy review cancel restores the draft instead of committing the run;
+    /// it must not auto-dispatch a queued follow-up during cleanup.
+    private var suppressQueuedSendFlushForCurrentRun = false
 
     // MARK: - Memoization Cache
     private let blockMemoizer = BlockMemoizer()
@@ -239,15 +259,6 @@ final class ChatSession: ObservableObject {
     /// `cachedContext` is reset so a new agent/session recomposes fresh.
     private var cachedPreviewContext: ComposedContext?
 
-    private var thinkingEnabledForCurrentModel: Bool {
-        guard let selectedModel else {
-            return activeModelOptions["disableThinking"]?.boolValue == false
-        }
-        return ModelProfileRegistry.thinkingEnabled(
-            for: selectedModel,
-            values: activeModelOptions
-        ) ?? false
-    }
     /// Estimated memory-section token cost for the next send. Populated by
     /// `refreshMemoryTokens` and surfaced through `estimatedContextBreakdown`
     /// so the Context Budget popover shows a "Memory" line even before the
@@ -790,19 +801,24 @@ final class ChatSession: ObservableObject {
         return Self.modelSupportsImages(modelId: model, pickerItems: pickerItems)
     }
 
-    /// Whether `modelId` can accept image input. Remote models are NOT assumed
-    /// vision-capable: a plain remote provider (incl. a Mode 1 `.osaurus`
-    /// device) exposes a flat model list with no capability metadata, so a
-    /// remote item's `isVLM` is false unless the id-based heuristic matched or
-    /// router metadata set it — sending images to a non-VLM remote model just
-    /// gets rejected upstream.
+    /// Whether `modelId` can accept image input. Local models are gated on
+    /// detected VLM capability; remote provider models are trusted to accept
+    /// images. A plain remote provider exposes a flat model list with no
+    /// capability metadata, so a remote item's `isVLM` is false even for
+    /// genuinely vision-capable models (e.g. current GPT / Claude / Gemini
+    /// releases). Gating on it silently dropped attached images from the
+    /// outbound request while the UI still displayed them in the bubble —
+    /// far worse than the alternative failure, where a text-only remote
+    /// model rejects the image part with a visible provider error.
     static func modelSupportsImages(modelId: String, pickerItems: [ModelPickerItem]) -> Bool {
         if modelId.lowercased() == "foundation" { return false }
         if ModelMediaCapabilities.from(modelId: modelId).supportsImage { return true }
         guard let option = pickerItems.first(where: { $0.id == modelId }) else { return false }
         // Image-edit models accept image input (osaurus image-edit feature).
         if option.imageCapabilities?.imageEdit == true { return true }
-        return option.isVLM
+        if option.isVLM { return true }
+        if case .remote = option.source { return !option.isEmbedding }
+        return false
     }
 
     var selectedModelSupportsAudio: Bool {
@@ -956,8 +972,7 @@ final class ChatSession: ObservableObject {
             let newBlocks = blockMemoizer.blocks(
                 from: mockTurns,
                 streamingTurnId: nil,
-                agentName: displayName,
-                thinkingEnabled: thinkingEnabledForCurrentModel
+                agentName: displayName
             )
             let newHeaderMap = blockMemoizer.groupHeaderMap
             withAnimation(.none) {
@@ -968,12 +983,12 @@ final class ChatSession: ObservableObject {
         }
 
         seedAutoExpandedReasoningBlocks(streamingTurnId: streamingTurnId)
+        updateStreamingThinkingExpansion(streamingTurnId: streamingTurnId)
 
         let newBlocks = blockMemoizer.blocks(
             from: turns,
             streamingTurnId: streamingTurnId,
-            agentName: displayName,
-            thinkingEnabled: thinkingEnabledForCurrentModel
+            agentName: displayName
         )
         let newHeaderMap = blockMemoizer.groupHeaderMap
 
@@ -1001,6 +1016,47 @@ final class ChatSession: ObservableObject {
             guard !autoExpandedReasoningBlockIds.contains(blockId) else { continue }
             autoExpandedReasoningBlockIds.insert(blockId)
             expandedBlocksStore.expand(blockId)
+        }
+    }
+
+    /// While the streaming turn is in its reasoning-only phase (no answer
+    /// content or tool calls yet), keep its thinking block expanded so the
+    /// user can watch the reasoning live; once the phase ends, collapse it
+    /// again to keep the thread clean. Opt-in via the Chat settings toggle
+    /// (`chatExpandThinkingWhileStreamingEnabled`, default off). Runs on
+    /// every visible-blocks rebuild, which fires per streaming delta and
+    /// once more from `completeRunCleanup`, so the collapse also lands when
+    /// a run ends or is cancelled mid-thought.
+    private func updateStreamingThinkingExpansion(streamingTurnId: UUID?) {
+        let activeThinkingBlockId: String? = {
+            guard
+                UserDefaults.standard.bool(forKey: "chatExpandThinkingWhileStreamingEnabled"),
+                let streamingTurnId,
+                let turn = turns.last, turn.id == streamingTurnId,
+                turn.role == .assistant,
+                turn.hasRenderableThinking,
+                turn.contentIsBlank,
+                (turn.toolCalls ?? []).isEmpty
+            else { return nil }
+            return ContentBlock.thinkingBlockId(turnId: streamingTurnId)
+        }()
+
+        // Collapse blocks whose thinking phase has ended — unless the
+        // completed-reasoning-only seeding above wants them expanded.
+        for blockId in streamingAutoExpandedThinkingBlockIds where blockId != activeThinkingBlockId {
+            streamingAutoExpandedThinkingBlockIds.remove(blockId)
+            if !autoExpandedReasoningBlockIds.contains(blockId) {
+                expandedBlocksStore.collapse(blockId)
+            }
+        }
+
+        // Expand at most once per block so a manual collapse mid-stream
+        // isn't fought on the next delta.
+        if let activeThinkingBlockId,
+            !streamingAutoExpandedThinkingBlockIds.contains(activeThinkingBlockId)
+        {
+            streamingAutoExpandedThinkingBlockIds.insert(activeThinkingBlockId)
+            expandedBlocksStore.expand(activeThinkingBlockId)
         }
     }
 
@@ -1530,6 +1586,10 @@ final class ChatSession: ObservableObject {
         queuedSend = nil
         voiceInputState = .idle
         showVoiceOverlay = false
+        transientSessionIdForCurrentRun = nil
+        appendedUserTurnForCurrentRun = false
+        turnsRollbackOnCancel = nil
+        suppressQueuedSendFlushForCurrentRun = false
         // Clear session identity for new chat
         if let prev = sessionId {
             let key = sessionStateKey(prev)
@@ -1865,6 +1925,10 @@ final class ChatSession: ObservableObject {
         showVoiceOverlay = false
         input = ""
         pendingAttachments = []
+        transientSessionIdForCurrentRun = nil
+        appendedUserTurnForCurrentRun = false
+        turnsRollbackOnCancel = nil
+        suppressQueuedSendFlushForCurrentRun = false
         isDirty = false  // Fresh load, not dirty
         // Clear caches to force a clean block rebuild for the new session
         blockMemoizer.clear()
@@ -2027,6 +2091,8 @@ final class ChatSession: ObservableObject {
         guard let index = turns.firstIndex(where: { $0.id == turnId }) else { return }
         guard turns[index].role == .user else { return }
 
+        turnsRollbackOnCancel = snapshotTurnsForCancelRollback()
+
         // Update the content
         turns[index].content = newContent
 
@@ -2053,6 +2119,8 @@ final class ChatSession: ObservableObject {
     func regenerate(turnId: UUID) {
         guard let index = turns.firstIndex(where: { $0.id == turnId }) else { return }
         guard turns[index].role == .assistant else { return }
+
+        turnsRollbackOnCancel = snapshotTurnsForCancelRollback()
 
         // Remove this turn and all subsequent turns
         turns = Array(turns.prefix(index))
@@ -2475,6 +2543,9 @@ final class ChatSession: ObservableObject {
         // unrelated cancel doesn't accidentally repopulate the input
         // with a turn the user already sent.
         savedDraftOnCancel = nil
+        transientSessionIdForCurrentRun = nil
+        appendedUserTurnForCurrentRun = false
+        turnsRollbackOnCancel = nil
         budgetTracker.clear()
         ServerController.signalGenerationEnd()
         // Finalize ledger outcomes before trimming so the classification sees
@@ -2485,7 +2556,10 @@ final class ChatSession: ObservableObject {
         markUnfinishedToolCallsInterrupted()
         rebuildVisibleBlocks()
         save()
-        flushQueuedSendIfEligible()
+        if !suppressQueuedSendFlushForCurrentRun {
+            flushQueuedSendIfEligible()
+        }
+        suppressQueuedSendFlushForCurrentRun = false
     }
 
     /// A stopped (or errored) run can leave an assistant tool call that never
@@ -3255,7 +3329,10 @@ final class ChatSession: ObservableObject {
         let hasContent = !trimmed.isEmpty || !attachments.isEmpty
         let isRegeneration = !hasContent && !turns.isEmpty
         guard hasContent || isRegeneration else { return }
-        guard activeRunId == nil, !isStreaming else { return }
+        guard activeRunId == nil, !isStreaming else {
+            restoreTurnsRollbackAfterAbortedRegeneration()
+            return
+        }
 
         // Authoritative guard for every send path (interactive, regeneration,
         // queued, VAD, programmatic): never start a local generation while
@@ -3263,13 +3340,20 @@ final class ChatSession: ObservableObject {
         // first so the draft survives; this backstops the rest.
         if localModelBusyInOtherWindow {
             windowState?.showLocalModelBusyAlert = true
+            restoreTurnsRollbackAfterAbortedRegeneration()
             return
+        }
+        if hasContent {
+            turnsRollbackOnCancel = nil
         }
 
         // Fresh run: a previous stop() may have left the flag true. The
         // auto-flush in completeRunCleanup keys off this, so clear it
         // before the new run can finalize.
         stopRequested = false
+        transientSessionIdForCurrentRun = nil
+        appendedUserTurnForCurrentRun = false
+        suppressQueuedSendFlushForCurrentRun = false
 
         // Any new user input clears a prior completion banner — we're
         // moving on to a follow-up. Clarify prompts (when active) live
@@ -3291,12 +3375,14 @@ final class ChatSession: ObservableObject {
         awaitingClarify = nil
 
         if hasContent {
+            let sendIntroducesFirstTurn = turns.isEmpty
             // One-shot activation signal — the install's first ever chat-UI
             // message. Inside the `hasContent` branch so a contentless
             // regeneration doesn't count as "used".
             FeatureTelemetry.firstTimeChatUsed()
 
             turns.append(ChatTurn(role: .user, content: trimmed, attachments: attachments))
+            appendedUserTurnForCurrentRun = true
             // Stash the draft so we can put it back if the user cancels
             // out of the privacy review sheet. The text and attachments
             // arrive cleared (the input bar wipes them as part of its
@@ -3306,18 +3392,12 @@ final class ChatSession: ObservableObject {
             isDirty = true
             rebuildVisibleBlocks()
 
-            // Immediately save new session so it appears in sidebar
-            if sessionId == nil {
-                sessionId = UUID()
-                createdAt = Date()
-                updatedAt = Date()
-                isDirty = false  // Already set updatedAt
-                // Auto-generate title from first user message
-                let turnData = turns.map { ChatTurnData(from: $0) }
-                title = ChatSessionData.generateTitle(from: turnData)
-                let data = toSessionData()
-                ChatSessionsManager.shared.save(data)
-                onSessionChanged?()
+            // Persist the user turn before inference starts. Final cleanup will
+            // save the assistant turn, but the user's text/attachments must
+            // survive a crash, quit, or long-running stream too.
+            save()
+            if sendIntroducesFirstTurn {
+                transientSessionIdForCurrentRun = sessionId
             }
         }
 
@@ -3354,8 +3434,12 @@ final class ChatSession: ObservableObject {
                 lastStreamError = nil
                 isStreaming = true
                 ServerController.signalGenerationStart()
+                var shouldPersistConversationArtifacts = true
                 defer {
-                    finalizeRun(runId: runId, persistConversationArtifacts: true)
+                    finalizeRun(
+                        runId: runId,
+                        persistConversationArtifacts: shouldPersistConversationArtifacts
+                    )
                 }
 
                 var assistantTurn = ChatTurn(role: .assistant, content: "")
@@ -4657,6 +4741,8 @@ final class ChatSession: ObservableObject {
                         debugLog("send: stop() cancelled mid-prepare — keeping user turn")
                     } else {
                         debugLog("send: cancelled before any delta — restoring draft")
+                        shouldPersistConversationArtifacts = false
+                        suppressQueuedSendFlushForCurrentRun = true
                         handleCancelledBeforeFirstDelta()
                     }
                 } catch let pfError as PrivacyFilterPipelineError {
@@ -4711,13 +4797,23 @@ final class ChatSession: ObservableObject {
         if let last = turns.last, last.role == .assistant, last.contentIsEmpty {
             turns.removeLast()
         }
+        if let rollback = turnsRollbackOnCancel {
+            turns = rollback
+            turnsRollbackOnCancel = nil
+            appendedUserTurnForCurrentRun = false
+            rebuildVisibleBlocks()
+            savedDraftOnCancel = nil
+            persistAfterCancelledBeforeFirstDelta()
+            return
+        }
         // Remove the user turn this run was attached to, if it's the
         // current trailing turn. Don't blindly drop the last turn —
         // queued sends or auxiliary turns might have landed between
         // the append and the cancel.
-        if let last = turns.last, last.role == .user {
+        if appendedUserTurnForCurrentRun, let last = turns.last, last.role == .user {
             turns.removeLast()
         }
+        appendedUserTurnForCurrentRun = false
         rebuildVisibleBlocks()
         // Restore the typed draft. Concatenating onto whatever the
         // user has half-typed since hitting Send would be surprising,
@@ -4729,6 +4825,44 @@ final class ChatSession: ObservableObject {
             pendingAttachments = draft.attachments
         }
         savedDraftOnCancel = nil
+        persistAfterCancelledBeforeFirstDelta()
+    }
+
+    private func snapshotTurnsForCancelRollback() -> [ChatTurn] {
+        turns.map { ChatTurn(from: ChatTurnData(from: $0)) }
+    }
+
+    private func restoreTurnsRollbackAfterAbortedRegeneration() {
+        guard let rollback = turnsRollbackOnCancel else { return }
+        turns = rollback
+        turnsRollbackOnCancel = nil
+        appendedUserTurnForCurrentRun = false
+        transientSessionIdForCurrentRun = nil
+        rebuildVisibleBlocks()
+        isDirty = false
+        save()
+    }
+
+    private func persistAfterCancelledBeforeFirstDelta() {
+        let transientId = transientSessionIdForCurrentRun
+        transientSessionIdForCurrentRun = nil
+
+        if turns.isEmpty, let id = transientId, sessionId == id {
+            sessionId = nil
+            title = "New Chat"
+            createdAt = Date()
+            updatedAt = createdAt
+            isDirty = false
+            ChatSessionsManager.shared.delete(id: id)
+            let key = sessionStateKey(id)
+            Task { await SessionToolStateStore.shared.invalidate(key) }
+            Task { await SessionRedactionStore.shared.invalidate(id.uuidString) }
+            onSessionChanged?()
+            return
+        }
+
+        guard !turns.isEmpty else { return }
+        save()
     }
 }
 
@@ -4762,6 +4896,12 @@ struct ChatView: View {
     @State private var activeMinimapTurnId: UUID?
     @State private var scrollToTurnId: UUID?
     @State private var scrollToTurnTrigger: Int = 0
+    // In-conversation find (Cmd+F). Visibility lives on `windowState` so the
+    // window-level key monitor can toggle it; query/matches are view state.
+    @State private var findQuery: String = ""
+    /// Ordered turn ids whose content matches `findQuery`.
+    @State private var findMatchTurnIds: [UUID] = []
+    @State private var findMatchIndex: Int = 0
     // What's New modal
     @State private var pendingWhatsNew: WhatsNewRelease? = nil
     @State private var showAutoSpeakPrompt: Bool = false
@@ -5309,7 +5449,12 @@ struct ChatView: View {
                                 remoteConnectionPending: windowState.remoteAgentConnectionPhase
                                     == .connecting,
                                 isRemoteAgentRun: windowState.selectedDiscoveredAgentProviderId
-                                    != nil
+                                    != nil,
+                                inputHistoryProvider: { [weak observedSession] in
+                                    guard let observedSession else { return [] }
+                                    return ChatInputHistory.entries(from: observedSession.turns)
+                                },
+                                inputHistoryKey: observedSession.sessionId
                             )
                             .frame(maxWidth: 1100)
                             .frame(maxWidth: .infinity)
@@ -5925,7 +6070,9 @@ struct ChatView: View {
                 },
                 scrollToTurnId: scrollToTurnId,
                 scrollToTurnTrigger: scrollToTurnTrigger,
-                sessionRedactions: session.sessionRedactions
+                sessionRedactions: session.sessionRedactions,
+                searchHighlightQuery: windowState.isFindBarVisible
+                    ? findQuery.trimmingCharacters(in: .whitespacesAndNewlines) : ""
             )
             .safeAreaInset(edge: .top, spacing: 0) {
                 Color.clear
@@ -5943,6 +6090,36 @@ struct ChatView: View {
             .padding(.top, 4)
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
             .allowsHitTesting(session.lastCompletionSummary != nil || session.currentTodo != nil)
+
+            // Find bar overlay (Cmd+F) — top-trailing, above the thread.
+            if windowState.isFindBarVisible {
+                VStack {
+                    HStack {
+                        Spacer()
+                        ChatFindBar(
+                            query: $findQuery,
+                            matchIndex: findMatchIndex,
+                            matchCount: findMatchTurnIds.count,
+                            onPrevious: { advanceFindMatch(by: -1) },
+                            onNext: { advanceFindMatch(by: 1) },
+                            onClose: { windowState.isFindBarVisible = false }
+                        )
+                        .padding(.trailing, 16)
+                        .padding(.top, inlineInsetHeight + 8)
+                    }
+                    Spacer()
+                }
+                .transition(.move(edge: .top).combined(with: .opacity))
+                .onChange(of: findQuery) { _, query in
+                    recomputeFindMatches(query: query, jumpToFirst: true)
+                }
+                .onChange(of: session.turns.count) { _, _ in
+                    recomputeFindMatches(query: findQuery, jumpToFirst: false)
+                }
+                .onAppear {
+                    recomputeFindMatches(query: findQuery, jumpToFirst: false)
+                }
+            }
 
             // Minimap overlay — sits at vertical center, right edge
             if minimapMarkers.count >= 2 {
@@ -6099,6 +6276,8 @@ private struct IsolatedThreadView: View {
     /// scroll controls so existing call sites stay backward-
     /// compatible (it's a defaulted property with an empty map).
     var sessionRedactions: [String: String] = [:]
+    /// Active in-conversation find query (Cmd+F); empty when the bar is closed.
+    var searchHighlightQuery: String = ""
 
     var body: some View {
         let _ = ChatPerfTrace.shared.count("body.IsolatedThreadView")
@@ -6129,7 +6308,8 @@ private struct IsolatedThreadView: View {
             onVisibleTopUserTurnChanged: onVisibleTopUserTurnChanged,
             scrollToTurnId: scrollToTurnId,
             scrollToTurnTrigger: scrollToTurnTrigger,
-            sessionRedactions: sessionRedactions
+            sessionRedactions: sessionRedactions,
+            searchHighlightQuery: searchHighlightQuery
         )
     }
 }
@@ -6310,6 +6490,42 @@ extension ChatView {
         windowState.cancelInlineEdit = nil
     }
 
+    // MARK: - In-Conversation Find (Cmd+F)
+
+    /// Recompute the ordered turn-id match list for `query` over the visible
+    /// conversation. `jumpToFirst` scrolls to the first match (used while
+    /// typing); otherwise the current match is preserved when it survives the
+    /// recompute (used when streaming appends turns). Logic lives in
+    /// `ChatFindMatcher` so the invariants are unit-tested.
+    private func recomputeFindMatches(query: String, jumpToFirst: Bool) {
+        let (state, jumpTo) = ChatFindMatcher.recompute(
+            query: query,
+            turns: session.turns,
+            previous: ChatFindState(matchTurnIds: findMatchTurnIds, matchIndex: findMatchIndex),
+            preserveCurrentMatch: !jumpToFirst
+        )
+        findMatchTurnIds = state.matchTurnIds
+        findMatchIndex = state.matchIndex
+        if let jumpTo {
+            scrollToTurnId = jumpTo
+            scrollToTurnTrigger &+= 1
+        }
+    }
+
+    /// Step to the next/previous match, wrapping at both ends.
+    private func advanceFindMatch(by delta: Int) {
+        let (state, jumpTo) = ChatFindMatcher.advance(
+            ChatFindState(matchTurnIds: findMatchTurnIds, matchIndex: findMatchIndex),
+            by: delta
+        )
+        findMatchTurnIds = state.matchTurnIds
+        findMatchIndex = state.matchIndex
+        if let jumpTo {
+            scrollToTurnId = jumpTo
+            scrollToTurnTrigger &+= 1
+        }
+    }
+
     // Key monitor for Esc. Dismisses transient UI in priority order
     // before falling through to closing the window. The monitor owns the
     // key event before SwiftUI's `.keyboardShortcut(.cancelAction)` /
@@ -6324,6 +6540,18 @@ extension ChatView {
         let windowState = self.windowState
 
         keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak session, weak windowState] event in
+            // Cmd+F opens the in-conversation find bar.
+            if event.modifierFlags.intersection([.command, .shift, .option, .control]) == .command,
+                event.charactersIgnoringModifiers?.lowercased() == "f"
+            {
+                guard let ourWindow = ChatWindowManager.shared.getNSWindow(id: capturedWindowId),
+                    event.window === ourWindow,
+                    let windowState
+                else { return event }
+                windowState.isFindBarVisible = true
+                return nil
+            }
+
             // Esc key code is 53
             if event.keyCode == 53 {
                 // Only handle Esc if this event is for our specific window
@@ -6340,6 +6568,14 @@ extension ChatView {
                 // Stage 0: Slash command popup is open — let the text view delegate handle it
                 if SlashCommandRegistry.shared.isPopupVisible {
                     return event
+                }
+
+                // Stage 0.5: Find bar is open — close it before any other
+                // transient UI so Esc can't fall through to window close
+                // while the user is mid-search.
+                if let windowState, windowState.isFindBarVisible {
+                    windowState.isFindBarVisible = false
+                    return nil
                 }
 
                 // Stage 1: A transient popover (model picker, model

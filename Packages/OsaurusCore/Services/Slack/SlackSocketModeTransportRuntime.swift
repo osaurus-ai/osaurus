@@ -284,6 +284,62 @@ actor SlackSocketModeTransportRuntime {
             currentSocket = nil
             let health = await publish(lastHealth)
             return AgentChannelTransportStepResult(disposition: .skipped, health: health)
+        } catch SlackSocketModeTransportError.disconnected(let reason) where Self.isPlannedRefresh(reason) {
+            // Slack periodically asks Socket Mode clients to reconnect
+            // (`refresh_requested`). That is routine operation, not a failure:
+            // reconnect promptly without a backoff or failure penalty.
+            currentSocket?.cancel()
+            currentSocket = nil
+            consecutiveFailures = 0
+            let health = await publish(
+                AgentChannelTransportHealthState(
+                    connectionId: AgentChannelConnection.nativeSlackConnectionId,
+                    transportId: Self.transportId,
+                    provider: .slack,
+                    status: .healthy,
+                    severity: .info,
+                    summary: "Slack requested a Socket Mode connection refresh; reconnecting.",
+                    isRunning: worker != nil,
+                    receiveEnabled: true,
+                    lastSuccessAt: now,
+                    updatedAt: now
+                )
+            )
+            return AgentChannelTransportStepResult(
+                disposition: .succeeded,
+                health: health,
+                retryDelay: 1
+            )
+        } catch SlackAPIError.rateLimited(let message, let retryAfter) {
+            currentSocket?.cancel()
+            currentSocket = nil
+            consecutiveFailures += 1
+            let backoffDelay = backoffPolicy.delay(consecutiveFailures: consecutiveFailures, jitter: jitter)
+            // Honor Slack's Retry-After when it is longer than our computed
+            // backoff, bounded to the sleeper's clamp window.
+            let delay = min(max(backoffDelay, retryAfter ?? 0), 3_600)
+            let health = await publish(
+                AgentChannelTransportHealthState(
+                    connectionId: AgentChannelConnection.nativeSlackConnectionId,
+                    transportId: Self.transportId,
+                    provider: .slack,
+                    status: .degraded,
+                    severity: .warning,
+                    summary: "Slack is rate limiting Socket Mode connections.",
+                    detail: service.redactSecrets(in: message),
+                    isRunning: worker != nil,
+                    receiveEnabled: true,
+                    lastFailureAt: now,
+                    nextRetryAt: now.addingTimeInterval(delay),
+                    consecutiveFailures: consecutiveFailures,
+                    updatedAt: now
+                )
+            )
+            return AgentChannelTransportStepResult(
+                disposition: .failed,
+                health: health,
+                retryDelay: delay
+            )
         } catch {
             currentSocket?.cancel()
             currentSocket = nil
@@ -297,7 +353,7 @@ actor SlackSocketModeTransportRuntime {
                     status: .failed,
                     severity: .warning,
                     summary: "Slack Socket Mode receive failed.",
-                    detail: error.localizedDescription,
+                    detail: service.redactSecrets(in: error.localizedDescription),
                     isRunning: worker != nil,
                     receiveEnabled: true,
                     lastFailureAt: now,
@@ -324,32 +380,45 @@ actor SlackSocketModeTransportRuntime {
             throw SlackSocketModeTransportError.invalidEnvelope
         }
 
-        if let envelopeId = envelope["envelope_id"] as? String,
-           !envelopeId.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            try await socket.sendText(Self.ackPayload(envelopeId: envelopeId))
-        }
-
         if envelope["type"] as? String == "disconnect" {
             throw SlackSocketModeTransportError.disconnected(envelope["reason"] as? String)
         }
+
+        let envelopeId = envelope["envelope_id"] as? String
 
         guard let payloadObject = envelope["payload"],
               JSONSerialization.isValidJSONObject(payloadObject),
               let payloadData = try? JSONSerialization.data(withJSONObject: payloadObject)
         else {
+            try await acknowledge(envelopeId, socket: socket)
             return SlackSocketModeProcessResult(received: 0, stored: 0, dispatchSuppressed: 0)
         }
 
         guard let slackEnvelope = try? JSONDecoder().decode(SlackEventEnvelope.self, from: payloadData) else {
+            try await acknowledge(envelopeId, socket: socket)
             return SlackSocketModeProcessResult(received: 1, stored: 0, dispatchSuppressed: 0)
         }
 
+        // Store before acking so a persistence failure leaves the envelope
+        // un-acked and Slack redelivers it; event-id dedupe absorbs retries
+        // of envelopes that were stored but whose ack did not reach Slack.
         let stored = try service.recordInboundEvent(slackEnvelope) != nil ? 1 : 0
+        try await acknowledge(envelopeId, socket: socket)
         return SlackSocketModeProcessResult(
             received: 1,
             stored: stored,
             dispatchSuppressed: stored
         )
+    }
+
+    private func acknowledge(
+        _ envelopeId: String?,
+        socket: any SlackSocketModeWebSocket
+    ) async throws {
+        guard let envelopeId = envelopeId?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !envelopeId.isEmpty
+        else { return }
+        try await socket.sendText(Self.ackPayload(envelopeId: envelopeId))
     }
 
     private func runLoop(pollInterval: TimeInterval) async {
@@ -369,6 +438,10 @@ actor SlackSocketModeTransportRuntime {
         lastHealth = health
         await healthCenter.update(health)
         return health
+    }
+
+    private static func isPlannedRefresh(_ reason: String?) -> Bool {
+        reason?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == "refresh_requested"
     }
 
     private static func ackPayload(envelopeId: String) throws -> String {

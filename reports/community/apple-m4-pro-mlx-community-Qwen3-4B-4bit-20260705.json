@@ -1,0 +1,88 @@
+{
+  "domains" : [
+    "agent_loop",
+    "apple_script",
+    "capability_claims",
+    "computer_use_loop",
+    "default_agent",
+    "micro_perf",
+    "subagent"
+  ],
+  "generatedAt" : "2026-07-06T02:32:02.833Z",
+  "models" : [
+    {
+      "chatModelPassed" : 185,
+      "chatModelScored" : 228,
+      "environment" : {
+        "caseCount" : 12,
+        "catalogHash" : "137408f3cdba4838",
+        "chip" : "Apple M4 Pro",
+        "cpuCores" : 14,
+        "judge" : "xai/grok-4.3",
+        "lowPowerMode" : false,
+        "osVersion" : "26.2.0",
+        "powerSource" : "AC",
+        "runModel" : "mlx-community/Qwen3-4B-4bit",
+        "thermalState" : "fair",
+        "totalRamMb" : 49152
+      },
+      "meanCpuPercent" : 67.65935984881716,
+      "meanDecodeTokensPerSecond" : 53.120355117710204,
+      "meanPromptTokensPerTask" : 21935.43956043956,
+      "meanTotalTokensPerTask" : 19186.26605504587,
+      "meanTtftMs" : 124.40918861551488,
+      "modelId" : "mlx-community/Qwen3-4B-4bit",
+      "peakCpuPercent" : 529.0317958409179,
+      "peakPhysFootprintMb" : 20583.414192199707,
+      "perDomain" : {
+        "agent_loop" : {
+          "errored" : 0,
+          "passed" : 66,
+          "scored" : 92,
+          "skipped" : 3
+        },
+        "apple_script" : {
+          "errored" : 0,
+          "passed" : 29,
+          "scored" : 34,
+          "skipped" : 1
+        },
+        "capability_claims" : {
+          "errored" : 0,
+          "passed" : 10,
+          "scored" : 11,
+          "skipped" : 0
+        },
+        "computer_use_loop" : {
+          "errored" : 0,
+          "passed" : 21,
+          "scored" : 23,
+          "skipped" : 0
+        },
+        "default_agent" : {
+          "errored" : 0,
+          "passed" : 24,
+          "scored" : 38,
+          "skipped" : 0
+        },
+        "micro_perf" : {
+          "errored" : 0,
+          "passed" : 3,
+          "scored" : 3,
+          "skipped" : 0
+        },
+        "subagent" : {
+          "errored" : 0,
+          "passed" : 45,
+          "scored" : 45,
+          "skipped" : 2
+        }
+      },
+      "startedAt" : "2026-07-05T23:03:10Z",
+      "subsystemPassed" : 13,
+      "subsystemScored" : 18,
+      "totalPassed" : 198,
+      "totalScored" : 246
+    }
+  ]
+}

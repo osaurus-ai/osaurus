@@ -205,6 +205,11 @@ final class SlackConnectionService: @unchecked Sendable {
         messageStore: AgentChannelMessageStore.shared
     )
 
+    /// Page caps for cursor-following so one tool call cannot fan out into an
+    /// unbounded number of Slack API requests.
+    static let maxConversationListPages = 5
+    static let maxMessagePages = 5
+
     private let client: SlackAPIClientProtocol
     private let credentialStore: any SlackCredentialStorage
     private let messageStore: AgentChannelMessageStore?
@@ -476,8 +481,20 @@ final class SlackConnectionService: @unchecked Sendable {
             throw SlackConnectionServiceError.teamNotConfigured(normalizedTeamId)
         }
 
-        let channels = try await client.conversations(token: token, limit: 100)
-        return channels.map { channel in
+        var channels: [SlackConversation] = []
+        var cursor: String?
+        var truncated = false
+        for page in 0 ..< Self.maxConversationListPages {
+            let result = try await client.conversations(token: token, limit: 100, cursor: cursor)
+            channels.append(contentsOf: result.conversations)
+            guard let nextCursor = result.nextCursor else {
+                truncated = false
+                break
+            }
+            cursor = nextCursor
+            truncated = page == Self.maxConversationListPages - 1
+        }
+        var rows: [[String: Any]] = channels.map { channel in
             [
                 "id": channel.id,
                 "name": channel.displayName,
@@ -489,6 +506,20 @@ final class SlackConnectionService: @unchecked Sendable {
                 "write_allowed": config.canWrite(channelId: channel.id),
             ]
         }
+        if truncated {
+            rows.append([
+                "id": "pagination_notice",
+                "name":
+                    "Slack returned more conversations than the \(Self.maxConversationListPages * 100)-row cap; the list is truncated.",
+                "type": "notice",
+                "team_id": normalizedTeamId,
+                "is_private": false,
+                "is_member": false,
+                "read_allowed": false,
+                "write_allowed": false,
+            ])
+        }
+        return rows
     }
 
     func readChannel(channelId: String, limit: Int?) async throws -> [String: Any] {
@@ -496,19 +527,26 @@ final class SlackConnectionService: @unchecked Sendable {
         let config = configuration()
         let normalizedChannelId = try requireReadableChannel(channelId, config: config)
         let safeLimit = SlackConnectionConfiguration.clampReadLimit(limit ?? config.defaultReadLimit)
-        let messages = try await client.messages(
-            channelId: normalizedChannelId,
-            token: token,
-            limit: safeLimit
-        )
-        recordMessages(messages, channelId: normalizedChannelId, direction: .inbound)
-        return [
+        let page = try await collectMessagePages(limit: safeLimit) { pageLimit, cursor in
+            try await client.messages(
+                channelId: normalizedChannelId,
+                token: token,
+                limit: pageLimit,
+                cursor: cursor
+            )
+        }
+        recordMessages(page.messages, channelId: normalizedChannelId, direction: .inbound)
+        var payload: [String: Any] = [
             "kind": "slack_recent_messages",
             "channel_id": normalizedChannelId,
             "limit": safeLimit,
-            "partial": true,
-            "messages": messages.map { Self.messageDictionary($0, channelId: normalizedChannelId) },
+            "partial": page.hasMore,
+            "messages": page.messages.map { Self.messageDictionary($0, channelId: normalizedChannelId) },
         ]
+        if let nextCursor = page.nextCursor {
+            payload["next_cursor"] = nextCursor
+        }
+        return payload
     }
 
     func readThread(threadId: String, limit: Int?) async throws -> [String: Any] {
@@ -517,22 +555,61 @@ final class SlackConnectionService: @unchecked Sendable {
         let parsed = try parseThreadId(threadId)
         let normalizedChannelId = try requireReadableChannel(parsed.channelId, config: config)
         let safeLimit = SlackConnectionConfiguration.clampReadLimit(limit ?? config.defaultReadLimit)
-        let messages = try await client.threadMessages(
-            channelId: normalizedChannelId,
-            threadTs: parsed.threadTs,
-            token: token,
-            limit: safeLimit
-        )
-        recordMessages(messages, channelId: normalizedChannelId, direction: .inbound)
-        return [
+        let page = try await collectMessagePages(limit: safeLimit) { pageLimit, cursor in
+            try await client.threadMessages(
+                channelId: normalizedChannelId,
+                threadTs: parsed.threadTs,
+                token: token,
+                limit: pageLimit,
+                cursor: cursor
+            )
+        }
+        recordMessages(page.messages, channelId: normalizedChannelId, direction: .inbound)
+        var payload: [String: Any] = [
             "kind": "slack_thread_messages",
             "channel_id": normalizedChannelId,
             "thread_id": "\(normalizedChannelId):\(parsed.threadTs)",
             "thread_ts": parsed.threadTs,
             "limit": safeLimit,
-            "partial": true,
-            "messages": messages.map { Self.messageDictionary($0, channelId: normalizedChannelId) },
+            "partial": page.hasMore,
+            "messages": page.messages.map { Self.messageDictionary($0, channelId: normalizedChannelId) },
         ]
+        if let nextCursor = page.nextCursor {
+            payload["next_cursor"] = nextCursor
+        }
+        return payload
+    }
+
+    /// Follows Slack cursors until `limit` messages are collected, the pages run
+    /// out, or the page cap is hit. Slack can return fewer rows than requested
+    /// per page even when more exist, so a single call is not enough.
+    private func collectMessagePages(
+        limit: Int,
+        fetch: (Int, String?) async throws -> SlackMessagePage
+    ) async rethrows -> SlackMessagePage {
+        var collected: [SlackMessage] = []
+        var requestCursor: String?
+        var continuationCursor: String?
+        var hasMore = false
+        for _ in 0 ..< Self.maxMessagePages {
+            let remaining = limit - collected.count
+            guard remaining > 0 else { break }
+            let page = try await fetch(remaining, requestCursor)
+            collected.append(contentsOf: page.messages)
+            hasMore = page.hasMore
+            continuationCursor = page.nextCursor
+            guard let nextCursor = page.nextCursor, collected.count < limit else { break }
+            requestCursor = nextCursor
+        }
+        let overflow = collected.count > limit
+        if overflow {
+            collected = Array(collected.prefix(limit))
+        }
+        return SlackMessagePage(
+            messages: collected,
+            hasMore: hasMore || overflow,
+            nextCursor: continuationCursor
+        )
     }
 
     func findRecentMessages(
@@ -562,7 +639,13 @@ final class SlackConnectionService: @unchecked Sendable {
         var matches: [[String: Any]] = []
 
         for channelId in allowedChannels {
-            let messages = try await client.messages(channelId: channelId, token: token, limit: safeLimit)
+            let page = try await client.messages(
+                channelId: channelId,
+                token: token,
+                limit: safeLimit,
+                cursor: nil
+            )
+            let messages = page.messages
             recordMessages(messages, channelId: channelId, direction: .inbound)
             for message in messages {
                 let haystack = "\(message.text ?? "") \(message.user ?? "") \(message.username ?? "")"
@@ -736,6 +819,17 @@ final class SlackConnectionService: @unchecked Sendable {
             token: token,
             signingSecret: signingSecret,
             appToken: appToken
+        )
+    }
+
+    /// Redacts saved credentials from arbitrary text before it reaches
+    /// user-visible or model-visible surfaces (for example transport health).
+    func redactSecrets(in text: String) -> String {
+        SlackSecurity.redact(
+            text,
+            token: credentialStore.botToken(),
+            signingSecret: credentialStore.signingSecret(),
+            appToken: credentialStore.appToken()
         )
     }
 

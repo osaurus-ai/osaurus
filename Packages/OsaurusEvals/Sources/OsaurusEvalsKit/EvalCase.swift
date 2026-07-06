@@ -293,19 +293,24 @@ public struct EvalCase: Sendable, Codable, Identifiable {
         public let speakEnabled: Bool?
         /// Expose the `search_memory` recall tool.
         public let searchMemoryEnabled: Bool?
+        /// Expose `applescript` / `mac_query` delegation tools (requires an
+        /// installed AppleScript model at run time).
+        public let appleScriptEnabled: Bool?
 
         public init(
             dbEnabled: Bool? = nil,
             selfSchedulingEnabled: Bool? = nil,
             renderChartEnabled: Bool? = nil,
             speakEnabled: Bool? = nil,
-            searchMemoryEnabled: Bool? = nil
+            searchMemoryEnabled: Bool? = nil,
+            appleScriptEnabled: Bool? = nil
         ) {
             self.dbEnabled = dbEnabled
             self.selfSchedulingEnabled = selfSchedulingEnabled
             self.renderChartEnabled = renderChartEnabled
             self.speakEnabled = speakEnabled
             self.searchMemoryEnabled = searchMemoryEnabled
+            self.appleScriptEnabled = appleScriptEnabled
         }
 
         /// True when any flag is explicitly enabled — the runner only
@@ -313,7 +318,7 @@ public struct EvalCase: Sendable, Codable, Identifiable {
         public var requestsAnyCapability: Bool {
             (dbEnabled ?? false) || (selfSchedulingEnabled ?? false)
                 || (renderChartEnabled ?? false) || (speakEnabled ?? false)
-                || (searchMemoryEnabled ?? false)
+                || (searchMemoryEnabled ?? false) || (appleScriptEnabled ?? false)
         }
     }
 
@@ -799,6 +804,10 @@ public struct EvalCase: Sendable, Codable, Identifiable {
         public let maxIterations: Int?
         /// Tool names that MUST be called somewhere in the run.
         public let mustCallTools: [String]?
+        /// At least ONE of these tool names must be called (OR semantics).
+        /// Use when several tools satisfy the same contract (e.g. shell vs
+        /// browser for a fetch attempt).
+        public let mustCallAnyTools: [String]?
         /// Tool names that must NOT be called anywhere in the run.
         public let mustNotCallTools: [String]?
         /// Cap on total processed tool calls (executed + deduped). Pins
@@ -903,6 +912,7 @@ public struct EvalCase: Sendable, Codable, Identifiable {
         public init(
             maxIterations: Int? = nil,
             mustCallTools: [String]? = nil,
+            mustCallAnyTools: [String]? = nil,
             mustNotCallTools: [String]? = nil,
             maxToolCalls: Int? = nil,
             noDuplicateExecutedCalls: Bool? = nil,
@@ -930,6 +940,7 @@ public struct EvalCase: Sendable, Codable, Identifiable {
         ) {
             self.maxIterations = maxIterations
             self.mustCallTools = mustCallTools
+            self.mustCallAnyTools = mustCallAnyTools
             self.mustNotCallTools = mustNotCallTools
             self.maxToolCalls = maxToolCalls
             self.noDuplicateExecutedCalls = noDuplicateExecutedCalls
@@ -965,17 +976,24 @@ public struct EvalCase: Sendable, Codable, Identifiable {
             public let exists: Bool?
             public let contains: String?
             public let equals: String?
+            /// When true, `contains` matches case-insensitively — for
+            /// natural-language contracts ("include the word 'killed'")
+            /// where sentence-position capitalization is not a defect.
+            /// Default false: exact-content contracts stay strict.
+            public let caseInsensitive: Bool?
 
             public init(
                 path: String,
                 exists: Bool? = nil,
                 contains: String? = nil,
-                equals: String? = nil
+                equals: String? = nil,
+                caseInsensitive: Bool? = nil
             ) {
                 self.path = path
                 self.exists = exists
                 self.contains = contains
                 self.equals = equals
+                self.caseInsensitive = caseInsensitive
             }
         }
 

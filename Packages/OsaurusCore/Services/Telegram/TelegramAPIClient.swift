@@ -111,6 +111,29 @@ struct TelegramUpdate: Codable, Equatable, Sendable {
     }
 }
 
+struct TelegramWebhookInfo: Codable, Equatable, Sendable {
+    let url: String
+    let pendingUpdateCount: Int?
+    let lastErrorMessage: String?
+
+    enum CodingKeys: String, CodingKey {
+        case url
+        case pendingUpdateCount = "pending_update_count"
+        case lastErrorMessage = "last_error_message"
+    }
+
+    init(url: String, pendingUpdateCount: Int? = nil, lastErrorMessage: String? = nil) {
+        self.url = url
+        self.pendingUpdateCount = pendingUpdateCount
+        self.lastErrorMessage = lastErrorMessage
+    }
+
+    /// Telegram reports an empty `url` when no webhook is registered.
+    var isRegistered: Bool {
+        !url.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+}
+
 enum TelegramDeliveryStatus: String, Codable, Equatable, Sendable {
     case accepted
     case sent
@@ -165,7 +188,7 @@ enum TelegramAPIError: LocalizedError, Equatable, Sendable {
     case forbidden(String)
     case conflict(String)
     case notFound(String)
-    case rateLimited(String)
+    case rateLimited(String, retryAfter: Int?)
     case invalidResponse(String)
     case requestFailed(String)
 
@@ -173,10 +196,11 @@ enum TelegramAPIError: LocalizedError, Equatable, Sendable {
         switch self {
         case .invalidToken:
             return "Telegram rejected the bot token."
+        case .rateLimited(let message, _):
+            return message
         case .forbidden(let message),
             .conflict(let message),
             .notFound(let message),
-            .rateLimited(let message),
             .invalidResponse(let message),
             .requestFailed(let message):
             return message
@@ -187,6 +211,8 @@ enum TelegramAPIError: LocalizedError, Equatable, Sendable {
 protocol TelegramAPIClientProtocol: Sendable {
     func getMe(token: String) async throws -> TelegramUser
     func getChat(chatId: String, token: String) async throws -> TelegramChat
+    func getWebhookInfo(token: String) async throws -> TelegramWebhookInfo
+    func deleteWebhook(token: String) async throws -> Bool
     func getUpdates(offset: Int64?, limit: Int, timeout: Int, token: String) async throws -> [TelegramUpdate]
     func sendMessage(
         chatId: String,
@@ -214,6 +240,15 @@ final class TelegramAPIClient: TelegramAPIClientProtocol, @unchecked Sendable {
 
     func getChat(chatId: String, token: String) async throws -> TelegramChat {
         try await post(method: "getChat", token: token, body: ["chat_id": chatId])
+    }
+
+    func getWebhookInfo(token: String) async throws -> TelegramWebhookInfo {
+        try await post(method: "getWebhookInfo", token: token, body: [:])
+    }
+
+    func deleteWebhook(token: String) async throws -> Bool {
+        // Pending updates are preserved so they flow to getUpdates afterwards.
+        try await post(method: "deleteWebhook", token: token, body: [:])
     }
 
     func getUpdates(offset: Int64?, limit: Int, timeout: Int, token: String) async throws -> [TelegramUpdate] {
@@ -334,7 +369,7 @@ final class TelegramAPIClient: TelegramAPIClientProtocol, @unchecked Sendable {
         case 404:
             return .notFound(message)
         case 429:
-            return .rateLimited(message)
+            return .rateLimited(message, retryAfter: envelope.parameters?.retryAfter)
         default:
             return .requestFailed(message)
         }
@@ -346,11 +381,21 @@ private struct TelegramAPIEnvelope<Result: Decodable>: Decodable {
     let result: Result?
     let description: String?
     let errorCode: Int?
+    let parameters: TelegramResponseParameters?
 
     enum CodingKeys: String, CodingKey {
         case ok
         case result
         case description
         case errorCode = "error_code"
+        case parameters
+    }
+}
+
+private struct TelegramResponseParameters: Decodable {
+    let retryAfter: Int?
+
+    enum CodingKeys: String, CodingKey {
+        case retryAfter = "retry_after"
     }
 }

@@ -84,8 +84,11 @@ server, bot, or chat and prove:
 
 The smoke boundary uses the visible Agent Channels settings surface and, for
 Telegram, the app-managed long-poll receive path. It does not require
-production webhook hosting. Slack Socket Mode background receive wiring remains
-the follow-up needed for full Slack desktop inbound proof.
+production webhook hosting. Slack Socket Mode background receive ships in the
+app: the transport supervisor starts the Socket Mode runtime at launch (and on
+settings changes) once a bot token, a Socket Mode app token, readable channels,
+and authorized sender IDs are configured. Its live health is shown in the
+Slack settings Receive section.
 
 Slack/Telegram release proof uses
 [`AGENT_CHANNELS_SLACK_TELEGRAM_SETUP.md`](AGENT_CHANNELS_SLACK_TELEGRAM_SETUP.md)

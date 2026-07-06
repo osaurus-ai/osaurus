@@ -119,6 +119,11 @@ public enum ChatExecutionContext {
     /// untouched.
     @TaskLocal public static var sandboxReadBridge: SandboxReadBridge?
 
+    /// Linux sandbox agent name for the current execution. Bound alongside
+    /// `sandboxReadBridge` so Agent DB file tools can resolve paths under
+    /// `/workspace/...` even in plain sandbox mode (no host folder).
+    @TaskLocal public static var sandboxAgentName: String?
+
     /// Default idle-timeout (seconds) for `shell_run`, applied ONLY when the
     /// model passed no `timeout` argument. Bound by headless drivers
     /// (`AgentLoopEvaluator`) where no user [Terminate] button exists, so a

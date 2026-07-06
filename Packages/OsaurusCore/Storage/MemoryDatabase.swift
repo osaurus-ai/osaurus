@@ -2735,6 +2735,8 @@ public final class MemoryDatabase: @unchecked Sendable {
             SELECT
                 SUM(CASE WHEN status = 'pending' THEN 1 ELSE 0 END),
                 COUNT(DISTINCT CASE WHEN status = 'pending' THEN conversation_id END),
+                SUM(CASE WHEN status = 'processed' THEN 1 ELSE 0 END),
+                SUM(CASE WHEN status = 'dead_letter' THEN 1 ELSE 0 END),
                 COUNT(*)
             FROM pending_signals
             """,
@@ -2744,7 +2746,11 @@ public final class MemoryDatabase: @unchecked Sendable {
                     summary.totalSignals =
                         sqlite3_column_type(stmt, 0) == SQLITE_NULL ? 0 : Int(sqlite3_column_int(stmt, 0))
                     summary.distinctConversations = Int(sqlite3_column_int(stmt, 1))
-                    summary.allTimeSignals = Int(sqlite3_column_int(stmt, 2))
+                    summary.processedSignals =
+                        sqlite3_column_type(stmt, 2) == SQLITE_NULL ? 0 : Int(sqlite3_column_int(stmt, 2))
+                    summary.deadLetteredSignals =
+                        sqlite3_column_type(stmt, 3) == SQLITE_NULL ? 0 : Int(sqlite3_column_int(stmt, 3))
+                    summary.allTimeSignals = Int(sqlite3_column_int(stmt, 4))
                 }
             }
         )
@@ -2806,7 +2812,10 @@ public final class MemoryDatabase: @unchecked Sendable {
             """
             SELECT COUNT(*), AVG(duration_ms),
                    SUM(CASE WHEN status = 'success' THEN 1 ELSE 0 END),
-                   SUM(CASE WHEN status = 'error' THEN 1 ELSE 0 END)
+                   SUM(CASE WHEN status = 'error' THEN 1 ELSE 0 END),
+                   SUM(CASE WHEN status = 'skipped' THEN 1 ELSE 0 END),
+                   SUM(CASE WHEN status = 'empty' THEN 1 ELSE 0 END),
+                   SUM(CASE WHEN status = 'dead_letter' THEN 1 ELSE 0 END)
             FROM processing_log
             """,
             bind: { _ in },
@@ -2817,6 +2826,9 @@ public final class MemoryDatabase: @unchecked Sendable {
                         sqlite3_column_type(stmt, 1) != SQLITE_NULL ? Int(sqlite3_column_int(stmt, 1)) : 0
                     stats.successCount = Int(sqlite3_column_int(stmt, 2))
                     stats.errorCount = Int(sqlite3_column_int(stmt, 3))
+                    stats.skippedCount = Int(sqlite3_column_int(stmt, 4))
+                    stats.emptyCount = Int(sqlite3_column_int(stmt, 5))
+                    stats.deadLetterCount = Int(sqlite3_column_int(stmt, 6))
                 }
             }
         )

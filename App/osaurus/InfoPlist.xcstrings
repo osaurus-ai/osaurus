@@ -115,13 +115,13 @@
         },
         "zh-Hans" : {
           "stringUnit" : {
-            "state" : "needs_review",
+            "state" : "translated",
             "value" : "Osaurus 插件可能会使用自动化代表你控制其他应用。"
           }
         },
         "zh-Hant" : {
           "stringUnit" : {
-            "state" : "needs_review",
+            "state" : "translated",
             "value" : "Osaurus 插件可能會用自動化來代表你控制其他應用。"
           }
         }

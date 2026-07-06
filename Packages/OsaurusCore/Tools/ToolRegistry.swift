@@ -223,6 +223,7 @@ public final class ToolRegistry: ObservableObject {
             DBInsertTool(),
             DBUpsertTool(),
             DBImportTool(),
+            DBExportTool(),
             DBUpdateTool(),
             DBDeleteTool(),
             DBRestoreTool(),
@@ -405,22 +406,26 @@ public final class ToolRegistry: ObservableObject {
 
     // MARK: - External surface deny list
 
+    /// Host-mutation tool classes that must never be invocable from EXTERNAL
+    /// surfaces. Kept separate from `agentChannelToolNames` so the full deny
+    /// list below stays a derived union with a single source of truth per
+    /// tool family.
+    nonisolated static let externallyDeniedHostToolNames: Set<String> = [
+        "file_write", "file_edit", "shell_run", "git_commit", "file_undo",
+    ]
+
     /// Tool classes that must never be invocable from EXTERNAL surfaces
     /// (the HTTP `/agents/{id}/run` loop and the `/mcp/call` bridge).
     /// With a working folder open, folder tools register process-wide
     /// with policy `.auto`; an external caller — loopback skips Bearer
     /// auth entirely — could otherwise rewrite the user's files or run
-    /// arbitrary shell commands. These names refuse with a structured
-    /// envelope regardless of registration state and are hidden from
-    /// `/mcp/tools` listings.
-    nonisolated public static let externallyDeniedToolNames: Set<String> = [
-        "file_write", "file_edit", "shell_run", "git_commit", "file_undo",
-        "agent_channel_list_connections", "agent_channel_diagnostics",
-        "agent_channel_list_spaces", "agent_channel_list_rooms",
-        "agent_channel_read_messages", "agent_channel_read_thread",
-        "agent_channel_search_messages", "agent_channel_draft_message",
-        "agent_channel_send_message", "agent_channel_reply_thread",
-    ]
+    /// arbitrary shell commands. Agent-channel tools are denied as a family:
+    /// the deny list is derived from `agentChannelToolNames`, so adding a new
+    /// `agent_channel_*` tool automatically keeps it off external surfaces.
+    /// These names refuse with a structured envelope regardless of
+    /// registration state and are hidden from `/mcp/tools` listings.
+    nonisolated public static let externallyDeniedToolNames: Set<String> =
+        externallyDeniedHostToolNames.union(agentChannelToolNames)
 
     /// Subset of `externallyDeniedToolNames` that an AUTHENTICATED,
     /// folder-bounded remote agent run may use (gated on
@@ -532,8 +537,11 @@ public final class ToolRegistry: ObservableObject {
                 if ChatExecutionContext.autoApproveToolPrompts {
                     approved = true
                 } else if ChatExecutionContext.denyUnapprovedToolPrompts {
-                    // Headless eval with no UI: deny instead of hanging on an
-                    // approval card nobody can click (see task-local doc).
+                    // Headless eval / external MCP with no UI: deny instead of
+                    // hanging on an approval card nobody can click.
+                    approved = false
+                } else if ChatExecutionContext.isExternalSurface {
+                    // External MCP/HTTP callers cannot interact with GUI prompts.
                     approved = false
                 } else {
                     approved = await ToolPermissionPromptService.requestApproval(
@@ -543,10 +551,15 @@ public final class ToolRegistry: ObservableObject {
                     )
                 }
                 if !approved {
+                    let message =
+                        ChatExecutionContext.isExternalSurface
+                        || ChatExecutionContext.denyUnapprovedToolPrompts
+                        ? "Tool '\(name)' requires interactive approval in the Osaurus app. Enable auto-approve or change the tool policy to auto before calling it from an external MCP client."
+                        : "User denied execution for tool: \(name)"
                     throw NSError(
                         domain: "ToolRegistry",
                         code: 4,
-                        userInfo: [NSLocalizedDescriptionKey: "User denied execution for tool: \(name)"]
+                        userInfo: [NSLocalizedDescriptionKey: message]
                     )
                 }
             case .auto:
@@ -642,9 +655,18 @@ public final class ToolRegistry: ObservableObject {
                     retryable: true
                 ).toJSONString()
             }
+            // No "did you mean" list on purpose (names trigger invention of
+            // siblings) — but a bare dead-end leaves small models apologizing
+            // and giving up ("the tool to delete X is not available") when the
+            // REAL tool is sitting in their schema under a name they didn't
+            // guess. Point back at the ground truth they already have.
             return ToolErrorEnvelope(
                 kind: .toolNotFound,
-                reason: "Tool '\(name)' is not available in this session.",
+                reason:
+                    "Tool '\(name)' is not available in this session. Do not guess "
+                    + "tool names: use exactly the names in your tool schema and "
+                    + "instructions (check them for the tool covering this task "
+                    + "before answering that it can't be done).",
                 toolName: name
             ).toJSONString()
         }
@@ -715,26 +737,29 @@ public final class ToolRegistry: ObservableObject {
             // relying on each caller to remember. Inert outside combined
             // mode, leaving plain folder + plain sandbox modes untouched.
             let policy = combinedHostReadPolicy
+            let sandboxAgent = activeSandboxAgentName
             let result = try await ChatExecutionContext.$hostReadOnlyScope.withValue(policy.scope) {
                 try await ChatExecutionContext.$allowHostSecretReads.withValue(policy.allowSecretReads) {
                     try await ChatExecutionContext.$sandboxReadBridge.withValue(combinedSandboxReadBridge) {
-                        if tool.bypassRegistryTimeout {
+                        try await ChatExecutionContext.$sandboxAgentName.withValue(sandboxAgent) {
+                            if tool.bypassRegistryTimeout {
+                                return Self.normalizeToolResult(
+                                    try await Self.runToolBodyUntimed(
+                                        tool,
+                                        argumentsJSON: effectiveArgumentsJSON
+                                    ),
+                                    tool: name
+                                )
+                            }
                             return Self.normalizeToolResult(
-                                try await Self.runToolBodyUntimed(
+                                try await Self.runToolBody(
                                     tool,
-                                    argumentsJSON: effectiveArgumentsJSON
+                                    argumentsJSON: effectiveArgumentsJSON,
+                                    timeoutSeconds: Self.defaultToolTimeoutSeconds
                                 ),
                                 tool: name
                             )
                         }
-                        return Self.normalizeToolResult(
-                            try await Self.runToolBody(
-                                tool,
-                                argumentsJSON: effectiveArgumentsJSON,
-                                timeoutSeconds: Self.defaultToolTimeoutSeconds
-                            ),
-                            tool: name
-                        )
                     }
                 }
             }
@@ -786,6 +811,19 @@ public final class ToolRegistry: ObservableObject {
             agentName: agentName,
             home: OsaurusPaths.inContainerAgentHome(agentName)
         )
+    }
+
+    /// Sandbox agent name bound for Agent DB file tools. Same resolution
+    /// order as `combinedSandboxReadBridge`, but also set in plain sandbox
+    /// mode when only sandbox built-ins are registered.
+    private var activeSandboxAgentName: String? {
+        if let captured = activeSandboxAgentContext?.agentName { return captured }
+        if let bridge = combinedSandboxReadBridge { return bridge.agentName }
+        guard toolsByName.keys.contains("sandbox_exec")
+            || toolsByName.keys.contains("sandbox_read_file"),
+            let agentId = ChatExecutionContext.currentAgentId
+        else { return nil }
+        return SandboxAgentProvisioner.linuxName(for: agentId.uuidString)
     }
 
     /// The effective autonomous-exec config for the agent driving the
@@ -1084,6 +1122,12 @@ public final class ToolRegistry: ObservableObject {
         return toolsByName.count
     }
 
+    /// Names of all currently registered tools. Used when minting MCP tool
+    /// names so two providers with the same sanitized prefix can't collide.
+    func registeredToolNames() -> [String] {
+        Array(toolsByName.keys)
+    }
+
     /// O(1) single-tool lookup as a `ToolEntry`. Prefer this over
     /// `listTools().first(where:)` on UI/render paths: `listTools()` sorts the
     /// entire registry and rebuilds every tool's JSON schema, while this only
@@ -1310,21 +1354,32 @@ public final class ToolRegistry: ObservableObject {
     /// Register a tool from a remote MCP provider.
     /// Auto-enables the tool on first registration so it is immediately usable;
     /// subsequent registrations preserve the user's choice.
-    func registerMCPTool(_ tool: OsaurusTool) {
+    func registerMCPTool(_ tool: MCPProviderTool) {
+        let name = tool.name
+        if let existing = toolsByName[name] as? MCPProviderTool,
+            existing.providerId != tool.providerId
+        {
+            NSLog(
+                "[ToolRegistry] MCP tool name collision on '\(name)': "
+                    + "existing provider '\(existing.providerName)' (\(existing.providerId)) "
+                    + "overwritten by '\(tool.providerName)' (\(tool.providerId)). "
+                    + "Consider renaming one of the providers."
+            )
+        }
         let firstTime =
-            toolsByName[tool.name] == nil
-            && !configuration.enabled.keys.contains(tool.name)
-        toolsByName[tool.name] = tool
-        sandboxToolNames.remove(tool.name)
-        builtInSandboxToolNames.remove(tool.name)
-        pluginToolNames.remove(tool.name)
-        mcpToolNames.insert(tool.name)
+            toolsByName[name] == nil
+            && !configuration.enabled.keys.contains(name)
+        toolsByName[name] = tool
+        sandboxToolNames.remove(name)
+        builtInSandboxToolNames.remove(name)
+        pluginToolNames.remove(name)
+        mcpToolNames.insert(name)
         if firstTime {
-            setEnabled(true, for: tool.name)
+            setEnabled(true, for: name)
         }
         Task {
             await ToolIndexService.shared.onToolRegistered(
-                name: tool.name,
+                name: name,
                 description: tool.description,
                 runtime: .mcp,
                 tokenCount: Self.estimateTokenCount(tool),

@@ -181,7 +181,55 @@ struct SandboxPluginRegistrationTests {
             )
             let payload = try failurePayload(result)
             #expect(payload["kind"] as? String == "invalid_args")
-            #expect((payload["message"] as? String ?? "").contains("Invalid plugin.json"))
+            let message = payload["message"] as? String ?? ""
+            #expect(message.contains("Invalid plugin.json"))
+            // The envelope must carry the parser's detail, not the generic
+            // "isn't in the correct format" — a model can only fix its JSON
+            // when told what/where the defect is (observed live: four blind
+            // identical retries on an unescaped quote).
+            #expect(!message.contains("isn’t in the correct format"))
+            #expect(message.contains("malformed JSON"))
+        }
+    }
+
+    /// Decode-failure detail: each `DecodingError` case names the offending
+    /// key/type and coding path, and raw JSON syntax errors surface the
+    /// parser's position hint.
+    @Test
+    func decodeFailureDetail_namesTheDefect() throws {
+        struct Probe: Decodable {
+            let name: String
+            let count: Int
+        }
+        let decoder = JSONDecoder()
+
+        // Malformed JSON (unescaped quote) → parser position detail.
+        do {
+            _ = try decoder.decode(Probe.self, from: Data(#"{"name": "a "b"", "count": 1}"#.utf8))
+            Issue.record("expected decode to throw")
+        } catch {
+            let detail = SandboxPluginRegisterTool.decodeFailureDetail(error)
+            #expect(detail.contains("malformed JSON"))
+            #expect(!detail.contains("isn’t in the correct format"))
+        }
+
+        // Missing key → key name + path.
+        do {
+            _ = try decoder.decode(Probe.self, from: Data(#"{"name": "a"}"#.utf8))
+            Issue.record("expected decode to throw")
+        } catch {
+            let detail = SandboxPluginRegisterTool.decodeFailureDetail(error)
+            #expect(detail.contains("missing required key `count`"))
+        }
+
+        // Wrong type → path + expected type.
+        do {
+            _ = try decoder.decode(Probe.self, from: Data(#"{"name": "a", "count": "x"}"#.utf8))
+            Issue.record("expected decode to throw")
+        } catch {
+            let detail = SandboxPluginRegisterTool.decodeFailureDetail(error)
+            #expect(detail.contains("wrong type at count"))
+            #expect(detail.contains("Int"))
         }
     }
 

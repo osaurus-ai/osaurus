@@ -122,6 +122,14 @@ final class NativeMarkdownView: NSView {
     /// first time `redactionHighlights` becomes non-empty; reused
     /// across updates so the NSTrackingArea stays installed.
     private var hoverController: RedactionHoverController?
+    /// Active in-conversation find query (Cmd+F). Every case-insensitive
+    /// occurrence in the body text gets a translucent background. Empty =
+    /// feature inactive, zero cost.
+    private var searchHighlightQuery: String = ""
+    /// Ranges the search highlighter painted, so a query change (or clear)
+    /// removes exactly what it added — never a background the markdown
+    /// renderer itself owns (e.g. inline-code chips).
+    private var appliedSearchRanges: [NSRange] = []
     /// cancels stale loads when segment id is reused with a new URL or view is removed
     private var imageLoadTasks: [String: (UUID, Task<Void, Never>)] = [:]
     /// Per-image height constraint, updated to match the loaded image's
@@ -206,6 +214,70 @@ final class NativeMarkdownView: NSView {
                 child.setRedactionHighlights(highlights, theme: theme)
             }
         }
+    }
+
+    /// Set the active find query (Cmd+F). Repaints when the query changed
+    /// and propagates into mixed-segment children like the redaction path.
+    func setSearchHighlight(query: String, theme: any ThemeProtocol) {
+        let changed = query != searchHighlightQuery
+        searchHighlightQuery = query
+        if changed {
+            applySearchHighlightsIfNeeded(theme: theme)
+        }
+        for entry in segmentViews {
+            if let child = entry.view as? NativeMarkdownView {
+                child.setSearchHighlight(query: query, theme: theme)
+            }
+        }
+    }
+
+    /// Repaint search-match backgrounds on the current textStorage. Always
+    /// removes the previously painted ranges first so a query change or
+    /// storage rebuild can't leave stale backgrounds behind. Occurrences
+    /// that already carry a background attribute (inline-code chips) are
+    /// skipped rather than clobbered.
+    private func applySearchHighlightsIfNeeded(theme: any ThemeProtocol) {
+        guard let tv = textView, let storage = tv.textStorage else {
+            appliedSearchRanges = []
+            return
+        }
+        if !appliedSearchRanges.isEmpty {
+            storage.beginEditing()
+            for range in appliedSearchRanges where range.upperBound <= storage.length {
+                storage.removeAttribute(.backgroundColor, range: range)
+            }
+            storage.endEditing()
+            appliedSearchRanges = []
+        }
+        let query = searchHighlightQuery.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !query.isEmpty, storage.length > 0 else {
+            tv.needsDisplay = true
+            return
+        }
+        let color = NSColor(theme.accentColor).withAlphaComponent(0.3)
+        let string = storage.string as NSString
+        var searchRange = NSRange(location: 0, length: string.length)
+        storage.beginEditing()
+        while searchRange.length > 0 {
+            let found = string.range(of: query, options: [.caseInsensitive], range: searchRange)
+            if found.location == NSNotFound { break }
+            var hasExistingBackground = false
+            storage.enumerateAttribute(.backgroundColor, in: found, options: []) { value, _, stop in
+                if value != nil {
+                    hasExistingBackground = true
+                    stop.pointee = true
+                }
+            }
+            if !hasExistingBackground {
+                storage.addAttribute(.backgroundColor, value: color, range: found)
+                appliedSearchRanges.append(found)
+            }
+            let next = found.location + max(found.length, 1)
+            if next >= string.length { break }
+            searchRange = NSRange(location: next, length: string.length - next)
+        }
+        storage.endEditing()
+        tv.needsDisplay = true
     }
 
     /// Re-paint highlights on the current textStorage. Called from
@@ -298,6 +370,11 @@ final class NativeMarkdownView: NSView {
     private func resetIncrementalHighlightCursor() {
         redactionHighlightAppliedThrough = 0
         appliedHighlightRanges = []
+        // The storage was swapped wholesale — previously painted search
+        // ranges point into the old string, so removing them from the new
+        // one could strip a background the renderer owns. The fresh string
+        // carries no search backgrounds; just forget the stale ranges.
+        appliedSearchRanges = []
     }
 
     /// Localized a11y label for VoiceOver. Outbound: "Redacted before
@@ -339,6 +416,7 @@ final class NativeMarkdownView: NSView {
         }
         ChatPerfTrace.shared.count("markdown.configure.applied")
 
+        invalidateHeightMemo()
         lastWidth = width
         lastThemeFingerprint = themeFingerprint
         lastIsStreaming = isStreaming
@@ -397,6 +475,7 @@ final class NativeMarkdownView: NSView {
 
         guard textChanged || widthChanged || themeChanged || streamingChanged else { return }
 
+        invalidateHeightMemo()
         lastWidth = width
         lastThemeFingerprint = themeFingerprint
         lastIsStreaming = isStreaming
@@ -429,6 +508,7 @@ final class NativeMarkdownView: NSView {
                 tv.needsDisplay = true
             }
             applyRedactionHighlightsIfNeeded(theme: theme)
+            applySearchHighlightsIfNeeded(theme: theme)
             if isStreaming && textChanged {
                 notifyTextReveal()
             }
@@ -458,12 +538,35 @@ final class NativeMarkdownView: NSView {
         return candidates.min() ?? max(fallbackWidth, 1)
     }
 
+    /// Memoized result of the last full measurement pass. `measuredHeight` is
+    /// re-entered many times per table update (row height query, cell
+    /// configure, child height callbacks, post-layout re-measure) and each
+    /// pass runs `ensureLayout` over every text container in the subtree —
+    /// on long code-heavy replies that repeated TextKit work is the dominant
+    /// main-thread cost and can trip the app-hang watchdog. The memo is
+    /// invalidated on every content mutation and child height notification,
+    /// and keyed on both the requested width and the effective measurement
+    /// width (bounds can change without the requested width changing).
+    private var heightMemo: (paramWidth: CGFloat, contentWidth: CGFloat, height: CGFloat)?
+
+    private func invalidateHeightMemo() {
+        heightMemo = nil
+    }
+
     func measuredHeight(for width: CGFloat) -> CGFloat {
         if measurementDepth > 0 {
             return heightConstraint?.constant ?? 20
         }
         measurementDepth += 1
         defer { measurementDepth -= 1 }
+
+        let contentWidth = measurementContentWidth(fallbackWidth: width)
+        if let memo = heightMemo,
+            abs(memo.paramWidth - width) <= 0.5,
+            abs(memo.contentWidth - contentWidth) <= 0.5
+        {
+            return memo.height
+        }
 
         if let tv = textView {
             // widthTracksTextView syncs the container to the text view; before first layout, bounds can
@@ -481,6 +584,7 @@ final class NativeMarkdownView: NSView {
             let h = ceil(lm.usedRect(for: tc).height) + 8 + 4
             heightConstraint?.constant = max(h, 8)  // ensure minimum height
             invalidateIntrinsicContentSize()
+            heightMemo = (paramWidth: width, contentWidth: contentWidth, height: max(h, 8))
             return max(h, 8)
         }
 
@@ -496,6 +600,7 @@ final class NativeMarkdownView: NSView {
 
         heightConstraint?.constant = totalH
         invalidateIntrinsicContentSize()
+        heightMemo = (paramWidth: width, contentWidth: contentWidth, height: totalH)
         return totalH
     }
 
@@ -576,6 +681,7 @@ final class NativeMarkdownView: NSView {
         theme: any ThemeProtocol,
         isStreaming: Bool
     ) {
+        invalidateHeightMemo()
         removeSegmentViews()
 
         let tv = ensureTextView(width: width, theme: theme)
@@ -603,6 +709,7 @@ final class NativeMarkdownView: NSView {
                 tv.needsDisplay = true
             }
             applyRedactionHighlightsIfNeeded(theme: theme)
+            applySearchHighlightsIfNeeded(theme: theme)
             if isStreaming && textChanged {
                 notifyTextReveal()
             }
@@ -644,6 +751,7 @@ final class NativeMarkdownView: NSView {
         theme: any ThemeProtocol,
         isStreaming: Bool
     ) {
+        invalidateHeightMemo()
         removeTextView()
         lastMixedSegments = segments
 
@@ -716,6 +824,7 @@ final class NativeMarkdownView: NSView {
                     addSubview(mv)
                 }
                 mv.onHeightChanged = { [weak self] in
+                    self?.invalidateHeightMemo()
                     self?.onHeightChanged?()
                 }
                 let segIsStreaming = isStreaming && (seg.id == lastTextSegmentId)
@@ -738,6 +847,7 @@ final class NativeMarkdownView: NSView {
                     addSubview(cv)
                 }
                 cv.onHeightChanged = { [weak self] in
+                    self?.invalidateHeightMemo()
                     self?.onHeightChanged?()
                 }
                 cv.configure(code: code, language: language, width: width, theme: theme)
@@ -799,6 +909,7 @@ final class NativeMarkdownView: NSView {
                     addSubview(tv)
                 }
                 tv.onHeightChanged = { [weak self] in
+                    self?.invalidateHeightMemo()
                     self?.onHeightChanged?()
                 }
                 tv.configure(headers: headers, rows: rows, width: width, theme: theme)
@@ -1003,6 +1114,7 @@ final class NativeMarkdownView: NSView {
                     self.imageAspectRatios[segmentId] = size.width / size.height
                 }
                 self.applyImageHeight(segmentId: segmentId, width: self.lastWidth)
+                self.invalidateHeightMemo()
                 self.onHeightChanged?()
             }
         }

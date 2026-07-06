@@ -77,10 +77,13 @@ set -uo pipefail
 #                  concurrent with the local lane (remote decode is
 #                  network-bound — no GPU contention). The remote lane runs
 #                  with config storage force-isolated so it can never race the
-#                  local lane on the real ~/.osaurus chat config, and the
-#                  sandbox-VM suite is serialized across lanes with a lock
-#                  (Apple Containerization is host-global). "0" restores the
-#                  fully sequential order.
+#                  local lane on the real ~/.osaurus chat config. The
+#                  sandbox-VM suite is the one exception: it is serialized
+#                  across lanes with a lock (Apple Containerization is
+#                  host-global) and runs WITHOUT forced isolation — the host's
+#                  provisioned sandbox.json lives in the real root, and an
+#                  isolated root would read setupComplete=false and skip every
+#                  case. "0" restores the fully sequential order.
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
@@ -144,6 +147,22 @@ BIN="$(swift build --package-path "${EVALS_PKG}" --show-bin-path)/osaurus-evals"
 if [[ ! -x "${BIN}" ]]; then
   log "ERROR: osaurus-evals binary not found at ${BIN}"
   exit 2
+fi
+
+# Re-sign with the eval entitlements (com.apple.security.virtualization et
+# al). SwiftPM's ad-hoc signature carries no entitlements, so without this
+# every SandboxFrontier case skips with a vmnet "Container networking
+# failed" — the VM can't attach its NAT interface. Idempotent: skipped when
+# the current signature already carries the virtualization key (signing
+# changes the binary's code-directory hash, which would re-trigger the
+# macOS Keychain consent prompt for no reason).
+ENTITLEMENTS="${EVALS_PKG}/osaurus-evals.entitlements"
+if [[ -f "${ENTITLEMENTS}" ]] \
+  && ! codesign -d --entitlements - "${BIN}" 2>/dev/null \
+       | grep -q 'com.apple.security.virtualization'; then
+  log "Signing osaurus-evals with eval entitlements (sandbox VM support)…"
+  codesign --force --sign - --entitlements "${ENTITLEMENTS}" "${BIN}" \
+    || log "WARNING: codesign failed — SandboxFrontier cases will skip"
 fi
 
 STAMP="$(date +%Y%m%d-%H%M%S)"
@@ -332,7 +351,16 @@ run_model_lane() {
   done
   run_suites_batch "${model}" "llm-${label}" "batch" ${batch_suites[@]+"${batch_suites[@]}"}
   for s in ${vm_suites[@]+"${vm_suites[@]}"}; do
-    with_sandbox_lock run_suite "${model}" "llm-${label}" "${s}"
+    # VM suites must NOT inherit forced config isolation (the remote lane
+    # sets OSAURUS_EVALS_ISOLATE_CONFIG=1 for its whole model pass): an
+    # isolated root hides the host's provisioned sandbox.json, so
+    # setupComplete reads false and every case silently skips with
+    # "sandbox setup incomplete on this host". The sandbox VM and its
+    # provisioning config are host-global by design, and cross-lane
+    # contention is already serialized by with_sandbox_lock — the same
+    # real-root regime the local lane always used for this suite.
+    OSAURUS_EVALS_ISOLATE_CONFIG=0 with_sandbox_lock \
+      run_suite "${model}" "llm-${label}" "${s}"
   done
 }
 

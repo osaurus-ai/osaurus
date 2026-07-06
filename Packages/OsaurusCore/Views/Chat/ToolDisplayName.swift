@@ -142,6 +142,7 @@ enum ToolDisplayName {
         "db_insert": ToolLabel(L("Inserting into the database"), L("Inserted into the database")),
         "db_upsert": ToolLabel(L("Saving to the database"), L("Saved to the database")),
         "db_import": ToolLabel(L("Importing data into the database"), L("Imported data into the database")),
+        "db_export": ToolLabel(L("Exporting data from the database"), L("Exported data from the database")),
         "db_update": ToolLabel(L("Updating the database"), L("Updated the database")),
         "db_delete": ToolLabel(L("Deleting from the database"), L("Deleted from the database")),
         "db_query": ToolLabel(L("Querying the database"), L("Queried the database")),

@@ -162,19 +162,33 @@ public final class TranscriptionModeService: ObservableObject {
         Task {
             _ = await speechService.stopStreamingTranscription()
 
-            let rawText = speechService.confirmedTranscription
+            let rawText = TranscriptionTextNormalizer.combined([
+                speechService.confirmedTranscription,
+                speechService.currentTranscription,
+            ])
             speechService.clearTranscription()
 
             if !discard, !rawText.isEmpty {
-                let finalText =
+                let cleanedText =
                     SpeechConfigurationStore.load().postProcessTranscription
                     ? await TranscriptionCleanupService.shared.clean(rawText)
                     : rawText
-                keyboardService.pasteText(finalText)
+                let finalText = TranscriptionTextNormalizer.visibleText(cleanedText)
+                if finalText.isEmpty {
+                    showNoSpeechDetectedFeedback()
+                } else {
+                    keyboardService.pasteText(finalText)
+                }
+            } else if !discard {
+                showNoSpeechDetectedFeedback()
             }
 
             overlayService.hide()
-            state = .idle
+            if case .error = state {
+                // Keep the error visible in Status/Settings until the next toggle.
+            } else {
+                state = .idle
+            }
             print("[TranscriptionMode] Stopped transcription (discard: \(discard))")
         }
     }
@@ -262,19 +276,21 @@ public final class TranscriptionModeService: ObservableObject {
         else { return }
 
         // Reset the pause timer on any real voice activity.
-        let confirmedLength = speechService.confirmedTranscription.count
+        let confirmedText = TranscriptionTextNormalizer.visibleText(speechService.confirmedTranscription)
+        let currentText = TranscriptionTextNormalizer.visibleText(speechService.currentTranscription)
+        let confirmedLength = confirmedText.count
         let hasNewConfirmedText = confirmedLength > lastConfirmedLength
         if hasNewConfirmedText { lastConfirmedLength = confirmedLength }
         if speechService.isSpeechDetected || hasNewConfirmedText
-            || !speechService.currentTranscription.isEmpty
+            || !currentText.isEmpty
         {
             lastSpeechActivityTime = Date()
         }
 
         // Only auto-stop once we've actually captured something to paste.
         let hasContent =
-            !speechService.confirmedTranscription.isEmpty
-            || !speechService.currentTranscription.isEmpty
+            !confirmedText.isEmpty
+            || !currentText.isEmpty
         guard hasContent else { return }
 
         let silenceDuration = Date().timeIntervalSince(lastSpeechActivityTime)
@@ -284,6 +300,14 @@ public final class TranscriptionModeService: ObservableObject {
             )
             stopTranscription()
         }
+    }
+
+    private func showNoSpeechDetectedFeedback() {
+        state = .error(L("No speech detected"))
+        ToastManager.shared.infoLocalized(
+            "No Speech Detected",
+            message: "Nothing was inserted."
+        )
     }
 
     // MARK: - Esc Key Monitoring

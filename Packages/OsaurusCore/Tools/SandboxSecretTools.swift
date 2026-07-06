@@ -165,7 +165,23 @@ struct SandboxSecretSetTool: OsaurusTool, @unchecked Sendable {
                     retryable: false
                 )
             }
-            AgentSecretsKeychain.saveSecret(value, id: key, agentId: uuid)
+            // A failed Keychain write (locked keychain, denied ACL,
+            // keychain-free process) must surface as a failure. Reporting
+            // `stored: true` here would tell the model the secret is
+            // available as an env var when `sandbox_exec` will see nothing —
+            // observed live as a model echoing an empty variable and then
+            // confabulating the value in its final answer.
+            guard AgentSecretsKeychain.saveSecret(value, id: key, agentId: uuid) else {
+                return ToolEnvelope.failure(
+                    kind: .executionError,
+                    message:
+                        "Secret storage failed for `\(key)`: the Keychain write "
+                        + "did not succeed, so the value will NOT be available to "
+                        + "sandbox commands. Do not report the secret as stored.",
+                    tool: name,
+                    retryable: false
+                )
+            }
             return SecretToolResult.stored(key: key)
         }
 

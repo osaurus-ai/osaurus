@@ -83,16 +83,30 @@ public final class TodoTool: OsaurusTool, @unchecked Sendable {
             )
         }
 
-        let stored = await AgentTodoStore.shared.setTodo(markdown: trimmed, for: sessionId)
-        if stored.totalCount == 0 {
-            return ToolEnvelope.success(
-                tool: name,
-                text:
-                    "Todo updated, but no `- [ ]` / `- [x]` lines were found. "
-                    + "Make sure each item starts with a checkbox.",
-                warnings: ["no checklist items detected"]
+        // Zero parseable checkboxes is a CONTRACT failure, not a soft
+        // warning. The old success-with-warning path let a `- item` list
+        // (no `[ ]`) through silently: the store then held 0 items, the
+        // todo-staleness nudge could never arm (pending == 0), the UI block
+        // showed nothing, and mark-as-you-go discipline was structurally
+        // impossible for the rest of the run (observed live: a model did
+        // every step of a multi-file refactor correctly but its checkbox-less
+        // list meant no progress could ever be recorded). Reject with the
+        // exact syntax so the immediate retry lands.
+        let parsed = AgentTodo.parse(trimmed)
+        if parsed.totalCount == 0 {
+            return ToolEnvelope.failure(
+                kind: .invalidArgs,
+                message:
+                    "No checklist items found. Every item must be a line starting "
+                    + "with `- [ ]` (pending) or `- [x]` (done) — e.g. "
+                    + "\"- [x] Read config\\n- [ ] Add field\\n- [ ] Test\". "
+                    + "Re-send the full list in that format.",
+                field: "markdown",
+                expected: "markdown checklist with `- [ ]` / `- [x]` items",
+                tool: name
             )
         }
+        let stored = await AgentTodoStore.shared.setTodo(markdown: trimmed, for: sessionId)
         return ToolEnvelope.success(
             tool: name,
             text:

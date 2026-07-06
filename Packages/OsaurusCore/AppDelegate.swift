@@ -486,6 +486,10 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
         Task { @MainActor in
             guard StorageKeyManager.shared.isStorageReadyForWrites else {
                 NSLog("[Osaurus] Scheduler disabled: storage key is not already unlocked")
+                // Arm a one-shot start for when the key becomes resident,
+                // so slots persisted from a previous session still fire
+                // once the user unlocks encrypted storage.
+                NextRunScheduler.shared.startWhenStorageBecomesReady()
                 return
             }
             NextRunScheduler.shared.start()
@@ -601,6 +605,19 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
                     try? await Task.sleep(for: .seconds(1.0))
                     self?.prewarmStatusPanel()
                 }
+            }
+        }
+
+        // Start Sparkle at launch so update checks run whenever the app is
+        // open, not only when the settings window is first shown. First access
+        // instantiates the lazy updater controller, which also arms Sparkle's
+        // own 24h scheduled check cycle for long-running sessions. Delayed a
+        // few seconds so it stays clear of the busy launch window (server
+        // bind, prewarms, database opens).
+        if !keychainDisabledTestMode {
+            Task { @MainActor [weak self] in
+                try? await Task.sleep(for: .seconds(5))
+                self?.updater.checkForUpdatesInBackground()
             }
         }
     }
@@ -1802,7 +1819,12 @@ extension AppDelegate {
                 )
                 alert.alertStyle = .warning
                 alert.addButton(withTitle: "OK")
-                alert.runModal()
+                // `runModal` intentionally blocks the main run loop until the
+                // user dismisses the alert; pause the hang watchdog so the
+                // wait isn't reported as an app hang (Sentry APPLE-MACOS-VE).
+                CrashReportingService.shared.withAppHangTrackingPaused {
+                    _ = alert.runModal()
+                }
                 return
             }
 

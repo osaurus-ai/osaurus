@@ -178,6 +178,198 @@ struct MemoryManagementConsoleTests {
         #expect(health.ftsTablesReady)
     }
 
+    @Test func diagnosticsExplainBufferedButSkippedDistillation() async throws {
+        let db = try makeDB()
+        let service = MemoryManagementConsoleService()
+        try db.insertPendingSignal(
+            PendingSignal(agentId: agentId, conversationId: "blocked-memory", userMessage: "Remember this")
+        )
+        try db.insertProcessingLog(
+            agentId: agentId,
+            taskType: "distill",
+            model: "none",
+            status: "skipped",
+            details: "core_model_unset"
+        )
+
+        let health = await service.diagnoseStorage(db: db, includeVectorState: false)
+
+        #expect(health.level == .degraded)
+        #expect(health.pendingSignals.totalSignals == 1)
+        #expect(health.processingStats.skippedCount == 1)
+        #expect(health.diagnostics.contains("Turns are buffered, but distillation has only skipped so far."))
+        #expect(health.diagnostics.contains("Chat turns reached memory, but no active episode has been written yet."))
+    }
+
+    @Test func diagnosticsExplainFailedEmptyAndDeadLetteredDistillation() async throws {
+        let db = try makeDB()
+        let service = MemoryManagementConsoleService()
+        try db.insertPendingSignal(
+            PendingSignal(agentId: agentId, conversationId: "dead-memory", userMessage: "Remember this")
+        )
+        let signals = try db.loadPendingSignals(conversationId: "dead-memory")
+        _ = try db.recordDistillFailure(ids: signals.map(\.id), maxAttempts: 1)
+        try db.insertProcessingLog(
+            agentId: agentId,
+            taskType: "distill",
+            model: "test",
+            status: "error",
+            details: "model failed"
+        )
+        try db.insertProcessingLog(
+            agentId: agentId,
+            taskType: "distill",
+            model: "test",
+            status: "empty",
+            details: "no episode"
+        )
+        try db.insertProcessingLog(
+            agentId: agentId,
+            taskType: "distill",
+            model: "test",
+            status: "dead_letter",
+            details: "retry cap"
+        )
+
+        let health = await service.diagnoseStorage(db: db, includeVectorState: false)
+
+        #expect(health.level == .degraded)
+        #expect(health.pendingSignals.deadLetteredSignals == 1)
+        #expect(health.processingStats.errorCount == 1)
+        #expect(health.processingStats.emptyCount == 1)
+        #expect(health.processingStats.deadLetterCount == 1)
+        #expect(health.diagnostics.contains("Distillation recorded 1 error row(s)."))
+        #expect(health.diagnostics.contains("Distillation recorded 1 empty result row(s)."))
+        #expect(health.diagnostics.contains("Some memory signals were dead-lettered after repeated distillation failures."))
+    }
+
+    @Test func diagnosticsStayHealthyWithRecoveredErrorAndEmptyHistory() async throws {
+        let db = try makeDB()
+        let service = MemoryManagementConsoleService()
+        _ = try db.insertEpisode(
+            Episode(
+                agentId: agentId,
+                conversationId: "recovered-memory",
+                summary: "A useful fact was stored after a transient failure.",
+                conversationAt: "2026-06-18T13:00:00Z"
+            )
+        )
+        try db.insertProcessingLog(
+            agentId: agentId,
+            taskType: "distill",
+            model: "test",
+            status: "error",
+            details: "transient"
+        )
+        try db.insertProcessingLog(
+            agentId: agentId,
+            taskType: "distill",
+            model: "test",
+            status: "empty",
+            details: "not memorable"
+        )
+        try db.insertProcessingLog(
+            agentId: agentId,
+            taskType: "distill",
+            model: "test",
+            status: "success",
+            details: "recovered"
+        )
+        try db.insertPendingSignal(
+            PendingSignal(agentId: agentId, conversationId: "active-chat", userMessage: "A new in-flight turn")
+        )
+
+        let health = await service.diagnoseStorage(db: db, includeVectorState: false)
+
+        #expect(health.level == .healthy)
+        #expect(health.activeEpisodeCount == 1)
+        #expect(health.pendingSignals.totalSignals == 1)
+        #expect(health.processingStats.successCount == 1)
+        #expect(health.processingStats.errorCount == 1)
+        #expect(health.processingStats.emptyCount == 1)
+        #expect(health.diagnostics.isEmpty)
+    }
+
+    @Test func diagnosticsStayHealthyWithRecoveredDeadLetterHistory() async throws {
+        let db = try makeDB()
+        let service = MemoryManagementConsoleService()
+        try db.insertPendingSignal(
+            PendingSignal(agentId: agentId, conversationId: "recovered-dead", userMessage: "Remember this")
+        )
+        let signals = try db.loadPendingSignals(conversationId: "recovered-dead")
+        _ = try db.recordDistillFailure(ids: signals.map(\.id), maxAttempts: 1)
+        _ = try db.insertEpisode(
+            Episode(
+                agentId: agentId,
+                conversationId: "later-success",
+                summary: "Memory recovered after the retry cap.",
+                conversationAt: "2026-06-18T14:00:00Z"
+            )
+        )
+        try db.insertProcessingLog(
+            agentId: agentId,
+            taskType: "distill",
+            model: "test",
+            status: "dead_letter",
+            details: "retry cap"
+        )
+        try db.insertProcessingLog(
+            agentId: agentId,
+            taskType: "distill",
+            model: "test",
+            status: "success",
+            details: "recovered"
+        )
+        try db.insertPendingSignal(
+            PendingSignal(agentId: agentId, conversationId: "active-chat", userMessage: "A new in-flight turn")
+        )
+
+        let health = await service.diagnoseStorage(db: db, includeVectorState: false)
+
+        #expect(health.level == .healthy)
+        #expect(health.activeEpisodeCount == 1)
+        #expect(health.pendingSignals.totalSignals == 1)
+        #expect(health.pendingSignals.deadLetteredSignals == 1)
+        #expect(health.processingStats.successCount == 1)
+        #expect(health.processingStats.deadLetterCount == 1)
+        #expect(health.diagnostics.isEmpty)
+    }
+
+    @Test func diagnosticsDegradeWhenLatestFailureFollowsRecovery() async throws {
+        let db = try makeDB()
+        let service = MemoryManagementConsoleService()
+        _ = try db.insertEpisode(
+            Episode(
+                agentId: agentId,
+                conversationId: "already-working",
+                summary: "Memory was working before this failure.",
+                conversationAt: "2026-06-18T15:00:00Z"
+            )
+        )
+        try db.insertProcessingLog(
+            agentId: agentId,
+            taskType: "distill",
+            model: "test",
+            status: "success",
+            details: "worked"
+        )
+        try db.insertProcessingLog(
+            agentId: agentId,
+            taskType: "distill",
+            model: "test",
+            status: "error",
+            details: "fresh failure"
+        )
+
+        let health = await service.diagnoseStorage(db: db, includeVectorState: false)
+
+        #expect(health.level == .degraded)
+        #expect(health.activeEpisodeCount == 1)
+        #expect(health.processingStats.successCount == 1)
+        #expect(health.processingStats.errorCount == 1)
+        #expect(health.diagnostics.contains("Distillation recorded 1 error row(s)."))
+    }
+
     @Test func privacyRedactorMasksSensitiveValuesAndBoundsPreview() {
         let sensitive = """
             Email alex@example.com, phone 415-555-1212, SSN 123-45-6789,

@@ -25,6 +25,20 @@ Modes:
   fixture (default)  No secrets or provider network calls. Runs source/fixture proof.
   live               Uses disposable provider credentials from environment.
 
+Row status legend (only some statuses are execution proof):
+  pass           Executed proof (focused Swift fixture tests actually ran).
+  source         rg source-string assertion only; code exists, not executed.
+  documented     Documentation-only claim; nothing was executed.
+  provider_curl  Raw provider API curl succeeded; does NOT exercise Osaurus
+                 runtimes or agent_channel_* tools.
+  warn/skipped   Missing optional evidence or intentionally skipped.
+  fail           Required evidence missing or a check errored.
+
+Per AGENTS.md, source-only assertions are not production proof. App-surface
+Osaurus runtime proof is a separate lane: follow
+docs/CHANNEL_RELEASE_RUNBOOK_SLACK_TELEGRAM.md through the app surface
+(scripts/live-proof/launch-keychain-free-osaurus.sh).
+
 Common env:
   OSAURUS_CHANNEL_SMOKE_MODE=fixture|live
   OSAURUS_CHANNEL_SMOKE_PROVIDERS=slack,telegram
@@ -119,7 +133,7 @@ require_text() {
   local pattern="$2"
   local id="$3"
   if rg -q --fixed-strings "$pattern" "$ROOT/$file"; then
-    record "$id" pass "$file contains $pattern"
+    record "$id" source "source assertion only: $file contains $pattern (not execution proof)"
   else
     record "$id" fail "$file is missing $pattern"
   fi
@@ -198,7 +212,7 @@ run_source_assertions() {
     "source.remote_dispatch_denial_fixture"
 
   if rg -q --fixed-strings "senderAllowlist" "$ROOT/Packages/OsaurusCore/Models/Slack/SlackConnectionConfiguration.swift"; then
-    record "source.slack_sender_allowlist" pass "Slack configuration exposes sender allowlist"
+    record "source.slack_sender_allowlist" source "source assertion only: Slack configuration exposes sender allowlist"
   else
     record "source.slack_sender_allowlist" fail "Slack native config must expose sender allowlist before channel receive proof"
   fi
@@ -258,7 +272,7 @@ run_live_slack() {
     --data "")" || return
   ok="$(printf '%s' "$response" | json_ok)"
   if [[ "$ok" == "true" ]]; then
-    record "slack.auth_test" pass "Slack bot token authenticated"
+    record "slack.auth_test" provider_curl "raw curl: Slack bot token authenticated (does not exercise Osaurus runtimes)"
   else
     record "slack.auth_test" fail "Slack auth.test returned ok=false"
     return
@@ -273,7 +287,7 @@ run_live_slack() {
     --data "limit=100")" || return
   ok="$(printf '%s' "$response" | json_ok)"
   [[ "$ok" == "true" ]] \
-    && record "slack.list_rooms" pass "Slack conversations.list succeeded for disposable workspace" \
+    && record "slack.list_rooms" provider_curl "raw curl: Slack conversations.list succeeded (does not exercise agent_channel_list_rooms)" \
     || record "slack.list_rooms" fail "Slack conversations.list returned ok=false"
 
   response="$(curl_capture "slack.read_store" \
@@ -284,10 +298,10 @@ run_live_slack() {
     --data "limit=3")" || return
   ok="$(printf '%s' "$response" | json_ok)"
   [[ "$ok" == "true" ]] \
-    && record "slack.read_store" pass "Slack disposable read succeeded; native fixture/source proof covers Agent Channel store write" \
+    && record "slack.read_store" provider_curl "raw curl: Slack disposable read succeeded (does not exercise agent_channel_read_messages or the local store)" \
     || record "slack.read_store" fail "Slack conversations.history returned ok=false"
 
-  record "slack.draft_no_send" pass "draft check is local only; no Slack chat.postMessage call attempted"
+  record "slack.draft_no_send" documented "documentation only: draft check is local; no Slack chat.postMessage call attempted"
 
   if [[ "$APPROVE_SEND" == "1" && "$CONFIRM_SEND" == "true" ]]; then
     local body
@@ -299,18 +313,18 @@ run_live_slack() {
       --data "$body")" || return
     ok="$(printf '%s' "$response" | json_ok)"
     [[ "$ok" == "true" ]] \
-      && record "slack.confirmed_send" pass "Slack disposable send executed only after approval and confirm flags" \
+      && record "slack.confirmed_send" provider_curl "raw curl: Slack disposable send executed after approval flags (does not exercise agent_channel_send_message)" \
       || record "slack.confirmed_send" fail "Slack chat.postMessage returned ok=false"
   else
-    record "slack.unapproved_send_denied" pass "send skipped because approval/confirm flags were not both set"
+    record "slack.unapproved_send_denied" documented "documentation only: this script skipped the send; Osaurus confirm_send denial is proven by fixtures and the app-surface lane"
   fi
 
   if [[ -n "${OSAURUS_SLACK_DENIED_CHANNEL_ID:-}" ]]; then
-    record "slack.unauthorized_room_denial" pass "denied Slack channel ${OSAURUS_SLACK_DENIED_CHANNEL_ID} is documented for local allowlist denial; no provider read/write attempted"
+    record "slack.unauthorized_room_denial" documented "documentation only: denied Slack channel ${OSAURUS_SLACK_DENIED_CHANNEL_ID} named for the app-surface denial proof; nothing executed here"
   else
     record "slack.unauthorized_room_denial" warn "set OSAURUS_SLACK_DENIED_CHANNEL_ID to name a disposable denied channel"
   fi
-  record "slack.unauthorized_sender_denial" pass "Slack sender allowlist denial is covered by focused source fixtures; live Socket Mode sender proof needs disposable credentials"
+  record "slack.unauthorized_sender_denial" documented "documentation only: Slack sender allowlist denial is fixture-covered; live Socket Mode sender denial belongs to the app-surface lane"
 }
 
 run_live_telegram() {
@@ -323,34 +337,34 @@ run_live_telegram() {
   response="$(curl_capture "telegram.get_me" "$base/getMe")" || return
   ok="$(printf '%s' "$response" | json_ok)"
   [[ "$ok" == "true" ]] \
-    && record "telegram.get_me" pass "Telegram bot token authenticated" \
+    && record "telegram.get_me" provider_curl "raw curl: Telegram bot token authenticated (does not exercise Osaurus runtimes)" \
     || { record "telegram.get_me" fail "Telegram getMe returned ok=false"; return; }
 
   response="$(curl_capture "telegram.list_chats.read" \
     "$base/getChat?chat_id=${OSAURUS_TELEGRAM_READ_CHAT_ID}")" || return
   ok="$(printf '%s' "$response" | json_ok)"
   [[ "$ok" == "true" ]] \
-    && record "telegram.list_chats.read" pass "Telegram read chat resolved" \
+    && record "telegram.list_chats.read" provider_curl "raw curl: Telegram read chat resolved (does not exercise agent_channel_list_rooms)" \
     || record "telegram.list_chats.read" fail "Telegram getChat for read chat returned ok=false"
 
   response="$(curl_capture "telegram.list_chats.write" \
     "$base/getChat?chat_id=${OSAURUS_TELEGRAM_WRITE_CHAT_ID}")" || return
   ok="$(printf '%s' "$response" | json_ok)"
   [[ "$ok" == "true" ]] \
-    && record "telegram.list_chats.write" pass "Telegram write chat resolved" \
+    && record "telegram.list_chats.write" provider_curl "raw curl: Telegram write chat resolved (does not exercise agent_channel_list_rooms)" \
     || record "telegram.list_chats.write" fail "Telegram getChat for write chat returned ok=false"
 
   if [[ "${OSAURUS_TELEGRAM_POLL_UPDATES:-0}" == "1" ]]; then
     response="$(curl_capture "telegram.read_store" "$base/getUpdates?limit=5&timeout=0")" || return
     ok="$(printf '%s' "$response" | json_ok)"
     [[ "$ok" == "true" ]] \
-      && record "telegram.read_store" pass "Telegram long-poll returned successfully; native fixture/source proof covers Agent Channel store write" \
+      && record "telegram.read_store" provider_curl "raw curl: Telegram long-poll returned (does not exercise the Osaurus long-poll runtime or store)" \
       || record "telegram.read_store" fail "Telegram getUpdates returned ok=false"
   else
-    record "telegram.read_store" warn "set OSAURUS_TELEGRAM_POLL_UPDATES=1 for provider long-poll read evidence; fixture/source proof covers store write"
+    record "telegram.read_store" warn "set OSAURUS_TELEGRAM_POLL_UPDATES=1 for provider long-poll read evidence; Osaurus store proof belongs to the app-surface lane"
   fi
 
-  record "telegram.draft_no_send" pass "draft check is local only; no Telegram sendMessage call attempted"
+  record "telegram.draft_no_send" documented "documentation only: draft check is local; no Telegram sendMessage call attempted"
 
   if [[ "$APPROVE_SEND" == "1" && "$CONFIRM_SEND" == "true" ]]; then
     response="$(curl_capture "telegram.confirmed_send" \
@@ -359,21 +373,21 @@ run_live_telegram() {
       --data-urlencode "text=${TEST_MESSAGE}")" || return
     ok="$(printf '%s' "$response" | json_ok)"
     [[ "$ok" == "true" ]] \
-      && record "telegram.confirmed_send" pass "Telegram disposable send executed only after approval and confirm flags" \
+      && record "telegram.confirmed_send" provider_curl "raw curl: Telegram disposable send executed after approval flags (does not exercise agent_channel_send_message)" \
       || record "telegram.confirmed_send" fail "Telegram sendMessage returned ok=false"
   else
-    record "telegram.unapproved_send_denied" pass "send skipped because approval/confirm flags were not both set"
+    record "telegram.unapproved_send_denied" documented "documentation only: this script skipped the send; Osaurus confirm_send denial is proven by fixtures and the app-surface lane"
   fi
 
   if [[ -n "${OSAURUS_TELEGRAM_DENIED_CHAT_ID:-}" ]]; then
-    record "telegram.unauthorized_room_denial" pass "denied Telegram chat ${OSAURUS_TELEGRAM_DENIED_CHAT_ID} is documented for local allowlist denial; no provider read/write attempted"
+    record "telegram.unauthorized_room_denial" documented "documentation only: denied Telegram chat ${OSAURUS_TELEGRAM_DENIED_CHAT_ID} named for the app-surface denial proof; nothing executed here"
   else
     record "telegram.unauthorized_room_denial" warn "set OSAURUS_TELEGRAM_DENIED_CHAT_ID to name a disposable denied chat"
   fi
 
   if [[ -n "${OSAURUS_TELEGRAM_ALLOWED_SENDER_ID:-}" && -n "${OSAURUS_TELEGRAM_DENIED_SENDER_ID:-}" \
         && "${OSAURUS_TELEGRAM_ALLOWED_SENDER_ID}" != "${OSAURUS_TELEGRAM_DENIED_SENDER_ID}" ]]; then
-    record "telegram.unauthorized_sender_denial" pass "Telegram denied sender differs from sender allowlist and is covered by native source fixture"
+    record "telegram.unauthorized_sender_denial" documented "documentation only: distinct denied sender named for the app-surface denial proof; fixture tests cover the gate"
   else
     record "telegram.unauthorized_sender_denial" warn "set distinct OSAURUS_TELEGRAM_ALLOWED_SENDER_ID and OSAURUS_TELEGRAM_DENIED_SENDER_ID"
   fi
@@ -388,6 +402,7 @@ write_artifacts() {
     printf '  "approval": {"approve_send": "%s", "confirm_send": "%s"},\n' \
       "$(json_escape "$APPROVE_SEND")" "$(json_escape "$CONFIRM_SEND")"
     printf '  "redaction": "known Slack and Telegram token env values plus token-shaped strings are redacted",\n'
+    printf '  "status_legend": {"pass": "executed proof", "source": "source-string assertion only", "documented": "documentation-only claim", "provider_curl": "raw provider curl; not Osaurus runtime proof", "warn": "missing optional evidence", "skipped": "intentionally skipped", "fail": "required evidence missing"},\n'
     printf '  "events": [\n'
     local i
     for i in "${!events[@]}"; do
@@ -406,6 +421,9 @@ write_artifacts() {
     printf '%s\n' "- Approval flags: \`OSAURUS_CHANNEL_SMOKE_APPROVE_SEND=$APPROVE_SEND\`, \`OSAURUS_CHANNEL_SMOKE_CONFIRM_SEND=$CONFIRM_SEND\`"
     printf '%s\n' "- JSON artifact: \`$JSON_ARTIFACT\`"
     printf '%s\n\n' "- Log artifact: \`$LOG_ARTIFACT\`"
+    printf '%s\n' "Status legend: \`pass\` = executed proof; \`source\` = source-string assertion only;"
+    printf '%s\n' "\`documented\` = documentation-only claim; \`provider_curl\` = raw provider curl (not"
+    printf '%s\n\n' "Osaurus runtime proof); \`warn\`/\`skipped\` = missing or skipped optional evidence."
     printf '| Check | Status | Summary |\n'
     printf '| --- | --- | --- |\n'
     local row
@@ -441,7 +459,8 @@ else
   done
 fi
 
-record "external_mcp_denial" pass "MCP/remote dispatch denial is source-asserted; run focused core fixtures for live HTTP proof"
+record "external_mcp_denial" documented "documentation only: MCP/remote dispatch denial is source-asserted here; run focused core fixtures and the app-surface /mcp/call check for executed proof"
+record "live.app_surface_lane" info "Osaurus runtime proof (agent_channel_* tools, Socket Mode/long-poll receive, kill switch) is a separate lane: docs/CHANNEL_RELEASE_RUNBOOK_SLACK_TELEGRAM.md via scripts/live-proof/launch-keychain-free-osaurus.sh"
 write_artifacts
 
 echo "Artifacts:"

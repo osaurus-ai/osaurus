@@ -171,6 +171,59 @@ struct MCPHTTPHandlerTests {
         }
     }
 
+    @Test func externally_denied_tool_names_derive_from_agent_channel_family() {
+        // Independent literal copy: if a new agent_channel_* tool ships
+        // without updating `ToolRegistry.agentChannelToolNames`, this fails.
+        #expect(ToolRegistry.agentChannelToolNames == Set(Self.agentChannelToolNames))
+        // The external deny list is derived, so the channel family can never
+        // drift out of it.
+        #expect(ToolRegistry.agentChannelToolNames.isSubset(of: ToolRegistry.externallyDeniedToolNames))
+        #expect(
+            ToolRegistry.externallyDeniedToolNames
+                == ToolRegistry.externallyDeniedHostToolNames.union(ToolRegistry.agentChannelToolNames)
+        )
+        // Every REGISTERED agent_channel_* tool must be in the deny family.
+        let registeredChannelNames = Set(
+            ToolRegistry.shared.listTools().map(\.name).filter { $0.hasPrefix("agent_channel_") }
+        )
+        #expect(registeredChannelNames.isSubset(of: ToolRegistry.externallyDeniedToolNames))
+    }
+
+    @Test func dispatcher_layer_rebinds_external_surface_from_request_metadata() async {
+        // Non-loopback HTTP dispatch marks the request external; the
+        // dispatcher-layer binding must deny agent-channel tools even
+        // without the HTTP handler's own task-local wrapper.
+        let external = DispatchRequest(prompt: "p", source: .http, externalSurface: true)
+        let internalRequest = DispatchRequest(prompt: "p", source: .http, externalSurface: false)
+
+        #expect(BackgroundTaskManager.resolvedExternalSurface(for: external))
+        #expect(!BackgroundTaskManager.resolvedExternalSurface(for: internalRequest))
+
+        let deniedViaDispatcher = ChatExecutionContext.$isExternalSurface.withValue(
+            BackgroundTaskManager.resolvedExternalSurface(for: external)
+        ) {
+            ToolRegistry.isDeniedForCurrentSurface("agent_channel_send_message")
+        }
+        #expect(deniedViaDispatcher)
+
+        // Widen-only: a trusted-looking request cannot clear an inherited
+        // external execution context.
+        let widened = ChatExecutionContext.$isExternalSurface.withValue(true) {
+            BackgroundTaskManager.resolvedExternalSurface(for: internalRequest)
+        }
+        #expect(widened)
+
+        // Propagates into the unstructured task the dispatched run starts.
+        let inherited = await ChatExecutionContext.$isExternalSurface.withValue(
+            BackgroundTaskManager.resolvedExternalSurface(for: external)
+        ) {
+            await Task {
+                ToolRegistry.isDeniedForCurrentSurface("agent_channel_send_message")
+            }.value
+        }
+        #expect(inherited)
+    }
+
     @Test func remote_dispatch_surface_binding_denies_agent_channel_tools() {
         #expect(!HTTPHandler.shouldBindExternalSurfaceForDispatch(isLoopback: true))
         #expect(HTTPHandler.shouldBindExternalSurfaceForDispatch(isLoopback: false))
@@ -296,6 +349,44 @@ struct MCPHTTPHandlerTests {
             #expect(envelope?["ok"] as? Bool == true)
             let result = envelope?["result"] as? [String: Any]
             #expect(result?["text"] as? String == "external")
+        }
+    }
+
+    @Test func mcp_call_rejects_disabled_tool() async throws {
+        try await DynamicCatalogTestLock.shared.run {
+            let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent(
+                "osaurus-tests-\(UUID().uuidString)",
+                isDirectory: true
+            )
+            ToolConfigurationStore.overrideDirectory = tempDir
+            try? FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+
+            ToolRegistry.shared.register(EchoTool())
+            ToolRegistry.shared.setEnabled(false, for: EchoTool.nameStatic)
+            defer { ToolRegistry.shared.unregister(names: [EchoTool.nameStatic]) }
+
+            let server = try await startTestServer()
+            defer { Task { await server.shutdown() } }
+
+            var request = URLRequest(url: URL(string: "http://\(server.host):\(server.port)/mcp/call")!)
+            request.httpMethod = "POST"
+            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            request.authenticate()
+            let bodyObj: [String: Any] = [
+                "name": EchoTool.nameStatic,
+                "arguments": ["text": "hi"],
+            ]
+            request.httpBody = try JSONSerialization.data(withJSONObject: bodyObj)
+
+            let (data, resp) = try await URLSession.shared.data(for: request)
+            let status = (resp as? HTTPURLResponse)?.statusCode ?? -1
+            #expect(status == 200)
+            let json = try JSONSerialization.jsonObject(with: data) as? [String: Any]
+            let isError = (json?["isError"] as? Bool) ?? false
+            #expect(isError == true)
+            let content = (json?["content"] as? [[String: Any]])?.first
+            let text = content?["text"] as? String ?? ""
+            #expect(text.contains("disabled"))
         }
     }
 

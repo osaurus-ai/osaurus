@@ -3,6 +3,90 @@
   <channel>
     <title>Osaurus</title>
         <item>
+            <title>0.21.7</title>
+            <pubDate>Mon, 06 Jul 2026 15:32:51 +0000</pubDate>
+            <sparkle:channel>release</sparkle:channel>
+            <sparkle:version>0.21.7</sparkle:version>
+            <sparkle:shortVersionString>0.21.7</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
+            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+            <enclosure url="https://github.com/osaurus-ai/osaurus/releases/download/0.21.7/Osaurus-0.21.7.dmg" length="57194018" type="application/octet-stream" sparkle:edSignature="TdEqvkjqwMxteoyhLKeMzHz2pzeenGQofFVmilkaMIQXsAM5doVOJdSMNYpbRd7v4VN7f4obe52HS4YXhDKgBg=="/>
+            <description sparkle:format="markdown"><![CDATA[
+## What's Changed
+
+- Backfill compatibility leaderboard with previously tested models (#1868) by @tpae
+- Ornith 1.0 optimization loop: hybrid-family fix, recorded evals, community compatibility leaderboard (#1864) by @tpae
+- Improve Telegram connection diagnostics (#1856) by @mimeding
+- Cap sandbox plugin tool expansion (#1839) by @mimeding
+- Pin agent run prompt injection contract (#1836) by @mimeding
+- Add agent chat generation settings regression (#1835) by @mimeding
+- Clarify memory ingestion diagnostics (#1834) by @mimeding
+- Add support diagnostics bundle scaffold (#1829) by @mimeding
+- Discover custom external model folders (#1850) by @mimeding
+- updated chinese translations (#1858) by @ftzahao
+
+## 🚀 Features
+
+- added terminal style input history navigation with arrow keys in chat input text field (#1885) by @RaajeevChandran
+- added full text conversation search and in-chat find with Cmd+F (#1883) by @RaajeevChandran
+- added option to expand thinking while streaming (#1871) by @RaajeevChandran
+
+## 🐛 Bug Fixes
+
+- fixed plugin search matching unrelated plugins (#1880) by @RaajeevChandran
+- fixed image attachments being blocked or silently dropped for remote provider model (#1879) by @RaajeevChandran
+- fixed capabilities toggle initial render (#1878) by @RaajeevChandran
+- fixed notch overlay covering the menu bar and improved its hover/ dismiss behavior (#1874) by @RaajeevChandran
+- Repin vmlx-swift to merged main (class-killer #116 + norm #117 + Theme 3) — fixes Metal concurrency crash class (#1866) by @jjang-ai
+- fixed sentry hangs (#1867) by @RaajeevChandran
+- Fix ExternalPlugin shutdown teardown race and recurring app-side hangs (#1862) by @tpae
+- Fix self-scheduled runs not auto-starting; fresh chat per wake (#1855) by @tpae
+
+## 🧰 Maintenance
+
+- Agent DB: sandbox file paths, db\_export, and token-efficiency fixes (#1869) by @tpae
+- Harden MCP surfaces: session recovery, OAuth single-flight, stdio death detection, external-surface enforcement (#1870) by @tpae
+- Polish model catalog cards and promote Ornith Top Picks (#1860) by @tpae
+
+**Full Changelog**: https://github.com/osaurus-ai/osaurus/compare/0.21.6...0.21.7
+]]></description>
+        </item>
+        <item>
+            <title>0.21.6</title>
+            <pubDate>Sat, 04 Jul 2026 15:49:35 +0000</pubDate>
+            <sparkle:channel>release</sparkle:channel>
+            <sparkle:version>0.21.6</sparkle:version>
+            <sparkle:shortVersionString>0.21.6</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
+            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+            <enclosure url="https://github.com/osaurus-ai/osaurus/releases/download/0.21.6/Osaurus-0.21.6.dmg" length="57065184" type="application/octet-stream" sparkle:edSignature="iKSWcTLtHfM/K7Kg6XHaSFbeeKQHjYKBelwGl8rcdpXxH4ZjHiVTiMg8g0K1/DI/nN6onBYlRAW571s19nqUAw=="/>
+            <description sparkle:format="markdown"><![CDATA[
+## What's Changed
+
+- Persist user turns before chat streaming (#1851) by @mimeding
+- Handle empty voice transcriptions (#1831) by @mimeding
+- Persist user turns before chat streaming (#1830) by @mimeding
+- Update Simplified Chinese and Traditional Chinese translations (#1820) by @ftzahao
+- Redesign Agent Channels settings as the Channels tab (#1827) by @tpae
+- Fix task progress overlay menu bar placement (#1825) by @mimeding
+- Polish Slack and Telegram Agent Channels (#1808) by @mimeding
+
+## 🐛 Bug Fixes
+
+- fixed mistral remote provider reasoning support (#1847) by @RaajeevChandran
+- fixed subagent feed hang (#1832) by @RaajeevChandran
+
+## 🧰 Maintenance
+
+- Eval matrix chat-model/subsystem split, delegation cases, and outcome-based frontier rubrics (#1853) by @tpae
+- Start Sparkle update checks at app launch (#1849) by @tpae
+- Local-model harness fixes from the gemma-4-E4B loop + full-coverage 3-way matrix (#1826) by @tpae
+- Harden Slack/Telegram Agent Channels after the PR #1808 audit (#1824) by @tpae
+
+**Full Changelog**: https://github.com/osaurus-ai/osaurus/compare/0.21.5...0.21.6
+]]></description>
+        </item>
+        <item>
             <title>0.21.5</title>
             <pubDate>Fri, 03 Jul 2026 13:51:22 +0000</pubDate>
             <sparkle:channel>release</sparkle:channel>

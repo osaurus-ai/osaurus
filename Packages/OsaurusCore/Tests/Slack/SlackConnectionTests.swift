@@ -255,7 +255,7 @@ struct SlackConnectionTests {
             sessionProvider: { session }
         )
 
-        _ = try await client.conversations(token: token, limit: 10)
+        _ = try await client.conversations(token: token, limit: 10, cursor: nil)
 
         let form = SlackHTTPStubProtocol.lastRequestFormBody()
         #expect(form["limit"] == "10")
@@ -277,10 +277,13 @@ struct SlackConnectionTests {
         )
 
         do {
-            _ = try await client.messages(channelId: "C23456", token: token, limit: 1)
+            _ = try await client.messages(channelId: "C23456", token: token, limit: 1, cursor: nil)
             Issue.record("Slack request should have been rate limited")
         } catch let error as SlackAPIError {
-            #expect(error == .rateLimited("Slack rate limited this request. Retry after 7 seconds."))
+            #expect(error == .rateLimited(
+                "Slack rate limited this request. Retry after 7 seconds.",
+                retryAfter: 7
+            ))
         }
     }
 
@@ -305,12 +308,146 @@ struct SlackConnectionTests {
 
             let result = try await service.readChannel(channelId: "C23456", limit: nil)
             #expect(result["channel_id"] as? String == "C23456")
-            #expect(result["partial"] as? Bool == true)
+            #expect(result["partial"] as? Bool == false)
+            #expect(result["next_cursor"] == nil)
             let messages = try #require(result["messages"] as? [[String: Any]])
             #expect(messages.count == 2)
             #expect(messages.first?["content"] as? String == "eval reports landed")
             #expect(messages.first?["thread_id"] as? String == "C23456:1718800000.000100")
         }
+    }
+
+    @Test func readChannelFollowsCursorsToFillRequestedLimit() async throws {
+        try await withIsolatedSlackStores { credentials in
+            let fake = FakeSlackAPIClient()
+            await fake.setMessagePages(
+                [
+                    SlackMessagePage(messages: [
+                        .fixture(ts: "1718800003.000400", text: "newest"),
+                        .fixture(ts: "1718800002.000300", text: "newer"),
+                    ]),
+                    SlackMessagePage(messages: [
+                        .fixture(ts: "1718800001.000200", text: "older"),
+                        .fixture(ts: "1718800000.000100", text: "oldest"),
+                    ]),
+                ],
+                channelId: "C23456"
+            )
+            let service = SlackConnectionService(client: fake, credentialStore: credentials)
+            try service.saveBotToken("xoxb-slack-bot-token-super-secret")
+            try service.saveConfiguration(
+                SlackConnectionConfiguration(
+                    configuredTeamIds: ["T12345"],
+                    readableChannelIds: ["C23456"]
+                )
+            )
+
+            let result = try await service.readChannel(channelId: "C23456", limit: 4)
+
+            let messages = try #require(result["messages"] as? [[String: Any]])
+            #expect(messages.count == 4)
+            #expect(messages.first?["content"] as? String == "newest")
+            #expect(messages.last?["content"] as? String == "oldest")
+            #expect(result["partial"] as? Bool == false)
+            #expect(result["next_cursor"] == nil)
+            #expect(await fake.messageCursorsRequested() == [nil, "cursor-1"])
+        }
+    }
+
+    @Test func readChannelExposesContinuationCursorWhenMoreHistoryRemains() async throws {
+        try await withIsolatedSlackStores { credentials in
+            let fake = FakeSlackAPIClient()
+            await fake.setMessagePages(
+                [
+                    SlackMessagePage(messages: [
+                        .fixture(ts: "1718800003.000400", text: "newest"),
+                        .fixture(ts: "1718800002.000300", text: "newer"),
+                    ]),
+                    SlackMessagePage(messages: [
+                        .fixture(ts: "1718800001.000200", text: "older"),
+                    ]),
+                ],
+                channelId: "C23456"
+            )
+            let service = SlackConnectionService(client: fake, credentialStore: credentials)
+            try service.saveBotToken("xoxb-slack-bot-token-super-secret")
+            try service.saveConfiguration(
+                SlackConnectionConfiguration(
+                    configuredTeamIds: ["T12345"],
+                    readableChannelIds: ["C23456"]
+                )
+            )
+
+            let result = try await service.readChannel(channelId: "C23456", limit: 2)
+
+            let messages = try #require(result["messages"] as? [[String: Any]])
+            #expect(messages.count == 2)
+            #expect(result["partial"] as? Bool == true)
+            #expect(result["next_cursor"] as? String == "cursor-1")
+            #expect(await fake.messageCursorsRequested() == [nil])
+        }
+    }
+
+    @Test func listChannelsFollowsConversationCursorsAcrossPages() async throws {
+        try await withIsolatedSlackStores { credentials in
+            let fake = FakeSlackAPIClient()
+            await fake.setConversationPages([
+                [SlackConversation(id: "C11111", name: "one", isChannel: true, isMember: true)],
+                [SlackConversation(id: "C22222", name: "two", isChannel: true, isMember: true)],
+            ])
+            let service = SlackConnectionService(client: fake, credentialStore: credentials)
+            try service.saveBotToken("xoxb-slack-bot-token-super-secret")
+            try service.saveConfiguration(
+                SlackConnectionConfiguration(
+                    configuredTeamIds: ["T12345"],
+                    readableChannelIds: ["C11111"]
+                )
+            )
+
+            let rows = try await service.listChannels(teamId: "T12345")
+
+            #expect(rows.count == 2)
+            #expect(rows.compactMap { $0["id"] as? String } == ["C11111", "C22222"])
+            #expect(await fake.conversationCursorsRequested() == [nil, "cursor-1"])
+        }
+    }
+
+    @Test func apiClientSendsCursorAndParsesNextCursor() async throws {
+        let token = "xoxb-slack-bot-token-super-secret"
+        let session = SlackHTTPStubProtocol.session(
+            statusCode: 200,
+            body: #"{"ok":true,"messages":[],"has_more":true,"response_metadata":{"next_cursor":"bmV4dDoxMjM="}}"#
+        )
+        let client = SlackAPIClient(
+            baseURL: URL(string: "https://slack.test/api")!,
+            sessionProvider: { session }
+        )
+
+        let page = try await client.messages(channelId: "C23456", token: token, limit: 5, cursor: "abc123")
+
+        let form = SlackHTTPStubProtocol.lastRequestFormBody()
+        #expect(form["cursor"] == "abc123")
+        #expect(page.nextCursor == "bmV4dDoxMjM=")
+        #expect(page.hasMore)
+    }
+
+    @Test func apiClientNormalizesEmptyNextCursorToNil() async throws {
+        let token = "xoxb-slack-bot-token-super-secret"
+        let session = SlackHTTPStubProtocol.session(
+            statusCode: 200,
+            body: #"{"ok":true,"channels":[],"response_metadata":{"next_cursor":""}}"#
+        )
+        let client = SlackAPIClient(
+            baseURL: URL(string: "https://slack.test/api")!,
+            sessionProvider: { session }
+        )
+
+        let page = try await client.conversations(token: token, limit: 10, cursor: nil)
+
+        let form = SlackHTTPStubProtocol.lastRequestFormBody()
+        #expect(form["cursor"] == nil)
+        #expect(page.nextCursor == nil)
+        #expect(page.conversations.isEmpty)
     }
 
     @Test func readAndSendRecordSlackMessagesInAgentChannelStore() async throws {
@@ -860,6 +997,365 @@ struct SlackConnectionTests {
         }
     }
 
+    @Test func socketModeRuntimeStoresEnvelopeBeforeSendingAck() async throws {
+        try await withIsolatedSlackStores { credentials in
+            let store = AgentChannelMessageStore()
+            try store.openInMemory()
+            defer { store.close() }
+
+            let fake = FakeSlackAPIClient()
+            let service = SlackConnectionService(
+                client: fake,
+                credentialStore: credentials,
+                messageStore: store
+            )
+            try service.saveAppToken("xapp-slack-app-token-super-secret")
+            try service.saveConfiguration(
+                SlackConnectionConfiguration(
+                    configuredTeamIds: ["T12345"],
+                    readableChannelIds: ["C23456"],
+                    senderAllowlist: ["U55555"],
+                    botUserId: "UOSABOT",
+                    botId: "BOSABOT",
+                    apiAppId: "A12345"
+                )
+            )
+            struct AckDeliveryFailure: Error {}
+            let socket = FakeSlackSocketModeWebSocket(
+                messages: [
+                    Self.socketModeEnvelope(
+                        envelopeId: "env-ack-order",
+                        eventId: "EvACKORDER",
+                        userId: "U55555",
+                        text: "<@UOSABOT> stored before ack"
+                    ),
+                ],
+                sendError: AckDeliveryFailure()
+            )
+            let runtime = SlackSocketModeTransportRuntime(
+                service: service,
+                client: fake,
+                webSocketFactory: FakeSlackSocketModeWebSocketFactory(socket: socket)
+            )
+
+            let result = await runtime.runStep(maxMessages: 1, jitter: 0.5)
+
+            // The envelope must be persisted before the ack is attempted: an ack
+            // delivery failure surfaces as a failed step (Slack will redeliver and
+            // event-id dedupe absorbs the retry), but the message is already stored.
+            #expect(result.disposition == .failed)
+            #expect(await socket.sentTexts().isEmpty)
+            #expect(try store.messageCount(connectionId: "slack", roomId: "C23456") == 1)
+        }
+    }
+
+    @Test func socketModeRuntimeTreatsRefreshRequestedDisconnectAsCleanReconnect() async throws {
+        try await withIsolatedSlackStores { credentials in
+            let store = AgentChannelMessageStore()
+            try store.openInMemory()
+            defer { store.close() }
+
+            let fake = FakeSlackAPIClient()
+            let service = SlackConnectionService(
+                client: fake,
+                credentialStore: credentials,
+                messageStore: store
+            )
+            try service.saveAppToken("xapp-slack-app-token-super-secret")
+            try service.saveConfiguration(
+                SlackConnectionConfiguration(
+                    configuredTeamIds: ["T12345"],
+                    readableChannelIds: ["C23456"],
+                    senderAllowlist: ["U55555"],
+                    botUserId: "UOSABOT",
+                    botId: "BOSABOT",
+                    apiAppId: "A12345"
+                )
+            )
+            let socket = FakeSlackSocketModeWebSocket(messages: [
+                #"{"type":"disconnect","reason":"refresh_requested"}"#,
+            ])
+            let runtime = SlackSocketModeTransportRuntime(
+                service: service,
+                client: fake,
+                webSocketFactory: FakeSlackSocketModeWebSocketFactory(socket: socket)
+            )
+
+            let refresh = await runtime.runStep(jitter: 0.5)
+
+            // A planned refresh is routine operation, not a failure.
+            #expect(refresh.disposition == .succeeded)
+            #expect(refresh.health.status == .healthy)
+            #expect(refresh.health.severity == .info)
+            #expect(refresh.health.consecutiveFailures == 0)
+            #expect(refresh.retryDelay == 1)
+            #expect(refresh.health.summary.localizedCaseInsensitiveContains("refresh"))
+
+            // And it must not carry a failure penalty into the next step:
+            // the first real failure after a refresh gets first-failure backoff.
+            struct SocketOpenFailure: Error {}
+            await fake.failSocketOpen(SocketOpenFailure())
+            let failure = await runtime.runStep(jitter: 0.5)
+            #expect(failure.disposition == .failed)
+            #expect(failure.health.consecutiveFailures == 1)
+            #expect(failure.retryDelay == 1)
+        }
+    }
+
+    @Test func socketModeRuntimeStillFailsOnUnplannedDisconnectReasons() async throws {
+        try await withIsolatedSlackStores { credentials in
+            let store = AgentChannelMessageStore()
+            try store.openInMemory()
+            defer { store.close() }
+
+            let fake = FakeSlackAPIClient()
+            let service = SlackConnectionService(
+                client: fake,
+                credentialStore: credentials,
+                messageStore: store
+            )
+            try service.saveAppToken("xapp-slack-app-token-super-secret")
+            try service.saveConfiguration(
+                SlackConnectionConfiguration(
+                    configuredTeamIds: ["T12345"],
+                    readableChannelIds: ["C23456"],
+                    senderAllowlist: ["U55555"],
+                    botUserId: "UOSABOT",
+                    botId: "BOSABOT",
+                    apiAppId: "A12345"
+                )
+            )
+            let socket = FakeSlackSocketModeWebSocket(messages: [
+                #"{"type":"disconnect","reason":"link_disabled"}"#,
+            ])
+            let runtime = SlackSocketModeTransportRuntime(
+                service: service,
+                client: fake,
+                webSocketFactory: FakeSlackSocketModeWebSocketFactory(socket: socket)
+            )
+
+            let result = await runtime.runStep(jitter: 0.5)
+
+            #expect(result.disposition == .failed)
+            #expect(result.health.status == .failed)
+            #expect(result.health.consecutiveFailures == 1)
+        }
+    }
+
+    @Test func socketModeRuntimeHonorsSlackRetryAfterOnRateLimit() async throws {
+        try await withIsolatedSlackStores { credentials in
+            let store = AgentChannelMessageStore()
+            try store.openInMemory()
+            defer { store.close() }
+
+            let fake = FakeSlackAPIClient()
+            await fake.failSocketOpen(
+                SlackAPIError.rateLimited(
+                    "Slack rate limited this request. Retry after 45 seconds.",
+                    retryAfter: 45
+                )
+            )
+            let service = SlackConnectionService(
+                client: fake,
+                credentialStore: credentials,
+                messageStore: store
+            )
+            try service.saveAppToken("xapp-slack-app-token-super-secret")
+            try service.saveConfiguration(
+                SlackConnectionConfiguration(
+                    configuredTeamIds: ["T12345"],
+                    readableChannelIds: ["C23456"],
+                    senderAllowlist: ["U55555"],
+                    botUserId: "UOSABOT",
+                    botId: "BOSABOT",
+                    apiAppId: "A12345"
+                )
+            )
+            let runtime = SlackSocketModeTransportRuntime(
+                service: service,
+                client: fake,
+                webSocketFactory: FakeSlackSocketModeWebSocketFactory(
+                    socket: FakeSlackSocketModeWebSocket(messages: [])
+                )
+            )
+
+            let now = Date(timeIntervalSince1970: 1_800_002_000)
+            let result = await runtime.runStep(now: now, jitter: 0.5)
+
+            // First-failure backoff would be ~1s; Slack asked for 45s.
+            #expect(result.disposition == .failed)
+            #expect(result.retryDelay == 45)
+            #expect(result.health.status == .degraded)
+            #expect(result.health.severity == .warning)
+            #expect(result.health.nextRetryAt == now.addingTimeInterval(45))
+        }
+    }
+
+    @Test func socketModeRuntimeRedactsSecretsInFailureHealthDetail() async throws {
+        try await withIsolatedSlackStores { credentials in
+            let store = AgentChannelMessageStore()
+            try store.openInMemory()
+            defer { store.close() }
+
+            let botToken = "xoxb-slack-bot-token-super-secret"
+            let appToken = "xapp-slack-app-token-super-secret"
+            let fake = FakeSlackAPIClient()
+            await fake.failSocketOpen(
+                SlackAPIError.requestFailed("transport echoed \(botToken) and \(appToken)")
+            )
+            let service = SlackConnectionService(
+                client: fake,
+                credentialStore: credentials,
+                messageStore: store
+            )
+            try service.saveBotToken(botToken)
+            try service.saveAppToken(appToken)
+            try service.saveConfiguration(
+                SlackConnectionConfiguration(
+                    configuredTeamIds: ["T12345"],
+                    readableChannelIds: ["C23456"],
+                    senderAllowlist: ["U55555"],
+                    botUserId: "UOSABOT",
+                    botId: "BOSABOT",
+                    apiAppId: "A12345"
+                )
+            )
+            let runtime = SlackSocketModeTransportRuntime(
+                service: service,
+                client: fake,
+                webSocketFactory: FakeSlackSocketModeWebSocketFactory(
+                    socket: FakeSlackSocketModeWebSocket(messages: [])
+                )
+            )
+
+            let result = await runtime.runStep(jitter: 0.5)
+
+            #expect(result.disposition == .failed)
+            let detail = try #require(result.health.detail)
+            #expect(detail.contains("[REDACTED:SLACK_BOT_TOKEN]"))
+            #expect(detail.contains("[REDACTED:SLACK_APP_TOKEN]"))
+            #expect(!detail.contains(botToken))
+            #expect(!detail.contains(appToken))
+        }
+    }
+
+    @Test func socketModeRunLoopBacksOffAcrossFailuresAndRecovers() async throws {
+        try await withIsolatedSlackStores { credentials in
+            let store = AgentChannelMessageStore()
+            try store.openInMemory()
+            defer { store.close() }
+
+            struct SocketOpenFailure: Error {}
+            let fake = FakeSlackAPIClient()
+            await fake.failSocketOpen(SocketOpenFailure())
+            let service = SlackConnectionService(
+                client: fake,
+                credentialStore: credentials,
+                messageStore: store
+            )
+            try service.saveAppToken("xapp-slack-app-token-super-secret")
+            try service.saveConfiguration(
+                SlackConnectionConfiguration(
+                    configuredTeamIds: ["T12345"],
+                    readableChannelIds: ["C23456"],
+                    senderAllowlist: ["U55555"],
+                    botUserId: "UOSABOT",
+                    botId: "BOSABOT",
+                    apiAppId: "A12345"
+                )
+            )
+            let sleeper = RecordingTransportSleeper()
+            let runtime = SlackSocketModeTransportRuntime(
+                service: service,
+                client: fake,
+                webSocketFactory: FakeSlackSocketModeWebSocketFactory(
+                    socket: FakeSlackSocketModeWebSocket(messages: [])
+                ),
+                healthCenter: AgentChannelTransportHealthCenter(),
+                backoffPolicy: AgentChannelTransportBackoffPolicy(
+                    initialDelay: 1,
+                    multiplier: 2,
+                    maxDelay: 60,
+                    jitterFraction: 0
+                ),
+                sleeper: sleeper
+            )
+
+            await runtime.start(pollInterval: 1)
+            let sawFailures = await waitForTransportCondition {
+                await sleeper.recordedDelays().count >= 3
+            }
+            #expect(sawFailures)
+
+            // The loop keeps retrying on its own with exponential backoff.
+            let delays = await sleeper.recordedDelays()
+            #expect(Array(delays.prefix(3)) == [1, 2, 4])
+
+            // Once Slack accepts connections again the loop recovers without
+            // outside intervention and the failure penalty resets.
+            await fake.clearSocketOpenFailure()
+            let recovered = await waitForTransportCondition {
+                let health = await runtime.health()
+                return health.status == .healthy && health.consecutiveFailures == 0
+            }
+            #expect(recovered)
+
+            await runtime.stop()
+            let stopped = await runtime.health()
+            #expect(stopped.status == .idle)
+            #expect(stopped.isRunning == false)
+        }
+    }
+
+    @Test func socketModeStopCancelsInFlightReceiveAndReturnsPromptly() async throws {
+        try await withIsolatedSlackStores { credentials in
+            let store = AgentChannelMessageStore()
+            try store.openInMemory()
+            defer { store.close() }
+
+            let fake = FakeSlackAPIClient()
+            let service = SlackConnectionService(
+                client: fake,
+                credentialStore: credentials,
+                messageStore: store
+            )
+            try service.saveAppToken("xapp-slack-app-token-super-secret")
+            try service.saveConfiguration(
+                SlackConnectionConfiguration(
+                    configuredTeamIds: ["T12345"],
+                    readableChannelIds: ["C23456"],
+                    senderAllowlist: ["U55555"],
+                    botUserId: "UOSABOT",
+                    botId: "BOSABOT",
+                    apiAppId: "A12345"
+                )
+            )
+            let socket = HangingSlackSocketModeWebSocket()
+            let runtime = SlackSocketModeTransportRuntime(
+                service: service,
+                client: fake,
+                webSocketFactory: AnySlackSocketModeWebSocketFactory(socket: socket),
+                healthCenter: AgentChannelTransportHealthCenter(),
+                sleeper: RecordingTransportSleeper()
+            )
+
+            await runtime.start(pollInterval: 1)
+            let receiveParked = await waitForTransportCondition {
+                socket.isReceiveInFlight()
+            }
+            #expect(receiveParked)
+
+            // Stopping while a receive is parked on the socket must cancel the
+            // in-flight read instead of waiting for it to complete.
+            await runtime.stop()
+
+            #expect(socket.wasCancelled())
+            let health = await runtime.health()
+            #expect(health.status == .idle)
+            #expect(health.isRunning == false)
+        }
+    }
+
     @Test func transportSupervisorStopsSlackRuntimeWhenBotTokenIsRemoved() async {
         let runtime = SlackReceiveTransportRuntimeSpy()
         let hasBotToken = SlackTokenPresenceBox(true)
@@ -1350,8 +1846,13 @@ private actor SlackReceiveTransportRuntimeSpy: AgentChannelReceiveTransportRunti
 private actor FakeSlackAPIClient: SlackAPIClientProtocol {
     private var authFailureMessage: String?
     private var messagesByChannel: [String: [SlackMessage]] = [:]
+    private var messagePagesByChannel: [String: [SlackMessagePage]] = [:]
+    private var conversationPages: [[SlackConversation]]?
     private var sentMessages: [(channelId: String, content: String, threadTs: String?)] = []
     private var openedAppToken: String?
+    private var socketOpenError: (any Error)?
+    private var requestedMessageCursors: [String?] = []
+    private var requestedConversationCursors: [String?] = []
 
     func setAuthFailureEchoingSecrets(botToken: String, signingSecret: String, appToken: String) {
         authFailureMessage = """
@@ -1359,8 +1860,45 @@ private actor FakeSlackAPIClient: SlackAPIClientProtocol {
         """
     }
 
+    func failSocketOpen(_ error: any Error) {
+        socketOpenError = error
+    }
+
+    func clearSocketOpenFailure() {
+        socketOpenError = nil
+    }
+
     func setMessages(_ messagesByChannel: [String: [SlackMessage]]) {
         self.messagesByChannel = messagesByChannel
+    }
+
+    /// Configure explicit cursor-linked message pages for a channel.
+    func setMessagePages(_ pages: [SlackMessagePage], channelId: String) {
+        messagePagesByChannel[channelId] = pages
+    }
+
+    /// Configure explicit cursor-linked conversation pages.
+    func setConversationPages(_ pages: [[SlackConversation]]) {
+        conversationPages = pages
+    }
+
+    func messageCursorsRequested() -> [String?] {
+        requestedMessageCursors
+    }
+
+    func conversationCursorsRequested() -> [String?] {
+        requestedConversationCursors
+    }
+
+    private static func pageIndex(for cursor: String?) -> Int {
+        guard let cursor, let index = Int(cursor.replacingOccurrences(of: "cursor-", with: "")) else {
+            return 0
+        }
+        return index
+    }
+
+    private static func cursor(forNextPageAfter index: Int, pageCount: Int) -> String? {
+        index + 1 < pageCount ? "cursor-\(index + 1)" : nil
     }
 
     func sentMessageCount() -> Int {
@@ -1391,6 +1929,9 @@ private actor FakeSlackAPIClient: SlackAPIClientProtocol {
 
     func openSocketModeConnection(appToken: String) async throws -> URL {
         openedAppToken = appToken
+        if let socketOpenError {
+            throw socketOpenError
+        }
         return URL(string: "wss://socket-mode.slack.test/link")!
     }
 
@@ -1398,39 +1939,70 @@ private actor FakeSlackAPIClient: SlackAPIClientProtocol {
         openedAppToken
     }
 
-    func conversations(token: String, limit: Int) async throws -> [SlackConversation] {
-        [
-            SlackConversation(
-                id: "C23456",
-                name: "dev",
-                isChannel: true,
-                isGroup: false,
-                isIM: false,
-                isMPIM: false,
-                isPrivate: false,
-                isArchived: false,
-                isMember: true
-            ),
-            SlackConversation(
-                id: "C34567",
-                name: "maintainers",
-                isChannel: true,
-                isGroup: false,
-                isIM: false,
-                isMPIM: false,
-                isPrivate: false,
-                isArchived: false,
-                isMember: true
-            ),
+    func conversations(token: String, limit: Int, cursor: String?) async throws -> SlackConversationPage {
+        requestedConversationCursors.append(cursor)
+        let pages = conversationPages ?? [
+            [
+                SlackConversation(
+                    id: "C23456",
+                    name: "dev",
+                    isChannel: true,
+                    isGroup: false,
+                    isIM: false,
+                    isMPIM: false,
+                    isPrivate: false,
+                    isArchived: false,
+                    isMember: true
+                ),
+                SlackConversation(
+                    id: "C34567",
+                    name: "maintainers",
+                    isChannel: true,
+                    isGroup: false,
+                    isIM: false,
+                    isMPIM: false,
+                    isPrivate: false,
+                    isArchived: false,
+                    isMember: true
+                ),
+            ]
         ]
+        let index = min(Self.pageIndex(for: cursor), pages.count - 1)
+        return SlackConversationPage(
+            conversations: pages[index],
+            nextCursor: Self.cursor(forNextPageAfter: index, pageCount: pages.count)
+        )
     }
 
-    func messages(channelId: String, token: String, limit: Int) async throws -> [SlackMessage] {
-        Array((messagesByChannel[channelId] ?? []).prefix(limit))
+    func messages(channelId: String, token: String, limit: Int, cursor: String?) async throws -> SlackMessagePage {
+        requestedMessageCursors.append(cursor)
+        if let pages = messagePagesByChannel[channelId], !pages.isEmpty {
+            let index = min(Self.pageIndex(for: cursor), pages.count - 1)
+            let page = pages[index]
+            let syntheticCursor = Self.cursor(forNextPageAfter: index, pageCount: pages.count)
+            return SlackMessagePage(
+                messages: Array(page.messages.prefix(limit)),
+                hasMore: page.hasMore || syntheticCursor != nil,
+                nextCursor: page.nextCursor ?? syntheticCursor
+            )
+        }
+        return SlackMessagePage(messages: Array((messagesByChannel[channelId] ?? []).prefix(limit)))
     }
 
-    func threadMessages(channelId: String, threadTs: String, token: String, limit: Int) async throws -> [SlackMessage] {
-        Array((messagesByChannel[channelId] ?? []).filter { ($0.threadTs ?? $0.ts) == threadTs }.prefix(limit))
+    func threadMessages(
+        channelId: String,
+        threadTs: String,
+        token: String,
+        limit: Int,
+        cursor: String?
+    ) async throws -> SlackMessagePage {
+        SlackMessagePage(
+            messages: Array(
+                (messagesByChannel[channelId] ?? [])
+                    .filter { ($0.threadTs ?? $0.ts) == threadTs }
+                    .prefix(limit)
+            )
+        )
     }
 
     func sendMessage(_ request: SlackOutboundMessageRequest, token: String) async throws -> SlackMessage {
@@ -1460,9 +2032,11 @@ private final class FakeSlackSocketModeWebSocket: SlackSocketModeWebSocket, @unc
     private var messages: [String]
     private var sent: [String] = []
     private var cancelled = false
+    private let sendError: (any Error)?
 
-    init(messages: [String]) {
+    init(messages: [String], sendError: (any Error)? = nil) {
         self.messages = messages
+        self.sendError = sendError
     }
 
     func receiveText() async throws -> String {
@@ -1478,6 +2052,9 @@ private final class FakeSlackSocketModeWebSocket: SlackSocketModeWebSocket, @unc
     }
 
     func sendText(_ text: String) async throws {
+        if let sendError {
+            throw sendError
+        }
         lock.withLock {
             sent.append(text)
         }
@@ -1622,4 +2199,88 @@ private extension SlackMessage {
             replyCount: nil
         )
     }
+}
+
+/// Records requested sleep durations and returns immediately so run-loop tests
+/// can observe backoff decisions without waiting in real time. Shared with the
+/// Telegram transport tests.
+final class RecordingTransportSleeper: AgentChannelTransportSleeping, @unchecked Sendable {
+    private let lock = NSLock()
+    private var delays: [TimeInterval] = []
+
+    func sleep(for duration: TimeInterval) async throws {
+        lock.withLock { delays.append(duration) }
+        try Task.checkCancellation()
+        await Task.yield()
+    }
+
+    func recordedDelays() -> [TimeInterval] {
+        lock.withLock { delays }
+    }
+}
+
+/// A socket whose receive parks until `cancel()` is called, mimicking a real
+/// WebSocket waiting for Slack traffic.
+private final class HangingSlackSocketModeWebSocket: SlackSocketModeWebSocket, @unchecked Sendable {
+    private let lock = NSLock()
+    private var continuation: CheckedContinuation<String, any Error>?
+    private var cancelled = false
+
+    func receiveText() async throws -> String {
+        try await withCheckedThrowingContinuation { cont in
+            let resumeImmediately: Bool = lock.withLock {
+                if cancelled { return true }
+                continuation = cont
+                return false
+            }
+            if resumeImmediately {
+                cont.resume(throwing: CancellationError())
+            }
+        }
+    }
+
+    func sendText(_ text: String) async throws {}
+
+    func cancel() {
+        let held: CheckedContinuation<String, any Error>? = lock.withLock {
+            cancelled = true
+            let current = continuation
+            continuation = nil
+            return current
+        }
+        held?.resume(throwing: URLError(.cancelled))
+    }
+
+    func isReceiveInFlight() -> Bool {
+        lock.withLock { continuation != nil }
+    }
+
+    func wasCancelled() -> Bool {
+        lock.withLock { cancelled }
+    }
+}
+
+private final class AnySlackSocketModeWebSocketFactory: SlackSocketModeWebSocketFactory, @unchecked Sendable {
+    private let socket: any SlackSocketModeWebSocket
+
+    init(socket: any SlackSocketModeWebSocket) {
+        self.socket = socket
+    }
+
+    func connect(to url: URL) -> any SlackSocketModeWebSocket {
+        socket
+    }
+}
+
+/// Polls an async condition until it holds or a wall-clock timeout expires.
+func waitForTransportCondition(
+    timeoutSeconds: TimeInterval = 10,
+    _ condition: () async -> Bool
+) async -> Bool {
+    let deadline = Date().addingTimeInterval(timeoutSeconds)
+    while Date() < deadline {
+        if await condition() { return true }
+        try? await Task.sleep(nanoseconds: 5_000_000)
+    }
+    return await condition()
 }

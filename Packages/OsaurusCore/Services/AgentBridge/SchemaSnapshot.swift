@@ -150,7 +150,8 @@ public enum SchemaSnapshot {
 
         lines.append("System columns on every user table: _created_at, _updated_at, _deleted_at.")
         lines.append(
-            "Queries via db.query() auto-filter `_deleted_at IS NULL` unless you pass include_deleted=true."
+            "Soft-deleted rows have a non-null `_deleted_at`. Typed tools hide them by default; "
+            + "add `_deleted_at IS NULL` in your `db_query` SQL when you want the same filter."
         )
         return lines.joined(separator: "\n")
     }

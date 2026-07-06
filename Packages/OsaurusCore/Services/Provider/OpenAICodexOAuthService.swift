@@ -463,6 +463,8 @@ public enum OpenAICodexOAuthService {
             return .authorizationCallbackRejected(detail.isEmpty ? "OAuth provider returned an error" : detail)
         case .invalidCallback:
             return .authorizationCallbackFailed("invalid callback path or request")
+        case .callbackTimeout:
+            return .authorizationCallbackFailed("timed out waiting for browser callback")
         }
     }
 }

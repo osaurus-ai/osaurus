@@ -55,6 +55,7 @@ public final class NextRunScheduler {
 
     private var tickerTask: Task<Void, Never>?
     private var earlyWakeContinuation: CheckedContinuation<Void, Never>?
+    private var storageUnlockObserver: NSObjectProtocol?
 
     /// `(agent_id, trigger_kind) -> last dispatch wall time`. Used for
     /// coalescing. Lives in-process; not persisted because spec defines
@@ -94,19 +95,65 @@ public final class NextRunScheduler {
         print("[Osaurus] NextRunScheduler started")
     }
 
+    /// Arm a one-shot start for when the storage key becomes resident.
+    /// Called from the app-delegate launch path when the storage gate
+    /// fails (opt-in encryption, key not yet unlocked): the scheduler
+    /// can't open `scheduler.sqlite` without the key, but must come up
+    /// as soon as some other subsystem unlocks it — otherwise slots
+    /// persisted from a previous session sit due forever.
+    public func startWhenStorageBecomesReady() {
+        guard tickerTask == nil, storageUnlockObserver == nil else { return }
+        storageUnlockObserver = NotificationCenter.default.addObserver(
+            forName: StorageKeyManager.storageKeyDidBecomeResident,
+            object: nil,
+            queue: .main
+        ) { _ in
+            Task { @MainActor in
+                NextRunScheduler.shared.handleStorageUnlocked()
+            }
+        }
+    }
+
+    private func handleStorageUnlocked() {
+        removeStorageUnlockObserver()
+        start()
+    }
+
+    private func removeStorageUnlockObserver() {
+        guard let observer = storageUnlockObserver else { return }
+        NotificationCenter.default.removeObserver(observer)
+        storageUnlockObserver = nil
+    }
+
     /// Stop the loop. Used by tests and (theoretically) the in-process
     /// dispatcher shutdown.
     public func stop() {
         tickerTask?.cancel()
         tickerTask = nil
+        removeStorageUnlockObserver()
         fireEarlyWake()
     }
+
+    /// True while the dispatch loop is alive. The Next Run panel uses this
+    /// to warn when a due row can't fire because the loop never started
+    /// (e.g. encrypted storage was still locked at launch).
+    public var isRunning: Bool { tickerTask != nil }
 
     /// Wake the loop early — call this from `LocalAgentBridge`
     /// `scheduleNextRun` / `cancelNextRun` so the next sleep cycle picks
     /// up the new row immediately rather than waiting for the 60s
     /// fallback. Safe to call when the loop is asleep, awake, or stopped.
+    ///
+    /// If the loop was never started (the launch-time storage gate failed)
+    /// but storage is ready now, start it lazily: the caller just wrote a
+    /// row to the (possibly encrypted) scheduler DB, so the key must be
+    /// resident. Without this, a slot scheduled mid-session would sit due
+    /// forever showing "Now" until a manual Run now.
     public func notifyRowChanged() {
+        if tickerTask == nil, StorageKeyManager.shared.isStorageReadyForWrites {
+            start()
+            return
+        }
         fireEarlyWake()
     }
 
@@ -213,20 +260,20 @@ public final class NextRunScheduler {
             source: "scheduler/NextRun"
         ) {
             print("[NextRunScheduler] dispatch skipped: \(rejection.message)")
+            // The slot was already cleared; leave a cancelled row so the
+            // Activity tab shows why the wake never produced a session.
+            await recordSkippedRun(entry: entry, reason: "builtin-agent-rejected")
             return
         }
 
-        let request = DispatchRequest(
-            prompt: entry.instructions,
-            agentId: entry.agentId,
-            title: "Self-scheduled run",
-            source: .selfSchedule,
-            externalSessionKey: entry.agentId.uuidString
-        )
+        let request = await Self.makeDispatchRequest(for: entry)
         guard let handle = await TaskDispatcher.shared.dispatch(request) else {
             print(
                 "[NextRunScheduler] dispatch failed for agent \(entry.agentId.uuidString.prefix(8))"
             )
+            // The slot was cleared before dispatch; without this row the
+            // run would vanish without a trace (e.g. concurrency limit hit).
+            await recordSkippedRun(entry: entry, reason: "dispatch-failed")
             return
         }
         // Fire-and-forget the await — we don't need to block the
@@ -235,6 +282,95 @@ public final class NextRunScheduler {
         // existing run-hook in Phase 1.
         Task.detached {
             _ = await TaskDispatcher.shared.awaitCompletion(handle)
+        }
+    }
+
+    // MARK: - Dispatch request composition
+    //
+    // Every self-scheduled wake runs in a FRESH chat session
+    // (`externalSessionKey: nil`, so `BackgroundTaskManager` never
+    // reattaches to a prior `.selfSchedule` session). Continuity across
+    // wakes is the agent's job via `schedule_next_run` instructions and
+    // its agent DB — accreting every run into one shared chat grew the
+    // context window without bound. Because the fresh chat has no prior
+    // turns, the prompt carries a preamble explaining why the run exists.
+    // Shared with `NextRunPanelView.runNow` so manual and automatic wakes
+    // produce identical sessions.
+
+    /// Build the dispatch request for a wake, including the previous-run
+    /// pointer looked up from `agent_runs`.
+    public static func makeDispatchRequest(for entry: NextRunEntry) async -> DispatchRequest {
+        let previousRun = await latestCompletedRun(for: entry.agentId)
+        return DispatchRequest(
+            prompt: composeDispatchPrompt(entry: entry, previousRun: previousRun),
+            agentId: entry.agentId,
+            title: sessionTitle(for: entry),
+            source: .selfSchedule,
+            externalSessionKey: nil
+        )
+    }
+
+    /// Most recent `agent_runs` row that reached a terminal state, used
+    /// as the previous-run pointer in the fresh-chat preamble.
+    public static func latestCompletedRun(for agentId: UUID) async -> AgentRunRecord? {
+        await Task.detached(priority: .utility) { () -> AgentRunRecord? in
+            do {
+                try SchedulerDatabase.shared.open()
+                let recent = try SchedulerDatabase.shared.runs(agentId: agentId, limit: 8)
+                return recent.first { $0.endedAt != nil }
+            } catch {
+                return nil
+            }
+        }.value
+    }
+
+    /// Prompt preamble + verbatim instructions for a self-scheduled wake.
+    public static func composeDispatchPrompt(
+        entry: NextRunEntry,
+        previousRun: AgentRunRecord?
+    ) -> String {
+        var lines: [String] = [
+            "[Self-scheduled run] This chat was started automatically for a "
+                + "scheduled wake. It is a fresh session with no prior "
+                + "conversation context.",
+            "Scheduled by: \(entry.scheduledBy.rawValue), "
+                + "for \(promptTimestamp(entry.scheduledAt)).",
+        ]
+        if let previousRun, let ended = previousRun.endedAt {
+            lines.append(
+                "Your previous run \(statusPhrase(previousRun.status)) at "
+                    + "\(promptTimestamp(ended)). Consult your agent database "
+                    + "or notes for any state you saved."
+            )
+        }
+        lines.append("")
+        lines.append("Instructions for this run:")
+        lines.append(entry.instructions)
+        return lines.joined(separator: "\n")
+    }
+
+    /// Session title for a self-scheduled wake, e.g.
+    /// "Self-scheduled run — Jul 4, 2:42 PM".
+    public static func sessionTitle(for entry: NextRunEntry) -> String {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "MMM d, h:mm a"
+        return "Self-scheduled run — \(formatter.string(from: entry.scheduledAt))"
+    }
+
+    private static func promptTimestamp(_ date: Date) -> String {
+        let formatter = DateFormatter()
+        formatter.dateStyle = .medium
+        formatter.timeStyle = .short
+        return formatter.string(from: date)
+    }
+
+    private static func statusPhrase(_ status: AgentRunStatus) -> String {
+        switch status {
+        case .success: return "completed"
+        case .error: return "failed"
+        case .cancelled: return "was cancelled"
+        case .clamped: return "was clamped"
+        case .running: return "was still running"
         }
     }
 

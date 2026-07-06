@@ -106,6 +106,10 @@ struct MessageTableRepresentable: NSViewRepresentable {
     /// scrubbed anything in this window yet.
     var sessionRedactions: [String: String] = [:]
 
+    /// Active in-conversation find query (Cmd+F); empty when the find bar is
+    /// closed. Threaded into every cell so match occurrences are highlighted.
+    var searchHighlightQuery: String = ""
+
     // MARK: - NSViewRepresentable Lifecycle
 
     func makeCoordinator() -> Coordinator { Coordinator() }
@@ -233,6 +237,7 @@ struct MessageTableRepresentable: NSViewRepresentable {
             onUserImagePreview: onUserImagePreview,
             onDocumentPreview: onDocumentPreview,
             sessionRedactions: sessionRedactions,
+            searchHighlightQuery: searchHighlightQuery,
             hasChartBeenDrawn: { [weak coordinator] id in
                 coordinator?.drawnChartBlockIds.contains(id) ?? false
             },
@@ -277,7 +282,8 @@ struct MessageTableRepresentable: NSViewRepresentable {
             onSpeak: onSpeak,
             onUserImagePreview: onUserImagePreview,
             onDocumentPreview: onDocumentPreview,
-            sessionRedactions: sessionRedactions
+            sessionRedactions: sessionRedactions,
+            searchHighlightQuery: searchHighlightQuery
         )
     }
 
@@ -667,6 +673,7 @@ extension MessageTableRepresentable {
             let widthChanged = abs(ctx.width - context.width) > 1.0
             let expandedIdsChanged = context.expandedIds != ctx.expandedIds
             let previousEditingTurnId = ctx.editingTurnId
+            let previousSearchHighlightQuery = ctx.searchHighlightQuery
             let previousStreaming = ctx.isStreaming
             let previousLastAssistantTurnId = ctx.lastAssistantTurnId
             // NSView backed cells snapshot the theme
@@ -692,6 +699,13 @@ extension MessageTableRepresentable {
             if context.editingTurnId != previousEditingTurnId {
                 reconfigureCellsForTurn(previousEditingTurnId)
                 reconfigureCellsForTurn(context.editingTurnId)
+            }
+
+            // Find-highlight query also lives in the context, not the blocks.
+            // Repaint every materialized cell when it changes so matches
+            // highlight (and un-highlight on close) immediately.
+            if context.searchHighlightQuery != previousSearchHighlightQuery {
+                reconfigureAllCellsFromLookup(blockLookup)
             }
 
             let newIds = blocks.map(\.id)

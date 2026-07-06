@@ -39,8 +39,23 @@ enum ChatSessionStore {
         return recovered
     }
 
+    /// Session ids whose message bodies contain `text` (case-insensitive
+    /// substring). Backs the sidebar's full-text search; returns an empty set
+    /// for a blank query or while the database is deferred/closed. The scan
+    /// itself runs off the main actor so typing in the search field never
+    /// blocks on the database's serial queue.
+    static func sessionIds(withContentContaining text: String) async -> Set<UUID> {
+        ensureOpen()
+        guard didOpen else { return [] }
+        let db = ChatHistoryDatabase.shared
+        return await Task.detached(priority: .userInitiated) {
+            db.sessionIds(withContentContaining: text)
+        }.value
+    }
+
     /// Save a session (creates or updates)
     static func save(_ session: ChatSessionData) {
+        guard !pendingDeletes.contains(session.id) else { return }
         ensureOpen()
         // When the chat-history DB is deferred (storage key not yet resident or
         // a key rotation is in flight), `ensureOpen()` leaves `didOpen` false.
@@ -62,17 +77,21 @@ enum ChatSessionStore {
     /// open yet. Keyed by id so repeated saves of the same session collapse to
     /// the latest snapshot. Drained by `flushPendingSaves()`.
     private static var pendingSaves: [UUID: ChatSessionData] = [:]
+    private static var pendingDeletes: Set<UUID> = []
 
     /// Re-attempt any saves that were deferred while the chat-history DB was
     /// closed. Call when storage becomes ready (e.g. on the rotation-complete
     /// notification). No-op when nothing is pending or the DB is still deferred.
     static func flushPendingSaves() {
-        guard !pendingSaves.isEmpty else { return }
+        guard !pendingSaves.isEmpty || !pendingDeletes.isEmpty else { return }
         ensureOpen()
         guard didOpen else { return }
+        flushPendingDeletes()
+        guard !pendingSaves.isEmpty else { return }
         let drained = pendingSaves
         pendingSaves.removeAll()
         for (id, session) in drained {
+            guard !pendingDeletes.contains(id) else { continue }
             do {
                 try ChatHistoryDatabase.shared.saveSession(session)
             } catch {
@@ -86,12 +105,40 @@ enum ChatSessionStore {
     /// Delete a session by ID. Also removes the session's artifacts dir
     /// on disk (best-effort) so old shared artifacts don't accumulate.
     static func delete(id: UUID) {
+        pendingSaves.removeValue(forKey: id)
         ensureOpen()
+        guard didOpen else {
+            pendingDeletes.insert(id)
+            removeArtifacts(for: id)
+            return
+        }
         do {
             try ChatHistoryDatabase.shared.deleteSession(id: id)
+            pendingDeletes.remove(id)
         } catch {
+            pendingDeletes.insert(id)
             print("[ChatSessionStore] Failed to delete session \(id): \(error)")
         }
+        removeArtifacts(for: id)
+    }
+
+    private static func flushPendingDeletes() {
+        guard !pendingDeletes.isEmpty else { return }
+        let drained = pendingDeletes
+        pendingDeletes.removeAll()
+        for id in drained {
+            do {
+                try ChatHistoryDatabase.shared.deleteSession(id: id)
+            } catch {
+                pendingDeletes.insert(id)
+                print("[ChatSessionStore] Failed to flush deferred delete \(id): \(error)")
+                continue
+            }
+            removeArtifacts(for: id)
+        }
+    }
+
+    private static func removeArtifacts(for id: UUID) {
         let artifactsDir = OsaurusPaths.contextArtifactsDir(contextId: id.uuidString)
         try? FileManager.default.removeItem(at: artifactsDir)
     }
@@ -214,6 +261,7 @@ enum ChatSessionStore {
         static func _resetForTesting() {
             didOpen = false
             pendingSaves.removeAll()
+            pendingDeletes.removeAll()
             ChatHistoryDatabase.shared.close()
         }
 
@@ -227,6 +275,12 @@ enum ChatSessionStore {
             pendingSaves[session.id] = session
         }
 
+        static func _enqueuePendingDeleteForTesting(_ id: UUID) {
+            pendingSaves.removeValue(forKey: id)
+            pendingDeletes.insert(id)
+        }
+
         static var _pendingSaveCountForTesting: Int { pendingSaves.count }
+        static var _pendingDeleteCountForTesting: Int { pendingDeletes.count }
     #endif
 }

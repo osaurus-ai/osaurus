@@ -658,8 +658,16 @@ struct RuntimePolicySourceTests {
         // plus the orphan tool-call closer strip (vmlx-swift#115) that
         // removes stray `</parameter></function></zyphra_tool_call>`
         // closer runs from the visible stream in ZAYA / Gemma-4
-        // AppleScript agent-loop rows.
-        let expectedRuntimeHardenedRevision = "8dffa0a8e69d7617d68f0843635158684120a3dc"
+        // AppleScript agent-loop rows,
+        // plus the GPU-stream-driver serialization (vmlx-swift#116) that
+        // re-locks eval/asyncEval/item + synchronize/clearCache to kill the
+        // Metal concurrent-encoder crash class (Sentry: end_encoding,
+        // "encoder already encoding", addCompletedHandler-after-commit,
+        // set_input_array double-free), and the NormConventionResolver
+        // fallback (vmlx-swift#117) so an unrecognized norm_convention
+        // declaration defers to the order-independent vote instead of
+        // silently disabling the (1+weight) RMSNorm shift.
+        let expectedRuntimeHardenedRevision = "53840914f693e9e1305fbbacb1ecc8e5c1e9625f"
         let manifestRevision = try Self.vmlxPinRevision(in: manifest)
         let workspaceRevision = try Self.vmlxPinRevision(in: workspaceResolved)
         let appRevision = try Self.vmlxPinRevision(in: appResolved)
@@ -2432,6 +2440,43 @@ struct RuntimePolicySourceTests {
                     ".sandbox: SandboxPluginLibrary.shared.plugins.count + builtInSandboxToolEntries.count"
                 ),
             "Tools tab badges must count the runtime rows they render so Settings cannot show 0 while chat has folder/sandbox tools."
+        )
+    }
+
+    @Test("Tools settings caps expanded tool groups to avoid eager scroll layout")
+    func toolsSettingsCapsExpandedToolGroups() throws {
+        let toolsView = try Self.source("Views/Plugin/ToolsManagerView.swift")
+
+        #expect(
+            toolsView.contains("let toolGroupRenderCapValue = 20"),
+            "Tools settings must keep a shared per-group render cap so large plugin/provider catalogs do not eagerly lay out every row while scrolling."
+        )
+        #expect(
+            toolsView.contains("private func cappedGroup<Row: View>"),
+            "Flat built-in/runtime tool groups should use the shared capped renderer."
+        )
+        #expect(
+            toolsView.contains("private var visibleTools: [ToolRegistry.ToolEntry]")
+                && toolsView.contains("ShowAllToolsButton("),
+            "Plugin and remote provider cards should cap expanded rows and expose an explicit show-all control."
+        )
+
+        let sandboxCardStart = try #require(toolsView.range(of: "private struct SandboxPluginToolCard"))
+        let hoverBackgroundStart = try #require(
+            toolsView.range(
+                of: "private struct HoverableCardBackground",
+                range: sandboxCardStart.upperBound ..< toolsView.endIndex
+            )
+        )
+        let sandboxCard = String(toolsView[sandboxCardStart.lowerBound ..< hoverBackgroundStart.lowerBound])
+
+        #expect(
+            sandboxCard.contains("@State private var showAllTools = false")
+                && sandboxCard.contains("private var visibleToolSpecs: [SandboxToolSpec]")
+                && sandboxCard.contains("toolGroupRenderCapValue")
+                && sandboxCard.contains("ForEach(visibleToolSpecs, id: \\.id)")
+                && sandboxCard.contains("ShowAllToolsButton("),
+            "Sandbox plugin cards must use the same capped expansion path as other tool cards; otherwise a large JSON tool recipe can freeze the Tools page."
         )
     }
 

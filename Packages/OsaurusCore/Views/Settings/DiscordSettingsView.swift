@@ -2,13 +2,14 @@
 //  DiscordSettingsView.swift
 //  osaurus
 //
-//  Manual configuration for the native Discord connection.
+//  Configuration sheet for the native Discord channel.
 //
 
 import SwiftUI
 
 struct DiscordSettingsView: View {
     @ObservedObject private var themeManager = ThemeManager.shared
+    @Environment(\.dismiss) private var dismiss
 
     @State private var botToken: String = ""
     @State private var guildIdsText: String = ""
@@ -18,168 +19,142 @@ struct DiscordSettingsView: View {
     @State private var defaultReadLimit: String = "50"
     @State private var tokenSaved: Bool = false
     @State private var statusMessage: String?
+    @State private var statusDetails: [String] = []
     @State private var statusIsError = false
     @State private var isTesting = false
 
     private var theme: ThemeProtocol { themeManager.currentTheme }
 
     var body: some View {
-        SettingsSubsection(label: "Discord") {
-            VStack(alignment: .leading, spacing: 16) {
+        AgentChannelSheetScaffold(
+            icon: AgentChannelKind.discord.icon,
+            gradient: AgentChannelKind.discord.brandGradient,
+            title: AgentChannelKind.discord.displayName,
+            subtitle: L("Read and reply in allowlisted servers")
+        ) {
+            VStack(alignment: .leading, spacing: 20) {
                 Text(
-                    "Connect a Discord bot so Osaurus can read allowlisted channels and post only to write-allowlisted destinations.",
+                    "Connect a Discord bot so agents can read allowlisted channels and post only to write-allowlisted destinations.",
                     bundle: .module
                 )
                 .font(.system(size: 12))
                 .foregroundColor(theme.secondaryText)
+                .fixedSize(horizontal: false, vertical: true)
 
                 credentialsSection
                 SettingsDivider()
-                allowlistSection
+                accessSection
                 SettingsDivider()
-                actionsSection
+                sendingSection
+                SettingsDivider()
+                advancedSection
+            }
+        } footer: {
+            if let statusMessage {
+                AgentChannelInlineStatusMessage(
+                    message: statusMessage,
+                    details: statusDetails,
+                    isError: statusIsError,
+                    onAutoClear: { clearStatus() }
+                )
+            }
+
+            HStack(spacing: 10) {
+                AgentChannelSheetActionButton(
+                    title: L("Test Connection"),
+                    busyTitle: L("Testing..."),
+                    isBusy: isTesting,
+                    action: testConnection
+                )
+                .disabled(isTesting || (!tokenSaved && !hasPendingToken))
+
+                Spacer()
+
+                AgentChannelSheetActionButton(
+                    title: L("Save"),
+                    busyTitle: L("Saving..."),
+                    isBusy: false,
+                    isPrimary: true,
+                    action: saveAndDismiss
+                )
             }
         }
         .onAppear(perform: loadConfiguration)
     }
 
     private var credentialsSection: some View {
-        SettingsSubsection(label: "Credentials") {
+        SettingsSubsection(label: L("Credentials")) {
             VStack(alignment: .leading, spacing: 12) {
-                HStack(spacing: 10) {
-                    SecureField("Discord bot token", text: $botToken)
-                        .textFieldStyle(.plain)
-                        .font(.system(size: 13, design: .monospaced))
-                        .foregroundColor(theme.primaryText)
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 10)
-                        .background(
-                            RoundedRectangle(cornerRadius: 10)
-                                .fill(theme.inputBackground)
-                                .overlay(
-                                    RoundedRectangle(cornerRadius: 10)
-                                        .stroke(theme.inputBorder, lineWidth: 1)
-                                )
-                        )
-
-                    Button(action: saveToken) {
-                        Text("Save Token", bundle: .module)
-                    }
-                    .buttonStyle(SettingsButtonStyle(isPrimary: true))
-                    .disabled(botToken.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-
-                    Button(action: removeToken) {
-                        Text("Remove", bundle: .module)
-                    }
-                    .buttonStyle(SettingsButtonStyle(isDestructive: true))
-                    .disabled(!tokenSaved)
-                }
-
-                HStack(spacing: 6) {
-                    Image(systemName: tokenSaved ? "checkmark.circle.fill" : "circle")
-                        .font(.system(size: 12))
-                    Text(tokenSaved ? "Bot token saved in Keychain" : "No bot token saved", bundle: .module)
-                        .font(.system(size: 11))
-                }
-                .foregroundColor(tokenSaved ? theme.successColor : theme.tertiaryText)
-
-                Text(
-                    "The token is stored in Keychain and is never written to the Discord configuration file.",
-                    bundle: .module
+                AgentChannelSetupLink(
+                    title: L("Create a bot in the Discord Developer Portal"),
+                    url: URL(string: "https://discord.com/developers/applications")!
                 )
-                .font(.system(size: 11))
-                .foregroundColor(theme.tertiaryText)
+
+                AgentChannelSecretField(
+                    label: L("Bot Token"),
+                    requirementHint: L("Required"),
+                    placeholder: L("Paste your bot token"),
+                    text: $botToken,
+                    saved: tokenSaved,
+                    onRemove: removeToken
+                )
+
+                Text("Saved to the macOS Keychain when you press Save.", bundle: .module)
+                    .font(.system(size: 11))
+                    .foregroundColor(theme.tertiaryText)
             }
         }
     }
 
-    private var allowlistSection: some View {
-        SettingsSubsection(label: "Access") {
+    private var accessSection: some View {
+        SettingsSubsection(label: L("Access")) {
             VStack(alignment: .leading, spacing: 12) {
-                multilineField(
-                    title: "Server IDs",
+                AgentChannelMultilineSettingsField(
+                    title: L("Server IDs"),
                     text: $guildIdsText,
-                    help: "Numeric Discord server IDs Osaurus may inspect for channel discovery. At least one server is required for diagnostics to report connected."
+                    placeholder: L("123456789012345678 — one per line"),
+                    help: L("Numeric server IDs Osaurus may inspect. At least one is required.")
                 )
-                multilineField(
-                    title: "Readable Channel IDs",
+                AgentChannelMultilineSettingsField(
+                    title: L("Readable Channel IDs"),
                     text: $readableChannelIdsText,
-                    help: "Numeric channel or thread IDs Osaurus may read, search, or inspect. Recent reads are bounded."
+                    placeholder: L("987654321098765432 — one per line"),
+                    help: L("Channels or threads agents may read and search.")
                 )
+            }
+        }
+    }
+
+    private var sendingSection: some View {
+        SettingsSubsection(label: L("Sending")) {
+            VStack(alignment: .leading, spacing: 12) {
                 SettingsToggle(
-                    title: "Enable Discord Writes",
-                    description:
-                        "Allow send/reply tools for write-allowlisted Discord destinations. The global channel write switch must also be on.",
-                    isOn: $writeEnabled
+                    title: L("Allow Sending on Discord"),
+                    description: L("Let agents post to write-allowlisted Discord destinations. Channel writes must also be on globally."),
+                    isOn: $writeEnabled.animation(.easeOut(duration: 0.2))
                 )
-                multilineField(
-                    title: "Writable Channel IDs",
-                    text: $writableChannelIdsText,
-                    help: "Numeric channel or thread IDs Osaurus may post to when Discord writes are enabled."
-                )
-                StyledSettingsTextField(
-                    label: "Default Read Limit",
-                    text: $defaultReadLimit,
-                    placeholder: "50",
-                    help: "Default recent-message count for channel/thread reads. Clamped to 1-100."
-                )
-            }
-        }
-    }
 
-    private var actionsSection: some View {
-        HStack(spacing: 12) {
-            Button(action: saveConfiguration) {
-                Text("Save Discord Settings", bundle: .module)
-            }
-            .buttonStyle(SettingsButtonStyle(isPrimary: true))
-
-            Button {
-                testConnection()
-            } label: {
-                Text(isTesting ? "Testing..." : "Test Connection", bundle: .module)
-            }
-            .buttonStyle(SettingsButtonStyle())
-            .disabled(isTesting || !tokenSaved)
-
-            if let statusMessage {
-                HStack(spacing: 6) {
-                    Image(systemName: statusIsError ? "exclamationmark.triangle.fill" : "checkmark.circle.fill")
-                        .font(.system(size: 12))
-                    Text(statusMessage)
-                        .font(.system(size: 11))
-                        .lineLimit(3)
+                if writeEnabled {
+                    AgentChannelMultilineSettingsField(
+                        title: L("Writable Channel IDs"),
+                        text: $writableChannelIdsText,
+                        placeholder: L("987654321098765432 — one per line"),
+                        help: L("Channels or threads agents may post to.")
+                    )
+                    .transition(.opacity.combined(with: .move(edge: .top)))
                 }
-                .foregroundColor(statusIsError ? theme.warningColor : theme.successColor)
             }
         }
     }
-    private func multilineField(
-        title: String,
-        text: Binding<String>,
-        help: String
-    ) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text(LocalizedStringKey(title), bundle: .module)
-                .font(.system(size: 12, weight: .medium))
-                .foregroundColor(theme.primaryText)
-            TextEditor(text: text)
-                .font(.system(size: 12, design: .monospaced))
-                .foregroundColor(theme.primaryText)
-                .scrollContentBackground(.hidden)
-                .frame(minHeight: 58)
-                .padding(8)
-                .background(
-                    RoundedRectangle(cornerRadius: 10)
-                        .fill(theme.inputBackground)
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 10)
-                                .stroke(theme.inputBorder, lineWidth: 1)
-                        )
-                )
-            Text(LocalizedStringKey(help), bundle: .module)
-                .font(.system(size: 11))
-                .foregroundColor(theme.tertiaryText)
+
+    private var advancedSection: some View {
+        AgentChannelAdvancedSection {
+            StyledSettingsTextField(
+                label: L("Default Read Limit"),
+                text: $defaultReadLimit,
+                placeholder: "50",
+                help: L("Default recent-message count for channel/thread reads. Clamped to 1-100.")
+            )
         }
     }
 
@@ -193,14 +168,21 @@ struct DiscordSettingsView: View {
         tokenSaved = DiscordConnectionService.shared.hasBotToken()
     }
 
-    private func saveToken() {
+    private var hasPendingToken: Bool {
+        !botToken.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    /// Persist a pasted bot token to Keychain before the configuration save.
+    private func persistPendingSecrets() -> Bool {
+        guard hasPendingToken else { return true }
         do {
             try DiscordConnectionService.shared.saveBotToken(botToken)
             botToken = ""
             tokenSaved = true
-            showStatus("Discord bot token saved", isError: false)
+            return true
         } catch {
             showStatus(error.localizedDescription, isError: true)
+            return false
         }
     }
 
@@ -208,10 +190,11 @@ struct DiscordSettingsView: View {
         _ = DiscordConnectionService.shared.deleteBotToken()
         botToken = ""
         tokenSaved = false
-        showStatus("Discord bot token removed", isError: false)
+        showStatus(L("Discord bot token removed"), isError: false)
     }
 
-    private func saveConfiguration() {
+    @discardableResult
+    private func saveConfiguration() -> Bool {
         let configuration = DiscordConnectionConfiguration(
             configuredGuildIds: parseIds(guildIdsText),
             readableChannelIds: parseIds(readableChannelIdsText),
@@ -221,31 +204,49 @@ struct DiscordSettingsView: View {
         )
         do {
             try DiscordConnectionService.shared.saveConfiguration(configuration)
-            loadConfiguration()
-            showStatus("Discord settings saved", isError: false)
+            return true
         } catch {
             showStatus(error.localizedDescription, isError: true)
+            return false
         }
     }
 
+    private func saveAndDismiss() {
+        guard persistPendingSecrets(), saveConfiguration() else { return }
+        _ = ToastManager.shared.success(L("Discord settings saved"))
+        dismiss()
+    }
+
+    /// Persist the current draft first so diagnostics always test what the
+    /// user sees in the form, not a stale save.
     private func testConnection() {
+        guard persistPendingSecrets(), saveConfiguration() else { return }
         isTesting = true
         Task {
             let diagnostics = await DiscordConnectionService.shared.diagnostics()
             await MainActor.run {
                 isTesting = false
+                let presentation = AgentChannelStatusPresentation.diagnostics(
+                    status: diagnostics.status
+                )
                 if diagnostics.failures.isEmpty {
-                    showStatus("Discord connection status: \(diagnostics.status)", isError: false)
+                    showStatus(presentation.label, isError: false)
                 } else {
-                    showStatus(diagnostics.failures.joined(separator: " "), isError: true)
+                    showStatus(presentation.label, details: diagnostics.failures, isError: true)
                 }
             }
         }
     }
 
-    private func showStatus(_ message: String, isError: Bool) {
+    private func showStatus(_ message: String, details: [String] = [], isError: Bool) {
         statusMessage = message
+        statusDetails = details
         statusIsError = isError
+    }
+
+    private func clearStatus() {
+        statusMessage = nil
+        statusDetails = []
     }
 
     private func parseIds(_ text: String) -> [String] {

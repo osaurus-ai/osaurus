@@ -75,6 +75,14 @@ func ensureHighlightrTheme(for theme: any ThemeProtocol) {
 /// Switch the theme (if needed) and highlight `code` as a single atomic
 /// operation under `highlightrLock`, so a concurrent theme switch can't
 /// land mid-highlight and corrupt the shared JSContext.
+///
+/// Results are cached per (theme, language, code): highlighting runs through
+/// JavaScriptCore and is expensive enough that re-highlighting unchanged code
+/// blocks — e.g. every cell reconfigure when a tool-call row expands or
+/// collapses — can stall the main thread on large outputs. NSCache evicts
+/// under memory pressure; entries are cheap relative to re-running the JS.
+nonisolated(unsafe) private let highlightCache = NSCache<NSString, NSAttributedString>()
+
 func highlightCode(
     _ code: String,
     language: String?,
@@ -83,7 +91,14 @@ func highlightCode(
     highlightrLock.lock()
     defer { highlightrLock.unlock() }
     switchHighlightrThemeLocked(for: theme)
-    return sharedHighlightr?.highlight(code, as: language?.lowercased(), fastRender: true)
+    let key = "\(currentHighlightrTheme)|\(language?.lowercased() ?? "")|\(code)" as NSString
+    if let cached = highlightCache.object(forKey: key) { return cached }
+    guard
+        let highlighted = sharedHighlightr?.highlight(
+            code, as: language?.lowercased(), fastRender: true)
+    else { return nil }
+    highlightCache.setObject(highlighted, forKey: key, cost: code.utf16.count)
+    return highlighted
 }
 
 /// Returns the background color from the current Highlightr theme as a SwiftUI Color.

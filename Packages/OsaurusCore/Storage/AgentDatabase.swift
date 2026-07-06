@@ -18,8 +18,10 @@
 //    - Every table gets `_created_at`, `_updated_at`, `_deleted_at`.
 //    - Soft delete is the default; `softDelete` writes `_deleted_at`.
 //    - Triggers auto-update `_updated_at` on UPDATE.
-//    - All `query()` calls auto-filter `_deleted_at IS NULL` unless the
-//      caller passes `includeDeleted = true`.
+//    - Typed mutation paths (`update`, `softDelete`, …) auto-filter
+//      `_deleted_at IS NULL` unless `includeDeleted = true`. Raw
+//      `query()` / `db_query` SQL does not rewrite the statement — add
+//      `_deleted_at IS NULL` yourself when you want to hide tombstones.
 //
 //  Concurrency: one serial queue per `AgentDatabase`. The
 //  `LocalAgentBridge` further serializes all mutations across this
@@ -271,10 +273,14 @@ public struct AgentQueryResult: Codable, Sendable, Equatable {
 public struct AgentExecuteResult: Codable, Sendable, Equatable {
     public var rowsAffected: Int
     public var warning: String?
+    /// When `execute()` drains a SELECT result set, this counts the rows
+    /// that were not returned — callers should use `query()` instead.
+    public var selectRowsDrained: Int?
 
-    public init(rowsAffected: Int, warning: String? = nil) {
+    public init(rowsAffected: Int, warning: String? = nil, selectRowsDrained: Int? = nil) {
         self.rowsAffected = rowsAffected
         self.warning = warning
+        self.selectRowsDrained = selectRowsDrained
     }
 }
 
@@ -607,10 +613,32 @@ public final class AgentDatabase: @unchecked Sendable {
                 )
             }
 
+            // A user-declared `id` column becomes the primary-key slot when
+            // no explicit PK was marked. The host otherwise auto-adds
+            // `id INTEGER PRIMARY KEY AUTOINCREMENT`, and blindly adding it
+            // next to a declared `id TEXT` produced SQLite's raw
+            // "duplicate column name: id" (observed live: a model declaring
+            // string order-ids retried the identical failing call until the
+            // budget ran out). Honoring the declared column preserves the
+            // model's intent; SQLite still enforces single-PK rules.
+            var columns = columns
             let hasPK = columns.contains(where: { $0.primaryKey })
+            if !hasPK,
+                let idIndex = columns.firstIndex(where: { $0.name.lowercased() == "id" })
+            {
+                let declared = columns[idIndex]
+                columns[idIndex] = AgentColumnSpec(
+                    name: declared.name,
+                    type: declared.type,
+                    nullable: declared.nullable,
+                    defaultValue: declared.defaultValue,
+                    primaryKey: true
+                )
+            }
+            let hasExplicitOrPromotedPK = columns.contains(where: { $0.primaryKey })
             var defs: [String] = []
 
-            if !hasPK {
+            if !hasExplicitOrPromotedPK {
                 defs.append("id INTEGER PRIMARY KEY AUTOINCREMENT")
             }
 
@@ -983,7 +1011,10 @@ public final class AgentDatabase: @unchecked Sendable {
             let whereSQL = whereCols.enumerated().map { i, c in
                 "\(c) = ?\(setCols.count + i + 1)"
             }.joined(separator: " AND ")
-            let softDeleteSQL = includeDeleted ? "" : " AND _deleted_at IS NULL"
+            // Soft-delete filtering only applies to tables that actually
+            // carry the column (raw-SQL-created tables don't).
+            let hasSoftDelete = try self.tableHasColumnUnlocked(table, column: "_deleted_at")
+            let softDeleteSQL = (includeDeleted || !hasSoftDelete) ? "" : " AND _deleted_at IS NULL"
             let sql = "UPDATE \(table) SET \(setSQL) WHERE \(whereSQL)\(softDeleteSQL)"
 
             try self.transactionalStep(sql) { stmt in
@@ -1029,6 +1060,18 @@ public final class AgentDatabase: @unchecked Sendable {
         for key in whereClause.keys { try Self.validateIdentifier(key) }
 
         return try inTransaction { _ in
+            // Soft delete REQUIRES the marker column. A raw-SQL-created table
+            // has no `_deleted_at`; the old code let SQLite fail the prepare
+            // with a bare "no such column" — precise but unactionable. Tell
+            // the model what the real situation is and which path works.
+            guard try self.tableHasColumnUnlocked(table, column: "_deleted_at") else {
+                throw AgentDatabaseError.invalidArgument(
+                    "table '\(table)' has no `_deleted_at` column (it was created "
+                        + "with raw SQL, not db_create_table), so soft delete isn't "
+                        + "available. Use `db_execute` with a DELETE statement to "
+                        + "remove rows from this table."
+                )
+            }
             let beforeRows = try self.selectMatchingRowsUnlocked(
                 table: table,
                 whereClause: whereClause,
@@ -1078,6 +1121,15 @@ public final class AgentDatabase: @unchecked Sendable {
         for key in whereClause.keys { try Self.validateIdentifier(key) }
 
         return try inTransaction { _ in
+            // Same schema requirement as softDelete: no marker column means
+            // there is nothing to restore from.
+            guard try self.tableHasColumnUnlocked(table, column: "_deleted_at") else {
+                throw AgentDatabaseError.invalidArgument(
+                    "table '\(table)' has no `_deleted_at` column (it was created "
+                        + "with raw SQL, not db_create_table), so it has no "
+                        + "soft-deleted rows to restore."
+                )
+            }
             let beforeRows = try self.selectMatchingRowsUnlocked(
                 table: table,
                 whereClause: whereClause,
@@ -1449,6 +1501,73 @@ public final class AgentDatabase: @unchecked Sendable {
         }
     }
 
+    /// Validate that SQL is a read-only SELECT/WITH suitable for export
+    /// or saved views. Reuses the same guardrails as `defineView`.
+    public static func validateReadOnlyQuery(_ sql: String) throws {
+        guard !sql.isEmpty else {
+            throw AgentDatabaseError.invalidArgument("SQL must not be empty")
+        }
+        if let reason = forbiddenReason(in: sql) {
+            throw AgentDatabaseError.forbidden(reason)
+        }
+        let head = collapseWhitespace(stripComments(sql))
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .uppercased()
+        guard head.hasPrefix("SELECT") || head.hasPrefix("WITH") else {
+            throw AgentDatabaseError.invalidArgument(
+                "Read-only export/query SQL must be SELECT or WITH ... SELECT only."
+            )
+        }
+    }
+
+    /// Stream every row from a read-only query without the `query()` row
+    /// cap. The handler receives column names once, then each row; return
+    /// `false` from the handler to stop early (e.g. export byte budget).
+    public func forEachQueryRow(
+        sql: String,
+        params: [AgentSQLValue] = [],
+        handler: (_ columns: [String], _ row: [AgentSQLValue]) throws -> Bool
+    ) throws -> Int {
+        try Self.validateReadOnlyQuery(sql)
+        return try queue.sync {
+            guard let connection = db else { throw AgentDatabaseError.notOpen }
+            try Self.executeRawOn(connection: connection, sql: "BEGIN DEFERRED")
+            defer { try? Self.executeRawOn(connection: connection, sql: "ROLLBACK") }
+
+            var stmt: OpaquePointer?
+            guard sqlite3_prepare_v2(connection, sql, -1, &stmt, nil) == SQLITE_OK,
+                let prepared = stmt
+            else {
+                throw AgentDatabaseError.failedToPrepare(String(cString: sqlite3_errmsg(connection)))
+            }
+            defer { sqlite3_finalize(prepared) }
+
+            for (i, value) in params.enumerated() {
+                Self.bind(prepared, index: i + 1, value: value)
+            }
+
+            let colCount = Int(sqlite3_column_count(prepared))
+            var columns: [String] = []
+            columns.reserveCapacity(colCount)
+            for c in 0 ..< colCount {
+                let name = sqlite3_column_name(prepared, Int32(c)).map { String(cString: $0) } ?? ""
+                columns.append(name)
+            }
+
+            var count = 0
+            while sqlite3_step(prepared) == SQLITE_ROW {
+                var row: [AgentSQLValue] = []
+                row.reserveCapacity(colCount)
+                for c in 0 ..< colCount {
+                    row.append(Self.readColumn(prepared, index: c))
+                }
+                count += 1
+                if try !handler(columns, row) { break }
+            }
+            return count
+        }
+    }
+
     /// Raw SQL escape hatch (spec §6.2). Rejects the absolute-disaster
     /// statements (`DROP TABLE`, `TRUNCATE`, `DELETE` with no WHERE on
     /// any user table) and logs everything else to `_changelog` with
@@ -1482,6 +1601,7 @@ public final class AgentDatabase: @unchecked Sendable {
             // deltas so non-DML statements (CREATE/PRAGMA) don't inflate the
             // total.
             let before = Int(sqlite3_total_changes(connection))
+            var selectRowsDrained = 0
             try sql.withCString { (base: UnsafePointer<CChar>) in
                 var cursor: UnsafePointer<CChar>? = base
                 while let current = cursor, current.pointee != 0 {
@@ -1513,7 +1633,10 @@ public final class AgentDatabase: @unchecked Sendable {
                     // surface the rows (`query` exists for that); drain to
                     // DONE so the transaction can commit cleanly.
                     if step == SQLITE_ROW {
-                        while sqlite3_step(prepared) == SQLITE_ROW { /* drain */  }
+                        selectRowsDrained += 1
+                        while sqlite3_step(prepared) == SQLITE_ROW {
+                            selectRowsDrained += 1
+                        }
                     } else if step != SQLITE_DONE {
                         throw AgentDatabaseError.failedToExecute(
                             "execute: step returned \(step): "
@@ -1535,7 +1658,19 @@ public final class AgentDatabase: @unchecked Sendable {
                 sql: sql
             )
 
-            return AgentExecuteResult(rowsAffected: affected, warning: warning)
+            if selectRowsDrained > 0 {
+                let selectHint =
+                    "SELECT returned \(selectRowsDrained) row(s) that were not included "
+                    + "in this result. Use `db_query` to read rows."
+                warning =
+                    warning.map { $0 + " " + selectHint }
+                    ?? selectHint
+            }
+            return AgentExecuteResult(
+                rowsAffected: affected,
+                warning: warning,
+                selectRowsDrained: selectRowsDrained > 0 ? selectRowsDrained : nil
+            )
         }
     }
 
@@ -1906,6 +2041,34 @@ public final class AgentDatabase: @unchecked Sendable {
         return found
     }
 
+    /// Whether `table` actually has a column named `column`.
+    ///
+    /// The typed mutation/read paths historically assumed every user table
+    /// carries the host-managed `_deleted_at` column — true for tables made
+    /// via `createTable`, false for tables created through raw SQL
+    /// (`db_execute` CREATE TABLE, eval `seedSql`). Blindly appending the
+    /// soft-delete predicate to those tables produced
+    /// "no such column: _deleted_at" prepare failures on perfectly valid
+    /// typed calls (observed live: `db_update`/`db_delete` on an
+    /// execute-created table). Callers use this to apply soft-delete
+    /// semantics only where the schema actually supports them.
+    private func tableHasColumnUnlocked(_ table: String, column: String) throws -> Bool {
+        // `table` is validated upstream (identifier charset), so direct
+        // interpolation into PRAGMA is safe — PRAGMA cannot bind parameters.
+        var found = false
+        try executeRaw("PRAGMA table_info(\(table))") { stmt in
+            while sqlite3_step(stmt) == SQLITE_ROW {
+                if let namePtr = sqlite3_column_text(stmt, 1),
+                    String(cString: namePtr) == column
+                {
+                    found = true
+                    break
+                }
+            }
+        }
+        return found
+    }
+
     /// Reads matching rows into `[column: value]` dictionaries. Used by
     /// mutation methods to capture before/after JSON for the changelog.
     private func selectMatchingRowsUnlocked(
@@ -1918,7 +2081,8 @@ public final class AgentDatabase: @unchecked Sendable {
             cols.isEmpty
             ? "1 = 1"
             : cols.enumerated().map { i, c in "\(c) = ?\(i + 1)" }.joined(separator: " AND ")
-        let softDeleteSQL = includeDeleted ? "" : " AND _deleted_at IS NULL"
+        let hasSoftDelete = try tableHasColumnUnlocked(table, column: "_deleted_at")
+        let softDeleteSQL = (includeDeleted || !hasSoftDelete) ? "" : " AND _deleted_at IS NULL"
         let sql = "SELECT * FROM \(table) WHERE \(whereSQL)\(softDeleteSQL)"
 
         var rows: [[String: AgentSQLValue]] = []

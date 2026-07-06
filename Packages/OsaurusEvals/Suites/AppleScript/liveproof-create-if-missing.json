@@ -9,7 +9,7 @@
     "appleScript": {
       "lane": "liveProof",
       "mode": "automate",
-      "executor": { "kind": "real" },
+      "executor": { "kind": "real", "probe": "tell application \"Finder\" to count windows" },
       "expectOutcome": ["done"],
       "valuesContain": ["true"],
       "scoredMaxSteps": 5,

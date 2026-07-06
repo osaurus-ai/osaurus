@@ -27,6 +27,13 @@ public struct EvalMatrixModelColumn: Sendable, Codable, Equatable {
     public let perDomain: [String: EvalMatrixDomainCell]
     public let totalPassed: Int
     public let totalScored: Int
+    /// Passed/scored excluding subsystem rows (AppleScript live/liveProof +
+    /// live image subagent) — the chat-model attributable column.
+    public let chatModelPassed: Int
+    public let chatModelScored: Int
+    /// Passed/scored for subsystem-only rows (AppleScript-16B + image stack).
+    public let subsystemPassed: Int
+    public let subsystemScored: Int
     /// Mean decode tok/s across telemetered rows for this model.
     public let meanDecodeTokensPerSecond: Double?
     /// Mean TTFT (ms) across telemetered rows.
@@ -62,6 +69,10 @@ public struct EvalMatrixModelColumn: Sendable, Codable, Equatable {
         perDomain: [String: EvalMatrixDomainCell],
         totalPassed: Int,
         totalScored: Int,
+        chatModelPassed: Int? = nil,
+        chatModelScored: Int? = nil,
+        subsystemPassed: Int? = nil,
+        subsystemScored: Int? = nil,
         meanDecodeTokensPerSecond: Double?,
         meanTtftMs: Double?,
         peakPhysFootprintMb: Double?,
@@ -77,6 +88,10 @@ public struct EvalMatrixModelColumn: Sendable, Codable, Equatable {
         self.perDomain = perDomain
         self.totalPassed = totalPassed
         self.totalScored = totalScored
+        self.chatModelPassed = chatModelPassed ?? totalPassed
+        self.chatModelScored = chatModelScored ?? totalScored
+        self.subsystemPassed = subsystemPassed ?? 0
+        self.subsystemScored = subsystemScored ?? 0
         self.meanDecodeTokensPerSecond = meanDecodeTokensPerSecond
         self.meanTtftMs = meanTtftMs
         self.peakPhysFootprintMb = peakPhysFootprintMb
@@ -170,6 +185,14 @@ public struct EvalMatrix: Sendable, Codable, Equatable {
             "| **total** | "
                 + models.map { "**\($0.totalPassed)/\($0.totalScored)**" }.joined(separator: " | ") + " |"
         )
+        lines.append(
+            "| **chat-model** | "
+                + models.map { "\($0.chatModelPassed)/\($0.chatModelScored)" }.joined(separator: " | ") + " |"
+        )
+        lines.append(
+            "| **subsystem** | "
+                + models.map { "\($0.subsystemPassed)/\($0.subsystemScored)" }.joined(separator: " | ") + " |"
+        )
         lines.append("")
         lines.append("## Performance")
         lines.append("")
@@ -250,6 +273,10 @@ public struct EvalMatrix: Sendable, Codable, Equatable {
             if let ctx = col.meanPromptTokensPerTask { perf.append(String(format: "%.0f ctx tok", ctx)) }
             let perfStr = perf.isEmpty ? "" : "  [\(perf.joined(separator: ", "))]"
             lines.append("  \(shortModel(col.modelId)): \(col.totalPassed)/\(col.totalScored)\(perfStr)")
+            lines.append(
+                "    chat-model: \(col.chatModelPassed)/\(col.chatModelScored)  "
+                    + "subsystem: \(col.subsystemPassed)/\(col.subsystemScored)"
+            )
         }
         for warning in comparabilityWarnings {
             lines.append("  ⚠ \(warning)")
@@ -263,6 +290,27 @@ public struct EvalMatrix: Sendable, Codable, Equatable {
 }
 
 public enum EvalMatrixBuilder {
+    /// True when a case belongs on the subsystem scoreboard (AppleScript-16B
+    /// live/liveProof lanes + live image subagent), not the chat-model column.
+    public static func isSubsystemCase(id: String, domain: String) -> Bool {
+        if domain == "apple_script" {
+            let lower = id.lowercased()
+            return lower.contains("liveproof") || lower.contains(".live-")
+        }
+        if domain == "subagent", id.hasPrefix("subagent.image-") {
+            return true
+        }
+        return false
+    }
+
+    private static func scoreTotals(for cases: [EvalCaseReport]) -> (passed: Int, scored: Int) {
+        let scoredRows = cases.filter { $0.outcome == .passed || $0.outcome == .failed }
+        return (
+            scoredRows.filter { $0.outcome == .passed }.count,
+            scoredRows.count
+        )
+    }
+
     /// Load every file that decodes as an `EvalReport` under `dir`
     /// (recursively). Files that don't decode (diff summaries, matrices,
     /// notes) are silently skipped so the loop can point this at a
@@ -336,12 +384,20 @@ public enum EvalMatrixBuilder {
             let promptToks = telem.compactMap(\.promptTokensTotal)
             let totalToks = telem.compactMap(\.totalModelTokens)
             let trialed = cases.filter { $0.trials != nil }
+            let chatCases = cases.filter { !isSubsystemCase(id: $0.id, domain: $0.domain) }
+            let subsystemCases = cases.filter { isSubsystemCase(id: $0.id, domain: $0.domain) }
+            let chatTotals = scoreTotals(for: chatCases)
+            let subsystemTotals = scoreTotals(for: subsystemCases)
             return EvalMatrixModelColumn(
                 modelId: modelId,
                 startedAt: startedByModel[modelId],
                 perDomain: perDomain,
                 totalPassed: cases.filter { $0.outcome == .passed }.count,
                 totalScored: cases.filter { $0.outcome == .passed || $0.outcome == .failed }.count,
+                chatModelPassed: chatTotals.passed,
+                chatModelScored: chatTotals.scored,
+                subsystemPassed: subsystemTotals.passed,
+                subsystemScored: subsystemTotals.scored,
                 meanDecodeTokensPerSecond: decodes.isEmpty ? nil : decodes.reduce(0, +) / Double(decodes.count),
                 meanTtftMs: ttfts.isEmpty ? nil : ttfts.reduce(0, +) / Double(ttfts.count),
                 peakPhysFootprintMb: rams.max(),
