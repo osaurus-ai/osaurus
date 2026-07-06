@@ -48,11 +48,11 @@ public enum MCPLocalProviderDiagnostics {
             ? L("\(result.toolCount) tool(s) discovered via \(snapshot.transportSummary).")
             : result.redactedMessage
         if let state, state.isConnected != result.succeeded {
+            detail += " "
             detail +=
-                " "
-                + L(
-                    "Live connection state (\(state.isConnected ? L("connected") : L("disconnected"))) differs from the last probe (\(result.succeeded ? L("ok") : L("failed")))."
-                )
+                state.isConnected
+                ? L("Currently connected, but the last probe failed.")
+                : L("The last probe succeeded, but the provider is not connected.")
         }
         return ProviderDiagnosticRow(
             id: "local-health",
