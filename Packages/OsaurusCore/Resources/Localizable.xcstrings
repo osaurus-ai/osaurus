@@ -53434,6 +53434,46 @@
         }
       }
     },
+    "Expand Thinking While Streaming" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Denkprozess beim Streaming ausklappen"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Expand Thinking While Streaming"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "스트리밍 중 사고 과정 펼치기"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Разворачивать размышления во время стриминга"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "流式输出时展开思考过程"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "流式輸出時展開思考過程"
+          }
+        }
+      }
+    },
     "Expected a directory but found a file or other non-directory item." : {
       "localizations" : {
         "de" : {
@@ -70153,6 +70193,46 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "繼續運行"
+          }
+        }
+      }
+    },
+    "Keep the model's reasoning expanded while it is actively thinking, then collapse it automatically once the response begins. Useful for monitoring long-running agent tasks in real time." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Hält die Denkschritte des Modells ausgeklappt, während es aktiv nachdenkt, und klappt sie automatisch wieder ein, sobald die Antwort beginnt. Nützlich, um langlaufende Agent-Aufgaben in Echtzeit zu verfolgen."
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Keep the model's reasoning expanded while it is actively thinking, then collapse it automatically once the response begins. Useful for monitoring long-running agent tasks in real time."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "모델이 사고하는 동안 사고 과정을 펼쳐서 보여주고, 응답이 시작되면 자동으로 접습니다. 장시간 실행되는 에이전트 작업을 실시간으로 모니터링할 때 유용합니다."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Размышления модели остаются развёрнутыми, пока она активно думает, и автоматически сворачиваются, как только начинается ответ. Полезно для наблюдения за длительными задачами агента в реальном времени."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "在模型思考期间保持思考过程展开，回答开始后自动折叠。便于实时监控长时间运行的智能体任务。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "在模型思考期間保持思考過程展開，回答開始後自動摺疊。便於即時監控長時間執行的智能體任務。"
           }
         }
       }
