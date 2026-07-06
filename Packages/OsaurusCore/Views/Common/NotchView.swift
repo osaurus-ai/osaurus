@@ -350,7 +350,16 @@ struct NotchView: View {
                             .combined(with: .scale(scale: 0.6, anchor: .top))
                             .combined(with: .opacity)
                     )
-                    : .opacity
+                    // Plain .opacity removal leaves a full-size ghost of the
+                    // card cross-fading over the already-final-size pill, so
+                    // the collapse reads as an abrupt size snap. Scaling the
+                    // outgoing card toward its top anchor makes it visibly
+                    // retract into the pill instead.
+                    : .asymmetric(
+                        insertion: .opacity,
+                        removal: .scale(scale: 0.12, anchor: .top)
+                            .combined(with: .opacity)
+                    )
             )
         }
     }
