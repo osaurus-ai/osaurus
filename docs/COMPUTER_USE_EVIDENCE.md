@@ -53,6 +53,30 @@ python3 scripts/evals/assert-computer-use-web-form-evidence-privacy.py \
   build/computer-use-evidence/manual/logs/computer-use-suite.log
 ```
 
+Optional manual live local-browser proof:
+
+```bash
+OSAURUS_CU_LIVE_WEB_FORM=1 \
+OSAURUS_DISABLE_KEYCHAIN_FOR_TESTS=1 \
+OSAURUS_TEST_ROOT=/tmp/osaurus-cu \
+swift test --package-path Packages/OsaurusCore \
+  --filter NativeMacDriverWebFormLiveTests
+```
+
+This live driver lane is manual-only and skipped by default CI. It opens the
+existing local WebForm fixture in Safari, requires a GUI session and
+Accessibility permission, and asserts loop success, AX end states, no cloud
+vision use, consequential submit confirmation, filled fields, accepted terms,
+and submitted status. To avoid reading unrelated browser tabs, it skips when
+Safari is already running; close Safari first before running the proof.
+For deterministic `file://` submission, the test stages a temporary local copy
+with `method="get"` and `action="submitted.html"`; the committed fixture is not
+modified. The test asks Safari for a fresh launch and refuses browser reuse.
+The submitted local URL may contain the synthetic proof-run values in Safari's
+address bar or history, so do not replace those fixture values with real
+credentials or personal data. The lane terminates the Safari process it
+cold-started during teardown.
+
 Optional model-dependent eval commands, matching `RUN_EVALS=1`, are:
 
 ```bash
