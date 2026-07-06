@@ -265,8 +265,11 @@ enum WorkspaceWriteSafety {
         oldLabel: String,
         newLabel: String
     ) -> (text: String, truncated: Bool) {
-        let oldLines = old.components(separatedBy: .newlines)
-        let newLines = new.components(separatedBy: .newlines)
+        // Empty content must yield zero lines, not [""] — otherwise a new-file
+        // diff carries one phantom old line that the LCS matches against a
+        // blank line in the new content, rendering it as untinted context.
+        let oldLines = old.isEmpty ? [] : old.components(separatedBy: .newlines)
+        let newLines = new.isEmpty ? [] : new.components(separatedBy: .newlines)
         var lines: [String] = [
             "--- \(path) (\(oldLabel))",
             "+++ \(path) (\(newLabel))",
