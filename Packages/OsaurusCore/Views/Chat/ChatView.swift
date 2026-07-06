@@ -2901,8 +2901,17 @@ final class ChatSession: ObservableObject {
                     if currentTurn.pendingToolArgSize > 0 {
                         currentTurn.clearPendingToolArgs()
                     }
-                    currentTurn.pendingToolName = toolName.isEmpty ? nil : toolName
-                    rebuildVisibleBlocks()
+                    let newName = toolName.isEmpty ? nil : toolName
+                    // Only rebuild when the name actually changed. On the
+                    // envelope-first flow the name was already derived
+                    // mid-stream — rebuilding here (right after the args
+                    // clear, right before the canonical args re-send) would
+                    // blank the live diff preview for one frame.
+                    let nameChanged = currentTurn.pendingToolName != newName
+                    currentTurn.pendingToolName = newName
+                    if nameChanged {
+                        rebuildVisibleBlocks()
+                    }
                     continue
                 }
                 // Captured OpenAI Responses reasoning item (id + encrypted blob).

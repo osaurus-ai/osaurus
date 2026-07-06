@@ -599,6 +599,24 @@ extension ContentBlock {
                         turnBlocks.append(
                             .fileDiff(turnId: turn.id, callId: call.id, diff: diff, position: .middle)
                         )
+                    } else if isStreaming,
+                        result == nil,
+                        FileDiff.diffProducingToolNames.contains(call.function.name),
+                        let preview = FileDiff.streamingPreview(
+                            toolName: call.function.name,
+                            partialArgs: call.function.arguments
+                        )
+                    {
+                        // File write currently EXECUTING: the streamed preview
+                        // state was cleared when the call was parsed, but the
+                        // result (with the real diff) hasn't landed yet. Keep a
+                        // preview card up from the call's canonical arguments so
+                        // the card doesn't vanish for the execution window —
+                        // the real diff replaces it under the same block id.
+                        flushRegularItems()
+                        turnBlocks.append(
+                            .fileDiff(turnId: turn.id, callId: call.id, diff: preview, position: .middle)
+                        )
                     } else {
                         regularItems.append(
                             ToolCallItem(call: call, result: result, duration: turn.toolCallDurations[call.id])
