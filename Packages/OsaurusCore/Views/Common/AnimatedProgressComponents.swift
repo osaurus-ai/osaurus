@@ -377,14 +377,19 @@ private struct CheckmarkShape: Shape {
         let width = rect.width
         let height = rect.height
 
+        // Points are chosen so the glyph's bounding box is symmetric around
+        // the rect center (x: 0.05–0.95, y: 0.2–0.8) — an off-center box
+        // reads as a visibly misaligned checkmark inside the status circle
+        // at small sizes.
+
         // Start at left point
-        path.move(to: CGPoint(x: width * 0.1, y: height * 0.5))
+        path.move(to: CGPoint(x: width * 0.05, y: height * 0.5))
 
         // Line to bottom point
-        path.addLine(to: CGPoint(x: width * 0.4, y: height * 0.85))
+        path.addLine(to: CGPoint(x: width * 0.35, y: height * 0.8))
 
         // Line to top-right point
-        path.addLine(to: CGPoint(x: width * 0.95, y: height * 0.15))
+        path.addLine(to: CGPoint(x: width * 0.95, y: height * 0.2))
 
         return path
     }
