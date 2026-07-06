@@ -1,6 +1,6 @@
 {
-  "contributions" : 4,
-  "generatedAt" : "2026-07-06T02:32:37.896Z",
+  "contributions" : 6,
+  "generatedAt" : "2026-07-06T04:20:09.751Z",
   "models" : [
     {
       "builds" : [
@@ -22,6 +22,30 @@
       "model" : "OsaurusAI/Ornith-1.0-9B-MXFP4",
       "passed" : 188,
       "peakPhysFootprintMb" : 20613.585746765137,
+      "scored" : 247,
+      "skipped" : 5,
+      "verdict" : "works"
+    },
+    {
+      "builds" : [
+
+      ],
+      "catalogHashes" : [
+        "137408f3cdba4838"
+      ],
+      "chips" : [
+        "Apple M4 Pro"
+      ],
+      "contributions" : 1,
+      "decodeTokensPerSecondMax" : 13.46734269025956,
+      "decodeTokensPerSecondMin" : 13.46734269025956,
+      "errored" : 0,
+      "hasSelfJudged" : false,
+      "maxRamMb" : 49152,
+      "minRamMb" : 49152,
+      "model" : "OsaurusAI/gemma-4-12B-it-MXFP8",
+      "passed" : 223,
+      "peakPhysFootprintMb" : 20535.99245452881,
       "scored" : 247,
       "skipped" : 5,
       "verdict" : "works"
@@ -94,6 +118,30 @@
       "model" : "mlx-community/Qwen3.5-4B-OptiQ-4bit",
       "passed" : 212,
       "peakPhysFootprintMb" : 20487.085746765137,
+      "scored" : 247,
+      "skipped" : 5,
+      "verdict" : "works"
+    },
+    {
+      "builds" : [
+
+      ],
+      "catalogHashes" : [
+        "137408f3cdba4838"
+      ],
+      "chips" : [
+        "Apple M4 Pro"
+      ],
+      "contributions" : 1,
+      "decodeTokensPerSecondMax" : 10.33938140350877,
+      "decodeTokensPerSecondMin" : 10.33938140350877,
+      "errored" : 0,
+      "hasSelfJudged" : true,
+      "maxRamMb" : 49152,
+      "minRamMb" : 49152,
+      "model" : "xai/grok-4.3",
+      "passed" : 228,
+      "peakPhysFootprintMb" : 19637.49208831787,
       "scored" : 247,
       "skipped" : 5,
       "verdict" : "works"
