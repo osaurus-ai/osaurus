@@ -339,6 +339,7 @@ final class NativeMarkdownView: NSView {
         }
         ChatPerfTrace.shared.count("markdown.configure.applied")
 
+        invalidateHeightMemo()
         lastWidth = width
         lastThemeFingerprint = themeFingerprint
         lastIsStreaming = isStreaming
@@ -397,6 +398,7 @@ final class NativeMarkdownView: NSView {
 
         guard textChanged || widthChanged || themeChanged || streamingChanged else { return }
 
+        invalidateHeightMemo()
         lastWidth = width
         lastThemeFingerprint = themeFingerprint
         lastIsStreaming = isStreaming
@@ -458,12 +460,35 @@ final class NativeMarkdownView: NSView {
         return candidates.min() ?? max(fallbackWidth, 1)
     }
 
+    /// Memoized result of the last full measurement pass. `measuredHeight` is
+    /// re-entered many times per table update (row height query, cell
+    /// configure, child height callbacks, post-layout re-measure) and each
+    /// pass runs `ensureLayout` over every text container in the subtree —
+    /// on long code-heavy replies that repeated TextKit work is the dominant
+    /// main-thread cost and can trip the app-hang watchdog. The memo is
+    /// invalidated on every content mutation and child height notification,
+    /// and keyed on both the requested width and the effective measurement
+    /// width (bounds can change without the requested width changing).
+    private var heightMemo: (paramWidth: CGFloat, contentWidth: CGFloat, height: CGFloat)?
+
+    private func invalidateHeightMemo() {
+        heightMemo = nil
+    }
+
     func measuredHeight(for width: CGFloat) -> CGFloat {
         if measurementDepth > 0 {
             return heightConstraint?.constant ?? 20
         }
         measurementDepth += 1
         defer { measurementDepth -= 1 }
+
+        let contentWidth = measurementContentWidth(fallbackWidth: width)
+        if let memo = heightMemo,
+            abs(memo.paramWidth - width) <= 0.5,
+            abs(memo.contentWidth - contentWidth) <= 0.5
+        {
+            return memo.height
+        }
 
         if let tv = textView {
             // widthTracksTextView syncs the container to the text view; before first layout, bounds can
@@ -481,6 +506,7 @@ final class NativeMarkdownView: NSView {
             let h = ceil(lm.usedRect(for: tc).height) + 8 + 4
             heightConstraint?.constant = max(h, 8)  // ensure minimum height
             invalidateIntrinsicContentSize()
+            heightMemo = (paramWidth: width, contentWidth: contentWidth, height: max(h, 8))
             return max(h, 8)
         }
 
@@ -496,6 +522,7 @@ final class NativeMarkdownView: NSView {
 
         heightConstraint?.constant = totalH
         invalidateIntrinsicContentSize()
+        heightMemo = (paramWidth: width, contentWidth: contentWidth, height: totalH)
         return totalH
     }
 
@@ -576,6 +603,7 @@ final class NativeMarkdownView: NSView {
         theme: any ThemeProtocol,
         isStreaming: Bool
     ) {
+        invalidateHeightMemo()
         removeSegmentViews()
 
         let tv = ensureTextView(width: width, theme: theme)
@@ -644,6 +672,7 @@ final class NativeMarkdownView: NSView {
         theme: any ThemeProtocol,
         isStreaming: Bool
     ) {
+        invalidateHeightMemo()
         removeTextView()
         lastMixedSegments = segments
 
@@ -716,6 +745,7 @@ final class NativeMarkdownView: NSView {
                     addSubview(mv)
                 }
                 mv.onHeightChanged = { [weak self] in
+                    self?.invalidateHeightMemo()
                     self?.onHeightChanged?()
                 }
                 let segIsStreaming = isStreaming && (seg.id == lastTextSegmentId)
@@ -738,6 +768,7 @@ final class NativeMarkdownView: NSView {
                     addSubview(cv)
                 }
                 cv.onHeightChanged = { [weak self] in
+                    self?.invalidateHeightMemo()
                     self?.onHeightChanged?()
                 }
                 cv.configure(code: code, language: language, width: width, theme: theme)
@@ -799,6 +830,7 @@ final class NativeMarkdownView: NSView {
                     addSubview(tv)
                 }
                 tv.onHeightChanged = { [weak self] in
+                    self?.invalidateHeightMemo()
                     self?.onHeightChanged?()
                 }
                 tv.configure(headers: headers, rows: rows, width: width, theme: theme)
@@ -1003,6 +1035,7 @@ final class NativeMarkdownView: NSView {
                     self.imageAspectRatios[segmentId] = size.width / size.height
                 }
                 self.applyImageHeight(segmentId: segmentId, width: self.lastWidth)
+                self.invalidateHeightMemo()
                 self.onHeightChanged?()
             }
         }
