@@ -542,6 +542,21 @@ public actor ModelRuntime {
         // Cache tier config is entirely osaurus-internal — not user-visible.
         await installCacheCoordinator(on: holder)
 
+        // Native-MTP bundles historically ran their FIRST request in plain
+        // autoregressive mode (the registry's cold-warmup rule), so the one
+        // request most users judge a model by silently lost the speculative
+        // speedup. Pay that warmup here instead, with a hidden two-token
+        // greedy generation, so the first user request decodes with MTP.
+        // Failure is non-fatal: the request path's cold-warmup rule remains
+        // as the fallback.
+        await MLXBatchAdapter.warmupNativeMTPAtLoad(
+            modelName: name,
+            container: holder.container,
+            draftStrategy: holder.draftStrategy,
+            runtime: getConfig(),
+            maxBatchSize: InferenceFeatureFlags.mlxBatchEngineMaxBatchSize
+        )
+
         genLog.info(
             "loadContainer: loaded \(name, privacy: .public) isVLM=\(holder.isVLM, privacy: .public)"
         )

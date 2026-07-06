@@ -550,6 +550,76 @@ struct MLXBatchAdapter {
             return true
         }
 
+        func isNativeMTPWarm(modelName: String) -> Bool {
+            nativeMTPWarmModels.contains(modelName)
+        }
+
+        /// Un-warms a model whose load-time warmup generation failed after
+        /// it had already consumed the cold-warmup flag, so the next real
+        /// request runs the AR warmup exactly as it would have without the
+        /// load-time attempt.
+        func resetNativeMTPWarmup(modelName: String) {
+            nativeMTPWarmModels.remove(modelName)
+        }
+
+    }
+
+    // MARK: - Native MTP load-time warmup
+
+    /// Escape hatch in case a family surfaces a first-generation issue that
+    /// the two-token warmup does not absorb:
+    ///   defaults write ai.osaurus ai.osaurus.mtp.disableLoadWarmup -bool true
+    static let mtpLoadWarmupDisabledKey = "ai.osaurus.mtp.disableLoadWarmup"
+
+    /// Runs the native-MTP cold warmup at model-load time instead of on the
+    /// user's first request. The registry's cold-warmup rule forces the
+    /// first generation per model into plain AR mode; without this, that
+    /// "first generation" is the user's entire first response, which
+    /// silently loses the MTP decode speedup. A hidden two-token greedy
+    /// generation through the regular `generate` path (so gating, engine
+    /// creation, and solo-lease behavior are identical to a real request)
+    /// consumes the warmup for a fraction of a second instead.
+    ///
+    /// Failure is non-fatal and self-healing: the warm flag is reset so the
+    /// next real request performs the AR warmup exactly as before.
+    static func warmupNativeMTPAtLoad(
+        modelName: String,
+        container: ModelContainer,
+        draftStrategy: MLXLMCommon.DraftStrategy?,
+        runtime: RuntimeConfig,
+        maxBatchSize: Int
+    ) async {
+        guard draftStrategy?.usesNativeMTP == true else { return }
+        guard !UserDefaults.standard.bool(forKey: mtpLoadWarmupDisabledKey) else { return }
+        guard await !Registry.shared.isNativeMTPWarm(modelName: modelName) else { return }
+
+        let startedAt = CFAbsoluteTimeGetCurrent()
+        do {
+            let prepared = try await generate(
+                modelName: modelName,
+                container: container,
+                buildChat: { [MLXLMCommon.Chat.Message(role: .user, content: "Hi")] },
+                buildToolsSpec: { nil },
+                generation: GenerationParameters(temperature: 0, maxTokens: 2),
+                toolChoice: nil,
+                stopSequences: [],
+                draftStrategy: draftStrategy,
+                runtime: runtime,
+                maxBatchSize: maxBatchSize
+            )
+            for await _ in prepared.stream {}
+            let elapsedMs = Int((CFAbsoluteTimeGetCurrent() - startedAt) * 1000)
+            batchAdapterLog.info(
+                "native MTP load warmup: completed for \(modelName, privacy: .public) in \(elapsedMs, privacy: .public)ms; first user request decodes with MTP"
+            )
+        } catch {
+            // The failed generation may already have consumed the warm flag;
+            // reset it so the request path's AR warmup applies unchanged.
+            await Registry.shared.resetNativeMTPWarmup(modelName: modelName)
+            batchAdapterLog.notice(
+                "native MTP load warmup failed for \(modelName, privacy: .public): \(String(describing: error), privacy: .public) — falling back to first-request AR warmup"
+            )
+        }
     }
 
     // MARK: - Image preprocessing
