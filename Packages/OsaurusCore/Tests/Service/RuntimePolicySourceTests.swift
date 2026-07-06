@@ -666,8 +666,12 @@ struct RuntimePolicySourceTests {
         // set_input_array double-free), and the NormConventionResolver
         // fallback (vmlx-swift#117) so an unrecognized norm_convention
         // declaration defers to the order-independent vote instead of
-        // silently disabling the (1+weight) RMSNorm shift.
-        let expectedRuntimeHardenedRevision = "53840914f693e9e1305fbbacb1ecc8e5c1e9625f"
+        // silently disabling the (1+weight) RMSNorm shift, plus the
+        // incremental tool-call envelope progress event
+        // (vmlx-swift#119, `Generation.toolCallProgress`) that lets the
+        // native chat show a live "Preparing tool call" card during a long
+        // buffered tool write instead of a frozen typing indicator.
+        let expectedRuntimeHardenedRevision = "8d0ef7e115f40bf428d05eee6f6a21ab0ddffb65"
         let manifestRevision = try Self.vmlxPinRevision(in: manifest)
         let workspaceRevision = try Self.vmlxPinRevision(in: workspaceResolved)
         let appRevision = try Self.vmlxPinRevision(in: appResolved)
