@@ -821,14 +821,19 @@ struct PluginsView: View {
 
     // MARK: - Helpers
 
+    // Matching policy for all three plugin lists: fuzzy subsequence matching
+    // is reserved for short identifier fields (name / id), where it enables
+    // abbreviation-style queries. Prose fields (description, keywords,
+    // author, category) use token / substring matching only — a query's
+    // characters almost always appear in order somewhere in a description,
+    // so subsequence matching there surfaced completely unrelated plugins.
+
     nonisolated private static func pluginMatchesQuery(_ plugin: PluginState, query: String) -> Bool {
         guard !query.isEmpty else { return true }
-        let queryLower = query.lowercased()
-        return [
-            plugin.pluginId.lowercased(),
-            (plugin.name ?? "").lowercased(),
-            (plugin.pluginDescription ?? "").lowercased(),
-        ].contains { SearchService.fuzzyMatch(query: queryLower, in: $0) }
+        let prepared = SearchService.PreparedQuery(query)
+        return SearchService.matches(prepared, in: plugin.pluginId)
+            || SearchService.matches(prepared, in: plugin.name ?? "")
+            || SearchService.matches(prepared, in: plugin.pluginDescription ?? "", allowFuzzy: false)
     }
 
     nonisolated private static func claudePluginMatchesQuery(
@@ -836,22 +841,20 @@ struct PluginsView: View {
         query: String
     ) -> Bool {
         guard !query.isEmpty else { return true }
-        let queryLower = query.lowercased()
-        var candidates: [String] = [
-            plugin.displayName.lowercased(),
-            plugin.pluginId.lowercased(),
-            plugin.sourceLabel.lowercased(),
-        ]
-        if let snap = plugin.snapshot {
-            if let description = snap.description {
-                candidates.append(description.lowercased())
-            }
-            candidates.append(contentsOf: snap.keywords.map { $0.lowercased() })
-            if let authorName = snap.authorName {
-                candidates.append(authorName.lowercased())
-            }
+        let prepared = SearchService.PreparedQuery(query)
+        if SearchService.matches(prepared, in: plugin.displayName)
+            || SearchService.matches(prepared, in: plugin.pluginId)
+            || SearchService.matches(prepared, in: plugin.sourceLabel, allowFuzzy: false)
+        {
+            return true
         }
-        return candidates.contains { SearchService.fuzzyMatch(query: queryLower, in: $0) }
+        guard let snap = plugin.snapshot else { return false }
+        var proseCandidates: [String] = snap.keywords
+        if let description = snap.description { proseCandidates.append(description) }
+        if let authorName = snap.authorName { proseCandidates.append(authorName) }
+        return proseCandidates.contains {
+            SearchService.matches(prepared, in: $0, allowFuzzy: false)
+        }
     }
 
     nonisolated private static func marketplaceEntryMatchesQuery(
@@ -859,13 +862,15 @@ struct PluginsView: View {
         query: String
     ) -> Bool {
         guard !query.isEmpty else { return true }
-        let queryLower = query.lowercased()
-        var candidates: [String] = [entry.name.lowercased()]
-        if let description = entry.description { candidates.append(description.lowercased()) }
-        if let author = entry.author?.name { candidates.append(author.lowercased()) }
-        if let category = entry.category { candidates.append(category.lowercased()) }
-        candidates.append(contentsOf: (entry.keywords ?? []).map { $0.lowercased() })
-        return candidates.contains { SearchService.fuzzyMatch(query: queryLower, in: $0) }
+        let prepared = SearchService.PreparedQuery(query)
+        if SearchService.matches(prepared, in: entry.name) { return true }
+        var proseCandidates: [String] = entry.keywords ?? []
+        if let description = entry.description { proseCandidates.append(description) }
+        if let author = entry.author?.name { proseCandidates.append(author) }
+        if let category = entry.category { proseCandidates.append(category) }
+        return proseCandidates.contains {
+            SearchService.matches(prepared, in: $0, allowFuzzy: false)
+        }
     }
 
     private func updateFilteredLists() async {
