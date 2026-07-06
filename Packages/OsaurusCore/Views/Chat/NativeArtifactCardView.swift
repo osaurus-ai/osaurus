@@ -805,12 +805,15 @@ final class NativeArtifactCardView: NSView {
         } else {
             url = URL(fileURLWithPath: hostPath)
         }
-        NSWorkspace.shared.open(url)
+        // Async variant avoids a synchronous LaunchServices XPC round-trip
+        // that can hang the main thread.
+        NSWorkspace.shared.open(url, configuration: NSWorkspace.OpenConfiguration())
     }
 
     @objc private func openArtifactWithDefaultApp() {
         guard !hostPath.isEmpty else { return }
-        NSWorkspace.shared.open(URL(fileURLWithPath: hostPath))
+        NSWorkspace.shared.open(
+            URL(fileURLWithPath: hostPath), configuration: NSWorkspace.OpenConfiguration())
     }
 
     @objc private func artifactImagePreviewTapped() {
