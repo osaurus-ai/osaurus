@@ -6060,7 +6060,9 @@ struct ChatView: View {
                 },
                 scrollToTurnId: scrollToTurnId,
                 scrollToTurnTrigger: scrollToTurnTrigger,
-                sessionRedactions: session.sessionRedactions
+                sessionRedactions: session.sessionRedactions,
+                searchHighlightQuery: windowState.isFindBarVisible
+                    ? findQuery.trimmingCharacters(in: .whitespacesAndNewlines) : ""
             )
             .safeAreaInset(edge: .top, spacing: 0) {
                 Color.clear
