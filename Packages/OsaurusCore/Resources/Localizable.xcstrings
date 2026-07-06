@@ -130,6 +130,34 @@
         }
       }
     },
+    "%lld of %lld exposed" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%lld von %lld freigegeben"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%2$lld개 중 %1$lld개 노출됨"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Открыто %lld из %lld"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "已公开 %lld/%lld"
+          }
+        }
+      }
+    },
     "-1001234567890 — one per line" : {
       "localizations" : {
         "de" : {
@@ -198,6 +226,34 @@
         }
       }
     },
+    "Apple Foundation Model" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Apple Foundation-Modell"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Apple Foundation 모델"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Модель Apple Foundation"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Apple 基础模型"
+          }
+        }
+      }
+    },
     "Auto-reconnecting after a stale session." : {
       "localizations" : {
         "de" : {
@@ -222,6 +278,34 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "会话失效，正在自动重新连接。"
+          }
+        }
+      }
+    },
+    "Choose which models the API lists" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Wählen Sie, welche Modelle die API auflistet"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "API가 나열할 모델 선택"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Выберите, какие модели показывает API"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "选择 API 列出的模型"
           }
         }
       }
@@ -322,6 +406,34 @@
         }
       }
     },
+    "Expose all" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Alle freigeben"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "모두 노출"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Показать все"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "全部公开"
+          }
+        }
+      }
+    },
     "Find in conversation" : {
       "localizations" : {
         "de" : {
@@ -358,6 +470,62 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "在對話中查找"
+          }
+        }
+      }
+    },
+    "Hidden by default. Enable the remote models you want the API to list." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Standardmäßig ausgeblendet. Aktivieren Sie die Remote-Modelle, die die API auflisten soll."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "기본적으로 숨겨져 있습니다. API에 나열할 원격 모델을 활성화하세요."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "По умолчанию скрыты. Включите удалённые модели, которые API должен показывать."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "默认隐藏。启用您希望 API 列出的远程模型。"
+          }
+        }
+      }
+    },
+    "Hide all" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Alle ausblenden"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "모두 숨기기"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Скрыть все"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "全部隐藏"
           }
         }
       }
@@ -418,6 +586,34 @@
         }
       }
     },
+    "Local Models" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Lokale Modelle"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "로컬 모델"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Локальные модели"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "本地模型"
+          }
+        }
+      }
+    },
     "Next match" : {
       "localizations" : {
         "de" : {
@@ -454,6 +650,62 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "下一個匹配項"
+          }
+        }
+      }
+    },
+    "No local models match your search." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Keine lokalen Modelle entsprechen Ihrer Suche."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "검색과 일치하는 로컬 모델이 없습니다."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Нет локальных моделей, соответствующих вашему запросу."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "没有符合搜索条件的本地模型。"
+          }
+        }
+      }
+    },
+    "No models match your search." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Keine Modelle entsprechen Ihrer Suche."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "검색과 일치하는 모델이 없습니다."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Нет моделей, соответствующих вашему запросу."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "没有符合搜索条件的模型。"
           }
         }
       }
@@ -522,6 +774,62 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "正在重新连接…"
+          }
+        }
+      }
+    },
+    "Remote Models" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Remote-Modelle"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "원격 모델"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Удалённые модели"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "远程模型"
+          }
+        }
+      }
+    },
+    "Scanning installed models…" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Installierte Modelle werden gescannt …"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "설치된 모델을 검색하는 중…"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Сканирование установленных моделей…"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "正在扫描已安装的模型…"
           }
         }
       }
