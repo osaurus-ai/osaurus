@@ -346,7 +346,9 @@ private struct BottomActionBar: View {
 
                 CircularIconButton(systemName: "questionmark.circle", help: "Documentation") {
                     if let url = URL(string: "https://docs.osaurus.ai/") {
-                        NSWorkspace.shared.open(url)
+                        // Async variant avoids a synchronous LaunchServices XPC
+                        // round-trip that can hang the main thread.
+                        NSWorkspace.shared.open(url, configuration: NSWorkspace.OpenConfiguration())
                     }
                 }
 
