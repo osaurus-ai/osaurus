@@ -2933,6 +2933,13 @@ final class ChatSession: ObservableObject {
                     // without hiding chunky provider deltas.
                     let count = currentTurn.pendingToolArgFragmentCount
                     let now = Date()
+                    // TEMP debug: fragment arrival timestamps vs the rebuilds
+                    // that render them — compare against markdown/diff
+                    // configure lines to measure delta-to-pixels latency.
+                    ChatDebugLog.shared.log(
+                        "toolArgs.fragment",
+                        "n=\(count) bytes=\(argFragment.utf8.count) total=\(currentTurn.pendingToolArgSize)"
+                    )
                     if count <= 3 || now.timeIntervalSince(lastToolArgRebuildAt) >= 0.08 {
                         lastToolArgRebuildAt = now
                         rebuildVisibleBlocks()

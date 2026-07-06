@@ -151,6 +151,14 @@ final class NativeFileDiffView: NSView {
 
         let tv = ensureTextView(theme: theme)
         if diffChanged || themeChanged {
+            if diff.isStreamingPreview {
+                // TEMP debug: when the streamed lines hit the screen —
+                // compare against toolArgs.fragment timestamps.
+                ChatDebugLog.shared.log(
+                    "fileDiff.streamRender",
+                    "lines=\(diff.lines.count) added=\(diff.addedCount) file=\(diff.fileName)"
+                )
+            }
             applyDiffText(to: tv, diff: diff, theme: theme)
         }
         layoutBody(width: width, collapsed: collapsed, theme: theme)
