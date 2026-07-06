@@ -67,6 +67,12 @@ struct PluginsView: View {
     @State private var selectedCategory: String?
     /// Search + category filtered marketplace entries.
     @State private var filteredMarketplaceEntries: [MarketplacePlugin] = []
+    /// Chip counts derived from the search-matched (but not category-filtered)
+    /// marketplace entries, so the "All" total and per-category counts track
+    /// the active query instead of always showing the full catalog. Nil until
+    /// the first filter pass; the chips fall back to the service's catalog
+    /// counts.
+    @State private var marketplaceChipCounts: (total: Int, byCategory: [String: Int])?
     /// Detail navigation for a browsable (not-yet-installed) marketplace entry.
     @State private var selectedMarketplaceEntry: MarketplacePlugin?
 
@@ -670,8 +676,13 @@ struct PluginsView: View {
             VStack(alignment: .leading, spacing: 16) {
                 if !claudeMarketplace.categories.isEmpty {
                     MarketplaceCategoryChips(
-                        categories: claudeMarketplace.categories,
-                        totalCount: claudeMarketplace.entries.count,
+                        categories: claudeMarketplace.categories.map { category in
+                            ClaudeMarketplaceCategory(
+                                id: category.id,
+                                count: marketplaceChipCounts?.byCategory[category.id] ?? category.count
+                            )
+                        },
+                        totalCount: marketplaceChipCounts?.total ?? claudeMarketplace.entries.count,
                         selected: $selectedCategory
                     )
                 }
@@ -884,7 +895,7 @@ struct PluginsView: View {
         let installedPluginIds = Set(currentClaudePlugins.map { $0.pluginId })
         let marketplaceRepo = claudeMarketplace.repo
 
-        let (browseResult, installedResult, claudeResult, marketplaceResult) =
+        let (browseResult, installedResult, claudeResult, marketplaceResult, chipCounts) =
             await Task.detached(priority: .userInitiated) {
                 let browse = currentPlugins.filter { Self.pluginMatchesQuery($0, query: query) }
                 let installed =
@@ -895,26 +906,33 @@ struct PluginsView: View {
                     currentClaudePlugins
                     .filter { Self.claudePluginMatchesQuery($0, query: query) }
                     .sorted { $0.displayName.lowercased() < $1.displayName.lowercased() }
+                // Search-matched marketplace entries BEFORE the category
+                // filter: the grid applies the selected category on top, while
+                // the chips derive their counts from this set so every
+                // category count (and the "All" total) tracks the query.
+                let searchMatched = currentMarketplace.filter { entry in
+                    let isInstalled: Bool = {
+                        guard let marketplaceRepo else { return false }
+                        let id = ClaudePluginInstaller.pluginId(
+                            repo: marketplaceRepo,
+                            pluginName: entry.name
+                        )
+                        return installedPluginIds.contains(id)
+                    }()
+                    return !isInstalled && Self.marketplaceEntryMatchesQuery(entry, query: query)
+                }
                 let marketplace =
-                    currentMarketplace
+                    searchMatched
                     .filter { entry in
-                        let categoryMatches =
-                            category == nil
+                        category == nil
                             || ClaudeMarketplaceService.categoryKey(for: entry) == category
-                        let isInstalled: Bool = {
-                            guard let marketplaceRepo else { return false }
-                            let id = ClaudePluginInstaller.pluginId(
-                                repo: marketplaceRepo,
-                                pluginName: entry.name
-                            )
-                            return installedPluginIds.contains(id)
-                        }()
-                        return categoryMatches
-                            && !isInstalled
-                            && Self.marketplaceEntryMatchesQuery(entry, query: query)
                     }
                     .sorted { $0.name.lowercased() < $1.name.lowercased() }
-                return (browse, installed, claude, marketplace)
+                var byCategory: [String: Int] = [:]
+                for entry in searchMatched {
+                    byCategory[ClaudeMarketplaceService.categoryKey(for: entry), default: 0] += 1
+                }
+                return (browse, installed, claude, marketplace, (searchMatched.count, byCategory))
             }.value
 
         guard !Task.isCancelled else { return }
@@ -923,6 +941,7 @@ struct PluginsView: View {
         installedPlugins = installedResult
         filteredClaudePlugins = claudeResult
         filteredMarketplaceEntries = marketplaceResult
+        marketplaceChipCounts = chipCounts
 
         var permissionCount = 0
         var missingPerms: [String: [SystemPermission]] = [:]
