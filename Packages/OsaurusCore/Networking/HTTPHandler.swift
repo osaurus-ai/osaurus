@@ -8849,6 +8849,36 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 ramFeasibility = NSNull()
             }
 
+            // Cache-effectiveness and speculation counters, aggregated across
+            // every resolved BatchEngine. The Settings panel already renders
+            // these; exposing them here lets benchmark/regression tooling
+            // attribute a TTFT change to its cause (prefix hit vs miss, MTP
+            // engaged vs fallen back) instead of guessing from timings.
+            let batchDiag = await MLXBatchAdapter.snapshotDiagnostics()
+            let batchDiagnostics: Any
+            if let d = batchDiag {
+                batchDiagnostics =
+                    [
+                        "pending": d.pendingCount,
+                        "active": d.activeCount,
+                        "active_high_watermark": d.activeHighWatermark,
+                        "accepting_requests": d.isAcceptingRequests,
+                        "native_mtp_models": d.nativeMTPModelCount,
+                        "native_mtp_depths": d.nativeMTPDepthSummary as Any? ?? NSNull(),
+                        "prefix_hits": d.prefixHits,
+                        "prefix_misses": d.prefixMisses,
+                        "disk_l2_hits": d.diskL2Hits,
+                        "disk_l2_misses": d.diskL2Misses,
+                        "disk_l2_stores": d.diskL2Stores,
+                        "ssm_companion_hits": d.ssmCompanionHits,
+                        "ssm_companion_misses": d.ssmCompanionMisses,
+                        "ssm_companion_rederives": d.ssmCompanionReDerives,
+                        "turboquant_compressions": d.turboQuantCompressions,
+                    ] as [String: Any]
+            } else {
+                batchDiagnostics = NSNull()
+            }
+
             let memoryConfig = MemoryConfigurationStore.load()
             let localModelScan: Any = ModelManager.localModelsScanDiagnosticJSONObject() as Any? ?? NSNull()
             let obj: [String: Any] = [
@@ -8869,6 +8899,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 "index_failures": indexFailures,
                 "local_model_scan": localModelScan,
                 "ram_feasibility": ramFeasibility,
+                "batch_diagnostics": batchDiagnostics,
                 "persistence": PersistenceHealth.shared.snapshot(),
             ]
 
