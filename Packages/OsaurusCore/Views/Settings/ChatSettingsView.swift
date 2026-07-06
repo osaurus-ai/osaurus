@@ -42,6 +42,13 @@ struct ChatSettingsView: View {
     /// `StreamingDeltaProcessor` reads per delta. Applied immediately, so
     /// it's excluded from the debounced save baseline.
     @AppStorage("chatSmoothStreamingEnabled") private var smoothStreamingEnabled: Bool = true
+    /// Auto-expand the thinking block while the model is actively reasoning
+    /// and collapse it again once the answer starts. Default off. Bound to
+    /// `UserDefaults` key `chatExpandThinkingWhileStreamingEnabled` which
+    /// `ChatSession` reads on every visible-blocks rebuild. Applied
+    /// immediately, so it's excluded from the debounced save baseline.
+    @AppStorage("chatExpandThinkingWhileStreamingEnabled")
+    private var expandThinkingWhileStreamingEnabled: Bool = false
     /// Free-text "voice" instruction for AI-generated empty-state
     /// greetings — the global default voice. The on/off is per-agent
     /// (`AgentSettings.generativeGreetingsEnabled`). Empty = use the
@@ -172,6 +179,13 @@ struct ChatSettingsView: View {
                     description:
                         "Pace incoming tokens at a steady rate so streaming looks like a typewriter across all providers. Disable to render tokens as soon as they arrive — useful with very fast remote providers that you'd rather see complete instantly.",
                     isOn: $smoothStreamingEnabled
+                )
+
+                SettingsToggle(
+                    title: L("Expand Thinking While Streaming"),
+                    description:
+                        "Keep the model's reasoning expanded while it is actively thinking, then collapse it automatically once the response begins. Useful for monitoring long-running agent tasks in real time.",
+                    isOn: $expandThinkingWhileStreamingEnabled
                 )
 
                 SettingsToggle(
