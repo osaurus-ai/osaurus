@@ -65,6 +65,7 @@ printf "name\tcommand\tlog\texit_code\tduration_ms\n" > "$RESULTS_TSV"
 fail=0
 fixture_server_pid=""
 
+# shellcheck disable=SC2329 # invoked by the EXIT trap below.
 cleanup() {
   if [[ -n "$fixture_server_pid" ]] && kill -0 "$fixture_server_pid" >/dev/null 2>&1; then
     kill "$fixture_server_pid" >/dev/null 2>&1 || true
@@ -199,7 +200,8 @@ PY
     exit 1
   fi
 
-  export OSAURUS_EVALS_BROWSER_FIXTURE_URL="http://127.0.0.1:$(cat "$port_file")"
+  OSAURUS_EVALS_BROWSER_FIXTURE_URL="http://127.0.0.1:$(cat "$port_file")"
+  export OSAURUS_EVALS_BROWSER_FIXTURE_URL
   echo "Started fixture server: ${OSAURUS_EVALS_BROWSER_FIXTURE_URL}"
 }
 
