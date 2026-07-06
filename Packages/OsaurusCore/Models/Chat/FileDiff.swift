@@ -44,6 +44,10 @@ struct FileDiff: Equatable {
     let truncated: Bool
     /// The raw unified-diff text, used for the card's copy action.
     let rawDiff: String
+    /// True for the live card rendered while the tool call's arguments are
+    /// still streaming — content is a partial prefix of the file, so the
+    /// renderer skips syntax highlighting and shows a "writing" badge.
+    var isStreamingPreview: Bool = false
 
     /// File name component for the card header.
     var fileName: String {
@@ -106,6 +110,109 @@ struct FileDiff: Equatable {
             truncated: truncated,
             rawDiff: diffText
         )
+    }
+
+    // MARK: - Streaming preview
+
+    /// Builds a live preview card from a diff-producing tool call whose
+    /// arguments are still streaming. Extracts the (possibly truncated)
+    /// `content` / `new_string` value from the partial JSON and renders every
+    /// line as added, so the card grows smoothly as the model writes instead
+    /// of the finished diff landing all at once. Returns nil until the content
+    /// field has started streaming.
+    static func streamingPreview(toolName: String, partialArgs: String) -> FileDiff? {
+        guard diffProducingToolNames.contains(toolName) else { return nil }
+        guard
+            let body = partialJSONStringValue(forKey: "content", in: partialArgs)
+                ?? partialJSONStringValue(forKey: "new_string", in: partialArgs),
+            !body.isEmpty
+        else { return nil }
+
+        let path = partialJSONStringValue(forKey: "path", in: partialArgs) ?? ""
+        let lines = body.components(separatedBy: "\n").map { Line(kind: .added, text: $0) }
+        return FileDiff(
+            path: path,
+            language: language(forPath: path),
+            lines: lines,
+            addedCount: lines.count,
+            removedCount: 0,
+            isPreview: false,
+            truncated: false,
+            rawDiff: body,
+            isStreamingPreview: true
+        )
+    }
+
+    /// Returns the decoded prefix of the JSON string value for `key` inside a
+    /// possibly-truncated JSON object text. Tolerates the value (or a trailing
+    /// escape sequence) being cut off mid-stream; a truncated escape is dropped
+    /// rather than decoded wrong. Returns nil when the key's value hasn't
+    /// started streaming or isn't a string.
+    private static func partialJSONStringValue(forKey key: String, in text: String) -> String? {
+        let needle = "\"\(key)\""
+        var searchStart = text.startIndex
+        while let keyRange = text.range(of: needle, range: searchStart ..< text.endIndex) {
+            searchStart = keyRange.upperBound
+            if let value = stringValue(startingAfter: keyRange.upperBound, in: text) {
+                return value
+            }
+        }
+        return nil
+    }
+
+    /// Decodes a string value expected after `"key"` at `start`: skips
+    /// whitespace and the colon, then unescapes until the closing quote or the
+    /// end of the (truncated) input. Returns nil if what follows isn't `: "`.
+    private static func stringValue(startingAfter start: String.Index, in text: String) -> String? {
+        var i = start
+        var sawColon = false
+        scan: while i < text.endIndex {
+            switch text[i] {
+            case ":" where !sawColon:
+                sawColon = true
+            case "\"" where sawColon:
+                i = text.index(after: i)
+                break scan
+            case let c where c.isWhitespace:
+                break
+            default:
+                return nil
+            }
+            i = text.index(after: i)
+        }
+        guard sawColon else { return nil }
+
+        var out = ""
+        while i < text.endIndex {
+            let c = text[i]
+            if c == "\"" { break }
+            if c == "\\" {
+                let escIndex = text.index(after: i)
+                guard escIndex < text.endIndex else { break }
+                switch text[escIndex] {
+                case "n": out.append("\n")
+                case "t": out.append("\t")
+                case "r": out.append("\r")
+                case "b": out.append("\u{08}")
+                case "f": out.append("\u{0C}")
+                case "u":
+                    let hexStart = text.index(after: escIndex)
+                    guard let hexEnd = text.index(hexStart, offsetBy: 4, limitedBy: text.endIndex),
+                        let value = UInt32(text[hexStart ..< hexEnd], radix: 16),
+                        let scalar = Unicode.Scalar(value)
+                    else { return out }
+                    out.unicodeScalars.append(scalar)
+                    i = hexEnd
+                    continue
+                case let e: out.append(e)
+                }
+                i = text.index(after: escIndex)
+                continue
+            }
+            out.append(c)
+            i = text.index(after: i)
+        }
+        return out
     }
 
     /// Maps a file extension to a highlight.js language id. Returns nil when

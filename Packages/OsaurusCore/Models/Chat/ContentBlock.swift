@@ -609,15 +609,36 @@ extension ContentBlock {
             }
 
             if isStreaming, let pendingName = turn.pendingToolName {
-                turnBlocks.append(
-                    .pendingToolCall(
-                        turnId: turn.id,
+                // File-writing tools stream their whole file through the call
+                // arguments. Render a live diff card that grows with the code
+                // instead of the generic pending chip, so the finished card
+                // doesn't land as one jarring dump. Falls back to the chip
+                // until the content field starts streaming.
+                if let partialArgs = turn.pendingToolArgFull,
+                    let preview = FileDiff.streamingPreview(
                         toolName: pendingName,
-                        argPreview: turn.pendingToolArgPreview,
-                        argSize: turn.pendingToolArgSize,
-                        position: .middle
+                        partialArgs: partialArgs
                     )
-                )
+                {
+                    turnBlocks.append(
+                        .fileDiff(
+                            turnId: turn.id,
+                            callId: "pending-\(turn.id.uuidString)",
+                            diff: preview,
+                            position: .middle
+                        )
+                    )
+                } else {
+                    turnBlocks.append(
+                        .pendingToolCall(
+                            turnId: turn.id,
+                            toolName: pendingName,
+                            argPreview: turn.pendingToolArgPreview,
+                            argSize: turn.pendingToolArgSize,
+                            position: .middle
+                        )
+                    )
+                }
             }
 
             // stats must be shown only on the final turn (intermediate tool calling turns should not display them)

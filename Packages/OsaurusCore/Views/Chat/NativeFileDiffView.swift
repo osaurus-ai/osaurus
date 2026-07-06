@@ -369,8 +369,8 @@ final class NativeFileDiffView: NSView {
         addedLabel.textColor = NSColor(theme.successColor)
         removedLabel.textColor = NSColor(theme.errorColor)
 
-        if diff.isPreview {
-            previewBadge.stringValue = L("preview")
+        if diff.isStreamingPreview || diff.isPreview {
+            previewBadge.stringValue = diff.isStreamingPreview ? "…" : L("preview")
             previewBadge.font = NSFont.systemFont(ofSize: CGFloat(theme.captionSize) - 2, weight: .medium)
             previewBadge.textColor = NSColor(theme.tertiaryText)
             previewBadge.isHidden = false
@@ -419,7 +419,11 @@ final class NativeFileDiffView: NSView {
         let fullText = diff.lines.map(\.text).joined(separator: "\n")
         let fullRange = NSRange(location: 0, length: (fullText as NSString).length)
 
-        if let language = diff.language,
+        // While the card is live-streaming, re-highlighting the whole document
+        // on every arg fragment is wasted work — use the flat path and let the
+        // final card (isStreamingPreview == false) do the one real pass.
+        if !diff.isStreamingPreview,
+            let language = diff.language,
             let highlighted = highlightCode(fullText, language: language, theme: theme)
         {
             let body = NSMutableAttributedString(attributedString: highlighted)
