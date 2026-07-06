@@ -238,6 +238,19 @@ struct NotchView: View {
         .spring(response: 0.45, dampingFraction: 0.68, blendDuration: 0.1)
     }
 
+    /// Collapse animation. The bouncy `swingSpring` reads as playful on the
+    /// way open but as judder on the way closed — the card overshoots past
+    /// pill size and rebounds after its content has already faded. Nearly
+    /// critically damped so the collapse settles in one motion.
+    private var settleSpring: Animation {
+        .spring(response: 0.38, dampingFraction: 0.9, blendDuration: 0.1)
+    }
+
+    /// Direction-aware animation for expansion-state changes.
+    private var expansionAnimation: Animation {
+        expansion == .expanded ? swingSpring : settleSpring
+    }
+
     // MARK: - Body
 
     var body: some View {
@@ -253,7 +266,7 @@ struct NotchView: View {
             }
         }
         .padding(.top, windowController.alertContentTopPadding)
-        .animation(swingSpring, value: expansion)
+        .animation(expansionAnimation, value: expansion)
         .animation(swingSpring, value: sortedTasks.map(\.id))
         .animation(swingSpring, value: activeTaskIndex)
         .onChange(of: sortedTasks.count) { _, newCount in
@@ -311,7 +324,7 @@ struct NotchView: View {
         guard hovering != isHovering else { return }
         let delay = hovering ? 0.15 : 0.2
         let work = DispatchWorkItem {
-            withAnimation(swingSpring) { isHovering = hovering }
+            withAnimation(hovering ? swingSpring : settleSpring) { isHovering = hovering }
         }
         hoverTransitionWorkItem = work
         DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: work)
