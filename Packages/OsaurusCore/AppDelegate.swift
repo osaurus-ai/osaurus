@@ -1819,7 +1819,12 @@ extension AppDelegate {
                 )
                 alert.alertStyle = .warning
                 alert.addButton(withTitle: "OK")
-                alert.runModal()
+                // `runModal` intentionally blocks the main run loop until the
+                // user dismisses the alert; pause the hang watchdog so the
+                // wait isn't reported as an app hang (Sentry APPLE-MACOS-VE).
+                CrashReportingService.shared.withAppHangTrackingPaused {
+                    _ = alert.runModal()
+                }
                 return
             }
 
