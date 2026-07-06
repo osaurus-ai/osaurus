@@ -2881,6 +2881,26 @@ final class ChatSession: ObservableObject {
                     rebuildVisibleBlocks()
                     continue
                 }
+                // A tool call is still being generated: the model is emitting the
+                // raw envelope (e.g. a large `write_file` argument) but it hasn't
+                // closed yet, so the parsed name/args aren't available. Local MLX
+                // buffers the whole envelope, so without this the assistant turn
+                // has no visible content and no `pendingToolName`, leaving only the
+                // frozen typing indicator for the entire (multi-second) write.
+                // Seed a neutral in-progress tool card so the view flips from the
+                // static dots to the shimmering pending-tool row; the committed
+                // `StreamingToolHint.decode` above overwrites the placeholder with
+                // the real tool name once the envelope closes. The raw envelope
+                // text itself is intentionally NOT rendered (it isn't parsed args
+                // and could be any format), so it never leaks as message text.
+                if StreamingToolCallProgressHint.decode(delta) != nil {
+                    uiToolSentinelCount += 1
+                    if currentTurn.pendingToolName == nil {
+                        currentTurn.pendingToolName = ToolDisplayName.pendingToolSentinel
+                        rebuildVisibleBlocks()
+                    }
+                    continue
+                }
                 // Captured OpenAI Responses reasoning item (id + encrypted blob).
                 // Not visible text — stash it on the turn so the next request
                 // re-emits it before this turn's function_call(s).

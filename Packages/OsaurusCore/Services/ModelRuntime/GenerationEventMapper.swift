@@ -152,6 +152,22 @@ enum GenerationEventMapper {
                         .toolInvocation(name: call.function.name, argsJSON: argsJSON)
                     )
 
+                case .toolCallProgress(let envelopeDelta):
+                    // Raw envelope preview while the call is still being
+                    // written. Keeps the stream alive during a long file-write
+                    // call (which otherwise buffers silently until it closes)
+                    // so the chat can render progress instead of a frozen
+                    // indicator. Marks first output so the prefill spinner
+                    // clears — the model IS producing, just inside a tool
+                    // envelope. The parsed call still lands as `.toolInvocation`.
+                    guard !envelopeDelta.isEmpty else { continue }
+                    markFirstModelOutput()
+                    if firstChunk {
+                        firstChunk = false
+                        InferenceProgressManager.shared.prefillDidFinishAsync()
+                    }
+                    continuation.yield(.toolCallProgress(envelopeDelta))
+
                 case .info:
                     continue
 

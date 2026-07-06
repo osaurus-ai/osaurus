@@ -2293,6 +2293,11 @@ public actor ModelRuntime {
                 pendingTools.append(
                     ServiceToolInvocation(toolName: name, jsonArguments: argsJSON)
                 )
+            case .toolCallProgress:
+                // Non-streaming caller — the incremental envelope preview is a
+                // UI-only affordance; only the committed `.toolInvocation`
+                // matters here. Dropped, like `.reasoning`/`.prefillProgress`.
+                break
             case .completionInfo:
                 break
             }
@@ -2440,6 +2445,20 @@ public actor ModelRuntime {
                     case .prefillProgress(let progress):
                         if pendingTool == nil {
                             continuation.yield(StreamingPrefillProgressHint.encode(progress))
+                        }
+                    case .toolCallProgress(let envelopeDelta):
+                        // Live preview of the tool-call envelope as it is
+                        // written. Emitted before the committed
+                        // `.toolInvocation`, so `pendingTool` is still nil here.
+                        // Encoded behind the `\u{FFFE}` sentinel so it never
+                        // reaches the visible token stream or the OpenAI wire —
+                        // only the native ChatView decodes it, to keep the
+                        // tool-call card alive instead of showing a frozen
+                        // spinner during a long file-write call.
+                        if pendingTool == nil, !envelopeDelta.isEmpty {
+                            continuation.yield(
+                                StreamingToolCallProgressHint.encode(envelopeDelta)
+                            )
                         }
                     case .toolInvocation(let name, let argsJSON):
                         // Surface the first tool call's hints immediately, then

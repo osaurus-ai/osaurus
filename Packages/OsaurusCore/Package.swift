@@ -43,10 +43,14 @@ let package = Package(
         // eval/asyncEval/item + synchronize/clearCache to kill the Metal
         // concurrent-encoder crash class) and #117 (NormConventionResolver:
         // an unrecognized norm_convention defers to the vote instead of
-        // silently disabling the (1+weight) shift).
+        // silently disabling the (1+weight) shift). Now also carries the
+        // incremental tool-call envelope progress event (`Generation
+        // .toolCallProgress`) so the app can show a live "preparing tool call"
+        // card during a long buffered tool write (e.g. a large file) instead of
+        // a frozen typing indicator. Additive — existing consumers unaffected.
         .package(
             url: "https://github.com/osaurus-ai/vmlx-swift",
-            revision: "53840914f693e9e1305fbbacb1ecc8e5c1e9625f"
+            revision: "8d0ef7e115f40bf428d05eee6f6a21ab0ddffb65"
         ),
         // FluidAudio 0.14.3 added a breaking `language:` parameter to TTS
         // calls that osaurus's `TTSService` doesn't pass. Pinning to the

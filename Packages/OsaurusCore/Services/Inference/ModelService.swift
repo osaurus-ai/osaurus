@@ -315,6 +315,25 @@ enum StreamingPrefillProgressHint: Sendable {
     }
 }
 
+/// In-band signaling for a tool call that is still being generated. Carries the
+/// raw, format-specific envelope delta (not parsed arguments) so the native
+/// chat can show a live "building tool call" preview instead of a frozen
+/// indicator while a long call — e.g. a large `write_file` — is streamed inside
+/// the buffered tool-call envelope. Mirrors `StreamingToolHint`'s `\u{FFFE}`
+/// sentinel so HTTP handlers and ChatView drop it from visible model text; the
+/// committed call still arrives afterwards as a `\u{FFFE}tool:` / `\u{FFFE}args:`
+/// pair, so this hint never replaces the actionable tool event.
+enum StreamingToolCallProgressHint: Sendable {
+    private static let progressPrefix = "\u{FFFE}toolprogress:"
+
+    static func encode(_ envelopeDelta: String) -> String { progressPrefix + envelopeDelta }
+
+    static func decode(_ delta: String) -> String? {
+        guard delta.hasPrefix(progressPrefix) else { return nil }
+        return String(delta.dropFirst(progressPrefix.count))
+    }
+}
+
 /// In-band signaling for generation benchmarks (tok/s, token count).
 /// Uses the same `\u{FFFE}` sentinel pattern as `StreamingToolHint`.
 ///
