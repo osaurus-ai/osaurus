@@ -86,18 +86,24 @@ nonisolated(unsafe) private let highlightCache = NSCache<NSString, NSAttributedS
 func highlightCode(
     _ code: String,
     language: String?,
-    theme: any ThemeProtocol
+    theme: any ThemeProtocol,
+    cache: Bool = true
 ) -> NSAttributedString? {
     highlightrLock.lock()
     defer { highlightrLock.unlock() }
     switchHighlightrThemeLocked(for: theme)
+    // `cache: false` for the throttled mid-stream passes — every pass sees a
+    // different prefix of the growing code, so caching them would only fill
+    // the cache with dead entries.
     let key = "\(currentHighlightrTheme)|\(language?.lowercased() ?? "")|\(code)" as NSString
-    if let cached = highlightCache.object(forKey: key) { return cached }
+    if cache, let cached = highlightCache.object(forKey: key) { return cached }
     guard
         let highlighted = sharedHighlightr?.highlight(
             code, as: language?.lowercased(), fastRender: true)
     else { return nil }
-    highlightCache.setObject(highlighted, forKey: key, cost: code.utf16.count)
+    if cache {
+        highlightCache.setObject(highlighted, forKey: key, cost: code.utf16.count)
+    }
     return highlighted
 }
 
@@ -295,10 +301,11 @@ struct CodeContentView: NSViewRepresentable {
         language: String?,
         baseWidth: CGFloat,
         theme: any ThemeProtocol,
-        highlight: Bool = true
+        highlight: Bool = true,
+        cacheHighlight: Bool = true
     ) -> NSMutableAttributedString {
         let view = CodeContentView(code: code, language: language, baseWidth: baseWidth, theme: theme)
-        return view.buildAttributedString(highlight: highlight)
+        return view.buildAttributedString(highlight: highlight, cacheHighlight: cacheHighlight)
     }
 
     // MARK: - Attributed String
@@ -316,7 +323,10 @@ struct CodeContentView: NSViewRepresentable {
         return NSFont.monospacedSystemFont(ofSize: size, weight: weight)
     }
 
-    func buildAttributedString(highlight: Bool = true) -> NSMutableAttributedString {
+    func buildAttributedString(
+        highlight: Bool = true,
+        cacheHighlight: Bool = true
+    ) -> NSMutableAttributedString {
         let fontSize = codeFontSize
         let font = monoFont(size: fontSize, weight: .regular)
         let lines = code.components(separatedBy: "\n")
@@ -328,7 +338,10 @@ struct CodeContentView: NSViewRepresentable {
         // Switch theme (if needed) + highlight atomically under the Highlightr
         // lock; fall back to plain text if it returns nil.
         let result: NSMutableAttributedString
-        let highlightedCode = highlight ? highlightCode(code, language: language, theme: theme) : nil
+        let highlightedCode =
+            highlight
+            ? highlightCode(code, language: language, theme: theme, cache: cacheHighlight)
+            : nil
         if let highlighted = highlightedCode {
             result = NSMutableAttributedString(attributedString: highlighted)
             let fullRange = NSRange(location: 0, length: result.length)
