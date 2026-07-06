@@ -2293,6 +2293,9 @@ public actor ModelRuntime {
                 pendingTools.append(
                     ServiceToolInvocation(toolName: name, jsonArguments: argsJSON)
                 )
+            case .toolInvocationProgress:
+                // Non-streaming caller — nothing to preview.
+                break
             case .completionInfo:
                 break
             }
@@ -2440,6 +2443,16 @@ public actor ModelRuntime {
                     case .prefillProgress(let progress):
                         if pendingTool == nil {
                             continuation.yield(StreamingPrefillProgressHint.encode(progress))
+                        }
+                    case .toolInvocationProgress(let delta):
+                        // Raw envelope delta while the model is still writing
+                        // the call. Forwarded as an args fragment so the chat
+                        // UI can live-preview file writes; the parsed
+                        // `.toolInvocation` below remains authoritative (its
+                        // full canonical argsJSON is re-sent and replaces the
+                        // preview accumulation downstream).
+                        if pendingTool == nil {
+                            continuation.yield(StreamingToolHint.encodeArgs(delta))
                         }
                     case .toolInvocation(let name, let argsJSON):
                         // Surface the first tool call's hints immediately, then

@@ -143,6 +143,18 @@ struct FileDiff: Equatable {
         )
     }
 
+    /// Best-effort tool name from a partial (still-streaming) tool-call
+    /// envelope. Local models stream the raw envelope before any parsed
+    /// call exists — the `"name"` field usually completes within the first
+    /// few fragments, letting the UI show the pending chip / diff preview
+    /// long before the call finishes.
+    static func partialToolName(inArgs args: String) -> String? {
+        guard let name = partialJSONStringValue(forKey: "name", in: args),
+            !name.isEmpty
+        else { return nil }
+        return name
+    }
+
     /// Returns the decoded prefix of the JSON string value for `key` inside a
     /// possibly-truncated JSON object text. Tolerates the value (or a trailing
     /// escape sequence) being cut off mid-stream; a truncated escape is dropped

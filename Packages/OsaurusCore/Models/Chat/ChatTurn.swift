@@ -419,7 +419,13 @@ final class ChatTurn: ObservableObject, Identifiable {
             ? String(updated.suffix(Self.maxArgPreviewLength))
             : updated
 
-        if let name = pendingToolName, FileDiff.diffProducingToolNames.contains(name) {
+        // Accumulate the full args for file-writing tools AND while the tool
+        // name is still unknown — local models stream the raw envelope before
+        // any name hint, and the name is derived from this buffer.
+        let wantsFull =
+            pendingToolName == nil
+            || FileDiff.diffProducingToolNames.contains(pendingToolName!)
+        if wantsFull {
             let full = pendingToolArgFull ?? ""
             if full.count < Self.maxFullArgAccumulation {
                 pendingToolArgFull = full + fragment

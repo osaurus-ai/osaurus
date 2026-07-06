@@ -44,10 +44,14 @@ let package = Package(
         // concurrent-encoder crash class) and #117 (NormConventionResolver:
         // an unrecognized norm_convention defers to the vote instead of
         // silently disabling the (1+weight) shift).
-        .package(
-            url: "https://github.com/osaurus-ai/vmlx-swift",
-            revision: "53840914f693e9e1305fbbacb1ecc8e5c1e9625f"
-        ),
+        // TEMPORARY: local path while verifying the toolCallProgress
+        // streaming feature (feature/tool-call-progress-events branch).
+        // Re-pin to the remote revision once verified:
+        // .package(
+        //     url: "https://github.com/osaurus-ai/vmlx-swift",
+        //     revision: "53840914f693e9e1305fbbacb1ecc8e5c1e9625f"
+        // ),
+        .package(path: "../../../vmlx-swift"),
         // FluidAudio 0.14.3 added a breaking `language:` parameter to TTS
         // calls that osaurus's `TTSService` doesn't pass. Pinning to the
         // last working version until osaurus catches up. Bumping requires

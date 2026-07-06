@@ -141,6 +141,11 @@ enum GenerationEventMapper {
                     }
                     continuation.yield(.prefillProgress(state))
 
+                case .toolCallProgress(let delta):
+                    guard !delta.isEmpty else { continue }
+                    markFirstModelOutput()
+                    continuation.yield(.toolInvocationProgress(delta))
+
                 case .toolCall(let call):
                     sawToolCall = true
                     markFirstModelOutput()

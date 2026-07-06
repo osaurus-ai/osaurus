@@ -2891,6 +2891,16 @@ final class ChatSession: ObservableObject {
                 }
                 if let toolName = StreamingToolHint.decode(delta) {
                     uiToolSentinelCount += 1
+                    // Local models stream the raw envelope as args fragments
+                    // BEFORE the parsed call's name hint. When the hint lands
+                    // the runtime re-sends the full canonical argsJSON, so
+                    // drop the envelope accumulation — the canonical args
+                    // rebuild the preview without envelope wrapper noise.
+                    // Remote providers send the hint before any fragment
+                    // (size 0), so this is a no-op there.
+                    if currentTurn.pendingToolArgSize > 0 {
+                        currentTurn.clearPendingToolArgs()
+                    }
                     currentTurn.pendingToolName = toolName.isEmpty ? nil : toolName
                     rebuildVisibleBlocks()
                     continue
@@ -2907,6 +2917,16 @@ final class ChatSession: ObservableObject {
                 if let argFragment = StreamingToolHint.decodeArgs(delta) {
                     uiToolSentinelCount += 1
                     currentTurn.appendToolArgFragment(argFragment)
+                    // Envelope-first flow (local models): the tool name rides
+                    // inside the streamed envelope, no name hint yet. Derive
+                    // it as soon as the "name" field completes so the pending
+                    // chip / live diff preview appear mid-generation.
+                    if currentTurn.pendingToolName == nil,
+                        let full = currentTurn.pendingToolArgFull,
+                        let name = FileDiff.partialToolName(inArgs: full)
+                    {
+                        currentTurn.pendingToolName = name
+                    }
                     // Always rebuild for the first few fragments so the chip
                     // appears immediately; afterwards cap at ~12 rebuilds/sec
                     // so the table stays responsive during long arg streams
