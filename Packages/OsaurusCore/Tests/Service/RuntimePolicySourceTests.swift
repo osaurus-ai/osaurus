@@ -658,8 +658,16 @@ struct RuntimePolicySourceTests {
         // plus the orphan tool-call closer strip (vmlx-swift#115) that
         // removes stray `</parameter></function></zyphra_tool_call>`
         // closer runs from the visible stream in ZAYA / Gemma-4
-        // AppleScript agent-loop rows.
-        let expectedRuntimeHardenedRevision = "8dffa0a8e69d7617d68f0843635158684120a3dc"
+        // AppleScript agent-loop rows,
+        // plus the GPU-stream-driver serialization (vmlx-swift#116) that
+        // re-locks eval/asyncEval/item + synchronize/clearCache to kill the
+        // Metal concurrent-encoder crash class (Sentry: end_encoding,
+        // "encoder already encoding", addCompletedHandler-after-commit,
+        // set_input_array double-free), and the NormConventionResolver
+        // fallback (vmlx-swift#117) so an unrecognized norm_convention
+        // declaration defers to the order-independent vote instead of
+        // silently disabling the (1+weight) RMSNorm shift.
+        let expectedRuntimeHardenedRevision = "53840914f693e9e1305fbbacb1ecc8e5c1e9625f"
         let manifestRevision = try Self.vmlxPinRevision(in: manifest)
         let workspaceRevision = try Self.vmlxPinRevision(in: workspaceResolved)
         let appRevision = try Self.vmlxPinRevision(in: appResolved)
