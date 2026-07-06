@@ -81,6 +81,12 @@ struct DatabaseToolsTests {
 
     @Test
     func pathResolverUnavailableWhenNoRoot() async {
+        // The whole test bundle runs suites in parallel, and sibling suites
+        // may leave a folder context registered in the process-global
+        // `FolderToolManager` (or an active sandbox agent context). The
+        // durable invariant is that resolution FAILS when the file exists
+        // nowhere — the exact envelope ("unavailable" vs "No file at")
+        // depends on whether a root happened to be visible.
         let result = await DatabaseFilePathResolver.resolveForRead(
             path: "missing.csv",
             tool: "db_import"
@@ -89,7 +95,10 @@ struct DatabaseToolsTests {
             Issue.record("expected failure")
             return
         }
-        #expect(envelope.contains("unavailable") || envelope.contains("db_insert"))
+        #expect(
+            envelope.contains("unavailable") || envelope.contains("db_insert")
+                || envelope.contains("missing.csv")
+        )
     }
 
     @Test
@@ -192,22 +201,44 @@ struct DatabaseToolsTests {
     }
 
     @Test
-    @MainActor
     func exportOverwriteGuard() async throws {
-        try await withHostFolder { root in
-            let dest = root.appendingPathComponent("out.csv")
-            try "old\n".write(to: dest, atomically: true, encoding: .utf8)
+        // Pin the resolver to a sandbox root via the TaskLocal (checked
+        // before any process-global state), so parallel sibling suites
+        // can't redirect the write candidate mid-test.
+        let agentName = "test-agent-\(UUID().uuidString.prefix(8))"
+        let agentDir = OsaurusPaths.containerAgentDir(agentName)
+        try FileManager.default.createDirectory(at: agentDir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: agentDir) }
 
-            let result = await DatabaseFilePathResolver.resolveForWrite(
+        let dest = agentDir.appendingPathComponent("out.csv")
+        try "old\n".write(to: dest, atomically: true, encoding: .utf8)
+
+        let result = await ChatExecutionContext.$sandboxAgentName.withValue(agentName) {
+            await DatabaseFilePathResolver.resolveForWrite(
                 path: "out.csv",
                 tool: "db_export",
                 overwrite: false
             )
-            guard case .failed(let envelope) = result else {
-                Issue.record("expected overwrite failure")
-                return
-            }
-            #expect(envelope.contains("overwrite"))
         }
+        guard case .failed(let envelope) = result else {
+            Issue.record("expected overwrite failure")
+            return
+        }
+        #expect(envelope.contains("overwrite"))
+
+        // Same path with overwrite: true must resolve to the sandbox file.
+        let allowed = await ChatExecutionContext.$sandboxAgentName.withValue(agentName) {
+            await DatabaseFilePathResolver.resolveForWrite(
+                path: "out.csv",
+                tool: "db_export",
+                overwrite: true
+            )
+        }
+        guard case .resolved(let resolved) = allowed else {
+            Issue.record("expected overwrite:true to resolve")
+            return
+        }
+        #expect(resolved.scope == .sandbox)
+        #expect(resolved.url.path == dest.path)
     }
 }
