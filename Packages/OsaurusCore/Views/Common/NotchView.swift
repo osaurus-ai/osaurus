@@ -98,8 +98,10 @@ struct NotchView: View {
     @State private var showCancelConfirmation = false
     @State private var contentRevealed = false
     @State private var absorbingTaskIds: Set<UUID> = []
-    /// Pending hover-intent dwell before the trigger zone expands the notch.
-    @State private var hoverExpandWorkItem: DispatchWorkItem?
+    /// Pending debounced hover transition (dwell before expanding, grace
+    /// period before collapsing). Cancelled whenever the hover state flips
+    /// again before the deadline.
+    @State private var hoverTransitionWorkItem: DispatchWorkItem?
 
     // MARK: - Metrics & Colors
 
@@ -297,25 +299,22 @@ struct NotchView: View {
 
     /// Hover on the notch body — the only entry point for expansion, sized
     /// by whatever is actually rendered (compact pill or expanded card).
-    /// Expansion requires a short dwell: the pill floats over whatever
-    /// window sits below (e.g. a browser's tab strip), so a cursor merely
-    /// passing through on its way to that window must not balloon the card
-    /// open and steal the click. Leaving cancels a pending dwell and
-    /// collapses immediately; once expanded, staying inside the card keeps
-    /// it open with no further dwell.
+    /// Both directions are debounced. Expanding requires a short dwell: the
+    /// pill floats over whatever window sits below (e.g. a browser's tab
+    /// strip), so a cursor merely passing through on its way to that window
+    /// must not balloon the card open and steal the click. Collapsing gets a
+    /// grace period so skimming the card's edge (or the jitter of a hand
+    /// coming to rest) doesn't slam it shut and replay the animation.
     private func handleBodyHover(_ hovering: Bool) {
-        hoverExpandWorkItem?.cancel()
-        hoverExpandWorkItem = nil
-        if hovering {
-            guard !isHovering else { return }
-            let work = DispatchWorkItem {
-                withAnimation(swingSpring) { isHovering = true }
-            }
-            hoverExpandWorkItem = work
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3, execute: work)
-        } else {
-            withAnimation(swingSpring) { isHovering = false }
+        hoverTransitionWorkItem?.cancel()
+        hoverTransitionWorkItem = nil
+        guard hovering != isHovering else { return }
+        let delay = hovering ? 0.15 : 0.2
+        let work = DispatchWorkItem {
+            withAnimation(swingSpring) { isHovering = hovering }
         }
+        hoverTransitionWorkItem = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: work)
     }
 
     // MARK: - Content Switching
