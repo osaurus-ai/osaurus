@@ -287,14 +287,18 @@ struct CodeContentView: NSViewRepresentable {
 
     /// Build a syntax-highlighted attributed string without going through
     /// the NSViewRepresentable lifecycle. Used by NativeCodeBlockView.
+    /// `highlight: false` skips the Highlightr/JavaScriptCore pass and returns
+    /// plain monospaced text — used while a code block is still streaming,
+    /// where a full-document highlight per delta would stall the main thread.
     static func attributedString(
         code: String,
         language: String?,
         baseWidth: CGFloat,
-        theme: any ThemeProtocol
+        theme: any ThemeProtocol,
+        highlight: Bool = true
     ) -> NSMutableAttributedString {
         let view = CodeContentView(code: code, language: language, baseWidth: baseWidth, theme: theme)
-        return view.buildAttributedString()
+        return view.buildAttributedString(highlight: highlight)
     }
 
     // MARK: - Attributed String
@@ -312,7 +316,7 @@ struct CodeContentView: NSViewRepresentable {
         return NSFont.monospacedSystemFont(ofSize: size, weight: weight)
     }
 
-    func buildAttributedString() -> NSMutableAttributedString {
+    func buildAttributedString(highlight: Bool = true) -> NSMutableAttributedString {
         let fontSize = codeFontSize
         let font = monoFont(size: fontSize, weight: .regular)
         let lines = code.components(separatedBy: "\n")
@@ -324,7 +328,7 @@ struct CodeContentView: NSViewRepresentable {
         // Switch theme (if needed) + highlight atomically under the Highlightr
         // lock; fall back to plain text if it returns nil.
         let result: NSMutableAttributedString
-        let highlightedCode = highlightCode(code, language: language, theme: theme)
+        let highlightedCode = highlight ? highlightCode(code, language: language, theme: theme) : nil
         if let highlighted = highlightedCode {
             result = NSMutableAttributedString(attributedString: highlighted)
             let fullRange = NSRange(location: 0, length: result.length)

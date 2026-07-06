@@ -549,7 +549,16 @@ final class NativeCodeBlockView: NSView {
     private var lastLang: String? = nil
     private var lastWidth: CGFloat = 0
     private var lastThemeId = ""
+    private var lastIsStreaming = false
     private var copyResetTask: Task<Void, Never>?
+
+    // MARK: Streaming cursor state
+
+    private var streamingCursor: StreamingCursorOverlay?
+    private var idleTimer: Timer?
+    private var lastCodeRevealAt: Date?
+    private var cursorColor: NSColor?
+    private static let cursorPauseThreshold: TimeInterval = 0.15
 
     // MARK: Init
 
@@ -560,21 +569,40 @@ final class NativeCodeBlockView: NSView {
 
     required init?(coder: NSCoder) { fatalError() }
 
+    /// Recycled/offscreen instances must not keep the idle timer alive.
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        if window == nil { exitStreamingMode() }
+    }
+
     // MARK: Configure
 
-    func configure(code: String, language: String?, width: CGFloat, theme: any ThemeProtocol) {
+    /// `isStreaming: true` marks a code block whose fence is still open and
+    /// growing: syntax highlighting is skipped (a full Highlightr pass per
+    /// delta stalls the main thread) and a blinking cursor mirrors the text
+    /// path's "still going" signal during stream pauses. The one real
+    /// highlight pass runs when the flag flips back to false.
+    func configure(
+        code: String,
+        language: String?,
+        width: CGFloat,
+        theme: any ThemeProtocol,
+        isStreaming: Bool = false
+    ) {
         let resolvedHL = theme.codeHighlightTheme ?? (theme.isDark ? "auto-dark" : "auto-light")
         let themeId = "\(theme.monoFontName)|\(theme.codeSize)|\(resolvedHL)"
         let codeChanged = code != lastCode || language != lastLang
         let widthChanged = abs(width - lastWidth) > 0.5
         let themeChanged = themeId != lastThemeId
+        let streamingChanged = isStreaming != lastIsStreaming
 
-        guard codeChanged || widthChanged || themeChanged else { return }
+        guard codeChanged || widthChanged || themeChanged || streamingChanged else { return }
 
         lastCode = code
         lastLang = language
         lastWidth = width
         lastThemeId = themeId
+        lastIsStreaming = isStreaming
 
         ensureHighlightrTheme(for: theme)
         let bgColor = highlightrThemeBackgroundNSColor()
@@ -590,8 +618,21 @@ final class NativeCodeBlockView: NSView {
         if widthChanged {
             cv.textContainer?.containerSize = NSSize(width: width - 24, height: .greatestFiniteMagnitude)
         }
-        if codeChanged || themeChanged || widthChanged {
-            applyHighlighting(to: cv, code: code, language: language, theme: theme)
+        if codeChanged || themeChanged || widthChanged || streamingChanged {
+            applyHighlighting(
+                to: cv,
+                code: code,
+                language: language,
+                theme: theme,
+                highlight: !isStreaming
+            )
+        }
+
+        if isStreaming {
+            if codeChanged { notifyCodeReveal() }
+            enterStreamingMode(theme: theme)
+        } else {
+            exitStreamingMode()
         }
     }
 
@@ -702,13 +743,15 @@ final class NativeCodeBlockView: NSView {
         to cv: CodeNSTextView,
         code: String,
         language: String?,
-        theme: any ThemeProtocol
+        theme: any ThemeProtocol,
+        highlight: Bool = true
     ) {
         let attrStr = CodeContentView.attributedString(
             code: code,
             language: language,
             baseWidth: lastWidth - 24,
-            theme: theme
+            theme: theme,
+            highlight: highlight
         )
         cv.textStorage?.setAttributedString(attrStr)
         // must match CodeContentView.buildAttributedString: gutter + headIndent use
@@ -729,6 +772,96 @@ final class NativeCodeBlockView: NSView {
             // notify parent that height has changed
             onHeightChanged?()
         }
+    }
+
+    // MARK: - Streaming cursor (mirrors NativeMarkdownView's interpunct)
+
+    /// Start the idle-check timer; the cursor itself only shows once the
+    /// stream has been quiet past the pause threshold (see `idleTick`).
+    private func enterStreamingMode(theme: any ThemeProtocol) {
+        cursorColor = NSColor(theme.primaryText)
+        guard idleTimer == nil else { return }
+        idleTimer = Timer.scheduledTimer(withTimeInterval: 0.05, repeats: true) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                self?.idleTick()
+            }
+        }
+    }
+
+    private func exitStreamingMode() {
+        idleTimer?.invalidate()
+        idleTimer = nil
+        lastCodeRevealAt = nil
+        streamingCursor?.removeFromSuperview()
+        streamingCursor = nil
+    }
+
+    /// New code landed — actively revealing is the opposite of "waiting".
+    private func notifyCodeReveal() {
+        lastCodeRevealAt = Date()
+        streamingCursor?.removeFromSuperview()
+        streamingCursor = nil
+    }
+
+    private func idleTick() {
+        guard idleTimer != nil else { return }
+        let elapsed = lastCodeRevealAt.map { Date().timeIntervalSince($0) }
+            ?? (Self.cursorPauseThreshold + 1)
+        if elapsed > Self.cursorPauseThreshold {
+            if streamingCursor == nil, let color = cursorColor {
+                let overlay = StreamingCursorOverlay()
+                overlay.updateColor(color)
+                addSubview(overlay)
+                streamingCursor = overlay
+            }
+            repositionStreamingCursor()
+        } else if streamingCursor != nil {
+            streamingCursor?.removeFromSuperview()
+            streamingCursor = nil
+        }
+    }
+
+    /// Park the dot just past the last glyph of the code text, vertically
+    /// centered on that line's cap-height band (same math as the markdown
+    /// text cursor).
+    private func repositionStreamingCursor() {
+        guard let cursor = streamingCursor, let cv = codeView,
+            let lm = cv.layoutManager, let tc = cv.textContainer,
+            let storage = cv.textStorage
+        else { return }
+        lm.ensureLayout(for: tc)
+
+        let origin = cv.textContainerOrigin
+        let font: NSFont =
+            storage.length > 0
+            ? (storage.attribute(.font, at: storage.length - 1, effectiveRange: nil) as? NSFont)
+                ?? .monospacedSystemFont(ofSize: 12, weight: .regular)
+            : .monospacedSystemFont(ofSize: 12, weight: .regular)
+        let slotWidth: CGFloat = StreamingCursorOverlay.dotDiameter + 4
+        let slotHeight: CGFloat = StreamingCursorOverlay.dotDiameter
+
+        let trailingX: CGFloat
+        let baselineInTV: CGFloat
+        if storage.length == 0 {
+            trailingX = origin.x + 6
+            baselineInTV = origin.y + font.ascender
+        } else {
+            let lastGlyphIdx = lm.glyphIndexForCharacter(at: storage.length - 1)
+            let usedRect = lm.lineFragmentUsedRect(forGlyphAt: lastGlyphIdx, effectiveRange: nil)
+            let lineFragRect = lm.lineFragmentRect(forGlyphAt: lastGlyphIdx, effectiveRange: nil)
+            let baselineOffset = lm.location(forGlyphAt: lastGlyphIdx).y
+            trailingX = usedRect.maxX + origin.x + 6
+            baselineInTV = lineFragRect.minY + baselineOffset + origin.y
+        }
+
+        let textMiddleInTV = baselineInTV - font.capHeight / 2
+        let centerInSelf = cv.convert(NSPoint(x: trailingX, y: textMiddleInTV), to: self)
+        cursor.frame = NSRect(
+            x: centerInSelf.x,
+            y: centerInSelf.y - slotHeight / 2,
+            width: slotWidth,
+            height: slotHeight
+        )
     }
 
     // MARK: - Mouse tracking for copy button visibility

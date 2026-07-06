@@ -850,7 +850,17 @@ final class NativeMarkdownView: NSView {
                     self?.invalidateHeightMemo()
                     self?.onHeightChanged?()
                 }
-                cv.configure(code: code, language: language, width: width, theme: theme)
+                // A trailing code segment while streaming is an open fence
+                // still growing — skip per-delta highlighting and show the
+                // blinking cursor inside the code card.
+                let segIsStreamingCode = isStreaming && seg.id == segments.last?.id
+                cv.configure(
+                    code: code,
+                    language: language,
+                    width: width,
+                    theme: theme,
+                    isStreaming: segIsStreamingCode
+                )
                 segView = cv
 
             case .image(let urlString, _):
@@ -1310,9 +1320,10 @@ final class NativeMarkdownView: NSView {
 // MARK: - StreamingCursorOverlay
 
 /// Tiny overlay view that renders a blinking dot. Used by
-/// `NativeMarkdownView` to indicate "still streaming" during the SSE
+/// `NativeMarkdownView` (and `NativeCodeBlockView` for a trailing
+/// streaming code fence) to indicate "still streaming" during the SSE
 /// quiet gaps that no amount of pacing can fully smooth over.
-private final class StreamingCursorOverlay: NSView {
+final class StreamingCursorOverlay: NSView {
 
     /// Diameter of the dot in points. Tuned to read as a deliberate
     /// "still going" pulse without competing with the body text.
