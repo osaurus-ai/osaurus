@@ -47,6 +47,8 @@ struct FloatingInputCard: View {
     var focusTrigger: Int = 0
     /// Current agent ID (used for agent-specific settings)
     var agentId: UUID? = nil
+    /// Current chat session. Used only to scope transient composer history.
+    var sessionId: UUID?
     /// Window ID for targeted VAD notifications
     var windowId: UUID? = nil
     /// Compact mode (sidebar open) - hides secondary chip content
@@ -123,6 +125,7 @@ struct FloatingInputCard: View {
         onStop: @escaping () -> Void,
         focusTrigger: Int = 0,
         agentId: UUID? = nil,
+        sessionId: UUID? = nil,
         windowId: UUID? = nil,
         isCompact: Bool = false,
         isEmptyChat: Bool = false,
@@ -160,6 +163,7 @@ struct FloatingInputCard: View {
         self.onStop = onStop
         self.focusTrigger = focusTrigger
         self.agentId = agentId
+        self.sessionId = sessionId
         self.windowId = windowId
         self.isCompact = isCompact
         self.isEmptyChat = isEmptyChat
@@ -229,6 +233,7 @@ struct FloatingInputCard: View {
 
     // Local state for text input to prevent parent re-renders on every keystroke
     @State private var localText: String = ""
+    @State private var inputHistory = ChatInputHistoryNavigator()
     @State private var isFocused: Bool = false
     @State private var isComposing: Bool = false
     /// Keeps focus in the input through the send/queue state cascade.
@@ -367,6 +372,10 @@ struct FloatingInputCard: View {
 
     private var showPlaceholder: Bool {
         localText.isEmpty && pendingAttachments.isEmpty && !isComposing
+    }
+
+    private var canNavigateInputHistory: Bool {
+        !showSlashPopup && !isComposing && localText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
     /// Context tokens including what's currently being typed (localText may differ from text binding)
@@ -1403,6 +1412,7 @@ extension FloatingInputCard {
     private func syncAndSend() {
         guard canSend else { return }
         let message = localText
+        inputHistory.record(message)
         // Hold first responder through the binding-flush cascade
         // (clearing local + bound text, parent reconcile, optional
         // new run kickoff). 300 ms covers the longest observed
@@ -1411,6 +1421,30 @@ extension FloatingInputCard {
         localText = ""
         text = ""
         onSend(message)
+    }
+
+    private func showPreviousInputHistoryEntry() -> Bool {
+        guard canNavigateInputHistory,
+            let previous = inputHistory.previous(currentText: localText)
+        else {
+            return false
+        }
+        localText = previous
+        text = previous
+        isFocused = true
+        return true
+    }
+
+    private func showNextInputHistoryEntry() -> Bool {
+        guard canNavigateInputHistory,
+            let next = inputHistory.next()
+        else {
+            return false
+        }
+        localText = next
+        text = next
+        isFocused = true
+        return true
     }
 
     // MARK: - Slash Commands
@@ -4066,17 +4100,21 @@ extension FloatingInputCard {
                 }
             },
             onShiftCommit: nil,
-            onArrowUp: showSlashPopup
-                ? {
+            onArrowUp: {
+                if showSlashPopup {
                     slashSelectedIndex = max(0, slashSelectedIndex - 1)
                     return true
-                } : nil,
-            onArrowDown: showSlashPopup
-                ? {
+                }
+                return showPreviousInputHistoryEntry()
+            },
+            onArrowDown: {
+                if showSlashPopup {
                     let maxIndex = slashFilteredCommands.count - 1
                     slashSelectedIndex = min(maxIndex, slashSelectedIndex + 1)
                     return true
-                } : nil,
+                }
+                return showNextInputHistoryEntry()
+            },
             onEscape: showSlashPopup
                 ? {
                     // Dismiss popup by clearing the slash prefix
@@ -4092,6 +4130,9 @@ extension FloatingInputCard {
                 return true
             }
         )
+        .onChange(of: sessionId) { _, _ in
+            inputHistory.reset()
+        }
         .frame(maxHeight: maxHeight)
         .overlay(alignment: .topLeading) {
             // Placeholder - uses theme body size

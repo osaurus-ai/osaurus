@@ -5430,6 +5430,7 @@ struct ChatView: View {
                                 onStop: { observedSession.stop() },
                                 focusTrigger: focusTrigger,
                                 agentId: windowState.agentId,
+                                sessionId: observedSession.sessionId,
                                 windowId: windowState.windowId,
                                 isCompact: windowState.showSidebar,
                                 isEmptyChat: !observedSession.hasVisibleThreadMessages,
