@@ -801,19 +801,24 @@ final class ChatSession: ObservableObject {
         return Self.modelSupportsImages(modelId: model, pickerItems: pickerItems)
     }
 
-    /// Whether `modelId` can accept image input. Remote models are NOT assumed
-    /// vision-capable: a plain remote provider (incl. a Mode 1 `.osaurus`
-    /// device) exposes a flat model list with no capability metadata, so a
-    /// remote item's `isVLM` is false unless the id-based heuristic matched or
-    /// router metadata set it — sending images to a non-VLM remote model just
-    /// gets rejected upstream.
+    /// Whether `modelId` can accept image input. Local models are gated on
+    /// detected VLM capability; remote provider models are trusted to accept
+    /// images. A plain remote provider exposes a flat model list with no
+    /// capability metadata, so a remote item's `isVLM` is false even for
+    /// genuinely vision-capable models (e.g. current GPT / Claude / Gemini
+    /// releases). Gating on it silently dropped attached images from the
+    /// outbound request while the UI still displayed them in the bubble —
+    /// far worse than the alternative failure, where a text-only remote
+    /// model rejects the image part with a visible provider error.
     static func modelSupportsImages(modelId: String, pickerItems: [ModelPickerItem]) -> Bool {
         if modelId.lowercased() == "foundation" { return false }
         if ModelMediaCapabilities.from(modelId: modelId).supportsImage { return true }
         guard let option = pickerItems.first(where: { $0.id == modelId }) else { return false }
         // Image-edit models accept image input (osaurus image-edit feature).
         if option.imageCapabilities?.imageEdit == true { return true }
-        return option.isVLM
+        if option.isVLM { return true }
+        if case .remote = option.source { return !option.isEmbedding }
+        return false
     }
 
     var selectedModelSupportsAudio: Bool {
