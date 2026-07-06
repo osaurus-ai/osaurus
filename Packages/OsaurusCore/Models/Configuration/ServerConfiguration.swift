@@ -224,7 +224,8 @@ public struct ServerConfiguration: Codable, Equatable, Sendable {
             allowedOrigins: [],
             globalProxyURL: nil,
             modelEvictionPolicy: .strictSingleModel,
-            modelIdleResidencyPolicy: .defaultWarm,
+            modelIdleResidencyPolicy: .tierDefault(
+                physicalMemoryBytes: ChipProfile.current.physicalMemoryBytes),
             modelLoadRAMSoftThreshold: Self.defaultModelLoadRAMSoftThreshold,
             modelLoadRAMHardThreshold: Self.defaultModelLoadRAMHardThreshold,
             maxRequestBodyBytes: 32 * 1024 * 1024,
@@ -299,6 +300,30 @@ public enum ModelIdleResidencyPolicy: Codable, Equatable, Hashable, Sendable {
     /// every response. Immediate unload remains available as an explicit
     /// low-memory setting.
     public static let defaultWarm: ModelIdleResidencyPolicy = .afterSeconds(900)
+
+    /// RAM-tier-aware default, used when the user has not chosen a policy.
+    /// The flat 15-minute default is the wrong trade at both ends of the
+    /// hardware range:
+    ///
+    ///   - ≤ 16 GiB: idle weights are the main driver of memory pressure on
+    ///     these machines (see `InferenceLoadCoordinator`'s jetsam notes);
+    ///     2 minutes still covers rapid follow-up turns while releasing RAM
+    ///     well before the system starts compressing/swapping.
+    ///   - ≥ 128 GiB: reload cost dominates (tens of seconds for the model
+    ///     sizes these machines are bought for) and idle RAM is abundant, so
+    ///     weights stay resident until an explicit unload. Strict single-model
+    ///     eviction, manual unload, `clearAll`, and memory cleanup still win
+    ///     over residency, exactly as for every other policy value.
+    ///
+    /// An explicit user selection always takes precedence — this only decides
+    /// the starting value (`ServerConfiguration.default` and the decode
+    /// fallback for configs saved before the key existed).
+    public static func tierDefault(physicalMemoryBytes: UInt64) -> ModelIdleResidencyPolicy {
+        let gib = UInt64(1) << 30
+        if physicalMemoryBytes <= 16 * gib { return .afterSeconds(120) }
+        if physicalMemoryBytes >= 128 * gib { return .never }
+        return .defaultWarm
+    }
 
     /// Settings picker presets.
     public static let presets: [ModelIdleResidencyPolicy] = [
