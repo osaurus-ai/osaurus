@@ -415,9 +415,20 @@ final class NativeMarkdownView: NSView {
         // empty, and the table falls back to NativeCellHeightEstimator (too small).
         guard textChanged || widthChanged || themeChanged || streamingChanged else {
             ChatPerfTrace.shared.count("markdown.configure.noOp")
+            ChatDebugLog.shared.log(
+                "markdown.configure.noOp",
+                "key=\(cacheKey ?? "nil") len=\(text.count) streaming=\(isStreaming)"
+            )
             return
         }
         ChatPerfTrace.shared.count("markdown.configure.applied")
+        ChatDebugLog.shared.log(
+            "markdown.configure",
+            "key=\(cacheKey ?? "nil") len=\(text.count) fenceCount=\(text.components(separatedBy: "```").count - 1) "
+                + "streaming=\(isStreaming) textChanged=\(textChanged) widthChanged=\(widthChanged) "
+                + "themeChanged=\(themeChanged) streamingChanged=\(streamingChanged) width=\(width) "
+                + "text=\(ChatDebugLog.preview(text))"
+        )
 
         invalidateHeightMemo()
         // Content is changing — any width observed by a previous tenancy of
@@ -429,8 +440,19 @@ final class NativeMarkdownView: NSView {
 
         // hide raw inline delimiters that haven't received their closer yet
         let parseInput = StreamingMarkdownBalancer.balance(text)
+        if parseInput != text {
+            ChatDebugLog.shared.log(
+                "markdown.balance",
+                "key=\(cacheKey ?? "nil") balancedLen=\(parseInput.count) rawLen=\(text.count) "
+                    + "balanced=\(ChatDebugLog.preview(parseInput))"
+            )
+        }
 
         if let cached = ThreadCache.shared.markdown(for: parseInput) {
+            ChatDebugLog.shared.log(
+                "markdown.cacheHit",
+                "key=\(cacheKey ?? "nil") segments=[\(cached.segments.map(\.id).joined(separator: ","))]"
+            )
             applySegments(
                 cached.segments,
                 cacheKey: cacheKey,
@@ -446,6 +468,10 @@ final class NativeMarkdownView: NSView {
 
         let blocks = parseBlocks(parseInput)
         let segs = groupBlocksIntoSegments(blocks)
+        ChatDebugLog.shared.log(
+            "markdown.parsed",
+            "key=\(cacheKey ?? "nil") blocks=\(blocks.count) segments=[\(segs.map(\.id).joined(separator: ","))]"
+        )
         ThreadCache.shared.setMarkdown(blocks: blocks, segments: segs, for: parseInput)
         applySegments(
             segs,
@@ -656,6 +682,11 @@ final class NativeMarkdownView: NSView {
         let isPureText = segments.allSatisfy {
             if case .textGroup = $0.kind { return true }; return false
         }
+        ChatDebugLog.shared.log(
+            "markdown.applySegments",
+            "key=\(cacheKey ?? "nil") pureText=\(isPureText) streaming=\(isStreaming) "
+                + "segments=[\(segments.map(\.id).joined(separator: ","))]"
+        )
 
         if isPureText {
             // collect all text blocks from every text-group segment
@@ -973,7 +1004,12 @@ final class NativeMarkdownView: NSView {
         // Final measurement must be authoritative: mid-loop child callbacks can
         // have memoized a partial total, so drop the memo before measuring.
         invalidateHeightMemo()
-        _ = measuredHeight(for: width)
+        let finalHeight = measuredHeight(for: width)
+        ChatDebugLog.shared.log(
+            "markdown.mixedMeasured",
+            "key=\(cacheKey ?? "nil") height=\(finalHeight) width=\(width) bounds=\(bounds.width) "
+                + "segViews=\(segmentViews.count)"
+        )
         onHeightChanged?()
     }
 

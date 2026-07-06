@@ -597,6 +597,13 @@ final class NativeCodeBlockView: NSView {
         let streamingChanged = isStreaming != lastIsStreaming
 
         guard codeChanged || widthChanged || themeChanged || streamingChanged else { return }
+        ChatDebugLog.shared.log(
+            "codeBlock.configure",
+            "lang=\(language ?? "nil") len=\(code.count) streaming=\(isStreaming) "
+                + "codeChanged=\(codeChanged) widthChanged=\(widthChanged) "
+                + "themeChanged=\(themeChanged) streamingChanged=\(streamingChanged) "
+                + "highlight=\(!isStreaming)"
+        )
 
         lastCode = code
         lastLang = language
