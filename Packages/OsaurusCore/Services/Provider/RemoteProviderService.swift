@@ -2912,6 +2912,33 @@ public actor RemoteProviderService: ToolCapableService {
         return !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
+    /// Translate an OpenAI-style `image_url` value (a `data:` URI or a plain
+    /// http(s) URL) into an Anthropic image content block. Returns nil for
+    /// malformed URIs so a bad part degrades to "image omitted" rather than a
+    /// provider 400.
+    static func anthropicImageBlock(fromImageUrl url: String) -> AnthropicImageBlock? {
+        if url.hasPrefix("data:") {
+            let afterScheme = url.dropFirst("data:".count)
+            guard let commaIndex = afterScheme.firstIndex(of: ",") else { return nil }
+            // Header is e.g. "image/png;base64".
+            let header = afterScheme[..<commaIndex]
+            let mediaType = header.split(separator: ";").first.map(String.init) ?? "image/png"
+            let base64 = String(afterScheme[afterScheme.index(after: commaIndex)...])
+            guard !base64.isEmpty else { return nil }
+            return AnthropicImageBlock(
+                type: "image",
+                source: .init(type: "base64", media_type: mediaType, data: base64, url: nil)
+            )
+        }
+        if url.hasPrefix("http://") || url.hasPrefix("https://") {
+            return AnthropicImageBlock(
+                type: "image",
+                source: .init(type: "url", media_type: nil, data: nil, url: url)
+            )
+        }
+        return nil
+    }
+
     /// The non-whitespace placeholder a truthful empty/nil tool result rides
     /// as. Anthropic and OpenAI Responses both reject empty/whitespace-only
     /// tool output, yet the result must still be emitted to keep its
@@ -3564,13 +3591,24 @@ struct RemoteChatRequest: Encodable {
             case "user":
                 // Flush any pending tool results before user message
                 flushToolResults()
-                // Convert user messages
-                if let content = msg.content {
+                // Convert user messages, translating any OpenAI-style
+                // image_url content parts into Anthropic image blocks.
+                // Reading only the flat `content` string silently dropped
+                // attached images — and dropped the whole message when the
+                // user sent an image with no accompanying text.
+                var userBlocks: [AnthropicContentBlock] = msg.imageUrls.compactMap { url in
+                    RemoteProviderService.anthropicImageBlock(fromImageUrl: url).map { .image($0) }
+                }
+                if let content = msg.content, RemoteProviderService.hasMeaningfulText(content) {
+                    userBlocks.append(.text(AnthropicTextBlock(text: content)))
+                }
+                if userBlocks.count == 1, case .text(let textBlock) = userBlocks[0] {
                     anthropicMessages.append(
-                        AnthropicMessage(
-                            role: "user",
-                            content: .text(content)
-                        )
+                        AnthropicMessage(role: "user", content: .text(textBlock.text))
+                    )
+                } else if !userBlocks.isEmpty {
+                    anthropicMessages.append(
+                        AnthropicMessage(role: "user", content: .blocks(userBlocks))
                     )
                 }
 

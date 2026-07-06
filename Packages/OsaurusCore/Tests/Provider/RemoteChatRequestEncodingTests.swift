@@ -868,6 +868,85 @@ struct RemoteChatRequestEncodingTests {
         #expect(toolEntries.first?["content"] as? String == "ok\n\n[System Notice] nudge")
     }
 
+    @Test func toAnthropicRequest_translatesUserImagePartsToImageBlocks() throws {
+        let pixel = Data([0x89, 0x50, 0x4E, 0x47])
+        let request = Self.makeRequest(
+            model: "claude-3-5-sonnet-20241022",
+            maxTokens: 1024,
+            messages: [
+                ChatMessage(role: "user", text: "describe this image", imageData: [pixel])
+            ]
+        )
+
+        let anthropic = request.toAnthropicRequest()
+
+        #expect(anthropic.messages.count == 1)
+        guard case .blocks(let blocks) = anthropic.messages[0].content else {
+            Issue.record("expected block content for a user message with an image part")
+            return
+        }
+        let images = blocks.compactMap { block -> AnthropicImageBlock? in
+            if case .image(let image) = block { return image }
+            return nil
+        }
+        #expect(images.count == 1)
+        #expect(images.first?.source.type == "base64")
+        #expect(images.first?.source.media_type == "image/png")
+        #expect(images.first?.source.data == pixel.base64EncodedString())
+
+        let texts = blocks.compactMap { block -> String? in
+            if case .text(let text) = block { return text.text }
+            return nil
+        }
+        #expect(texts == ["describe this image"])
+    }
+
+    @Test func toAnthropicRequest_keepsImageOnlyUserMessage() throws {
+        // An image with no accompanying text has a nil `content` string; the
+        // encoder used to drop the entire message.
+        let pixel = Data([0x89, 0x50, 0x4E, 0x47])
+        let request = Self.makeRequest(
+            model: "claude-3-5-sonnet-20241022",
+            maxTokens: 1024,
+            messages: [
+                ChatMessage(role: "user", text: "", imageData: [pixel])
+            ]
+        )
+
+        let anthropic = request.toAnthropicRequest()
+
+        #expect(anthropic.messages.count == 1)
+        guard case .blocks(let blocks) = anthropic.messages[0].content else {
+            Issue.record("expected block content for an image-only user message")
+            return
+        }
+        #expect(blocks.count == 1)
+        guard case .image(let image) = blocks[0] else {
+            Issue.record("expected an image block")
+            return
+        }
+        #expect(image.source.data == pixel.base64EncodedString())
+    }
+
+    @Test func toAnthropicRequest_keepsPlainStringForTextOnlyUserMessage() throws {
+        let request = Self.makeRequest(
+            model: "claude-3-5-sonnet-20241022",
+            maxTokens: 1024,
+            messages: [
+                ChatMessage(role: "user", content: "just text")
+            ]
+        )
+
+        let anthropic = request.toAnthropicRequest()
+
+        #expect(anthropic.messages.count == 1)
+        guard case .text(let text) = anthropic.messages[0].content else {
+            Issue.record("expected plain string content for a text-only user message")
+            return
+        }
+        #expect(text == "just text")
+    }
+
     @Test func toAnthropicRequest_emitsSingleToolResultPerToolUseId() throws {
         let request = Self.makeRequest(
             model: "claude-3-5-sonnet-20241022",
