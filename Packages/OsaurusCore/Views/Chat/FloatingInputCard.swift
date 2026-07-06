@@ -2230,8 +2230,12 @@ extension FloatingInputCard {
                 }
 
                 // Clipboard / paste chip — last in the left cluster.
-                if AppConfiguration.shared.chatConfig.enableClipboardMonitoring && clipboardService.hasNewContent {
-                    clipboardToggleChip
+                if AppConfiguration.shared.chatConfig.enableClipboardMonitoring {
+                    if clipboardService.lastSelectionGrabReport?.needsUserAttention == true {
+                        selectionGrabStatusChip
+                    } else if clipboardService.hasNewContent {
+                        clipboardToggleChip
+                    }
                 }
 
                 Spacer()
@@ -3551,6 +3555,74 @@ extension FloatingInputCard {
                 triggerPulse()
             }
         }
+    }
+
+    private var selectionGrabStatusChip: some View {
+        let report = clipboardService.lastSelectionGrabReport
+        return Button {
+            if let report {
+                ToastManager.shared.warning(L("Could not grab selection"), message: report.userFacingMessage)
+            }
+        } label: {
+            HStack(spacing: 5) {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .font(.system(size: CGFloat(theme.captionSize) - 2, weight: .semibold))
+                    .foregroundColor(.orange)
+
+                Text("Selection unavailable", bundle: .module)
+                    .font(theme.font(size: CGFloat(theme.captionSize), weight: .medium))
+                    .foregroundColor(theme.secondaryText)
+                    .lineLimit(1)
+
+                Image(systemName: "chevron.right")
+                    .font(theme.font(size: CGFloat(theme.captionSize) - 4, weight: .bold))
+                    .foregroundColor(theme.tertiaryText.opacity(0.7))
+                    .padding(.leading, 2)
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 5)
+            .background(
+                Capsule()
+                    .fill(theme.secondaryBackground.opacity(isClipboardHovered ? 0.95 : 0.8))
+            )
+            .clipShape(Capsule())
+            .overlay(
+                Capsule()
+                    .strokeBorder(
+                        LinearGradient(
+                            colors: [
+                                Color.orange.opacity(isClipboardHovered ? 0.45 : 0.25),
+                                theme.primaryBorder.opacity(isClipboardHovered ? 0.2 : 0.12),
+                            ],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        ),
+                        lineWidth: 1
+                    )
+            )
+            .shadow(
+                color: Color.orange.opacity(isClipboardHovered ? 0.24 : 0.08),
+                radius: isClipboardHovered ? 6 : 4,
+                x: 0,
+                y: 1
+            )
+        }
+        .buttonStyle(.plain)
+        .pointingHandCursor()
+        .onHover { hovering in
+            withAnimation(.easeOut(duration: 0.15)) {
+                isClipboardHovered = hovering
+            }
+        }
+        .help(Text(report?.userFacingMessage ?? L("Selection could not be captured")))
+        .contextMenu {
+            Button {
+                clipboardService.dismissSelectionGrabReport()
+            } label: {
+                Text("Dismiss", bundle: .module)
+            }
+        }
+        .transition(.scale(scale: 0.8).combined(with: .opacity))
     }
 
     private func triggerPulse() {

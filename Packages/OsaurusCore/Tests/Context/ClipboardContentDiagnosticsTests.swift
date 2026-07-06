@@ -71,4 +71,111 @@ struct ClipboardContentDiagnosticsTests {
         #expect(methodBody.contains("string(forType: type)"))
         #expect(methodBody.contains("Sentry APPLE-MACOS-43"))
     }
+
+    @Test func selectionGrabReportRedactsCapturedTextPayload() {
+        let secret = "client acquisition plan sk-live-secret"
+        let report = ClipboardService.SelectionGrabReport(
+            outcome: .capturedText(characterCount: secret.count),
+            sourceApp: "Pages"
+        )
+
+        #expect(report.needsUserAttention == false)
+        #expect(report.userFacingMessage.contains("\(secret.count) characters"))
+        #expect(report.redactedDiagnosticDescription.contains("characters: \(secret.count)"))
+        #expect(report.redactedDiagnosticDescription.contains("Pages"))
+        #expect(report.redactedDiagnosticDescription.contains("sk-live") == false)
+        #expect(report.redactedDiagnosticDescription.contains("acquisition") == false)
+    }
+
+    @Test func selectionGrabFailureReportsAreActionableAndPayloadFree() {
+        let denied = ClipboardService.SelectionGrabReport(
+            outcome: .accessibilityDenied,
+            sourceApp: "Safari"
+        )
+        let unchanged = ClipboardService.SelectionGrabReport(
+            outcome: .pasteboardUnchanged,
+            sourceApp: nil
+        )
+
+        #expect(denied.needsUserAttention)
+        #expect(denied.userFacingMessage.contains("Accessibility"))
+        #expect(denied.redactedDiagnosticDescription == "selection_grab(outcome: accessibility_denied, source: Safari)")
+
+        #expect(unchanged.needsUserAttention)
+        #expect(unchanged.userFacingMessage.contains("No selection"))
+        #expect(unchanged.redactedDiagnosticDescription == "selection_grab(outcome: pasteboard_unchanged, source: unknown)")
+    }
+
+    @Test func selectionGrabNonTextReportUsesRedactedContentSummary() {
+        let file = ClipboardService.ClipboardContent.file(
+            URL(fileURLWithPath: "/Users/example/Desktop/Secret Merger Plan.pdf")
+        )
+        let report = ClipboardService.SelectionGrabReport(
+            outcome: .capturedNonText(file.redactedDiagnosticDescription),
+            sourceApp: "Finder"
+        )
+
+        #expect(report.needsUserAttention == false)
+        #expect(report.userFacingMessage.contains("file(extension: pdf)"))
+        #expect(report.redactedDiagnosticDescription.contains("file(extension: pdf)"))
+        #expect(report.redactedDiagnosticDescription.contains("Secret") == false)
+        #expect(report.redactedDiagnosticDescription.contains("/Users/example") == false)
+    }
+
+    @Test func hotkeySelectionGrabAwaitsBeforeOverlayTakesFocus() throws {
+        let source = try sourceFile("AppDelegate.swift")
+
+        #expect(source.contains("_ = await ClipboardService.shared.grabSelectionReport()"))
+        #expect(!source.contains("Task {\n                        _ = await ClipboardService.shared.grabSelectionReport()"))
+    }
+
+    @Test func selectionFailureChipTakesPriorityOverUnreadClipboardChip() throws {
+        let source = try sourceFile("Views/Chat/FloatingInputCard.swift")
+        let sectionStart = try #require(
+            source.range(of: "// Clipboard / paste chip — last in the left cluster.")
+        )
+        let sectionEnd = try #require(
+            source.range(of: "\n                Spacer()", range: sectionStart.upperBound ..< source.endIndex)
+        )
+        let section = String(source[sectionStart.lowerBound ..< sectionEnd.lowerBound])
+
+        let failureCheck = try #require(
+            section.range(of: "clipboardService.lastSelectionGrabReport?.needsUserAttention == true")
+        )
+        let clipboardCheck = try #require(section.range(of: "clipboardService.hasNewContent"))
+
+        #expect(failureCheck.lowerBound < clipboardCheck.lowerBound)
+        #expect(section.contains("selectionGrabStatusChip"))
+        #expect(section.contains("clipboardToggleChip"))
+    }
+
+    @Test func clipboardRefreshAndDismissClearStaleSelectionReports() throws {
+        let source = try sourceFile("Services/Context/ClipboardService.swift")
+
+        let refreshStart = try #require(source.range(of: "private func performPasteboardRefresh"))
+        let refreshEnd = try #require(
+            source.range(of: "\n    nonisolated private static func detectContent", range: refreshStart.upperBound ..< source.endIndex)
+        )
+        let refreshBody = String(source[refreshStart.lowerBound ..< refreshEnd.lowerBound])
+
+        let markStart = try #require(source.range(of: "public func markAsRead()"))
+        let markEnd = try #require(
+            source.range(of: "\n    /// Clear the latest selection-grab diagnostic", range: markStart.upperBound ..< source.endIndex)
+        )
+        let markBody = String(source[markStart.lowerBound ..< markEnd.lowerBound])
+
+        #expect(refreshBody.contains("lastSelectionGrabReport = nil"))
+        #expect(markBody.contains("lastSelectionGrabReport = nil"))
+    }
+
+    private func sourceFile(_ relativePath: String) throws -> String {
+        let here = URL(fileURLWithPath: #filePath)
+        let packageRoot = here.deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+        return try String(
+            contentsOf: packageRoot.appendingPathComponent(relativePath),
+            encoding: .utf8
+        )
+    }
 }

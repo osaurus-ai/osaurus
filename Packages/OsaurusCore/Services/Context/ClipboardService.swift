@@ -39,16 +39,83 @@ public final class ClipboardService: ObservableObject {
         }
     }
 
+    public struct SelectionGrabReport: Equatable, Sendable {
+        public enum Outcome: Equatable, Sendable {
+            case capturedText(characterCount: Int)
+            case capturedNonText(String)
+            case accessibilityDenied
+            case pasteboardReadFailed
+            case noReadableContent
+            case pasteboardUnchanged
+        }
+
+        public let outcome: Outcome
+        public let sourceApp: String?
+
+        public var needsUserAttention: Bool {
+            switch outcome {
+            case .capturedText, .capturedNonText:
+                return false
+            case .accessibilityDenied, .pasteboardReadFailed, .noReadableContent, .pasteboardUnchanged:
+                return true
+            }
+        }
+
+        public var userFacingMessage: String {
+            switch outcome {
+            case .capturedText(let count):
+                return L("Captured selected text (\(count) characters).")
+            case .capturedNonText(let summary):
+                return L("Captured \(summary), but only text selections can be inserted automatically.")
+            case .accessibilityDenied:
+                return L("Osaurus could not request the selection. Enable Accessibility permission, then try again.")
+            case .pasteboardReadFailed:
+                return L("macOS pasteboard access failed while reading the copied selection. Try again.")
+            case .noReadableContent:
+                return L("The selection copied, but the pasteboard did not contain readable text.")
+            case .pasteboardUnchanged:
+                return L("No selection was copied. Select text in the frontmost app and try again.")
+            }
+        }
+
+        public var redactedDiagnosticDescription: String {
+            let source = sourceApp ?? "unknown"
+            switch outcome {
+            case .capturedText(let count):
+                return "selection_grab(outcome: captured_text, characters: \(count), source: \(source))"
+            case .capturedNonText(let summary):
+                return "selection_grab(outcome: captured_non_text, content: \(summary), source: \(source))"
+            case .accessibilityDenied:
+                return "selection_grab(outcome: accessibility_denied, source: \(source))"
+            case .pasteboardReadFailed:
+                return "selection_grab(outcome: pasteboard_read_failed, source: \(source))"
+            case .noReadableContent:
+                return "selection_grab(outcome: no_readable_content, source: \(source))"
+            case .pasteboardUnchanged:
+                return "selection_grab(outcome: pasteboard_unchanged, source: \(source))"
+            }
+        }
+    }
+
+    private struct SelectionGrabResult: Sendable {
+        let report: SelectionGrabReport
+        let text: String?
+    }
+
     /// The current content on the pasteboard
     @Published public private(set) var currentContent: ClipboardContent?
 
     /// The application that was frontmost when the clipboard last changed
     @Published public private(set) var lastSourceApp: String?
 
+    /// Redacted result from the latest explicit "grab selection" attempt.
+    @Published public private(set) var lastSelectionGrabReport: SelectionGrabReport?
+
     /// Whether the clipboard content has been "seen" or used
     @Published public var hasNewContent: Bool = false
 
     private var lastChangeCount: Int = NSPasteboard.general.changeCount
+    private var currentContentChangeCount: Int?
     private var timer: AnyCancellable?
     /// Guards against overlapping pasteboard reads if one outlives the poll interval.
     private var isChecking = false
@@ -134,7 +201,8 @@ public final class ClipboardService: ObservableObject {
     }
 
     /// Poll the pasteboard and, if its content changed, publish it.
-    private func performPasteboardRefresh() async {
+    @discardableResult
+    private func performPasteboardRefresh(markIdenticalAsNew: Bool = false) async -> ClipboardContent? {
         let knownChangeCount = lastChangeCount
 
         // Both the `changeCount` poll and the content read run off-main: every
@@ -144,22 +212,27 @@ public final class ClipboardService: ObservableObject {
         // (never `readObjects(forClasses:)`), which are safe to call off the main actor.
         // They run on the shared serial pasteboard queue so they never overlap another
         // pasteboard access and corrupt its internal type cache.
-        guard let changeCount = await Self.onPasteboardQueue({ $0.changeCount }) else { return }
-        guard changeCount != knownChangeCount else { return }
+        guard let changeCount = await Self.onPasteboardQueue({ $0.changeCount }) else { return nil }
+        guard changeCount != knownChangeCount else { return nil }
 
         print("[ClipboardService] Pasteboard change detected. Count: \(changeCount) (was \(knownChangeCount))")
         lastChangeCount = changeCount
 
-        let detected = await Self.onPasteboardQueue { Self.detectContent(in: $0) } ?? nil
+        let detected = (await Self.onPasteboardQueue { Self.detectContent(in: $0) }).flatMap { $0 }
         guard let content = detected else {
             print("[ClipboardService] Change detected but no meaningful content found on pasteboard.")
-            return
+            return nil
         }
 
         // Only update if content actually changed
         guard content != currentContent else {
             print("[ClipboardService] Change detected but content is identical to current.")
-            return
+            currentContentChangeCount = changeCount
+            if markIdenticalAsNew {
+                hasNewContent = true
+                lastSelectionGrabReport = nil
+            }
+            return content
         }
 
         // Build the redacted diagnostic off the main actor: the `.text`
@@ -172,13 +245,16 @@ public final class ClipboardService: ObservableObject {
         }.value
         print("[ClipboardService] New content detected: \(summary)")
         currentContent = content
+        currentContentChangeCount = changeCount
         hasNewContent = true
+        lastSelectionGrabReport = nil
 
         // Identify the source application
         if let frontmost = NSWorkspace.shared.frontmostApplication {
             lastSourceApp = frontmost.localizedName ?? frontmost.bundleIdentifier
             print("[ClipboardService] Source app identified: \(lastSourceApp ?? "unknown")")
         }
+        return content
     }
 
     nonisolated private static func detectContent(in pb: NSPasteboard) -> ClipboardContent? {
@@ -195,8 +271,7 @@ public final class ClipboardService: ObservableObject {
                 continue
             }
             if url.isFileURL,
-                DocumentParser.canParse(url: url) || DocumentParser.isImageFile(url: url)
-            {
+                DocumentParser.canParse(url: url) || DocumentParser.isImageFile(url: url) {
                 return .file(url)
             }
         }
@@ -206,8 +281,7 @@ public final class ClipboardService: ObservableObject {
             return .image(imageData)
         }
         if let tiffData = pb.data(forType: .tiff), let nsImage = NSImage(data: tiffData),
-            let pngData = nsImage.pngData()
-        {
+            let pngData = nsImage.pngData() {
             return .image(pngData)
         }
 
@@ -222,7 +296,26 @@ public final class ClipboardService: ObservableObject {
     /// Attempt to grab the current selection from the active application
     /// by simulating Cmd+C and waiting for the pasteboard to update.
     public func grabSelection() async -> String? {
-        guard let startChangeCount = await Self.onPasteboardQueue({ $0.changeCount }) else { return nil }
+        await grabSelectionResult().text
+    }
+
+    /// Attempt to grab the current selection and return a redacted diagnostic report.
+    ///
+    /// The report never includes selected text. Call `grabSelection()` when the
+    /// caller actually needs the selected payload for composer insertion.
+    @discardableResult
+    public func grabSelectionReport() async -> SelectionGrabReport {
+        await grabSelectionResult().report
+    }
+
+    private func grabSelectionResult() async -> SelectionGrabResult {
+        let sourceApp = Self.currentFrontmostApplicationName()
+        guard let startChangeCount = await Self.onPasteboardQueue({ $0.changeCount }) else {
+            return finishSelectionGrab(
+                report: SelectionGrabReport(outcome: .pasteboardReadFailed, sourceApp: sourceApp),
+                text: nil
+            )
+        }
         print("[ClipboardService] Starting grabSelection. Current changeCount: \(startChangeCount)")
 
         // 1. simulate Cmd+C
@@ -231,7 +324,10 @@ public final class ClipboardService: ObservableObject {
 
         if !posted {
             print("[ClipboardService] FAILED to post Cmd+C event. Likely missing accessibility permissions.")
-            return nil
+            return finishSelectionGrab(
+                report: SelectionGrabReport(outcome: .accessibilityDenied, sourceApp: sourceApp),
+                text: nil
+            )
         }
 
         // 2. wait for update (up to 500ms)
@@ -243,21 +339,66 @@ public final class ClipboardService: ObservableObject {
                 print(
                     "[ClipboardService] Pasteboard update detected at iteration \(i+1). New count: \(currentChangeCount)"
                 )
-                await performPasteboardRefresh()
-
-                if case .text(let text) = currentContent {
-                    return text
+                let refreshed = await performPasteboardRefresh(markIdenticalAsNew: true)
+                guard let content = refreshed ?? contentPublished(forChangeCount: currentChangeCount) else {
+                    return finishSelectionGrab(
+                        report: SelectionGrabReport(outcome: .noReadableContent, sourceApp: sourceApp),
+                        text: nil
+                    )
                 }
-                return nil
+
+                switch content {
+                case .text(let text):
+                    return finishSelectionGrab(
+                        report: SelectionGrabReport(
+                            outcome: .capturedText(characterCount: text.count),
+                            sourceApp: sourceApp
+                        ),
+                        text: text
+                    )
+                case .image, .file:
+                    return finishSelectionGrab(
+                        report: SelectionGrabReport(
+                            outcome: .capturedNonText(content.redactedDiagnosticDescription),
+                            sourceApp: sourceApp
+                        ),
+                        text: nil
+                    )
+                }
             }
         }
 
         print("[ClipboardService] TIMEOUT: Pasteboard did not update after 500ms.")
-        return nil
+        return finishSelectionGrab(
+            report: SelectionGrabReport(outcome: .pasteboardUnchanged, sourceApp: sourceApp),
+            text: nil
+        )
+    }
+
+    private func contentPublished(forChangeCount changeCount: Int) -> ClipboardContent? {
+        guard currentContentChangeCount == changeCount else { return nil }
+        return currentContent
+    }
+
+    private static func currentFrontmostApplicationName() -> String? {
+        NSWorkspace.shared.frontmostApplication?.localizedName
+            ?? NSWorkspace.shared.frontmostApplication?.bundleIdentifier
+    }
+
+    private func finishSelectionGrab(report: SelectionGrabReport, text: String?) -> SelectionGrabResult {
+        print("[ClipboardService] \(report.redactedDiagnosticDescription)")
+        lastSelectionGrabReport = report
+        return SelectionGrabResult(report: report, text: text)
     }
 
     /// Mark the current clipboard content as "read"
     public func markAsRead() {
         hasNewContent = false
+        lastSelectionGrabReport = nil
+    }
+
+    /// Clear the latest selection-grab diagnostic after the user has seen it.
+    public func dismissSelectionGrabReport() {
+        lastSelectionGrabReport = nil
     }
 }

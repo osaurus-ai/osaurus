@@ -1811,13 +1811,8 @@ extension AppDelegate {
                 // if opening (about to be shown), and clipboard monitoring is enabled, trigger a selection grab before showing Osaurus
                 // to capture content from the currently active application.
                 if !ChatWindowManager.shared.hasVisibleWindows && cfg.enableClipboardMonitoring {
-                    // start grabbing selection in the background before we take focus
-                    Task {
-                        _ = await ClipboardService.shared.grabSelection()
-                    }
-                    // small yield to allow Cmd+C to be posted before toggle takes focus
-                    // 50ms
-                    try? await Task.sleep(nanoseconds: 50_000_000)
+                    // Finish the bounded selection grab before the overlay takes focus.
+                    _ = await ClipboardService.shared.grabSelectionReport()
                 }
 
                 self?.toggleChatOverlay()

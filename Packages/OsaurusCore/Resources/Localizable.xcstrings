@@ -39221,6 +39221,96 @@
         }
       }
     },
+    "Could not grab selection" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Could not grab selection"
+          }
+        }
+      }
+    },
+    "Captured %@, but only text selections can be inserted automatically." : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Captured %@, but only text selections can be inserted automatically."
+          }
+        }
+      }
+    },
+    "Captured selected text (%lld characters)." : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Captured selected text (%lld characters)."
+          }
+        }
+      }
+    },
+    "No selection was copied. Select text in the frontmost app and try again." : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "No selection was copied. Select text in the frontmost app and try again."
+          }
+        }
+      }
+    },
+    "Osaurus could not request the selection. Enable Accessibility permission, then try again." : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Osaurus could not request the selection. Enable Accessibility permission, then try again."
+          }
+        }
+      }
+    },
+    "Selection could not be captured" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Selection could not be captured"
+          }
+        }
+      }
+    },
+    "Selection unavailable" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Selection unavailable"
+          }
+        }
+      }
+    },
+    "The selection copied, but the pasteboard did not contain readable text." : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "The selection copied, but the pasteboard did not contain readable text."
+          }
+        }
+      }
+    },
+    "macOS pasteboard access failed while reading the copied selection. Try again." : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "macOS pasteboard access failed while reading the copied selection. Try again."
+          }
+        }
+      }
+    },
     "Could not create a secure login challenge" : {
       "localizations" : {
         "de" : {
