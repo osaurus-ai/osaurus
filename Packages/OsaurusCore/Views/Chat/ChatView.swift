@@ -2743,6 +2743,18 @@ final class ChatSession: ObservableObject {
     /// Processes the streaming delta loop from the chat engine, updating the given
     /// assistant turn and UI state. Returns any parsed tool invocations and the
     /// final updated assistant turn.
+    /// Clears the transient `pendingToolName` placeholder seeded by the
+    /// tool-call-progress branch when — and only when — it is still the
+    /// sentinel at stream end (i.e. no committed tool name ever overwrote it).
+    /// A real tool name replaces the sentinel at `\u{FFFE}tool:`, so this is a
+    /// no-op for genuine pending tool calls; it only prevents a "Preparing tool
+    /// call" card from surviving on a cancelled or reclassified turn.
+    private static func clearPendingToolCallProgressPlaceholder(on turn: ChatTurn) {
+        if turn.pendingToolName == ToolDisplayName.pendingToolSentinel {
+            turn.pendingToolName = nil
+        }
+    }
+
     private func processStreamDeltas(
         stream: AsyncThrowingStream<String, Error>,
         assistantTurn: ChatTurn,
@@ -2752,6 +2764,12 @@ final class ChatSession: ObservableObject {
         selectedModel: String?
     ) async throws -> (invocations: [ServiceToolInvocation], finalTurn: ChatTurn) {
         var currentTurn = assistantTurn
+        // On every exit — clean end, cancel, tool-invocation throw, or a
+        // mid-stream error — drop a tool-call-progress placeholder if it never
+        // resolved to a committed tool name, so the "Preparing tool call" card
+        // can't persist on the finalized turn. No-op for real pending calls
+        // (the committed `\u{FFFE}tool:` name overwrites the sentinel first).
+        defer { Self.clearPendingToolCallProgressPlaceholder(on: currentTurn) }
         var uiDeltaCount = 0
         var uiReasoningDeltaCount = 0
         var uiToolSentinelCount = 0
