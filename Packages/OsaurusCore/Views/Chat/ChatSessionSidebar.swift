@@ -56,6 +56,9 @@ struct ChatSessionSidebar: View {
     /// titles.
     @State private var contentMatchedSessionIds: Set<UUID> = []
     @State private var contentSearchTask: Task<Void, Never>?
+    /// True from query change until its (debounced) database lookup returns.
+    /// Drives the search field's trailing spinner.
+    @State private var isContentSearchInFlight: Bool = false
     @FocusState private var isSearchFocused: Bool
 
     // MARK: - Source Filter
@@ -129,15 +132,19 @@ struct ChatSessionSidebar: View {
         let trimmed = query.trimmingCharacters(in: .whitespaces)
         guard !trimmed.isEmpty else {
             contentMatchedSessionIds = []
+            isContentSearchInFlight = false
             return
         }
+        isContentSearchInFlight = true
         contentSearchTask = Task { @MainActor in
             // Debounce so fast typing doesn't scan the database per keystroke.
             try? await Task.sleep(nanoseconds: 250_000_000)
             guard !Task.isCancelled else { return }
             let ids = await ChatSessionStore.sessionIds(withContentContaining: trimmed)
+            // A cancelled task must not clear the flag owned by its successor.
             guard !Task.isCancelled else { return }
             contentMatchedSessionIds = ids
+            isContentSearchInFlight = false
         }
     }
 
@@ -166,7 +173,8 @@ struct ChatSessionSidebar: View {
             SidebarSearchField(
                 text: $searchQuery,
                 placeholder: "Search conversations...",
-                isFocused: $isSearchFocused
+                isFocused: $isSearchFocused,
+                isSearching: isContentSearchInFlight
             )
             .padding(.horizontal, 12)
             .padding(.bottom, 6)
