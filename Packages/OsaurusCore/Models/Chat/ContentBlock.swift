@@ -609,10 +609,14 @@ extension ContentBlock {
                     {
                         // File write currently EXECUTING: the streamed preview
                         // state was cleared when the call was parsed, but the
-                        // result (with the real diff) hasn't landed yet. Keep a
-                        // preview card up from the call's canonical arguments so
-                        // the card doesn't vanish for the execution window —
-                        // the real diff replaces it under the same block id.
+                        // result (with the real diff) hasn't landed yet. Keep
+                        // the running tool row (shimmer continuity from the
+                        // pending chip) with the preview card below it — the
+                        // real diff replaces the card under the same block id
+                        // when the result lands.
+                        regularItems.append(
+                            ToolCallItem(call: call, result: nil, duration: nil)
+                        )
                         flushRegularItems()
                         turnBlocks.append(
                             .fileDiff(turnId: turn.id, callId: call.id, diff: preview, position: .middle)
@@ -632,6 +636,18 @@ extension ContentBlock {
                 // instead of the generic pending chip, so the finished card
                 // doesn't land as one jarring dump. Falls back to the chip
                 // until the content field starts streaming.
+                // The shimmer chip stays up for the whole pending phase —
+                // the growing diff preview renders BELOW it rather than
+                // replacing it, so the "working" signal never blinks out.
+                turnBlocks.append(
+                    .pendingToolCall(
+                        turnId: turn.id,
+                        toolName: pendingName,
+                        argPreview: turn.pendingToolArgPreview,
+                        argSize: turn.pendingToolArgSize,
+                        position: .middle
+                    )
+                )
                 if let partialArgs = turn.pendingToolArgFull,
                     let preview = FileDiff.streamingPreview(
                         toolName: pendingName,
@@ -643,16 +659,6 @@ extension ContentBlock {
                             turnId: turn.id,
                             callId: "pending-\(turn.id.uuidString)",
                             diff: preview,
-                            position: .middle
-                        )
-                    )
-                } else {
-                    turnBlocks.append(
-                        .pendingToolCall(
-                            turnId: turn.id,
-                            toolName: pendingName,
-                            argPreview: turn.pendingToolArgPreview,
-                            argSize: turn.pendingToolArgSize,
                             position: .middle
                         )
                     )
