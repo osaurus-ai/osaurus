@@ -422,8 +422,25 @@ struct MLXModel: Identifiable, Codable {
         EmbeddingDetection.isEmbedding(at: localDirectory)
     }
 
+    /// Memoizes `family` per model name. The model grid derives card gradients
+    /// from `family` for every card on every SwiftUI update, and each
+    /// computation lowercases and scans the name against the whole match
+    /// table — enough aggregate work to trip the app-hang watchdog on slow
+    /// machines. Names come from a small curated catalog, so the cache stays
+    /// tiny.
+    private static let familyCache = OSAllocatedUnfairLock<[String: String]>(initialState: [:])
+
     /// Extracts the model family from the name/id (e.g., "Llama", "Qwen", "Gemma", "Phi")
     var family: String {
+        Self.familyCache.withLock { cache in
+            if let cached = cache[self.name] { return cached }
+            let computed = computeFamily()
+            cache[self.name] = computed
+            return computed
+        }
+    }
+
+    private func computeFamily() -> String {
         let name = self.name.lowercased()
 
         // 1. Check for common families first (strong matches)
