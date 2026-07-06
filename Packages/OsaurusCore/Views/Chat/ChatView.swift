@@ -6485,42 +6485,35 @@ extension ChatView {
     /// Recompute the ordered turn-id match list for `query` over the visible
     /// conversation. `jumpToFirst` scrolls to the first match (used while
     /// typing); otherwise the current match is preserved when it survives the
-    /// recompute (used when streaming appends turns).
+    /// recompute (used when streaming appends turns). Logic lives in
+    /// `ChatFindMatcher` so the invariants are unit-tested.
     private func recomputeFindMatches(query: String, jumpToFirst: Bool) {
-        let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else {
-            findMatchTurnIds = []
-            findMatchIndex = 0
-            return
-        }
-        let previousCurrent =
-            findMatchTurnIds.indices.contains(findMatchIndex)
-            ? findMatchTurnIds[findMatchIndex] : nil
-        let matches = session.turns
-            .filter { turn in
-                (turn.role == .user || turn.role == .assistant)
-                    && turn.content.range(of: trimmed, options: [.caseInsensitive]) != nil
-            }
-            .map(\.id)
-        findMatchTurnIds = matches
-        if !jumpToFirst, let previousCurrent, let idx = matches.firstIndex(of: previousCurrent) {
-            findMatchIndex = idx
-            return
-        }
-        findMatchIndex = 0
-        if jumpToFirst, let first = matches.first {
-            scrollToTurnId = first
+        let (state, jumpTo) = ChatFindMatcher.recompute(
+            query: query,
+            turns: session.turns,
+            previous: ChatFindState(matchTurnIds: findMatchTurnIds, matchIndex: findMatchIndex),
+            preserveCurrentMatch: !jumpToFirst
+        )
+        findMatchTurnIds = state.matchTurnIds
+        findMatchIndex = state.matchIndex
+        if let jumpTo {
+            scrollToTurnId = jumpTo
             scrollToTurnTrigger &+= 1
         }
     }
 
     /// Step to the next/previous match, wrapping at both ends.
     private func advanceFindMatch(by delta: Int) {
-        guard !findMatchTurnIds.isEmpty else { return }
-        let count = findMatchTurnIds.count
-        findMatchIndex = ((findMatchIndex + delta) % count + count) % count
-        scrollToTurnId = findMatchTurnIds[findMatchIndex]
-        scrollToTurnTrigger &+= 1
+        let (state, jumpTo) = ChatFindMatcher.advance(
+            ChatFindState(matchTurnIds: findMatchTurnIds, matchIndex: findMatchIndex),
+            by: delta
+        )
+        findMatchTurnIds = state.matchTurnIds
+        findMatchIndex = state.matchIndex
+        if let jumpTo {
+            scrollToTurnId = jumpTo
+            scrollToTurnTrigger &+= 1
+        }
     }
 
     // Key monitor for Esc. Dismisses transient UI in priority order
