@@ -64,6 +64,11 @@ final class NativeThinkingView: NSView {
 
     override func layout() {
         super.layout()
+        // AppKit resets view-managed layer geometry during layout, wiping the
+        // chevron's rotation. Streaming deltas re-layout on every height
+        // change, so reapply the current rotation or the arrow visibly snaps
+        // back to the collapsed direction between reconfigures.
+        updateChevron(expanded: isExpanded, animated: false)
     }
 
     override func hitTest(_ point: NSPoint) -> NSView? {
