@@ -651,7 +651,12 @@ struct NotchView: View {
                 withAnimation(.easeOut(duration: 0.25)) { contentRevealed = true }
             }
         } else {
-            withAnimation(.easeOut(duration: 0.15)) { contentRevealed = false }
+            // Fade the content over the same window as the frame's settle
+            // spring. A fast fade makes the card read as "already collapsed"
+            // the instant the content blinks out, so the frame's shrink looks
+            // abrupt even though it animates — the eye tracks the content,
+            // not the border.
+            withAnimation(.easeInOut(duration: 0.3)) { contentRevealed = false }
         }
     }
 
