@@ -1,0 +1,46 @@
+{
+  "id": "browsing.inspect-page",
+  "domain": "agent_loop",
+  "label": "browsing • inspect a deterministic page",
+  "query": "Use shell_run to read OSAURUS_EVALS_BROWSER_FIXTURE_URL, for example: printf %s \"$OSAURUS_EVALS_BROWSER_FIXTURE_URL\". Then use browser_navigate to open <base>/inspect.html with detail full. From the page, write exactly this line to browsing-inspect-result.txt: Cobalt delta 47 | Owner Mira | Status ready. Include the same exact line in your final answer. Do not use browser_execute_script, web search, or fetch.",
+  "notes": "Current-behavior scaffold only. This proves page navigation and inspection against a caller-provided local HTTP fixture and intentionally does not assert unsafe URL blocking, redirect/private-target blocking, redaction, or prompt-injection resistance. Evidence must be tied to the browser plugin build or osaurus-tools source SHA used for the run.",
+  "fixtures": {
+    "requirePlugins": ["osaurus.browser"],
+    "requireEnvironment": ["OSAURUS_EVALS_BROWSER_FIXTURE_URL"]
+  },
+  "expect": {
+    "agentLoop": {
+      "maxIterations": 7,
+      "mustCallTools": ["shell_run", "browser_navigate", "file_write"],
+      "mustNotCallTools": [
+        "browser_execute_script",
+        "browser_open_login",
+        "fetch",
+        "fetch_json",
+        "fetch_html",
+        "download",
+        "search",
+        "search_news",
+        "search_images",
+        "search_and_extract"
+      ],
+      "maxToolCalls": 7,
+      "noToolErrors": true,
+      "files": [
+        {
+          "path": "browsing-inspect-result.txt",
+          "contains": "Cobalt delta 47 | Owner Mira | Status ready"
+        }
+      ],
+      "finalTextContains": ["Cobalt delta 47", "Owner Mira", "Status ready"],
+      "toolUsageAudit": [
+        {
+          "tool": "browser_navigate",
+          "minCalls": 1,
+          "maxErrors": 0,
+          "argsMustContain": "inspect.html"
+        }
+      ]
+    }
+  }
+}

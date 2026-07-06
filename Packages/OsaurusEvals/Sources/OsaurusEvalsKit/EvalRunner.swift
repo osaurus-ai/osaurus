@@ -555,6 +555,9 @@ public enum EvalRunner {
         suiteDirectory: URL
     ) async -> EvalCaseReport {
         let label = testCase.label ?? testCase.id
+        if let skip = requiredFixtureSkipReport(testCase, label: label, modelId: modelId) {
+            return skip
+        }
 
         switch testCase.domain {
         case "schema":
@@ -629,6 +632,40 @@ public enum EvalRunner {
                 modelId: modelId
             )
         }
+    }
+
+    static func requiredFixtureSkipReport(
+        _ testCase: EvalCase,
+        label: String,
+        modelId: String
+    ) -> EvalCaseReport? {
+        var notes: [String] = []
+
+        if let required = testCase.fixtures.requirePlugins, !required.isEmpty {
+            let installed = EvalHostBootstrap.installedPluginIds()
+            let missing = required.filter { !installed.contains($0) }
+            if !missing.isEmpty {
+                notes.append("missing plugins: \(missing.joined(separator: ", "))")
+            }
+        }
+
+        if let required = testCase.fixtures.requireEnvironment, !required.isEmpty {
+            let env = ProcessInfo.processInfo.environment
+            let missing = required.filter { (env[$0] ?? "").isEmpty }
+            if !missing.isEmpty {
+                notes.append("missing environment: \(missing.joined(separator: ", "))")
+            }
+        }
+
+        guard !notes.isEmpty else { return nil }
+        return .terminal(
+            id: testCase.id,
+            label: label,
+            domain: testCase.domain,
+            outcome: .skipped,
+            notes: notes,
+            modelId: modelId
+        )
     }
 
     // MARK: - Schema domain

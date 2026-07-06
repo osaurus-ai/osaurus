@@ -23,6 +23,7 @@ Packages/OsaurusEvals/
     AgentLoopFrontier/  — harder agent-loop tasks for the local-vs-frontier proof lane (LLM)
     AppleScript/        — AppleScript tool discipline: scripted CI lane + live lane (LLM or scripted)
     ArgumentCoercion/   — ArgumentCoercion.{stringArray,int,bool} pinning
+    Browsing/           — current-behavior browser plugin E2E tasks with pinned fixture/provenance evidence (LLM)
     CapabilityClaims/   — agent-loop "do you have X" behaviour + LLM judge (LLM)
     CapabilitySearch/   — index-only recall measurements (no LLM)
     ComputerUse/        — single-action gate / effect classification (no LLM)
@@ -90,6 +91,19 @@ step does it only when you opt in with `OSAURUS_EVALS_INSTALL_BROWSER=1`
 a selected case declares `fixtures.requirePlugins`, the runner now
 auto-bootstraps installed plugins (no `--bootstrap-plugins` needed); pass
 `--no-plugin-bootstrap` to force-skip them.
+
+The `Browsing` suite is the current-behavior evidence lane for live
+`osaurus.browser` execution. It requires a local fixture base URL in
+`OSAURUS_EVALS_BROWSER_FIXTURE_URL` and skips when that variable or the browser
+plugin is absent. Use `scripts/review/evals-browsing-evidence.sh` for PR
+evidence; it starts a deterministic loopback HTTP fixture server, forces native
+plugin bootstrap, runs the browsing suite with report output, and records the
+app checkout plus the optional `OSAURUS_TOOLS_SOURCE` SHA / plugin artifact
+hashes. These cases do not assert unsafe URL blocking, redirect/private-target
+blocking, redaction, or prompt-injection resistance; add those only with the
+matching browser/fetch/search security plugin build pinned. When browser URL
+policy starts blocking loopback by default, that adoption PR must provide an
+explicit eval/test fixture allowance instead of weakening the production policy.
 
 Or call the CLI directly if you need flags the Makefile doesn't expose:
 

@@ -66,6 +66,11 @@ public struct EvalCase: Sendable, Codable, Identifiable {
         /// missing requirements are SKIPPED in the report (not failed)
         /// so an incomplete local setup doesn't mask real regressions.
         public let requirePlugins: [String]?
+        /// Environment variables the case needs at runtime. Cases with
+        /// missing or empty variables are SKIPPED in the report, matching
+        /// `requirePlugins`. This keeps local-only fixture URLs explicit
+        /// without baking machine-specific paths into committed JSON.
+        public let requireEnvironment: [String]?
         /// Methods to insert into `MethodDatabase` before the case
         /// runs (and remove afterwards). Used by `capability_search`
         /// cases that probe the methods lane — methods have no
@@ -186,6 +191,7 @@ public struct EvalCase: Sendable, Codable, Identifiable {
 
         public init(
             requirePlugins: [String]? = nil,
+            requireEnvironment: [String]? = nil,
             seedMethods: [SeedMethod]? = nil,
             enableSkills: [String]? = nil,
             enableTools: [String]? = nil,
@@ -198,6 +204,7 @@ public struct EvalCase: Sendable, Codable, Identifiable {
             seedSql: [String]? = nil
         ) {
             self.requirePlugins = requirePlugins
+            self.requireEnvironment = requireEnvironment
             self.seedMethods = seedMethods
             self.enableSkills = enableSkills
             self.enableTools = enableTools

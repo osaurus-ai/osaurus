@@ -1,0 +1,47 @@
+{
+  "id": "browsing.form-complete",
+  "domain": "agent_loop",
+  "label": "browsing • complete a deterministic form",
+  "query": "Use shell_run to read OSAURUS_EVALS_BROWSER_FIXTURE_URL, for example: printf %s \"$OSAURUS_EVALS_BROWSER_FIXTURE_URL\". Then use browser_navigate to open <base>/form.html. Use browser form controls to enter orchid-72 into the Codename field and submit the form. Write the resulting confirmation text exactly as shown to browsing-form-result.txt, and include the same confirmation in your final answer. Do not use browser_execute_script, web search, or fetch.",
+  "notes": "Current-behavior scaffold only. This proves form interaction against a caller-provided local HTTP fixture and intentionally does not assert unsafe URL blocking, redirect/private-target blocking, redaction, or prompt-injection resistance. Evidence must be tied to the browser plugin build or osaurus-tools source SHA used for the run.",
+  "fixtures": {
+    "requirePlugins": ["osaurus.browser"],
+    "requireEnvironment": ["OSAURUS_EVALS_BROWSER_FIXTURE_URL"]
+  },
+  "expect": {
+    "agentLoop": {
+      "maxIterations": 8,
+      "mustCallTools": ["shell_run", "browser_navigate", "file_write"],
+      "mustCallAnyTools": ["browser_do", "browser_type", "browser_click"],
+      "mustNotCallTools": [
+        "browser_execute_script",
+        "browser_open_login",
+        "fetch",
+        "fetch_json",
+        "fetch_html",
+        "download",
+        "search",
+        "search_news",
+        "search_images",
+        "search_and_extract"
+      ],
+      "maxToolCalls": 8,
+      "noToolErrors": true,
+      "files": [
+        {
+          "path": "browsing-form-result.txt",
+          "contains": "Submitted: orchid-72"
+        }
+      ],
+      "finalTextContains": ["Submitted: orchid-72"],
+      "toolUsageAudit": [
+        {
+          "tool": "browser_navigate",
+          "minCalls": 1,
+          "maxErrors": 0,
+          "argsMustContain": "form.html"
+        }
+      ]
+    }
+  }
+}
