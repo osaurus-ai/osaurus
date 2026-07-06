@@ -23,6 +23,30 @@ Advanced or future transports:
   require a public HTTPS endpoint and `X-Telegram-Bot-Api-Secret-Token`
   verification.
 
+## Native Channels vs. the Legacy Telegram Plugin
+
+The native Telegram Agent Channel and the legacy Telegram plugin are separate
+paths:
+
+| Path | Where it is configured | Receive path | Message store | Review status |
+| --- | --- | --- | --- | --- |
+| Native Telegram Agent Channel | Settings -> Channels -> Telegram | Bot API long polling, with public webhooks reserved for future proof | Agent Channel message store | New replacement path; use this guide for live proof |
+| Legacy Telegram plugin | Plugin installation/configuration flow | Plugin-owned route/webhook behavior | Plugin-owned SQLite database | Keep separate until native Channels are proven |
+
+If feedback says "I put in the Telegram token and nothing happened," first
+confirm which path the user configured. A report from the legacy Telegram plugin
+does not prove a native Agent Channel bug, and a native Agent Channel fix should
+not be claimed as a plugin fix unless the plugin path was tested too.
+
+Deprecation should be staged, not abrupt:
+
+1. Prove native Telegram Agent Channels with the live checklist below.
+2. Document the migration path from plugin configuration to native channel
+   settings.
+3. Keep the plugin available for at least one overlap window.
+4. Mark the plugin deprecated only after native receive, read, write, restart,
+   and group authorization proof is complete.
+
 ## Slack App Manifest
 
 Create a disposable Slack app for a disposable workspace. Use a dedicated bot
@@ -142,6 +166,42 @@ The diagnostics field `receive_ready` is the authoritative signal that the local
 inbox should fill from Telegram. A long-poll transport can still start and then
 report conflict health if Telegram rejects `getUpdates` because a webhook or
 another consumer owns the same bot token.
+
+## Live Proof Checklist
+
+Run this checklist in a disposable workspace/chat before telling a maintainer
+the channel is ready for user testing:
+
+### Telegram
+
+- Bot token saved and **Test Connection** returns bot identity.
+- `Store Incoming Messages` is enabled.
+- `Enable Long Polling` is enabled.
+- At least one readable chat id is allowlisted.
+- At least one authorized sender id is allowlisted.
+- No webhook is registered for the bot token.
+- Send one inbound message from an authorized sender and confirm it appears in
+  the local Agent Channel inbox.
+- Send one inbound message from an unauthorized sender in the same group and
+  confirm it is ignored.
+- If writes are enabled, send one confirmed message to a write-allowlisted chat.
+- Restart Osaurus and confirm configuration and stored messages persist.
+
+### Slack
+
+- Bot token and Socket Mode app token are saved for local desktop receive proof.
+  Signing secret is also saved when signed HTTP event proof is in scope.
+- **Test Connection** returns bot identity and the configured workspace/team is
+  allowlisted.
+- At least one readable channel id is allowlisted.
+- At least one authorized sender id is allowlisted.
+- Send one inbound Socket Mode message from an authorized sender and confirm it
+  appears in the local Agent Channel inbox.
+- Send one inbound message from an unauthorized sender in the same channel and
+  confirm it is ignored.
+- If writes are enabled, send one confirmed message to a write-allowlisted
+  channel.
+- Restart Osaurus and confirm transport health and configuration persist.
 
 Webhook setup is advanced/future. When it is used, set a random webhook secret
 token and verify the `X-Telegram-Bot-Api-Secret-Token` header before decoding
