@@ -1,0 +1,102 @@
+{
+  "contributions" : 4,
+  "generatedAt" : "2026-07-06T02:32:37.896Z",
+  "models" : [
+    {
+      "builds" : [
+
+      ],
+      "catalogHashes" : [
+        "137408f3cdba4838"
+      ],
+      "chips" : [
+        "Apple M4 Pro"
+      ],
+      "contributions" : 1,
+      "decodeTokensPerSecondMax" : 22.848566486530114,
+      "decodeTokensPerSecondMin" : 22.848566486530114,
+      "errored" : 0,
+      "hasSelfJudged" : false,
+      "maxRamMb" : 49152,
+      "minRamMb" : 49152,
+      "model" : "OsaurusAI/Ornith-1.0-9B-MXFP4",
+      "passed" : 188,
+      "peakPhysFootprintMb" : 20613.585746765137,
+      "scored" : 247,
+      "skipped" : 5,
+      "verdict" : "works"
+    },
+    {
+      "builds" : [
+
+      ],
+      "catalogHashes" : [
+        "137408f3cdba4838"
+      ],
+      "chips" : [
+        "Apple M4 Pro"
+      ],
+      "contributions" : 1,
+      "decodeTokensPerSecondMax" : 21.36396340791487,
+      "decodeTokensPerSecondMin" : 21.36396340791487,
+      "errored" : 0,
+      "hasSelfJudged" : false,
+      "maxRamMb" : 49152,
+      "minRamMb" : 49152,
+      "model" : "OsaurusAI/gemma-4-E4B-it-4bit",
+      "passed" : 188,
+      "peakPhysFootprintMb" : 19797.867179870605,
+      "scored" : 245,
+      "skipped" : 7,
+      "verdict" : "works"
+    },
+    {
+      "builds" : [
+
+      ],
+      "catalogHashes" : [
+        "137408f3cdba4838"
+      ],
+      "chips" : [
+        "Apple M4 Pro"
+      ],
+      "contributions" : 1,
+      "decodeTokensPerSecondMax" : 53.120355117710204,
+      "decodeTokensPerSecondMin" : 53.120355117710204,
+      "errored" : 0,
+      "hasSelfJudged" : false,
+      "maxRamMb" : 49152,
+      "minRamMb" : 49152,
+      "model" : "mlx-community/Qwen3-4B-4bit",
+      "passed" : 198,
+      "peakPhysFootprintMb" : 20583.414192199707,
+      "scored" : 246,
+      "skipped" : 6,
+      "verdict" : "works"
+    },
+    {
+      "builds" : [
+
+      ],
+      "catalogHashes" : [
+        "137408f3cdba4838"
+      ],
+      "chips" : [
+        "Apple M4 Pro"
+      ],
+      "contributions" : 1,
+      "decodeTokensPerSecondMax" : 34.852818213933865,
+      "decodeTokensPerSecondMin" : 34.852818213933865,
+      "errored" : 0,
+      "hasSelfJudged" : false,
+      "maxRamMb" : 49152,
+      "minRamMb" : 49152,
+      "model" : "mlx-community/Qwen3.5-4B-OptiQ-4bit",
+      "passed" : 212,
+      "peakPhysFootprintMb" : 20487.085746765137,
+      "scored" : 247,
+      "skipped" : 5,
+      "verdict" : "works"
+    }
+  ]
+}
