@@ -196,6 +196,10 @@ struct ChatSessionSidebar: View {
             // Session list
             if sessions.isEmpty {
                 emptyState
+            } else if filteredSessions.isEmpty, isContentSearchInFlight {
+                // The async content lookup hasn't finished — don't claim
+                // "no results" until the whole search process is complete.
+                searchingPlaceholder
             } else if filteredSessions.isEmpty {
                 SidebarNoResultsView(searchQuery: searchQuery) {
                     withAnimation(theme.animationQuick()) {
@@ -379,6 +383,22 @@ struct ChatSessionSidebar: View {
     }
 
     // MARK: - Empty State
+
+    /// Interim state while the async content lookup is still running and no
+    /// title/metadata match is visible yet. Prevents a premature "No matches
+    /// found" flash before the search process has actually finished.
+    private var searchingPlaceholder: some View {
+        VStack(spacing: 12) {
+            Spacer()
+            ProgressView()
+                .controlSize(.small)
+            Text("Searching conversations…", bundle: .module)
+                .font(.system(size: 12, weight: .medium))
+                .foregroundColor(theme.secondaryText.opacity(0.8))
+            Spacer()
+        }
+        .frame(maxWidth: .infinity)
+    }
 
     private var emptyState: some View {
         VStack(spacing: 8) {
