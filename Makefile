@@ -124,6 +124,13 @@ EASYLOCOMO_REPO ?= https://github.com/playeriv65/EasyLocomo.git
 EASYLOCOMO_DIR := benchmarks/EasyLocomo
 BENCH_PYTHON := $(EASYLOCOMO_DIR)/.venv/bin/python
 
+# Inference benchmark (TTFT / prefill / decode) against the running server.
+# Usage: make bench-mlx [BENCH_MLX_ARGS="--model <id> --runs 5"]
+BENCH_MLX_ARGS ?=
+bench-mlx: install-cli
+	@echo "Running osaurus bench…"
+	osaurus bench $(BENCH_MLX_ARGS)
+
 bench-setup:
 	@echo "Setting up EasyLocomo benchmark…"
 	@if [ ! -d "$(EASYLOCOMO_DIR)/.git" ]; then \

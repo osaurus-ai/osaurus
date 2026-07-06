@@ -18,6 +18,7 @@ struct OsaurusCLI {
         case show(String)
         case run(String)
         case pull(String)
+        case bench([String])
         case mcp([String])
         case ui
         case tools([String])
@@ -45,6 +46,7 @@ struct OsaurusCLI {
         case "pull":
             if let modelId = rest.first, !modelId.isEmpty { return .pull(modelId) }
             return nil
+        case "bench": return .bench(rest)
         case "mcp": return .mcp(rest)
         case "ui": return .ui
         case "tools": return .tools(rest)
@@ -80,6 +82,8 @@ struct OsaurusCLI {
             await RunCommand.execute(args: [modelId])
         case .pull(let modelId):
             await PullCommand.execute(args: [modelId])
+        case .bench(let args):
+            await BenchCommand.execute(args: args)
         case .mcp(let args):
             await MCPCommand.execute(args: args)
         case .ui:
@@ -123,6 +127,9 @@ struct OsaurusCLI {
               osaurus show <model_id> Show metadata for a model
               osaurus pull <model_id> Download a model from Hugging Face
               osaurus run <model_id>  Chat with a downloaded model (interactive)
+              osaurus bench [--model <id>] [--prompt-tokens 1024,8192] [--runs 3] [--json <path>]
+                                      Benchmark TTFT / prefill / decode against the
+                                      running server; emits JSON tagged with hardware info
               osaurus ui              Show the Osaurus menu popover in the menu bar
               osaurus tools list      List installed tools
               osaurus tools install <plugin_id|url-or-path>
