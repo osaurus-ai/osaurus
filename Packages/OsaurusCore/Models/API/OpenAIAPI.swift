@@ -775,6 +775,16 @@ struct ChatCompletionRequest: Codable, Sendable {
     /// (e.g. a leftover prefix like `fugu/...`) can't redirect an agent run to a
     /// different provider. Not decoded from OpenAI JSON, not sent to providers.
     var remoteAgentProviderId: UUID? = nil
+    /// Local-only: when true, model-load and prefill progress are not surfaced
+    /// through `InferenceProgressManager` (background warm-up requests).
+    var suppressProgressUI: Bool = false
+    /// Local-only: when true, the prompt is truncated to the processor's
+    /// canonical history cache boundary (rendered without the generation
+    /// prompt) before prefill. Background warm-up requests set this so the
+    /// KV the engine stores is an exact token-prefix of the next real send —
+    /// required for sliding-window models whose caches cannot be trimmed to
+    /// a boundary at store time.
+    var warmupPrefill: Bool = false
 
     /// Resolved max tokens, preferring max_tokens then max_completion_tokens.
     var resolvedMaxTokens: Int? { max_tokens ?? max_completion_tokens }
@@ -821,6 +831,8 @@ struct ChatCompletionRequest: Codable, Sendable {
         copy.runAsRemoteAgent = runAsRemoteAgent
         copy.remoteAgentLogModel = remoteAgentLogModel
         copy.remoteAgentProviderId = remoteAgentProviderId
+        copy.suppressProgressUI = suppressProgressUI
+        copy.warmupPrefill = warmupPrefill
         return copy
     }
 
@@ -861,6 +873,8 @@ struct ChatCompletionRequest: Codable, Sendable {
         copy.runAsRemoteAgent = runAsRemoteAgent
         copy.remoteAgentLogModel = remoteAgentLogModel
         copy.remoteAgentProviderId = remoteAgentProviderId
+        copy.suppressProgressUI = suppressProgressUI
+        copy.warmupPrefill = warmupPrefill
         return copy
     }
 }

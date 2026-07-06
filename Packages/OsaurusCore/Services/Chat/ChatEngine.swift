@@ -168,7 +168,9 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
             sessionId: request.session_id,
             ttftTrace: trace,
             idempotencyKey: request.idempotencyKey,
-            runAsRemoteAgent: request.runAsRemoteAgent
+            runAsRemoteAgent: request.runAsRemoteAgent,
+            suppressProgressUI: request.suppressProgressUI,
+            warmupPrefill: request.warmupPrefill
         )
 
         // Mode 2 (remote agent run): route to the *selected agent's provider*,

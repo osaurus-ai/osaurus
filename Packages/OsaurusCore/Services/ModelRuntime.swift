@@ -2138,9 +2138,14 @@ public actor ModelRuntime {
             maxBatchSize: InferenceFeatureFlags.mlxBatchEngineMaxBatchSize
         )
         trace?.mark("load_container_start")
-        let shouldReportModelLoad = modelCache[modelName] == nil
+        let shouldReportModelLoad = modelCache[modelName] == nil && !parameters.suppressProgressUI
         if shouldReportModelLoad {
             InferenceProgressManager.shared.modelLoadWillStartAsync()
+        }
+        // Warm-up requests stay out of the global progress HUD but publish
+        // their load phase to the per-model side channel for the chip tooltip.
+        if modelCache[modelName] == nil && parameters.suppressProgressUI {
+            WarmupProgressHub.shared.modelLoadWillStart(model: modelName)
         }
         let holder: SessionHolder
         do {
@@ -2149,6 +2154,9 @@ public actor ModelRuntime {
             await ModelResidencyManager.shared.cancel(modelName: modelName)
             if shouldReportModelLoad {
                 InferenceProgressManager.shared.modelLoadDidFinishAsync()
+            }
+            if parameters.suppressProgressUI {
+                WarmupProgressHub.shared.finish(model: modelName)
             }
             throw error
         }
@@ -2196,7 +2204,11 @@ public actor ModelRuntime {
                 maxBatchSize: InferenceFeatureFlags.mlxBatchEngineMaxBatchSize
             )
         } catch {
-            InferenceProgressManager.shared.prefillDidFinishAsync()
+            if !parameters.suppressProgressUI {
+                InferenceProgressManager.shared.prefillDidFinishAsync()
+            } else {
+                WarmupProgressHub.shared.finish(model: modelName)
+            }
             await ModelLease.shared.release(modelName)
             await scheduleIdleResidency(for: modelName)
             throw error
@@ -2224,7 +2236,12 @@ public actor ModelRuntime {
         }
         activeGenerationTasks[genID] = ActiveGenerationRecord(modelName: modelName, task: activeTask)
 
-        return GenerationEventMapper.map(events: prepared.stream, modelName: modelName, trace: trace)
+        return GenerationEventMapper.map(
+            events: prepared.stream,
+            modelName: modelName,
+            trace: trace,
+            suppressProgressUI: parameters.suppressProgressUI
+        )
     }
 
     // MARK: - New message-based (OpenAI ChatMessage) APIs

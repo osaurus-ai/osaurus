@@ -67,6 +67,13 @@ struct GenerationParameters: Sendable {
     /// the plain OpenAI-compatible `/chat/completions` inference path (Mode 1).
     /// Ignored by local services and non-Osaurus remotes.
     let runAsRemoteAgent: Bool
+    /// When true, model-load and prefill progress are not surfaced through
+    /// `InferenceProgressManager` (background warm-up requests).
+    let suppressProgressUI: Bool
+    /// When true, the prompt is truncated to the processor's canonical
+    /// history cache boundary before prefill (see
+    /// `ChatCompletionRequest.warmupPrefill`).
+    let warmupPrefill: Bool
 
     init(
         temperature: Float?,
@@ -85,7 +92,9 @@ struct GenerationParameters: Sendable {
         sessionId: String? = nil,
         ttftTrace: TTFTTrace? = nil,
         idempotencyKey: String? = nil,
-        runAsRemoteAgent: Bool = false
+        runAsRemoteAgent: Bool = false,
+        suppressProgressUI: Bool = false,
+        warmupPrefill: Bool = false
     ) {
         self.temperature = temperature
         self.maxTokens = maxTokens
@@ -104,6 +113,8 @@ struct GenerationParameters: Sendable {
         self.ttftTrace = ttftTrace
         self.idempotencyKey = idempotencyKey
         self.runAsRemoteAgent = runAsRemoteAgent
+        self.suppressProgressUI = suppressProgressUI
+        self.warmupPrefill = warmupPrefill
     }
 }
 
