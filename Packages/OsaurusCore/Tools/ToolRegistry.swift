@@ -536,8 +536,11 @@ public final class ToolRegistry: ObservableObject {
                 if ChatExecutionContext.autoApproveToolPrompts {
                     approved = true
                 } else if ChatExecutionContext.denyUnapprovedToolPrompts {
-                    // Headless eval with no UI: deny instead of hanging on an
-                    // approval card nobody can click (see task-local doc).
+                    // Headless eval / external MCP with no UI: deny instead of
+                    // hanging on an approval card nobody can click.
+                    approved = false
+                } else if ChatExecutionContext.isExternalSurface {
+                    // External MCP/HTTP callers cannot interact with GUI prompts.
                     approved = false
                 } else {
                     approved = await ToolPermissionPromptService.requestApproval(
@@ -547,10 +550,15 @@ public final class ToolRegistry: ObservableObject {
                     )
                 }
                 if !approved {
+                    let message =
+                        ChatExecutionContext.isExternalSurface
+                        || ChatExecutionContext.denyUnapprovedToolPrompts
+                        ? "Tool '\(name)' requires interactive approval in the Osaurus app. Enable auto-approve or change the tool policy to auto before calling it from an external MCP client."
+                        : "User denied execution for tool: \(name)"
                     throw NSError(
                         domain: "ToolRegistry",
                         code: 4,
-                        userInfo: [NSLocalizedDescriptionKey: "User denied execution for tool: \(name)"]
+                        userInfo: [NSLocalizedDescriptionKey: message]
                     )
                 }
             case .auto:
@@ -1097,6 +1105,12 @@ public final class ToolRegistry: ObservableObject {
         return toolsByName.count
     }
 
+    /// Names of all currently registered tools. Used when minting MCP tool
+    /// names so two providers with the same sanitized prefix can't collide.
+    func registeredToolNames() -> [String] {
+        Array(toolsByName.keys)
+    }
+
     /// O(1) single-tool lookup as a `ToolEntry`. Prefer this over
     /// `listTools().first(where:)` on UI/render paths: `listTools()` sorts the
     /// entire registry and rebuilds every tool's JSON schema, while this only
@@ -1323,21 +1337,32 @@ public final class ToolRegistry: ObservableObject {
     /// Register a tool from a remote MCP provider.
     /// Auto-enables the tool on first registration so it is immediately usable;
     /// subsequent registrations preserve the user's choice.
-    func registerMCPTool(_ tool: OsaurusTool) {
+    func registerMCPTool(_ tool: MCPProviderTool) {
+        let name = tool.name
+        if let existing = toolsByName[name] as? MCPProviderTool,
+            existing.providerId != tool.providerId
+        {
+            NSLog(
+                "[ToolRegistry] MCP tool name collision on '\(name)': "
+                    + "existing provider '\(existing.providerName)' (\(existing.providerId)) "
+                    + "overwritten by '\(tool.providerName)' (\(tool.providerId)). "
+                    + "Consider renaming one of the providers."
+            )
+        }
         let firstTime =
-            toolsByName[tool.name] == nil
-            && !configuration.enabled.keys.contains(tool.name)
-        toolsByName[tool.name] = tool
-        sandboxToolNames.remove(tool.name)
-        builtInSandboxToolNames.remove(tool.name)
-        pluginToolNames.remove(tool.name)
-        mcpToolNames.insert(tool.name)
+            toolsByName[name] == nil
+            && !configuration.enabled.keys.contains(name)
+        toolsByName[name] = tool
+        sandboxToolNames.remove(name)
+        builtInSandboxToolNames.remove(name)
+        pluginToolNames.remove(name)
+        mcpToolNames.insert(name)
         if firstTime {
-            setEnabled(true, for: tool.name)
+            setEnabled(true, for: name)
         }
         Task {
             await ToolIndexService.shared.onToolRegistered(
-                name: tool.name,
+                name: name,
                 description: tool.description,
                 runtime: .mcp,
                 tokenCount: Self.estimateTokenCount(tool),

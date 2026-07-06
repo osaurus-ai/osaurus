@@ -15,7 +15,17 @@ private let mcpLog = Logger(subsystem: "ai.osaurus", category: "MCP")
 final class MCPServerManager {
     static let shared = MCPServerManager()
 
-    private init() {}
+    private var toolsChangedObserver: NSObjectProtocol?
+
+    private init() {
+        toolsChangedObserver = NotificationCenter.default.addObserver(
+            forName: .toolsListChanged,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            Task { await self?.notifyInboundToolListChangedIfRunning() }
+        }
+    }
 
     // MARK: - MCP Core
     private var server: MCP.Server?
@@ -128,6 +138,20 @@ final class MCPServerManager {
                     )
                 }
 
+                let isEnabled = await ToolRegistry.shared.isGlobalEnabled(params.name)
+                if !isEnabled {
+                    return .init(
+                        content: [
+                            .text(
+                                text: "Tool '\(params.name)' is disabled in Osaurus settings.",
+                                annotations: nil,
+                                _meta: nil
+                            )
+                        ],
+                        isError: true
+                    )
+                }
+
                 // Validate against tool schema when available
                 if let schema = await ToolRegistry.shared.parametersForTool(name: params.name) {
                     let result = SchemaValidator.validate(arguments: argumentsAny, against: schema)
@@ -162,8 +186,30 @@ final class MCPServerManager {
     }
 
     static func executeToolAsExternalMCP(name: String, argumentsJSON: String) async throws -> String {
-        try await ChatExecutionContext.$isExternalSurface.withValue(true) {
-            try await ToolRegistry.shared.execute(name: name, argumentsJSON: argumentsJSON)
+        guard ToolRegistry.shared.isGlobalEnabled(name) else {
+            throw NSError(
+                domain: "ToolRegistry",
+                code: 5,
+                userInfo: [
+                    NSLocalizedDescriptionKey: "Tool '\(name)' is disabled in Osaurus settings."
+                ]
+            )
+        }
+        return try await ChatExecutionContext.$isExternalSurface.withValue(true) {
+            try await ChatExecutionContext.$denyUnapprovedToolPrompts.withValue(true) {
+                try await ToolRegistry.shared.execute(name: name, argumentsJSON: argumentsJSON)
+            }
+        }
+    }
+
+    private func notifyInboundToolListChangedIfRunning() async {
+        guard let server else { return }
+        do {
+            try await server.notify(ToolListChangedNotification.message())
+        } catch {
+            mcpLog.error(
+                "Failed to emit tools/list_changed to MCP clients: \(error.localizedDescription, privacy: .public)"
+            )
         }
     }
 

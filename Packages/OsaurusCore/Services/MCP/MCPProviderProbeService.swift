@@ -229,21 +229,17 @@ public enum MCPProviderProbeService {
             )
         }
 
-        let configuration = GlobalProxySettings.makeConfiguration(base: .default)
         var allHeaders = headers
         if let token, !token.isEmpty {
             allHeaders["Authorization"] = "Bearer \(token)"
         }
-        if !allHeaders.isEmpty {
-            configuration.httpAdditionalHeaders = allHeaders
-        }
-        configuration.timeoutIntervalForRequest = discoveryTimeout
-        configuration.timeoutIntervalForResource = max(discoveryTimeout, 20)
 
-        let transport = HTTPClientTransport(
+        let transport = MCPHTTPTransportBuilder.makeTransport(
             endpoint: endpoint,
-            configuration: configuration,
-            streaming: streamingEnabled
+            headers: allHeaders,
+            streaming: streamingEnabled,
+            discoveryTimeout: discoveryTimeout,
+            toolCallTimeout: discoveryTimeout
         )
         return await runProbe(provider: provider, transport: transport, startedAt: startedAt)
     }
@@ -306,6 +302,10 @@ public enum MCPProviderProbeService {
             let (tools, _) = try await withTimeout(seconds: provider.discoveryTimeout) {
                 try await client.listTools()
             }
+            // Probes are short-lived by contract: disconnect the client so
+            // HTTP transports invalidate their URLSession (and stop any SSE
+            // loop) instead of leaking one per Test click.
+            await client.disconnect()
             if let cleanup {
                 await cleanup()
             }
@@ -315,6 +315,7 @@ public enum MCPProviderProbeService {
                 tools: tools
             )
         } catch {
+            await client.disconnect()
             if let cleanup {
                 await cleanup()
             }

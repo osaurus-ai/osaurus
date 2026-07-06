@@ -346,6 +346,11 @@ struct MCPOAuthServiceTests {
         #expect(capturedForm?["client_secret"] == nil)
     }
 
+    @Test func refreshPermanentFailureDetectsInvalidToken() {
+        let error = MCPOAuthError.tokenRequestFailed(401, #"{"error":"invalid_token"}"#)
+        #expect(MCPOAuthService.isPermanentAuthFailure(error))
+    }
+
     // MARK: - Helpers
 
     private func makePRM(scopes: [String]?) -> MCPProtectedResourceMetadata {

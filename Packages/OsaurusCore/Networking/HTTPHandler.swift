@@ -9560,8 +9560,46 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 // Belt-and-braces: the registry re-checks the external deny
                 // list under this flag even if a new entry point forgets
                 // the name-based preflight above.
+                let isEnabled = await MainActor.run {
+                    ToolRegistry.shared.isGlobalEnabled(toolName)
+                }
+                if !isEnabled {
+                    let message = "Tool '\(toolName)' is disabled in Osaurus settings."
+                    let payload: [String: Any] = [
+                        "content": [["type": "text", "text": message]],
+                        "isError": true,
+                    ]
+                    let data =
+                        (try? JSONSerialization.data(withJSONObject: payload, options: .osaurusCanonical))
+                        ?? Data("{}".utf8)
+                    let body = String(decoding: data, as: UTF8.self)
+                    hop {
+                        var headers = [("Content-Type", "application/json; charset=utf-8")]
+                        headers.append(contentsOf: cors)
+                        self.sendResponse(
+                            context: ctx.value,
+                            version: head.version,
+                            status: .ok,
+                            headers: headers,
+                            body: body
+                        )
+                    }
+                    logSelf.logRequest(
+                        method: "POST",
+                        path: "/mcp/call",
+                        userAgent: logUserAgent,
+                        requestBody: logRequestBody,
+                        responseStatus: 200,
+                        startTime: logStartTime,
+                        errorMessage: message
+                    )
+                    return
+                }
+
                 let result = try await ChatExecutionContext.$isExternalSurface.withValue(true) {
-                    try await ToolRegistry.shared.execute(name: toolName, argumentsJSON: argsJSON)
+                    try await ChatExecutionContext.$denyUnapprovedToolPrompts.withValue(true) {
+                        try await ToolRegistry.shared.execute(name: toolName, argumentsJSON: argsJSON)
+                    }
                 }
                 let payload: [String: Any] = [
                     "content": [["type": "text", "text": result]],

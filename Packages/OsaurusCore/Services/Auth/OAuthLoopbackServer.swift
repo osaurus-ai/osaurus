@@ -23,6 +23,7 @@ public enum OAuthLoopbackError: LocalizedError, Sendable {
     case bindFailed(String)
     case stateMismatch
     case missingCode
+    case callbackTimeout
     case oauthError(error: String, description: String?)
 
     public var errorDescription: String? {
@@ -35,6 +36,8 @@ public enum OAuthLoopbackError: LocalizedError, Sendable {
             return "OAuth state mismatch — possible CSRF or stale callback"
         case .missingCode:
             return "OAuth provider returned no authorization code"
+        case .callbackTimeout:
+            return "Timed out waiting for OAuth sign-in to complete in the browser"
         case .oauthError(let error, let description):
             if let description, !description.isEmpty {
                 return "OAuth provider returned error \(error): \(description)"
@@ -103,12 +106,15 @@ public final class OAuthLoopbackServer: @unchecked Sendable {
         self.callbackPath = callbackPath.hasPrefix("/") ? callbackPath : "/" + callbackPath
         self.corsOriginAllowlist = corsOriginAllowlist
         do {
+            let parameters = NWParameters.tcp
+            // RFC 8252 §7.3: bind to the loopback interface only — never all interfaces.
+            parameters.requiredInterfaceType = .loopback
             switch port {
             case .fixed(let value):
                 let nwPort = NWEndpoint.Port(rawValue: value) ?? .any
-                self.listener = try NWListener(using: .tcp, on: nwPort)
+                self.listener = try NWListener(using: parameters, on: nwPort)
             case .ephemeral:
-                self.listener = try NWListener(using: .tcp, on: .any)
+                self.listener = try NWListener(using: parameters, on: .any)
             }
         } catch {
             throw OAuthLoopbackError.bindFailed(error.localizedDescription)
@@ -177,17 +183,25 @@ public final class OAuthLoopbackServer: @unchecked Sendable {
         }
     }
 
+    /// Await the authorization callback. Responds to task cancellation
+    /// (e.g. a sign-in timeout racing this call) by resuming with
+    /// `CancellationError` — without this, cancelling the surrounding task
+    /// would leave the continuation stranded forever.
     public func waitForCallback() async throws -> OAuthCallbackResult {
-        try await withCheckedThrowingContinuation { continuation in
-            lock.lock()
-            if let pendingResult {
-                self.pendingResult = nil
+        try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { continuation in
+                lock.lock()
+                if let pendingResult {
+                    self.pendingResult = nil
+                    lock.unlock()
+                    continuation.resume(with: pendingResult)
+                    return
+                }
+                self.continuation = continuation
                 lock.unlock()
-                continuation.resume(with: pendingResult)
-                return
             }
-            self.continuation = continuation
-            lock.unlock()
+        } onCancel: {
+            complete(.failure(CancellationError()))
         }
     }
 

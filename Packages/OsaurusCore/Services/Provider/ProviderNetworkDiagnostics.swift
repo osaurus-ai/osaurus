@@ -448,12 +448,21 @@ public enum ProviderNetworkDiagnostics {
             )
         }
         if state?.isConnected == true {
+            var detail = L("\(state?.discoveredToolCount ?? 0) tool(s) discovered.")
+            if let connectedAt = state?.lastConnectedAt {
+                detail += " " + L("Last connected \(connectedAt.formatted(date: .abbreviated, time: .shortened)).")
+            }
+            if state?.isAutoReconnecting == true {
+                detail += " " + L("Auto-reconnecting after a stale session…")
+            } else if state?.lastAutoReconnectAt != nil {
+                detail += " " + L("Last auto-reconnect \(state!.lastAutoReconnectAt!.formatted(date: .omitted, time: .shortened)).")
+            }
             return ProviderDiagnosticRow(
                 id: "connection",
                 title: L("Connection"),
                 value: L("Connected"),
                 severity: .ok,
-                detail: L("\(state?.discoveredToolCount ?? 0) tool(s) discovered.")
+                detail: detail
             )
         }
         if state?.requiresAuth == true {
