@@ -170,7 +170,10 @@ final class NativeMarkdownView: NSView {
         // first `measuredHeight` often runs before `bounds.width` exists; remeasure once width is real
         // so row height and text wrapping match (avoids clipped last line + trailing edge mismatch).
         let w = bounds.width
-        guard textView != nil, w > 0.5 else { return }
+        // Mixed-segment content (textView == nil) must also remeasure here:
+        // its height memo can be keyed on a stale recycled-cell bounds width,
+        // and layout() is the only signal that the real width has settled.
+        guard w > 0.5, textView != nil || !lastMixedSegments.isEmpty else { return }
         if streamingCursor != nil {
             repositionStreamingCursor()
         }
@@ -417,6 +420,9 @@ final class NativeMarkdownView: NSView {
         ChatPerfTrace.shared.count("markdown.configure.applied")
 
         invalidateHeightMemo()
+        // Content is changing — any width observed by a previous tenancy of
+        // this (possibly recycled) view no longer counts as "already measured".
+        lastLayoutWidthForHeight = -1
         lastWidth = width
         lastThemeFingerprint = themeFingerprint
         lastIsStreaming = isStreaming
@@ -476,6 +482,7 @@ final class NativeMarkdownView: NSView {
         guard textChanged || widthChanged || themeChanged || streamingChanged else { return }
 
         invalidateHeightMemo()
+        lastLayoutWidthForHeight = -1
         lastWidth = width
         lastThemeFingerprint = themeFingerprint
         lastIsStreaming = isStreaming
@@ -810,7 +817,19 @@ final class NativeMarkdownView: NSView {
 
         for seg in segments {
             let existingEntry = segmentViews.first(where: { $0.key == seg.id })
+            let isNewSegment = existingEntry == nil
             let segView: NSView
+
+            // The child views fire onHeightChanged synchronously from inside
+            // configure, which re-enters measuredHeight on this view. The
+            // segment must already be registered in `segmentViews` at that
+            // point or the mixed-branch measurement skips it, computes a
+            // near-zero total, and (via the height memo) freezes the row at
+            // that bogus height. So every creation branch below appends to
+            // `segmentViews` BEFORE its configure call runs.
+            func register(_ view: NSView) {
+                segmentViews.append((view: view, key: seg.id))
+            }
 
             switch seg.kind {
             case .textGroup(let blocks):
@@ -822,6 +841,7 @@ final class NativeMarkdownView: NSView {
                     mv = NativeMarkdownView()
                     mv.translatesAutoresizingMaskIntoConstraints = false
                     addSubview(mv)
+                    register(mv)
                 }
                 mv.onHeightChanged = { [weak self] in
                     self?.invalidateHeightMemo()
@@ -845,6 +865,7 @@ final class NativeMarkdownView: NSView {
                     cv = NativeCodeBlockView()
                     cv.translatesAutoresizingMaskIntoConstraints = false
                     addSubview(cv)
+                    register(cv)
                 }
                 cv.onHeightChanged = { [weak self] in
                     self?.invalidateHeightMemo()
@@ -888,6 +909,7 @@ final class NativeMarkdownView: NSView {
                     hc.isActive = true
                     imageHeightConstraints[seg.id] = hc
                     addSubview(iv)
+                    register(iv)
                 }
                 applyImageHeight(segmentId: seg.id, width: width)
                 scheduleImageLoad(segmentId: seg.id, urlString: urlString, imageView: iv)
@@ -906,6 +928,7 @@ final class NativeMarkdownView: NSView {
                     lv.maximumNumberOfLines = 0
                     lv.lineBreakMode = .byWordWrapping
                     addSubview(lv)
+                    register(lv)
                 }
                 if case .math(let latex) = seg.kind { lv.stringValue = latex }
                 segView = lv
@@ -917,6 +940,7 @@ final class NativeMarkdownView: NSView {
                 } else {
                     tv = NativeMarkdownTableView()
                     addSubview(tv)
+                    register(tv)
                 }
                 tv.onHeightChanged = { [weak self] in
                     self?.invalidateHeightMemo()
@@ -931,7 +955,7 @@ final class NativeMarkdownView: NSView {
             // re-activating leading/trailing here on every pass would pile duplicate
             // constraints into the window's layout engine on each streaming tick,
             // progressively slowing every subsequent layout solve to a crawl.
-            if existingEntry == nil {
+            if isNewSegment {
                 NSLayoutConstraint.activate([
                     segView.leadingAnchor.constraint(equalTo: leadingAnchor),
                     segView.trailingAnchor.constraint(equalTo: trailingAnchor),
@@ -943,13 +967,12 @@ final class NativeMarkdownView: NSView {
                 ])
             }
 
-            if existingEntry == nil {
-                segmentViews.append((view: segView, key: seg.id))
-            }
-
             prevAnchor = segView.bottomAnchor
             prevOffset = 0
         }
+        // Final measurement must be authoritative: mid-loop child callbacks can
+        // have memoized a partial total, so drop the memo before measuring.
+        invalidateHeightMemo()
         _ = measuredHeight(for: width)
         onHeightChanged?()
     }
