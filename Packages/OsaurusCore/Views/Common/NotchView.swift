@@ -547,6 +547,19 @@ struct NotchView: View {
             Spacer()
         }
         .padding(.top, 2)
+        // Dismiss every finished task at once instead of forcing the user to
+        // surface and close each dot individually. Running tasks are left
+        // untouched — mass-cancelling them silently would be destructive.
+        .overlay(alignment: .trailing) {
+            if finishedTasks.count > 1 {
+                Button(action: handleDismissAllFinished) {
+                    Text("Clear All", bundle: .module)
+                        .font(.system(size: 9.5, weight: .medium))
+                        .foregroundColor(notchTertiaryText)
+                }
+                .buttonStyle(.plain)
+            }
+        }
     }
 
     // MARK: - Background & Border
@@ -615,6 +628,26 @@ struct NotchView: View {
             }
         } else {
             withAnimation(.easeOut(duration: 0.15)) { contentRevealed = false }
+        }
+    }
+
+    private var finishedTasks: [BackgroundTaskState] {
+        sortedTasks.filter { !$0.status.isActive }
+    }
+
+    /// Absorb-and-finalize every finished task in one action ("Clear All").
+    /// Mirrors the single-task dismiss path in `handleDismiss`.
+    private func handleDismissAllFinished() {
+        let finished = finishedTasks
+        guard !finished.isEmpty else { return }
+        withAnimation(swingSpring) {
+            absorbingTaskIds.formUnion(finished.map(\.id))
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.45) {
+            for task in finished {
+                BackgroundTaskManager.shared.finalizeTask(task.id)
+                absorbingTaskIds.remove(task.id)
+            }
         }
     }
 
