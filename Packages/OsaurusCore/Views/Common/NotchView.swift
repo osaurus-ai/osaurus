@@ -88,17 +88,18 @@ struct NotchView: View {
 
     // MARK: - State
 
-    /// Split hover tracking: trigger zone (top strip) + body (expanded content).
-    @State private var isHoveringTrigger = false
-    @State private var isHoveringBody = false
+    /// Single hover flag driven by the notch body's own bounds. The hover
+    /// region therefore always matches what's on screen: the compact pill,
+    /// or the expanded card once open. (A previous split trigger-strip +
+    /// body-content scheme let the collapsing card re-report hover from the
+    /// area below the pill and ping-pong the expansion.)
+    @State private var isHovering = false
     @State private var activeTaskIndex: Int = 0
     @State private var showCancelConfirmation = false
     @State private var contentRevealed = false
     @State private var absorbingTaskIds: Set<UUID> = []
     /// Pending hover-intent dwell before the trigger zone expands the notch.
     @State private var hoverExpandWorkItem: DispatchWorkItem?
-
-    private var isHovering: Bool { isHoveringTrigger || isHoveringBody }
 
     // MARK: - Metrics & Colors
 
@@ -258,8 +259,7 @@ struct NotchView: View {
                 activeTaskIndex = max(0, newCount - 1)
             }
         }
-        .onChange(of: isHoveringTrigger) { _, _ in handleHoverChange() }
-        .onChange(of: isHoveringBody) { _, _ in handleHoverChange() }
+        .onChange(of: isHovering) { _, _ in handleHoverChange() }
     }
 
     // MARK: - Notch Body
@@ -273,7 +273,7 @@ struct NotchView: View {
             .clipShape(currentShape)
             .contentShape(currentShape)
             .overlay(notchBorderOverlay)
-            .overlay(alignment: .top) { hoverTriggerZone }
+            .onHover(perform: handleBodyHover)
             .shadow(
                 color: Color.black.opacity(expansion == .compact ? 0 : (isHovering ? 0.6 : 0.4)),
                 radius: expansion == .compact ? 0 : (isHovering ? 20 : 12),
@@ -295,29 +295,27 @@ struct NotchView: View {
             )
     }
 
-    /// Thin strip at the top that triggers hover — the only entry point for
-    /// expansion. Expansion requires a short dwell: the pill floats over
-    /// whatever window sits below (e.g. a browser's tab strip), so a cursor
-    /// merely passing through on its way to that window must not balloon the
-    /// card open and steal the click. Leaving cancels a pending dwell and
-    /// collapses immediately.
-    private var hoverTriggerZone: some View {
-        Color.clear
-            .frame(width: metrics.notchWidth + 60, height: metrics.notchHeight)
-            .contentShape(Rectangle())
-            .onHover { hovering in
-                hoverExpandWorkItem?.cancel()
-                hoverExpandWorkItem = nil
-                if hovering {
-                    let work = DispatchWorkItem {
-                        withAnimation(swingSpring) { isHoveringTrigger = true }
-                    }
-                    hoverExpandWorkItem = work
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.3, execute: work)
-                } else {
-                    withAnimation(swingSpring) { isHoveringTrigger = false }
-                }
+    /// Hover on the notch body — the only entry point for expansion, sized
+    /// by whatever is actually rendered (compact pill or expanded card).
+    /// Expansion requires a short dwell: the pill floats over whatever
+    /// window sits below (e.g. a browser's tab strip), so a cursor merely
+    /// passing through on its way to that window must not balloon the card
+    /// open and steal the click. Leaving cancels a pending dwell and
+    /// collapses immediately; once expanded, staying inside the card keeps
+    /// it open with no further dwell.
+    private func handleBodyHover(_ hovering: Bool) {
+        hoverExpandWorkItem?.cancel()
+        hoverExpandWorkItem = nil
+        if hovering {
+            guard !isHovering else { return }
+            let work = DispatchWorkItem {
+                withAnimation(swingSpring) { isHovering = true }
             }
+            hoverExpandWorkItem = work
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3, execute: work)
+        } else {
+            withAnimation(swingSpring) { isHovering = false }
+        }
     }
 
     // MARK: - Content Switching
@@ -422,9 +420,6 @@ struct NotchView: View {
             .offset(y: contentRevealed ? 0 : 8)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .onHover { hovering in
-            withAnimation(swingSpring) { isHoveringBody = hovering }
-        }
     }
 
     private var expandedHeader: some View {
