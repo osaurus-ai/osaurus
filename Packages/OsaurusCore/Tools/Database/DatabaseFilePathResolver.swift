@@ -247,9 +247,18 @@ enum DatabaseFilePathResolver {
             ToolRegistry.shared.activeSandboxAgentContext?.agentName
         }
         if let captured { return captured }
+        // Last-resort fallback for entry points that bypass the registry
+        // TaskLocal binding. Only trust it when the agent actually has a
+        // provisioned sandbox dir — deriving a name from a bare agent id
+        // in host-folder mode would fabricate a sandbox root and hijack
+        // writes away from the working folder.
         if let agentId = ChatExecutionContext.currentAgentId {
-            return await MainActor.run {
+            let name = await MainActor.run {
                 SandboxAgentProvisioner.linuxName(for: agentId.uuidString)
+            }
+            let agentDir = OsaurusPaths.containerAgentDir(name)
+            if FileManager.default.fileExists(atPath: agentDir.path) {
+                return name
             }
         }
         return nil

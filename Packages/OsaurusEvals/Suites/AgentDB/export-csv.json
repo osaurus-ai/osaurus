@@ -1,0 +1,52 @@
+{
+  "id": "agentdb.export-csv",
+  "domain": "agent_loop",
+  "label": "agentdb • export a result set to CSV via one host-mediated db_export",
+  "query": "Your agent database has a table named orders with columns item (TEXT) and amount (INTEGER) holding 8 rows. Export the item and amount columns of every order, ordered by amount ascending, to a CSV file named orders.csv in your working folder using db_export — do not page the rows through db_query and do not write the file yourself. Then tell me exactly how many rows were exported.",
+  "notes": "db_export proof: a full result set must land on disk via the host-mediated export path (one tool call, no row data through tokens), NOT a db_query page loop plus file_write. mustNotCallTools pins that the model didn't hand-write the file; the files assertions verify the CSV header (from the SELECT's columns) and the last data row landed in the working folder; dbState pins the source table untouched. seedSql shapes the table like a real db_create_table table (id PK + system columns) so db_schema composes with it.",
+  "fixtures": {
+    "agentCapabilities": {
+      "dbEnabled": true
+    },
+    "seedSql": [
+      "CREATE TABLE orders (id INTEGER PRIMARY KEY AUTOINCREMENT, item TEXT, amount INTEGER, _created_at INTEGER NOT NULL DEFAULT (strftime('%s','now')), _updated_at INTEGER NOT NULL DEFAULT (strftime('%s','now')), _deleted_at INTEGER);",
+      "INSERT INTO orders (item, amount) VALUES ('alpha',10),('bravo',20),('charlie',30),('delta',40),('echo',50),('foxtrot',60),('golf',70),('hotel',80);"
+    ]
+  },
+  "expect": {
+    "agentLoop": {
+      "maxIterations": 10,
+      "mustCallTools": [
+        "db_export"
+      ],
+      "mustNotCallTools": [
+        "file_write"
+      ],
+      "toolUsageAudit": [
+        {
+          "tool": "db_export",
+          "argsMustContain": "orders.csv"
+        }
+      ],
+      "files": [
+        {
+          "path": "orders.csv",
+          "contains": "item,amount"
+        },
+        {
+          "path": "orders.csv",
+          "contains": "hotel,80"
+        }
+      ],
+      "dbState": [
+        {
+          "sql": "SELECT COUNT(*) FROM orders",
+          "expectFirstValue": "8"
+        }
+      ],
+      "finalTextContains": [
+        "8"
+      ]
+    }
+  }
+}
