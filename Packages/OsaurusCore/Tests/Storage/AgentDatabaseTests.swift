@@ -238,7 +238,8 @@ struct AgentDatabaseTests {
         // The bulk-ingestion guidance must be present so the model reaches
         // for db_import instead of looping single-row writes.
         #expect(OnboardingPrompt.block.contains("db_import"))
-        // And it still calls out the soft-delete contract explicitly.
+        #expect(OnboardingPrompt.block.contains("db_export"))
+        // Soft-delete guidance: typed tools hide tombstones; raw SQL does not.
         #expect(
             OnboardingPrompt.block.lowercased().contains("soft delete")
         )
@@ -459,6 +460,43 @@ struct AgentDatabaseTests {
         #expect(page3.rows.first?[0] == .integer(21))
         #expect(page3.rows.last?[0] == .integer(25))
         #expect(page3.truncated == false)
+    }
+
+    @Test
+    func executeReportsDrainedSelectRows() throws {
+        let db = try makeDB()
+        try db.createTable(
+            name: "rows",
+            purpose: "select drain",
+            columns: [AgentColumnSpec(name: "n", type: "INTEGER", nullable: false)],
+            indexes: [],
+            actor: .agent,
+            runId: nil
+        )
+        _ = try db.insert(table: "rows", row: ["n": .integer(1)], actor: .agent, runId: nil)
+        _ = try db.insert(table: "rows", row: ["n": .integer(2)], actor: .agent, runId: nil)
+
+        let result = try db.execute(sql: "SELECT n FROM rows ORDER BY n", actor: .agent, runId: nil)
+        #expect(result.selectRowsDrained == 2)
+        #expect(result.warning?.contains("db_query") == true)
+    }
+
+    @Test
+    func queryDoesNotAutoFilterSoftDeletedRows() throws {
+        let db = try makeDB()
+        try db.createTable(
+            name: "notes",
+            purpose: "soft delete visibility",
+            columns: [AgentColumnSpec(name: "title", type: "TEXT", nullable: false)],
+            indexes: [],
+            actor: .agent,
+            runId: nil
+        )
+        let id = try db.insert(table: "notes", row: ["title": .text("gone")], actor: .agent, runId: nil)
+        _ = try db.softDelete(table: "notes", whereClause: ["id": .integer(id)], actor: .agent, runId: nil)
+
+        let all = try db.query(sql: "SELECT COUNT(*) FROM notes")
+        #expect(all.rows[0][0] == .integer(1))
     }
 
     // MARK: - Typed tools on raw-SQL tables (no host-managed columns)

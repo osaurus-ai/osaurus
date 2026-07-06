@@ -223,6 +223,7 @@ public final class ToolRegistry: ObservableObject {
             DBInsertTool(),
             DBUpsertTool(),
             DBImportTool(),
+            DBExportTool(),
             DBUpdateTool(),
             DBDeleteTool(),
             DBRestoreTool(),
@@ -728,26 +729,29 @@ public final class ToolRegistry: ObservableObject {
             // relying on each caller to remember. Inert outside combined
             // mode, leaving plain folder + plain sandbox modes untouched.
             let policy = combinedHostReadPolicy
+            let sandboxAgent = activeSandboxAgentName
             let result = try await ChatExecutionContext.$hostReadOnlyScope.withValue(policy.scope) {
                 try await ChatExecutionContext.$allowHostSecretReads.withValue(policy.allowSecretReads) {
                     try await ChatExecutionContext.$sandboxReadBridge.withValue(combinedSandboxReadBridge) {
-                        if tool.bypassRegistryTimeout {
+                        try await ChatExecutionContext.$sandboxAgentName.withValue(sandboxAgent) {
+                            if tool.bypassRegistryTimeout {
+                                return Self.normalizeToolResult(
+                                    try await Self.runToolBodyUntimed(
+                                        tool,
+                                        argumentsJSON: effectiveArgumentsJSON
+                                    ),
+                                    tool: name
+                                )
+                            }
                             return Self.normalizeToolResult(
-                                try await Self.runToolBodyUntimed(
+                                try await Self.runToolBody(
                                     tool,
-                                    argumentsJSON: effectiveArgumentsJSON
+                                    argumentsJSON: effectiveArgumentsJSON,
+                                    timeoutSeconds: Self.defaultToolTimeoutSeconds
                                 ),
                                 tool: name
                             )
                         }
-                        return Self.normalizeToolResult(
-                            try await Self.runToolBody(
-                                tool,
-                                argumentsJSON: effectiveArgumentsJSON,
-                                timeoutSeconds: Self.defaultToolTimeoutSeconds
-                            ),
-                            tool: name
-                        )
                     }
                 }
             }
@@ -799,6 +803,19 @@ public final class ToolRegistry: ObservableObject {
             agentName: agentName,
             home: OsaurusPaths.inContainerAgentHome(agentName)
         )
+    }
+
+    /// Sandbox agent name bound for Agent DB file tools. Same resolution
+    /// order as `combinedSandboxReadBridge`, but also set in plain sandbox
+    /// mode when only sandbox built-ins are registered.
+    private var activeSandboxAgentName: String? {
+        if let captured = activeSandboxAgentContext?.agentName { return captured }
+        if let bridge = combinedSandboxReadBridge { return bridge.agentName }
+        guard toolsByName.keys.contains("sandbox_exec")
+            || toolsByName.keys.contains("sandbox_read_file"),
+            let agentId = ChatExecutionContext.currentAgentId
+        else { return nil }
+        return SandboxAgentProvisioner.linuxName(for: agentId.uuidString)
     }
 
     /// The effective autonomous-exec config for the agent driving the
