@@ -6266,6 +6266,8 @@ private struct IsolatedThreadView: View {
     /// scroll controls so existing call sites stay backward-
     /// compatible (it's a defaulted property with an empty map).
     var sessionRedactions: [String: String] = [:]
+    /// Active in-conversation find query (Cmd+F); empty when the bar is closed.
+    var searchHighlightQuery: String = ""
 
     var body: some View {
         let _ = ChatPerfTrace.shared.count("body.IsolatedThreadView")
@@ -6296,7 +6298,8 @@ private struct IsolatedThreadView: View {
             onVisibleTopUserTurnChanged: onVisibleTopUserTurnChanged,
             scrollToTurnId: scrollToTurnId,
             scrollToTurnTrigger: scrollToTurnTrigger,
-            sessionRedactions: sessionRedactions
+            sessionRedactions: sessionRedactions,
+            searchHighlightQuery: searchHighlightQuery
         )
     }
 }
