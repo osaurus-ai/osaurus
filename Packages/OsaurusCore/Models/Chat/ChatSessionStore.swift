@@ -39,6 +39,15 @@ enum ChatSessionStore {
         return recovered
     }
 
+    /// Session ids whose message bodies contain `text` (case-insensitive
+    /// substring). Backs the sidebar's full-text search; returns an empty set
+    /// for a blank query or while the database is deferred/closed.
+    static func sessionIds(withContentContaining text: String) -> Set<UUID> {
+        ensureOpen()
+        guard didOpen else { return [] }
+        return ChatHistoryDatabase.shared.sessionIds(withContentContaining: text)
+    }
+
     /// Save a session (creates or updates)
     static func save(_ session: ChatSessionData) {
         guard !pendingDeletes.contains(session.id) else { return }
