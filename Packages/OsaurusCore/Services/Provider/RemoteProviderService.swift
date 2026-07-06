@@ -4105,10 +4105,28 @@ struct RemoteChatRequest: Encodable {
                 }
 
             case "user":
-                // User messages become message input items
-                if let content = msg.content {
-                    let msgContent = OpenResponsesMessageContent.text(content)
-                    inputItems.append(.message(OpenResponsesMessageItem(role: "user", content: msgContent)))
+                // User messages become message input items. Image content
+                // parts translate to `input_image` parts (the Responses API
+                // accepts data URIs in `image_url`); reading only the flat
+                // `content` string dropped attached images, and dropped the
+                // whole message when the user sent an image with no text.
+                let imageParts: [OpenResponsesContentPart] = msg.imageUrls.map {
+                    .inputImage(OpenResponsesInputImagePart(imageUrl: $0))
+                }
+                if imageParts.isEmpty {
+                    if let content = msg.content {
+                        let msgContent = OpenResponsesMessageContent.text(content)
+                        inputItems.append(.message(OpenResponsesMessageItem(role: "user", content: msgContent)))
+                    }
+                } else {
+                    var parts: [OpenResponsesContentPart] = []
+                    if let content = msg.content, RemoteProviderService.hasMeaningfulText(content) {
+                        parts.append(.inputText(OpenResponsesInputTextPart(text: content)))
+                    }
+                    parts.append(contentsOf: imageParts)
+                    inputItems.append(
+                        .message(OpenResponsesMessageItem(role: "user", content: .parts(parts)))
+                    )
                 }
 
             case "assistant":
@@ -4220,11 +4238,15 @@ struct RemoteChatRequest: Encodable {
             }
         }
 
-        // Determine input format
+        // Determine input format. The shorthand only applies to plain-text
+        // content: flattening a parts message through `plainText` would strip
+        // its input_image parts.
         let input: OpenResponsesInput
-        if !alwaysUseInputItems, inputItems.count == 1, case .message(let msg) = inputItems[0], msg.role == "user" {
-            // Single user message - use text shorthand
-            input = .text(msg.content.plainText)
+        if !alwaysUseInputItems, inputItems.count == 1, case .message(let msg) = inputItems[0],
+            msg.role == "user", case .text(let text) = msg.content
+        {
+            // Single text-only user message - use text shorthand
+            input = .text(text)
         } else {
             input = .items(inputItems)
         }
