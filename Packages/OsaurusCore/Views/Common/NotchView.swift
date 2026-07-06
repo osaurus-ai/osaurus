@@ -95,6 +95,8 @@ struct NotchView: View {
     @State private var showCancelConfirmation = false
     @State private var contentRevealed = false
     @State private var absorbingTaskIds: Set<UUID> = []
+    /// Pending hover-intent dwell before the trigger zone expands the notch.
+    @State private var hoverExpandWorkItem: DispatchWorkItem?
 
     private var isHovering: Bool { isHoveringTrigger || isHoveringBody }
 
@@ -293,13 +295,28 @@ struct NotchView: View {
             )
     }
 
-    /// Thin strip at the top that triggers hover — the only entry point for expansion.
+    /// Thin strip at the top that triggers hover — the only entry point for
+    /// expansion. Expansion requires a short dwell: the pill floats over
+    /// whatever window sits below (e.g. a browser's tab strip), so a cursor
+    /// merely passing through on its way to that window must not balloon the
+    /// card open and steal the click. Leaving cancels a pending dwell and
+    /// collapses immediately.
     private var hoverTriggerZone: some View {
         Color.clear
             .frame(width: metrics.notchWidth + 60, height: metrics.notchHeight)
             .contentShape(Rectangle())
             .onHover { hovering in
-                withAnimation(swingSpring) { isHoveringTrigger = hovering }
+                hoverExpandWorkItem?.cancel()
+                hoverExpandWorkItem = nil
+                if hovering {
+                    let work = DispatchWorkItem {
+                        withAnimation(swingSpring) { isHoveringTrigger = true }
+                    }
+                    hoverExpandWorkItem = work
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.3, execute: work)
+                } else {
+                    withAnimation(swingSpring) { isHoveringTrigger = false }
+                }
             }
     }
 
