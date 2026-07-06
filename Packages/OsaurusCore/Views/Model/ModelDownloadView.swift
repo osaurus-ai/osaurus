@@ -738,10 +738,18 @@ struct ModelDownloadView: View {
 
             ScrollViewReader { proxy in
                 ScrollView(.horizontal, showsIndicators: false) {
-                    LazyHStack(spacing: 12) {
+                    // Non-lazy HStack: a LazyHStack lets the scroll view settle
+                    // its height from the first cards it measures, clipping any
+                    // taller card that scrolls in later. Top Picks is a small
+                    // curated set, so measuring every card up front is cheap.
+                    // `ModelRowView`'s fixed-slot body gives every card the
+                    // same natural height, and `fixedSize` guarantees each one
+                    // gets it regardless of the proposed height.
+                    HStack(alignment: .top, spacing: 12) {
                         ForEach(models, id: \.id) { model in
                             modelCard(for: model)
                                 .frame(width: 280)
+                                .fixedSize(horizontal: false, vertical: true)
                                 .id(model.id)
                         }
                     }
@@ -1598,11 +1606,20 @@ struct ModelDownloadView: View {
         // (when searching) anything matching the query. without the latter two,
         // imported/pasted repos inserted into `availableModels` are filtered
         // out and never appear
+        //
+        // AppleScript bundles only ever emit AppleScript (dedicated subagent
+        // models, not chat models), so they never surface in the Catalog tab —
+        // same rule as the chat model picker. They install and manage through
+        // Computer Use → Models instead; the On Device tab still lists an
+        // installed one so it stays deletable from here.
         let hasQuery = !searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         let allTabBase = input.availableModels.filter { model in
-            isOsaurusAI(model) || isUserModel(model) || hasQuery
+            guard !AppleScriptModelCatalog.isAppleScriptModel(id: model.id) else { return false }
+            return isOsaurusAI(model) || isUserModel(model) || hasQuery
         }
-        let osaurusSuggested = input.suggestedModels.filter { isOsaurusAI($0) }
+        let osaurusSuggested = input.suggestedModels.filter {
+            isOsaurusAI($0) && !AppleScriptModelCatalog.isAppleScriptModel(id: $0.id)
+        }
 
         let availSearched = SearchService.filterModels(allTabBase, with: searchText)
         let availFiltered = filterState.apply(to: availSearched, totalMemoryGB: mem)
