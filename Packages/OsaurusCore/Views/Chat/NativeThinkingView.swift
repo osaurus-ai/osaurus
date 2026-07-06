@@ -42,6 +42,11 @@ final class NativeThinkingView: NSView {
 
     private var isExpanded = false
     private var currentWidth: CGFloat = 0
+    /// Block this view was last configured for. The chevron only animates on
+    /// an expand-state change within the same block — a fresh or recycled
+    /// cell arriving mid-stream must snap to its state, not replay the
+    /// collapsed→expanded rotation on every reconfigure.
+    private var configuredBlockId: String?
 
     // MARK: Callbacks
 
@@ -135,8 +140,13 @@ final class NativeThinkingView: NSView {
         charCountLabel.font = NSFont.systemFont(ofSize: CGFloat(theme.captionSize) - 2, weight: .medium)
         charCountLabel.textColor = NSColor(theme.tertiaryText)
 
-        updateChevron(expanded: isExpanded, animated: isExpanded != self.isExpanded)
+        let isSameBlock = configuredBlockId == blockId
+        updateChevron(
+            expanded: isExpanded,
+            animated: isSameBlock && isExpanded != self.isExpanded
+        )
         self.isExpanded = isExpanded
+        configuredBlockId = blockId
 
         contentContainer.isHidden = !isExpanded
         separatorView.isHidden = !isExpanded
