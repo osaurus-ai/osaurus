@@ -949,7 +949,9 @@ final class NativeMarkdownView: NSView {
     private func ensureTextView(width: CGFloat, theme: any ThemeProtocol) -> SelectableNSTextView {
         if let tv = textView { return tv }
 
-        let tv = SelectableNSTextView()
+        // TextKit 1 from birth — avoids the lazy TextKit 2 → 1 downgrade on
+        // first `.layoutManager` access (see EditableTextView.makeNSView).
+        let tv = SelectableNSTextView(usingTextLayoutManager: false)
         tv.isEditable = false
         tv.isSelectable = true
         tv.isRichText = true

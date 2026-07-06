@@ -928,7 +928,9 @@ private final class UserMessageInlineEditView: NSView, NSTextViewDelegate {
     private var lastLayoutWidth: CGFloat = 0
 
     override init(frame frameRect: NSRect) {
-        let tv = CustomNSTextView()
+        // TextKit 1 from birth — avoids the lazy TextKit 2 → 1 downgrade on
+        // first `.layoutManager` access (see EditableTextView.makeNSView).
+        let tv = CustomNSTextView(usingTextLayoutManager: false)
         tv.maxHeight = 240
         tv.focusRingType = .none
         tv.isRichText = false

@@ -82,7 +82,10 @@ struct SelectableTextView: NSViewRepresentable {
     }
 
     func makeNSView(context: Context) -> SelectableNSTextView {
-        let textView = SelectableNSTextView()
+        // TextKit 1 from birth — this view reads `.layoutManager` for hit
+        // testing and drawing, which would otherwise force a lazy TextKit 2 → 1
+        // downgrade mid-lifecycle (see EditableTextView.makeNSView).
+        let textView = SelectableNSTextView(usingTextLayoutManager: false)
         textView.isEditable = false
         textView.isSelectable = true
         textView.isRichText = true
