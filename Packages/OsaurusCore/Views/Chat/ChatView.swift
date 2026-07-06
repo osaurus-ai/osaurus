@@ -4891,6 +4891,12 @@ struct ChatView: View {
     @State private var activeMinimapTurnId: UUID?
     @State private var scrollToTurnId: UUID?
     @State private var scrollToTurnTrigger: Int = 0
+    // In-conversation find (Cmd+F). Visibility lives on `windowState` so the
+    // window-level key monitor can toggle it; query/matches are view state.
+    @State private var findQuery: String = ""
+    /// Ordered turn ids whose content matches `findQuery`.
+    @State private var findMatchTurnIds: [UUID] = []
+    @State private var findMatchIndex: Int = 0
     // What's New modal
     @State private var pendingWhatsNew: WhatsNewRelease? = nil
     @State private var showAutoSpeakPrompt: Bool = false
@@ -6073,6 +6079,36 @@ struct ChatView: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
             .allowsHitTesting(session.lastCompletionSummary != nil || session.currentTodo != nil)
 
+            // Find bar overlay (Cmd+F) — top-trailing, above the thread.
+            if windowState.isFindBarVisible {
+                VStack {
+                    HStack {
+                        Spacer()
+                        ChatFindBar(
+                            query: $findQuery,
+                            matchIndex: findMatchIndex,
+                            matchCount: findMatchTurnIds.count,
+                            onPrevious: { advanceFindMatch(by: -1) },
+                            onNext: { advanceFindMatch(by: 1) },
+                            onClose: { windowState.isFindBarVisible = false }
+                        )
+                        .padding(.trailing, 16)
+                        .padding(.top, inlineInsetHeight + 8)
+                    }
+                    Spacer()
+                }
+                .transition(.move(edge: .top).combined(with: .opacity))
+                .onChange(of: findQuery) { _, query in
+                    recomputeFindMatches(query: query, jumpToFirst: true)
+                }
+                .onChange(of: session.turns.count) { _, _ in
+                    recomputeFindMatches(query: findQuery, jumpToFirst: false)
+                }
+                .onAppear {
+                    recomputeFindMatches(query: findQuery, jumpToFirst: false)
+                }
+            }
+
             // Minimap overlay — sits at vertical center, right edge
             if minimapMarkers.count >= 2 {
                 HStack {
@@ -6439,6 +6475,49 @@ extension ChatView {
         windowState.cancelInlineEdit = nil
     }
 
+    // MARK: - In-Conversation Find (Cmd+F)
+
+    /// Recompute the ordered turn-id match list for `query` over the visible
+    /// conversation. `jumpToFirst` scrolls to the first match (used while
+    /// typing); otherwise the current match is preserved when it survives the
+    /// recompute (used when streaming appends turns).
+    private func recomputeFindMatches(query: String, jumpToFirst: Bool) {
+        let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            findMatchTurnIds = []
+            findMatchIndex = 0
+            return
+        }
+        let previousCurrent =
+            findMatchTurnIds.indices.contains(findMatchIndex)
+            ? findMatchTurnIds[findMatchIndex] : nil
+        let matches = session.turns
+            .filter { turn in
+                (turn.role == .user || turn.role == .assistant)
+                    && turn.content.range(of: trimmed, options: [.caseInsensitive]) != nil
+            }
+            .map(\.id)
+        findMatchTurnIds = matches
+        if !jumpToFirst, let previousCurrent, let idx = matches.firstIndex(of: previousCurrent) {
+            findMatchIndex = idx
+            return
+        }
+        findMatchIndex = 0
+        if jumpToFirst, let first = matches.first {
+            scrollToTurnId = first
+            scrollToTurnTrigger &+= 1
+        }
+    }
+
+    /// Step to the next/previous match, wrapping at both ends.
+    private func advanceFindMatch(by delta: Int) {
+        guard !findMatchTurnIds.isEmpty else { return }
+        let count = findMatchTurnIds.count
+        findMatchIndex = ((findMatchIndex + delta) % count + count) % count
+        scrollToTurnId = findMatchTurnIds[findMatchIndex]
+        scrollToTurnTrigger &+= 1
+    }
+
     // Key monitor for Esc. Dismisses transient UI in priority order
     // before falling through to closing the window. The monitor owns the
     // key event before SwiftUI's `.keyboardShortcut(.cancelAction)` /
@@ -6453,6 +6532,18 @@ extension ChatView {
         let windowState = self.windowState
 
         keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak session, weak windowState] event in
+            // Cmd+F opens the in-conversation find bar.
+            if event.modifierFlags.intersection([.command, .shift, .option, .control]) == .command,
+                event.charactersIgnoringModifiers?.lowercased() == "f"
+            {
+                guard let ourWindow = ChatWindowManager.shared.getNSWindow(id: capturedWindowId),
+                    event.window === ourWindow,
+                    let windowState
+                else { return event }
+                windowState.isFindBarVisible = true
+                return nil
+            }
+
             // Esc key code is 53
             if event.keyCode == 53 {
                 // Only handle Esc if this event is for our specific window
@@ -6469,6 +6560,14 @@ extension ChatView {
                 // Stage 0: Slash command popup is open — let the text view delegate handle it
                 if SlashCommandRegistry.shared.isPopupVisible {
                     return event
+                }
+
+                // Stage 0.5: Find bar is open — close it before any other
+                // transient UI so Esc can't fall through to window close
+                // while the user is mid-search.
+                if let windowState, windowState.isFindBarVisible {
+                    windowState.isFindBarVisible = false
+                    return nil
                 }
 
                 // Stage 1: A transient popover (model picker, model
