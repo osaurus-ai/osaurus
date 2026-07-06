@@ -102,6 +102,67 @@ struct FileDiffStreamingPreviewTests {
         #expect(FileDiff.partialToolName(inArgs: "call:sandbox_wri") == nil)
     }
 
+    @Test("xml function envelope streams name and content")
+    func xmlEnvelope() throws {
+        let args = "<function=file_write>\n<parameter=path>gen.py</parameter>\n<parameter=content>import os\nprint(1)"
+        #expect(FileDiff.partialToolName(inArgs: args) == "file_write")
+        let diff = try #require(
+            FileDiff.streamingPreview(toolName: "file_write", partialArgs: args)
+        )
+        #expect(diff.path == "gen.py")
+        #expect(diff.lines.map(\.text) == ["import os", "print(1)"])
+    }
+
+    @Test("xml envelope trims a trailing partial closing tag")
+    func xmlPartialCloser() throws {
+        let args = "<function=file_write><parameter=path>a.py</parameter><parameter=content>x = 1</par"
+        let diff = try #require(
+            FileDiff.streamingPreview(toolName: "file_write", partialArgs: args)
+        )
+        #expect(diff.lines.map(\.text) == ["x = 1"])
+    }
+
+    @Test("minimax invoke envelope streams name and content")
+    func minimaxEnvelope() throws {
+        let args = "<invoke name=\"sandbox_write_file\"><parameter name=\"path\">m.py</parameter><parameter name=\"content\">a = 2\nb = 3"
+        #expect(FileDiff.partialToolName(inArgs: args) == "sandbox_write_file")
+        let diff = try #require(
+            FileDiff.streamingPreview(toolName: "sandbox_write_file", partialArgs: args)
+        )
+        #expect(diff.path == "m.py")
+        #expect(diff.lines.map(\.text) == ["a = 2", "b = 3"])
+    }
+
+    @Test("arg_key arg_value envelope streams name and content")
+    func glm4Envelope() throws {
+        let args = "file_write<arg_key>path</arg_key><arg_value>g.py</arg_value><arg_key>content</arg_key><arg_value>import sys"
+        #expect(FileDiff.partialToolName(inArgs: args) == "file_write")
+        let diff = try #require(
+            FileDiff.streamingPreview(toolName: "file_write", partialArgs: args)
+        )
+        #expect(diff.path == "g.py")
+        #expect(diff.lines.map(\.text) == ["import sys"])
+    }
+
+    @Test("pythonic envelope streams name and content with escapes")
+    func pythonicEnvelope() throws {
+        let args = #"[file_write(path="p.py", content="import re\nx = \"hi\""#
+        #expect(FileDiff.partialToolName(inArgs: args) == "file_write")
+        let diff = try #require(
+            FileDiff.streamingPreview(toolName: "file_write", partialArgs: args)
+        )
+        #expect(diff.path == "p.py")
+        #expect(diff.lines.map(\.text) == ["import re", #"x = "hi""#])
+    }
+
+    @Test("kimi function prefix yields the name")
+    func kimiName() {
+        #expect(
+            FileDiff.partialToolName(inArgs: "functions.sandbox_write_file:0<|tool_call_argument_begin|>{\"pa")
+                == "sandbox_write_file"
+        )
+    }
+
     @Test("non-diff tools never preview")
     func otherTool() {
         #expect(

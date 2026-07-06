@@ -148,13 +148,32 @@ struct FileDiff: Equatable {
     /// call exists — the `"name"` field usually completes within the first
     /// few fragments, letting the UI show the pending chip / diff preview
     /// long before the call finishes.
+    /// Tool-name extraction across every envelope syntax the runtime streams.
+    /// Each strategy anchors on protocol markup so a name is only reported
+    /// once it has fully streamed (a half-streamed name would stick as the
+    /// pending tool name and never be re-derived).
     static func partialToolName(inArgs args: String) -> String? {
+        // JSON: {"name": "tool_name", ...}
         if let name = partialJSONStringValue(forKey: "name", in: args), !name.isEmpty {
             return name
         }
-        // Gemma function envelope: `call:tool_name{...`. Only report the name
-        // once its terminating `{` has streamed — a mid-stream prefix
-        // ("sandbox_wri") would otherwise stick as the pending tool name.
+        // XML function (Qwen3-coder / Zyphra / Step): <function=tool_name>
+        if let name = delimitedValue(in: args, after: "<function=", terminator: ">") {
+            return name
+        }
+        // MiniMax M2: <invoke name="tool_name">
+        if let name = delimitedValue(in: args, after: "<invoke name=\"", terminator: "\"") {
+            return name
+        }
+        // Kimi K2: functions.tool_name:0<|tool_call_argument_begin|>{...}
+        if let r = args.range(of: "functions.") {
+            let after = args[r.upperBound...]
+            let name = after.prefix(while: { $0.isLetter || $0.isNumber || $0 == "_" })
+            if !name.isEmpty, after.dropFirst(name.count).first == ":" {
+                return String(name)
+            }
+        }
+        // Gemma function envelope: call:tool_name{...
         if let r = args.range(of: "call:") {
             let after = args[r.upperBound...]
             let name = after.prefix(while: { $0.isLetter || $0.isNumber || $0 == "_" })
@@ -162,49 +181,160 @@ struct FileDiff: Equatable {
                 return String(name)
             }
         }
+        // Hunyuan: <tool_call>tool_name<tool_sep>  /  GLM4: tool_name<arg_key>
+        for terminator in ["<tool_sep>", "<arg_key>"] {
+            if let r = args.range(of: terminator) {
+                let head = args[..<r.lowerBound]
+                var start = head.endIndex
+                while start > head.startIndex {
+                    let prev = head.index(before: start)
+                    let c = head[prev]
+                    guard c.isLetter || c.isNumber || c == "_" else { break }
+                    start = prev
+                }
+                if start < head.endIndex { return String(head[start...]) }
+            }
+        }
+        // Pythonic (LFM2 / Llama3 native): [tool_name(key="value")] — the
+        // identifier must open the buffer (after optional '[' / tag noise)
+        // and its '(' must have streamed.
+        var head = Substring(args.drop(while: { $0.isWhitespace }))
+        if head.first == "[" { head = head.dropFirst() }
+        let ident = head.prefix(while: { $0.isLetter || $0.isNumber || $0 == "_" })
+        if !ident.isEmpty, head.dropFirst(ident.count).first == "(" {
+            return String(ident)
+        }
         return nil
     }
 
     /// Extracts the (possibly still-streaming) string value for `key` from a
-    /// partial tool-call payload, across the transports the runtime streams:
-    /// JSON (`"key": "…"`, remote providers and JSON-envelope local models)
-    /// and the Gemma function envelope (`key:<|"|>…<|"|>`, raw text between
-    /// escape markers).
+    /// partial tool-call payload, across the envelope syntaxes the runtime
+    /// streams. Ordered from the most explicitly-marked syntax down, so a
+    /// format's own key markup always wins over a looser textual match.
     private static func partialStringField(_ key: String, in text: String) -> String? {
-        partialJSONStringValue(forKey: key, in: text)
-            ?? partialMarkerValue(forKey: key, in: text)
+        // JSON: "key": "escaped value"
+        if let v = partialJSONStringValue(forKey: key, in: text) { return v }
+        // Gemma function envelope: key:<|"|>raw value<|"|>
+        if let v = partialDelimitedRawValue(
+            in: text, opener: key + ":", valueStart: gemmaStringMarker, closer: gemmaStringMarker
+        ) { return v }
+        // XML function: <parameter=key>raw value</parameter>
+        if let v = partialDelimitedRawValue(
+            in: text, opener: "<parameter=\(key)>", valueStart: "", closer: "</parameter>"
+        ) { return v }
+        // MiniMax: <parameter name="key">raw value</parameter>
+        if let v = partialDelimitedRawValue(
+            in: text, opener: "<parameter name=\"\(key)\">", valueStart: "", closer: "</parameter>"
+        ) { return v }
+        // GLM4 / Hunyuan: <arg_key>key</arg_key><arg_value>raw value</arg_value>
+        if let v = partialDelimitedRawValue(
+            in: text, opener: "<arg_key>\(key)</arg_key>", valueStart: "<arg_value>",
+            closer: "</arg_value>"
+        ) { return v }
+        // Pythonic kwarg: key="python string" or key='python string'
+        if let v = partialPythonStringValue(forKey: key, in: text) { return v }
+        return nil
     }
 
     /// Gemma-4 escape marker wrapping string values in its function envelope.
     private static let gemmaStringMarker = "<|\"|>"
 
-    /// Gemma function-envelope extraction: `key:<|"|>value<|"|>`, where the
-    /// value is raw text (real newlines, no JSON escaping). Tolerates the
-    /// closing marker not having streamed yet; a trailing partial marker is
-    /// trimmed so it never flashes in the preview.
-    private static func partialMarkerValue(forKey key: String, in text: String) -> String? {
-        let marker = gemmaStringMarker
+    /// Complete (non-partial) value between a marker and a terminator, e.g.
+    /// the name in `<function=NAME>`. Returns nil until the terminator has
+    /// streamed or when the value isn't a plain identifier-ish token.
+    private static func delimitedValue(
+        in text: String, after opener: String, terminator: String
+    ) -> String? {
+        guard let r = text.range(of: opener),
+            let end = text.range(of: terminator, range: r.upperBound ..< text.endIndex)
+        else { return nil }
+        let value = String(text[r.upperBound ..< end.lowerBound])
+        guard !value.isEmpty, value.count < 200, !value.contains("\n") else { return nil }
+        return value
+    }
+
+    /// Raw-text value extraction for marker-delimited syntaxes: finds
+    /// `opener`, optionally skips whitespace, requires `valueStart`, then
+    /// returns everything up to `closer` — or, mid-stream, everything to the
+    /// end of the buffer with any trailing partial `closer` prefix trimmed so
+    /// it never flashes in the preview. Values are raw text (real newlines).
+    private static func partialDelimitedRawValue(
+        in text: String, opener: String, valueStart: String, closer: String
+    ) -> String? {
         var searchStart = text.startIndex
-        while let keyRange = text.range(of: key + ":", range: searchStart ..< text.endIndex) {
-            searchStart = keyRange.upperBound
-            var i = keyRange.upperBound
+        while let openerRange = text.range(of: opener, range: searchStart ..< text.endIndex) {
+            searchStart = openerRange.upperBound
+            var i = openerRange.upperBound
             while i < text.endIndex, text[i] == " " || text[i] == "\n" {
                 i = text.index(after: i)
             }
-            guard text[i...].hasPrefix(marker) else { continue }
-            let valueStart = text.index(i, offsetBy: marker.count)
-            let rest = text[valueStart...]
-            if let end = rest.range(of: marker) {
+            let valueBegin: String.Index
+            if valueStart.isEmpty {
+                valueBegin = i
+            } else {
+                guard text[i...].hasPrefix(valueStart) else { continue }
+                valueBegin = text.index(i, offsetBy: valueStart.count)
+            }
+            let rest = text[valueBegin...]
+            if let end = rest.range(of: closer) {
                 return String(rest[..<end.lowerBound])
             }
             var value = String(rest)
-            for length in stride(from: marker.count - 1, through: 1, by: -1) {
-                if value.hasSuffix(String(marker.prefix(length))) {
+            for length in stride(from: closer.count - 1, through: 1, by: -1) {
+                if value.hasSuffix(String(closer.prefix(length))) {
                     value.removeLast(length)
                     break
                 }
             }
             return value
+        }
+        return nil
+    }
+
+    /// Pythonic kwarg extraction: `key="value"` / `key='value'` with Python
+    /// escape decoding, tolerating a truncated value or trailing escape. The
+    /// match must sit in kwarg position (preceded by `(` or `,`) so code text
+    /// that merely mentions `key=` inside another value doesn't match.
+    private static func partialPythonStringValue(forKey key: String, in text: String) -> String? {
+        var searchStart = text.startIndex
+        while let keyRange = text.range(of: key + "=", range: searchStart ..< text.endIndex) {
+            searchStart = keyRange.upperBound
+            // kwarg position check: previous non-space char is '(' or ','
+            var p = keyRange.lowerBound
+            var precededOK = false
+            while p > text.startIndex {
+                p = text.index(before: p)
+                let c = text[p]
+                if c == " " || c == "\n" { continue }
+                precededOK = c == "(" || c == ","
+                break
+            }
+            guard precededOK else { continue }
+            var i = keyRange.upperBound
+            while i < text.endIndex, text[i] == " " { i = text.index(after: i) }
+            guard i < text.endIndex, text[i] == "\"" || text[i] == "'" else { continue }
+            let quote = text[i]
+            i = text.index(after: i)
+            var out = ""
+            while i < text.endIndex {
+                let c = text[i]
+                if c == quote { return out }
+                if c == "\\" {
+                    let escIndex = text.index(after: i)
+                    guard escIndex < text.endIndex else { return out }
+                    switch text[escIndex] {
+                    case "n": out.append("\n")
+                    case "t": out.append("\t")
+                    case "r": out.append("\r")
+                    case let e: out.append(e)
+                    }
+                    i = text.index(after: escIndex)
+                    continue
+                }
+                out.append(c)
+                i = text.index(after: i)
+            }
+            return out
         }
         return nil
     }
