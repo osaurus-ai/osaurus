@@ -998,20 +998,6 @@ final class ChatSession: ObservableObject {
             visibleBlocksStore.blocks = newBlocks
             visibleBlocksStore.groupHeaderMap = newHeaderMap
         }
-
-        // TEMP debug: tail block summary so /tmp/osaurus-chat-debug.log shows
-        // whether paragraph blocks still carry their ``` fences downstream.
-        let tail = newBlocks.suffix(8).map { block -> String in
-            if case let .paragraph(_, text, streaming, _) = block.kind {
-                let fences = text.components(separatedBy: "```").count - 1
-                return "para(len:\(text.count),fences:\(fences),streaming:\(streaming))"
-            }
-            return block.id.components(separatedBy: "-").first ?? block.id
-        }
-        ChatDebugLog.shared.log(
-            "chat.rebuild",
-            "blocks=\(newBlocks.count) streaming=\(isStreaming) tail=[\(tail.joined(separator: " | "))]"
-        )
     }
 
     /// Auto-expand the thinking block of a completed reasoning-only turn so the
@@ -2942,13 +2928,6 @@ final class ChatSession: ObservableObject {
                     // without hiding chunky provider deltas.
                     let count = currentTurn.pendingToolArgFragmentCount
                     let now = Date()
-                    // TEMP debug: fragment arrival timestamps vs the rebuilds
-                    // that render them — compare against markdown/diff
-                    // configure lines to measure delta-to-pixels latency.
-                    ChatDebugLog.shared.log(
-                        "toolArgs.fragment",
-                        "n=\(count) bytes=\(argFragment.utf8.count) total=\(currentTurn.pendingToolArgSize)"
-                    )
                     if count <= 3 || now.timeIntervalSince(lastToolArgRebuildAt) >= 0.08 {
                         lastToolArgRebuildAt = now
                         rebuildVisibleBlocks()

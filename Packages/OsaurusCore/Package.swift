@@ -44,14 +44,14 @@ let package = Package(
         // concurrent-encoder crash class) and #117 (NormConventionResolver:
         // an unrecognized norm_convention defers to the vote instead of
         // silently disabling the (1+weight) shift).
-        // TEMPORARY: local path while verifying the toolCallProgress
-        // streaming feature (feature/tool-call-progress-events branch).
-        // Re-pin to the remote revision once verified:
-        // .package(
-        //     url: "https://github.com/osaurus-ai/vmlx-swift",
-        //     revision: "53840914f693e9e1305fbbacb1ecc8e5c1e9625f"
-        // ),
-        .package(path: "../../../vmlx-swift"),
+        // Now also carries the toolCallProgress streaming event (#118) —
+        // raw tool-call envelope deltas while a call is being collected, so
+        // the chat can live-preview file writes during generation. Pinned to
+        // the feature branch commit until #118 merges to main.
+        .package(
+            url: "https://github.com/osaurus-ai/vmlx-swift",
+            revision: "396bf301ab76ab3bfc0f96feddabd8e48927f727"
+        ),
         // FluidAudio 0.14.3 added a breaking `language:` parameter to TTS
         // calls that osaurus's `TTSService` doesn't pass. Pinning to the
         // last working version until osaurus catches up. Bumping requires
