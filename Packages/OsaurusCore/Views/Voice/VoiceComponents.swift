@@ -116,7 +116,10 @@ private struct WaveformBars: View {
     private let barSpacing: CGFloat = 2
 
     var body: some View {
-        TimelineView(.animation(minimumInterval: 1.0 / 60.0)) { timeline in
+        // 30fps is visually indistinguishable for a sine-driven waveform and
+        // halves the per-frame body evaluations, which showed up in app-hang
+        // sampling on memory-starved machines.
+        TimelineView(.animation(minimumInterval: 1.0 / 30.0)) { timeline in
             let timestamp = timeline.date.timeIntervalSinceReferenceDate
 
             HStack(alignment: .center, spacing: barSpacing) {
