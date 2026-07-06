@@ -102,7 +102,16 @@ struct ServerConfigurationStoreTests {
     }
 
     @Test func modelIdleResidencyPolicy_defaultsWarmForMultiTurnChat() async throws {
-        #expect(ServerConfiguration.default.modelIdleResidencyPolicy == .afterSeconds(900))
+        // The default is derived from the host's RAM tier, so this test must
+        // not pin a single value — it would pass or fail depending on which
+        // machine runs CI. Assert the two intents instead: the default
+        // matches the tier function for this host, and it is never the old
+        // unload-immediately behavior (every tier keeps weights warm for at
+        // least a couple of minutes).
+        let expected = ModelIdleResidencyPolicy.tierDefault(
+            physicalMemoryBytes: ChipProfile.current.physicalMemoryBytes)
+        #expect(ServerConfiguration.default.modelIdleResidencyPolicy == expected)
+        #expect(ServerConfiguration.default.modelIdleResidencyPolicy != .immediately)
         #expect(ModelIdleResidencyPolicy.presets.first == .afterSeconds(300))
         #expect(ModelIdleResidencyPolicy.presets.contains(.immediately))
     }
