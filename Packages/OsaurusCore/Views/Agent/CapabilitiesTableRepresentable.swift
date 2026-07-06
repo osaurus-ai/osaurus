@@ -270,8 +270,27 @@ extension CapabilitiesTableRepresentable {
             return false
         }
 
+        /// Bounded retry for reconfigures that land before the table's first
+        /// in-window layout. The Capabilities tab hydrates its enabled-state
+        /// sets synchronously in `onAppear`, which fires before AppKit lays
+        /// the table out — at that instant `visibleRowIndices()` is empty, so
+        /// without a retry the correction is silently dropped and cells keep
+        /// their stale all-off payload until scrolling re-dequeues them.
+        private var pendingReconfigureRetries = 0
+
         private func reconfigureVisibleCells() {
-            for row in visibleRowIndices() {
+            let visible = visibleRowIndices()
+            guard !visible.isEmpty else {
+                if pendingReconfigureRetries < 5 {
+                    pendingReconfigureRetries += 1
+                    DispatchQueue.main.async { [weak self] in
+                        self?.reconfigureVisibleCells()
+                    }
+                }
+                return
+            }
+            pendingReconfigureRetries = 0
+            for row in visible {
                 reconfigureCell(at: row)
             }
         }
