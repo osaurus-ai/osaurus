@@ -55,7 +55,8 @@ struct NotchPanelPlacement: Equatable {
     static func panelRect(
         screenFrame: CGRect,
         visibleFrame: CGRect,
-        preferredSize: CGSize
+        preferredSize: CGSize,
+        hiddenMenuBarInset: CGFloat = 0
     ) -> NotchPanelPlacement {
         let safeFrame = visibleFrame.isEmpty ? screenFrame : visibleFrame
         let width = min(preferredSize.width, max(1, safeFrame.width))
@@ -64,7 +65,15 @@ struct NotchPanelPlacement: Equatable {
         let minX = safeFrame.minX
         let maxX = safeFrame.maxX - width
         let x = min(max(centeredX, minX), maxX)
-        let y = safeFrame.maxY - height
+        // When the menu bar auto-hides, `visibleFrame` extends to the very top
+        // of the screen, which would place the panel exactly in the strip
+        // where the menu bar reappears — overlapping the clock / status icons
+        // whenever it reveals. Reserve that strip explicitly in that case.
+        let topY =
+            safeFrame.maxY >= screenFrame.maxY
+            ? safeFrame.maxY - hiddenMenuBarInset
+            : safeFrame.maxY
+        let y = topY - height
 
         return NotchPanelPlacement(frame: CGRect(x: x, y: y, width: width, height: height))
     }
@@ -275,12 +284,15 @@ public final class NotchWindowController: NSObject, ObservableObject {
         isExpandedForAlert = alertActive
     }
 
-    /// Panel positioned at the top of the usable display area, below the menu bar.
+    /// Panel positioned at the top of the usable display area, below the menu
+    /// bar — including the reveal strip of an auto-hidden menu bar, which
+    /// `visibleFrame` does not reserve.
     private func panelRect(for screen: NSScreen) -> NSRect {
         NotchPanelPlacement.panelRect(
             screenFrame: screen.frame,
             visibleFrame: screen.visibleFrame,
-            preferredSize: CGSize(width: Self.panelWidth, height: Self.panelHeight)
+            preferredSize: CGSize(width: Self.panelWidth, height: Self.panelHeight),
+            hiddenMenuBarInset: NotchScreenMetrics.detect(for: screen).notchHeight
         ).frame
     }
 
