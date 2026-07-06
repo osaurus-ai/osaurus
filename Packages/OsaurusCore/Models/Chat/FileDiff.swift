@@ -123,12 +123,12 @@ struct FileDiff: Equatable {
     static func streamingPreview(toolName: String, partialArgs: String) -> FileDiff? {
         guard diffProducingToolNames.contains(toolName) else { return nil }
         guard
-            let body = partialJSONStringValue(forKey: "content", in: partialArgs)
-                ?? partialJSONStringValue(forKey: "new_string", in: partialArgs),
+            let body = partialStringField("content", in: partialArgs)
+                ?? partialStringField("new_string", in: partialArgs),
             !body.isEmpty
         else { return nil }
 
-        let path = partialJSONStringValue(forKey: "path", in: partialArgs) ?? ""
+        let path = partialStringField("path", in: partialArgs) ?? ""
         let lines = body.components(separatedBy: "\n").map { Line(kind: .added, text: $0) }
         return FileDiff(
             path: path,
@@ -149,10 +149,64 @@ struct FileDiff: Equatable {
     /// few fragments, letting the UI show the pending chip / diff preview
     /// long before the call finishes.
     static func partialToolName(inArgs args: String) -> String? {
-        guard let name = partialJSONStringValue(forKey: "name", in: args),
-            !name.isEmpty
-        else { return nil }
-        return name
+        if let name = partialJSONStringValue(forKey: "name", in: args), !name.isEmpty {
+            return name
+        }
+        // Gemma function envelope: `call:tool_name{...`. Only report the name
+        // once its terminating `{` has streamed — a mid-stream prefix
+        // ("sandbox_wri") would otherwise stick as the pending tool name.
+        if let r = args.range(of: "call:") {
+            let after = args[r.upperBound...]
+            let name = after.prefix(while: { $0.isLetter || $0.isNumber || $0 == "_" })
+            if !name.isEmpty, after.dropFirst(name.count).first == "{" {
+                return String(name)
+            }
+        }
+        return nil
+    }
+
+    /// Extracts the (possibly still-streaming) string value for `key` from a
+    /// partial tool-call payload, across the transports the runtime streams:
+    /// JSON (`"key": "…"`, remote providers and JSON-envelope local models)
+    /// and the Gemma function envelope (`key:<|"|>…<|"|>`, raw text between
+    /// escape markers).
+    private static func partialStringField(_ key: String, in text: String) -> String? {
+        partialJSONStringValue(forKey: key, in: text)
+            ?? partialMarkerValue(forKey: key, in: text)
+    }
+
+    /// Gemma-4 escape marker wrapping string values in its function envelope.
+    private static let gemmaStringMarker = "<|\"|>"
+
+    /// Gemma function-envelope extraction: `key:<|"|>value<|"|>`, where the
+    /// value is raw text (real newlines, no JSON escaping). Tolerates the
+    /// closing marker not having streamed yet; a trailing partial marker is
+    /// trimmed so it never flashes in the preview.
+    private static func partialMarkerValue(forKey key: String, in text: String) -> String? {
+        let marker = gemmaStringMarker
+        var searchStart = text.startIndex
+        while let keyRange = text.range(of: key + ":", range: searchStart ..< text.endIndex) {
+            searchStart = keyRange.upperBound
+            var i = keyRange.upperBound
+            while i < text.endIndex, text[i] == " " || text[i] == "\n" {
+                i = text.index(after: i)
+            }
+            guard text[i...].hasPrefix(marker) else { continue }
+            let valueStart = text.index(i, offsetBy: marker.count)
+            let rest = text[valueStart...]
+            if let end = rest.range(of: marker) {
+                return String(rest[..<end.lowerBound])
+            }
+            var value = String(rest)
+            for length in stride(from: marker.count - 1, through: 1, by: -1) {
+                if value.hasSuffix(String(marker.prefix(length))) {
+                    value.removeLast(length)
+                    break
+                }
+            }
+            return value
+        }
+        return nil
     }
 
     /// Returns the decoded prefix of the JSON string value for `key` inside a

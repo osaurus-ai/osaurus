@@ -77,6 +77,31 @@ struct FileDiffStreamingPreviewTests {
         #expect(diff.lines.map(\.text) == ["let x = 2", "let y"])
     }
 
+    @Test("gemma function envelope streams name and content")
+    func gemmaEnvelope() throws {
+        let args = "call:sandbox_write_file{path:<|\"|>gen.py<|\"|>, content:<|\"|>import numpy as np\nprint(1)"
+        #expect(FileDiff.partialToolName(inArgs: args) == "sandbox_write_file")
+        let diff = try #require(
+            FileDiff.streamingPreview(toolName: "sandbox_write_file", partialArgs: args)
+        )
+        #expect(diff.path == "gen.py")
+        #expect(diff.lines.map(\.text) == ["import numpy as np", "print(1)"])
+    }
+
+    @Test("gemma envelope trims a trailing partial escape marker")
+    func gemmaPartialCloser() throws {
+        let args = "call:file_write{path:<|\"|>a.py<|\"|>, content:<|\"|>x = 1<|\""
+        let diff = try #require(
+            FileDiff.streamingPreview(toolName: "file_write", partialArgs: args)
+        )
+        #expect(diff.lines.map(\.text) == ["x = 1"])
+    }
+
+    @Test("gemma name not reported until its opening brace streams")
+    func gemmaIncompleteName() {
+        #expect(FileDiff.partialToolName(inArgs: "call:sandbox_wri") == nil)
+    }
+
     @Test("non-diff tools never preview")
     func otherTool() {
         #expect(
