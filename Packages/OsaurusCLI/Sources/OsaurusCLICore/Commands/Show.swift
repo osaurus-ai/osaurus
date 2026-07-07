@@ -307,7 +307,36 @@ public struct ShowCommand: Command {
         let baseDir = await modelsBaseDirectory(port: port)
         guard let modelDir = resolveLocalModelDirectory(forModelId: modelId, under: baseDir)
         else { return nil }
+        // MoE models activate only a fraction of their weights per token, so
+        // the all-weights-streamed decode formula understates them severalfold
+        // (a 35B-A3B bundle showing ~12 tok/s while really decoding ~10x that
+        // misleads worse than no estimate). Suppress until the estimator
+        // learns active-parameter bytes; dense models keep their line.
+        guard !isMoEBundle(at: modelDir) else { return nil }
         return weightsBytes(under: modelDir)
+    }
+
+    /// True when the bundle's config.json declares a mixture-of-experts
+    /// architecture (any of the expert-count keys used across families, at
+    /// the top level or under text_config).
+    static func isMoEBundle(at modelDir: URL) -> Bool {
+        let configURL = modelDir.appendingPathComponent("config.json")
+        guard let data = try? Data(contentsOf: configURL),
+            let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+        else { return false }
+        let expertKeys = [
+            "num_experts", "n_routed_experts", "num_local_experts", "num_experts_per_tok",
+        ]
+        func declaresExperts(_ object: [String: Any]) -> Bool {
+            expertKeys.contains { key in
+                (object[key] as? Int).map { $0 > 1 } ?? false
+            }
+        }
+        if declaresExperts(root) { return true }
+        if let textConfig = root["text_config"] as? [String: Any], declaresExperts(textConfig) {
+            return true
+        }
+        return false
     }
 
     /// Models base directory, in order of authority:
