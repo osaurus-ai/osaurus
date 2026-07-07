@@ -35,11 +35,16 @@ struct ResidencyTierDefaultTests {
         }
     }
 
-    @Test func bigMemoryMachinesKeepWeightsResident() {
+    @Test func bigMemoryMachinesGetTheHourWindow() {
+        // Not `.never`: a default must guarantee weights eventually leave on
+        // their own so memory-pressure relief doesn't depend on user action
+        // (review feedback on #1902). `.never` stays an explicit choice.
         #expect(
-            ModelIdleResidencyPolicy.tierDefault(physicalMemoryBytes: gib(128)) == .never)
+            ModelIdleResidencyPolicy.tierDefault(physicalMemoryBytes: gib(128))
+                == .afterSeconds(3_600))
         #expect(
-            ModelIdleResidencyPolicy.tierDefault(physicalMemoryBytes: gib(512)) == .never)
+            ModelIdleResidencyPolicy.tierDefault(physicalMemoryBytes: gib(512))
+                == .afterSeconds(3_600))
     }
 
     @Test func boundariesAreInclusiveLowExclusiveMiddle() {

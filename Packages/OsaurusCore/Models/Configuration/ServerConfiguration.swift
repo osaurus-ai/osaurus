@@ -311,9 +311,12 @@ public enum ModelIdleResidencyPolicy: Codable, Equatable, Hashable, Sendable {
     ///     well before the system starts compressing/swapping.
     ///   - ≥ 128 GiB: reload cost dominates (tens of seconds for the model
     ///     sizes these machines are bought for) and idle RAM is abundant, so
-    ///     weights stay resident until an explicit unload. Strict single-model
-    ///     eviction, manual unload, `clearAll`, and memory cleanup still win
-    ///     over residency, exactly as for every other policy value.
+    ///     the window stretches to an hour. Deliberately NOT `.never` as a
+    ///     default: an implicit hold-forever would sidestep the
+    ///     memory-pressure relief that eventual idle unload provides (review
+    ///     feedback on #1902) — a default must guarantee weights leave on
+    ///     their own without user action. `.never` remains available as an
+    ///     explicit Settings choice.
     ///
     /// An explicit user selection always takes precedence — this only decides
     /// the starting value (`ServerConfiguration.default` and the decode
@@ -321,7 +324,7 @@ public enum ModelIdleResidencyPolicy: Codable, Equatable, Hashable, Sendable {
     public static func tierDefault(physicalMemoryBytes: UInt64) -> ModelIdleResidencyPolicy {
         let gib = UInt64(1) << 30
         if physicalMemoryBytes <= 16 * gib { return .afterSeconds(120) }
-        if physicalMemoryBytes >= 128 * gib { return .never }
+        if physicalMemoryBytes >= 128 * gib { return .afterSeconds(3_600) }
         return .defaultWarm
     }
 
