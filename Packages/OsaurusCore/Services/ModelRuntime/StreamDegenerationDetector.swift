@@ -6,21 +6,29 @@
 //  detection (abort) and template-leak detection (log-only), fed text deltas
 //  by `GenerationEventMapper` as they stream.
 //
-//  The degeneration detector is a port of the CLI gauntlet's batch-mode
-//  `DegenerationDetector` (Packages/OsaurusCLI/Sources/OsaurusCLICore/
-//  Commands/DegenerationDetector.swift). The two failure modes seen in the
-//  wild are a single character repeated forever (`!!!!!…`) and a short
-//  phrase looping (`idea idea idea…`), so both detectors target exactly
-//  those shapes:
+//  The degeneration detector is an adaptation of the CLI gauntlet's
+//  batch-mode `DegenerationDetector` (Packages/OsaurusCLI/Sources/
+//  OsaurusCLICore/Commands/DegenerationDetector.swift). The two failure
+//  modes seen in the wild are a single character repeated forever
+//  (`!!!!!…`) and a short phrase looping (`idea idea idea…`), so both
+//  detectors target exactly those shapes:
 //
-//    - any single character repeated `minCharacterRun` (64) or more times
-//      consecutively, and
+//    - a single non-whitespace character repeated consecutively past its
+//      per-class threshold (`minCharacterRun` = 64 for letters/digits,
+//      `minCharacterRunPunctuation` = 256 for punctuation/symbols), AND
+//      only when the run has GROWN in at least
+//      `minCharacterRunGrowthDeltas` (3) distinct deltas — a single-delta
+//      paste of a long divider / base64 blob is never a decode loop;
 //    - any n-gram of `minNGram`...`maxNGram` (3–12) whitespace-separated
-//      tokens occurring `minConsecutiveRepeats` (8) or more times
+//      tokens occurring `minConsecutiveRepeats` (12) or more times
 //      back-to-back.
 //
-//  KEEP IN SYNC: the CLI gauntlet's batch-mode sibling uses the same
-//  thresholds — if either side's thresholds change, change both.
+//  THRESHOLDS INTENTIONALLY DIVERGE from the CLI gauntlet's batch
+//  detector: this detector ABORTS live user streams and therefore needs
+//  anti-false-positive margins (markdown dividers, table padding, base64,
+//  "print 100 !", "repeat this 10 times" must all pass), while the
+//  gauntlet judges complete transcripts after the fact where a lower bar
+//  costs nothing. Do not "re-sync" them.
 //
 //  "Token" here means a whitespace-separated word, not a model token: the
 //  detector runs over streamed text and must not depend on any tokenizer.
@@ -88,26 +96,51 @@ public struct StreamGuardrailSettings: Sendable {
 /// accumulated text crosses a threshold, then latches (all later calls
 /// return nil — the caller aborts the stream on first trigger anyway).
 ///
-/// Thresholds are IDENTICAL to the CLI gauntlet's batch-mode
-/// `DegenerationDetector` and must stay in sync with it.
+/// Thresholds intentionally DIVERGE from the CLI gauntlet's batch-mode
+/// `DegenerationDetector`: streaming abort needs anti-false-positive
+/// margins, the gauntlet judges whole transcripts (see the file header).
 public struct StreamDegenerationDetector {
     /// Smallest and largest repeating unit considered, in whitespace tokens.
     public static let minNGram = 3
     public static let maxNGram = 12
-    /// An n-gram must occur this many times back-to-back to count as a loop.
-    public static let minConsecutiveRepeats = 8
-    /// A single character repeated this many times consecutively is a loop.
+    /// An n-gram must occur this many times back-to-back to count as a
+    /// loop. 12 (vs the gauntlet's 8): the documented failure loops repeat
+    /// hundreds of times, so detection stays fast, while a user's "repeat
+    /// this 10 times" request streams through untouched.
+    public static let minConsecutiveRepeats = 12
+    /// A single LETTER or DIGIT repeated this many times consecutively is a
+    /// loop (subject to the growth gate below). Whitespace never counts —
+    /// indentation, table padding, and blank runs are always legitimate.
     public static let minCharacterRun = 64
+    /// Punctuation/symbol runs need a higher bar: markdown dividers
+    /// (`----`, `====`), box-drawing, and requested bursts ("print 100 !")
+    /// are everyday shapes at 64–100 characters. A real decode loop blows
+    /// far past 256 anyway.
+    public static let minCharacterRunPunctuation = 256
+    /// A run only triggers when it has GROWN in at least this many distinct
+    /// `observe()` calls: a genuine loop dribbles out over many small
+    /// decode deltas, while a single-delta paste of an arbitrarily long
+    /// divider/base64 run is model-completed content, not a stuck decoder.
+    public static let minCharacterRunGrowthDeltas = 3
+
+    /// Per-class character-run threshold (see `minCharacterRun` /
+    /// `minCharacterRunPunctuation`).
+    static func characterRunThreshold(for character: Character) -> Int {
+        (character.isLetter || character.isNumber)
+            ? minCharacterRun
+            : minCharacterRunPunctuation
+    }
 
     /// Tail-buffer bound, in `Character`s. The largest window the n-gram
-    /// rule ever needs is `maxNGram × minConsecutiveRepeats` = 96 whitespace
-    /// tokens; 4096 characters covers that window for tokens averaging up to
-    /// ~42 characters (separator included) — an order of magnitude above the
+    /// rule ever needs is `maxNGram × minConsecutiveRepeats` = 144
+    /// whitespace tokens; 4096 characters covers that window for tokens
+    /// averaging up to ~28 characters (separator included) — well above the
     /// word/short-phrase loops seen in the wild — while keeping the
     /// per-delta rescan O(4 KB) no matter how long the stream runs.
     /// Character runs are tracked incrementally and are NOT bounded by this
-    /// buffer. A loop of period ≤ 12 whose unit is longer than ~340 chars
-    /// would escape the window; accepted as out of scope for this detector.
+    /// buffer. A loop of period ≤ 12 whose unit is longer than ~28 chars
+    /// per token could escape the window; accepted as out of scope for this
+    /// detector.
     public static let maxTailCharacters = 4096
 
     /// Accumulated recent text, trimmed to `maxTailCharacters` after each
@@ -118,6 +151,13 @@ public struct StreamDegenerationDetector {
     /// over many deltas is still caught.
     private var runCharacter: Character?
     private var runLength = 0
+    /// Monotonic `observe()` call counter plus per-run growth accounting
+    /// backing the ≥`minCharacterRunGrowthDeltas` gate: `runGrowthDeltas`
+    /// counts the DISTINCT observe() calls that extended the current run,
+    /// `lastGrowthCallIndex` dedupes growth within one delta.
+    private var observeCallIndex = 0
+    private var runGrowthDeltas = 0
+    private var lastGrowthCallIndex = -1
     private var triggered = false
 
     /// Test hook: current tail size, to assert the bound holds under long
@@ -132,6 +172,7 @@ public struct StreamDegenerationDetector {
     public mutating func observe(_ delta: String) -> String? {
         guard !triggered, !delta.isEmpty else { return nil }
 
+        observeCallIndex += 1
         if let evidence = updateCharacterRun(with: delta) {
             triggered = true
             return evidence
@@ -149,18 +190,44 @@ public struct StreamDegenerationDetector {
     // MARK: - Character runs
 
     /// Advance the cross-delta run counter one character at a time and
-    /// trigger the moment the run reaches the threshold — checking only at
-    /// delta end would miss a 64-run that ends mid-delta.
+    /// trigger the moment a run satisfies BOTH gates — checking only at
+    /// delta end would miss a run that crosses its threshold mid-delta.
+    ///
+    /// Gates (anti-false-positive, see the type/file docs):
+    ///   * whitespace is exempt entirely (indentation, table padding);
+    ///   * per-class length threshold — 64 for letters/digits, 256 for
+    ///     punctuation/symbols (dividers, requested `!` bursts);
+    ///   * the run must have grown in ≥ `minCharacterRunGrowthDeltas`
+    ///     distinct `observe()` calls, so a single-delta paste of a long
+    ///     divider or base64 run never aborts while a decoder stuck
+    ///     emitting the same character across many small deltas still does.
     private mutating func updateCharacterRun(with delta: String) -> String? {
         for character in delta {
+            if character.isWhitespace {
+                // Whitespace runs are always legitimate; also break any
+                // tracked run so `!  !  !` never accumulates.
+                runCharacter = nil
+                runLength = 0
+                runGrowthDeltas = 0
+                lastGrowthCallIndex = -1
+                continue
+            }
             if character == runCharacter {
                 runLength += 1
-                if runLength >= Self.minCharacterRun {
-                    return "character \"\(character)\" repeated \(runLength)x consecutively"
-                }
             } else {
                 runCharacter = character
                 runLength = 1
+                runGrowthDeltas = 0
+                lastGrowthCallIndex = -1
+            }
+            if lastGrowthCallIndex != observeCallIndex {
+                lastGrowthCallIndex = observeCallIndex
+                runGrowthDeltas += 1
+            }
+            if runGrowthDeltas >= Self.minCharacterRunGrowthDeltas,
+                runLength >= Self.characterRunThreshold(for: character) {
+                return
+                    "character \"\(character)\" repeated \(runLength)x consecutively across \(runGrowthDeltas) deltas"
             }
         }
         return nil

@@ -109,10 +109,10 @@ struct StreamGuardrailsMapperTests {
     // MARK: - Degeneration abort
 
     @Test func degenerating_chunk_stream_throws_typed_error() async {
-        // 30 "idea " chunks: the 3-gram rule trips at the 24th token; the
+        // 45 "idea " chunks: the 3-gram rule trips at the 36th token; the
         // mapped stream must finish with the typed guardrail error instead
         // of streaming the loop forever.
-        let events: [Generation] = Array(repeating: .chunk("idea "), count: 30)
+        let events: [Generation] = Array(repeating: .chunk("idea "), count: 45)
         do {
             _ = try await collect(events: events)
             Issue.record("expected StreamGuardrailError.degeneration to be thrown")
@@ -130,7 +130,7 @@ struct StreamGuardrailsMapperTests {
     @Test func degenerating_reasoning_stream_throws_typed_error() async {
         // Loops routinely start inside the thinking channel; `.reasoning`
         // deltas must feed the same detector.
-        let events: [Generation] = Array(repeating: .reasoning("loop token here "), count: 10)
+        let events: [Generation] = Array(repeating: .reasoning("loop token here "), count: 14)
         do {
             _ = try await collect(events: events)
             Issue.record("expected StreamGuardrailError.degeneration to be thrown")
@@ -146,10 +146,24 @@ struct StreamGuardrailsMapperTests {
     }
 
     @Test func character_run_split_across_chunks_throws() async {
-        let events: [Generation] = Array(repeating: .chunk("!!!!!!!"), count: 10)
+        // 50 × 7 = 350 `!` growing across many deltas: past the 256
+        // punctuation threshold with the ≥3-delta growth gate satisfied.
+        let events: [Generation] = Array(repeating: .chunk("!!!!!!!"), count: 50)
         await #expect(throws: StreamGuardrailError.self) {
             _ = try await collect(events: events)
         }
+    }
+
+    @Test func single_delta_divider_and_requested_burst_pass_through() async throws {
+        // Legitimate long runs must NOT abort: an 80-char divider pasted in
+        // one delta, and a requested 100-`!` burst in one delta.
+        let chunks = [
+            "Summary follows.\n",
+            String(repeating: "-", count: 80) + "\n",
+            "Here you go: " + String(repeating: "!", count: 100),
+        ]
+        let out = try await collect(events: chunks.map { .chunk($0) })
+        #expect(tokenDeltas(out) == chunks)
     }
 
     @Test func clean_stream_is_unaffected_byte_for_byte() async throws {
@@ -188,7 +202,7 @@ struct StreamGuardrailsMapperTests {
     // MARK: - Flags
 
     @Test func degeneration_flag_off_streams_the_loop_untouched() async throws {
-        let events: [Generation] = Array(repeating: .chunk("idea "), count: 30)
+        let events: [Generation] = Array(repeating: .chunk("idea "), count: 45)
         let out = try await collect(
             events: events,
             guardrails: StreamGuardrailSettings(
@@ -196,7 +210,7 @@ struct StreamGuardrailsMapperTests {
                 templateLeakDetection: true
             )
         )
-        #expect(tokenDeltas(out).count == 30)
+        #expect(tokenDeltas(out).count == 45)
     }
 
     @Test func leak_flag_off_streams_marker_untouched() async throws {
