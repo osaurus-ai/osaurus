@@ -3417,18 +3417,26 @@ extension FloatingInputCard {
         }
     }
 
-    /// In-flow wrapper for `ramPressureBanner`: a leading-aligned row at the
-    /// top of the composer stack, directly above the model picker chip it
-    /// refers to. Sized to the chip's measured width so the banner and its
-    /// pointer read as attached to the chip, popover-style. The
-    /// config-context error (still a floating overlay) wins when both apply.
+    /// Fixed banner width so a short model name (e.g. "gpt-5.5") never shrinks
+    /// the banner into a cramped container.
+    private static let ramBannerWidth: CGFloat = 320
+
+    /// In-flow wrapper for `ramPressureBanner`: a fixed-width, popover-style
+    /// toast at the top of the composer stack, centered over the model picker
+    /// chip it refers to (clamped to the leading inset when the chip sits too
+    /// far left for true centering — the pointer then slides to stay on the
+    /// chip's center). The config-context error (still a floating overlay)
+    /// wins when both apply.
     @ViewBuilder
     private var ramPressureRow: some View {
         if !configContextTooSmall, let feasibility = pendingLoadFeasibility {
-            ramPressureBanner(feasibility)
-                .frame(width: modelChipWidth > 0 ? modelChipWidth : nil, alignment: .leading)
+            // Chip leading inset is 20 (selector row horizontal padding).
+            let chipCenter = 20 + modelChipWidth / 2
+            let leading = max(20, chipCenter - Self.ramBannerWidth / 2)
+            ramPressureBanner(feasibility, pointerCenterX: chipCenter - leading)
+                .frame(width: Self.ramBannerWidth, alignment: .leading)
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.horizontal, 20)
+                .padding(.leading, leading)
                 .padding(.top, 8)
                 // Pull the banner down toward the chip: leave just the pointer
                 // height plus a small gap, cancelling most of the stack
@@ -3442,7 +3450,10 @@ extension FloatingInputCard {
     /// selected model would be a tight RAM fit. Orange = warn (send allowed),
     /// red = blocked (send paused until memory frees; the 2s feasibility
     /// re-check clears it automatically).
-    private func ramPressureBanner(_ feasibility: ModelRuntime.RAMFeasibility) -> some View {
+    private func ramPressureBanner(
+        _ feasibility: ModelRuntime.RAMFeasibility,
+        pointerCenterX: CGFloat
+    ) -> some View {
         let blocked = feasibility.loadPressureSeverity == .block
         let tint: Color = blocked ? .red : .orange
         let modelName = selectedPickerItem?.displayName ?? feasibility.modelName
@@ -3484,16 +3495,19 @@ extension FloatingInputCard {
             RoundedRectangle(cornerRadius: 14, style: .continuous)
                 .strokeBorder(tint.opacity(0.35), lineWidth: 1)
         )
-        // Popover-style pointer aimed down at the model picker chip. The
-        // banner is sized to the chip's width, so bottom-center of the banner
-        // is the chip's center.
-        .overlay(alignment: .bottom) {
+        // Popover-style pointer aimed down at the model picker chip's center,
+        // clamped away from the banner's rounded corners.
+        .overlay(alignment: .bottomLeading) {
+            let clampedX = min(
+                max(pointerCenterX, 14 + RAMBannerPointer.width / 2),
+                Self.ramBannerWidth - 14 - RAMBannerPointer.width / 2
+            )
             ZStack {
                 RAMBannerPointer().fill(.regularMaterial)
                 RAMBannerPointer().fill(tint.opacity(0.28))
             }
             .frame(width: RAMBannerPointer.width, height: RAMBannerPointer.height)
-            .offset(y: RAMBannerPointer.height)
+            .offset(x: clampedX - RAMBannerPointer.width / 2, y: RAMBannerPointer.height)
         }
         .shadow(color: Color.black.opacity(0.12), radius: 8, x: 0, y: 3)
         .accessibilityLabel(
