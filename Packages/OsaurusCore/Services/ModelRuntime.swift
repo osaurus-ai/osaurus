@@ -187,10 +187,13 @@ public actor ModelRuntime {
     private var lastUseSource: [String: RequestSource] = [:]
 
     /// Grace period applied when the last chat window referencing a model
-    /// closes: long enough for an accidental-close reopen to stay warm, short
-    /// enough that the model doesn't hog unified memory for the full idle
-    /// policy (default 15 minutes) after the user walked away.
-    static let chatCloseUnloadGraceSeconds: TimeInterval = 15
+    /// closes. Zero: closing the chat evicts the model immediately — the
+    /// user closed the surface that was using it, and holding gigabytes of
+    /// unified memory "in case they reopen" costs more than a reload. The
+    /// unload still runs through the residency manager's fire-time guards
+    /// (lease count, reopen re-check), so an in-flight generation or an
+    /// instant reopen keeps the model resident.
+    static let chatCloseUnloadGraceSeconds: TimeInterval = 0
 
     private init() {}
 
@@ -280,8 +283,8 @@ public actor ModelRuntime {
     }
 
     /// Chat-window-close residency acceleration: shorten the pending idle
-    /// unload of chat-sourced resident models to `grace` seconds instead of
-    /// waiting out the full idle policy.
+    /// unload of chat-sourced resident models to `grace` seconds (default 0
+    /// — evict immediately) instead of waiting out the full idle policy.
     ///
     /// Only applies under an `.afterSeconds` idle policy — `.immediately` is
     /// handled by the caller's existing `unloadModelsNotIn` path, and `.never`
@@ -293,8 +296,8 @@ public actor ModelRuntime {
     /// Races with API traffic are resolved inside `ModelResidencyManager`:
     /// a new generation's `markActive` cancels the accelerated timer, the
     /// fire path re-checks the lease count, and `isModelStillWanted` is
-    /// re-evaluated at fire time so a window reopened during the grace
-    /// period keeps the model warm.
+    /// re-evaluated at fire time so a window reopened before the unload
+    /// fires keeps the model warm.
     func accelerateIdleUnloadAfterChatClose(
         keeping activeNames: Set<String>,
         grace: TimeInterval = ModelRuntime.chatCloseUnloadGraceSeconds,

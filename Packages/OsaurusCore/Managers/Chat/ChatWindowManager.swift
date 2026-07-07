@@ -746,12 +746,12 @@ public final class ChatWindowManager: NSObject, ObservableObject {
             // Residency on window close (note: hotkey HIDE is not close — a
             // hidden window keeps its model warm for the quick-toggle flow):
             // - .immediately: unload anything no remaining window references.
-            // - .afterSeconds: accelerate the pending idle unload of
-            //   chat-sourced models to a short grace period instead of the
-            //   full policy, so a closed chat doesn't pin gigabytes of
-            //   unified memory for 15 minutes. Models last used by the HTTP
-            //   API keep their full residency; the fire-time guard re-checks
-            //   open windows so a reopen during the grace stays warm.
+            // - .afterSeconds: evict chat-sourced models immediately (zero
+            //   grace) instead of waiting out the policy, so a closed chat
+            //   doesn't pin gigabytes of unified memory. Models last used by
+            //   the HTTP API keep their full residency; the fire-time guard
+            //   re-checks lease count and open windows, so an in-flight
+            //   generation or an instant reopen keeps the model warm.
             // - .never: explicit user opt-in to permanent residency.
             let idlePolicy =
                 ServerConfigurationStore.load()?.modelIdleResidencyPolicy

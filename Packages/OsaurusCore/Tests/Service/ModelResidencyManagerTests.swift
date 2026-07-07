@@ -206,6 +206,78 @@ struct ModelResidencyManagerTests {
         #expect(await manager.snapshots().isEmpty)
     }
 
+    @Test("accelerateIdleUnload with zero grace unloads immediately")
+    func accelerateZeroGraceUnloadsImmediately() async {
+        let sleeper = ResidencySleepRecorder()
+        let unloads = ResidencyUnloadRecorder()
+        let manager = ModelResidencyManager(sleep: { nanoseconds in
+            await sleeper.sleep(nanoseconds)
+        })
+        let now = Date(timeIntervalSinceReferenceDate: 100)
+
+        await manager.scheduleIdleUnload(
+            modelName: "llama",
+            policy: .afterSeconds(900),
+            now: now,
+            unload: { name in await unloads.unload(name) },
+            leaseCount: { _ in 0 },
+            isResident: { _ in true }
+        )
+        await Self.allowTasksToRun()
+
+        // Chat-window close with the immediate-eviction grace (0): the fire
+        // must not go through the injected sleep at all — only the original
+        // 900s policy timer ever slept, and it was cancelled.
+        await manager.accelerateIdleUnload(
+            modelName: "llama",
+            grace: 0,
+            now: now,
+            unload: { name in await unloads.unload(name) },
+            leaseCount: { _ in 0 },
+            isResident: { _ in true }
+        )
+        await Self.allowTasksToRun()
+
+        #expect(await sleeper.recordedRequests() == [900_000_000_000])
+        #expect(await unloads.names() == ["llama"])
+        #expect(await manager.snapshots().isEmpty)
+    }
+
+    @Test("accelerateIdleUnload with zero grace still respects the fire-time reopen guard")
+    func accelerateZeroGraceRespectsReopenGuard() async {
+        let sleeper = ResidencySleepRecorder()
+        let unloads = ResidencyUnloadRecorder()
+        let manager = ModelResidencyManager(sleep: { nanoseconds in
+            await sleeper.sleep(nanoseconds)
+        })
+        let now = Date(timeIntervalSinceReferenceDate: 100)
+
+        await manager.scheduleIdleUnload(
+            modelName: "llama",
+            policy: .afterSeconds(900),
+            now: now,
+            unload: { name in await unloads.unload(name) },
+            leaseCount: { _ in 0 },
+            isResident: { _ in true }
+        )
+        await Self.allowTasksToRun()
+
+        // A window reopened for this model between close and fire: the
+        // shouldStillUnload guard vetoes the immediate eviction.
+        await manager.accelerateIdleUnload(
+            modelName: "llama",
+            grace: 0,
+            now: now,
+            unload: { name in await unloads.unload(name) },
+            leaseCount: { _ in 0 },
+            isResident: { _ in true },
+            shouldStillUnload: { _ in false }
+        )
+        await Self.allowTasksToRun()
+
+        #expect(await unloads.names().isEmpty)
+    }
+
     @Test("accelerateIdleUnload never extends a sooner deadline")
     func accelerateNeverExtendsSoonerDeadline() async {
         let sleeper = ResidencySleepRecorder()
