@@ -2869,6 +2869,9 @@ struct RuntimePolicySourceTests {
             !adapter.contains("message: \"begin model=\\(modelName) promptTokens="),
             "Sentry scrubs breadcrumbs containing prompt-like fields as content; token counts must remain visible for OOM/context-growth triage"
         )
-        #expect(adapter.contains("submit model=\\(modelName) batch=\\(maxBatchSize)"))
+        // #1919 renamed the local to `effectiveMaxBatchSize` (auto batch sizing);
+        // the policy this pins — batch size stays visible in breadcrumbs — is
+        // unchanged.
+        #expect(adapter.contains("submit model=\\(modelName) batch=\\(effectiveMaxBatchSize)"))
     }
 }
