@@ -128,8 +128,14 @@ public struct BenchCommand: Command {
             ],
         ]
 
-        let data = try! JSONSerialization.data(
-            withJSONObject: report, options: [.prettyPrinted, .sortedKeys])
+        let data: Data
+        do {
+            data = try JSONSerialization.data(
+                withJSONObject: report, options: [.prettyPrinted, .sortedKeys])
+        } catch {
+            fputs("Failed to encode report: \(error.localizedDescription)\n", stderr)
+            exit(EXIT_FAILURE)
+        }
         if let path = options.jsonPath {
             let url = URL(fileURLWithPath: path)
             try? FileManager.default.createDirectory(
@@ -142,7 +148,7 @@ public struct BenchCommand: Command {
                 exit(EXIT_FAILURE)
             }
         } else {
-            print(String(decoding: data, as: UTF8.self))
+            print(String(bytes: data, encoding: .utf8) ?? "{}")
         }
         exit(EXIT_SUCCESS)
     }
@@ -336,8 +342,7 @@ public struct BenchCommand: Command {
 
             if let u = obj["usage"] as? [String: Any],
                 let promptTokens = u["prompt_tokens"] as? Int,
-                let completionTokens = u["completion_tokens"] as? Int
-            {
+                let completionTokens = u["completion_tokens"] as? Int {
                 usage = (promptTokens, completionTokens)
             }
             // Reasoning models stream `reasoning_content` deltas (often for
@@ -345,8 +350,7 @@ public struct BenchCommand: Command {
             // max_tokens run can be reasoning-only. Both delta kinds are
             // generated tokens, so both count for TTFT and the decode window.
             if let choices = obj["choices"] as? [[String: Any]],
-                let delta = choices.first?["delta"] as? [String: Any]
-            {
+                let delta = choices.first?["delta"] as? [String: Any] {
                 let content = delta["content"] as? String
                 let reasoning = delta["reasoning_content"] as? String
                 if (content?.isEmpty == false) || (reasoning?.isEmpty == false) {
