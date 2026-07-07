@@ -203,14 +203,20 @@ public struct BenchCommand: Command {
             {
                 usage = (promptTokens, completionTokens)
             }
+            // Reasoning models stream `reasoning_content` deltas (often for
+            // hundreds of tokens) before any `content` delta — and a short
+            // max_tokens run can be reasoning-only. Both delta kinds are
+            // generated tokens, so both count for TTFT and the decode window.
             if let choices = obj["choices"] as? [[String: Any]],
-                let delta = choices.first?["delta"] as? [String: Any],
-                let content = delta["content"] as? String,
-                !content.isEmpty
+                let delta = choices.first?["delta"] as? [String: Any]
             {
-                let now = DispatchTime.now()
-                if firstDelta == nil { firstDelta = now }
-                lastDelta = now
+                let content = delta["content"] as? String
+                let reasoning = delta["reasoning_content"] as? String
+                if (content?.isEmpty == false) || (reasoning?.isEmpty == false) {
+                    let now = DispatchTime.now()
+                    if firstDelta == nil { firstDelta = now }
+                    lastDelta = now
+                }
             }
         }
 
