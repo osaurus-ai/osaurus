@@ -200,6 +200,11 @@ final class NativeTypingIndicatorView: NSView {
             sandbox.$isProvisioning.map { _ in () }.eraseToAnyPublisher(),
             agents.$activeAgentId.map { _ in () }.eraseToAnyPublisher(),
             agents.$agents.map { _ in () }.eraseToAnyPublisher(),
+            // Warm-up generations run with `suppressProgressUI` and publish
+            // load/prefill progress to this side channel instead of the
+            // global HUD. A send waiting on the pre-send handshake shows this
+            // indicator, so the warm-up's model load must surface here too.
+            WarmupProgressHub.shared.$phases.map { _ in () }.eraseToAnyPublisher(),
         ]
 
         cancellables.append(
@@ -227,6 +232,18 @@ final class NativeTypingIndicatorView: NSView {
         if agentUsesSandbox && sandboxBooting { return .sandbox }
         if let prefillProgress = cachedPrefill { return .prefill(prefillProgress) }
         if progress.loadInFlightCount > 0 { return .modelLoad }
+
+        // Fall back to warm-up progress: while a send waits on the pre-send
+        // handshake, the model load/prefill in flight belongs to a suppressed
+        // warm-up request whose progress only reaches WarmupProgressHub.
+        let warmupPhases = WarmupProgressHub.shared.phases.values
+        if warmupPhases.contains(.loadingModel) { return .modelLoad }
+        if case .prefilling(let state)? = warmupPhases.first(where: {
+            if case .prefilling = $0 { return true }
+            return false
+        }) {
+            return .prefill(state)
+        }
         return nil
     }
 

@@ -7,9 +7,11 @@
 //  (system + tools + history, excluding the pending user turn) so the first
 //  real send can prefix-hit and pay less time-to-first-token cost.
 //
-//  Also owns the debounced model-switch policy: under strict single-model
-//  residency, eviction of the previous model is delayed ~2.5s so a quick
-//  switch-back keeps the prior model resident with its KV/coordinator state.
+//  Also owns the model-switch policy: a selection change acts immediately —
+//  any in-flight warm-up of the previous model is cancelled (waiting it out
+//  made switches feel stuck), the previous model is evicted per the
+//  residency policy, and the new model starts warming right away so the
+//  user gets instant visual feedback.
 //
 
 import Foundation
@@ -51,9 +53,6 @@ final class ChatWarmupController: ObservableObject {
         case warm
     }
 
-    /// Debounce before acting on a model switch under strict single-model
-    /// residency so a quick switch-back keeps the prior model's cache.
-    static let modelSwitchDebounce: Duration = .milliseconds(2_500)
     /// Debounce coalescing fingerprint-invalidating warm-up retriggers.
     static let scheduleDebounce: Duration = .milliseconds(500)
 
@@ -64,17 +63,16 @@ final class ChatWarmupController: ObservableObject {
 
     private var warmedFingerprint: String?
     private var scheduleTask: Task<Void, Never>?
-    private var modelSwitchTask: Task<Void, Never>?
     private var inFlightWarmup: Task<Void, Never>?
     private var inFlightWarmupID: UUID?
-    /// Model selected before the pending debounced switch — the "switch back
-    /// to this and nothing is lost" target.
-    private var modelBeforePendingSwitch: String?
-    /// Warm fingerprint held when the pending switch started, restored on a
-    /// quick switch-back so the dot snaps straight back to green.
-    private var fingerprintBeforePendingSwitch: String?
+    /// The immediate switch operation in flight (cancel stale warm-up →
+    /// evict per policy → schedule the new model's warm-up). Tracked so the
+    /// pre-send handshake can wait for the eviction to settle and so rapid
+    /// consecutive switches serialize instead of interleaving unloads.
+    private var activeModelSwitch: Task<Void, Never>?
+    private var activeModelSwitchID: UUID?
     /// Monotonic counter bumped by every switch-affecting entry point
-    /// (selection change, flush, reset). Handlers that suspend re-check it
+    /// (selection change, reset). Handlers that suspend re-check it
     /// afterwards so a stale resume can't cancel or restore state installed
     /// by a newer event.
     private var switchEpoch: UInt64 = 0
@@ -87,7 +85,7 @@ final class ChatWarmupController: ObservableObject {
 
     deinit {
         scheduleTask?.cancel()
-        modelSwitchTask?.cancel()
+        activeModelSwitch?.cancel()
         inFlightWarmup?.cancel()
     }
 
@@ -102,15 +100,14 @@ final class ChatWarmupController: ObservableObject {
     func reset() {
         switchEpoch &+= 1
         scheduleTask?.cancel()
-        modelSwitchTask?.cancel()
+        activeModelSwitch?.cancel()
         inFlightWarmup?.cancel()
         scheduleTask = nil
-        modelSwitchTask = nil
+        activeModelSwitch = nil
+        activeModelSwitchID = nil
         inFlightWarmup = nil
         inFlightWarmupID = nil
         warmedFingerprint = nil
-        modelBeforePendingSwitch = nil
-        fingerprintBeforePendingSwitch = nil
         state = .cold
     }
 
@@ -123,119 +120,92 @@ final class ChatWarmupController: ObservableObject {
 
     // MARK: - Model switch
 
-    /// Handle a model selection change: debounce eviction under strict
-    /// single-model residency (quick switch-back keeps the old model's
-    /// cache), evict-then-warm when the debounce fires, and skip eviction
-    /// entirely under multi-model residency.
+    /// Handle a model selection change immediately: cancel any warm-up still
+    /// running for the previous model (letting it finish deferred the
+    /// eviction and made switches feel stuck), evict per the residency
+    /// policy, and start warming the new model right away so the dot /
+    /// progress feedback reacts the moment the user picks a model.
+    ///
+    /// The `$selectedModel` sink fires at `willSet` time; the Task hop
+    /// defers the switch until after the property (and the rest of the view
+    /// update) has settled, so session reads see the new selection and
+    /// `@Published` state isn't mutated mid-publish.
     func handleModelSelectionChange(
         session: ChatWarmupSessionContext,
-        from previous: String?,
         to newModel: String?,
         performSwitch: @escaping @MainActor (_ evictOthers: Bool) async -> Void
     ) {
         Task { @MainActor in
-            await self.handleModelSelectionChangeAsync(
+            self.performModelSelectionChange(
                 session: session,
-                from: previous,
                 to: newModel,
                 performSwitch: performSwitch
             )
         }
     }
 
-    private func handleModelSelectionChangeAsync(
+    private func performModelSelectionChange(
         session: ChatWarmupSessionContext,
-        from previous: String?,
         to newModel: String?,
         performSwitch: @escaping @MainActor (_ evictOthers: Bool) async -> Void
-    ) async {
+    ) {
         guard !isShutDown else { return }
         switchEpoch &+= 1
         let epoch = switchEpoch
-        // Quick switch-back inside the debounce window: the old model is
-        // still resident (nothing was evicted yet), so cancel the pending
-        // switch and restore the warm claim it had.
-        if let newModel,
-            modelSwitchTask != nil,
-            newModel == modelBeforePendingSwitch,
-            await ModelRuntime.shared.isResident(name: newModel)
-        {
-            // The residency check suspended; a newer selection change, send
-            // flush, or reset may have replaced the pending-switch state this
-            // branch is about to cancel/restore.
-            guard epoch == switchEpoch else { return }
-            modelSwitchTask?.cancel()
-            modelSwitchTask = nil
-            modelBeforePendingSwitch = nil
-            let restored = fingerprintBeforePendingSwitch
-            fingerprintBeforePendingSwitch = nil
-            if let restored, restored.hasPrefix("\(newModel)|") {
-                warmedFingerprint = restored
-                state = .warm
-            } else {
-                invalidateWarmState()
-                scheduleWarmup(session: session, debounce: .zero)
-            }
-            return
-        }
-        // Same staleness rule for the fall-through: if the residency check
-        // above suspended and a newer event ran meanwhile, defer to it.
-        guard epoch == switchEpoch else { return }
 
-        let priorFingerprint = warmedFingerprint
         invalidateWarmState()
-        modelSwitchTask?.cancel()
-        modelSwitchTask = nil
-        modelBeforePendingSwitch = nil
-        fingerprintBeforePendingSwitch = nil
+
+        // A scheduled warm-up targets the old selection — drop it. A warm-up
+        // generation already in flight is cancelled AND detached: clearing
+        // the ID makes its stale-writer guards drop its state writes, so the
+        // cancelled unwind can't flip the fresh `.warming` below back to
+        // `.cold` (or claim a stale warm fingerprint).
+        cancelScheduledWarmup()
+        let staleWarmup = inFlightWarmup
+        if staleWarmup != nil {
+            inFlightWarmup = nil
+            inFlightWarmupID = nil
+            staleWarmup?.cancel()
+        }
 
         guard let newModel, !newModel.isEmpty else { return }
 
         let policy =
             ServerConfigurationStore.load()?.modelEvictionPolicy ?? .strictSingleModel
 
-        // Multi-model residency: nothing is ever evicted on switch, so
-        // there is no cache to protect — load + warm the new model now.
-        if policy == .manualMultiModel {
-            await performSwitch(false)
-            scheduleWarmup(session: session, debounce: .zero)
-            return
-        }
-
-        // Strict single-model: debounce before evicting so a quick
-        // switch-back keeps the prior model resident. Loading early is not
-        // an option — `loadContainer` performs strict eviction itself, so
-        // starting the new load would destroy the old cache immediately.
-        modelBeforePendingSwitch = previous
-        fingerprintBeforePendingSwitch = priorFingerprint
+        // Immediate visual feedback: the chip dot goes yellow the moment the
+        // selection changes (remote/non-warmable selections ignore state).
         state = .warming
 
-        modelSwitchTask = Task { @MainActor in
-            try? await Task.sleep(for: Self.modelSwitchDebounce)
+        let switchID = UUID()
+        let previousSwitch = activeModelSwitch
+        activeModelSwitchID = switchID
+        activeModelSwitch = Task { @MainActor in
+            // Serialize with a still-running earlier switch so evictions
+            // never interleave, then wait for the cancelled warm-up to
+            // actually unwind — its generation lease would otherwise make
+            // the runtime skip (not defer) the old model's unload.
+            await previousSwitch?.value
+            await staleWarmup?.value
             guard !Task.isCancelled else { return }
-            modelSwitchTask = nil
-            modelBeforePendingSwitch = nil
-            fingerprintBeforePendingSwitch = nil
-            await performSwitch(true)
-            scheduleWarmup(session: session, debounce: .zero)
+
+            // Evict models no window points at anymore (strict single-model
+            // only). Multi-model residency never evicts on switch.
+            await performSwitch(policy == .strictSingleModel)
+
+            guard self.activeModelSwitchID == switchID else { return }
+            self.activeModelSwitch = nil
+            self.activeModelSwitchID = nil
+            guard epoch == self.switchEpoch, !Task.isCancelled else { return }
+            self.scheduleWarmup(session: session, debounce: .zero)
         }
     }
 
-    /// Flush a pending model-switch debounce immediately (evict per policy).
-    /// Called on send so the user never waits out the debounce timer.
-    func flushPendingModelSwitch(
-        performSwitch: @escaping @MainActor (_ evictOthers: Bool) async -> Void
-    ) async {
-        guard modelSwitchTask != nil else { return }
-        switchEpoch &+= 1
-        modelSwitchTask?.cancel()
-        modelSwitchTask = nil
-        modelBeforePendingSwitch = nil
-        fingerprintBeforePendingSwitch = nil
-
-        let policy =
-            ServerConfigurationStore.load()?.modelEvictionPolicy ?? .strictSingleModel
-        await performSwitch(policy == .strictSingleModel)
+    /// Wait for an in-flight immediate model switch (stale warm-up unwind +
+    /// eviction) to settle. Called by the pre-send handshake so a send right
+    /// after a switch generates against a clean residency state.
+    func awaitActiveModelSwitch() async {
+        await activeModelSwitch?.value
     }
 
     // MARK: - Warm-up
@@ -264,11 +234,11 @@ final class ChatWarmupController: ObservableObject {
     }
 
     /// True when a send must run the async pre-send handshake first
-    /// (pending debounced model switch or a warm-up generation in flight).
+    /// (model switch settling or a warm-up generation in flight).
     /// When false, sends can dispatch synchronously — preserving the
     /// "user turn is appended synchronously inside send()" contract.
     var needsPreSendHandshake: Bool {
-        modelSwitchTask != nil || inFlightWarmup != nil
+        activeModelSwitch != nil || inFlightWarmup != nil
     }
 
     /// Drop a scheduled-but-not-started warm-up so it can't fire mid-run.
@@ -290,10 +260,10 @@ final class ChatWarmupController: ObservableObject {
     private func shouldAttemptWarmup(session: ChatWarmupSessionContext) -> Bool {
         guard !isShutDown else { return false }
         guard ChatConfigurationStore.load().warmModelsOnLoad else { return false }
-        // Never load the new model while a debounced switch is pending —
-        // strict eviction inside `loadContainer` would tear down the old
-        // model and defeat the switch-back grace period.
-        guard modelSwitchTask == nil else { return false }
+        // Never load the new model while a switch is still settling — the
+        // switch task itself schedules the warm-up once eviction completes,
+        // and loading early would race the old model's teardown.
+        guard activeModelSwitch == nil else { return false }
         guard let model = session.selectedModel, !model.isEmpty else { return false }
         guard session.selectedModelIsLocal, !session.isRemoteAgentTarget else { return false }
         guard !session.isStreaming else { return false }

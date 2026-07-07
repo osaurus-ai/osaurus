@@ -947,6 +947,32 @@ public actor ModelRuntime {
         public let softLimitBytes: Int64
         public let hardLimitBytes: Int64
         public let timestamp: Date
+
+        /// UI severity for the chat input's tight-fit disclaimer.
+        public enum LoadPressureSeverity: String, Sendable, Equatable {
+            /// Comfortably within budget — no banner.
+            case none
+            /// Above the soft threshold (or free pages look short): show the
+            /// disclaimer but allow sending.
+            case warn
+            /// Above the hard ceiling, or the load can never fit in physical
+            /// memory: block sending until memory frees.
+            case block
+        }
+
+        /// Maps the assessment to the chat input's disclaimer/send-gate
+        /// severity. Pure so it can be unit-tested without UI. This is a
+        /// UI-layer gate only — the runtime load path stays advisory (see
+        /// `checkRAMFeasibility`).
+        public var loadPressureSeverity: LoadPressureSeverity {
+            if projectedBytes > hardLimitBytes || requiredAvailableBytes > physicalMemoryBytes {
+                return .block
+            }
+            if verdict != .ok || projectedBytes > softLimitBytes {
+                return .warn
+            }
+            return .none
+        }
     }
 
     /// Estimated KV-cache + activation headroom an incoming load needs beyond
@@ -1130,6 +1156,60 @@ public actor ModelRuntime {
         lastRAMFeasibility
     }
 
+    /// Shared verdict math for the pre-load advisory gate
+    /// (`checkRAMFeasibility`) and the chat input's candidate-load projection
+    /// (`projectedLoadFeasibility`), so the two assessments can't drift.
+    ///
+    /// On unified-memory Macs the OS satisfies a load by compressing,
+    /// evicting, or paging, so the immediately-free page count
+    /// (`available`) routinely sits below a model's full weight size even
+    /// when the load would succeed. A hard threshold refusal here is a fake
+    /// stability fix: it avoids crashes by blocking valid mmap-backed
+    /// loads. Keep the signal, evict idle resident models before this
+    /// point, and let real load errors propagate.
+    /// Internal (not private) so unit tests can drive the boundary math with
+    /// synthetic byte counts; production callers are the two methods above.
+    static func buildRAMFeasibility(
+        modelName: String,
+        incomingWeightsBytes: Int64,
+        incomingLoadFootprintBytes: Int64,
+        resident: Int64,
+        inflightOther: Int64,
+        kvHeadroom: Int64,
+        physical: Int64,
+        available: Int64
+    ) -> RAMFeasibility {
+        let requiredAvailable = incomingLoadFootprintBytes + kvHeadroom
+        let projected = resident + inflightOther + incomingLoadFootprintBytes + kvHeadroom
+        let thresholds = ServerRuntimeSettingsStore.modelLoadRAMThresholds()
+        let softLimit = Int64(Double(physical) * thresholds.soft)
+        let hardLimit = Int64(Double(physical) * thresholds.hard)
+
+        let lowAvailable = available > 0 && requiredAvailable > available
+        let verdict: RAMFeasibility.Verdict
+        if projected > hardLimit || projected > softLimit || lowAvailable {
+            verdict = .tight
+        } else {
+            verdict = .ok
+        }
+
+        return RAMFeasibility(
+            modelName: modelName,
+            verdict: verdict,
+            incomingWeightsBytes: incomingWeightsBytes,
+            incomingLoadFootprintBytes: incomingLoadFootprintBytes,
+            residentWeightsBytes: resident,
+            kvHeadroomBytes: kvHeadroom,
+            projectedBytes: projected,
+            physicalMemoryBytes: physical,
+            availableMemoryBytes: available,
+            requiredAvailableBytes: requiredAvailable,
+            softLimitBytes: softLimit,
+            hardLimitBytes: hardLimit,
+            timestamp: Date()
+        )
+    }
+
     /// Pre-load RAM feasibility assessment. Records `lastRAMFeasibility` for
     /// observability but does not reject a user-requested load solely because
     /// RAM is currently full or projected pressure crosses a configured
@@ -1157,50 +1237,25 @@ public actor ModelRuntime {
             modelDirectory: modelDirectory,
             modelName: modelName
         )
-        let available = Self.availableMemoryBytes()
-        let requiredAvailable = incomingLoadFootprintBytes + kvHeadroom
-        let projected = resident + inflightOther + incomingLoadFootprintBytes + kvHeadroom
-        let thresholds = ServerRuntimeSettingsStore.modelLoadRAMThresholds()
-        let softLimit = Int64(Double(physical) * thresholds.soft)
-        let hardLimit = Int64(Double(physical) * thresholds.hard)
-
-        // On unified-memory Macs the OS satisfies a load by compressing,
-        // evicting, or paging, so the immediately-free page count
-        // (`available`) routinely sits below a model's full weight size even
-        // when the load would succeed. A hard threshold refusal here is a fake
-        // stability fix: it avoids crashes by blocking valid mmap-backed
-        // loads. Keep the signal, evict idle resident models before this
-        // point, and let real load errors propagate.
-        let lowAvailable = available > 0 && requiredAvailable > available
-        let verdict: RAMFeasibility.Verdict
-        if projected > hardLimit || projected > softLimit || lowAvailable {
-            verdict = .tight
-        } else {
-            verdict = .ok
-        }
-
-        lastRAMFeasibility = RAMFeasibility(
+        let assessment = Self.buildRAMFeasibility(
             modelName: modelName,
-            verdict: verdict,
             incomingWeightsBytes: incomingWeightsBytes,
             incomingLoadFootprintBytes: incomingLoadFootprintBytes,
-            residentWeightsBytes: resident,
-            kvHeadroomBytes: kvHeadroom,
-            projectedBytes: projected,
-            physicalMemoryBytes: physical,
-            availableMemoryBytes: available,
-            requiredAvailableBytes: requiredAvailable,
-            softLimitBytes: softLimit,
-            hardLimitBytes: hardLimit,
-            timestamp: Date()
+            resident: resident,
+            inflightOther: inflightOther,
+            kvHeadroom: kvHeadroom,
+            physical: physical,
+            available: Self.availableMemoryBytes()
         )
 
-        switch verdict {
+        lastRAMFeasibility = assessment
+
+        switch assessment.verdict {
         case .ok:
             break
         case .tight:
             genLog.warning(
-                "loadContainer: RAM tight for \(modelName, privacy: .public) projected=\(projected, privacy: .public) soft=\(softLimit, privacy: .public) hard=\(hardLimit, privacy: .public) physical=\(physical, privacy: .public) available=\(available, privacy: .public) requiredAvailable=\(requiredAvailable, privacy: .public)"
+                "loadContainer: RAM tight for \(modelName, privacy: .public) projected=\(assessment.projectedBytes, privacy: .public) soft=\(assessment.softLimitBytes, privacy: .public) hard=\(assessment.hardLimitBytes, privacy: .public) physical=\(physical, privacy: .public) available=\(assessment.availableMemoryBytes, privacy: .public) requiredAvailable=\(assessment.requiredAvailableBytes, privacy: .public)"
             )
         case .refused:
             genLog.warning(
@@ -1211,6 +1266,75 @@ public actor ModelRuntime {
                 message: "ram-advisory model=\(modelName) verdict=refused"
             )
         }
+    }
+
+    /// Projected RAM feasibility for loading `name`, computed WITHOUT loading
+    /// anything. Backs the chat input's tight-fit disclaimer and send gate.
+    ///
+    /// Returns `nil` when no new load would happen or nothing can be
+    /// projected: the model is already resident, isn't installed locally, or
+    /// its bundle size can't be determined. Never mutates
+    /// `lastRAMFeasibility` and never gates the runtime load path — the
+    /// returned snapshot is a UI-layer signal keyed to the documented
+    /// soft/hard RAM threshold settings.
+    public func projectedLoadFeasibility(for name: String) async -> RAMFeasibility? {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+        guard modelCache[trimmed] == nil else { return nil }
+        guard let found = ModelManager.findInstalledModel(named: trimmed) else { return nil }
+        guard let localURL = Self.findLocalDirectory(forModelId: found.id) else { return nil }
+
+        let physical = Int64(ProcessInfo.processInfo.physicalMemory)
+        guard physical > 0 else { return nil }
+        let weightsBytes = candidateWeightsSizeBytes(modelName: trimmed, directory: localURL)
+        guard weightsBytes > 0 else { return nil }
+
+        let loadFootprintBytes = Self.effectiveLoadFootprintBytes(
+            rawWeightsBytes: weightsBytes,
+            modelDirectory: localURL,
+            modelName: trimmed
+        )
+        let kvHeadroom = Self.estimatedKVHeadroomBytes(
+            forWeights: loadFootprintBytes,
+            modelDirectory: localURL,
+            modelName: trimmed
+        )
+
+        // Strict single-model evicts the current resident before the load
+        // starts, so the projection must not double-count it. Flexible
+        // (multi-model) residency keeps other models around.
+        let policy =
+            await ServerConfigurationStore.load()?.modelEvictionPolicy ?? .strictSingleModel
+        let resident = policy == .strictSingleModel ? 0 : residentWeightBytes(excluding: trimmed)
+        let inflightOther = inflightLoadWeightBytes(excluding: trimmed)
+
+        return Self.buildRAMFeasibility(
+            modelName: trimmed,
+            incomingWeightsBytes: weightsBytes,
+            incomingLoadFootprintBytes: loadFootprintBytes,
+            resident: resident,
+            inflightOther: inflightOther,
+            kvHeadroom: kvHeadroom,
+            physical: physical,
+            available: Self.availableMemoryBytes()
+        )
+    }
+
+    /// Memoized bundle-size lookup for `projectedLoadFeasibility`: the UI
+    /// re-polls every ~2s while a banner is up, and `computeWeightsSizeBytes`
+    /// re-reads directory metadata / index JSON on every call. Keyed by model
+    /// name and invalidated when the resolved directory changes.
+    private var candidateWeightsBytesCache: [String: (path: String, bytes: Int64)] = [:]
+
+    private func candidateWeightsSizeBytes(modelName: String, directory: URL) -> Int64 {
+        if let cached = candidateWeightsBytesCache[modelName], cached.path == directory.path {
+            return cached.bytes
+        }
+        let bytes = Self.computeWeightsSizeBytes(at: directory, modelName: modelName)
+        if bytes > 0 {
+            candidateWeightsBytesCache[modelName] = (directory.path, bytes)
+        }
+        return bytes
     }
 
     private static func availableMemoryBytes() -> Int64 {

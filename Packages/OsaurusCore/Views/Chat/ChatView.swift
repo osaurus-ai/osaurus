@@ -219,6 +219,15 @@ final class ChatSession: ObservableObject {
     /// Whether this run appended a new user turn. Regeneration sends reuse
     /// historical user turns and must not pop one during privacy-cancel rollback.
     private var appendedUserTurnForCurrentRun = false
+    /// True while a send is parked on the pre-send warm-up handshake (the
+    /// in-flight warm-up generation may still be loading the model). Drives a
+    /// placeholder typing-indicator row so the wait shows "Loading Model..."
+    /// instead of a silent gap under the user's message.
+    private var awaitingPreSendHandshake = false
+    /// Stable placeholder assistant turn rendered (never persisted, never in
+    /// `turns`) while `awaitingPreSendHandshake` is true. Stable identity so
+    /// the typing-indicator block id doesn't churn across rebuilds.
+    private let preSendHandshakePlaceholderTurn = ChatTurn(role: .assistant, content: "")
     /// Full transcript snapshot to restore when privacy review cancels a
     /// regeneration/edit-regeneration before the request leaves the device.
     private var turnsRollbackOnCancel: [ChatTurn]?
@@ -376,7 +385,6 @@ final class ChatSession: ObservableObject {
     nonisolated(unsafe) private var modelCacheCancellable: AnyCancellable?
     /// Flag to prevent auto-persist during initial load or programmatic resets
     private var isLoadingModel: Bool = false
-    private var previousSelectedModel: String?
 
     nonisolated(unsafe) private var localModelsObserver: NSObjectProtocol?
     /// Observer for `.privacyFilterRedactionsApproved`. Folds every
@@ -568,8 +576,6 @@ final class ChatSession: ObservableObject {
             .removeDuplicates()
             .sink { [weak self] newModel in
                 guard let self = self, !self.isLoadingModel else { return }
-                let previous = self.previousSelectedModel
-                self.previousSelectedModel = newModel
                 guard let model = newModel else { return }
                 let pid = self.agentId ?? Agent.defaultId
                 // Mode 2 (remote agent run): the model is pinned to the remote
@@ -593,7 +599,6 @@ final class ChatSession: ObservableObject {
 
                 self.warmupController.handleModelSelectionChange(
                     session: self,
-                    from: previous,
                     to: model,
                     performSwitch: { [weak self] evictOthers in
                         await self?.performModelResidencySwitch(evictOthers: evictOthers)
@@ -780,7 +785,6 @@ final class ChatSession: ObservableObject {
         }
         loadActiveModelOptions(for: selectedModel)
         applyImageModelDefaults(for: selectedModel)
-        previousSelectedModel = selectedModel
         isLoadingModel = false
         notifySessionBecameActive()
     }
@@ -994,7 +998,17 @@ final class ChatSession: ObservableObject {
         // In Mode 2 the remote agent owns the conversation, so its name heads
         // the thread; otherwise fall back to the local agent's name.
         let displayName = threadAgentDisplayName ?? localName
-        let streamingTurnId = isStreaming ? turns.last?.id : nil
+        var streamingTurnId = isStreaming ? turns.last?.id : nil
+
+        // While a send waits on the pre-send warm-up handshake there is no
+        // assistant turn yet; render a placeholder typing-indicator group so
+        // the model-load/prefill wait is visible. The placeholder never
+        // enters `turns` — it exists only in this rebuild's block input.
+        var effectiveTurns = turns
+        if awaitingPreSendHandshake, !isStreaming, !turns.isEmpty {
+            effectiveTurns.append(preSendHandshakePlaceholderTurn)
+            streamingTurnId = preSendHandshakePlaceholderTurn.id
+        }
 
         if MockChatData.isEnabled {
             let mockTurns = MockChatData.mockTurnsForPerformanceTest()
@@ -1015,7 +1029,7 @@ final class ChatSession: ObservableObject {
         updateStreamingThinkingExpansion(streamingTurnId: streamingTurnId)
 
         let newBlocks = blockMemoizer.blocks(
-            from: turns,
+            from: effectiveTurns,
             streamingTurnId: streamingTurnId,
             agentName: displayName
         )
@@ -1369,17 +1383,18 @@ final class ChatSession: ObservableObject {
         send(text, attachments: attachments)
     }
 
-    /// Pre-send warm-up handshake: flush a pending debounced model switch
-    /// (the user must never wait out the switch timer), then wait for any
+    /// Pre-send warm-up handshake: wait for an in-flight model switch
+    /// (stale warm-up unwind + eviction) to settle, then wait for any
     /// in-flight warm-up generation to finish so its prefilled KV prefix is
     /// stored and the real request can prefix-hit. Does NOT start new
     /// warm-up work.
     private func prepareForSendWarmup() async {
-        await warmupController.flushPendingModelSwitch(
-            performSwitch: { [weak self] evictOthers in
-                await self?.performModelResidencySwitch(evictOthers: evictOthers)
-            }
-        )
+        await warmupController.awaitActiveModelSwitch()
+        // The switch task's last step schedules a fresh warm-up; this send
+        // owns the next generation, so drop that scheduled warm-up before it
+        // starts (a warm-up that already reached generation is covered by
+        // the await below and only pre-warms this send's own prefix).
+        warmupController.cancelScheduledWarmup()
         await warmupController.awaitInFlightWarmup()
     }
 
@@ -1631,6 +1646,7 @@ final class ChatSession: ObservableObject {
         showVoiceOverlay = false
         transientSessionIdForCurrentRun = nil
         appendedUserTurnForCurrentRun = false
+        awaitingPreSendHandshake = false
         turnsRollbackOnCancel = nil
         suppressQueuedSendFlushForCurrentRun = false
         // Clear session identity for new chat
@@ -1971,6 +1987,7 @@ final class ChatSession: ObservableObject {
         pendingAttachments = []
         transientSessionIdForCurrentRun = nil
         appendedUserTurnForCurrentRun = false
+        awaitingPreSendHandshake = false
         turnsRollbackOnCancel = nil
         suppressQueuedSendFlushForCurrentRun = false
         isDirty = false  // Fresh load, not dirty
@@ -1985,7 +2002,6 @@ final class ChatSession: ObservableObject {
         suppressVisibleBlockRebuild = false
         rebuildVisibleBlocks()
         warmupController.reset()
-        previousSelectedModel = selectedModel
 
         Task { [weak self] in
             await self?.refreshContextEstimates()
@@ -3486,16 +3502,42 @@ final class ChatSession: ObservableObject {
 
         // Common case: nothing pending — dispatch synchronously so the user
         // turn is appended inside send() (callers and tests rely on this).
-        // Only a pending debounced model switch or an in-flight warm-up
+        // Only a model switch still settling or an in-flight warm-up
         // generation requires the async handshake first.
         guard warmupController.needsPreSendHandshake else {
             dispatchSend(trimmed: trimmed, attachments: attachments, hasContent: hasContent)
             return
         }
 
+        // The handshake can wait out an entire model load (the in-flight
+        // warm-up generation loads the container first), so the user's
+        // message must appear NOW — not when the model finishes loading.
+        // Append the turn eagerly; dispatchSend skips the append, and the
+        // post-handshake guards roll it back if the dispatch aborts.
+        var preAppendedUserTurn: ChatTurn?
+        var preAppendIntroducedFirstTurn = false
+        if hasContent {
+            preAppendIntroducedFirstTurn = turns.isEmpty
+            let turn = ChatTurn(role: .user, content: trimmed, attachments: attachments)
+            turns.append(turn)
+            preAppendedUserTurn = turn
+        }
+        // Show the typing-indicator row (which surfaces "Loading Model..." /
+        // prefill progress) while the send waits on the warm-up, so the wait
+        // isn't a silent gap between the user's message and the run starting.
+        awaitingPreSendHandshake = true
+        rebuildVisibleBlocks()
+
         Task { @MainActor in
             await self.prepareForSendWarmup()
-            self.dispatchSend(trimmed: trimmed, attachments: attachments, hasContent: hasContent)
+            self.awaitingPreSendHandshake = false
+            self.dispatchSend(
+                trimmed: trimmed,
+                attachments: attachments,
+                hasContent: hasContent,
+                preAppendedUserTurn: preAppendedUserTurn,
+                preAppendIntroducedFirstTurn: preAppendIntroducedFirstTurn
+            )
         }
     }
 
@@ -3505,9 +3547,13 @@ final class ChatSession: ObservableObject {
     private func dispatchSend(
         trimmed: String,
         attachments: [Attachment],
-        hasContent: Bool
+        hasContent: Bool,
+        preAppendedUserTurn: ChatTurn? = nil,
+        preAppendIntroducedFirstTurn: Bool = false
     ) {
         guard activeRunId == nil, !isStreaming else {
+            rollbackPreAppendedUserTurn(
+                preAppendedUserTurn, restoringDraft: (trimmed, attachments))
             restoreTurnsRollbackAfterAbortedRegeneration()
             return
         }
@@ -3516,6 +3562,7 @@ final class ChatSession: ObservableObject {
             // `sendCurrent` already cleared the composer, and the warm-up
             // await above widened the window in which another window can
             // grab the runtime. Put the draft back instead of dropping it.
+            rollbackPreAppendedUserTurn(preAppendedUserTurn, restoringDraft: nil)
             if hasContent, input.isEmpty, pendingAttachments.isEmpty {
                 input = trimmed
                 pendingAttachments = attachments
@@ -3555,13 +3602,25 @@ final class ChatSession: ObservableObject {
         awaitingClarify = nil
 
         if hasContent {
-            let sendIntroducesFirstTurn = turns.isEmpty
+            // The pre-appended turn normally still sits in `turns`; it only
+            // disappears if the transcript was reset during the handshake
+            // (new chat / session load), in which case re-appending here
+            // restores the old dispatch-time-append behavior.
+            let preAppendedTurnPresent = preAppendedUserTurn.map { pre in
+                turns.contains { $0.id == pre.id }
+            }
+            let sendIntroducesFirstTurn =
+                preAppendedTurnPresent == true ? preAppendIntroducedFirstTurn : turns.isEmpty
             // One-shot activation signal — the install's first ever chat-UI
             // message. Inside the `hasContent` branch so a contentless
             // regeneration doesn't count as "used".
             FeatureTelemetry.firstTimeChatUsed()
 
-            turns.append(ChatTurn(role: .user, content: trimmed, attachments: attachments))
+            if let pre = preAppendedUserTurn {
+                if preAppendedTurnPresent == false { turns.append(pre) }
+            } else {
+                turns.append(ChatTurn(role: .user, content: trimmed, attachments: attachments))
+            }
             appendedUserTurnForCurrentRun = true
             // Stash the draft so we can put it back if the user cancels
             // out of the privacy review sheet. The text and attachments
@@ -5010,6 +5069,25 @@ final class ChatSession: ObservableObject {
 
     private func snapshotTurnsForCancelRollback() -> [ChatTurn] {
         turns.map { ChatTurn(from: ChatTurnData(from: $0)) }
+    }
+
+    /// Undo the eager user-turn append from `send()`'s pre-send-handshake
+    /// path when the post-handshake dispatch aborts (a run started or
+    /// another window grabbed the local runtime while we waited). Restores
+    /// the draft when asked so the user's text isn't silently dropped.
+    private func rollbackPreAppendedUserTurn(
+        _ turn: ChatTurn?,
+        restoringDraft draft: (text: String, attachments: [Attachment])?
+    ) {
+        guard let turn else { return }
+        if let index = turns.lastIndex(where: { $0.id == turn.id }) {
+            turns.remove(at: index)
+            rebuildVisibleBlocks()
+        }
+        if let draft, input.isEmpty, pendingAttachments.isEmpty {
+            input = draft.text
+            pendingAttachments = draft.attachments
+        }
     }
 
     private func restoreTurnsRollbackAfterAbortedRegeneration() {

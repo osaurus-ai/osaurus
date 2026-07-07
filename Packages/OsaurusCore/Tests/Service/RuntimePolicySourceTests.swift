@@ -1972,8 +1972,11 @@ struct RuntimePolicySourceTests {
                 && runtime.contains("availableMemoryBytes: available"),
             "The load assessment must track available memory and expose it through health/logs without using it as a hard RAM block."
         )
+        // The verdict math lives in the shared builder so the advisory
+        // pre-load gate and the chat input's candidate projection can't
+        // drift apart.
         let assessmentBody = try Self.functionBody(
-            "private func checkRAMFeasibility",
+            "static func buildRAMFeasibility",
             in: runtime
         )
         // RAM pressure must not refuse a user-requested load: unified memory
@@ -1985,6 +1988,15 @@ struct RuntimePolicySourceTests {
                 && !assessmentBody.contains("throw LoadRefusedError(")
                 && !assessmentBody.contains("verdict = .refused"),
             "RAM pressure must warn as .tight, not throw or mark a hard refusal before vMLX attempts the load."
+        )
+        let advisoryGateBody = try Self.functionBody(
+            "private func checkRAMFeasibility",
+            in: runtime
+        )
+        #expect(
+            advisoryGateBody.contains("buildRAMFeasibility(")
+                && !advisoryGateBody.contains("throw LoadRefusedError("),
+            "The pre-load gate must route through the shared assessment builder and stay advisory."
         )
 
         let health = try Self.source("Networking/HTTPHandler.swift")

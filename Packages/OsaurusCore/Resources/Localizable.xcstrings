@@ -130,34 +130,6 @@
         }
       }
     },
-    "%lld of %lld exposed" : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "%lld von %lld freigegeben"
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "%2$lld개 중 %1$lld개 노출됨"
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Открыто %lld из %lld"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "已公开 %lld/%lld"
-          }
-        }
-      }
-    },
     "-1001234567890 — one per line" : {
       "localizations" : {
         "de" : {
@@ -222,642 +194,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "-1001234567890 或 @channelname — 每行一個"
-          }
-        }
-      }
-    },
-    "Apple Foundation Model" : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Apple Foundation-Modell"
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Apple Foundation 모델"
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Модель Apple Foundation"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Apple 基础模型"
-          }
-        }
-      }
-    },
-    "Auto-reconnecting after a stale session." : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Automatische Wiederverbindung nach einer veralteten Sitzung."
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "세션이 만료되어 자동으로 다시 연결하는 중입니다."
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Автоматическое переподключение после устаревшей сессии."
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "会话失效，正在自动重新连接。"
-          }
-        }
-      }
-    },
-    "Choose which models the API lists" : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Wählen Sie, welche Modelle die API auflistet"
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "API가 나열할 모델 선택"
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Выберите, какие модели показывает API"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "选择 API 列出的模型"
-          }
-        }
-      }
-    },
-    "Close find bar" : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Suchleiste schließen"
-          }
-        },
-        "en" : {
-          "stringUnit" : {
-            "state" : "new",
-            "value" : "Close find bar"
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "찾기 막대 닫기"
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Закрыть панель поиска"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "关闭查找栏"
-          }
-        },
-        "zh-Hant" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "關閉查找欄"
-          }
-        }
-      }
-    },
-    "Connected %@" : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Verbunden %@"
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "연결됨 %@"
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Подключено %@"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "已连接 %@"
-          }
-        }
-      }
-    },
-    "Currently connected, but the last probe failed." : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Derzeit verbunden, aber die letzte Prüfung ist fehlgeschlagen."
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "현재 연결되어 있지만 마지막 상태 확인이 실패했습니다."
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Сейчас подключено, но последняя проверка не удалась."
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "当前已连接，但上次探测失败。"
-          }
-        }
-      }
-    },
-    "Expose all" : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Alle freigeben"
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "모두 노출"
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Показать все"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "全部公开"
-          }
-        }
-      }
-    },
-    "Find in conversation" : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "In Konversation suchen"
-          }
-        },
-        "en" : {
-          "stringUnit" : {
-            "state" : "new",
-            "value" : "Find in conversation"
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "대화에서 찾기"
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Найти в беседе"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "在对话中查找"
-          }
-        },
-        "zh-Hant" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "在對話中查找"
-          }
-        }
-      }
-    },
-    "Hidden by default. Enable the remote models you want the API to list." : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Standardmäßig ausgeblendet. Aktivieren Sie die Remote-Modelle, die die API auflisten soll."
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "기본적으로 숨겨져 있습니다. API에 나열할 원격 모델을 활성화하세요."
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "По умолчанию скрыты. Включите удалённые модели, которые API должен показывать."
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "默认隐藏。启用您希望 API 列出的远程模型。"
-          }
-        }
-      }
-    },
-    "Hide all" : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Alle ausblenden"
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "모두 숨기기"
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Скрыть все"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "全部隐藏"
-          }
-        }
-      }
-    },
-    "Last auto-reconnect %@." : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Letzte automatische Wiederverbindung: %@."
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "마지막 자동 재연결: %@."
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Последнее автоматическое переподключение: %@."
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "上次自动重连：%@。"
-          }
-        }
-      }
-    },
-    "Last connected %@." : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Zuletzt verbunden: %@."
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "마지막 연결: %@."
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Последнее подключение: %@."
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "上次连接：%@。"
-          }
-        }
-      }
-    },
-    "Local Models" : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Lokale Modelle"
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "로컬 모델"
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Локальные модели"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "本地模型"
-          }
-        }
-      }
-    },
-    "Next match" : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Nächster Treffer"
-          }
-        },
-        "en" : {
-          "stringUnit" : {
-            "state" : "new",
-            "value" : "Next match"
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "다음 일치 항목"
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Следующее совпадение"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "下一个匹配项"
-          }
-        },
-        "zh-Hant" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "下一個匹配項"
-          }
-        }
-      }
-    },
-    "No local models match your search." : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Keine lokalen Modelle entsprechen Ihrer Suche."
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "검색과 일치하는 로컬 모델이 없습니다."
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Нет локальных моделей, соответствующих вашему запросу."
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "没有符合搜索条件的本地模型。"
-          }
-        }
-      }
-    },
-    "No models match your search." : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Keine Modelle entsprechen Ihrer Suche."
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "검색과 일치하는 모델이 없습니다."
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Нет моделей, соответствующих вашему запросу."
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "没有符合搜索条件的模型。"
-          }
-        }
-      }
-    },
-    "Previous match" : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Vorheriger Treffer"
-          }
-        },
-        "en" : {
-          "stringUnit" : {
-            "state" : "new",
-            "value" : "Previous match"
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "이전 일치 항목"
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Предыдущее совпадение"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "上一个匹配项"
-          }
-        },
-        "zh-Hant" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "上一個匹配項"
-          }
-        }
-      }
-    },
-    "Reconnecting…" : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Wird erneut verbunden …"
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "다시 연결하는 중…"
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Повторное подключение…"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "正在重新连接…"
-          }
-        }
-      }
-    },
-    "Remote Models" : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Remote-Modelle"
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "원격 모델"
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Удалённые модели"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "远程模型"
-          }
-        }
-      }
-    },
-    "Scanning installed models…" : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Installierte Modelle werden gescannt …"
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "설치된 모델을 검색하는 중…"
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Сканирование установленных моделей…"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "正在扫描已安装的模型…"
-          }
-        }
-      }
-    },
-    "The last probe succeeded, but the provider is not connected." : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Die letzte Prüfung war erfolgreich, aber der Anbieter ist nicht verbunden."
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "마지막 상태 확인은 성공했지만 공급자가 연결되어 있지 않습니다."
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Последняя проверка прошла успешно, но провайдер не подключён."
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "上次探测成功，但提供方未连接。"
           }
         }
       }
@@ -2666,6 +2002,62 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "%@ 不是 MLX 模型，因此無法在 Osaurus 中使用。本地引擎僅支持運行 MLX 格式的模型。"
+          }
+        }
+      }
+    },
+    "%@ needs ~%@ GB to load and memory is at %@%% of %@ GB. Close other apps for best performance." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%1$@ benötigt zum Laden ~%2$@ GB und der Speicher ist zu %3$@%% von %4$@ GB belegt. Schließe andere Apps für die beste Leistung."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%1$@을(를) 로드하려면 약 %2$@GB가 필요하며 메모리가 %4$@GB 중 %3$@%% 사용 중입니다. 최상의 성능을 위해 다른 앱을 닫으세요."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Для загрузки %1$@ нужно ~%2$@ ГБ, память заполнена на %3$@%% из %4$@ ГБ. Закройте другие приложения для лучшей производительности."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "加载 %1$@ 需要约 %2$@ GB，内存已使用 %4$@ GB 中的 %3$@%%。关闭其他应用可获得最佳性能。"
+          }
+        }
+      }
+    },
+    "%@ needs ~%@ GB to load, but memory is at %@%% of %@ GB. Sending is paused until memory frees — close other apps or pick a smaller model." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%1$@ benötigt zum Laden ~%2$@ GB, aber der Speicher ist zu %3$@%% von %4$@ GB belegt. Das Senden ist pausiert, bis Speicher frei wird — schließe andere Apps oder wähle ein kleineres Modell."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%1$@을(를) 로드하려면 약 %2$@GB가 필요하지만 메모리가 %4$@GB 중 %3$@%% 사용 중입니다. 메모리가 확보될 때까지 전송이 일시 중지됩니다 — 다른 앱을 닫거나 더 작은 모델을 선택하세요."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Для загрузки %1$@ нужно ~%2$@ ГБ, но память заполнена на %3$@%% из %4$@ ГБ. Отправка приостановлена, пока память не освободится — закройте другие приложения или выберите меньшую модель."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "加载 %1$@ 需要约 %2$@ GB，但内存已使用 %4$@ GB 中的 %3$@%%。发送已暂停，等待内存释放 — 请关闭其他应用或选择更小的模型。"
           }
         }
       }
@@ -4537,6 +3929,34 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "%1$lld / %2$lld"
+          }
+        }
+      }
+    },
+    "%lld of %lld exposed" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%lld von %lld freigegeben"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%2$lld개 중 %1$lld개 노출됨"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Открыто %lld из %lld"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "已公开 %lld/%lld"
           }
         }
       }
@@ -16169,6 +15589,34 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "外觀"
+          }
+        }
+      }
+    },
+    "Apple Foundation Model" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Apple Foundation-Modell"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Apple Foundation 모델"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Модель Apple Foundation"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Apple 基础模型"
           }
         }
       }
@@ -29301,6 +28749,34 @@
         }
       }
     },
+    "Choose which models the API lists" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Wählen Sie, welche Modelle die API auflistet"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "API가 나열할 모델 선택"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Выберите, какие модели показывает API"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "选择 API 列出的模型"
+          }
+        }
+      }
+    },
     "Choose your model" : {
       "localizations" : {
         "de" : {
@@ -36121,6 +35597,10 @@
           }
         }
       }
+    },
+    "Controls the models returned by /models and /tags. Hidden models can still be used by requesting them directly. Changes apply immediately." : {
+      "comment" : "Description of the feature that allows the user to choose which models are visible to the API.",
+      "isCommentAutoGenerated" : true
     },
     "Conversation" : {
       "localizations" : {
@@ -55812,6 +55292,34 @@
         }
       }
     },
+    "Expose all" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Alle freigeben"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "모두 노출"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Показать все"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "全部公开"
+          }
+        }
+      }
+    },
     "Expose this agent to the public internet via a relay tunnel so external services can reach it." : {
       "localizations" : {
         "de" : {
@@ -63150,6 +62658,34 @@
         }
       }
     },
+    "Hidden by default. Enable the remote models you want the API to list." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Standardmäßig ausgeblendet. Aktivieren Sie die Remote-Modelle, die die API auflisten soll."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "기본적으로 숨겨져 있습니다. API에 나열할 원격 모델을 활성화하세요."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "По умолчанию скрыты. Включите удалённые модели, которые API должен показывать."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "默认隐藏。启用您希望 API 列出的远程模型。"
+          }
+        }
+      }
+    },
     "hidden in %@ mode" : {
       "localizations" : {
         "de" : {
@@ -63214,6 +62750,34 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "隱藏高級設置"
+          }
+        }
+      }
+    },
+    "Hide all" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Alle ausblenden"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "모두 숨기기"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Скрыть все"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "全部隐藏"
           }
         }
       }
@@ -76176,6 +75740,34 @@
         }
       }
     },
+    "Local Models" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Lokale Modelle"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "로컬 모델"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Локальные модели"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "本地模型"
+          }
+        }
+      }
+    },
     "Local models are compute-intensive and our curated picks need more unified memory than this machine has. We recommend a different path." : {
       "extractionState" : "stale",
       "localizations" : {
@@ -80223,6 +79815,34 @@
         }
       }
     },
+    "Memory is tight for %@" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Der Speicher ist knapp für %@"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%@에 대한 메모리가 부족합니다"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Мало памяти для %@"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%@ 的内存吃紧"
+          }
+        }
+      }
+    },
     "Memory Recall" : {
       "comment" : "A feature toggle that lets the agent search its memory mid-conversation.",
       "isCommentAutoGenerated" : true,
@@ -82633,6 +82253,9 @@
           }
         }
       }
+    },
+    "Model warm — ready for a fast first response" : {
+
     },
     "models" : {
       "localizations" : {
@@ -87480,6 +87103,38 @@
         }
       }
     },
+    "No local models installed yet. Download models from the Models manager and they will be exposed here automatically." : {
+      "comment" : "Message shown in the \"No local models installed yet\" empty state row of the server models tab.",
+      "isCommentAutoGenerated" : true
+    },
+    "No local models match your search." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Keine lokalen Modelle entsprechen Ihrer Suche."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "검색과 일치하는 로컬 모델이 없습니다."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Нет локальных моделей, соответствующих вашему запросу."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "没有符合搜索条件的本地模型。"
+          }
+        }
+      }
+    },
     "No local proof" : {
       "localizations" : {
         "de" : {
@@ -88306,6 +87961,34 @@
         }
       }
     },
+    "No models match your search." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Keine Modelle entsprechen Ihrer Suche."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "검색과 일치하는 모델이 없습니다."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Нет моделей, соответствующих вашему запросу."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "没有符合搜索条件的模型。"
+          }
+        }
+      }
+    },
     "No models on device yet" : {
       "localizations" : {
         "de" : {
@@ -88886,6 +88569,10 @@
           }
         }
       }
+    },
+    "No remote providers connected. Models from Osaurus Router and your own providers appear here once connected." : {
+      "comment" : "Text displayed in the \"Remote Models\" section when there are no remote providers connected.",
+      "isCommentAutoGenerated" : true
     },
     "No reply" : {
       "comment" : "Activity outcome: the request produced no visible reply.",
@@ -115334,6 +115021,34 @@
         }
       }
     },
+    "Remote Models" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Remote-Modelle"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "원격 모델"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Удалённые модели"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "远程模型"
+          }
+        }
+      }
+    },
     "Remote Osaurus" : {
       "localizations" : {
         "de" : {
@@ -125633,6 +125348,34 @@
         }
       }
     },
+    "Scanning installed models…" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Installierte Modelle werden gescannt …"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "설치된 모델을 검색하는 중…"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Сканирование установленных моделей…"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "正在扫描已安装的模型…"
+          }
+        }
+      }
+    },
     "Scanning…" : {
       "localizations" : {
         "de" : {
@@ -130100,6 +129843,34 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "傳送已全域暫停。代理仍可讀取已允許清單的頻道。"
+          }
+        }
+      }
+    },
+    "Sending paused: not enough memory to load %@" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Senden pausiert: Nicht genug Speicher, um %@ zu laden"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "전송 일시 중지됨: %@을(를) 로드할 메모리가 부족합니다"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Отправка приостановлена: недостаточно памяти для загрузки %@"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "发送已暂停：内存不足，无法加载 %@"
           }
         }
       }
@@ -158476,6 +158247,28 @@
           }
         }
       }
+    },
+    "Warming up — loading model…" : {
+
+    },
+    "Warming up — prefilling context %lld%% (%lld/%lld tokens)" : {
+      "comment" : "A label indicating that a model is warming up, showing the percentage of the prefilling process that has completed and the number of tokens that have been processed. The first argument is the percentage of the prefilling process that has completed. The second argument is the number of tokens that have been successfully processed. The third argument is the total number of tokens that were expected to be processed.",
+      "isCommentAutoGenerated" : true,
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Warming up — prefilling context %1$lld%% (%2$lld/%3$lld tokens)"
+          }
+        }
+      }
+    },
+    "Warming up — prefilling context…" : {
+
+    },
+    "Warming up…" : {
+      "comment" : "A message indicating that the model is warming up.",
+      "isCommentAutoGenerated" : true
     },
     "Warning" : {
       "localizations" : {
