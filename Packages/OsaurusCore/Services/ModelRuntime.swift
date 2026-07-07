@@ -205,6 +205,17 @@ public actor ModelRuntime {
         return modelCache[name] != nil
     }
 
+    /// True while any container load or tracked generation wrapper task is
+    /// in flight. Background maintenance (`ModelVerificationScheduler`) polls
+    /// this together with `InferenceLoadCoordinator.activeCount` to find a
+    /// window where a lightweight probe generation cannot contend with user
+    /// work. `coldLoadActive` is included because the expensive
+    /// pre-registration phase of a cold load (`ensureComplete`, sidecar
+    /// fetch, budget eviction) runs before a `loadingTasks` record exists.
+    var hasLoadOrGenerationInFlight: Bool {
+        coldLoadActive || !loadingTasks.isEmpty || !activeGenerationTasks.isEmpty
+    }
+
     /// Warm-load an installed local model without starting generation. Used by
     /// delegated jobs that temporarily evict chat models for unified-memory
     /// headroom, then restore the prior resident set after the helper job.

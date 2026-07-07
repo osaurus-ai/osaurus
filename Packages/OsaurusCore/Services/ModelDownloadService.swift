@@ -509,6 +509,14 @@ final class ModelDownloadService: ObservableObject {
                         )
                         ModelManager.invalidateLocalModelsCache()
                         NotificationCenter.default.post(name: .localModelsChanged, object: nil)
+                        // Background capability autorun (ledger probes). No-op
+                        // unless `ai.osaurus.verification.autoRunOnInstall` is
+                        // enabled; the scheduler waits for a fully idle runtime
+                        // before touching the GPU.
+                        ModelVerificationScheduler.shared.modelInstalled(
+                            name: model.name,
+                            localDirectory: model.localDirectory
+                        )
                     }
                 }
             } catch let pauseInfo as DirectDownloader.PauseInfo {
