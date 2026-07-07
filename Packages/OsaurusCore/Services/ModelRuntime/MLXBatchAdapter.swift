@@ -1127,7 +1127,13 @@ struct MLXBatchAdapter {
             stopSequences: stopSequences,
             draftStrategy: effectiveDraftStrategy,
             enableCompiledBatchDecode: effective.compiledBatchDecode,
-            prefillStepSize: runtime.concurrency.prefillStepSize,
+            // Optimal prefill chunking is model-architecture-dependent (a
+            // 4× spread was measured between a small dense model and a 35B
+            // MoE on the same machine), so a per-model measured value from
+            // `osaurus bench --tune-prefill` beats the server-wide setting;
+            // the setting remains the fallback, then vmlx's default.
+            prefillStepSize: ModelPrefillTuningStore.tunedStepSize(for: modelName)
+                ?? runtime.concurrency.prefillStepSize,
             modelName: modelName
         )
         // Block-diffusion speed/quality budget (DiffusionGemma): server
