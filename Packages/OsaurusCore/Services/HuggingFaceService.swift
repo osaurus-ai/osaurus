@@ -640,7 +640,9 @@ actor HuggingFaceService {
             safePath
             .split(separator: "/")
             .reduce(base) { partial, component in
-                partial.appendingPathComponent(String(component))
+                // isDirectory: false avoids a per-component disk stat; this can
+                // run on the main thread during downloads.
+                partial.appendingPathComponent(String(component), isDirectory: false)
             }
             .standardizedFileURL
 
