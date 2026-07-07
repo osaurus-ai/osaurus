@@ -931,16 +931,48 @@ fileprivate func voiceDebugLog(
 /// Groups the RAM tight-fit banner overlay and its refresh triggers into one
 /// modifier so the already-enormous `FloatingInputCard.body` chain doesn't
 /// gain four more inference nodes (the type-checker times out otherwise).
-/// Downward-pointing popover-style triangle under the RAM tight-fit banner.
-private struct RAMBannerPointer: Shape {
-    static let width: CGFloat = 18
-    static let height: CGFloat = 8
+/// The RAM tight-fit banner's full popover silhouette: a rounded rectangle
+/// whose bottom edge flows into a downward pointer triangle as one continuous
+/// path, so stroking it draws a single unbroken border around banner and
+/// pointer alike (no border line across the triangle's flat top).
+private struct RAMBannerShape: Shape {
+    static let pointerWidth: CGFloat = 18
+    static let pointerHeight: CGFloat = 8
+    static let cornerRadius: CGFloat = 14
+
+    /// X position of the pointer's tip, in the shape's own coordinates.
+    let pointerCenterX: CGFloat
 
     func path(in rect: CGRect) -> Path {
+        let r = Self.cornerRadius
+        let halfPointer = Self.pointerWidth / 2
+        let bodyBottom = rect.maxY - Self.pointerHeight
+
         var path = Path()
-        path.move(to: CGPoint(x: rect.minX, y: rect.minY))
-        path.addLine(to: CGPoint(x: rect.maxX, y: rect.minY))
-        path.addLine(to: CGPoint(x: rect.midX, y: rect.maxY))
+        path.move(to: CGPoint(x: rect.minX + r, y: rect.minY))
+        path.addLine(to: CGPoint(x: rect.maxX - r, y: rect.minY))
+        path.addArc(
+            center: CGPoint(x: rect.maxX - r, y: rect.minY + r),
+            radius: r, startAngle: .degrees(-90), endAngle: .degrees(0), clockwise: false
+        )
+        path.addLine(to: CGPoint(x: rect.maxX, y: bodyBottom - r))
+        path.addArc(
+            center: CGPoint(x: rect.maxX - r, y: bodyBottom - r),
+            radius: r, startAngle: .degrees(0), endAngle: .degrees(90), clockwise: false
+        )
+        path.addLine(to: CGPoint(x: pointerCenterX + halfPointer, y: bodyBottom))
+        path.addLine(to: CGPoint(x: pointerCenterX, y: rect.maxY))
+        path.addLine(to: CGPoint(x: pointerCenterX - halfPointer, y: bodyBottom))
+        path.addLine(to: CGPoint(x: rect.minX + r, y: bodyBottom))
+        path.addArc(
+            center: CGPoint(x: rect.minX + r, y: bodyBottom - r),
+            radius: r, startAngle: .degrees(90), endAngle: .degrees(180), clockwise: false
+        )
+        path.addLine(to: CGPoint(x: rect.minX, y: rect.minY + r))
+        path.addArc(
+            center: CGPoint(x: rect.minX + r, y: rect.minY + r),
+            radius: r, startAngle: .degrees(180), endAngle: .degrees(270), clockwise: false
+        )
         path.closeSubpath()
         return path
     }
@@ -3412,10 +3444,10 @@ extension FloatingInputCard {
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.leading, 20)
                 .padding(.top, 8)
-                // Pull the banner down toward the chip: leave just the pointer
-                // height plus a small gap, cancelling most of the stack
-                // spacing between this row and the selector row below.
-                .padding(.bottom, RAMBannerPointer.height - 16)
+                // The pointer is inside the banner's frame now; the negative
+                // padding cancels most of the stack spacing + selector row top
+                // padding so the pointer tip sits ~4pt above the chip.
+                .padding(.bottom, -16)
                 .transition(.opacity.combined(with: .move(edge: .bottom)))
         }
     }
@@ -3446,6 +3478,15 @@ extension FloatingInputCard {
                 bundle: .module
             )
 
+        // One continuous popover silhouette: the rounded rect and the pointer
+        // triangle are a single shape, so the fill and the border flow around
+        // the combined outline with no seam where they meet.
+        let clampedX = min(
+            max(pointerCenterX, 14 + RAMBannerShape.pointerWidth / 2),
+            Self.ramBannerWidth - 14 - RAMBannerShape.pointerWidth / 2
+        )
+        let shape = RAMBannerShape(pointerCenterX: clampedX)
+
         // Icon is concatenated into the text as a first-line prefix (not an
         // HStack sibling) so wrapped lines use the banner's full width.
         return
@@ -3456,35 +3497,17 @@ extension FloatingInputCard {
             .font(theme.font(size: CGFloat(theme.captionSize), weight: .medium))
             .fixedSize(horizontal: false, vertical: true)
         .padding(.horizontal, 14)
-        .padding(.vertical, 9)
+        .padding(.top, 9)
+        // The shape's bottom edge sits above the pointer, so reserve its
+        // height inside the frame.
+        .padding(.bottom, 9 + RAMBannerShape.pointerHeight)
         .background(
             ZStack {
-                RoundedRectangle(cornerRadius: 14, style: .continuous)
-                    .fill(.regularMaterial)
-                RoundedRectangle(cornerRadius: 14, style: .continuous)
-                    .fill(tint.opacity(0.12))
+                shape.fill(.regularMaterial)
+                shape.fill(tint.opacity(0.12))
             }
         )
-        .overlay(
-            RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .strokeBorder(tint.opacity(0.35), lineWidth: 1)
-        )
-        // Popover-style pointer aimed down at the model picker chip's center,
-        // clamped away from the banner's rounded corners.
-        .overlay(alignment: .bottomLeading) {
-            let clampedX = min(
-                max(pointerCenterX, 14 + RAMBannerPointer.width / 2),
-                Self.ramBannerWidth - 14 - RAMBannerPointer.width / 2
-            )
-            ZStack {
-                RAMBannerPointer().fill(.regularMaterial)
-                RAMBannerPointer().fill(tint.opacity(0.28))
-            }
-            .frame(width: RAMBannerPointer.width, height: RAMBannerPointer.height)
-            // +1 keeps the triangle's flat top below the banner's 1pt border
-            // stroke instead of overlapping it.
-            .offset(x: clampedX - RAMBannerPointer.width / 2, y: RAMBannerPointer.height + 1)
-        }
+        .overlay(shape.stroke(tint.opacity(0.35), lineWidth: 1))
         .shadow(color: Color.black.opacity(0.12), radius: 8, x: 0, y: 3)
         .accessibilityLabel(
             blocked
