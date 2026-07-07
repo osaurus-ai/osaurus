@@ -278,7 +278,14 @@ private extension ManagementView {
                 hasAppeared = true
             }
         }
-        updater.checkForUpdatesInBackground()
+        // First touch lazily creates SPUStandardUpdaterController, whose init
+        // reads bundle/defaults state off disk — and this appear fires during
+        // the launch-time management-window prewarm. Defer it past launch
+        // congestion instead of stalling the prewarm frame; a delayed
+        // background check is invisible to the user.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
+            updater.checkForUpdatesInBackground()
+        }
     }
 
     func handleTabChange(to newTab: ManagementTab) {
