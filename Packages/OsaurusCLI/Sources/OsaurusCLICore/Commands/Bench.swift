@@ -275,8 +275,7 @@ public struct BenchCommand: Command {
             records.removeValue(forKey: model)
         }
         if let data = try? JSONSerialization.data(
-            withJSONObject: records, options: [.prettyPrinted, .sortedKeys])
-        {
+            withJSONObject: records, options: [.prettyPrinted, .sortedKeys]) {
             try? data.write(to: url, options: .atomic)
         }
     }

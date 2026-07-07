@@ -37,7 +37,7 @@ enum ModelPrefillTuningStore {
     /// Test-only injection point, scoped per task tree (same pattern as
     /// `ModelRuntime.sidecarFetcherForTests`) so parallel tests don't race.
     @TaskLocal
-    static var fileURLOverrideForTests: URL? = nil
+    static var fileURLOverrideForTests: URL?
 
     static var fileURL: URL {
         fileURLOverrideForTests
@@ -48,12 +48,12 @@ enum ModelPrefillTuningStore {
 
     private struct CacheBox: @unchecked Sendable {
         var records: [String: Record] = [:]
-        var mtime: Date? = nil
-        var checkedURL: URL? = nil
+        var mtime: Date?
+        var checkedURL: URL?
     }
 
     private static let lock = NSLock()
-    private static nonisolated(unsafe) var cache = CacheBox()
+    nonisolated(unsafe) private static var cache = CacheBox()
 
     /// Tuned step size for `modelName`, or nil when no measurement exists.
     /// Keys are matched case-insensitively because the chat router
@@ -79,8 +79,7 @@ enum ModelPrefillTuningStore {
         var records: [String: Record] = [:]
         if let mtime,
             let data = try? Data(contentsOf: url),
-            let decoded = try? JSONDecoder().decode([String: Record].self, from: data)
-        {
+            let decoded = try? JSONDecoder().decode([String: Record].self, from: data) {
             records = decoded
             tuningLog.info(
                 "loaded \(records.count, privacy: .public) prefill tuning record(s) (mtime \(mtime.ISO8601Format(), privacy: .public))"
@@ -98,8 +97,7 @@ enum ModelPrefillTuningStore {
         let url = fileURL
         var records: [String: Record] = [:]
         if let data = try? Data(contentsOf: url),
-            let decoded = try? JSONDecoder().decode([String: Record].self, from: data)
-        {
+            let decoded = try? JSONDecoder().decode([String: Record].self, from: data) {
             records = decoded
         }
         records[modelName] = record
