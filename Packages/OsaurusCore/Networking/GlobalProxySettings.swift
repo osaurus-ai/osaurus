@@ -130,13 +130,39 @@ public enum GlobalProxySettings {
     /// `ServerConfigurationStore` is main-actor isolated because it is also
     /// used by SwiftUI state. Reading the same JSON file directly keeps
     /// session construction synchronous and side-effect free.
+    private struct ConfigCacheState {
+        let path: String
+        let modified: Date?
+        let configuration: ServerConfiguration?
+    }
+
+    /// Decoded-config cache validated by the file's modification date. Every
+    /// proxy lookup used to re-read and re-decode server.json — and lookups
+    /// run on the main thread (settings views, session builds), where the
+    /// read is an observed hang under disk pressure. A single stat per call
+    /// replaces the read+decode; an edit to the file still applies
+    /// immediately because the mtime changes.
+    private static let configCacheBox = OSAllocatedUnfairLock<ConfigCacheState?>(initialState: nil)
+
     static func diskBackedServerConfiguration() -> ServerConfiguration? {
         let url = OsaurusPaths.resolvePath(
             new: OsaurusPaths.serverConfigFile(),
             legacy: "ServerConfiguration.json"
         )
-        guard let data = try? Data(contentsOf: url) else { return nil }
-        return try? JSONDecoder().decode(ServerConfiguration.self, from: data)
+        let modified =
+            (try? FileManager.default.attributesOfItem(atPath: url.path))?[.modificationDate]
+            as? Date
+        return configCacheBox.withLock { state in
+            if let state, state.path == url.path, state.modified == modified {
+                return state.configuration
+            }
+            var configuration: ServerConfiguration?
+            if let data = try? Data(contentsOf: url) {
+                configuration = try? JSONDecoder().decode(ServerConfiguration.self, from: data)
+            }
+            state = ConfigCacheState(path: url.path, modified: modified, configuration: configuration)
+            return configuration
+        }
     }
 }
 
