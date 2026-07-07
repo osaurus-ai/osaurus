@@ -32,8 +32,10 @@ import Foundation
 /// Callers get a real error instead of an endless stream of garbage.
 ///
 /// Deliberately abort-only in this layer: automatic retry-with-safe-settings
-/// needs caller-side design (which settings to change, how many attempts,
-/// how to splice the retried stream) and is tracked as a follow-up.
+/// is caller-side policy and lives in `DegenerationRetry`, composed by
+/// `ModelRuntime.streamWithTools` / `respondWithTools` around the mapped
+/// stream. When the retry is ineligible (content already reached the
+/// consumer) or disabled, this error propagates to the consumer unchanged.
 public enum StreamGuardrailError: Error, Equatable {
     /// The stream degenerated into a repetition loop. `fragment` carries the
     /// human-readable evidence (the repeating fragment and its counts).

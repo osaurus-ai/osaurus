@@ -2352,6 +2352,11 @@ public actor ModelRuntime {
     /// prefill, and post-generation cache store via the container-attached
     /// `CacheCoordinator` — osaurus does not need to plumb anything cache-
     /// related through this path.
+    /// - Parameter disableDraftStrategy: When true, the container's draft
+    ///   strategy (native MTP / speculative decoding) is dropped for this
+    ///   stream only. Used by the degeneration-retry path
+    ///   (`DegenerationRetry`): the retry forces sampling on, and drafting
+    ///   is tuned for the greedy decode that just looped.
     private func generateEventStream(
         chatBuilder: @Sendable () -> [MLXLMCommon.Chat.Message],
         rawPromptBuilder: (@Sendable () -> String)? = nil,
@@ -2360,7 +2365,8 @@ public actor ModelRuntime {
         tools: [Tool]?,
         toolChoice: ToolChoiceOption?,
         modelId: String,
-        modelName: String
+        modelName: String,
+        disableDraftStrategy: Bool = false
     ) async throws -> AsyncThrowingStream<ModelRuntimeEvent, Error> {
         let trace = parameters.ttftTrace
         trace?.mark("runtime_start")
@@ -2457,7 +2463,7 @@ public actor ModelRuntime {
                 generation: parameters,
                 toolChoice: toolChoice,
                 stopSequences: stopSequences,
-                draftStrategy: holder.draftStrategy,
+                draftStrategy: disableDraftStrategy ? nil : holder.draftStrategy,
                 runtime: cfg,
                 maxBatchSize: InferenceFeatureFlags.mlxBatchEngineMaxBatchSize
             )
@@ -2534,14 +2540,15 @@ public actor ModelRuntime {
             modelName: modelName
         )
         let augmented = ModelRuntime.applyJSONMode(forcedToolMessages, jsonMode: parameters.jsonMode)
-        let events = try await generateEventStream(
-            chatBuilder: {
-                ModelRuntime.mapOpenAIChatToMLX(
-                    augmented,
-                    trace: parameters.ttftTrace,
-                    preserveStructuredToolHistory: !tools.isEmpty
-                )
-            },
+        let chatBuilder: @Sendable () -> [MLXLMCommon.Chat.Message] = {
+            ModelRuntime.mapOpenAIChatToMLX(
+                augmented,
+                trace: parameters.ttftTrace,
+                preserveStructuredToolHistory: !tools.isEmpty
+            )
+        }
+        let rawEvents = try await generateEventStream(
+            chatBuilder: chatBuilder,
             parameters: parameters,
             stopSequences: stopSequences,
             tools: tools,
@@ -2549,6 +2556,30 @@ public actor ModelRuntime {
             modelId: modelId,
             modelName: modelName
         )
+        // Retry-once on a reasoning-channel degeneration abort (see
+        // DegenerationRetry.swift for the eligibility rule). Reasoning is
+        // dropped by this non-streaming API anyway, so an eligible retry is
+        // fully invisible here: `accumulated`/`pendingTools` are only fed by
+        // content-bearing events, which by the eligibility rule none of
+        // attempt 1's forwarded events were.
+        let events = DegenerationRetry.withRetry(
+            events: rawEvents,
+            modelName: modelName
+        ) {
+            try await self.generateEventStream(
+                chatBuilder: chatBuilder,
+                parameters: DegenerationRetry.safeParameters(
+                    retrying: parameters,
+                    modelName: modelName
+                ),
+                stopSequences: stopSequences,
+                tools: tools,
+                toolChoice: toolChoice,
+                modelId: modelId,
+                modelName: modelName,
+                disableDraftStrategy: true
+            )
+        }
         // Drain the entire stream so multiple tool invocations parsed by
         // vmlx-swift in a single completion are surfaced together
         // (`BatchEngine.generate` emits one `.toolCall` event per detected
@@ -2647,14 +2678,15 @@ public actor ModelRuntime {
             modelName: modelName
         )
         let augmented = ModelRuntime.applyJSONMode(forcedToolMessages, jsonMode: parameters.jsonMode)
-        let events = try await generateEventStream(
-            chatBuilder: {
-                ModelRuntime.mapOpenAIChatToMLX(
-                    augmented,
-                    trace: parameters.ttftTrace,
-                    preserveStructuredToolHistory: !tools.isEmpty
-                )
-            },
+        let chatBuilder: @Sendable () -> [MLXLMCommon.Chat.Message] = {
+            ModelRuntime.mapOpenAIChatToMLX(
+                augmented,
+                trace: parameters.ttftTrace,
+                preserveStructuredToolHistory: !tools.isEmpty
+            )
+        }
+        let rawEvents = try await generateEventStream(
+            chatBuilder: chatBuilder,
             parameters: parameters,
             stopSequences: stopSequences,
             tools: tools,
@@ -2662,6 +2694,29 @@ public actor ModelRuntime {
             modelId: modelId,
             modelName: modelName
         )
+        // Retry-once on a reasoning-channel degeneration abort. The splice
+        // keeps THIS outer stream open across the retry, so the HTTP/chat
+        // consumer never observes it; a degeneration after any content
+        // delta / tool event was already yielded propagates exactly as
+        // before. Eligibility rule + safe settings: DegenerationRetry.swift.
+        let events = DegenerationRetry.withRetry(
+            events: rawEvents,
+            modelName: modelName
+        ) {
+            try await self.generateEventStream(
+                chatBuilder: chatBuilder,
+                parameters: DegenerationRetry.safeParameters(
+                    retrying: parameters,
+                    modelName: modelName
+                ),
+                stopSequences: stopSequences,
+                tools: tools,
+                toolChoice: toolChoice,
+                modelId: modelId,
+                modelName: modelName,
+                disableDraftStrategy: true
+            )
+        }
         let (stream, continuation) = AsyncThrowingStream<String, Error>.makeStream()
         let producerTask = Task {
             // Chat UI streaming should execute a parsed tool call as soon as

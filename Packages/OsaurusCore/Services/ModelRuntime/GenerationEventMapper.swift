@@ -84,11 +84,13 @@ enum GenerationEventMapper {
             var leakDetector = StreamTemplateLeakDetector()
             var guardrailAborted = false
 
-            // Abort-only by design: retry-with-safe-settings needs a
-            // caller-side policy (settings delta, attempt budget, stream
-            // splicing) and is a follow-up. The triggering delta is NOT
-            // yielded — by trigger time the caller has already received
-            // ~7 repeats of the loop; one more helps nobody.
+            // Abort-only by design at THIS layer: retry-with-safe-settings
+            // is caller-side policy (`DegenerationRetry`, composed in
+            // `ModelRuntime.streamWithTools`/`respondWithTools`). The
+            // triggering delta is NOT yielded — by trigger time the caller
+            // has already received ~7 repeats of the loop; one more helps
+            // nobody. Not yielding it also keeps a first-content-delta loop
+            // retry-eligible (zero content forwarded downstream).
             func handleDegeneration(in text: String) -> Bool {
                 guard guardrails.degenerationDetection,
                     let fragment = degenerationDetector.observe(text)
