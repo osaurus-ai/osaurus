@@ -780,7 +780,9 @@ public actor ModelRuntime {
         let totalWeights = Int(modelCache.values.reduce(Int64(0)) { $0 + $1.weightsSizeBytes })
         return Self.mlxCacheLimitBytes(
             residentWeightsBytes: totalWeights,
-            physicalMemoryBytes: ChipProfile.current.physicalMemoryBytes
+            physicalMemoryBytes: ChipProfile.current.physicalMemoryBytes,
+            adaptiveDisabled: UserDefaults.standard.bool(
+                forKey: "ai.osaurus.perf.disableAdaptiveMemoryPolicy")
         )
     }
 
@@ -798,19 +800,20 @@ public actor ModelRuntime {
     ///     activations at long context, and beyond that the freed-buffer
     ///     cache mostly hoards memory the OS could use better.
     ///
-    /// Escape hatch: `defaults write ai.osaurus
+    /// Escape hatch: `defaults write com.dinoki.osaurus
     /// ai.osaurus.perf.disableAdaptiveMemoryPolicy -bool true` restores the
     /// historical min(weights/4, min(RAM/8, 8 GiB)) on every tier.
+    /// `adaptiveDisabled` is passed in (the UserDefaults read lives at the
+    /// `mlxCacheLimit()` call site) so this function stays genuinely pure.
     static func mlxCacheLimitBytes(
         residentWeightsBytes: Int,
-        physicalMemoryBytes: UInt64
+        physicalMemoryBytes: UInt64,
+        adaptiveDisabled: Bool
     ) -> Int {
         let gib = 1 << 30
         let systemRAM = Int(clamping: physicalMemoryBytes)
         let byModel = max(residentWeightsBytes / 4, 1 * gib)
 
-        let adaptiveDisabled = UserDefaults.standard.bool(
-            forKey: "ai.osaurus.perf.disableAdaptiveMemoryPolicy")
         let bySystem: Int
         if adaptiveDisabled {
             bySystem = min(systemRAM / 8, 8 * gib)
