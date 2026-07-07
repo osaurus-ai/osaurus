@@ -3481,7 +3481,9 @@ extension FloatingInputCard {
                 RAMBannerPointer().fill(tint.opacity(0.28))
             }
             .frame(width: RAMBannerPointer.width, height: RAMBannerPointer.height)
-            .offset(x: clampedX - RAMBannerPointer.width / 2, y: RAMBannerPointer.height)
+            // +1 keeps the triangle's flat top below the banner's 1pt border
+            // stroke instead of overlapping it.
+            .offset(x: clampedX - RAMBannerPointer.width / 2, y: RAMBannerPointer.height + 1)
         }
         .shadow(color: Color.black.opacity(0.12), radius: 8, x: 0, y: 3)
         .accessibilityLabel(
