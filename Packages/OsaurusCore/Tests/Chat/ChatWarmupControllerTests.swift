@@ -136,6 +136,108 @@ struct ChatWarmupControllerModelSwitchTests {
     }
 }
 
+@Suite("ChatWarmupController RAM gate")
+@MainActor
+struct ChatWarmupControllerRAMGateTests {
+
+    private static func feasibility(
+        projected: Int64,
+        soft: Int64,
+        hard: Int64,
+        physical: Int64,
+        requiredAvailable: Int64
+    ) -> ModelRuntime.RAMFeasibility {
+        ModelRuntime.RAMFeasibility(
+            modelName: "test-model",
+            verdict: projected > soft ? .tight : .ok,
+            incomingWeightsBytes: projected,
+            incomingLoadFootprintBytes: projected,
+            residentWeightsBytes: 0,
+            kvHeadroomBytes: 0,
+            projectedBytes: projected,
+            physicalMemoryBytes: physical,
+            availableMemoryBytes: physical,
+            requiredAvailableBytes: requiredAvailable,
+            softLimitBytes: soft,
+            hardLimitBytes: hard,
+            timestamp: Date()
+        )
+    }
+
+    /// Sentry APPLE-MACOS-3T: a window-open warm-up of a 31B model on a
+    /// 24GB machine died in a fatal Metal OOM. Proactive warm-up must skip
+    /// entirely when the projection is block-severity.
+    @Test("warm-up is skipped when the projected load exceeds the hard RAM ceiling")
+    func warmupSkippedWhenProjectionBlocks() async {
+        let gib: Int64 = 1_073_741_824
+        let engine = WarmupRecordingEngine()
+        let session = WarmupTestSession()
+        session.engine = engine
+        session.payload = ChatWarmupPayload(
+            model: "test-model",
+            messages: [ChatMessage(role: "system", content: "sys")],
+            tools: nil,
+            modelOptions: nil,
+            fingerprint: "test-model|hint|"
+        )
+
+        let controller = ChatWarmupController()
+        controller.projectedLoadFeasibility = { _ in
+            Self.feasibility(
+                projected: 23 * gib,
+                soft: Int64(16.8 * Double(gib)),
+                hard: Int64(21.6 * Double(gib)),
+                physical: 24 * gib,
+                requiredAvailable: 23 * gib
+            )
+        }
+        controller.scheduleWarmup(session: session, debounce: .zero)
+
+        try? await Task.sleep(for: .milliseconds(150))
+        await controller.awaitInFlightWarmup()
+
+        // No generation was started, and the dot must not claim warming.
+        #expect(engine.lastRequest == nil)
+        #expect(controller.state == .cold)
+    }
+
+    @Test("warn-severity projection still warms up")
+    func warnSeverityStillWarms() async {
+        let gib: Int64 = 1_073_741_824
+        let engine = WarmupRecordingEngine()
+        let session = WarmupTestSession()
+        session.engine = engine
+        session.payload = ChatWarmupPayload(
+            model: "test-model",
+            messages: [ChatMessage(role: "system", content: "sys")],
+            tools: nil,
+            modelOptions: nil,
+            fingerprint: "test-model|hint|"
+        )
+
+        let controller = ChatWarmupController()
+        controller.projectedLoadFeasibility = { _ in
+            Self.feasibility(
+                projected: 18 * gib,
+                soft: Int64(16.8 * Double(gib)),
+                hard: Int64(21.6 * Double(gib)),
+                physical: 24 * gib,
+                requiredAvailable: 18 * gib
+            )
+        }
+        controller.scheduleWarmup(session: session, debounce: .zero)
+
+        for _ in 0 ..< 100 {
+            if controller.state == .warm { break }
+            try? await Task.sleep(for: .milliseconds(20))
+        }
+        await controller.awaitInFlightWarmup()
+
+        #expect(engine.lastRequest != nil)
+        #expect(controller.state == .warm)
+    }
+}
+
 @Suite("ChatWarmupController request fidelity")
 @MainActor
 struct ChatWarmupControllerRequestTests {

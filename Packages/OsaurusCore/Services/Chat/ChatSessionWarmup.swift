@@ -167,6 +167,16 @@ extension ChatSession: ChatWarmupSessionContext {
 
         guard !ChatConfigurationStore.load().warmModelsOnLoad else { return }
         guard let model = selectedModel, !model.isEmpty, selectedModelIsLocal else { return }
+        // Same RAM gate as the warm-up path: a switch-triggered preload is
+        // Osaurus-initiated background work and must not force a load whose
+        // projection exceeds the hard RAM ceiling — that's a fatal Metal OOM
+        // on machines where the selected model can't fit. The send path
+        // surfaces the block to the user via the input card's banner.
+        if let feasibility = await ModelRuntime.shared.projectedLoadFeasibility(for: model),
+            feasibility.loadPressureSeverity == .block
+        {
+            return
+        }
         try? await ModelRuntime.shared.preload(name: model)
     }
 

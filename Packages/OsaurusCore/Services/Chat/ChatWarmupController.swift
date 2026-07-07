@@ -56,6 +56,17 @@ final class ChatWarmupController: ObservableObject {
     /// Debounce coalescing fingerprint-invalidating warm-up retriggers.
     static let scheduleDebounce: Duration = .milliseconds(500)
 
+    /// Projected RAM feasibility for a candidate warm-up load (test seam;
+    /// production queries the shared runtime). Warm-up is Osaurus-initiated
+    /// background work, so a projection past the hard RAM ceiling skips it
+    /// entirely — proactively loading a model that can't fit is how a
+    /// window-open warm-up turns into a fatal Metal OOM
+    /// (kIOGPUCommandBufferCallbackErrorOutOfMemory) on small machines.
+    var projectedLoadFeasibility: @MainActor (String) async -> ModelRuntime.RAMFeasibility? =
+        { model in
+            await ModelRuntime.shared.projectedLoadFeasibility(for: model)
+        }
+
     @Published private(set) var state: WarmState = .cold
 
     /// True when the UI should render the green "warm" dot.
@@ -290,6 +301,24 @@ final class ChatWarmupController: ObservableObject {
             state = .warm
             return
         }
+
+        // RAM gate: never proactively load a model whose projection exceeds
+        // the hard ceiling (documented `modelLoadRAMHardThreshold`) or that
+        // outright exceeds physical memory. The send path stays gated by the
+        // input card's red banner, which tells the user why; a nil projection
+        // (model already resident, or size unknown) proceeds normally.
+        if let feasibility = await projectedLoadFeasibility(payload.model),
+            feasibility.loadPressureSeverity == .block
+        {
+            state = .cold
+            debugLog(
+                "[ChatWarmup] skipped model=\(payload.model): projected load "
+                    + "\(feasibility.projectedBytes)B exceeds hard limit \(feasibility.hardLimitBytes)B"
+            )
+            return
+        }
+        guard !Task.isCancelled else { return }
+        guard shouldAttemptWarmup(session: session) else { return }
 
         state = .warming
         let id = UUID()
