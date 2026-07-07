@@ -1343,7 +1343,7 @@
         "fr" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "/usr/local/bin/uvx or npx"
+            "value" : "/usr/local/bin/uvx ou npx"
           }
         },
         "ko" : {
@@ -1472,7 +1472,7 @@
         "fr" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "%.0f GB free / %.0f GB"
+            "value" : "%.0f Go libre / %.0f Go"
           }
         },
         "ko" : {
@@ -1722,7 +1722,7 @@
         "fr" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "%1$@ / %2$@ GB"
+            "value" : "%1$@ / %2$@ Go"
           }
         },
         "ko" : {
@@ -1851,7 +1851,7 @@
         "fr" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "%@ download"
+            "value" : "%@ téléchargé"
           }
         },
         "ko" : {
@@ -1899,7 +1899,7 @@
         "fr" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Téléchargement de %1$@ — vous disposez de %2$@ gratuitement"
+            "value" : "Téléchargement de %1$@ — vous disposez de %2$@ libre"
           }
         },
         "ko" : {
@@ -2123,7 +2123,7 @@
         "fr" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "%@ is empty"
+            "value" : "%@ est vide"
           }
         },
         "ko" : {
@@ -2163,7 +2163,7 @@
         "fr" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "%@ is missing"
+            "value" : "%@ est manquant"
           }
         },
         "ko" : {
@@ -2477,7 +2477,7 @@
         "fr" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "%@ reopened."
+            "value" : "%@ réouvert"
           }
         },
         "ko" : {
@@ -2519,7 +2519,7 @@
         "fr" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "%@ reset."
+            "value" : "%@ réinitialisé."
           }
         },
         "ko" : {
@@ -2648,7 +2648,7 @@
         "fr" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "%@ a passé cette session. Cliquez pour ajouter des crédits."
+            "value" : "%@ passé sur cette session. Cliquez pour ajouter des crédits."
           }
         },
         "ko" : {
@@ -3132,7 +3132,7 @@
         "fr" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Modèle(s) %d trouvé(s)"
+            "value" : "%d Modèle(s) trouvé(s)"
           }
         },
         "ko" : {
@@ -3172,7 +3172,7 @@
         "fr" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "%dm %ds gauche"
+            "value" : "%dm %ds restant"
           }
         },
         "ko" : {
@@ -3212,7 +3212,7 @@
         "fr" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "%d restants"
+            "value" : "%d restant"
           }
         },
         "ko" : {
@@ -3376,7 +3376,7 @@
         "fr" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Actions %lld"
+            "value" : "%lld actions"
           }
         },
         "ko" : {
@@ -3496,7 +3496,7 @@
         "fr" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Caractères %lld"
+            "value" : "%lld caractères"
           }
         },
         "ko" : {
@@ -3536,7 +3536,7 @@
         "fr" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Caractères %lld"
+            "value" : "%lld caractères"
           }
         },
         "ko" : {
@@ -3677,7 +3677,7 @@
         "fr" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Noyaux %1$lld · Mémoire %2$lld Go"
+            "value" : "%1$lld coeurs · %2$lld Go de mémoire"
           }
         },
         "ko" : {
@@ -3927,7 +3927,7 @@
         "fr" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Modèles externes %lld trouvés"
+            "value" : "%lld modèles externes trouvés"
           }
         },
         "ko" : {
@@ -3967,7 +3967,7 @@
         "fr" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Fichiers %lld"
+            "value" : "%lld fichiers"
           }
         },
         "ko" : {
@@ -4007,7 +4007,7 @@
         "fr" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "%lld FR"
+            "value" : "%lld Go"
           }
         },
         "ko" : {
@@ -4053,7 +4053,7 @@
         "fr" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Images %1$lld, suivi %2$@ de %3$@, décodage %4$lld, décodage échoué %5$lld"
+            "value" : "%1$lld images, %2$@ suivi de %3$@, %4$lld décodages, %5$lld décodage échoué"
           }
         },
         "ko" : {
@@ -4142,7 +4142,7 @@
         "fr" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Éléments %lld installés"
+            "value" : "%lld éléments installés"
           }
         },
         "ko" : {
@@ -4184,7 +4184,7 @@
         "fr" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Lignes %lld"
+            "value" : "%lld lignes"
           }
         },
         "ko" : {
@@ -4224,7 +4224,7 @@
         "fr" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Modèle(s) %lld actuellement disponibles."
+            "value" : "%lld modèle(s) actuellement disponible(s)."
           }
         },
         "ko" : {
@@ -4270,7 +4270,7 @@
         "fr" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Modèle %1$lld%2$@"
+            "value" : "%1$lld%2$@ modèle"
           }
         },
         "ko" : {
@@ -4316,7 +4316,7 @@
         "fr" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Modèle %1$lld%2$@ disponible"
+            "value" : "%1$lld%2$@ modèle disponible"
           }
         },
         "ko" : {
@@ -4362,7 +4362,7 @@
         "fr" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Modèle %1$lld%2$@ trouvé"
+            "value" : "%1$lld%2$@ modèle trouvé"
           }
         },
         "ko" : {
@@ -4408,7 +4408,7 @@
         "fr" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Modèle %1$lld%2$@ prêt"
+            "value" : "%1$lld%2$@ modèle prêt"
           }
         },
         "ko" : {
@@ -4454,7 +4454,7 @@
         "fr" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Modèles %1$lld"
+            "value" : "%1$lld modèles"
           }
         },
         "ko" : {
@@ -4524,7 +4524,7 @@
         "fr" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Modèles %1$lld • %2$@"
+            "value" : "%1$lld modèles • %2$@"
           }
         },
         "ko" : {
@@ -4570,7 +4570,7 @@
         "fr" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "%1$lld ou %2$lld"
+            "value" : "%1$lld de %2$lld"
           }
         },
         "ko" : {
@@ -4650,7 +4650,7 @@
         "fr" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Faits sur %1$lld ou %2$lld"
+            "value" : "%1$lld de %2$lld faits"
           }
         },
         "ko" : {
@@ -4698,7 +4698,7 @@
         "fr" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "%1$lld des thèmes %2$lld"
+            "value" : "%1$lld sur %2$lld thèmes"
           }
         },
         "ko" : {
@@ -7295,7 +7295,7 @@
         "fr" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "~%1$@ of %2$.0f GB"
+            "value" : "~%1$@ sur %2$.0f Go"
           }
         },
         "ko" : {
@@ -7336,7 +7336,7 @@
         "fr" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Les éléments ~%d seraient masqués avant l'envoi dans le cloud."
+            "value" : "~%d éléments seront masqués avant l'envoi dans le cloud."
           }
         },
         "ko" : {
@@ -7419,7 +7419,7 @@
         "fr" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "~Jetons %lld"
+            "value" : "~%lld jetons"
           }
         },
         "ko" : {
@@ -7460,7 +7460,7 @@
         "fr" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "~ 1 élément serait masqué avant l'envoi dans le cloud."
+            "value" : "~1 élément sera masqué avant l'envoi dans le cloud."
           }
         },
         "ko" : {
@@ -7806,7 +7806,7 @@
         "fr" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "0 favorise les performances, 2 est Safe Auto, 3 est strict et 4 est diagnostic/custom."
+            "value" : "0 favorise les performances, 2 est le Safe Auto, 3 est strict et 4 est diagnostic/personnalisé."
           }
         },
         "ko" : {

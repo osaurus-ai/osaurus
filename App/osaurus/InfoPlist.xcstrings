@@ -164,7 +164,7 @@
         "fr" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Osaurus utilise l'accès complet au calendrier pour vous aider à lire, créer et mettre à jour des événements lorsque vous le demandez."
+            "value" : "Les plugins d'Osaurus peuvent accéder à votre calendrier pour lire et créer des événements."
           }
         },
         "ko" : {
@@ -212,7 +212,7 @@
         "fr" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Osaurus utilise l'accès au calendrier pour vous aider à lire et gérer vos événements lorsque vous le demandez."
+            "value" : "Les plugins d'Osaurus peuvent accéder à votre calendrier pour lire et créer des événements."
           }
         },
         "ko" : {
@@ -260,7 +260,7 @@
         "fr" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Osaurus utilise l'accès aux contacts pour permettre aux plugins de rechercher et d'utiliser vos contacts lorsque vous le demandez."
+            "value" : "Les plugins d'Osaurus peuvent accéder à vos contacts pour rechercher et lire leurs informations."
           }
         },
         "ko" : {
@@ -299,12 +299,6 @@
             "value" : ""
           }
         },
-        "fr" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Copyright © 2026 Osaurus. Tous droits réservés."
-          }
-        }
       }
     },
     "NSLocalNetworkUsageDescription" : {
@@ -326,7 +320,7 @@
         "fr" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Osaurus utilise le réseau local pour découvrir et se connecter à des services locaux, comme des modèles et serveurs exécutés sur votre Mac."
+            "value" : "Osaurus utilise le réseau local pour découvrir et se connecter à des agents exécutés sur d'autres appareils."
           }
         },
         "ko" : {
@@ -374,7 +368,7 @@
         "fr" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Osaurus utilise votre position uniquement lorsque vous demandez une tâche qui en a besoin."
+            "value" : "Les plugins d'Osaurus peuvent accéder à votre position pour fournir des services basés sur votre localisation."
           }
         },
         "ko" : {
@@ -422,7 +416,7 @@
         "fr" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Osaurus utilise votre position lorsque l'app est utilisée et que vous demandez une tâche qui en a besoin."
+            "value" : "Les plugins d'Osaurus peuvent accéder à votre position pour fournir des services basés sur votre localisation."
           }
         },
         "ko" : {
@@ -470,7 +464,7 @@
         "fr" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Osaurus utilise le microphone pour l'entrée vocale lorsque vous l'activez."
+            "value" : "Osaurus utilise le microphone pour la transcription vocale sur l'appareil avec FluidAudio."
           }
         },
         "ko" : {
@@ -518,7 +512,7 @@
         "fr" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Osaurus utilise l'accès aux rappels pour vous aider à lire, créer et mettre à jour des rappels lorsque vous le demandez."
+            "value" : "Les plugins d'Osaurus peuvent accéder à vos rappels pour lire et créer des tâches."
           }
         },
         "ko" : {
@@ -566,7 +560,7 @@
         "fr" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Osaurus utilise l'enregistrement de l'écran pour permettre aux agents de voir votre écran et de vous aider avec les tâches que vous demandez."
+            "value" : "Osaurus ne peut capturer des captures d'écran et l'audio du système que si vous lui accordez l'accès à l'enregistrement de l'écran."
           }
         },
         "ko" : {
