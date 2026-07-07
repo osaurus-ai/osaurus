@@ -234,6 +234,10 @@ let package = Package(
                 "OsaurusCore",
                 "OsaurusSQLCipher",
                 .product(name: "VMLXJinja", package: "vmlx-swift"),
+                // Reference implementation for the embedding batch-parity
+                // test: the batched forward in VMLXModel2VecEmbedder must
+                // match vmlx's original sequential Model2Vec pipeline.
+                .product(name: "MLXEmbedders", package: "vmlx-swift"),
                 .product(name: "NIOEmbedded", package: "swift-nio"),
                 .product(name: "VecturaKit", package: "VecturaKit"),
             ],

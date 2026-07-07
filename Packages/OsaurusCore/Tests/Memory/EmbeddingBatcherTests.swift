@@ -12,6 +12,7 @@
 
 import Foundation
 import MLX
+import MLXEmbedders
 import Testing
 import VecturaKit
 
@@ -265,8 +266,12 @@ struct CoalescingEmbedderTests {
 // MARK: - Real-model batch parity (skipped when the model is not local)
 
 /// Verifies the batched `[N, L]` padded forward in `VMLXModel2VecEmbedder`
-/// produces the same vectors as one-at-a-time forwards — i.e. padding and
-/// masking do not change any text's embedding.
+/// against two references: its own one-at-a-time forwards (padding and
+/// masking must not change any text's embedding) and vmlx-swift's ORIGINAL
+/// sequential `Model2VecStaticEmbeddingPipeline` — the implementation the
+/// batched forward replaced — so a systematic semantic deviation (tokenizer
+/// handling, unknown-token filtering, normalize behavior) cannot hide
+/// behind a self-comparison where both sides run the new code.
 ///
 /// Opt-in: MLX hard-aborts the whole test process when its metallib is not
 /// locatable, and plain `swift test` has no Cmlx resource bundle. Run with
@@ -333,6 +338,44 @@ struct VMLXModel2VecEmbedderBatchParityTests {
             } else {
                 #expect(abs(norm - 1) < 1e-3)
             }
+        }
+
+        // Reference parity against vmlx-swift's original sequential pipeline,
+        // loaded from the same bundle with the same tokenizer loader. This is
+        // the semantic ground truth the batched forward must reproduce.
+        let directory = try #require(
+            VMLXModel2VecEmbedder.locateModelDirectory(modelName: EmbeddingService.modelName)
+        )
+        let reference = try await Model2VecStaticEmbeddingPipeline.load(
+            from: directory,
+            using: SwiftTransformersTokenizerLoader()
+        )
+        for (index, text) in texts.enumerated() {
+            // Per-text calls, so the reference runs its own (sequential)
+            // convention for every input — including the empty string, for
+            // which it returns an all-zero vector like the batched forward.
+            let expected = try await reference.embed(texts: [text])[0]
+            #expect(expected.count == batched[index].count)
+            let maxDelta = zip(expected, batched[index])
+                .map { abs($0 - $1) }
+                .max() ?? 0
+            // Observed on potion-base-4M: max delta 1.5e-08 (float32
+            // reduction-order noise on the longest text; exact zeros
+            // elsewhere).
+            #expect(
+                maxDelta < 1e-4,
+                "vmlx reference pipeline mismatch for texts[\(index)] = \(text)"
+            )
+        }
+
+        // Intentional convention difference, asserted on both sides so a
+        // silent change in either implementation fails here: for an EMPTY
+        // INPUT ARRAY the batched embedder returns [] (VecturaKit callers
+        // may forward empty document lists), while the vmlx pipeline throws
+        // `Model2VecStaticEmbeddingError.emptyBatch`.
+        #expect(try await embedder.embed(texts: []).isEmpty)
+        await #expect(throws: (any Error).self) {
+            _ = try await reference.embed(texts: [])
         }
     }
 }
