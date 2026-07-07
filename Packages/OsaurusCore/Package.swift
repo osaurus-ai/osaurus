@@ -50,7 +50,7 @@ let package = Package(
         // a frozen typing indicator. Additive — existing consumers unaffected.
         .package(
             url: "https://github.com/osaurus-ai/vmlx-swift",
-            revision: "8d0ef7e115f40bf428d05eee6f6a21ab0ddffb65"
+            revision: "ff714f1d0033768e85d48435fad2d244d80c91d6"
         ),
         // FluidAudio 0.14.3 added a breaking `language:` parameter to TTS
         // calls that osaurus's `TTSService` doesn't pass. Pinning to the
