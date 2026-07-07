@@ -3505,7 +3505,7 @@ extension FloatingInputCard {
             .fixedSize(horizontal: false, vertical: true)
         .padding(.leading, 14)
         // Warn banners reserve room for the dismiss button in the corner.
-        .padding(.trailing, blocked ? 14 : 26)
+        .padding(.trailing, blocked ? 14 : 32)
         .padding(.top, 9)
         // The shape's bottom edge sits above the pointer, so reserve its
         // height inside the frame.
@@ -3551,8 +3551,8 @@ extension FloatingInputCard {
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .padding(.top, 4)
-        .padding(.trailing, 4)
+        .padding(.top, 6)
+        .padding(.trailing, 8)
         .help(Text("Hide this warning for the selected model", bundle: .module))
         .accessibilityLabel(Text("Dismiss memory warning", bundle: .module))
     }
