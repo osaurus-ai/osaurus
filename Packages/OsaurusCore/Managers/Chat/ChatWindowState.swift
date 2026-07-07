@@ -210,6 +210,10 @@ final class ChatWindowState: ObservableObject {
         selectedDiscoveredAgent = nil
         selectedDiscoveredAgentProviderId = nil
         selectedRelayAgent = nil
+        // Shut the warm-up controller BEFORE stop(): stop() on an idle session
+        // runs completeRunCleanup(), whose run-completed hook would otherwise
+        // schedule a fresh warm-up for a session that is being torn down.
+        session.warmupController.shutdown()
         session.stop()
         session.onSessionChanged = nil
     }

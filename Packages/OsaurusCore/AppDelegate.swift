@@ -269,6 +269,12 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
         // leaves a unified-log breadcrumb diagnosable without a debugger.
         MainThreadWatchdog.shared.start()
 
+        // Respond to macOS memory pressure: free reconstructible UI caches on
+        // warning, and additionally unload idle (lease-free) model weights on
+        // critical, so local models never push the system into swap while
+        // sitting unused.
+        MemoryPressureResponder.shared.start()
+
         // Initialize directory access early so security-scoped bookmark is active
         _ = DirectoryPickerService.shared
 

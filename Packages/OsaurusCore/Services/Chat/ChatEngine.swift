@@ -170,7 +170,8 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
             idempotencyKey: request.idempotencyKey,
             runAsRemoteAgent: request.runAsRemoteAgent,
             suppressProgressUI: request.suppressProgressUI,
-            warmupPrefill: request.warmupPrefill
+            warmupPrefill: request.warmupPrefill,
+            requestSource: inferenceSource
         )
 
         // Mode 2 (remote agent run): route to the *selected agent's provider*,

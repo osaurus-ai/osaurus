@@ -726,6 +726,18 @@ extension MessageTableRepresentable {
                         toolGroupViewCache.removeValue(forKey: key)
                     }
                 }
+                // Drop measured heights for blocks that left the thread —
+                // without this, chat switches / session reloads accumulate
+                // stale entries until a width or theme change wipes the cache.
+                if !heightCache.isEmpty || !lastNotedHeight.isEmpty {
+                    let newIdSet = Set(newIds)
+                    for key in heightCache.keys where !newIdSet.contains(key) {
+                        heightCache.removeValue(forKey: key)
+                    }
+                    for key in lastNotedHeight.keys where !newIdSet.contains(key) {
+                        lastNotedHeight.removeValue(forKey: key)
+                    }
+                }
             }
             // Use uniquingKeysWith instead of uniqueKeysWithValues to avoid a
             // precondition crash if block IDs collide (e.g. stale memoizer cache

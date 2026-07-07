@@ -74,6 +74,12 @@ struct GenerationParameters: Sendable {
     /// history cache boundary before prefill (see
     /// `ChatCompletionRequest.warmupPrefill`).
     let warmupPrefill: Bool
+    /// Where the request originated (chat UI, HTTP API, plugin, P2P).
+    /// `ModelRuntime` records this per model so chat-window close can
+    /// accelerate idle unload of chat-sourced models without touching models
+    /// kept warm by API clients. Defaults to `.httpAPI` — the conservative
+    /// choice (never accelerated) for paths that don't set it explicitly.
+    let requestSource: RequestSource
 
     init(
         temperature: Float?,
@@ -94,7 +100,8 @@ struct GenerationParameters: Sendable {
         idempotencyKey: String? = nil,
         runAsRemoteAgent: Bool = false,
         suppressProgressUI: Bool = false,
-        warmupPrefill: Bool = false
+        warmupPrefill: Bool = false,
+        requestSource: RequestSource = .httpAPI
     ) {
         self.temperature = temperature
         self.maxTokens = maxTokens
@@ -115,6 +122,7 @@ struct GenerationParameters: Sendable {
         self.runAsRemoteAgent = runAsRemoteAgent
         self.suppressProgressUI = suppressProgressUI
         self.warmupPrefill = warmupPrefill
+        self.requestSource = requestSource
     }
 }
 

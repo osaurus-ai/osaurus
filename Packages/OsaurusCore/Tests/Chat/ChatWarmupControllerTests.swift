@@ -99,6 +99,62 @@ struct ChatWarmupControllerRequestTests {
     }
 }
 
+@Suite("ChatWarmupController shutdown")
+@MainActor
+struct ChatWarmupControllerShutdownTests {
+
+    /// Window close calls `cleanup()` → `shutdown()` before `session.stop()`.
+    /// `stop()`'s run-completed path calls `scheduleWarmup` again; after
+    /// shutdown that must be inert so teardown can't start model work.
+    @Test("scheduleWarmup after shutdown does not run a warm-up")
+    func scheduleAfterShutdownIsInert() async {
+        let engine = WarmupRecordingEngine()
+        let session = WarmupTestSession()
+        session.engine = engine
+        session.payload = ChatWarmupPayload(
+            model: "test-model",
+            messages: [ChatMessage(role: "system", content: "sys")],
+            tools: nil,
+            modelOptions: nil,
+            fingerprint: "test-model|hint|"
+        )
+
+        let controller = ChatWarmupController()
+        controller.shutdown()
+        controller.scheduleWarmup(session: session, debounce: .zero)
+
+        try? await Task.sleep(for: .milliseconds(150))
+        await controller.awaitInFlightWarmup()
+
+        #expect(engine.lastRequest == nil)
+        #expect(controller.state == .cold)
+    }
+
+    @Test("shutdown cancels a scheduled-but-not-started warm-up")
+    func shutdownCancelsScheduledWarmup() async {
+        let engine = WarmupRecordingEngine()
+        let session = WarmupTestSession()
+        session.engine = engine
+        session.payload = ChatWarmupPayload(
+            model: "test-model",
+            messages: [ChatMessage(role: "system", content: "sys")],
+            tools: nil,
+            modelOptions: nil,
+            fingerprint: "test-model|hint|"
+        )
+
+        let controller = ChatWarmupController()
+        controller.scheduleWarmup(session: session, debounce: .milliseconds(80))
+        controller.shutdown()
+
+        try? await Task.sleep(for: .milliseconds(200))
+        await controller.awaitInFlightWarmup()
+
+        #expect(engine.lastRequest == nil)
+        #expect(controller.state == .cold)
+    }
+}
+
 @MainActor
 private final class WarmupTestSession: ChatWarmupSessionContext {
     var selectedModel: String? = "test-model"

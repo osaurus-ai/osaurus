@@ -79,10 +79,24 @@ final class ChatWarmupController: ObservableObject {
     /// by a newer event.
     private var switchEpoch: UInt64 = 0
 
+    /// True once the owning window began teardown. `session.stop()` during
+    /// window close runs the normal run-completed cleanup, which schedules a
+    /// fresh warm-up — pointless model work for a session that is about to be
+    /// deallocated. Once shut down, all scheduling entry points are inert.
+    private var isShutDown = false
+
     deinit {
         scheduleTask?.cancel()
         modelSwitchTask?.cancel()
         inFlightWarmup?.cancel()
+    }
+
+    /// Permanently stop this controller: cancel pending and in-flight warm-up
+    /// work and refuse any future scheduling. Called from window teardown
+    /// (`ChatWindowState.cleanup()`) before `session.stop()`.
+    func shutdown() {
+        isShutDown = true
+        reset()
     }
 
     func reset() {
@@ -135,6 +149,7 @@ final class ChatWarmupController: ObservableObject {
         to newModel: String?,
         performSwitch: @escaping @MainActor (_ evictOthers: Bool) async -> Void
     ) async {
+        guard !isShutDown else { return }
         switchEpoch &+= 1
         let epoch = switchEpoch
         // Quick switch-back inside the debounce window: the old model is
@@ -273,6 +288,7 @@ final class ChatWarmupController: ObservableObject {
     // MARK: - Private
 
     private func shouldAttemptWarmup(session: ChatWarmupSessionContext) -> Bool {
+        guard !isShutDown else { return false }
         guard ChatConfigurationStore.load().warmModelsOnLoad else { return false }
         // Never load the new model while a debounced switch is pending —
         // strict eviction inside `loadContainer` would tear down the old

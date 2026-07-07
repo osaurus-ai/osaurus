@@ -2306,7 +2306,13 @@ struct RuntimePolicySourceTests {
         #expect(health.contains("\"idle_unload_at\""))
         #expect(health.contains("\"idle_seconds_remaining\""))
         #expect(windows.contains("modelIdleResidencyPolicy"))
-        #expect(windows.contains("if idlePolicy == .immediately"))
+        // Window close must branch on the full policy: immediate GC for
+        // `.immediately`, short-grace acceleration for `.afterSeconds`
+        // (chat-sourced models only, with a fire-time reopen guard), and no
+        // action for `.never`.
+        #expect(windows.contains("case .immediately:"))
+        #expect(windows.contains("case .afterSeconds:"))
+        #expect(windows.contains("accelerateIdleUnloadAfterChatClose"))
         #expect(
             windows.contains("let found = ModelManager.findInstalledModel(named: model)")
                 && windows.contains("return found.name"),
