@@ -592,12 +592,38 @@ extension ContentBlock {
                         let result,
                         let diff = FileDiff.from(toolResult: result)
                     {
-                        // Replace the generic tool-call row with a GitHub-style
-                        // diff card so a folder-scoped edit reads as a reviewable
-                        // change rather than an opaque tool invocation.
+                        // Completed file write: keep the tool row (it flips to
+                        // past tense, "Wrote a file…") with the diff card below
+                        // it. The row persisted through the pending and running
+                        // phases, so removing it at completion read as a
+                        // flicker; the card alone also lost the duration badge.
+                        regularItems.append(
+                            ToolCallItem(call: call, result: result, duration: turn.toolCallDurations[call.id])
+                        )
                         flushRegularItems()
                         turnBlocks.append(
                             .fileDiff(turnId: turn.id, callId: call.id, diff: diff, position: .middle)
+                        )
+                    } else if FileDiff.diffProducingToolNames.contains(call.function.name),
+                        let result,
+                        ToolEnvelope.successPayload(result) == nil,
+                        let preview = FileDiff.streamingPreview(
+                            toolName: call.function.name,
+                            partialArgs: call.function.arguments,
+                            isStreaming: false
+                        )
+                    {
+                        // FAILED file write: the streamed content was never
+                        // applied, but discarding it with the error made the
+                        // card the user just watched stream vanish. Keep the
+                        // failed row (error in the title + expandable envelope)
+                        // with the content as a "preview"-badged card below.
+                        regularItems.append(
+                            ToolCallItem(call: call, result: result, duration: turn.toolCallDurations[call.id])
+                        )
+                        flushRegularItems()
+                        turnBlocks.append(
+                            .fileDiff(turnId: turn.id, callId: call.id, diff: preview, position: .middle)
                         )
                     } else if isStreaming,
                         result == nil,

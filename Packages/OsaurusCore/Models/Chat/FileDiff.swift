@@ -120,7 +120,14 @@ struct FileDiff: Equatable {
     /// line as added, so the card grows smoothly as the model writes instead
     /// of the finished diff landing all at once. Returns nil until the content
     /// field has started streaming.
-    static func streamingPreview(toolName: String, partialArgs: String) -> FileDiff? {
+    /// `isStreaming: false` builds the same card as a settled, never-applied
+    /// preview (badge "preview" instead of "…") — used when a write FAILS so
+    /// the content the user watched stream doesn't vanish with the error.
+    static func streamingPreview(
+        toolName: String,
+        partialArgs: String,
+        isStreaming: Bool = true
+    ) -> FileDiff? {
         guard diffProducingToolNames.contains(toolName) else { return nil }
         guard
             let body = partialStringField("content", in: partialArgs)
@@ -136,10 +143,10 @@ struct FileDiff: Equatable {
             lines: lines,
             addedCount: lines.count,
             removedCount: 0,
-            isPreview: false,
+            isPreview: !isStreaming,
             truncated: false,
             rawDiff: body,
-            isStreamingPreview: true
+            isStreamingPreview: isStreaming
         )
     }
 
