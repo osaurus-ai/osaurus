@@ -157,20 +157,27 @@ enum ModelCapabilityLedger {
     }
 
     /// Merge-writes one record under the normalized key. Reads the file
-    /// fresh (not the cache) so two writers interleaving lose at most their
-    /// own key, never the whole file.
+    /// fresh (not the cache) and merges at the raw JSON level — only the
+    /// target key is overlaid, so every other record survives verbatim,
+    /// including fields this build does not know about (the gauntlet-written
+    /// `probes`/`evidence` maps; a `[String: Record]` decode/re-encode round
+    /// trip would strip them from EVERY record). The residual race is
+    /// whole-file last-write-wins: a writer working from a stale snapshot
+    /// can lose the OTHER writer's key, but never an unrelated record or
+    /// field it merely carried along.
     static func save(record: Record, for modelName: String) throws {
         let url = fileURL
-        var records: [String: Record] = [:]
+        var records: [String: Any] = [:]
         if let data = try? Data(contentsOf: url),
-            let decoded = try? JSONDecoder().decode([String: Record].self, from: data) {
-            records = decoded
+            let existing = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+            records = existing
         }
-        records[normalize(modelName)] = record
-        let encoder = JSONEncoder()
-        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        let encoded = try JSONEncoder().encode(record)
+        records[normalize(modelName)] = try JSONSerialization.jsonObject(with: encoded)
         try FileManager.default.createDirectory(
             at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
-        try encoder.encode(records).write(to: url, options: .atomic)
+        let data = try JSONSerialization.data(
+            withJSONObject: records, options: [.prettyPrinted, .sortedKeys])
+        try data.write(to: url, options: .atomic)
     }
 }

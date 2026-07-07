@@ -109,4 +109,64 @@ struct ModelCapabilityLedgerTests {
                     modelName: "model-x", modelId: "model-x") == "external")
         }
     }
+
+    // MARK: - save() must not strip foreign fields from other records
+
+    @Test func savePreservesUnknownFieldsOnOtherRecords() throws {
+        try withTempLedger { url in
+            // A gauntlet-written record carrying fields this build's Record
+            // type does not model (`probes`, `evidence`, a future field).
+            let preexisting = Data(
+                """
+                {
+                  "model_a" : {
+                    "evidence" : { "load" : "first response TTFT 812 ms" },
+                    "futureUnknownField" : 42,
+                    "probes" : { "load" : "pass", "stop-sequence" : "pass" },
+                    "productionServing" : "pass",
+                    "source" : "gauntlet"
+                  }
+                }
+                """.utf8)
+            try FileManager.default.createDirectory(
+                at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try preexisting.write(to: url, options: .atomic)
+
+            // Saving a DIFFERENT model must leave model_a verbatim.
+            try ModelCapabilityLedger.save(
+                record: .init(
+                    productionServing: .fail, blockReason: "measured",
+                    source: "gauntlet", digest: nil, chip: nil, measuredAt: "2026-07-07"),
+                for: "model-b")
+
+            let raw = try #require(
+                try JSONSerialization.jsonObject(with: Data(contentsOf: url)) as? [String: Any])
+            let modelA = try #require(raw["model_a"] as? [String: Any])
+
+            // Byte-level: canonical re-serialization of model_a is identical
+            // before and after the save of model_b.
+            let originalRoot = try #require(
+                try JSONSerialization.jsonObject(with: preexisting) as? [String: Any])
+            let originalA = try #require(originalRoot["model_a"] as? [String: Any])
+            let canonicalBefore = try JSONSerialization.data(
+                withJSONObject: originalA, options: [.sortedKeys])
+            let canonicalAfter = try JSONSerialization.data(
+                withJSONObject: modelA, options: [.sortedKeys])
+            #expect(canonicalBefore == canonicalAfter)
+
+            // And the fields the old decode/re-encode implementation stripped:
+            #expect(
+                modelA["probes"] as? [String: String]
+                    == ["load": "pass", "stop-sequence": "pass"])
+            #expect(
+                modelA["evidence"] as? [String: String]
+                    == ["load": "first response TTFT 812 ms"])
+            #expect(modelA["futureUnknownField"] as? Int == 42)
+
+            // The saved record itself landed under its normalized key.
+            let modelB = try #require(raw["model_b"] as? [String: Any])
+            #expect(modelB["productionServing"] as? String == "fail")
+            #expect(modelB["blockReason"] as? String == "measured")
+        }
+    }
 }
