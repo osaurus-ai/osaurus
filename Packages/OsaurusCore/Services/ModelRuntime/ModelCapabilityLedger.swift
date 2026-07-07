@@ -66,18 +66,13 @@ enum ModelCapabilityLedger {
         let record: Record
     }
 
-    private static let seedRules: [SeedRule] = [
-        // Migrated verbatim from `MLXService.isBlockedProductionModel`.
-        SeedRule(
-            nameContains: "zaya1_vl_8b_jangtq_k",
-            record: Record(
-                productionServing: .fail,
-                blockReason:
-                    "ZAYA1-VL JANGTQ_K is a diagnostic artifact with a proven first-token fidelity failure; use zaya1-vl-8b-mxfp4 or zaya1-vl-8b-jangtq4 for production serving.",
-                source: "seed"
-            )
-        )
-    ]
+    /// Currently empty: the ZAYA1-VL JANGTQ_K block that seeded this list
+    /// was lifted upstream (#1907 unblocked the bundle after a vmlx repin
+    /// fixed its first-token fidelity failure), so main ships with no
+    /// hardcoded production blocks. The mechanism stays as the extension
+    /// point for future compiled-in knowledge; measured ledger records are
+    /// the primary path.
+    private static let seedRules: [SeedRule] = []
 
     // MARK: - Lookup
 

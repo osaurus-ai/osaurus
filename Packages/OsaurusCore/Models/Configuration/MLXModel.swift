@@ -7,6 +7,7 @@
 
 import Foundation
 import SwiftUI
+import os
 
 /// Represents an MLX-compatible LLM that can be downloaded and used
 struct MLXModel: Identifiable, Codable {
@@ -158,15 +159,24 @@ struct MLXModel: Identifiable, Codable {
         return result.isEmpty ? name : result
     }
 
+    /// Memoized byte-count strings keyed by size. `ByteCountFormatStyle.format`
+    /// walks ICU/attributed-string machinery on every call, and the model grid
+    /// reads `formattedDownloadSize` for every card on every SwiftUI update —
+    /// enough aggregate work to trip the app-hang watchdog on slow machines
+    /// (Sentry APPLE-MACOS-VM). Sizes come from a small curated catalog, so
+    /// the cache stays tiny. Stale only if the system locale changes
+    /// mid-session, which the rest of the formatted UI doesn't survive either.
+    private static let formattedSizeCache = OSAllocatedUnfairLock<[Int64: String]>(initialState: [:])
+
     /// Formatted download size string (e.g., "3.9 GB").
-    ///
-    /// Uses the value-type `ByteCountFormatStyle` rather than allocating a
-    /// `ByteCountFormatter` per call: the size string is read from SwiftUI body
-    /// getters once per model row, and the format style is cheap and
-    /// concurrency-safe.
     var formattedDownloadSize: String? {
         guard let bytes = totalSizeEstimateBytes else { return nil }
-        return bytes.formatted(.byteCount(style: .file, allowedUnits: [.gb, .mb]))
+        return Self.formattedSizeCache.withLock { cache in
+            if let cached = cache[bytes] { return cached }
+            let formatted = bytes.formatted(.byteCount(style: .file, allowedUnits: [.gb, .mb]))
+            cache[bytes] = formatted
+            return formatted
+        }
     }
 
     /// Abbreviated HF Hub download (popularity) count for the card footer
@@ -412,8 +422,25 @@ struct MLXModel: Identifiable, Codable {
         EmbeddingDetection.isEmbedding(at: localDirectory)
     }
 
+    /// Memoizes `family` per model name. The model grid derives card gradients
+    /// from `family` for every card on every SwiftUI update, and each
+    /// computation lowercases and scans the name against the whole match
+    /// table — enough aggregate work to trip the app-hang watchdog on slow
+    /// machines. Names come from a small curated catalog, so the cache stays
+    /// tiny.
+    private static let familyCache = OSAllocatedUnfairLock<[String: String]>(initialState: [:])
+
     /// Extracts the model family from the name/id (e.g., "Llama", "Qwen", "Gemma", "Phi")
     var family: String {
+        Self.familyCache.withLock { cache in
+            if let cached = cache[self.name] { return cached }
+            let computed = computeFamily()
+            cache[self.name] = computed
+            return computed
+        }
+    }
+
+    private func computeFamily() -> String {
         let name = self.name.lowercased()
 
         // 1. Check for common families first (strong matches)

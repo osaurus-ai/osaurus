@@ -67,6 +67,12 @@ struct PluginsView: View {
     @State private var selectedCategory: String?
     /// Search + category filtered marketplace entries.
     @State private var filteredMarketplaceEntries: [MarketplacePlugin] = []
+    /// Chip counts derived from the search-matched (but not category-filtered)
+    /// marketplace entries, so the "All" total and per-category counts track
+    /// the active query instead of always showing the full catalog. Nil until
+    /// the first filter pass; the chips fall back to the service's catalog
+    /// counts.
+    @State private var marketplaceChipCounts: (total: Int, byCategory: [String: Int])?
     /// Detail navigation for a browsable (not-yet-installed) marketplace entry.
     @State private var selectedMarketplaceEntry: MarketplacePlugin?
 
@@ -670,8 +676,13 @@ struct PluginsView: View {
             VStack(alignment: .leading, spacing: 16) {
                 if !claudeMarketplace.categories.isEmpty {
                     MarketplaceCategoryChips(
-                        categories: claudeMarketplace.categories,
-                        totalCount: claudeMarketplace.entries.count,
+                        categories: claudeMarketplace.categories.map { category in
+                            ClaudeMarketplaceCategory(
+                                id: category.id,
+                                count: marketplaceChipCounts?.byCategory[category.id] ?? category.count
+                            )
+                        },
+                        totalCount: marketplaceChipCounts?.total ?? claudeMarketplace.entries.count,
                         selected: $selectedCategory
                     )
                 }
@@ -821,14 +832,19 @@ struct PluginsView: View {
 
     // MARK: - Helpers
 
+    // Matching policy for all three plugin lists: fuzzy subsequence matching
+    // is reserved for short identifier fields (name / id), where it enables
+    // abbreviation-style queries. Prose fields (description, keywords,
+    // author, category) use token / substring matching only — a query's
+    // characters almost always appear in order somewhere in a description,
+    // so subsequence matching there surfaced completely unrelated plugins.
+
     nonisolated private static func pluginMatchesQuery(_ plugin: PluginState, query: String) -> Bool {
         guard !query.isEmpty else { return true }
-        let queryLower = query.lowercased()
-        return [
-            plugin.pluginId.lowercased(),
-            (plugin.name ?? "").lowercased(),
-            (plugin.pluginDescription ?? "").lowercased(),
-        ].contains { SearchService.fuzzyMatch(query: queryLower, in: $0) }
+        let prepared = SearchService.PreparedQuery(query)
+        return SearchService.matches(prepared, in: plugin.pluginId)
+            || SearchService.matches(prepared, in: plugin.name ?? "")
+            || SearchService.matches(prepared, in: plugin.pluginDescription ?? "", allowFuzzy: false)
     }
 
     nonisolated private static func claudePluginMatchesQuery(
@@ -836,22 +852,20 @@ struct PluginsView: View {
         query: String
     ) -> Bool {
         guard !query.isEmpty else { return true }
-        let queryLower = query.lowercased()
-        var candidates: [String] = [
-            plugin.displayName.lowercased(),
-            plugin.pluginId.lowercased(),
-            plugin.sourceLabel.lowercased(),
-        ]
-        if let snap = plugin.snapshot {
-            if let description = snap.description {
-                candidates.append(description.lowercased())
-            }
-            candidates.append(contentsOf: snap.keywords.map { $0.lowercased() })
-            if let authorName = snap.authorName {
-                candidates.append(authorName.lowercased())
-            }
+        let prepared = SearchService.PreparedQuery(query)
+        if SearchService.matches(prepared, in: plugin.displayName)
+            || SearchService.matches(prepared, in: plugin.pluginId)
+            || SearchService.matches(prepared, in: plugin.sourceLabel, allowFuzzy: false)
+        {
+            return true
         }
-        return candidates.contains { SearchService.fuzzyMatch(query: queryLower, in: $0) }
+        guard let snap = plugin.snapshot else { return false }
+        var proseCandidates: [String] = snap.keywords
+        if let description = snap.description { proseCandidates.append(description) }
+        if let authorName = snap.authorName { proseCandidates.append(authorName) }
+        return proseCandidates.contains {
+            SearchService.matches(prepared, in: $0, allowFuzzy: false)
+        }
     }
 
     nonisolated private static func marketplaceEntryMatchesQuery(
@@ -859,13 +873,15 @@ struct PluginsView: View {
         query: String
     ) -> Bool {
         guard !query.isEmpty else { return true }
-        let queryLower = query.lowercased()
-        var candidates: [String] = [entry.name.lowercased()]
-        if let description = entry.description { candidates.append(description.lowercased()) }
-        if let author = entry.author?.name { candidates.append(author.lowercased()) }
-        if let category = entry.category { candidates.append(category.lowercased()) }
-        candidates.append(contentsOf: (entry.keywords ?? []).map { $0.lowercased() })
-        return candidates.contains { SearchService.fuzzyMatch(query: queryLower, in: $0) }
+        let prepared = SearchService.PreparedQuery(query)
+        if SearchService.matches(prepared, in: entry.name) { return true }
+        var proseCandidates: [String] = entry.keywords ?? []
+        if let description = entry.description { proseCandidates.append(description) }
+        if let author = entry.author?.name { proseCandidates.append(author) }
+        if let category = entry.category { proseCandidates.append(category) }
+        return proseCandidates.contains {
+            SearchService.matches(prepared, in: $0, allowFuzzy: false)
+        }
     }
 
     private func updateFilteredLists() async {
@@ -879,7 +895,7 @@ struct PluginsView: View {
         let installedPluginIds = Set(currentClaudePlugins.map { $0.pluginId })
         let marketplaceRepo = claudeMarketplace.repo
 
-        let (browseResult, installedResult, claudeResult, marketplaceResult) =
+        let (browseResult, installedResult, claudeResult, marketplaceResult, chipCounts) =
             await Task.detached(priority: .userInitiated) {
                 let browse = currentPlugins.filter { Self.pluginMatchesQuery($0, query: query) }
                 let installed =
@@ -890,26 +906,33 @@ struct PluginsView: View {
                     currentClaudePlugins
                     .filter { Self.claudePluginMatchesQuery($0, query: query) }
                     .sorted { $0.displayName.lowercased() < $1.displayName.lowercased() }
+                // Search-matched marketplace entries BEFORE the category
+                // filter: the grid applies the selected category on top, while
+                // the chips derive their counts from this set so every
+                // category count (and the "All" total) tracks the query.
+                let searchMatched = currentMarketplace.filter { entry in
+                    let isInstalled: Bool = {
+                        guard let marketplaceRepo else { return false }
+                        let id = ClaudePluginInstaller.pluginId(
+                            repo: marketplaceRepo,
+                            pluginName: entry.name
+                        )
+                        return installedPluginIds.contains(id)
+                    }()
+                    return !isInstalled && Self.marketplaceEntryMatchesQuery(entry, query: query)
+                }
                 let marketplace =
-                    currentMarketplace
+                    searchMatched
                     .filter { entry in
-                        let categoryMatches =
-                            category == nil
+                        category == nil
                             || ClaudeMarketplaceService.categoryKey(for: entry) == category
-                        let isInstalled: Bool = {
-                            guard let marketplaceRepo else { return false }
-                            let id = ClaudePluginInstaller.pluginId(
-                                repo: marketplaceRepo,
-                                pluginName: entry.name
-                            )
-                            return installedPluginIds.contains(id)
-                        }()
-                        return categoryMatches
-                            && !isInstalled
-                            && Self.marketplaceEntryMatchesQuery(entry, query: query)
                     }
                     .sorted { $0.name.lowercased() < $1.name.lowercased() }
-                return (browse, installed, claude, marketplace)
+                var byCategory: [String: Int] = [:]
+                for entry in searchMatched {
+                    byCategory[ClaudeMarketplaceService.categoryKey(for: entry), default: 0] += 1
+                }
+                return (browse, installed, claude, marketplace, (searchMatched.count, byCategory))
             }.value
 
         guard !Task.isCancelled else { return }
@@ -918,6 +941,7 @@ struct PluginsView: View {
         installedPlugins = installedResult
         filteredClaudePlugins = claudeResult
         filteredMarketplaceEntries = marketplaceResult
+        marketplaceChipCounts = chipCounts
 
         var permissionCount = 0
         var missingPerms: [String: [SystemPermission]] = [:]

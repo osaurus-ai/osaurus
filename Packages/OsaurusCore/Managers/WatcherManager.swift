@@ -56,6 +56,15 @@ public final class WatcherManager {
     /// Last known fingerprint per watcher (convergence anchor)
     private var lastKnownFingerprints: [UUID: DirectoryFingerprint] = [:]
 
+    /// Memoized results of `resolveWatchPath`. Resolving a security-scoped
+    /// bookmark does a synchronous IPC round-trip to `scopedbookmarksagent`
+    /// that can stall for seconds, and `handleFSEvent` used to re-resolve
+    /// every enabled watcher's bookmark on every FSEvent batch — on the main
+    /// queue — which tripped the app-hang watchdog (Sentry APPLE-MACOS-CB).
+    /// The resolved path is stable for the app session, so resolve once per
+    /// watcher and invalidate whenever the watcher set reloads (`refresh()`).
+    private var resolvedWatchPaths: [UUID: String] = [:]
+
     // MARK: - Initialization
 
     private init() {
@@ -86,6 +95,9 @@ public final class WatcherManager {
     public func refresh() {
         watchers = WatcherStore.loadAll()
         recomputeAgentCounts()
+        // Bookmarks may have changed with the reload; drop memoized paths so
+        // the next resolve re-reads them (see `resolvedWatchPaths`).
+        resolvedWatchPaths.removeAll()
     }
 
     /// Number of watchers linked to the given agent.
@@ -354,8 +366,20 @@ public final class WatcherManager {
         eventStream = nil
     }
 
-    /// Resolve the watch path from a watcher's bookmark
+    /// Resolve the watch path from a watcher's bookmark. Memoized per
+    /// watcher for the app session — see `resolvedWatchPaths` for why.
     private func resolveWatchPath(for watcher: Watcher) -> String? {
+        if let cached = resolvedWatchPaths[watcher.id] {
+            return cached
+        }
+        let resolved = resolveWatchPathUncached(for: watcher)
+        if let resolved {
+            resolvedWatchPaths[watcher.id] = resolved
+        }
+        return resolved
+    }
+
+    private func resolveWatchPathUncached(for watcher: Watcher) -> String? {
         guard let bookmark = watcher.watchBookmark else {
             return watcher.watchPath
         }

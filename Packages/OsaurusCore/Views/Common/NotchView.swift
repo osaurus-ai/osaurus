@@ -88,15 +88,20 @@ struct NotchView: View {
 
     // MARK: - State
 
-    /// Split hover tracking: trigger zone (top strip) + body (expanded content).
-    @State private var isHoveringTrigger = false
-    @State private var isHoveringBody = false
+    /// Single hover flag driven by the notch body's own bounds. The hover
+    /// region therefore always matches what's on screen: the compact pill,
+    /// or the expanded card once open. (A previous split trigger-strip +
+    /// body-content scheme let the collapsing card re-report hover from the
+    /// area below the pill and ping-pong the expansion.)
+    @State private var isHovering = false
     @State private var activeTaskIndex: Int = 0
     @State private var showCancelConfirmation = false
     @State private var contentRevealed = false
     @State private var absorbingTaskIds: Set<UUID> = []
-
-    private var isHovering: Bool { isHoveringTrigger || isHoveringBody }
+    /// Pending debounced hover transition (dwell before expanding, grace
+    /// period before collapsing). Cancelled whenever the hover state flips
+    /// again before the deadline.
+    @State private var hoverTransitionWorkItem: DispatchWorkItem?
 
     // MARK: - Metrics & Colors
 
@@ -233,6 +238,19 @@ struct NotchView: View {
         .spring(response: 0.45, dampingFraction: 0.68, blendDuration: 0.1)
     }
 
+    /// Collapse animation. The bouncy `swingSpring` reads as playful on the
+    /// way open but as judder on the way closed — the card overshoots past
+    /// pill size and rebounds after its content has already faded. Nearly
+    /// critically damped so the collapse settles in one motion.
+    private var settleSpring: Animation {
+        .spring(response: 0.38, dampingFraction: 0.9, blendDuration: 0.1)
+    }
+
+    /// Direction-aware animation for expansion-state changes.
+    private var expansionAnimation: Animation {
+        expansion == .expanded ? swingSpring : settleSpring
+    }
+
     // MARK: - Body
 
     var body: some View {
@@ -248,7 +266,7 @@ struct NotchView: View {
             }
         }
         .padding(.top, windowController.alertContentTopPadding)
-        .animation(swingSpring, value: expansion)
+        .animation(expansionAnimation, value: expansion)
         .animation(swingSpring, value: sortedTasks.map(\.id))
         .animation(swingSpring, value: activeTaskIndex)
         .onChange(of: sortedTasks.count) { _, newCount in
@@ -256,8 +274,7 @@ struct NotchView: View {
                 activeTaskIndex = max(0, newCount - 1)
             }
         }
-        .onChange(of: isHoveringTrigger) { _, _ in handleHoverChange() }
-        .onChange(of: isHoveringBody) { _, _ in handleHoverChange() }
+        .onChange(of: isHovering) { _, _ in handleHoverChange() }
     }
 
     // MARK: - Notch Body
@@ -271,7 +288,7 @@ struct NotchView: View {
             .clipShape(currentShape)
             .contentShape(currentShape)
             .overlay(notchBorderOverlay)
-            .overlay(alignment: .top) { hoverTriggerZone }
+            .onHover(perform: handleBodyHover)
             .shadow(
                 color: Color.black.opacity(expansion == .compact ? 0 : (isHovering ? 0.6 : 0.4)),
                 radius: expansion == .compact ? 0 : (isHovering ? 20 : 12),
@@ -293,14 +310,24 @@ struct NotchView: View {
             )
     }
 
-    /// Thin strip at the top that triggers hover — the only entry point for expansion.
-    private var hoverTriggerZone: some View {
-        Color.clear
-            .frame(width: metrics.notchWidth + 60, height: metrics.notchHeight)
-            .contentShape(Rectangle())
-            .onHover { hovering in
-                withAnimation(swingSpring) { isHoveringTrigger = hovering }
-            }
+    /// Hover on the notch body — the only entry point for expansion, sized
+    /// by whatever is actually rendered (compact pill or expanded card).
+    /// Both directions are debounced. Expanding requires a short dwell: the
+    /// pill floats over whatever window sits below (e.g. a browser's tab
+    /// strip), so a cursor merely passing through on its way to that window
+    /// must not balloon the card open and steal the click. Collapsing gets a
+    /// grace period so skimming the card's edge (or the jitter of a hand
+    /// coming to rest) doesn't slam it shut and replay the animation.
+    private func handleBodyHover(_ hovering: Bool) {
+        hoverTransitionWorkItem?.cancel()
+        hoverTransitionWorkItem = nil
+        guard hovering != isHovering else { return }
+        let delay = hovering ? 0.15 : 0.2
+        let work = DispatchWorkItem {
+            withAnimation(hovering ? swingSpring : settleSpring) { isHovering = hovering }
+        }
+        hoverTransitionWorkItem = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: work)
     }
 
     // MARK: - Content Switching
@@ -323,7 +350,16 @@ struct NotchView: View {
                             .combined(with: .scale(scale: 0.6, anchor: .top))
                             .combined(with: .opacity)
                     )
-                    : .opacity
+                    // Plain .opacity removal leaves a full-size ghost of the
+                    // card cross-fading over the already-final-size pill, so
+                    // the collapse reads as an abrupt size snap. Scaling the
+                    // outgoing card toward its top anchor makes it visibly
+                    // retract into the pill instead.
+                    : .asymmetric(
+                        insertion: .opacity,
+                        removal: .scale(scale: 0.12, anchor: .top)
+                            .combined(with: .opacity)
+                    )
             )
         }
     }
@@ -405,9 +441,6 @@ struct NotchView: View {
             .offset(y: contentRevealed ? 0 : 8)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .onHover { hovering in
-            withAnimation(swingSpring) { isHoveringBody = hovering }
-        }
     }
 
     private var expandedHeader: some View {
@@ -547,6 +580,19 @@ struct NotchView: View {
             Spacer()
         }
         .padding(.top, 2)
+        // Dismiss every finished task at once instead of forcing the user to
+        // surface and close each dot individually. Running tasks are left
+        // untouched — mass-cancelling them silently would be destructive.
+        .overlay(alignment: .trailing) {
+            if finishedTasks.count > 1 {
+                Button(action: handleDismissAllFinished) {
+                    Text("Clear All", bundle: .module)
+                        .font(.system(size: 9.5, weight: .medium))
+                        .foregroundColor(notchTertiaryText)
+                }
+                .buttonStyle(.plain)
+            }
+        }
     }
 
     // MARK: - Background & Border
@@ -614,7 +660,32 @@ struct NotchView: View {
                 withAnimation(.easeOut(duration: 0.25)) { contentRevealed = true }
             }
         } else {
-            withAnimation(.easeOut(duration: 0.15)) { contentRevealed = false }
+            // Fade the content over the same window as the frame's settle
+            // spring. A fast fade makes the card read as "already collapsed"
+            // the instant the content blinks out, so the frame's shrink looks
+            // abrupt even though it animates — the eye tracks the content,
+            // not the border.
+            withAnimation(.easeInOut(duration: 0.3)) { contentRevealed = false }
+        }
+    }
+
+    private var finishedTasks: [BackgroundTaskState] {
+        sortedTasks.filter { !$0.status.isActive }
+    }
+
+    /// Absorb-and-finalize every finished task in one action ("Clear All").
+    /// Mirrors the single-task dismiss path in `handleDismiss`.
+    private func handleDismissAllFinished() {
+        let finished = finishedTasks
+        guard !finished.isEmpty else { return }
+        withAnimation(swingSpring) {
+            absorbingTaskIds.formUnion(finished.map(\.id))
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.45) {
+            for task in finished {
+                BackgroundTaskManager.shared.finalizeTask(task.id)
+                absorbingTaskIds.remove(task.id)
+            }
         }
     }
 

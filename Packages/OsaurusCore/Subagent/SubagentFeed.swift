@@ -131,6 +131,13 @@ public final class SubagentFeed: @unchecked Sendable {
     private let lock = NSLock()
     private var _events: [SubagentActivityEvent] = []
 
+    /// Upper bound on retained events. Long computer-use / spawn runs emit
+    /// continuously (act/verify/tool rows), and every emission republishes the
+    /// full snapshot to the UI — an unbounded buffer grows both the feed and
+    /// each published copy. When the cap is hit the oldest rows are dropped;
+    /// the UI shows the most recent activity, which is what matters mid-run.
+    private static let maxRetainedEvents = 2_000
+
     private nonisolated(unsafe) let eventsSubject: CurrentValueSubject<[SubagentActivityEvent], Never>
     private nonisolated(unsafe) let statusSubject: CurrentValueSubject<SubagentRunStatus, Never>
 
@@ -165,6 +172,9 @@ public final class SubagentFeed: @unchecked Sendable {
     private func mutateEvents(_ body: (inout [SubagentActivityEvent]) -> Void) {
         lock.lock()
         body(&_events)
+        if _events.count > Self.maxRetainedEvents {
+            _events.removeFirst(_events.count - Self.maxRetainedEvents)
+        }
         let snapshot = _events
         lock.unlock()
         eventsSubject.send(snapshot)

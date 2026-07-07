@@ -1007,7 +1007,12 @@ struct MemoryView: View {
             let agentEntries = (try? db.agentIdsWithPinnedFacts()) ?? []
 
             let agents = await MainActor.run { agentManager.agents }
-            let agentLookup = Dictionary(uniqueKeysWithValues: agents.map { ($0.id, $0) })
+            // Duplicate-tolerant: two agent files can share an id, and
+            // uniqueKeysWithValues traps.
+            let agentLookup = Dictionary(
+                agents.map { ($0.id, $0) },
+                uniquingKeysWith: { first, _ in first }
+            )
             let resolvedCounts: [(agent: Agent, count: Int)] = agentEntries.compactMap { pair in
                 guard let uuid = UUID(uuidString: pair.agentId),
                     !Agent.isDefaultAgentId(pair.agentId),

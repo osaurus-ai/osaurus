@@ -25,33 +25,35 @@ final class MCPProviderTool: OsaurusTool, PermissionedTool, @unchecked Sendable 
     /// Original MCP tool name (may differ from exposed name if prefixed)
     let mcpToolName: String
 
+    /// Maximum length for remote MCP tool descriptions exposed to the model.
+    /// Vendors often put parameter semantics and examples beyond 200 chars; 4000
+    /// keeps the guardrail without stripping actionable detail.
+    static let maxDescriptionLength = 4_000
+
     init(
         mcpTool: MCP.Tool,
         providerId: UUID,
         providerName: String,
-        prefixWithProvider: Bool = true
+        prefixWithProvider: Bool = true,
+        reservedNames: Set<String> = []
     ) {
         self.providerId = providerId
         self.providerName = providerName
         self.mcpToolName = mcpTool.name
 
-        // Optionally prefix tool name with provider name to avoid conflicts
         if prefixWithProvider {
-            // Convert provider name to safe identifier (e.g., "My Server" -> "my_server")
-            let safeProviderName =
-                providerName
-                .lowercased()
-                .replacingOccurrences(of: " ", with: "_")
-                .replacingOccurrences(of: "-", with: "_")
-                .filter { $0.isLetter || $0.isNumber || $0 == "_" }
-            self.name = "\(safeProviderName)_\(mcpTool.name)"
+            self.name = Self.exposedName(
+                providerId: providerId,
+                providerName: providerName,
+                mcpToolName: mcpTool.name,
+                reservedNames: reservedNames
+            )
         } else {
             self.name = mcpTool.name
         }
 
-        // Truncate description to reasonable length
         let desc = mcpTool.description ?? "Tool from \(providerName)"
-        self.description = String(desc.prefix(200))
+        self.description = Self.truncatedDescription(desc)
 
         // Convert MCP input schema to JSONValue
         self.parameters = Self.convertInputSchema(mcpTool.inputSchema)
@@ -61,6 +63,59 @@ final class MCPProviderTool: OsaurusTool, PermissionedTool, @unchecked Sendable 
 
         // Default to asking for permission since these are remote tools
         self.defaultPermissionPolicy = .ask
+    }
+
+    /// Sanitize a provider display name into a stable tool-name prefix segment.
+    static func sanitizedProviderPrefix(from providerName: String) -> String {
+        providerName
+            .lowercased()
+            .replacingOccurrences(of: " ", with: "_")
+            .replacingOccurrences(of: "-", with: "_")
+            .filter { $0.isLetter || $0.isNumber || $0 == "_" }
+    }
+
+    /// Build the Osaurus-exposed tool name for an MCP tool, disambiguating when
+    /// two providers normalize to the same prefix (e.g. "My Server" / "my-server").
+    static func exposedName(
+        providerId: UUID,
+        providerName: String,
+        mcpToolName: String,
+        reservedNames: Set<String> = []
+    ) -> String {
+        let basePrefix = sanitizedProviderPrefix(from: providerName)
+        let prefix = basePrefix.isEmpty ? "mcp" : basePrefix
+        let candidate = sanitizeExposedToolName("\(prefix)_\(mcpToolName)")
+        guard reservedNames.contains(candidate) else { return candidate }
+
+        // Append a stable short id from the provider UUID so collisions can't
+        // silently overwrite another provider's tool in the registry.
+        let disambiguator = providerId.uuidString
+            .replacingOccurrences(of: "-", with: "")
+            .prefix(8)
+            .lowercased()
+        return sanitizeExposedToolName("\(prefix)_\(disambiguator)_\(mcpToolName)")
+    }
+
+    /// Local copy of `ToolRegistry.sanitizeToolName` so prefix logic stays
+    /// callable from this type's nonisolated initialiser path.
+    private static func sanitizeExposedToolName(_ raw: String) -> String {
+        var out = ""
+        out.reserveCapacity(raw.count)
+        for ch in raw {
+            if ch.isASCII, ch.isLetter || ch.isNumber || ch == "_" || ch == "-" {
+                out.append(ch)
+            } else {
+                out.append("_")
+            }
+        }
+        if out.isEmpty { out = "tool_unnamed" }
+        if out.count > 64 { out = String(out.prefix(64)) }
+        return out
+    }
+
+    static func truncatedDescription(_ raw: String) -> String {
+        guard raw.count > maxDescriptionLength else { return raw }
+        return String(raw.prefix(maxDescriptionLength)) + "..."
     }
 
     func execute(argumentsJSON: String) async throws -> String {

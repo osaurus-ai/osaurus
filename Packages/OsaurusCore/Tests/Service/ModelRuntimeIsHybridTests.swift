@@ -71,6 +71,21 @@ struct ModelRuntimeIsHybridTests {
         }
     }
 
+    @Test("Ornith 1.0 family — qwen3_5 / qwen3_5_moe model_type without a qwen substring")
+    func ornithFamilyIsHybrid() {
+        for id in [
+            "OsaurusAI/Ornith-1.0-9B-MXFP4",
+            "OsaurusAI/Ornith-1.0-35B-MXFP4",
+            "ornith-1.0-9b-mxfp4",  // picker form
+            "ornith-1.0-35b-mxfp4",
+        ] {
+            #expect(
+                ModelRuntime.isKnownHybridModel(name: id),
+                "Ornith bundles are qwen3_5-family hybrids (linear_attention ArraysCache slots) and must flip setHybrid eagerly: \(id)"
+            )
+        }
+    }
+
     @Test("Bailing / Ling Linear-Attn hybrid family")
     func bailingLing_isHybrid() {
         for id in [

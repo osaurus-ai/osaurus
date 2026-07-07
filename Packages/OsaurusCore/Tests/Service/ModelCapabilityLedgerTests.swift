@@ -25,31 +25,15 @@ struct ModelCapabilityLedgerTests {
         }
     }
 
-    // MARK: - Seed rules reproduce the retired hardcoded check
+    // MARK: - Seed rules (empty on current main - #1907 lifted the ZAYA block)
 
-    @Test func seedBlocksZayaDiagnosticArtifactInEveryNameForm() throws {
+    @Test func noSeedBlocksAnything() throws {
         try withTempLedger { _ in
-            // Picker casing, router lowercase, dash and underscore forms,
-            // and org-prefixed repo ids — all forms the old
-            // `isBlockedProductionModel` substring check caught.
+            // Matches main's behavior since #1907: no hardcoded production
+            // blocks. Includes the formerly-blocked bundle.
             for (name, id) in [
                 ("ZAYA1-VL-8B-JANGTQ_K", "Zyphra/ZAYA1-VL-8B-JANGTQ_K"),
-                ("zaya1-vl-8b-jangtq_k", "zyphra/zaya1-vl-8b-jangtq_k"),
-                ("zaya1_vl_8b_jangtq_k", "zaya1_vl_8b_jangtq_k"),
-                ("Some Alias", "Org/ZAYA1-VL-8B-JANGTQ_K"),
-            ] {
-                let reason = ModelCapabilityLedger.productionServingBlockReason(
-                    modelName: name, modelId: id)
-                #expect(reason?.contains("diagnostic artifact") == true, "expected block for \(name)")
-            }
-        }
-    }
-
-    @Test func seedDoesNotBlockTheRecommendedReplacements() throws {
-        try withTempLedger { _ in
-            for (name, id) in [
                 ("zaya1-vl-8b-mxfp4", "Zyphra/ZAYA1-VL-8B-mxfp4"),
-                ("zaya1-vl-8b-jangtq4", "Zyphra/ZAYA1-VL-8B-JANGTQ4"),
                 ("gemma-4-e2b-it-4bit", "OsaurusAI/gemma-4-E2B-it-4bit"),
             ] {
                 #expect(
@@ -62,7 +46,7 @@ struct ModelCapabilityLedgerTests {
 
     // MARK: - Measured records beat seeds (both directions)
 
-    @Test func measuredPassClearsASeedBlock() throws {
+    @Test func measuredPassIsExplicitAllow() throws {
         try withTempLedger { _ in
             try ModelCapabilityLedger.save(
                 record: .init(
@@ -91,16 +75,17 @@ struct ModelCapabilityLedgerTests {
         }
     }
 
-    @Test func untestedRecordFallsThroughToSeeds() throws {
+    @Test func untestedRecordFallsThroughToSeedsAndAllows() throws {
         try withTempLedger { _ in
             try ModelCapabilityLedger.save(
                 record: .init(
                     productionServing: .untested, blockReason: nil,
                     source: "gauntlet", digest: nil, chip: nil, measuredAt: nil),
                 for: "zaya1-vl-8b-jangtq_k")
+            // With no seed rules, untested falls all the way through to allow.
             #expect(
                 ModelCapabilityLedger.productionServingBlockReason(
-                    modelName: "zaya1-vl-8b-jangtq_k", modelId: "zaya1-vl-8b-jangtq_k") != nil)
+                    modelName: "zaya1-vl-8b-jangtq_k", modelId: "zaya1-vl-8b-jangtq_k") == nil)
         }
     }
 

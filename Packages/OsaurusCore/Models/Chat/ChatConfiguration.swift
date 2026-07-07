@@ -80,6 +80,12 @@ public struct ChatConfiguration: Codable, Equatable, Sendable {
     /// When true, Osaurus will monitor the clipboard for new text content to offer as context.
     public var enableClipboardMonitoring: Bool
 
+    // MARK: - Model Warm-Up
+    /// When true, local chat sessions proactively load the selected model and
+    /// prefill the static prompt prefix (system + tools + history) before the
+    /// user sends, so the first response pays less time-to-first-token cost.
+    public var warmModelsOnLoad: Bool
+
     // MARK: - Generative Greetings
     /// Free-text "voice" instruction that shapes the AI-generated empty-state
     /// greetings and quick actions. Empty string means "use the built-in
@@ -102,6 +108,7 @@ public struct ChatConfiguration: Codable, Equatable, Sendable {
         coreModelName: String? = nil,
         disableTools: Bool = false,
         enableClipboardMonitoring: Bool = true,
+        warmModelsOnLoad: Bool = true,
         greetingPersona: String = ""
     ) {
         self.hotkey = hotkey
@@ -116,6 +123,7 @@ public struct ChatConfiguration: Codable, Equatable, Sendable {
         self.coreModelName = coreModelName
         self.disableTools = disableTools
         self.enableClipboardMonitoring = enableClipboardMonitoring
+        self.warmModelsOnLoad = warmModelsOnLoad
         self.greetingPersona = greetingPersona
     }
 
@@ -133,6 +141,7 @@ public struct ChatConfiguration: Codable, Equatable, Sendable {
         coreModelName = try container.decodeIfPresent(String.self, forKey: .coreModelName)
         disableTools = try container.decodeIfPresent(Bool.self, forKey: .disableTools) ?? false
         enableClipboardMonitoring = try container.decodeIfPresent(Bool.self, forKey: .enableClipboardMonitoring) ?? true
+        warmModelsOnLoad = try container.decodeIfPresent(Bool.self, forKey: .warmModelsOnLoad) ?? true
         // The on/off for AI greetings is now per-agent
         // (`AgentSettings.generativeGreetingsEnabled`). Any legacy
         // `generativeGreetingsEnabled` boolean persisted here is ignored
@@ -163,6 +172,7 @@ public struct ChatConfiguration: Codable, Equatable, Sendable {
             coreModelProvider: nil,
             coreModelName: defaultCoreModelNameIfAvailable,
             enableClipboardMonitoring: true,
+            warmModelsOnLoad: true,
             // Empty persona = "use built-in playful default". This is the
             // global default voice; the on/off is per-agent. Users opt
             // into a custom voice from Settings → Chat (or a per-agent

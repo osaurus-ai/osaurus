@@ -8,9 +8,14 @@
 
 import Foundation
 
-/// Detects agent names in transcribed speech
-@MainActor
-public final class AgentNameDetector {
+/// Detects agent names in transcribed speech.
+///
+/// Immutable after init, so matching is safe to run off the main actor —
+/// the Levenshtein-based fuzzy match over every agent name and wake
+/// variation is heavy enough on long transcriptions to trip the app-hang
+/// watchdog when run on the main thread. Only `init` is main-actor bound
+/// (it reads `AgentManager`).
+public final class AgentNameDetector: Sendable {
     /// IDs of agents enabled for VAD detection
     private let enabledAgentIds: [UUID]
 
@@ -30,6 +35,7 @@ public final class AgentNameDetector {
         "yo",
     ]
 
+    @MainActor
     public init(enabledAgentIds: [UUID], customWakePhrase: String = "") {
         self.enabledAgentIds = enabledAgentIds
         self.customWakePhrase = customWakePhrase

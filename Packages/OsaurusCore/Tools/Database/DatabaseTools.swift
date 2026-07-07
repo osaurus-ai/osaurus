@@ -152,6 +152,46 @@ enum DatabaseToolHelpers {
             tool: tool
         )
     }
+
+    /// JSON-schema fragment for positional SQL bind parameters.
+    static let sqlParamsProperty: JSONValue = .object([
+        "type": .string("array"),
+        "description": .string(
+            "Positional bind parameters (optional). Each item may be string, number, boolean, or null."
+        ),
+    ])
+
+    /// Soft ceiling on encoded row payloads returned by read tools.
+    static let maxEncodedRowBytes = 80_000
+
+    /// Trim trailing rows so the JSON payload stays under the soft cap.
+    static func trimQueryRows(
+        _ rows: inout [[Any]],
+        offset: Int?,
+        maxBytes: Int = maxEncodedRowBytes
+    ) -> (sizeTruncated: Bool, pagingHint: String?) {
+        var sizeTruncated = false
+        if let data = try? JSONSerialization.data(withJSONObject: rows),
+            data.count > maxBytes, !rows.isEmpty
+        {
+            let avg = max(1, data.count / rows.count)
+            let keep = max(1, (maxBytes * 9 / 10) / avg)
+            if keep < rows.count {
+                rows = Array(rows.prefix(keep))
+                sizeTruncated = true
+            }
+        }
+        let hint: String?
+        if sizeTruncated {
+            let nextOffset = (offset ?? 0) + rows.count
+            hint =
+                "Result truncated at \(rows.count) rows. Page with `offset: \(nextOffset)`, "
+                + "or aggregate in SQL (COUNT/SUM/GROUP BY) instead of returning raw rows."
+        } else {
+            hint = nil
+        }
+        return (sizeTruncated, hint)
+    }
 }
 
 // MARK: - db_schema
@@ -902,14 +942,10 @@ final class DBQueryTool: OsaurusTool, @unchecked Sendable {
         "Run a read-only SQL query. Returns up to `limit` rows (default "
         + "1000, hard cap 5000); page through larger results with "
         + "`limit`/`offset`. `truncated` is true when more rows existed. For "
-        + "big tables, prefer aggregating in SQL (COUNT/SUM/GROUP BY) over "
-        + "returning raw rows. Queries auto-filter `_deleted_at IS NULL` on "
-        + "user tables unless you pass `include_deleted=true` in the WHERE."
-
-    /// Soft ceiling on the encoded row payload (chars), kept under the
-    /// universal 100K tool-result cap so the model gets a clean
-    /// `truncated` + paging hint instead of a hard string cut.
-    private static let maxEncodedRowBytes = 80_000
+        + "big tables, prefer aggregating in SQL (COUNT/SUM/GROUP BY) or "
+        + "`db_export` over returning raw rows. On user tables, add "
+        + "`_deleted_at IS NULL` to your WHERE when you want to hide "
+        + "soft-deleted rows — `db_query` runs your SQL as written."
 
     let parameters: JSONValue? = .object([
         "type": .string("object"),
@@ -921,11 +957,7 @@ final class DBQueryTool: OsaurusTool, @unchecked Sendable {
                     "SELECT statement. May reference `?1`, `?2`, … bound from `params`."
                 ),
             ]),
-            "params": .object([
-                "type": .string("array"),
-                "description": .string("Positional bind parameters (optional)."),
-                "items": .object(["type": .string("string")]),
-            ]),
+            "params": DatabaseToolHelpers.sqlParamsProperty,
             "limit": .object([
                 "type": .string("integer"),
                 "description": .string(
@@ -970,29 +1002,15 @@ final class DBQueryTool: OsaurusTool, @unchecked Sendable {
                 row.map { DatabaseToolHelpers.toJSONAny($0) }
             }
 
-            // Encoded-size guard: trim trailing rows so the payload stays
-            // under the soft cap, surfacing a paging hint rather than a hard
-            // truncation of the JSON string downstream.
-            var sizeTruncated = false
-            if let data = try? JSONSerialization.data(withJSONObject: rows),
-                data.count > Self.maxEncodedRowBytes, !rows.isEmpty
-            {
-                let avg = max(1, data.count / rows.count)
-                let keep = max(1, (Self.maxEncodedRowBytes * 9 / 10) / avg)
-                if keep < rows.count {
-                    rows = Array(rows.prefix(keep))
-                    sizeTruncated = true
-                }
-            }
+            let (sizeTruncated, pagingHint) = DatabaseToolHelpers.trimQueryRows(
+                &rows,
+                offset: offset
+            )
 
             let truncated = result.truncated || sizeTruncated
             var warnings: [String] = []
-            if truncated {
-                let nextOffset = (offset ?? 0) + rows.count
-                warnings.append(
-                    "Result truncated at \(rows.count) rows. Page with `offset: \(nextOffset)`, "
-                        + "or aggregate in SQL (COUNT/SUM/GROUP BY) instead of returning raw rows."
-                )
+            if truncated, let pagingHint {
+                warnings.append(pagingHint)
             }
             return ToolEnvelope.success(
                 tool: name,
@@ -1018,9 +1036,11 @@ final class DBExecuteTool: OsaurusTool, @unchecked Sendable {
         + "multi-statement transform scripts (`INSERT … SELECT`, CTEs, "
         + "window functions, index/trigger DDL) which run inside one "
         + "transaction. Prefer this over pulling rows into context to "
-        + "compute by hand, and use `db_import` for file ingestion. Logged "
-        + "with `op='raw'`. Rejected: DROP TABLE, TRUNCATE, DROP DATABASE, "
-        + "unconstrained DELETE, ATTACH/DETACH, PRAGMA writes, "
+        + "compute by hand. Pass `path` (instead of `sql`) to run a `.sql` "
+        + "script from your sandbox workspace or working folder without "
+        + "loading it into tokens. Use `db_import` for CSV/JSON ingestion. "
+        + "Logged with `op='raw'`. Rejected: DROP TABLE, TRUNCATE, DROP "
+        + "DATABASE, unconstrained DELETE, ATTACH/DETACH, PRAGMA writes, "
         + "load_extension, and writes to system tables."
 
     let parameters: JSONValue? = .object([
@@ -1029,14 +1049,19 @@ final class DBExecuteTool: OsaurusTool, @unchecked Sendable {
         "properties": .object([
             "sql": .object([
                 "type": .string("string"),
-                "description": .string("Statement to execute."),
+                "description": .string(
+                    "Statement to execute. Mutually exclusive with `path`."
+                ),
             ]),
-            "params": .object([
-                "type": .string("array"),
-                "items": .object(["type": .string("string")]),
+            "path": .object([
+                "type": .string("string"),
+                "description": .string(
+                    "Path to a `.sql` script under your sandbox workspace or "
+                        + "working folder. Mutually exclusive with `sql`."
+                ),
             ]),
+            "params": DatabaseToolHelpers.sqlParamsProperty,
         ]),
-        "required": .array([.string("sql")]),
     ])
 
     func execute(argumentsJSON: String) async throws -> String {
@@ -1045,8 +1070,32 @@ final class DBExecuteTool: OsaurusTool, @unchecked Sendable {
         let agentReq = DatabaseToolHelpers.requireAgentId(tool: name)
         guard case .value(let agentId) = agentReq else { return agentReq.failureEnvelope ?? "" }
 
-        let sqlReq = requireString(args, "sql", expected: "SQL statement", tool: name)
-        guard case .value(let sql) = sqlReq else { return sqlReq.failureEnvelope ?? "" }
+        let inlineSQL = (args["sql"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let pathArg = (args["path"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let hasSQL = !(inlineSQL ?? "").isEmpty
+        let hasPath = !(pathArg ?? "").isEmpty
+        guard hasSQL != hasPath else {
+            let field = (hasSQL && hasPath) ? "sql" : nil
+            return ToolEnvelope.failure(
+                kind: .invalidArgs,
+                message: "Pass exactly one of `sql` or `path`.",
+                field: field,
+                expected: "sql XOR path",
+                tool: name
+            )
+        }
+
+        let sql: String
+        if hasPath, let pathArg {
+            switch await DatabaseFilePathResolver.loadTextScript(path: pathArg, tool: name) {
+            case .failed(let envelope):
+                return envelope
+            case .text(let text):
+                sql = text
+            }
+        } else {
+            sql = inlineSQL ?? ""
+        }
 
         let params: [AgentSQLValue]
         if let raw = args["params"] {
@@ -1064,6 +1113,9 @@ final class DBExecuteTool: OsaurusTool, @unchecked Sendable {
             var resultDict: [String: Any] = ["rows_affected": result.rowsAffected]
             if let warning = result.warning {
                 resultDict["warning"] = warning
+            }
+            if let drained = result.selectRowsDrained {
+                resultDict["select_rows_drained"] = drained
             }
             return ToolEnvelope.success(
                 tool: name,
@@ -1086,10 +1138,11 @@ final class DBExecuteTool: OsaurusTool, @unchecked Sendable {
 final class DBImportTool: OsaurusTool, @unchecked Sendable {
     let name = "db_import"
     let description =
-        "Bulk-load a file from your working folder straight into a table. "
-        + "The host reads and parses it, so no row data passes through your "
-        + "tokens and you don't spend a tool call per row — use this instead "
-        + "of looping `db_insert` whenever the data already lives in a file. "
+        "Bulk-load a file from your sandbox workspace or host working "
+        + "folder straight into a table. The host reads and parses it, so "
+        + "no row data passes through your tokens and you don't spend a tool "
+        + "call per row — use this instead of looping `db_insert` whenever "
+        + "the data already lives in a file (e.g. `/workspace/output/data.csv`). "
         + "Supports CSV, TSV, JSON (array or object), and JSONL/NDJSON; the "
         + "format is auto-detected from the extension/content. Creates the "
         + "table from the file's columns when it doesn't exist (set "
@@ -1107,8 +1160,9 @@ final class DBImportTool: OsaurusTool, @unchecked Sendable {
             "path": .object([
                 "type": .string("string"),
                 "description": .string(
-                    "Path to the data file, relative to your working folder "
-                        + "(e.g. `data/today.csv`)."
+                    "Path to the data file under your sandbox workspace or "
+                        + "host working folder (e.g. `output/today.csv` or "
+                        + "`/workspace/output/today.csv`)."
                 ),
             ]),
             "format": .object([
@@ -1170,7 +1224,7 @@ final class DBImportTool: OsaurusTool, @unchecked Sendable {
         let pathReq = requireString(
             args,
             "path",
-            expected: "path under your working folder",
+            expected: "path under sandbox workspace or working folder",
             tool: name
         )
         guard case .value(let path) = pathReq else { return pathReq.failureEnvelope ?? "" }
@@ -1222,104 +1276,210 @@ final class DBImportTool: OsaurusTool, @unchecked Sendable {
             }
         }
 
-        // Resolve the working-folder root the same way `file_read` does.
-        let root: URL? = await MainActor.run {
-            FolderToolManager.shared.registeredContext?.rootPath
-        }
-        guard let rootPath = root else {
-            return ToolEnvelope.failure(
-                kind: .unavailable,
-                message:
-                    "db_import reads from your working folder, but no folder is bound to "
-                    + "this session. Ask the user to pick a working folder, then retry.",
-                tool: name,
-                retryable: false
-            )
-        }
-
-        let fileURL: URL
-        do {
-            fileURL = try FolderToolHelpers.resolvePath(path, rootPath: rootPath)
-        } catch {
-            return ToolEnvelope.fromError(error, tool: name)
-        }
-        guard FileManager.default.fileExists(atPath: fileURL.path) else {
-            return ToolEnvelope.failure(
-                kind: .invalidArgs,
-                message: "No file at `\(path)` in the working folder.",
-                field: "path",
-                tool: name,
-                retryable: false
-            )
-        }
-        let parsed: DatabaseImport.Parsed
-        do {
-            parsed = try AgentImportRunner.parse(
-                url: fileURL,
-                explicitFormat: args["format"] as? String,
-                hasHeader: hasHeader,
-                explicitColumns: explicitColumnNames,
-                maxRows: maxRows
-            )
-        } catch {
-            return ToolEnvelope.failure(
-                kind: .invalidArgs,
-                message: (error as? LocalizedError)?.errorDescription ?? error.localizedDescription,
-                tool: name,
-                retryable: false
-            )
-        }
-
-        let mode: AgentImportRunner.Mode =
-            (modeRaw == "upsert") ? .upsert(keyColumns: keyColumns) : .insert
-        do {
-            let outcome = try AgentImportRunner.run(
-                agentId: agentId,
-                table: table,
-                parsed: parsed,
-                mode: mode,
-                createTable: createTable,
-                typeOverrides: typeOverrides,
-                sourceLabel: (path as NSString).lastPathComponent
-            )
-
-            var resultDict: [String: Any] = [
-                "table": outcome.table,
-                "rows_imported": outcome.rowsImported,
-                "rows_skipped": outcome.rowsSkipped,
-                "created_table": outcome.createdTable,
-                "columns": outcome.columns,
-                "truncated": outcome.truncated,
-            ]
-            if !outcome.droppedColumns.isEmpty {
-                resultDict["dropped_columns"] = outcome.droppedColumns
-            }
-            if !outcome.sampleErrors.isEmpty { resultDict["sample_errors"] = outcome.sampleErrors }
-
-            var warnings: [String] = []
-            if outcome.truncated {
-                warnings.append("Import stopped at max_rows; not all rows were loaded.")
-            }
-            if !outcome.droppedColumns.isEmpty {
-                warnings.append(
-                    "Ignored columns not on `\(table)`: "
-                        + outcome.droppedColumns.joined(separator: ", ") + "."
+        switch await DatabaseFilePathResolver.resolveForRead(path: path, tool: name) {
+        case .failed(let envelope):
+            return envelope
+        case .resolved(let resolved):
+            let parsed: DatabaseImport.Parsed
+            do {
+                parsed = try AgentImportRunner.parse(
+                    url: resolved.url,
+                    explicitFormat: args["format"] as? String,
+                    hasHeader: hasHeader,
+                    explicitColumns: explicitColumnNames,
+                    maxRows: maxRows
+                )
+            } catch {
+                return ToolEnvelope.failure(
+                    kind: .invalidArgs,
+                    message: (error as? LocalizedError)?.errorDescription ?? error.localizedDescription,
+                    tool: name,
+                    retryable: false
                 )
             }
-            return ToolEnvelope.success(
-                tool: name,
-                result: resultDict,
-                warnings: warnings.isEmpty ? nil : warnings
-            )
-        } catch let error as AgentImportRunner.RunError {
+
+            let mode: AgentImportRunner.Mode =
+                (modeRaw == "upsert") ? .upsert(keyColumns: keyColumns) : .insert
+            do {
+                let outcome = try AgentImportRunner.run(
+                    agentId: agentId,
+                    table: table,
+                    parsed: parsed,
+                    mode: mode,
+                    createTable: createTable,
+                    typeOverrides: typeOverrides,
+                    sourceLabel: (path as NSString).lastPathComponent
+                )
+
+                var resultDict: [String: Any] = [
+                    "table": outcome.table,
+                    "rows_imported": outcome.rowsImported,
+                    "rows_skipped": outcome.rowsSkipped,
+                    "created_table": outcome.createdTable,
+                    "columns": outcome.columns,
+                    "truncated": outcome.truncated,
+                    "source_scope": resolved.scope.rawValue,
+                ]
+                if !outcome.droppedColumns.isEmpty {
+                    resultDict["dropped_columns"] = outcome.droppedColumns
+                }
+                if !outcome.sampleErrors.isEmpty { resultDict["sample_errors"] = outcome.sampleErrors }
+
+                var warnings: [String] = []
+                if outcome.truncated {
+                    warnings.append("Import stopped at max_rows; not all rows were loaded.")
+                }
+                if !outcome.droppedColumns.isEmpty {
+                    warnings.append(
+                        "Ignored columns not on `\(table)`: "
+                            + outcome.droppedColumns.joined(separator: ", ") + "."
+                    )
+                }
+                return ToolEnvelope.success(
+                    tool: name,
+                    result: resultDict,
+                    warnings: warnings.isEmpty ? nil : warnings
+                )
+            } catch let error as AgentImportRunner.RunError {
+                return ToolEnvelope.failure(
+                    kind: .invalidArgs,
+                    message: error.errorDescription ?? "Import failed.",
+                    tool: name,
+                    retryable: false
+                )
+            } catch {
+                return DatabaseToolHelpers.envelope(for: error, tool: name)
+            }
+        }
+    }
+}
+
+// MARK: - db_export
+
+/// Host-mediated bulk exporter. Runs a read-only SELECT and writes rows
+/// to CSV/JSON/JSONL on disk — the mirror of `db_import`.
+final class DBExportTool: OsaurusTool, @unchecked Sendable {
+    let name = "db_export"
+    let description =
+        "Run a read-only SELECT and write the rows to a file in your "
+        + "sandbox workspace or host working folder. No row data passes "
+        + "through your tokens — use this instead of paging `db_query` when "
+        + "you need a large extract. Supports CSV (default), JSON, and "
+        + "JSONL/NDJSON (auto-detected from the path extension). Returns a "
+        + "small summary only."
+
+    let parameters: JSONValue? = .object([
+        "type": .string("object"),
+        "additionalProperties": .bool(false),
+        "properties": .object([
+            "sql": .object([
+                "type": .string("string"),
+                "description": .string(
+                    "Read-only SELECT or WITH … SELECT statement."
+                ),
+            ]),
+            "params": DatabaseToolHelpers.sqlParamsProperty,
+            "path": .object([
+                "type": .string("string"),
+                "description": .string(
+                    "Destination file under sandbox workspace or working folder."
+                ),
+            ]),
+            "format": .object([
+                "type": .string("string"),
+                "description": .string(
+                    "Optional override: `csv`, `json`, `jsonl`/`ndjson`. "
+                        + "Auto-detected from extension when omitted."
+                ),
+            ]),
+            "overwrite": .object([
+                "type": .string("boolean"),
+                "description": .string(
+                    "Replace an existing file at `path`. Default false."
+                ),
+            ]),
+        ]),
+        "required": .array([.string("sql"), .string("path")]),
+    ])
+
+    func execute(argumentsJSON: String) async throws -> String {
+        let argsReq = requireArgumentsDictionary(argumentsJSON, tool: name)
+        guard case .value(let args) = argsReq else { return argsReq.failureEnvelope ?? "" }
+        let agentReq = DatabaseToolHelpers.requireAgentId(tool: name)
+        guard case .value(let agentId) = agentReq else { return agentReq.failureEnvelope ?? "" }
+
+        let sqlReq = requireString(args, "sql", expected: "read-only SELECT statement", tool: name)
+        guard case .value(let sql) = sqlReq else { return sqlReq.failureEnvelope ?? "" }
+        let pathReq = requireString(
+            args,
+            "path",
+            expected: "destination path under sandbox workspace or working folder",
+            tool: name
+        )
+        guard case .value(let path) = pathReq else { return pathReq.failureEnvelope ?? "" }
+
+        guard let format = DatabaseExport.Format.detect(
+            path: path,
+            explicit: args["format"] as? String
+        ) else {
             return ToolEnvelope.failure(
                 kind: .invalidArgs,
-                message: error.errorDescription ?? "Import failed.",
-                tool: name,
-                retryable: false
+                message:
+                    "Could not detect export format from `\(path)`. "
+                    + "Pass `format`: csv, json, or jsonl.",
+                field: "format",
+                tool: name
             )
-        } catch {
-            return DatabaseToolHelpers.envelope(for: error, tool: name)
+        }
+
+        let overwrite = coerceBool(args["overwrite"]) ?? false
+        switch await DatabaseFilePathResolver.resolveForWrite(
+            path: path,
+            tool: name,
+            overwrite: overwrite
+        ) {
+        case .failed(let envelope):
+            return envelope
+        case .resolved(let resolved):
+            let params: [AgentSQLValue]
+            if let raw = args["params"] {
+                params = DatabaseToolHelpers.toSQLValueArray(raw)
+            } else {
+                params = []
+            }
+
+            do {
+                let outcome = try LocalAgentBridge.shared.exportQueryToFile(
+                    agentId: agentId,
+                    sql: sql,
+                    params: params,
+                    url: resolved.url,
+                    format: format,
+                    maxBytes: DatabaseImport.maxBytes
+                )
+                var warnings: [String] = []
+                if outcome.truncated {
+                    warnings.append(
+                        "Export stopped at the \(DatabaseImport.maxBytes)-byte file cap; "
+                            + "not all rows were written. Narrow the query or export in chunks."
+                    )
+                }
+                return ToolEnvelope.success(
+                    tool: name,
+                    result: [
+                        "path": path,
+                        "format": format.rawValue,
+                        "rows_exported": outcome.rowsExported,
+                        "bytes": outcome.bytesWritten,
+                        "truncated": outcome.truncated,
+                        "columns": outcome.columns,
+                        "destination_scope": resolved.scope.rawValue,
+                    ],
+                    warnings: warnings.isEmpty ? nil : warnings
+                )
+            } catch {
+                return DatabaseToolHelpers.envelope(for: error, tool: name)
+            }
         }
     }
 }
@@ -1457,16 +1617,26 @@ final class DBRunViewTool: OsaurusTool, @unchecked Sendable {
                 agentId: agentId,
                 name: viewName
             )
-            let rows: [[Any]] = result.rows.map { row in
+            var rows: [[Any]] = result.rows.map { row in
                 row.map { DatabaseToolHelpers.toJSONAny($0) }
+            }
+            let (sizeTruncated, pagingHint) = DatabaseToolHelpers.trimQueryRows(
+                &rows,
+                offset: nil
+            )
+            let truncated = result.truncated || sizeTruncated
+            var warnings: [String] = []
+            if truncated, let pagingHint {
+                warnings.append(pagingHint)
             }
             return ToolEnvelope.success(
                 tool: name,
                 result: [
                     "columns": result.columns,
                     "rows": rows,
-                    "truncated": result.truncated,
-                ]
+                    "truncated": truncated,
+                ],
+                warnings: warnings.isEmpty ? nil : warnings
             )
         } catch {
             return DatabaseToolHelpers.envelope(for: error, tool: name)

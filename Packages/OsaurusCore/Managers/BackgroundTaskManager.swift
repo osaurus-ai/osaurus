@@ -992,9 +992,15 @@ public final class BackgroundTaskManager: ObservableObject {
         let previousCount = chatTurnCounts[taskId] ?? 0
         guard newCount > previousCount else { return }
 
+        // `$turns` emits on willSet, so `session.turns` still holds the OLD
+        // array here while `newCount` describes the incoming one. A session
+        // load that replaces a long history with a shorter array can leave
+        // `previousCount` past the readable bounds — clamp both ends or the
+        // range constructor traps.
         let turns = session.turns
-        let scanStart = max(0, previousCount - 1)
-        for turn in turns[scanStart ..< min(newCount, turns.count)] {
+        let scanEnd = min(newCount, turns.count)
+        let scanStart = min(max(0, previousCount - 1), scanEnd)
+        for turn in turns[scanStart ..< scanEnd] {
             if let toolCalls = turn.toolCalls {
                 for call in toolCalls {
                     state.appendActivity(kind: .tool, title: "Tool", detail: call.function.name)

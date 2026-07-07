@@ -120,6 +120,16 @@ struct IsKnownHybridModelMCDCTests {
         #expect(ModelRuntime.isKnownHybridModel(name: "holo-3-mxfp4"))
     }
 
+    @Test("B2.ornith family (qwen3_5/qwen3_5_moe model_type, no qwen substring) flips")
+    func b2_ornith() {
+        // Ornith 1.0 bundles are qwen3_5 (9B dense) / qwen3_5_moe (35B MoE)
+        // with linear_attention layers, but the ids carry no "qwen"
+        // substring — the dedicated `ornith` match covers them.
+        #expect(ModelRuntime.isKnownHybridModel(name: "OsaurusAI/Ornith-1.0-9B-MXFP4"))
+        #expect(ModelRuntime.isKnownHybridModel(name: "OsaurusAI/Ornith-1.0-35B-MXFP4"))
+        #expect(ModelRuntime.isKnownHybridModel(name: "ornith-1.0-35b-mxfp4"))  // picker form
+    }
+
     @Test("B2 all-false: qwen3 / qwen3-coder / qwen2 / qwen3.7 do NOT flip Block 2")
     func b2_allFalse() {
         #expect(!ModelRuntime.isKnownHybridModel(name: "qwen3-coder-plus"))

@@ -77,6 +77,45 @@ struct GenerationEventMapperTests {
         #expect((parsed?["n"] as? Int) == 3 || (parsed?["n"] as? Double) == 3.0)
     }
 
+    @Test func toolCallProgress_passes_through_with_committed_call() async throws {
+        // While the engine buffers a tool-call envelope it now streams
+        // `.toolCallProgress` deltas (raw envelope text), then the committed
+        // `.toolCall` once it closes. The bridge must forward each progress
+        // delta as `.toolCallProgress` AND still surface the final call as
+        // `.toolInvocation` — the progress event never replaces the call.
+        let args: [String: any Sendable] = ["path": "/tmp/a.txt"]
+        let call = MLXLMCommon.ToolCall(
+            function: MLXLMCommon.ToolCall.Function(
+                name: "write_file",
+                arguments: args
+            )
+        )
+        let events: [Generation] = [
+            .toolCallProgress("<tool_call>{\"name\": \"write_"),
+            .toolCallProgress("file\", \"arguments\": {\"path\":"),
+            .toolCallProgress(" \"/tmp/a.txt\"}}"),
+            .toolCall(call),
+        ]
+        let out = try await collect(events: events)
+
+        let progressDeltas = out.compactMap { ev -> String? in
+            if case .toolCallProgress(let s) = ev { return s } else { return nil }
+        }
+        #expect(progressDeltas.count == 3)
+        #expect(progressDeltas.joined().contains("write_file"))
+
+        #expect(
+            out.contains { if case .toolInvocation(let n, _) = $0 { n == "write_file" } else { false } }
+        )
+    }
+
+    @Test func toolCallProgress_drops_empty_deltas() async throws {
+        // Empty envelope deltas carry no preview and must not produce events.
+        let events: [Generation] = [.toolCallProgress("")]
+        let out = try await collect(events: events)
+        #expect(!out.contains { if case .toolCallProgress = $0 { true } else { false } })
+    }
+
     @Test func info_emits_completionInfo() async throws {
         let info = GenerateCompletionInfo(
             promptTokenCount: 12,

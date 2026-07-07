@@ -193,6 +193,13 @@ public final class MCPProviderManager: ObservableObject {
         state.resourceMetadataURL = nil
         providerStates[providerId] = state
 
+        // Held outside the do/catch so the failure path can tear the
+        // half-connected client down. Without this, a failed HTTP connect
+        // leaked the transport's URLSession — and, with streaming enabled,
+        // the SDK's SSE retry loop kept reconnecting forever with stale
+        // credentials because nobody ever called `disconnect()`.
+        var attemptClient: MCP.Client?
+
         do {
             // Create authenticated transport
             let transport = try await createTransport(for: provider)
@@ -202,6 +209,7 @@ public final class MCPProviderManager: ObservableObject {
                 name: "Osaurus",
                 version: Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.0.0"
             )
+            attemptClient = client
 
             // Connect under a timeout. Without this, a stdio subprocess that
             // spawned successfully but never speaks MCP would leave the card
@@ -212,8 +220,15 @@ public final class MCPProviderManager: ObservableObject {
                 _ = try await client.connect(transport: transport)
             }
 
-            // Store client
+            // Store client, tearing down any client we're replacing (a
+            // connect on an already-connected provider must not leak the
+            // old transport's URLSession / SSE loop).
+            if let replaced = clients[providerId], replaced !== client {
+                Task.detached { await replaced.disconnect() }
+            }
             clients[providerId] = client
+
+            await registerRemoteToolListChangedHandler(client: client, providerId: providerId)
 
             // Discover tools
             try await discoverTools(for: providerId, client: client, provider: provider)
@@ -259,6 +274,9 @@ public final class MCPProviderManager: ObservableObject {
                         try await performConnect(provider: provider, allowOAuthRetry: false)
                         return
                     } catch {
+                        if MCPOAuthService.isPermanentAuthFailure(error) {
+                            handlePermanentOAuthFailure(providerId: providerId)
+                        }
                         // Fall through and surface the original auth challenge.
                     }
                 }
@@ -282,8 +300,16 @@ public final class MCPProviderManager: ObservableObject {
                 ToolRegistry.shared.unregister(names: tools.map { $0.name })
             }
 
-            // Clean up local state
-            clients.removeValue(forKey: providerId)
+            // Clean up local state. The half-connected client from THIS
+            // attempt must be disconnected explicitly so its transport
+            // invalidates the URLSession and stops any SSE retry loop.
+            let staleClient = clients.removeValue(forKey: providerId)
+            var teardown: [MCP.Client] = []
+            if let attemptClient { teardown.append(attemptClient) }
+            if let staleClient, staleClient !== attemptClient { teardown.append(staleClient) }
+            for client in teardown {
+                Task.detached { await client.disconnect() }
+            }
             discoveredTools.removeValue(forKey: providerId)
             registeredTools.removeValue(forKey: providerId)
             // Stdio subprocesses might have been spawned successfully even
@@ -304,8 +330,13 @@ public final class MCPProviderManager: ObservableObject {
             ToolRegistry.shared.unregister(names: toolNames)
         }
 
-        // Clean up
-        clients.removeValue(forKey: providerId)
+        // Clean up. HTTP transports must be disconnected explicitly:
+        // dropping the reference alone never invalidates the transport's
+        // URLSession, and with streaming enabled the SDK's SSE retry loop
+        // keeps reconnecting every few seconds forever.
+        if let client = clients.removeValue(forKey: providerId) {
+            Task.detached { await client.disconnect() }
+        }
         discoveredTools.removeValue(forKey: providerId)
         registeredTools.removeValue(forKey: providerId)
 
@@ -381,26 +412,73 @@ public final class MCPProviderManager: ObservableObject {
 
     // MARK: - Tool Execution
 
-    /// Execute a tool on a provider
+    /// Execute a tool on a provider.
+    ///
+    /// Remote streamable-HTTP servers expire their `Mcp-Session-Id` after
+    /// idle periods or restarts, and OAuth access tokens baked into the
+    /// transport at connect time go stale. Both used to strand the provider
+    /// in a "Connected" state whose every tool call failed until the user
+    /// manually reconnected. We now reconnect once (which rebuilds the
+    /// transport with fresh auth and a fresh session) and retry the call.
     public func executeTool(providerId: UUID, toolName: String, argumentsJSON: String) async throws -> String {
-        guard let client = clients[providerId] else {
-            throw MCPProviderError.notConnected
-        }
-
         guard let provider = configuration.provider(id: providerId) else {
             throw MCPProviderError.providerNotFound
+        }
+
+        // A missing client on an enabled provider (transient connect failure
+        // at launch, earlier session loss) is recoverable — reconnect instead
+        // of failing the model's tool call outright.
+        if clients[providerId] == nil, provider.enabled {
+            try await performConnect(provider: provider, allowOAuthRetry: true)
+        }
+        guard let client = clients[providerId] else {
+            throw MCPProviderError.notConnected
         }
 
         let arguments = try MCPProviderTool.convertArgumentsToMCPValues(argumentsJSON)
         let timeout = provider.toolCallTimeout
 
         // Run the network call off MainActor so it doesn't block the UI thread.
-        let (content, isError) = try await Self.callMCPTool(
-            client: client,
-            toolName: toolName,
-            arguments: arguments,
-            timeout: timeout
-        )
+        let (content, isError): ([MCP.Tool.Content], Bool?)
+        do {
+            (content, isError) = try await Self.callMCPTool(
+                client: client,
+                toolName: toolName,
+                arguments: arguments,
+                timeout: timeout
+            )
+        } catch let error where Self.isRecoverableSessionError(error) {
+            if var reconnectState = providerStates[providerId] {
+                reconnectState.isAutoReconnecting = true
+                providerStates[providerId] = reconnectState
+                notifyStatusChanged()
+            }
+            defer {
+                if var finished = providerStates[providerId] {
+                    finished.isAutoReconnecting = false
+                    providerStates[providerId] = finished
+                }
+            }
+            // One reconnect + one retry; the rebuilt transport carries fresh
+            // OAuth/bearer credentials and negotiates a new session. If the
+            // reconnect fails we surface the reconnect error (it is the more
+            // actionable one: auth required, server down, ...).
+            try await performConnect(provider: provider, allowOAuthRetry: true)
+            guard let freshClient = clients[providerId] else {
+                throw MCPProviderError.notConnected
+            }
+            if var reconnected = providerStates[providerId] {
+                reconnected.lastAutoReconnectAt = Date()
+                providerStates[providerId] = reconnected
+                notifyStatusChanged()
+            }
+            (content, isError) = try await Self.callMCPTool(
+                client: freshClient,
+                toolName: toolName,
+                arguments: arguments,
+                timeout: timeout
+            )
+        }
 
         // Check for error
         if let isError = isError, isError {
@@ -413,6 +491,32 @@ public final class MCPProviderManager: ObservableObject {
 
         // Convert content to string
         return MCPProviderTool.convertMCPContent(content)
+    }
+
+    /// True when a tool-call failure indicates the connection/session is
+    /// stale (expired `Mcp-Session-Id`, expired auth token, closed
+    /// transport) rather than a failure of the tool itself. These are the
+    /// cases where the request was rejected before execution, so a single
+    /// reconnect + retry is safe (no double-execution risk). Timeouts are
+    /// deliberately excluded: the server may have executed the tool.
+    ///
+    /// The MCP SDK exposes these conditions only as `internalError`
+    /// message strings, so we match the exact strings it produces
+    /// (`HTTPClientTransport.processHTTPResponse` / `send`).
+    nonisolated static func isRecoverableSessionError(_ error: Error) -> Bool {
+        guard let mcpError = error as? MCPError else { return false }
+        switch mcpError {
+        case .connectionClosed:
+            return true
+        case .internalError(let message):
+            guard let message else { return false }
+            return message == "Session expired"
+                || message == "Authentication required"
+                || message == "Access forbidden"
+                || message == "Transport not connected"
+        default:
+            return false
+        }
     }
 
     /// Trampoline that runs the MCP network call outside MainActor isolation.
@@ -497,21 +601,17 @@ public final class MCPProviderManager: ObservableObject {
         }
 
         // Create temporary transport
-        let configuration = GlobalProxySettings.makeConfiguration(base: .default)
         var allHeaders: [String: String] = headers
         if let token = token, !token.isEmpty {
             allHeaders["Authorization"] = "Bearer \(token)"
         }
-        if !allHeaders.isEmpty {
-            configuration.httpAdditionalHeaders = allHeaders
-        }
-        configuration.timeoutIntervalForRequest = 10
-        configuration.timeoutIntervalForResource = 20
 
-        let transport = HTTPClientTransport(
+        let transport = MCPHTTPTransportBuilder.makeTransport(
             endpoint: endpoint,
-            configuration: configuration,
-            streaming: false
+            headers: allHeaders,
+            streaming: false,
+            discoveryTimeout: 10,
+            toolCallTimeout: 10
         )
 
         let client = MCP.Client(
@@ -519,13 +619,21 @@ public final class MCPProviderManager: ObservableObject {
             version: "1.0.0"
         )
 
-        // Connect
-        _ = try await client.connect(transport: transport)
+        // Probe clients are short-lived: always tear the transport down so
+        // the test URLSession doesn't outlive the sheet that triggered it.
+        do {
+            // Connect
+            _ = try await client.connect(transport: transport)
 
-        // List tools to verify connection
-        let (tools, _) = try await client.listTools()
+            // List tools to verify connection
+            let (tools, _) = try await client.listTools()
 
-        return tools.count
+            await client.disconnect()
+            return tools.count
+        } catch {
+            await client.disconnect()
+            throw error
+        }
     }
 
     // MARK: - OAuth
@@ -627,6 +735,18 @@ public final class MCPProviderManager: ObservableObject {
         switch provider.executionHost {
         case .host:
             let runner = try MCPStdioHostRunner(provider: provider)
+            let providerId = provider.id
+            await runner.setProcessExitHandler { [weak self] exitCode in
+                Task { @MainActor in
+                    guard let self else { return }
+                    let tail = await runner.lastStderrTail()
+                    self.handleStdioProcessExit(
+                        providerId: providerId,
+                        exitCode: exitCode,
+                        stderrTail: tail
+                    )
+                }
+            }
             try await runner.start()
             hostStdioRunners[provider.id] = runner
             return runner.transport
@@ -655,6 +775,18 @@ public final class MCPProviderManager: ObservableObject {
                     }
                 }
                 let runner = try SandboxStdioRunner(provider: provider)
+                let providerId = provider.id
+                await runner.setProcessExitHandler { [weak self] exitCode in
+                    Task { @MainActor in
+                        guard let self else { return }
+                        let tail = await runner.lastStderrTail()
+                        self.handleStdioProcessExit(
+                            providerId: providerId,
+                            exitCode: exitCode,
+                            stderrTail: tail
+                        )
+                    }
+                }
                 try await runner.start()
                 sandboxStdioRunners[provider.id] = runner
                 return runner.transport
@@ -664,15 +796,19 @@ public final class MCPProviderManager: ObservableObject {
         }
     }
 
-    /// Build the `URLSessionConfiguration` for a provider, including any cached
-    /// auth headers. OAuth refresh-before-connect happens inside this method so
+    /// Build the HTTP transport for a provider, including any cached auth
+    /// headers. OAuth refresh-before-connect happens inside this method so
     /// every entrypoint (connect / testConnection) goes through the same gate.
+    ///
+    /// Headers are injected per-request via the transport's request modifier
+    /// instead of `httpAdditionalHeaders` — Apple documents the latter as
+    /// unsupported for `Authorization`, and per-request injection also covers
+    /// the SDK's SSE reconnects. Timeout semantics live in
+    /// `MCPHTTPTransportBuilder`.
     private func createHTTPTransport(for provider: MCPProvider) async throws -> HTTPClientTransport {
         guard let endpoint = URL(string: provider.url) else {
             throw MCPProviderError.invalidURL
         }
-
-        let urlConfig = GlobalProxySettings.makeConfiguration(base: .default)
 
         // Build headers
         var headers = provider.resolvedHeaders()
@@ -695,17 +831,12 @@ public final class MCPProviderManager: ObservableObject {
             break
         }
 
-        if !headers.isEmpty {
-            urlConfig.httpAdditionalHeaders = headers
-        }
-
-        urlConfig.timeoutIntervalForRequest = provider.discoveryTimeout
-        urlConfig.timeoutIntervalForResource = max(provider.discoveryTimeout, provider.toolCallTimeout)
-
-        return HTTPClientTransport(
+        return MCPHTTPTransportBuilder.makeTransport(
             endpoint: endpoint,
-            configuration: urlConfig,
-            streaming: provider.streamingEnabled
+            headers: headers,
+            streaming: provider.streamingEnabled,
+            discoveryTimeout: provider.discoveryTimeout,
+            toolCallTimeout: provider.toolCallTimeout
         )
     }
 
@@ -728,9 +859,82 @@ public final class MCPProviderManager: ObservableObject {
         do {
             return try await MCPOAuthService.refresh(provider: provider, tokens: tokens)
         } catch {
+            if MCPOAuthService.isPermanentAuthFailure(error) {
+                handlePermanentOAuthFailure(providerId: provider.id)
+            }
             throw MCPProviderError.connectionFailed(
                 "Could not refresh OAuth tokens: \(error.localizedDescription)"
             )
+        }
+    }
+
+    private func handlePermanentOAuthFailure(providerId: UUID) {
+        MCPProviderKeychain.deleteOAuthTokens(for: providerId)
+        if var state = providerStates[providerId] {
+            state.requiresAuth = true
+            state.isConnected = false
+            state.isConnecting = false
+            state.lastError = "Session expired — please sign in again."
+            providerStates[providerId] = state
+        }
+        notifyStatusChanged()
+    }
+
+    private func handleStdioProcessExit(providerId: UUID, exitCode: Int32, stderrTail: String) {
+        guard providerStates[providerId]?.isConnected == true else { return }
+
+        if let tools = registeredTools[providerId] {
+            ToolRegistry.shared.unregister(names: tools.map { $0.name })
+        }
+        if let client = clients.removeValue(forKey: providerId) {
+            Task.detached { await client.disconnect() }
+        }
+        discoveredTools.removeValue(forKey: providerId)
+        registeredTools.removeValue(forKey: providerId)
+        stopStdioRunners(for: providerId)
+
+        if var state = providerStates[providerId] {
+            state.isConnected = false
+            state.isConnecting = false
+            state.discoveredToolCount = 0
+            state.discoveredToolNames = []
+            state.lastStderrTail = stderrTail.isEmpty ? nil : stderrTail
+            let codeSuffix = exitCode >= 0 ? " (exit \(exitCode))" : ""
+            if stderrTail.isEmpty {
+                state.lastError = "Stdio MCP subprocess exited unexpectedly\(codeSuffix)."
+            } else {
+                state.lastError = "Stdio MCP subprocess exited\(codeSuffix): \(stderrTail)"
+            }
+            providerStates[providerId] = state
+        }
+        NotificationCenter.default.post(name: .toolsListChanged, object: nil)
+        notifyStatusChanged()
+    }
+
+    private func registerRemoteToolListChangedHandler(client: MCP.Client, providerId: UUID) async {
+        await client.onNotification(ToolListChangedNotification.self) { [weak self] _ in
+            Task { @MainActor in
+                await self?.handleRemoteToolListChanged(providerId: providerId)
+            }
+        }
+    }
+
+    private func handleRemoteToolListChanged(providerId: UUID) async {
+        guard let provider = configuration.provider(id: providerId),
+            let client = clients[providerId]
+        else { return }
+
+        do {
+            if let oldTools = registeredTools[providerId] {
+                ToolRegistry.shared.unregister(names: oldTools.map { $0.name })
+            }
+            try await discoverTools(for: providerId, client: client, provider: provider)
+        } catch {
+            if var state = providerStates[providerId] {
+                state.lastError = "Tool list refresh failed: \(error.localizedDescription)"
+                providerStates[providerId] = state
+            }
+            notifyStatusChanged()
         }
     }
 
@@ -817,13 +1021,16 @@ public final class MCPProviderManager: ObservableObject {
         provider: MCPProvider
     ) -> [MCPProviderTool] {
         var tools: [MCPProviderTool] = []
+        var reservedNames = Set(ToolRegistry.shared.registeredToolNames())
         for mcpTool in mcpTools {
             let tool = MCPProviderTool(
                 mcpTool: mcpTool,
                 providerId: providerId,
-                providerName: provider.name
+                providerName: provider.name,
+                reservedNames: reservedNames
             )
             tools.append(tool)
+            reservedNames.insert(tool.name)
             ToolRegistry.shared.registerMCPTool(tool)
         }
         return tools

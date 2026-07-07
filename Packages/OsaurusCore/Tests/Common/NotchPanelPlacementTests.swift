@@ -76,6 +76,38 @@ struct NotchPanelPlacementTests {
         #expect(placement.frame.midX == screenFrame.midX)
     }
 
+    @Test func panelReservesRevealStripWhenMenuBarAutoHides() {
+        // Auto-hidden menu bar: visibleFrame extends to the top of the screen.
+        let screenFrame = CGRect(x: 0, y: 0, width: 1920, height: 1080)
+        let visibleFrame = screenFrame
+
+        let placement = NotchPanelPlacement.panelRect(
+            screenFrame: screenFrame,
+            visibleFrame: visibleFrame,
+            preferredSize: CGSize(width: 600, height: 500),
+            hiddenMenuBarInset: 32
+        )
+
+        #expect(placement.frame.maxY == screenFrame.maxY - 32)
+        #expect(placement.frame.midX == screenFrame.midX)
+    }
+
+    @Test func panelIgnoresInsetWhenMenuBarIsVisible() {
+        // Visible menu bar already reserves the strip; the inset must not
+        // push the panel down a second time.
+        let screenFrame = CGRect(x: 0, y: 0, width: 1440, height: 900)
+        let visibleFrame = CGRect(x: 0, y: 0, width: 1440, height: 868)
+
+        let placement = NotchPanelPlacement.panelRect(
+            screenFrame: screenFrame,
+            visibleFrame: visibleFrame,
+            preferredSize: CGSize(width: 600, height: 500),
+            hiddenMenuBarInset: 32
+        )
+
+        #expect(placement.frame.maxY == visibleFrame.maxY)
+    }
+
     @Test func alertContentTopPaddingMatchesMenuBarGap() {
         let screenFrame = CGRect(x: 0, y: 0, width: 1440, height: 900)
         let visibleFrame = CGRect(x: 0, y: 0, width: 1440, height: 868)

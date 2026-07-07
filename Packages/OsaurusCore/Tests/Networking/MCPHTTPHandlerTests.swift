@@ -352,6 +352,44 @@ struct MCPHTTPHandlerTests {
         }
     }
 
+    @Test func mcp_call_rejects_disabled_tool() async throws {
+        try await DynamicCatalogTestLock.shared.run {
+            let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent(
+                "osaurus-tests-\(UUID().uuidString)",
+                isDirectory: true
+            )
+            ToolConfigurationStore.overrideDirectory = tempDir
+            try? FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+
+            ToolRegistry.shared.register(EchoTool())
+            ToolRegistry.shared.setEnabled(false, for: EchoTool.nameStatic)
+            defer { ToolRegistry.shared.unregister(names: [EchoTool.nameStatic]) }
+
+            let server = try await startTestServer()
+            defer { Task { await server.shutdown() } }
+
+            var request = URLRequest(url: URL(string: "http://\(server.host):\(server.port)/mcp/call")!)
+            request.httpMethod = "POST"
+            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            request.authenticate()
+            let bodyObj: [String: Any] = [
+                "name": EchoTool.nameStatic,
+                "arguments": ["text": "hi"],
+            ]
+            request.httpBody = try JSONSerialization.data(withJSONObject: bodyObj)
+
+            let (data, resp) = try await URLSession.shared.data(for: request)
+            let status = (resp as? HTTPURLResponse)?.statusCode ?? -1
+            #expect(status == 200)
+            let json = try JSONSerialization.jsonObject(with: data) as? [String: Any]
+            let isError = (json?["isError"] as? Bool) ?? false
+            #expect(isError == true)
+            let content = (json?["content"] as? [[String: Any]])?.first
+            let text = content?["text"] as? String ?? ""
+            #expect(text.contains("disabled"))
+        }
+    }
+
     @Test func mcp_call_with_missing_required_arg_returns_error() async throws {
         try await DynamicCatalogTestLock.shared.run {
             let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent(

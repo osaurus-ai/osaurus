@@ -658,8 +658,26 @@ struct RuntimePolicySourceTests {
         // plus the orphan tool-call closer strip (vmlx-swift#115) that
         // removes stray `</parameter></function></zyphra_tool_call>`
         // closer runs from the visible stream in ZAYA / Gemma-4
-        // AppleScript agent-loop rows.
-        let expectedRuntimeHardenedRevision = "8dffa0a8e69d7617d68f0843635158684120a3dc"
+        // AppleScript agent-loop rows,
+        // plus the GPU-stream-driver serialization (vmlx-swift#116) that
+        // re-locks eval/asyncEval/item + synchronize/clearCache to kill the
+        // Metal concurrent-encoder crash class (Sentry: end_encoding,
+        // "encoder already encoding", addCompletedHandler-after-commit,
+        // set_input_array double-free), and the NormConventionResolver
+        // fallback (vmlx-swift#117) so an unrecognized norm_convention
+        // declaration defers to the order-independent vote instead of
+        // silently disabling the (1+weight) RMSNorm shift, plus the
+        // incremental tool-call envelope progress event
+        // (vmlx-swift#119, `Generation.toolCallProgress`) that lets the
+        // native chat show a live "Preparing tool call" card during a long
+        // buffered tool write instead of a frozen typing indicator.
+        // Now also carries vmlx-swift#123 (production crash-trap fixes):
+        // Qwen3VL low-rank position-id normalization + per-sequence rope
+        // delta broadcast, Gemma4/NemotronH guards against the rank-0/empty
+        // results a failed MLX op returns inside a withError scope, and
+        // non-trapping compiled-closure failure paths — so recorded MLX
+        // errors surface instead of dying in Swift bounds checks.
+        let expectedRuntimeHardenedRevision = "aa14267b11840f89f1976a273e553a3b7bbedf39"
         let manifestRevision = try Self.vmlxPinRevision(in: manifest)
         let workspaceRevision = try Self.vmlxPinRevision(in: workspaceResolved)
         let appRevision = try Self.vmlxPinRevision(in: appResolved)
@@ -1960,8 +1978,11 @@ struct RuntimePolicySourceTests {
                 && runtime.contains("availableMemoryBytes: available"),
             "The load assessment must track available memory and expose it through health/logs without using it as a hard RAM block."
         )
+        // The verdict math lives in the shared builder so the advisory
+        // pre-load gate and the chat input's candidate projection can't
+        // drift apart.
         let assessmentBody = try Self.functionBody(
-            "private func checkRAMFeasibility",
+            "static func buildRAMFeasibility",
             in: runtime
         )
         // RAM pressure must not refuse a user-requested load: unified memory
@@ -1973,6 +1994,15 @@ struct RuntimePolicySourceTests {
                 && !assessmentBody.contains("throw LoadRefusedError(")
                 && !assessmentBody.contains("verdict = .refused"),
             "RAM pressure must warn as .tight, not throw or mark a hard refusal before vMLX attempts the load."
+        )
+        let advisoryGateBody = try Self.functionBody(
+            "private func checkRAMFeasibility",
+            in: runtime
+        )
+        #expect(
+            advisoryGateBody.contains("buildRAMFeasibility(")
+                && !advisoryGateBody.contains("throw LoadRefusedError("),
+            "The pre-load gate must route through the shared assessment builder and stay advisory."
         )
 
         let health = try Self.source("Networking/HTTPHandler.swift")
@@ -2294,7 +2324,13 @@ struct RuntimePolicySourceTests {
         #expect(health.contains("\"idle_unload_at\""))
         #expect(health.contains("\"idle_seconds_remaining\""))
         #expect(windows.contains("modelIdleResidencyPolicy"))
-        #expect(windows.contains("if idlePolicy == .immediately"))
+        // Window close must branch on the full policy: immediate GC for
+        // `.immediately`, short-grace acceleration for `.afterSeconds`
+        // (chat-sourced models only, with a fire-time reopen guard), and no
+        // action for `.never`.
+        #expect(windows.contains("case .immediately:"))
+        #expect(windows.contains("case .afterSeconds:"))
+        #expect(windows.contains("accelerateIdleUnloadAfterChatClose"))
         #expect(
             windows.contains("let found = ModelManager.findInstalledModel(named: model)")
                 && windows.contains("return found.name"),
@@ -2327,7 +2363,7 @@ struct RuntimePolicySourceTests {
     func residentSameModelTurnsDoNotFlashModelLoadingUI() throws {
         let runtime = try Self.source("Services/ModelRuntime.swift")
 
-        #expect(runtime.contains("let shouldReportModelLoad = modelCache[modelName] == nil"))
+        #expect(runtime.contains("let shouldReportModelLoad = modelCache[modelName] == nil && !parameters.suppressProgressUI"))
         #expect(
             runtime.contains(
                 "if shouldReportModelLoad {\n            InferenceProgressManager.shared.modelLoadWillStartAsync()"

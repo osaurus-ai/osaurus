@@ -837,6 +837,36 @@ extension ModelManager {
             useCase: .vision
         ),
 
+        // MARK: Ornith 1.0 (DeepReinforce, Qwen 3.5 hybrid backbone)
+        //
+        // Vision-language agentic-coding models on the Qwen 3.5 hybrid
+        // architecture (Gated-DeltaNet linear attention + full attention),
+        // so they reuse the existing `qwen3_5` / `qwen3_5_moe` runtime
+        // classes. MXFP8 is the curated Top Pick representative per family
+        // (precision-first, matching the Qwen 3.6 convention); the MXFP4 and
+        // JANG_4M siblings stay auto-fetched and collapse into each family
+        // card's Versions picker.
+
+        curated(
+            id: "OsaurusAI/Ornith-1.0-9B-MXFP8",
+            description:
+                "Ornith 1.0 9B vision-language model, tuned for agentic coding on a Qwen 3.5 hybrid backbone. MXFP8 — near-lossless precision. 256K context.",
+            isTopSuggestion: true,
+            modelType: "qwen3_5",
+            releasedAt: date("2026-06-26"),
+            useCase: .vision
+        ),
+
+        curated(
+            id: "OsaurusAI/Ornith-1.0-35B-MXFP8",
+            description:
+                "Ornith 1.0 35B vision-language MoE, state-of-the-art open agentic coding for its size. MXFP8 — near-lossless precision. 256K context.",
+            isTopSuggestion: true,
+            modelType: "qwen3_5_moe",
+            releasedAt: date("2026-06-26"),
+            useCase: .vision
+        ),
+
         // MARK: MiniMax M2.7 (JANGTQ MoE)
         //
         // 228.7B total / ~1.4B active MoE (256 experts, top-8) with 192K context.

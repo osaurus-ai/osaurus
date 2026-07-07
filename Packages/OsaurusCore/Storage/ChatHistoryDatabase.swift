@@ -494,6 +494,45 @@ public final class ChatHistoryDatabase: @unchecked Sendable {
         return counts
     }
 
+    /// Session ids whose message bodies contain `text` as a substring
+    /// (case-insensitive for ASCII, SQLite `LIKE` semantics). Backs the
+    /// sidebar's full-text conversation search; title/metadata matching
+    /// happens separately in memory. A plain scan over `turns.content` —
+    /// there is no FTS index, but local history is small and the scan works
+    /// unchanged under SQLCipher.
+    public func sessionIds(withContentContaining text: String) -> Set<UUID> {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return [] }
+        // Escape LIKE wildcards so a literal % or _ in the query matches
+        // literally instead of exploding the scan.
+        let escaped =
+            trimmed
+            .replacingOccurrences(of: "\\", with: "\\\\")
+            .replacingOccurrences(of: "%", with: "\\%")
+            .replacingOccurrences(of: "_", with: "\\_")
+        var ids: Set<UUID> = []
+        let sql = "SELECT DISTINCT session_id FROM turns WHERE content LIKE ?1 ESCAPE '\\'"
+        do {
+            try prepareAndExecute(
+                sql,
+                bind: { stmt in
+                    Self.bindText(stmt, index: 1, value: "%\(escaped)%")
+                },
+                process: { stmt in
+                    while sqlite3_step(stmt) == SQLITE_ROW {
+                        guard let cString = sqlite3_column_text(stmt, 0) else { continue }
+                        if let uuid = UUID(uuidString: String(cString: cString)) {
+                            ids.insert(uuid)
+                        }
+                    }
+                }
+            )
+        } catch {
+            print("[ChatHistoryDatabase] sessionIds(withContentContaining:) failed: \(error)")
+        }
+        return ids
+    }
+
     /// Find an existing session by `(source, external_session_key)`,
     /// optionally constrained to `agentId`. Used by HTTP / scheduler / watcher
     /// dispatch paths where there's no plugin id to scope by. Returns the

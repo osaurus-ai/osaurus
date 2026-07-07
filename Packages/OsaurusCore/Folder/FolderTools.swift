@@ -115,18 +115,32 @@ enum FolderToolHelpers {
         // Symlink-safe containment: the lexical check above only resolves
         // `..` / `.`, so a symlink *inside* the root (e.g. `notes.txt ->
         // ~/.ssh/id_rsa`) would pass it and then be followed out of scope
-        // on read. Resolve symlinks on both the target and the root and
-        // re-check. `resolvingSymlinksInPath()` resolves existing
-        // components (and macOS firmlinks like `/tmp` -> `/private/tmp`),
-        // leaving not-yet-created trailing components intact — so a new
-        // file under a real directory still passes, while a symlink whose
-        // real target escapes the root is rejected. Both sides are
-        // resolved so the firmlink rewrite can't cause a false mismatch.
+        // on read. Resolve symlinks and re-check.
+        //
+        // `resolvingSymlinksInPath()` only rewrites components that exist on
+        // disk. Applying it to the *whole* target is asymmetric with the root
+        // when the target's trailing component doesn't exist yet: for a
+        // firmlinked root like `/tmp` (`/private/tmp`) or `/var`
+        // (`/private/var`), the fully-existing root resolves to the `/tmp`
+        // side while the new file — its trailing name unresolved — keeps the
+        // `/private/tmp` side, so the prefix check falsely fails and every
+        // write under such a root is rejected as "outside the working
+        // directory". Resolve the *deepest existing ancestor* of the target
+        // instead: it flips firmlinks exactly as the root does (symmetry), and
+        // an in-root symlink escaping the root still resolves out and is
+        // rejected. Components below the existing ancestor don't exist yet, so
+        // they can't be symlinks and are safe to treat lexically.
         let realRoot = rootPath.resolvingSymlinksInPath().standardized.path
-        let realResolved = resolvedURL.resolvingSymlinksInPath().standardized.path
+        var existingAncestor = resolvedURL
+        while !FileManager.default.fileExists(atPath: existingAncestor.path) {
+            let parent = existingAncestor.deletingLastPathComponent()
+            if parent.path == existingAncestor.path { break }
+            existingAncestor = parent
+        }
+        let realExisting = existingAncestor.resolvingSymlinksInPath().standardized.path
         let isWithinRealRoot =
-            realResolved == realRoot
-            || realResolved.hasPrefix(realRoot + "/")
+            realExisting == realRoot
+            || realExisting.hasPrefix(realRoot + "/")
         guard isWithinRealRoot else {
             throw FolderToolError.pathOutsideRoot(relativePath)
         }

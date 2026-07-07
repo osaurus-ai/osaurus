@@ -50,6 +50,10 @@ struct CellRenderingContext {
     /// bubbles. Empty dict means no privacy redactions in this
     /// session yet (the highlight pass short-circuits).
     var sessionRedactions: [String: String] = [:]
+    /// Active in-conversation find query (Cmd+F). Empty when the find bar is
+    /// closed. Message cells paint every case-insensitive occurrence in
+    /// their body text via `NativeMarkdownView.setSearchHighlight`.
+    var searchHighlightQuery: String = ""
     /// Coordinator-scoped predicate: has the chart with this block id ever
     /// been drawn (and thus already played its entry animation) in the
     /// current chat? Used by `configureAsChart` to suppress the animation
@@ -262,6 +266,15 @@ final class NativeHeaderView: NSView {
     /// share the same key once stringified.
     private static var monogramCache: [String: NSImage] = [:]
     private static let monogramCacheLock = NSLock()
+
+    /// Drop all memoized monograms (memory-pressure response); re-rendered
+    /// lazily on next display.
+    static func clearMonogramCache() {
+        monogramCacheLock.lock()
+        monogramCache.removeAll()
+        monogramCacheLock.unlock()
+    }
+
     private static func monogramImage(
         name: String,
         tint: NSColor,
@@ -302,6 +315,9 @@ final class NativeHeaderView: NSView {
             return true
         }
         monogramCacheLock.lock()
+        // Safety-net cap (reset-on-overflow): keys vary by initial/tint/size,
+        // and monograms are cheap to re-render.
+        if monogramCache.count >= 256 { monogramCache.removeAll() }
         monogramCache[key] = image
         monogramCacheLock.unlock()
         return image
@@ -924,7 +940,9 @@ private final class UserMessageInlineEditView: NSView, NSTextViewDelegate {
     private var lastLayoutWidth: CGFloat = 0
 
     override init(frame frameRect: NSRect) {
-        let tv = CustomNSTextView()
+        // TextKit 1 from birth — avoids the lazy TextKit 2 → 1 downgrade on
+        // first `.layoutManager` access (see EditableTextView.makeNSView).
+        let tv = CustomNSTextView(usingTextLayoutManager: false)
         tv.maxHeight = 240
         tv.focusRingType = .none
         tv.isRichText = false
@@ -1807,6 +1825,7 @@ final class NativeMessageCellView: NSTableCellView {
             Self.buildHighlights(from: context.sessionRedactions, direction: .inbound),
             theme: context.theme
         )
+        mv.setSearchHighlight(query: context.searchHighlightQuery, theme: context.theme)
 
         // Apply assistant bubble background only when the target value actually changes —
         // configure() runs on every streaming token, so unconditional CGColor assignment
@@ -2211,6 +2230,7 @@ final class NativeMessageCellView: NSTableCellView {
                 Self.buildHighlights(from: context.sessionRedactions, direction: .outbound),
                 theme: theme
             )
+            mv.setSearchHighlight(query: context.searchHighlightQuery, theme: theme)
         }
 
         if let stack = userImageStack {
