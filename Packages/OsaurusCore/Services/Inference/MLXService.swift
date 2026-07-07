@@ -284,25 +284,20 @@ actor MLXService: ToolCapableService {
         {
             issues.append("Model capability detection reports tool calling as unsupported.")
         }
-        if isBlockedProductionModel(modelName: modelName, modelId: modelId) {
-            issues.append(
-                "ZAYA1-VL JANGTQ_K is a diagnostic artifact with a proven first-token fidelity failure; use zaya1-vl-8b-mxfp4 or zaya1-vl-8b-jangtq4 for production serving."
-            )
+        // Production-serving block consults the capability ledger: the seed
+        // rule reproduces the old hardcoded ZAYA1-VL JANGTQ_K check exactly,
+        // and a measured `productionServing: pass` record (e.g. a future
+        // gauntlet run proving a fixed bundle) can clear it without a
+        // release. See `ModelCapabilityLedger`.
+        if let blockReason = ModelCapabilityLedger.productionServingBlockReason(
+            modelName: modelName, modelId: modelId)
+        {
+            issues.append(blockReason)
         }
 
         if !issues.isEmpty {
             throw RuntimePolicyError(modelName: modelName, issues: issues)
         }
-    }
-
-    private nonisolated static func isBlockedProductionModel(
-        modelName: String,
-        modelId: String
-    ) -> Bool {
-        let combined = "\(modelName) \(modelId)"
-            .lowercased()
-            .replacingOccurrences(of: "-", with: "_")
-        return combined.contains("zaya1_vl_8b_jangtq_k")
     }
 
     nonisolated static func supportsLocalToolCalling(
