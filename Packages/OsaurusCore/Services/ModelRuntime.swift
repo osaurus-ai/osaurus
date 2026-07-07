@@ -622,8 +622,16 @@ public actor ModelRuntime {
         }
 
         if !quit {
+            // Serialize this drain-sync against other GPU producers, same as
+            // every other synchronize/clearCache pair in this file. Ungated,
+            // it forces `end_encoding` on the shared stream while a gated
+            // producer (another model's generation, an image job) is
+            // mid-encode — observed null deref in
+            // `metal::Device::end_encoding` via `unload`.
+            await MetalGate.shared.enterModelTeardown(model: "loading-task-drain")
             Stream.gpu.synchronize()
             Memory.clearCache()
+            await MetalGate.shared.exitModelTeardown(model: "loading-task-drain")
         }
     }
 
