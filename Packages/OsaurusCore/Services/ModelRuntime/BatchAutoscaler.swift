@@ -72,7 +72,11 @@ enum BatchAutoscalerPolicy {
     static func decision(windowMax: Int, tierCap: Int, previous: Int) -> Int {
         let cap = max(tierCap, 1)
         guard windowMax > 1 else { return 1 }
-        let target = min(nextPowerOfTwo(windowMax), cap)
+        // Cap BEFORE rounding up: `nextPowerOfTwo` of an unbounded
+        // windowMax can overflow-shift for absurd demand values, and any
+        // rounded value above the cap would be discarded anyway. The outer
+        // `min` keeps non-power-of-two caps authoritative.
+        let target = min(nextPowerOfTwo(min(windowMax, cap)), cap)
         return min(max(target, previous), cap)
     }
 }

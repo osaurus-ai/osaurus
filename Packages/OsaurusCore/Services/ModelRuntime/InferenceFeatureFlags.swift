@@ -139,7 +139,7 @@ public enum InferenceFeatureFlags {
         }
         let tierCap =
             tierCapOverride
-            ?? BatchAutoscalerPolicy.tierCap(for: ChipProfile.current.tier)
+            ?? BatchAutoscalerPolicy.tierCap(for: ChipProfile.current.policyTier)
         let scaler = autoscaler ?? BatchAutoscaler.shared
         return await scaler.recommendedBatchSize(for: model, tierCap: tierCap)
     }

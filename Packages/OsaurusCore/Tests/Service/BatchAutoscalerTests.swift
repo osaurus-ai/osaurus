@@ -123,6 +123,9 @@ struct BatchAutoscalerTests {
         #expect(BatchAutoscalerPolicy.decision(windowMax: 30, tierCap: 16, previous: 1) == 16)
         // Base/unknown cap of 1 means overlap can never escalate.
         #expect(BatchAutoscalerPolicy.decision(windowMax: 6, tierCap: 1, previous: 1) == 1)
+        // The cap is applied BEFORE the power-of-two round-up, so an absurd
+        // windowMax cannot overflow `nextPowerOfTwo`'s shift loop.
+        #expect(BatchAutoscalerPolicy.decision(windowMax: Int.max, tierCap: 8, previous: 1) == 8)
     }
 
     /// Never resize DOWN while the window still shows overlap: mid-burst
@@ -258,6 +261,77 @@ struct BatchAutoscalerTests {
         #expect(await recorder.models == ["m", "m"])
         await scaler.sweep(model: "m")
         #expect(await recorder.models == ["m", "m"])
+    }
+
+    // MARK: - Registry idle-shutdown handle accounting
+
+    /// TOCTOU fix: a request holds an "engine handle" from `engine(for:)`
+    /// entry (`beginGenerate`) until its producer drains (`endGenerate`);
+    /// during that whole window — including the awaits BEFORE the
+    /// submission raises the engine's pending/active counts —
+    /// `shutdownEngineIfIdle` must decline, or the submit would land on a
+    /// drained engine and surface as an empty 200.
+    @Test func shutdownEngineIfIdle_declinesWhileHandleHeld() async {
+        let registry = MLXBatchAdapter.Registry()
+        await registry.beginGenerate(model: "m")
+        #expect(await registry.inFlightHandleCount(for: "m") == 1)
+        #expect(await registry.shutdownEngineIfIdle(for: "m") == false)
+
+        // Handle released: teardown may proceed (no engine exists here, so
+        // "idle" is trivially true).
+        await registry.endGenerate(model: "m")
+        #expect(await registry.inFlightHandleCount(for: "m") == 0)
+        #expect(await registry.shutdownEngineIfIdle(for: "m") == true)
+    }
+
+    @Test func shutdownEngineIfIdle_countsOverlappingHandlesPerModel() async {
+        let registry = MLXBatchAdapter.Registry()
+        await registry.beginGenerate(model: "m")
+        await registry.beginGenerate(model: "m")
+        await registry.endGenerate(model: "m")
+        // One of two overlapping handles released — still held.
+        #expect(await registry.shutdownEngineIfIdle(for: "m") == false)
+        await registry.endGenerate(model: "m")
+        #expect(await registry.shutdownEngineIfIdle(for: "m") == true)
+
+        // Handles are tracked per model: another model's in-flight handle
+        // must not block this model's teardown.
+        await registry.beginGenerate(model: "other")
+        #expect(await registry.shutdownEngineIfIdle(for: "m") == true)
+        #expect(await registry.shutdownEngineIfIdle(for: "other") == false)
+    }
+
+    // MARK: - Auto path never hot-resizes a cached engine down
+
+    /// A decayed recommendation must not resize an active engine down on
+    /// the request path: the request keeps serving at the cached engine's
+    /// actual size (which also keeps `compiledBatchDecode` honest), and
+    /// shrink-to-1 is exclusively the decay sweep's shutdown+rebuild.
+    @Test func autoEffectiveSize_recommendationDropKeepsCachedEngineSize() {
+        #expect(MLXBatchAdapter.autoEffectiveMaxBatchSize(recommended: 1, cachedEngineSize: 4) == 4)
+        #expect(MLXBatchAdapter.autoEffectiveMaxBatchSize(recommended: 2, cachedEngineSize: 8) == 8)
+    }
+
+    /// Resize UP and the fresh post-teardown build stay untouched: with no
+    /// cached engine (the sweep tore it down) the recommendation is used
+    /// as-is, which is how shrink-to-1 regains compile eligibility.
+    @Test func autoEffectiveSize_allowsResizeUpAndFreshRebuild() {
+        #expect(MLXBatchAdapter.autoEffectiveMaxBatchSize(recommended: 8, cachedEngineSize: 4) == 8)
+        #expect(MLXBatchAdapter.autoEffectiveMaxBatchSize(recommended: 1, cachedEngineSize: nil) == 1)
+        #expect(MLXBatchAdapter.autoEffectiveMaxBatchSize(recommended: 4, cachedEngineSize: nil) == 4)
+        #expect(MLXBatchAdapter.autoEffectiveMaxBatchSize(recommended: 4, cachedEngineSize: 4) == 4)
+    }
+
+    /// `compiledBatchDecode` must follow the size actually used: a request
+    /// clamped up to a cached multi-slot engine reports compile OFF even
+    /// though the decayed recommendation was 1.
+    @Test func compiledBatchDecodeFollowsSizeActuallyUsed() {
+        #expect(
+            MLXBatchAdapter.shouldEnableCompiledBatchDecode(
+                modelName: "test/plain-model", maxBatchSize: 1))
+        #expect(
+            !MLXBatchAdapter.shouldEnableCompiledBatchDecode(
+                modelName: "test/plain-model", maxBatchSize: 4))
     }
 
     // MARK: - Recommendation-change log gating

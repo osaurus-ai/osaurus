@@ -1139,9 +1139,12 @@ struct RuntimePolicySourceTests {
             "Eviction must call `coalescer.remove(_:dispose:)` so the tombstone stays alive across the defensive `engine.shutdown()` call (mirrors the shutdownEngine path)"
         )
         // After eviction, recurse so the next first-fetch builds fresh.
+        // Recursion targets `resolveEngine` (the resolution body) rather
+        // than `engine(for:)` so the caller's in-flight handle is counted
+        // exactly once across the rebuild.
         #expect(
-            adapter.contains("return await self.engine("),
-            "Post-eviction must recurse into engine(...) so the rebuild lands through the coalescer's first-fetch path"
+            adapter.contains("return await self.resolveEngine("),
+            "Post-eviction must recurse into resolveEngine(...) so the rebuild lands through the coalescer's first-fetch path without double-counting the caller's engine handle"
         )
     }
 
