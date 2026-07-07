@@ -286,11 +286,11 @@ struct ClaudeMarketplaceCard: View {
     private var trustBadgeText: String {
         switch trustPreview.importabilityStatus {
         case .importable:
-            return trustPreview.source.isMarketplaceRepo ? "Official" : "External source"
+            return trustPreview.source.isMarketplaceRepo ? L("Official") : L("External source")
         case .requiresReview:
-            return "Review"
+            return L("Review")
         case .blocked:
-            return "Blocked"
+            return L("Blocked")
         }
     }
 

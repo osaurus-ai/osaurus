@@ -2548,19 +2548,19 @@ struct AgentDetailView: View {
 
     private static func scheduleModeTitle(_ mode: AgentScheduleMode) -> String {
         switch mode {
-        case .ambient: return "Ambient"
-        case .reactive: return "Reactive"
-        case .project: return "Project"
-        case .manual: return "Manual"
+        case .ambient: return L("Ambient")
+        case .reactive: return L("Reactive")
+        case .project: return L("Project")
+        case .manual: return L("Manual")
         }
     }
 
     private static func scheduleModeTagline(_ mode: AgentScheduleMode) -> String {
         switch mode {
-        case .ambient: return "Background helper"
-        case .reactive: return "Quick reflexes"
-        case .project: return "Deep work"
-        case .manual: return "Self-scheduling off"
+        case .ambient: return L("Background helper")
+        case .reactive: return L("Quick reflexes")
+        case .project: return L("Deep work")
+        case .manual: return L("Self-scheduling off")
         }
     }
 
@@ -2571,13 +2571,13 @@ struct AgentDetailView: View {
     private static func scheduleModePresetSummary(_ mode: AgentScheduleMode) -> String {
         switch mode {
         case .ambient:
-            return "Up to 6 runs/day · at most once an hour · quiet 10pm–7am."
+            return L("Up to 6 runs/day · at most once an hour · quiet 10pm–7am.")
         case .reactive:
-            return "Up to 48 runs/day · as often as every 5 min · no quiet hours."
+            return L("Up to 48 runs/day · as often as every 5 min · no quiet hours.")
         case .project:
-            return "Up to 4 runs/day · at most once an hour · quiet 10pm–7am."
+            return L("Up to 4 runs/day · at most once an hour · quiet 10pm–7am.")
         case .manual:
-            return "The agent only runs when you ask. Scheduled API calls from the agent are rejected."
+            return L("The agent only runs when you ask. Scheduled API calls from the agent are rejected.")
         }
     }
 
