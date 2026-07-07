@@ -2122,11 +2122,20 @@ public actor ModelRuntime {
         // that is a cache hit and must not flash the UI back to
         // "Loading Model..." on every message.
         let cfg = await getConfig()
+        // Model-aware resolution: identical to the legacy static var unless
+        // the opt-in auto batch sizing flag is set, in which case the
+        // BatchAutoscaler recommendation (observed same-model demand, capped
+        // by hardware tier) decides. `MLXBatchAdapter.generate` re-resolves
+        // on the auto path after recording its own demand sample, so this
+        // value is a floor there, not the final word.
+        let maxBatchSize = await InferenceFeatureFlags.mlxBatchEngineMaxBatchSize(
+            model: modelName
+        )
         await MLXBatchAdapter.recordPendingEffectiveGenerationSettings(
             modelName: modelName,
             generation: parameters,
             runtimeDefaults: cfg.generation,
-            maxBatchSize: InferenceFeatureFlags.mlxBatchEngineMaxBatchSize
+            maxBatchSize: maxBatchSize
         )
         trace?.mark("load_container_start")
         let shouldReportModelLoad = modelCache[modelName] == nil
@@ -2184,7 +2193,7 @@ public actor ModelRuntime {
                 stopSequences: stopSequences,
                 draftStrategy: holder.draftStrategy,
                 runtime: cfg,
-                maxBatchSize: InferenceFeatureFlags.mlxBatchEngineMaxBatchSize
+                maxBatchSize: maxBatchSize
             )
         } catch {
             InferenceProgressManager.shared.prefillDidFinishAsync()

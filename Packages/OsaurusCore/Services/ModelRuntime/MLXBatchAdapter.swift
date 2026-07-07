@@ -498,6 +498,41 @@ struct MLXBatchAdapter {
             )
         }
 
+        /// Observed demand on the RESOLVED engine for `modelName`:
+        /// pending + active counts, or 0 when no engine exists. Peek only —
+        /// never creates an engine. This is the auto-batch-sizing overlap
+        /// signal source; it deliberately reads exactly one pending/active
+        /// pair so the hot path gains no extra cross-actor chatter.
+        func pendingAndActiveCount(for modelName: String) async -> Int {
+            guard let engine = await coalescer.resolvedValue(for: modelName) else { return 0 }
+            let pending = await engine.pendingCount
+            let active = await engine.activeCount
+            return pending + active
+        }
+
+        /// Auto-batch-sizing decay teardown: shut the engine down ONLY when
+        /// it is idle (pending == 0 && active == 0), so the next request
+        /// rebuilds fresh at `maxBatchSize == 1` and regains compiled-decode
+        /// eligibility (a hot-resize down does NOT recover the compiled
+        /// path — see the vmlx invariant cited in `InferenceFeatureFlags`).
+        /// Returns `true` when no engine exists or teardown completed;
+        /// `false` means "busy, retry later" (the `BatchAutoscaler` decay
+        /// loop retries).
+        ///
+        /// Known benign race: a request that acquired the engine handle but
+        /// has not yet submitted can land on the drained engine; vmlx then
+        /// finishes that stream cleanly with a `.cancelled` info event
+        /// (never restarts GPU work), and the caller's next request rebuilds
+        /// through the coalescer tombstone.
+        func shutdownEngineIfIdle(for modelName: String) async -> Bool {
+            guard let engine = await coalescer.resolvedValue(for: modelName) else { return true }
+            let pending = await engine.pendingCount
+            let active = await engine.activeCount
+            guard pending == 0, active == 0 else { return false }
+            await shutdownEngine(for: modelName)
+            return true
+        }
+
         /// Shut down and remove the engine for `modelName`. Safe to call
         /// when no engine exists. Pending requests on the engine receive a
         /// `.cancelled` info event before the actor exits.
@@ -988,6 +1023,34 @@ struct MLXBatchAdapter {
     ) async throws -> PreparedStream {
         let trace = generation.ttftTrace
         trace?.mark("batch_prepare_start")
+        // Auto batch sizing (opt-in): record this submission's observed
+        // demand and re-resolve the batch size BEFORE the solo lease. Both
+        // orderings are load-bearing:
+        //   * With `maxBatchSize == 1` the solo lease serializes overlapping
+        //     same-model requests upstream of the engine, so pending/active
+        //     counts read after the lease would never exceed 1 and overlap
+        //     could never be observed — the signal MUST be captured
+        //     pre-lease (one Registry peek + one pending/active read pair;
+        //     the +1 counts this submission).
+        //   * Re-resolving after recording lets the request that CREATES the
+        //     overlap escalate itself (skipping the solo lease and joining
+        //     the batch) instead of hot-resizing the engine down below live
+        //     demand with a stale single-slot value: the sample just
+        //     recorded keeps the recommendation >= the observed concurrency.
+        // When the flag is off this block does nothing and the resolved
+        // value from the caller is used unchanged.
+        var effectiveMaxBatchSize = maxBatchSize
+        if InferenceFeatureFlags.autoBatchSizingEnabled {
+            let observedDemand =
+                await Registry.shared.pendingAndActiveCount(for: modelName) + 1
+            await BatchAutoscaler.shared.recordSubmission(
+                model: modelName,
+                pendingAndActive: observedDemand
+            )
+            effectiveMaxBatchSize = await InferenceFeatureFlags.mlxBatchEngineMaxBatchSize(
+                model: modelName
+            )
+        }
         // Prefill diagnostics: a generation step's clock starts HERE. The
         // solo-lease acquire below blocks until the PREVIOUS step's producer
         // task has released — and that release happens only after vmlx's
@@ -995,10 +1058,10 @@ struct MLXBatchAdapter {
         // exactly how long this step waited on the prior step's KV store.
         let genEnterAt = CFAbsoluteTimeGetCurrent()
         PrefillDebugLog.shared.log(
-            "==GEN GENERATE-ENTER model=\(modelName) maxBatch=\(maxBatchSize)"
+            "==GEN GENERATE-ENTER model=\(modelName) maxBatch=\(effectiveMaxBatchSize)"
         )
         let soloLease =
-            maxBatchSize == 1
+            effectiveMaxBatchSize == 1
             ? await Registry.shared.acquireSoloLease(for: modelName)
             : nil
         if Task.isCancelled {
@@ -1068,13 +1131,13 @@ struct MLXBatchAdapter {
         // Identifiers and counts only, never prompt content.
         CrashReportingService.recordBreadcrumb(
             category: "inference.generate",
-            message: "begin model=\(modelName) input_tokens=\(prepared.promptTokens.count) batch=\(maxBatchSize)"
+            message: "begin model=\(modelName) input_tokens=\(prepared.promptTokens.count) batch=\(effectiveMaxBatchSize)"
         )
 
         let engine = await Registry.shared.engine(
             for: modelName,
             container: container,
-            maxBatchSize: maxBatchSize
+            maxBatchSize: effectiveMaxBatchSize
         )
 
         // Honor the model's shipped generation defaults when the OpenAI-wire
@@ -1104,7 +1167,7 @@ struct MLXBatchAdapter {
             modelName: modelName,
             generation: generation,
             runtimeDefaults: runtime.generation,
-            maxBatchSize: maxBatchSize,
+            maxBatchSize: effectiveMaxBatchSize,
             modelDefaults: modelDefaults,
             draftStrategy: effectiveDraftStrategy,
             nativeMTPExplicitSamplingFallback: nativeMTPExplicitSamplingFallback,
@@ -1204,7 +1267,7 @@ struct MLXBatchAdapter {
         trace?.mark("batch_submit")
         CrashReportingService.recordBreadcrumb(
             category: "inference.generate",
-            message: "submit model=\(modelName) batch=\(maxBatchSize)"
+            message: "submit model=\(modelName) batch=\(effectiveMaxBatchSize)"
         )
         // Take the Metal gate's SHARED (generation) lock BEFORE submitting the
         // slot, so an external MLX user — the Model2Vec embedder behind
