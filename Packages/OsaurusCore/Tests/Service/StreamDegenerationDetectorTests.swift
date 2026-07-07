@@ -4,12 +4,15 @@
 //
 //  Threshold tests for the live-stream degeneration detector: the two known
 //  failure modes (`!!!!!…` character runs and `idea idea idea…` phrase
-//  loops) must trip it, normal prose — including legitimate repetition just
-//  under the thresholds — must not, and the incremental adaptation must hold
-//  its guarantees (trigger across arbitrary delta splits, bounded tail).
+//  loops) must trip it, normal prose — including legitimate repetition and
+//  legitimate long runs (markdown dividers, requested bursts, base64,
+//  "repeat this 10 times") — must not, and the incremental adaptation must
+//  hold its guarantees (trigger across arbitrary delta splits, bounded
+//  tail).
 //
-//  The batch-mode boundary cases mirror the CLI gauntlet's
-//  DegenerationDetectorTests — thresholds are shared and must stay in sync.
+//  Thresholds intentionally DIVERGE from the CLI gauntlet's batch-mode
+//  DegenerationDetectorTests: aborting a live stream needs
+//  anti-false-positive margins the transcript judge doesn't.
 //
 
 import Foundation
@@ -38,14 +41,15 @@ struct StreamDegenerationDetectorTests {
         return nil
     }
 
-    // MARK: - Character runs (ported boundary cases)
+    // MARK: - Character runs
 
-    @Test func characterRunAtThresholdIsDetected() {
-        let text = "The explanation ends here " + String(repeating: "!", count: 64)
-        let evidence = observe(text)
+    @Test func letterRunGrowingAcrossDeltasIsDetected() {
+        // A letter run over the 64 threshold, dribbling in across many
+        // deltas (the live decode-loop shape), must trip.
+        let text = "aaaa " + String(repeating: "e", count: 100)
+        let evidence = observe(text, chunkSize: 10)
         #expect(evidence != nil)
-        #expect(evidence?.contains("\"!\"") == true, "evidence should name the character")
-        #expect(evidence?.contains("64") == true, "evidence should carry the run length")
+        #expect(evidence?.contains("\"e\"") == true, "evidence should name the character")
     }
 
     @Test func characterRunBelowThresholdIsClean() {
@@ -53,41 +57,99 @@ struct StreamDegenerationDetectorTests {
         #expect(observe(text) == nil)
     }
 
-    @Test func characterRunAtEndOfTextIsDetected() {
-        // The run must be caught even when the text ends mid-run.
-        let text = "aaaa" + String(repeating: "e", count: 100)
-        #expect(observe(text) != nil)
+    @Test func characterRunAtEndOfStreamIsDetected() {
+        // The run must be caught even when the stream ends mid-run.
+        let text = "aaaa " + String(repeating: "e", count: 100)
+        #expect(observe(text, chunkSize: 30) != nil)
+    }
+
+    // MARK: - Character runs: legitimate shapes must NOT abort
+
+    @Test func markdownDividerInOneDeltaIsClean() {
+        // An 80-char `-` divider pasted in one delta is everyday markdown,
+        // not a stuck decoder (single-delta growth < 3-delta gate).
+        #expect(observe("Section done.\n" + String(repeating: "-", count: 80) + "\n") == nil)
+        #expect(observe(String(repeating: "=", count: 80)) == nil)
+    }
+
+    @Test func requestedExclamationBurstInOneDeltaIsClean() {
+        // "print 100 !" — the model completes the request in one delta.
+        #expect(observe("Here you go: " + String(repeating: "!", count: 100)) == nil)
+    }
+
+    @Test func base64StyleRunInOneDeltaIsClean() {
+        // Base64/padding blobs can carry long same-character stretches;
+        // 200 identical letters in one delta must stream through.
+        #expect(observe(String(repeating: "A", count: 200)) == nil)
+    }
+
+    @Test func whitespaceRunsNeverCount() {
+        // Table padding / indentation: arbitrarily long whitespace runs are
+        // exempt entirely, however they arrive.
+        let text = "| a |" + String(repeating: " ", count: 400) + "| b |"
+        #expect(observe(text, chunkSize: 7) == nil)
+        #expect(observe(String(repeating: "\n", count: 300), chunkSize: 5) == nil)
+    }
+
+    @Test func punctuationRunUnderHigherThresholdIsCleanEvenAcrossDeltas() {
+        // Punctuation gets the 256 threshold: a 100-`!` burst split across
+        // deltas (growth gate satisfied) still must not abort.
+        #expect(observe("answer " + String(repeating: "!", count: 100), chunkSize: 5) == nil)
+    }
+
+    @Test func punctuationRunGrowingPastHigherThresholdIsDetected() {
+        // The true positive: a `!` run growing across many small deltas to
+        // 300+ is the documented `!!!!!…` failure mode.
+        let evidence = observe("answer " + String(repeating: "!", count: 320), chunkSize: 5)
+        #expect(evidence != nil)
+        #expect(evidence?.contains("\"!\"") == true)
     }
 
     // MARK: - N-gram loops (ported boundary cases)
 
     @Test func singleWordLoopIsDetectedViaTrigram() {
-        // 24 consecutive "idea" = the 3-gram "idea idea idea" occurring
-        // 8 times back-to-back.
+        // 36 consecutive "idea" = the 3-gram "idea idea idea" occurring
+        // 12 times back-to-back.
         let text = "The core concept is "
-            + Array(repeating: "idea", count: 24).joined(separator: " ")
+            + Array(repeating: "idea", count: 36).joined(separator: " ")
         let evidence = observe(text)
         #expect(evidence != nil)
         #expect(evidence?.contains("idea idea idea") == true)
     }
 
+    @Test func singleWordLoopFiftyTimesIsDetected() {
+        // The documented `idea idea idea…` failure mode repeats hundreds of
+        // times; ×50 must fire well before the loop ends.
+        let text = Array(repeating: "idea", count: 50).joined(separator: " ")
+        #expect(observe(text, chunkSize: 6) != nil)
+    }
+
     @Test func phraseLoopAtThresholdIsDetected() {
-        let text = Array(repeating: "the sky is blue because", count: 8).joined(separator: " ")
+        let text = Array(repeating: "the sky is blue because", count: 12).joined(separator: " ")
         let evidence = observe(text)
         #expect(evidence != nil)
         #expect(evidence?.contains("the sky is blue because") == true)
     }
 
-    @Test func phraseRepeatedSevenTimesIsClean() {
+    @Test func phraseRepeatedElevenTimesIsClean() {
         // One repeat under the threshold must not trip the detector.
-        let text = Array(repeating: "alpha beta gamma", count: 7).joined(separator: " ")
+        let text = Array(repeating: "alpha beta gamma", count: 11).joined(separator: " ")
         #expect(observe(text) == nil)
+    }
+
+    @Test func requestedTenfoldRepetitionIsClean() {
+        // "Repeat this sentence 10 times" is a legitimate user request; the
+        // 12-repeat bar clears it with margin, batch or streamed.
+        let text = Array(repeating: "I will repeat this sentence.", count: 10)
+            .joined(separator: " ")
+        #expect(observe(text) == nil)
+        #expect(observe(text, chunkSize: 4) == nil)
     }
 
     @Test func loopEmbeddedInProseIsDetected() {
         let text =
             "Rayleigh scattering explains the color. "
-            + Array(repeating: "shorter wavelengths scatter more", count: 9)
+            + Array(repeating: "shorter wavelengths scatter more", count: 13)
                 .joined(separator: " ")
             + " and that is why the sky is blue."
         #expect(observe(text) != nil)
@@ -96,7 +158,7 @@ struct StreamDegenerationDetectorTests {
     @Test func sevenWordPhraseLoopIsDetectedAsSevenGram() {
         // Repeating units longer than 3 words are caught by their own
         // n-gram size (here n=7), not just trigrams.
-        let text = Array(repeating: "blue sky today and calm sea tonight", count: 8)
+        let text = Array(repeating: "blue sky today and calm sea tonight", count: 12)
             .joined(separator: " ")
         #expect(observe(text) != nil)
     }
@@ -136,16 +198,17 @@ struct StreamDegenerationDetectorTests {
         // time (splitting words and separators arbitrarily), must still
         // trip — this is the live-stream shape.
         let text = "The core concept is "
-            + Array(repeating: "idea", count: 24).joined(separator: " ")
+            + Array(repeating: "idea", count: 36).joined(separator: " ")
         let evidence = observe(text, chunkSize: 3)
         #expect(evidence != nil)
         #expect(evidence?.contains("idea idea idea") == true)
     }
 
     @Test func characterRunSplitAcrossDeltasIsDetected() {
-        // `!!!!!` split into 5-char deltas crosses the 64 threshold on a
-        // delta boundary; the cross-delta run counter must carry.
-        let text = "answer " + String(repeating: "!", count: 70)
+        // `!!!!!` split into 5-char deltas crosses the 256 punctuation
+        // threshold on a delta boundary; the cross-delta run counter must
+        // carry, and the growth gate (many deltas) is satisfied.
+        let text = "answer " + String(repeating: "!", count: 300)
         let evidence = observe(text, chunkSize: 5)
         #expect(evidence != nil)
         #expect(evidence?.contains("\"!\"") == true)
@@ -181,10 +244,10 @@ struct StreamDegenerationDetectorTests {
         // The mapper aborts on first trigger; the latch guarantees no
         // duplicate evidence even if more deltas arrive.
         var detector = StreamDegenerationDetector()
-        let loop = Array(repeating: "idea", count: 24).joined(separator: " ")
+        let loop = Array(repeating: "idea", count: 36).joined(separator: " ")
         #expect(detector.observe(loop) != nil)
         #expect(detector.observe(loop) == nil)
-        #expect(detector.observe(String(repeating: "!", count: 100)) == nil)
+        #expect(detector.observe(String(repeating: "!", count: 300)) == nil)
     }
 
     @Test func loopArrivingAfterLongCleanPrefixIsStillDetected() {
@@ -196,7 +259,7 @@ struct StreamDegenerationDetectorTests {
             #expect(detector.observe("unique\(i) ") == nil)
         }
         var evidence: String?
-        for _ in 0..<24 where evidence == nil {
+        for _ in 0..<40 where evidence == nil {
             evidence = detector.observe("idea ")
         }
         #expect(evidence?.contains("idea idea idea") == true)
