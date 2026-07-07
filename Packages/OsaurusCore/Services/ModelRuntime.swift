@@ -1196,7 +1196,13 @@ public actor ModelRuntime {
         let softLimit = Int64(Double(physical) * thresholds.soft)
         let hardLimit = Int64(Double(physical) * thresholds.hard)
 
-        let lowAvailable = available > 0 && requiredAvailable > available
+        // `available` counts only immediately reclaimable pages; macOS also
+        // frees compressor and file-cache memory on demand, so a strict
+        // `required > available` comparison flags loads that succeed without
+        // pressure on any busy machine. Allow a slack of 10% of physical for
+        // that on-demand reclaim before calling free pages short.
+        let reclaimSlack = physical / 10
+        let lowAvailable = available > 0 && requiredAvailable > available + reclaimSlack
         let verdict: RAMFeasibility.Verdict
         if projected > hardLimit || projected > softLimit || lowAvailable {
             verdict = .tight

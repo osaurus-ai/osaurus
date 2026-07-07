@@ -111,6 +111,22 @@ struct ModelRuntimeRAMFeasibilityTests {
         #expect(f.loadPressureSeverity == .warn)
     }
 
+    @Test("Shortfall within the on-demand reclaim slack stays ok")
+    func shortfallWithinReclaimSlackStaysOK() {
+        let physical = 100 * gb
+
+        // Required exceeds the instantaneous free pages, but by less than
+        // the 10%-of-physical slack macOS can reclaim on demand — no banner.
+        let f = assess(
+            footprint: 25 * gb,
+            physical: physical,
+            available: 20 * gb
+        )
+
+        #expect(f.verdict == .ok)
+        #expect(f.loadPressureSeverity == .none)
+    }
+
     @Test("Model larger than physical memory blocks regardless of thresholds")
     func modelLargerThanPhysicalBlocks() {
         let physical = 16 * gb

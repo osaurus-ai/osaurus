@@ -3544,12 +3544,15 @@ extension FloatingInputCard {
             Image(systemName: "xmark")
                 .font(.system(size: 8, weight: .bold))
                 .foregroundColor(theme.tertiaryText)
-                .padding(6)
+                .padding(5)
+                .background(
+                    Circle().stroke(theme.tertiaryText.opacity(0.35), lineWidth: 1)
+                )
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .padding(.top, 2)
-        .padding(.trailing, 2)
+        .padding(.top, 4)
+        .padding(.trailing, 4)
         .help(Text("Hide this warning for the selected model", bundle: .module))
         .accessibilityLabel(Text("Dismiss memory warning", bundle: .module))
     }

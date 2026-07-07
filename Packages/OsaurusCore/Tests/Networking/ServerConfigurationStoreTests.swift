@@ -194,6 +194,32 @@ struct ServerConfigurationStoreTests {
         #expect(decoded.modelLoadRAMHardThreshold == 1.0)
     }
 
+    @Test func modelLoadRAMThresholds_repairsPersistedLegacySoftDefault() async throws {
+        // Saves persist the resolved soft threshold, so upgraded installs
+        // carry the old 0.70 default on disk; decode repairs it to the
+        // current default while leaving deliberate custom values alone.
+        let legacyJSON = """
+            {
+                "modelLoadRAMSoftThreshold": 0.70,
+                "modelLoadRAMHardThreshold": 0.90
+            }
+            """
+        let legacy = try JSONDecoder().decode(ServerConfiguration.self, from: Data(legacyJSON.utf8))
+        #expect(
+            legacy.modelLoadRAMSoftThreshold
+                == ServerConfiguration.defaultModelLoadRAMSoftThreshold
+        )
+
+        let customJSON = """
+            {
+                "modelLoadRAMSoftThreshold": 0.65,
+                "modelLoadRAMHardThreshold": 0.90
+            }
+            """
+        let custom = try JSONDecoder().decode(ServerConfiguration.self, from: Data(customJSON.utf8))
+        #expect(custom.modelLoadRAMSoftThreshold == 0.65)
+    }
+
     @Test func modelIdleResidencyPolicy_encodesStableJSON() async throws {
         let data = try JSONEncoder().encode(ModelIdleResidencyPolicy.afterSeconds(12))
         let object = try #require(
