@@ -102,6 +102,42 @@ public actor VMLXModel2VecEmbedder: VecturaEmbedder {
     public func embed(texts: [String]) async throws -> [[Float]] {
         guard !texts.isEmpty else { return [] }
         let model = try await loadedModel()
+
+        // Bound the batched forward's working set: the padded gather
+        // materializes [N, L_max, D] floats, and N is CLIENT-CONTROLLED on
+        // the /v1/embeddings pass-through (CoalescingEmbedder hands
+        // caller-assembled arrays straight here) — an unbounded request
+        // would materialize an unbounded GPU allocation. Process in chunks
+        // of at most `EmbeddingBatcher.defaultMaxBatchSize` (the same bound
+        // the micro-batcher keeps for its coalesced batches: 16 × 512
+        // tokens × 128 dims of Float is ~4 MB per chunk) and concatenate.
+        // Sequential chunks all run inside the CALLER's single MetalGate
+        // acquisition — `MetalSafeEmbedder.embed(texts:)` wraps this whole
+        // method, so chunking never releases/re-acquires the gate mid-batch.
+        var results: [[Float]] = []
+        results.reserveCapacity(texts.count)
+        for range in Self.forwardChunkRanges(
+            count: texts.count,
+            maxChunkSize: EmbeddingBatcher.defaultMaxBatchSize
+        ) {
+            results.append(contentsOf: embedChunk(Array(texts[range]), model: model))
+        }
+        return results
+    }
+
+    /// Contiguous ranges of at most `maxChunkSize` covering `0..<count`, in
+    /// order. Pure helper backing the bounded chunked forward above; kept
+    /// static so the boundary math is unit-testable without loading MLX.
+    static func forwardChunkRanges(count: Int, maxChunkSize: Int) -> [Range<Int>] {
+        guard count > 0, maxChunkSize > 0 else { return [] }
+        return stride(from: 0, to: count, by: maxChunkSize).map { start in
+            start..<min(start + maxChunkSize, count)
+        }
+    }
+
+    /// One bounded batched forward: padded `[N, L]` gather + masked mean +
+    /// eval for `texts.count <= EmbeddingBatcher.defaultMaxBatchSize` texts.
+    private func embedChunk(_ texts: [String], model: LoadedModel) -> [[Float]] {
         let dimension = model.embeddings.shape[1]
 
         // Tokenize on CPU, dropping unknown tokens exactly like the vmlx

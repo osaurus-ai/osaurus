@@ -234,6 +234,97 @@ struct EmbeddingBatcherTests {
         let calls = await backend.calls
         #expect(calls == [["first"], ["second"]])
     }
+
+    /// Chunked == unchunked: 40 concurrent requests against the default
+    /// 16-text bound must return exactly the vectors a direct unchunked
+    /// call would, with every backend batch capped at the bound.
+    @Test func fortyTextsChunkedResultsMatchUnchunkedReference() async throws {
+        let backend = CountingBackend()
+        let batcher = makeBatcher(window: .milliseconds(200), backend: backend)
+        let texts = (0..<40).map { "text-\($0)" }
+
+        let chunked = try await withThrowingTaskGroup(of: (String, [Float]).self) { group in
+            for text in texts {
+                group.addTask { (text, try await batcher.embed(text)) }
+            }
+            var results: [String: [Float]] = [:]
+            for try await (text, vector) in group {
+                results[text] = vector
+            }
+            return results
+        }
+
+        // Unchunked reference: the deterministic per-text vector the mock
+        // returns regardless of batching.
+        for text in texts {
+            #expect(chunked[text] == CountingBackend.vector(for: text))
+        }
+        let calls = await backend.calls
+        #expect(calls.flatMap { $0 }.count == texts.count)
+        #expect(
+            calls.allSatisfy { $0.count <= EmbeddingBatcher.defaultMaxBatchSize },
+            "every backend batch must respect the 16-text bound"
+        )
+    }
+
+    /// A backend returning the wrong number of vectors must surface the
+    /// typed `mismatchedResultCount` to every waiter of that batch —
+    /// silently misaligning vectors to texts would corrupt the index.
+    @Test func mismatchedResultCountPropagatesTypedError() async throws {
+        let batcher = EmbeddingBatcher(window: .milliseconds(100)) { texts in
+            // Wrong count: drops the last vector.
+            texts.dropLast().map(CountingBackend.vector(for:))
+        }
+
+        let outcomes = await withTaskGroup(of: Bool.self) { group in
+            for text in ["a", "b", "c"] {
+                group.addTask {
+                    do {
+                        _ = try await batcher.embed(text)
+                        return false
+                    } catch let error as EmbeddingBatcherError {
+                        return error
+                            == .mismatchedResultCount(expected: 3, received: 2)
+                    } catch {
+                        return false
+                    }
+                }
+            }
+            var sawTypedError: [Bool] = []
+            for await outcome in group {
+                sawTypedError.append(outcome)
+            }
+            return sawTypedError
+        }
+        #expect(outcomes == [true, true, true])
+    }
+}
+
+// MARK: - Direct-forward chunk bounds (pure math, no MLX)
+
+struct VMLXModel2VecEmbedderChunkingTests {
+    /// The /v1/embeddings pass-through bound: client-controlled arrays are
+    /// processed in chunks of at most `EmbeddingBatcher.defaultMaxBatchSize`
+    /// so the padded [N, L_max, D] gather can never be sized by the client.
+    @Test func fortyTextsSplitIntoBoundedOrderedRanges() {
+        let ranges = VMLXModel2VecEmbedder.forwardChunkRanges(
+            count: 40, maxChunkSize: EmbeddingBatcher.defaultMaxBatchSize
+        )
+        #expect(ranges == [0..<16, 16..<32, 32..<40])
+    }
+
+    @Test func chunkRangeEdgeCases() {
+        #expect(VMLXModel2VecEmbedder.forwardChunkRanges(count: 0, maxChunkSize: 16).isEmpty)
+        #expect(VMLXModel2VecEmbedder.forwardChunkRanges(count: 1, maxChunkSize: 16) == [0..<1])
+        #expect(VMLXModel2VecEmbedder.forwardChunkRanges(count: 16, maxChunkSize: 16) == [0..<16])
+        #expect(
+            VMLXModel2VecEmbedder.forwardChunkRanges(count: 17, maxChunkSize: 16)
+                == [0..<16, 16..<17]
+        )
+        // Defensive: a non-positive bound yields no ranges instead of
+        // looping forever.
+        #expect(VMLXModel2VecEmbedder.forwardChunkRanges(count: 5, maxChunkSize: 0).isEmpty)
+    }
 }
 
 // MARK: - CoalescingEmbedder routing
@@ -376,6 +467,32 @@ struct VMLXModel2VecEmbedderBatchParityTests {
         #expect(try await embedder.embed(texts: []).isEmpty)
         await #expect(throws: (any Error).self) {
             _ = try await reference.embed(texts: [])
+        }
+    }
+
+    /// The bounded direct pass-through: a 40-text call crosses the 16-text
+    /// chunk bound (three sequential chunks) and must return exactly the
+    /// per-text vectors, in input order — chunk boundaries must be
+    /// invisible in the output.
+    @Test(.enabled(if: explicitModelDirectoryUsable))
+    func chunkedDirectBatchMatchesPerTextForward() async throws {
+        Device.setDefault(device: .cpu)
+
+        let embedder = VMLXModel2VecEmbedder(
+            modelName: EmbeddingService.modelName,
+            dimension: EmbeddingService.embeddingDimension,
+            tokenizerLoader: SwiftTransformersTokenizerLoader()
+        )
+        let texts = (0..<40).map { "chunk parity sample number \($0) with some shared words" }
+
+        let chunked = try await embedder.embed(texts: texts)
+        #expect(chunked.count == texts.count)
+        for (index, text) in texts.enumerated() {
+            let single = try await embedder.embed(text: text)
+            let maxDelta = zip(single, chunked[index])
+                .map { abs($0 - $1) }
+                .max() ?? 0
+            #expect(maxDelta < 1e-4, "vector mismatch for texts[\(index)] = \(text)")
         }
     }
 }
