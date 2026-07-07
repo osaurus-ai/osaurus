@@ -17,14 +17,28 @@ public actor EmbeddingService {
     /// Known dimension for potion-base-4M so VecturaKit can init without loading the model.
     public static let embeddingDimension = 128
 
-    /// Single shared embedder used by all VecturaKit indexes and the embedding API.
-    /// Wrapped in MetalSafeEmbedder to coordinate embedding and generation work.
-    public static let sharedEmbedder: MetalSafeEmbedder = MetalSafeEmbedder(
+    /// Direct (non-coalescing) embedder: MetalSafeEmbedder serializes every
+    /// call against MLX generation via MetalGate. Kept exposed so tests and
+    /// already-batched callers can bypass the micro-batching window.
+    public static let directEmbedder: MetalSafeEmbedder = MetalSafeEmbedder(
         inner: VMLXModel2VecEmbedder(
             modelName: modelName,
             dimension: embeddingDimension,
             tokenizerLoader: SwiftTransformersTokenizerLoader()
         )
+    )
+
+    /// Single shared embedder used by all VecturaKit indexes and the embedding API.
+    /// Single-text embeds coalesce through `EmbeddingBatcher` into one batched
+    /// forward (one MetalGate acquisition per batch); multi-text embeds pass
+    /// straight through to `directEmbedder`. Worst-case added latency for a
+    /// lone single-text embed is one batching window
+    /// (`EmbeddingBatcher.defaultWindow`, 25 ms).
+    public static let sharedEmbedder: CoalescingEmbedder = CoalescingEmbedder(
+        direct: directEmbedder,
+        batcher: EmbeddingBatcher { texts in
+            try await directEmbedder.embed(texts: texts)
+        }
     )
 
     private static let logger = Logger(subsystem: "ai.osaurus", category: "EmbeddingService")
