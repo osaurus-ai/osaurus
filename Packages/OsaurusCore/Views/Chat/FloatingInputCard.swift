@@ -296,6 +296,9 @@ struct FloatingInputCard: View {
     /// `SystemMonitorService` and re-rendering on every 2s tick.
     @State private var ramBannerUsagePercent: Int = 0
     @State private var ramBannerTotalGB: Int = 0
+    /// Measured width of the model picker chip; the RAM tight-fit banner
+    /// matches it so the two read as one attached unit.
+    @State private var modelChipWidth: CGFloat = 0
     // MARK: - Voice Input State
     @ObservedObject private var speechService = SpeechService.shared
     @ObservedObject private var speechModelManager = SpeechModelManager.shared
@@ -526,6 +529,13 @@ struct FloatingInputCard: View {
 
     private var mainContent: some View {
         VStack(spacing: 12) {
+            // RAM tight-fit banner is a real row above the selector row (not a
+            // floating overlay) so it sits directly above the model picker
+            // chip it refers to and can never overlap the chip or token count.
+            if !showVoiceOverlay {
+                ramPressureRow
+            }
+
             // Read-only screen-context indicator sits on its OWN row above the
             // selector row, right-aligned so it stacks directly over the
             // context-token count, rendered as quiet muted text (not a chip)
@@ -624,10 +634,12 @@ struct FloatingInputCard: View {
                 RAMTightFitModifier(
                     severity: ramPressureSeverity,
                     selectedModel: selectedModel,
-                    banner: ramPressureOverlay,
                     refresh: refreshLoadFeasibility
                 )
             )
+            .onPreferenceChange(ModelChipWidthKey.self) { width in
+                if modelChipWidth != width { modelChipWidth = width }
+            }
             .onAppear {
                 refreshLoadFeasibility()
                 let isReappear = !localText.isEmpty || voiceInputState != .idle
@@ -925,19 +937,40 @@ fileprivate func voiceDebugLog(
 /// Groups the RAM tight-fit banner overlay and its refresh triggers into one
 /// modifier so the already-enormous `FloatingInputCard.body` chain doesn't
 /// gain four more inference nodes (the type-checker times out otherwise).
-private struct RAMTightFitModifier<Banner: View>: ViewModifier {
+/// Width of the model picker chip, reported so the RAM tight-fit banner can
+/// match it. Max wins if multiple report (only one chip renders at a time).
+private struct ModelChipWidthKey: PreferenceKey {
+    static let defaultValue: CGFloat = 0
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+        value = max(value, nextValue())
+    }
+}
+
+/// Downward-pointing popover-style triangle under the RAM tight-fit banner.
+private struct RAMBannerPointer: Shape {
+    static let width: CGFloat = 18
+    static let height: CGFloat = 8
+
+    func path(in rect: CGRect) -> Path {
+        var path = Path()
+        path.move(to: CGPoint(x: rect.minX, y: rect.minY))
+        path.addLine(to: CGPoint(x: rect.maxX, y: rect.minY))
+        path.addLine(to: CGPoint(x: rect.midX, y: rect.maxY))
+        path.closeSubpath()
+        return path
+    }
+}
+
+private struct RAMTightFitModifier: ViewModifier {
     let severity: ModelRuntime.RAMFeasibility.LoadPressureSeverity
     let selectedModel: String?
-    let banner: Banner
     let refresh: () -> Void
 
     func body(content: Content) -> some View {
         content
-            // Float the tight-fit disclaimer above the card, same overlay
-            // mechanics as the configuration-context error banner.
-            .overlay(alignment: .top) {
-                banner
-            }
+            // The tight-fit banner itself is an in-flow row above the model
+            // picker chip (`ramPressureRow`); this modifier only owns the
+            // refresh triggers and the show/hide animation.
             .animation(.easeOut(duration: 0.2), value: severity)
             .onChange(of: selectedModel) { _, _ in
                 refresh()
@@ -2329,13 +2362,21 @@ extension FloatingInputCard {
         }
     }
 
-    @ViewBuilder
     private var modelSelectorChip: some View {
-        if isModelPinned {
-            pinnedModelChip
-        } else {
-            interactiveModelSelectorChip
+        Group {
+            if isModelPinned {
+                pinnedModelChip
+            } else {
+                interactiveModelSelectorChip
+            }
         }
+        // Report the chip's width so the RAM tight-fit banner above can match
+        // it exactly and its pointer lines up with the chip's center.
+        .background(
+            GeometryReader { proxy in
+                Color.clear.preference(key: ModelChipWidthKey.self, value: proxy.size.width)
+            }
+        )
     }
 
     /// Non-interactive model label for Mode 2 (remote agent run). The model is
@@ -3376,14 +3417,23 @@ extension FloatingInputCard {
         }
     }
 
-    /// Floating wrapper for `ramPressureBanner`, same overlay mechanics as
-    /// `configContextErrorOverlay`. The config-context error wins when both
-    /// apply — the two toasts share the space above the card.
+    /// In-flow wrapper for `ramPressureBanner`: a leading-aligned row at the
+    /// top of the composer stack, directly above the model picker chip it
+    /// refers to. Sized to the chip's measured width so the banner and its
+    /// pointer read as attached to the chip, popover-style. The
+    /// config-context error (still a floating overlay) wins when both apply.
     @ViewBuilder
-    private var ramPressureOverlay: some View {
+    private var ramPressureRow: some View {
         if !configContextTooSmall, let feasibility = pendingLoadFeasibility {
             ramPressureBanner(feasibility)
-                .alignmentGuide(.top) { dimensions in dimensions.height + 10 }
+                .frame(width: modelChipWidth > 0 ? modelChipWidth : nil, alignment: .leading)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 20)
+                .padding(.top, 8)
+                // Pull the banner down toward the chip: leave just the pointer
+                // height plus a small gap, cancelling most of the stack
+                // spacing between this row and the selector row below.
+                .padding(.bottom, RAMBannerPointer.height - 16)
                 .transition(.opacity.combined(with: .move(edge: .bottom)))
         }
     }
@@ -3408,12 +3458,12 @@ extension FloatingInputCard {
             Group {
                 if blocked {
                     Text(
-                        "\(modelName) needs ~\(neededGB) GB to load, but memory is at \(usage)% of \(total) GB. Sending is paused until memory frees — close other apps or pick a smaller model.",
+                        "This model needs ~\(neededGB) GB to load, but memory is at \(usage)% of \(total) GB. Sending is paused until memory frees — close other apps or pick a smaller model.",
                         bundle: .module
                     )
                 } else {
                     Text(
-                        "\(modelName) needs ~\(neededGB) GB to load and memory is at \(usage)% of \(total) GB. Close other apps for best performance.",
+                        "This model needs ~\(neededGB) GB to load and memory is at \(usage)% of \(total) GB. Close other apps for best performance.",
                         bundle: .module
                     )
                 }
@@ -3421,16 +3471,6 @@ extension FloatingInputCard {
             .font(theme.font(size: CGFloat(theme.captionSize), weight: .medium))
             .foregroundColor(theme.primaryText)
             .fixedSize(horizontal: false, vertical: true)
-
-            Button {
-                showModelPicker = true
-            } label: {
-                Text("Choose model", bundle: .module)
-                    .font(theme.font(size: CGFloat(theme.captionSize), weight: .semibold))
-                    .foregroundColor(theme.accentColor)
-            }
-            .buttonStyle(.plain)
-            .pointingHandCursor()
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 9)
@@ -3446,8 +3486,18 @@ extension FloatingInputCard {
             RoundedRectangle(cornerRadius: 14, style: .continuous)
                 .strokeBorder(tint.opacity(0.35), lineWidth: 1)
         )
+        // Popover-style pointer aimed down at the model picker chip. The
+        // banner is sized to the chip's width, so bottom-center of the banner
+        // is the chip's center.
+        .overlay(alignment: .bottom) {
+            ZStack {
+                RAMBannerPointer().fill(.regularMaterial)
+                RAMBannerPointer().fill(tint.opacity(0.28))
+            }
+            .frame(width: RAMBannerPointer.width, height: RAMBannerPointer.height)
+            .offset(y: RAMBannerPointer.height)
+        }
         .shadow(color: Color.black.opacity(0.12), radius: 8, x: 0, y: 3)
-        .frame(maxWidth: 560)
         .accessibilityLabel(
             blocked
                 ? Text("Sending paused: not enough memory to load \(modelName)", bundle: .module)
