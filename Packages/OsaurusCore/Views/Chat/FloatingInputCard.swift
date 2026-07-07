@@ -296,9 +296,6 @@ struct FloatingInputCard: View {
     /// `SystemMonitorService` and re-rendering on every 2s tick.
     @State private var ramBannerUsagePercent: Int = 0
     @State private var ramBannerTotalGB: Int = 0
-    /// Measured width of the model picker chip; the RAM tight-fit banner
-    /// matches it so the two read as one attached unit.
-    @State private var modelChipWidth: CGFloat = 0
     // MARK: - Voice Input State
     @ObservedObject private var speechService = SpeechService.shared
     @ObservedObject private var speechModelManager = SpeechModelManager.shared
@@ -637,9 +634,6 @@ struct FloatingInputCard: View {
                     refresh: refreshLoadFeasibility
                 )
             )
-            .onPreferenceChange(ModelChipWidthKey.self) { width in
-                if modelChipWidth != width { modelChipWidth = width }
-            }
             .onAppear {
                 refreshLoadFeasibility()
                 let isReappear = !localText.isEmpty || voiceInputState != .idle
@@ -937,15 +931,6 @@ fileprivate func voiceDebugLog(
 /// Groups the RAM tight-fit banner overlay and its refresh triggers into one
 /// modifier so the already-enormous `FloatingInputCard.body` chain doesn't
 /// gain four more inference nodes (the type-checker times out otherwise).
-/// Width of the model picker chip, reported so the RAM tight-fit banner can
-/// match it. Max wins if multiple report (only one chip renders at a time).
-private struct ModelChipWidthKey: PreferenceKey {
-    static let defaultValue: CGFloat = 0
-    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
-        value = max(value, nextValue())
-    }
-}
-
 /// Downward-pointing popover-style triangle under the RAM tight-fit banner.
 private struct RAMBannerPointer: Shape {
     static let width: CGFloat = 18
@@ -2362,21 +2347,13 @@ extension FloatingInputCard {
         }
     }
 
+    @ViewBuilder
     private var modelSelectorChip: some View {
-        Group {
-            if isModelPinned {
-                pinnedModelChip
-            } else {
-                interactiveModelSelectorChip
-            }
+        if isModelPinned {
+            pinnedModelChip
+        } else {
+            interactiveModelSelectorChip
         }
-        // Report the chip's width so the RAM tight-fit banner above can match
-        // it exactly and its pointer lines up with the chip's center.
-        .background(
-            GeometryReader { proxy in
-                Color.clear.preference(key: ModelChipWidthKey.self, value: proxy.size.width)
-            }
-        )
     }
 
     /// Non-interactive model label for Mode 2 (remote agent run). The model is
@@ -3422,21 +3399,18 @@ extension FloatingInputCard {
     private static let ramBannerWidth: CGFloat = 320
 
     /// In-flow wrapper for `ramPressureBanner`: a fixed-width, popover-style
-    /// toast at the top of the composer stack, centered over the model picker
-    /// chip it refers to (clamped to the leading inset when the chip sits too
-    /// far left for true centering — the pointer then slides to stay on the
-    /// chip's center). The config-context error (still a floating overlay)
-    /// wins when both apply.
+    /// toast at the top of the composer stack, left-aligned with the model
+    /// picker chip it refers to (same 20pt leading inset), with the pointer
+    /// fixed near the banner's left so it lands on the front of the chip
+    /// regardless of the chip's width. The config-context error (still a
+    /// floating overlay) wins when both apply.
     @ViewBuilder
     private var ramPressureRow: some View {
         if !configContextTooSmall, let feasibility = pendingLoadFeasibility {
-            // Chip leading inset is 20 (selector row horizontal padding).
-            let chipCenter = 20 + modelChipWidth / 2
-            let leading = max(20, chipCenter - Self.ramBannerWidth / 2)
-            ramPressureBanner(feasibility, pointerCenterX: chipCenter - leading)
+            ramPressureBanner(feasibility, pointerCenterX: 28)
                 .frame(width: Self.ramBannerWidth, alignment: .leading)
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.leading, leading)
+                .padding(.leading, 20)
                 .padding(.top, 8)
                 // Pull the banner down toward the chip: leave just the pointer
                 // height plus a small gap, cancelling most of the stack
