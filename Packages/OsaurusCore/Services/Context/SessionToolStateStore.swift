@@ -131,14 +131,19 @@ actor SessionToolStateStore {
         alwaysLoadedNames: LoadedTools?,
         fingerprint: String? = nil,
         manifest: String? = nil,
-        soul: String? = nil
+        soul: String? = nil,
+        delegationTools: [String]? = nil,
+        // swiftlint:disable:next discouraged_optional_boolean
+        imageGenerationOnly: Bool? = nil
     ) {
         guard states[sessionId] == nil else { return }
         states[sessionId] = SessionToolState(
             initialAlwaysLoadedNames: alwaysLoadedNames,
             sessionFingerprint: fingerprint,
             frozenManifest: manifest,
-            frozenSoul: soul
+            frozenSoul: soul,
+            frozenDelegationTools: delegationTools,
+            frozenImageGenerationOnly: imageGenerationOnly
         )
     }
 
