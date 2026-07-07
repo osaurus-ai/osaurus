@@ -48,14 +48,18 @@ let package = Package(
         // .toolCallProgress`) so the app can show a live "preparing tool call"
         // card during a long buffered tool write (e.g. a large file) instead of
         // a frozen typing indicator. Additive — existing consumers unaffected.
-        // TESTING PIN: head of vmlx-swift fix/sentry-crashes (PR #123) —
-        // production crash-trap fixes (Qwen3VL position ids + rope deltas,
-        // Gemma4/NemotronH error-array guards, compiled-closure failure
-        // path). Contains the previous ff714f1 pin. Repoint to the merge
-        // commit once the PR lands.
+        // Now also carries #123 (production crash-trap fixes): Qwen3VL
+        // rotary embedding accepts low-rank position ids and the decode-path
+        // rope delta broadcasts per sequence (stale deltas fall back to cache
+        // offsets); Gemma4 maskedScatter and NemotronH mambaForward guard the
+        // rank-0/empty results a failed MLX op hands back inside a withError
+        // scope; the compile() overloads and innerCall degrade to empty
+        // results instead of trapping on a failed closure evaluation — so a
+        // recorded MLX error reaches the error-scope exit instead of dying in
+        // a Swift bounds check. Contains the previous ff714f1 pin.
         .package(
             url: "https://github.com/osaurus-ai/vmlx-swift",
-            revision: "a8c9b72f625e60d8b6b67b07f6b32cf1f173303e"
+            revision: "aa14267b11840f89f1976a273e553a3b7bbedf39"
         ),
         // FluidAudio 0.14.3 added a breaking `language:` parameter to TTS
         // calls that osaurus's `TTSService` doesn't pass. Pinning to the
