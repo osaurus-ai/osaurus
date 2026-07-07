@@ -152,6 +152,7 @@ public struct ShowCommand: Command {
             let decoder = JSONDecoder()
             let showResponse = try decoder.decode(ShowResponse.self, from: data)
             printFormattedOutput(modelArg: modelArg, response: showResponse)
+            await printDecodeEstimateIfAvailable(modelArg: modelArg, port: port)
             exit(EXIT_SUCCESS)
         } catch {
             fputs("Error: \(error.localizedDescription)\n", stderr)
@@ -258,6 +259,157 @@ public struct ShowCommand: Command {
                 }
             }
         }
+    }
+
+    // MARK: - Decode-speed estimate (memory-bandwidth-based)
+
+    /// Prints `Estimated decode: ~NN tok/s on this Mac (…)` when — and only
+    /// when — the model's weights are installed locally (size computable) AND
+    /// a bandwidth number exists: a calibration record from
+    /// `osaurus bench --calibrate`, else the chip's spec-sheet bandwidth.
+    /// Decode is memory-bound, so tok/s ≈ bandwidth × 0.7 ÷ weights bytes
+    /// (see `MemoryBandwidthCalibration`). Silent otherwise: a missing
+    /// estimate must never break `show` for remote or unknown models.
+    private static func printDecodeEstimateIfAvailable(modelArg: String, port: Int) async {
+        guard let weightsBytes = await localWeightsBytes(forModelId: modelArg, port: port),
+            weightsBytes > 0
+        else {
+            return
+        }
+        let bandwidthGBps: Double
+        let sourceLabel: String
+        if let record = MemoryBandwidthCalibration.readValidRecord() {
+            bandwidthGBps = record.measuredBandwidthGBps
+            sourceLabel = "measured"
+        } else if let spec = MemoryBandwidthCalibration.specBandwidthGBps(
+            brandString: MemoryBandwidthCalibration.chipBrandString()) {
+            bandwidthGBps = spec
+            sourceLabel = "spec"
+        } else {
+            return
+        }
+        let tps = MemoryBandwidthCalibration.estimatedDecodeTps(
+            weightsBytes: weightsBytes, bandwidthGBps: bandwidthGBps)
+        guard tps > 0, tps.isFinite else { return }
+        print("")
+        print(String(
+            format: "  Estimated decode: ~%.0f tok/s on this Mac (%@ %.0f GB/s × %.1f ÷ %.1f GB weights)",
+            tps, sourceLabel, bandwidthGBps,
+            MemoryBandwidthCalibration.decodeEfficiency,
+            Double(weightsBytes) / 1e9))
+    }
+
+    /// Sum of local `.safetensors` file sizes for the model, or nil when the
+    /// model directory can't be located (not installed locally). The
+    /// recursive walk covers sharded weights placed in subdirectories by
+    /// `osaurus pull`.
+    static func localWeightsBytes(forModelId modelId: String, port: Int) async -> Int64? {
+        let baseDir = await modelsBaseDirectory(port: port)
+        guard let modelDir = resolveLocalModelDirectory(forModelId: modelId, under: baseDir)
+        else { return nil }
+        return weightsBytes(under: modelDir)
+    }
+
+    /// Models base directory, in order of authority:
+    /// 1. The running server's own scan root (`/health` →
+    ///    `local_model_scan.root`) — authoritative, because the user can
+    ///    point the app at any folder (e.g. `~/MLXModels`) and only the
+    ///    scanning server knows which one it actually lists models from.
+    /// 2. The shared group-defaults path (mirrors
+    ///    `PullCommand.resolveLocalDirectory`).
+    /// 3. `~/.osaurus/models` (the default install location).
+    static func modelsBaseDirectory(port: Int) async -> URL {
+        if let healthURL = URL(string: "http://127.0.0.1:\(port)/health"),
+            let health = await BenchCommand.fetchJSON(healthURL),
+            let root = modelsRoot(fromHealth: health) {
+            return root
+        }
+        if let shared = UserDefaults(suiteName: "group.com.osaurus.shared"),
+            let storedPath = shared.string(forKey: "modelsDirectoryPath"),
+            !storedPath.isEmpty {
+            return URL(fileURLWithPath: storedPath, isDirectory: true)
+        }
+        return FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent(".osaurus/models", isDirectory: true)
+    }
+
+    /// Extracts the server's local-model scan root from a `/health` payload.
+    /// Pure so the JSON contract is unit-testable against a fixture.
+    static func modelsRoot(fromHealth health: [String: Any]) -> URL? {
+        guard let scan = health["local_model_scan"] as? [String: Any],
+            let root = scan["root"] as? String,
+            !root.isEmpty
+        else { return nil }
+        return URL(fileURLWithPath: root, isDirectory: true)
+    }
+
+    /// Resolves the model's directory under `baseDir`, trying both name
+    /// forms:
+    /// 1. The id's `/`-components nested as-is (matches `osaurus pull`
+    ///    layout and fully-qualified `org/name` ids).
+    /// 2. A case-insensitive scan of the first two directory levels,
+    ///    comparing lowercased names — the server lists lowercased ids
+    ///    (e.g. `qwen3.6-35b-a3b-mxfp4-mtp`) while directories keep their
+    ///    original casing (`OsaurusAI/Qwen3.6-35B-A3B-MXFP4-MTP`), and a
+    ///    single-component id may name a repo nested one org level down.
+    ///    Two levels is enough: discovery supports flat and `org/repo`
+    ///    layouts; deeper multi-org roots are rare and this line is
+    ///    best-effort display, never an error.
+    static func resolveLocalModelDirectory(forModelId modelId: String, under baseDir: URL) -> URL? {
+        let fm = FileManager.default
+        func isDirectory(_ url: URL) -> Bool {
+            var isDir: ObjCBool = false
+            return fm.fileExists(atPath: url.path, isDirectory: &isDir) && isDir.boolValue
+        }
+        let components = modelId.split(separator: "/").map(String.init)
+        guard !components.isEmpty else { return nil }
+
+        // 1. Exact nesting of the id's components.
+        let exact = components.reduce(baseDir) { partial, component in
+            partial.appendingPathComponent(component, isDirectory: true)
+        }
+        if isDirectory(exact) { return exact }
+
+        // 2. Case-insensitive two-level scan.
+        func childDirectories(of url: URL) -> [URL] {
+            ((try? fm.contentsOfDirectory(at: url, includingPropertiesForKeys: [.isDirectoryKey]))
+                ?? [])
+                .filter { (try? $0.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true }
+        }
+        let loweredId = modelId.lowercased()
+        var leafMatch: URL?
+        for level1 in childDirectories(of: baseDir) {
+            let name1 = level1.lastPathComponent.lowercased()
+            if name1 == loweredId { return level1 }
+            for level2 in childDirectories(of: level1) {
+                let name2 = level2.lastPathComponent.lowercased()
+                // Full relative-path match wins over a bare leaf-name match.
+                if "\(name1)/\(name2)" == loweredId { return level2 }
+                if leafMatch == nil, name2 == loweredId { leafMatch = level2 }
+            }
+        }
+        return leafMatch
+    }
+
+    /// Recursive `.safetensors` byte sum, nil when `directory` is absent.
+    /// Split from the id-based resolver so tests can point it at a fixture
+    /// directory without touching user defaults or the home directory.
+    static func weightsBytes(under directory: URL) -> Int64? {
+        let fm = FileManager.default
+        var isDir: ObjCBool = false
+        guard fm.fileExists(atPath: directory.path, isDirectory: &isDir), isDir.boolValue else {
+            return nil
+        }
+        guard let enumerator = fm.enumerator(
+            at: directory, includingPropertiesForKeys: [.fileSizeKey]) else { return nil }
+        var total: Int64 = 0
+        for case let fileURL as URL in enumerator
+        where fileURL.pathExtension.lowercased() == "safetensors" {
+            if let size = try? fileURL.resourceValues(forKeys: [.fileSizeKey]).fileSize {
+                total += Int64(size)
+            }
+        }
+        return total
     }
 
     private static func pad(_ string: String, to width: Int) -> String {
