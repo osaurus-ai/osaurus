@@ -671,7 +671,7 @@ struct RuntimePolicySourceTests {
         // (vmlx-swift#119, `Generation.toolCallProgress`) that lets the
         // native chat show a live "Preparing tool call" card during a long
         // buffered tool write instead of a frozen typing indicator.
-        let expectedRuntimeHardenedRevision = "8d0ef7e115f40bf428d05eee6f6a21ab0ddffb65"
+        let expectedRuntimeHardenedRevision = "ff714f1d0033768e85d48435fad2d244d80c91d6"
         let manifestRevision = try Self.vmlxPinRevision(in: manifest)
         let workspaceRevision = try Self.vmlxPinRevision(in: workspaceResolved)
         let appRevision = try Self.vmlxPinRevision(in: appResolved)
