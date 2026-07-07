@@ -214,7 +214,7 @@ fields and adds `resident_models[]` with per-model `idle_unload_at` and
 A single `defaults` knob remains:
 
 ```bash
-defaults write ai.osaurus ai.osaurus.scheduler.mlxBatchEngineMaxBatchSize -int 8
+defaults write com.dinoki.osaurus ai.osaurus.scheduler.mlxBatchEngineMaxBatchSize -int 8
 ```
 
 Defaults to `1`, clamped to `[1, 32]`. The default preserves vmlx's

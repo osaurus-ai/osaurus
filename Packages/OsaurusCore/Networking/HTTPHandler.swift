@@ -8752,6 +8752,72 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
 
     // MARK: - Health Endpoint
 
+    /// Await `operation`, but give up after `nanoseconds` and return `nil`.
+    ///
+    /// `/health` must answer even when the inference stack is wedged: the
+    /// batch-diagnostics fetch chains awaits through the Registry actor and
+    /// every per-engine actor, so a hung engine would otherwise hang the
+    /// health endpoint (and suppress `LaunchGuard.noteHealthyHealthCheck()`)
+    /// exactly when the process is sick. A structured task group cannot
+    /// express this race — the group scope still waits for the wedged child
+    /// after `cancelAll()` — so the fetch runs as an unstructured task that
+    /// simply loses the race and is abandoned on timeout.
+    static func awaitWithDeadline<T: Sendable>(
+        nanoseconds: UInt64,
+        operation: @escaping @Sendable () async -> T
+    ) async -> T? {
+        let (stream, continuation) = AsyncStream<T?>.makeStream()
+        let work = Task { continuation.yield(await operation()) }
+        let deadline = Task {
+            try? await Task.sleep(nanoseconds: nanoseconds)
+            continuation.yield(nil)
+        }
+        var first: T?
+        for await value in stream {
+            first = value
+            break
+        }
+        continuation.finish()
+        deadline.cancel()
+        // Best-effort: a fetch wedged inside an actor await won't observe
+        // cancellation, but a merely-slow one stops doing work sooner.
+        if first == nil { work.cancel() }
+        return first
+    }
+
+    /// Shape the `/health` `batch_diagnostics` block from a snapshot.
+    /// Pure — extracted from the NIO-embedded endpoint body so the
+    /// nil-snapshot and empty-depth-summary shapes are unit-testable.
+    static func healthBatchDiagnosticsObject(_ snapshot: BatchDiagnosticsSnapshot?) -> Any {
+        guard let d = snapshot else { return NSNull() }
+        // A nil or empty depth summary both mean "no native-MTP models
+        // resolved"; emit JSON null rather than an empty string so consumers
+        // can key off null uniformly.
+        let depths: Any
+        if let summary = d.nativeMTPDepthSummary, !summary.isEmpty {
+            depths = summary
+        } else {
+            depths = NSNull()
+        }
+        return [
+            "pending": d.pendingCount,
+            "active": d.activeCount,
+            "active_high_watermark": d.activeHighWatermark,
+            "accepting_requests": d.isAcceptingRequests,
+            "native_mtp_models": d.nativeMTPModelCount,
+            "native_mtp_depths": depths,
+            "prefix_hits": d.prefixHits,
+            "prefix_misses": d.prefixMisses,
+            "disk_l2_hits": d.diskL2Hits,
+            "disk_l2_misses": d.diskL2Misses,
+            "disk_l2_stores": d.diskL2Stores,
+            "ssm_companion_hits": d.ssmCompanionHits,
+            "ssm_companion_misses": d.ssmCompanionMisses,
+            "ssm_companion_rederives": d.ssmCompanionReDerives,
+            "turboquant_compressions": d.turboQuantCompressions,
+        ] as [String: Any]
+    }
+
     /// `/health` returns liveness plus per-model in-flight counts and the
     /// list of currently-loaded models. External observers can use this to
     /// detect contention without scraping logs (one model starving the
@@ -8854,34 +8920,26 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             // these; exposing them here lets benchmark/regression tooling
             // attribute a TTFT change to its cause (prefix hit vs miss, MTP
             // engaged vs fallen back) instead of guessing from timings.
-            let batchDiag = await MLXBatchAdapter.snapshotDiagnostics()
-            let batchDiagnostics: Any
-            if let d = batchDiag {
-                batchDiagnostics =
-                    [
-                        "pending": d.pendingCount,
-                        "active": d.activeCount,
-                        "active_high_watermark": d.activeHighWatermark,
-                        "accepting_requests": d.isAcceptingRequests,
-                        "native_mtp_models": d.nativeMTPModelCount,
-                        "native_mtp_depths": d.nativeMTPDepthSummary as Any? ?? NSNull(),
-                        "prefix_hits": d.prefixHits,
-                        "prefix_misses": d.prefixMisses,
-                        "disk_l2_hits": d.diskL2Hits,
-                        "disk_l2_misses": d.diskL2Misses,
-                        "disk_l2_stores": d.diskL2Stores,
-                        "ssm_companion_hits": d.ssmCompanionHits,
-                        "ssm_companion_misses": d.ssmCompanionMisses,
-                        "ssm_companion_rederives": d.ssmCompanionReDerives,
-                        "turboquant_compressions": d.turboQuantCompressions,
-                    ] as [String: Any]
-            } else {
-                batchDiagnostics = NSNull()
+            //
+            // The fetch is raced against a 1-second deadline: it chains
+            // awaits through the Registry actor and every per-engine actor,
+            // and a wedged engine must not wedge /health (or block
+            // LaunchGuard.noteHealthyHealthCheck) exactly when the process
+            // is sick. On timeout the block is JSON null and
+            // `batch_diagnostics_timeout: true` is added at the top level.
+            let batchDiagFetch: BatchDiagnosticsSnapshot?? = await Self.awaitWithDeadline(
+                nanoseconds: 1_000_000_000
+            ) {
+                await MLXBatchAdapter.snapshotDiagnostics()
             }
+            let batchDiagTimedOut = (batchDiagFetch == nil)
+            let batchDiagnostics = Self.healthBatchDiagnosticsObject(
+                batchDiagFetch.flatMap { $0 }
+            )
 
             let memoryConfig = MemoryConfigurationStore.load()
             let localModelScan: Any = ModelManager.localModelsScanDiagnosticJSONObject() as Any? ?? NSNull()
-            let obj: [String: Any] = [
+            var obj: [String: Any] = [
                 "status": "healthy",
                 "timestamp": Date().ISO8601Format(),
                 "loaded": loaded,
@@ -8902,6 +8960,9 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 "batch_diagnostics": batchDiagnostics,
                 "persistence": PersistenceHealth.shared.snapshot(),
             ]
+            if batchDiagTimedOut {
+                obj["batch_diagnostics_timeout"] = true
+            }
 
             // A served /health means the process is alive and responsive —
             // clear any crash-loop safe mode and bring skipped subsystems back.
