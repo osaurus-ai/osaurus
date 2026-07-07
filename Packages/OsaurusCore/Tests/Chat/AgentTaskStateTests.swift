@@ -632,6 +632,27 @@ struct AgentTaskStateTests {
         #expect(state.nextStepBias() == nil, "interleaved action resets the planning run")
     }
 
+    /// False-positive guard for the allowlist scope: a NON-planning tool
+    /// (e.g. `db_insert`, `image`, `web_search`, `capabilities_load`) issued
+    /// 3× in a row with varied args is legitimate consecutive work, NOT a
+    /// stalled plan — the planning detector is an allowlist (`todo` only), so
+    /// it must never arm for these. This also guarantees the planning nudge
+    /// cannot mask/contradict the `image` gen→edit continuation nudge.
+    @Test func planningLoop_consecutiveNonPlanningToolNotNudged() {
+        for tool in ["db_insert", "image", "web_search", "capabilities_load"] {
+            let state = AgentTaskState()
+            state.record(name: tool, argsJSON: #"{"q":"1"}"#,
+                result: ToolEnvelope.success(tool: tool, text: "ok"))
+            state.record(name: tool, argsJSON: #"{"q":"2"}"#,
+                result: ToolEnvelope.success(tool: tool, text: "ok"))
+            state.record(name: tool, argsJSON: #"{"q":"3"}"#,
+                result: ToolEnvelope.success(tool: tool, text: "ok"))
+            #expect(
+                state.nextStepBias() == nil,
+                "3 consecutive \(tool) calls are work, not a planning loop")
+        }
+    }
+
     /// A different call between repeats disarms the pending nudge — the
     /// notice describes the MOST RECENT call only.
     @Test func repeatedCall_differentCallDisarms() {

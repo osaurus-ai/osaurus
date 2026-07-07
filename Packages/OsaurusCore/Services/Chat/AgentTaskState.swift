@@ -109,6 +109,16 @@ public final class AgentTaskState {
     /// before failing.
     private static let execLikeTools: Set<String> = ["shell_run", "sandbox_exec"]
 
+    /// Planning/meta tools whose whole purpose is (re)stating intent rather
+    /// than acting on the world. Re-issuing one of these repeatedly — even
+    /// with a reworded body each turn — is re-planning without progress, and
+    /// is what the reworded-`todo` stall does. Deliberately an ALLOWLIST, not
+    /// "everything that isn't read/write/exec/search": tools like `image`,
+    /// `db_*`, `capabilities_load`, `spawn`, and `web_*` are legitimately
+    /// called several times in a row (three images, three row inserts, three
+    /// capability loads) and must NOT be treated as a stalled plan.
+    private static let planningLikeTools: Set<String> = ["todo"]
+
     /// Tools whose `invalid_args` / `not_found` failures are DETERMINISTIC
     /// given an unchanged filesystem / capability catalog: re-issuing the
     /// identical call must return the identical error. Their held errors are
@@ -347,24 +357,23 @@ public final class AgentTaskState {
             repeatedCallName = count >= Self.repeatedCallThreshold ? name : nil
         }
 
-        // Same-NAME run for planning/meta tools (NOT read/write/exec/search):
-        // re-issuing one of these repeatedly — even with different arguments
+        // Same-NAME run for a planning/meta tool (an explicit allowlist —
+        // `todo` today): re-issuing one repeatedly — even with a reworded body
         // each turn — is re-planning without progress. This catches the
         // reworded-`todo` loop the identical-args `nonReadCallCounts` counter
         // above cannot: every new checklist is a fresh signature, so that
-        // counter never fires while the model burns turns re-planning. The
-        // productive tools (read/write/exec/search) are excluded because
-        // repeating them with varied arguments is legitimate work (writing
-        // several files, searching several terms). Advisory only.
-        let isProductiveTool =
-            Self.readLikeTools.contains(name) || Self.writeLikeTools.contains(name)
-            || Self.execLikeTools.contains(name) || Self.searchLikeTools.contains(name)
-        if isProductiveTool {
-            planningRunName = nil
-            planningRunCount = 0
-        } else {
+        // counter never fires while the model burns turns re-planning. Every
+        // non-planning tool DISARMS the run — that keeps legitimate consecutive
+        // work (three `image` generations, three `db_insert`s, three
+        // `capabilities_load`s) from being mislabeled a stalled plan, and
+        // ensures the planning nudge never masks another result-class nudge
+        // (e.g. the `image` gen→edit continuation). Advisory only.
+        if Self.planningLikeTools.contains(name) {
             planningRunCount = (previousToolName == name) ? planningRunCount + 1 : 1
             planningRunName = planningRunCount >= Self.repeatedCallThreshold ? name : nil
+        } else {
+            planningRunName = nil
+            planningRunCount = 0
         }
 
         // Wandering counter: a listing is a step that hasn't reached a file
