@@ -246,6 +246,66 @@ struct CrossModelBandwidthBudgeterTests {
         #expect(recorded == ["B", "C"])
     }
 
+    // MARK: - Head-starvation aging (same-model bypass is bounded)
+
+    /// Continuous same-model traffic must not starve the FIFO head
+    /// indefinitely: within the limit the same-model bypass admits
+    /// immediately, but once the head has waited past
+    /// `headStarvationLimit` the next same-model request queues behind it,
+    /// and admissions then proceed strictly FIFO (head first).
+    @Test func continuous_same_model_traffic_stops_bypassing_after_starvation_limit() async throws {
+        let clock = ManualUptimeClock()
+        let budgeter = CrossModelBandwidthBudgeter(now: { clock.now })
+        let order = AdmissionOrder()
+
+        let leaseA1 = try await budgeter.acquire(
+            modelName: "A", weightsBytes: 60 * Self.GB, budgetBytes: 100 * Self.GB)
+
+        // Head B (70 GB) does not fit alongside A and parks.
+        let taskB = Task<Void, Never> {
+            guard
+                let lease = try? await budgeter.acquire(
+                    modelName: "B", weightsBytes: 70 * Self.GB, budgetBytes: 100 * Self.GB)
+            else { return }
+            await order.record("B")
+            await lease.release()
+        }
+        try? await Task.sleep(nanoseconds: 50_000_000)
+        #expect(await budgeter.waiterCountForTesting == 1)
+
+        // Within the limit, the same-model bypass still admits immediately
+        // (BatchEngine owns same-model concurrency).
+        clock.advance(by: 30)
+        let leaseA2 = try await budgeter.acquire(
+            modelName: "A", weightsBytes: 60 * Self.GB, budgetBytes: 100 * Self.GB)
+        #expect(await budgeter.waiterCountForTesting == 1)
+
+        // Past the limit, the NEXT same-model request must queue behind the
+        // starving head instead of bypassing.
+        clock.advance(by: 31)
+        let taskA3 = Task<Void, Never> {
+            guard
+                let lease = try? await budgeter.acquire(
+                    modelName: "A", weightsBytes: 60 * Self.GB, budgetBytes: 100 * Self.GB)
+            else { return }
+            await order.record("A3")
+            await lease.release()
+        }
+        try? await Task.sleep(nanoseconds: 50_000_000)
+        #expect(await budgeter.waiterCountForTesting == 2)
+
+        // Draining the in-flight A streams lets the head go FIRST; the
+        // queued same-model request follows in FIFO order (A3 does not fit
+        // alongside B: 70 + 60 > 100, so it waits for B's release).
+        await leaseA1.release()
+        await leaseA2.release()
+        await taskB.value
+        await taskA3.value
+        #expect(await order.entries == ["B", "A3"])
+        #expect(await budgeter.activeStreamCountForTesting == 0)
+        #expect(await budgeter.waiterCountForTesting == 0)
+    }
+
     // MARK: - Cancellation
 
     @Test func cancelling_a_waiting_task_removes_it_from_the_queue() async throws {
@@ -340,6 +400,21 @@ struct CrossModelBandwidthBudgeterTests {
 private actor AdmissionOrder {
     private(set) var entries: [String] = []
     func record(_ name: String) { entries.append(name) }
+}
+
+/// Manually advanced monotonic clock for the head-starvation aging rule,
+/// mirroring `BatchAutoscalerTests.ManualClock`.
+private final class ManualUptimeClock: @unchecked Sendable {
+    private let lock = NSLock()
+    private var value: TimeInterval = 10_000
+
+    var now: TimeInterval {
+        lock.withLock { value }
+    }
+
+    func advance(by seconds: TimeInterval) {
+        lock.withLock { value += seconds }
+    }
 }
 
 // `AtomicBoolFlag` is intentionally duplicated from

@@ -25,7 +25,12 @@
 //     `BatchEngine` (and its autoscaler) owns intra-model batching, and
 //     concurrent streams on one model share a single weight-streaming
 //     pass. A request for a model that is already decoding therefore adds
-//     no marginal cross-model demand and is always admitted.
+//     no marginal cross-model demand and normally bypasses the queue —
+//     but the bypass is BOUNDED, not absolute: once the FIFO head has
+//     been waiting longer than `headStarvationLimit`, same-model requests
+//     enqueue normally, so continuous same-model traffic cannot park a
+//     cross-model waiter indefinitely (each bypass keeps the model in
+//     `active`; the head only fits once that model drains).
 //   * Only active behind the `ai.osaurus.perf.crossModelBudgeter` flag
 //     (default false, dark launch) AND `manualMultiModel` eviction AND a
 //     known host bandwidth AND ≥ 96 GiB RAM. Single-model machines and
@@ -39,8 +44,20 @@
 import Foundation
 import os
 
+private let budgeterLog = Logger(subsystem: "ai.osaurus", category: "BandwidthBudgeter")
+
 actor CrossModelBandwidthBudgeter {
     static let shared = CrossModelBandwidthBudgeter()
+
+    typealias NowProvider = @Sendable () -> TimeInterval
+
+    /// Injectable monotonic clock (seconds) so the head-starvation aging
+    /// rule is testable without wall-clock waits.
+    private let now: NowProvider
+
+    init(now: @escaping NowProvider = { ProcessInfo.processInfo.systemUptime }) {
+        self.now = now
+    }
 
     // MARK: - Gating (pure, unit-tested)
 
@@ -58,6 +75,18 @@ actor CrossModelBandwidthBudgeter {
     /// achieves 60–75% of the spec sheet, and decode's access pattern is
     /// close to memcpy.
     static let streamableBandwidthFraction = 0.7
+
+    /// Aging bound on the zero-marginal-demand (same-model) fast path:
+    /// once the FIFO head has been waiting longer than this, same-model
+    /// requests stop bypassing the queue and enqueue behind it. Without
+    /// the bound, CONTINUOUS same-model traffic starves the head forever —
+    /// every bypass keeps that model registered in `active`, and the head
+    /// only fits once the model drains. 60 s is generous next to
+    /// interactive decode turns (seconds), so the bypass keeps its
+    /// serialization win for normal bursts while bounding a parked
+    /// waiter's worst case to roughly one starvation window plus the
+    /// in-flight streams' remaining decode time.
+    static let headStarvationLimit: TimeInterval = 60
 
     static var isFlagEnabled: Bool { isFlagEnabled(in: .standard) }
 
@@ -156,6 +185,11 @@ actor CrossModelBandwidthBudgeter {
         let modelName: String
         let weightsBytes: Int64
         let budgetBytes: Int64
+        /// When this waiter entered the FIFO queue (monotonic seconds).
+        /// The queue is strict FIFO, so for the head this is exactly when
+        /// its wait started — the input to the `headStarvationLimit`
+        /// aging rule.
+        let enqueuedAt: TimeInterval
         let continuation: CheckedContinuation<Void, Error>
     }
 
@@ -174,7 +208,10 @@ actor CrossModelBandwidthBudgeter {
     ///
     /// Admission rule: admit immediately when the request adds no marginal
     /// cross-model demand (no other model is active, or this model is
-    /// already decoding); otherwise admit when
+    /// already decoding) AND the queue head is not starving — once the head
+    /// has waited past `headStarvationLimit`, same-model requests enqueue
+    /// normally so continuous same-model traffic cannot bypass the FIFO
+    /// forever. Otherwise admit when
     /// Σ weights of distinct active models + `weightsBytes` ≤ `budgetBytes`,
     /// and only when no earlier waiter is still queued (strict FIFO).
     ///
@@ -185,7 +222,7 @@ actor CrossModelBandwidthBudgeter {
         weightsBytes: Int64,
         budgetBytes: Int64
     ) async throws -> Lease {
-        if zeroMarginalDemand(modelName: modelName) {
+        if zeroMarginalDemand(modelName: modelName), !headIsStarving() {
             register(modelName: modelName, weightsBytes: weightsBytes)
             return Lease(budgeter: self, modelName: modelName)
         }
@@ -212,6 +249,7 @@ actor CrossModelBandwidthBudgeter {
                         modelName: modelName,
                         weightsBytes: weightsBytes,
                         budgetBytes: budgetBytes,
+                        enqueuedAt: now(),
                         continuation: cc
                     ))
             }
@@ -246,11 +284,21 @@ actor CrossModelBandwidthBudgeter {
     /// True when admitting `modelName` adds no cross-model weight-streaming
     /// demand: nothing else is decoding, or this model already is (its
     /// weights are already being streamed; intra-model concurrency belongs
-    /// to `BatchEngine`).
+    /// to `BatchEngine`). On the `acquire` fast path this bypass is gated
+    /// by `headIsStarving()` — see `headStarvationLimit`.
     private func zeroMarginalDemand(modelName: String) -> Bool {
         if active.isEmpty { return true }
         if active[modelName] != nil { return true }
         return false
+    }
+
+    /// True when the FIFO head has been waiting longer than
+    /// `headStarvationLimit`. Only consulted by `acquire`'s fast path;
+    /// `admitEligibleWaiters` keeps using `zeroMarginalDemand` unguarded —
+    /// admitting the HEAD is FIFO progress, never starvation.
+    private func headIsStarving() -> Bool {
+        guard let head = waiters.first else { return false }
+        return now() - head.enqueuedAt > Self.headStarvationLimit
     }
 
     private func fitsBudget(modelName: String, weightsBytes: Int64, budgetBytes: Int64) -> Bool {
@@ -308,8 +356,8 @@ actor CrossModelBandwidthBudgeter {
             .map { "\($0.key)@\(Self.formatGB(Double($0.value.weightsBytes) / 1e9))GB" }
             .joined(separator: ", ")
         let budget = Self.formatGB(Double(budgetBytes) / 1e9)
-        print(
-            "[Osaurus] budgeter: holding model=\(modelName) (active: \(activeSummary); budget \(budget)GB/s)"
+        budgeterLog.notice(
+            "budgeter: holding model=\(modelName, privacy: .public) (active: \(activeSummary, privacy: .public); budget \(budget, privacy: .public)GB/s)"
         )
     }
 

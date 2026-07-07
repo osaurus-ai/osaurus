@@ -158,6 +158,12 @@ public actor ModelRuntime {
     private var coldLoadWaiters: [CheckedContinuation<Void, Never>] = []
     private var currentModelName: String?
     private var cachedConfig: RuntimeConfig?
+    /// Cached `modelEvictionPolicy`, mirroring `cachedConfig`'s pattern:
+    /// `RuntimeConfig` doesn't carry the eviction policy (it lives on the
+    /// legacy `ServerConfiguration`), and reading it per request through
+    /// `ServerConfigurationStore.load()` is a MainActor-hopping disk read
+    /// on the generation hot path. Invalidated by `invalidateConfig()`.
+    private var cachedEvictionPolicy: ModelEvictionPolicy?
 
     /// Result of the most recent pre-load RAM feasibility check. Surfaced via
     /// `lastRAMFeasibilitySnapshot()` so `/health` and the model picker can
@@ -884,9 +890,11 @@ public actor ModelRuntime {
         if !quit { await MetalGate.shared.exitModelTeardown(model: "all-models") }
     }
 
-    /// Invalidates the cached RuntimeConfig so the next request reads fresh values.
+    /// Invalidates the cached RuntimeConfig (and the cached eviction
+    /// policy) so the next request reads fresh values.
     func invalidateConfig() {
         cachedConfig = nil
+        cachedEvictionPolicy = nil
     }
 
     // MARK: - Internals
@@ -896,6 +904,17 @@ public actor ModelRuntime {
         let cfg = await RuntimeConfig.snapshot()
         cachedConfig = cfg
         return cfg
+    }
+
+    /// Cached read of the legacy `modelEvictionPolicy`, mirroring
+    /// `getConfig()`: one MainActor disk read on first use, then actor-local
+    /// until `invalidateConfig()` drops it.
+    private func getModelEvictionPolicy() async -> ModelEvictionPolicy {
+        if let cached = cachedEvictionPolicy { return cached }
+        let policy =
+            await ServerConfigurationStore.load()?.modelEvictionPolicy ?? .strictSingleModel
+        cachedEvictionPolicy = policy
+        return policy
     }
 
     private func scheduleIdleResidency(for modelName: String) async {
@@ -2371,7 +2390,11 @@ public actor ModelRuntime {
         fallbackWeightsBytes: Int64
     ) async throws -> CrossModelBandwidthBudgeter.Lease? {
         guard CrossModelBandwidthBudgeter.isFlagEnabled else { return nil }
-        let policy = await ServerConfigurationStore.load()?.modelEvictionPolicy ?? .strictSingleModel
+        // Cached (actor-local) policy read — the per-request
+        // `ServerConfigurationStore.load()` MainActor disk read was a
+        // review finding; `invalidateConfig()` drops the cache on
+        // configuration changes.
+        let policy = await getModelEvictionPolicy()
         let profile = ChipProfile.current
         let bandwidthGBps = CrossModelBandwidthBudgeter.hostBandwidthGBps(profile: profile)
         guard
