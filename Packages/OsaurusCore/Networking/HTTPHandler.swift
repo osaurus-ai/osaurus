@@ -2843,14 +2843,51 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         // Honor the global "Disable tools" switch on the HTTP path too —
         // `effectiveToolsDisabled` does not read it, so it must be folded
         // in here (the app chat path does the same via `chatCfg.disableTools`).
-        let globalToolsDisabled = await MainActor.run { ChatConfigurationStore.load().disableTools }
+        let (globalToolsDisabled, toolMode) = await MainActor.run {
+            (
+                ChatConfigurationStore.load().disableTools,
+                AgentManager.shared.effectiveToolSelectionMode(for: agentUUID)
+            )
+        }
+        // Session-frozen compose inputs (parity with the chat and plugin-host
+        // send paths): the first compose for a `session_id` snapshots the
+        // manifest / SOUL / always-loaded names, and every later compose
+        // echoes them so the static system-prompt prefix stays byte-identical
+        // across the session. The disk-L2 KV cache matches on an EXACT hash
+        // of the token prefix, so any drifting section (a tool registering
+        // late, a mid-session SOUL edit) previously moved the divergence
+        // point to token 0 and forced a full re-prefill on every
+        // `/agents/{id}/run` turn.
+        var cachedSession: SessionToolState?
+        let sessionKey = (request.session_id?.isEmpty == false) ? request.session_id : nil
+        if let sid = sessionKey {
+            let liveFp = SessionToolState.fingerprint(
+                executionMode: executionMode, toolMode: toolMode)
+            await SessionToolStateStore.shared.invalidateIfFingerprintChanged(
+                sid, liveFingerprint: liveFp)
+            cachedSession = await SessionToolStateStore.shared.get(sid)
+        }
         let composed = await SystemPromptComposer.composeChatContext(
             agentId: agentUUID,
             executionMode: executionMode,
             query: query,
             messages: enriched.messages,
-            toolsDisabled: globalToolsDisabled
+            toolsDisabled: globalToolsDisabled,
+            additionalToolNames: cachedSession?.loadedToolNames ?? [],
+            frozenAlwaysLoadedNames: cachedSession?.initialAlwaysLoadedNames,
+            frozenManifest: cachedSession?.frozenManifest,
+            frozenSoul: cachedSession?.frozenSoul
         )
+        if let sid = sessionKey, cachedSession == nil {
+            await SessionToolStateStore.shared.setInitial(
+                sid,
+                alwaysLoadedNames: composed.alwaysLoadedNames,
+                fingerprint: SessionToolState.fingerprint(
+                    executionMode: executionMode, toolMode: toolMode),
+                manifest: composed.enabledManifest,
+                soul: composed.soul
+            )
+        }
         if !composed.prompt.isEmpty {
             SystemPromptComposer.injectSystemContent(composed.prompt, into: &enriched.messages)
         }
@@ -4891,13 +4928,17 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             }
 
             // Enrich with agent context (system prompt + memory) and use the
-            // same composer-resolved tool surface for the model request. The
-            // endpoint is still stateless — no SessionToolStateStore,
-            // preflight LLM, or frozen per-session schema — but `/agents/{id}/run`
-            // is an agent surface, so per-agent gates (Default-agent configure
-            // tools, DB, scheduling, speak, render_chart, search_memory) must
-            // match the rendered prompt. Bare `alwaysLoadedSpecs` remains the
-            // contract for strict OpenAI-compatible `/chat/completions`.
+            // same composer-resolved tool surface for the model request. When
+            // the caller supplies a `session_id`, the composer inputs are
+            // session-frozen through SessionToolStateStore (same contract as
+            // the chat and plugin-host paths) so the static prompt prefix and
+            // `<tools>` block stay byte-identical across turns and the KV
+            // cache can reuse the prefix; without a session_id each request
+            // remains stateless. `/agents/{id}/run` is an agent surface, so
+            // per-agent gates (Default-agent configure tools, DB, scheduling,
+            // speak, render_chart, search_memory) must match the rendered
+            // prompt. Bare `alwaysLoadedSpecs` remains the contract for
+            // strict OpenAI-compatible `/chat/completions`.
             let enrichedReq = await Self.enrichWithAgentContext(
                 req,
                 agentId: agentId.uuidString,
