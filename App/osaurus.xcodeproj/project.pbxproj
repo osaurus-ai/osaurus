@@ -227,6 +227,7 @@
 				de,
 				"zh-Hans",
 				es,
+				fr,
 				ko,
 				ja,
 				ru,
