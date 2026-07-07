@@ -3450,28 +3450,26 @@ extension FloatingInputCard {
         let usage = "\(ramBannerUsagePercent)"
         let total = "\(ramBannerTotalGB)"
 
-        return HStack(spacing: 8) {
-            Image(systemName: blocked ? "memorychip.fill" : "memorychip")
-                .font(.system(size: CGFloat(theme.captionSize)))
-                .foregroundColor(tint)
+        let message: Text =
+            blocked
+            ? Text(
+                "This model needs ~\(neededGB) GB to load, but memory is at \(usage)% of \(total) GB. Sending is paused until memory frees — close other apps or pick a smaller model.",
+                bundle: .module
+            )
+            : Text(
+                "This model needs ~\(neededGB) GB to load and memory is at \(usage)% of \(total) GB. Close other apps for best performance.",
+                bundle: .module
+            )
 
-            Group {
-                if blocked {
-                    Text(
-                        "This model needs ~\(neededGB) GB to load, but memory is at \(usage)% of \(total) GB. Sending is paused until memory frees — close other apps or pick a smaller model.",
-                        bundle: .module
-                    )
-                } else {
-                    Text(
-                        "This model needs ~\(neededGB) GB to load and memory is at \(usage)% of \(total) GB. Close other apps for best performance.",
-                        bundle: .module
-                    )
-                }
-            }
+        // Icon is concatenated into the text as a first-line prefix (not an
+        // HStack sibling) so wrapped lines use the banner's full width.
+        return
+            (Text(Image(systemName: blocked ? "memorychip.fill" : "memorychip"))
+                .foregroundColor(tint)
+                + Text(verbatim: "  ")
+                + message.foregroundColor(theme.primaryText))
             .font(theme.font(size: CGFloat(theme.captionSize), weight: .medium))
-            .foregroundColor(theme.primaryText)
             .fixedSize(horizontal: false, vertical: true)
-        }
         .padding(.horizontal, 14)
         .padding(.vertical, 9)
         .background(
