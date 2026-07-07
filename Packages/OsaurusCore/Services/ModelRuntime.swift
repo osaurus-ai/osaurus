@@ -2355,6 +2355,44 @@ public actor ModelRuntime {
 
     // MARK: - Generation driver
 
+    /// Resolve the cross-model budgeter gates and, when all pass, acquire a
+    /// decode-admission lease for `modelName` (suspending FIFO while the
+    /// aggregate cross-model demand is over budget). Returns nil — without
+    /// touching the budgeter or loading configuration beyond the flag — when
+    /// the budgeter is dark: flag off (the default), strict single-model
+    /// eviction, unknown host bandwidth, or < 96 GiB RAM.
+    ///
+    /// Demand proxy is the model's resident weights size from the cache
+    /// summaries (the same number `/health` reports); `fallbackWeightsBytes`
+    /// (the freshly loaded holder's size) covers the unreachable case of the
+    /// summary missing right after `loadContainer`.
+    private func acquireCrossModelBudgetIfEnabled(
+        modelName: String,
+        fallbackWeightsBytes: Int64
+    ) async throws -> CrossModelBandwidthBudgeter.Lease? {
+        guard CrossModelBandwidthBudgeter.isFlagEnabled else { return nil }
+        let policy = await ServerConfigurationStore.load()?.modelEvictionPolicy ?? .strictSingleModel
+        let profile = ChipProfile.current
+        let bandwidthGBps = CrossModelBandwidthBudgeter.hostBandwidthGBps(profile: profile)
+        guard
+            CrossModelBandwidthBudgeter.isActive(
+                flagEnabled: true,
+                policy: policy,
+                bandwidthGBps: bandwidthGBps,
+                physicalMemoryBytes: profile.physicalMemoryBytes
+            ),
+            let bandwidthGBps
+        else { return nil }
+        let weightsBytes =
+            await cachedModelSummaries().first(where: { $0.name == modelName })?.bytes
+            ?? fallbackWeightsBytes
+        return try await CrossModelBandwidthBudgeter.shared.acquire(
+            modelName: modelName,
+            weightsBytes: weightsBytes,
+            budgetBytes: CrossModelBandwidthBudgeter.budgetBytes(bandwidthGBps: bandwidthGBps)
+        )
+    }
+
     /// Top-level dispatcher: loads the container, takes the model lease, and
     /// submits the request through `MLXBatchAdapter`. `BatchEngine` is the
     /// single MLX entry point — its actor loop is the serialization point
@@ -2450,6 +2488,25 @@ public actor ModelRuntime {
         // Pin the model against eviction for the stream's lifetime.
         await ModelLease.shared.acquire(modelName)
 
+        // Cross-model decode admission (dark-launched, see
+        // `CrossModelBandwidthBudgeter`). Acquired after the container load
+        // and model lease — so the model stays pinned while queued — and
+        // before `MLXBatchAdapter.generate` submits GPU work. Released
+        // wherever the lease is released. Flag off / strict eviction /
+        // unknown bandwidth / < 96 GiB RAM all resolve to a nil lease with
+        // no waiting, so default setups are unaffected.
+        let budgetLease: CrossModelBandwidthBudgeter.Lease?
+        do {
+            budgetLease = try await acquireCrossModelBudgetIfEnabled(
+                modelName: modelName,
+                fallbackWeightsBytes: holder.weightsSizeBytes
+            )
+        } catch {
+            await ModelLease.shared.release(modelName)
+            await scheduleIdleResidency(for: modelName)
+            throw error
+        }
+
         // `MLXLMCommon.Chat.Message` is non-Sendable but the message array
         // never escapes the producer task. Heap-box the snapshot so the
         // `@Sendable` closure passed to `MLXBatchAdapter` can capture it
@@ -2481,6 +2538,7 @@ public actor ModelRuntime {
             } else {
                 WarmupProgressHub.shared.finish(model: modelName)
             }
+            await budgetLease?.release()
             await ModelLease.shared.release(modelName)
             await scheduleIdleResidency(for: modelName)
             throw error
@@ -2502,6 +2560,7 @@ public actor ModelRuntime {
             } onCancel: {
                 innerProducer.cancel()
             }
+            await budgetLease?.release()
             await ModelLease.shared.release(modelName)
             await self.scheduleIdleResidency(for: modelName)
             self.clearGenerationTask(id: genID)
