@@ -160,6 +160,97 @@ struct ChipProfileCalibrationTests {
                 profile: profile(brand: "Intel(R) Xeon(R)", measured: nil)) == nil)
     }
 
+    // MARK: - MoE active-weights estimate
+
+    @Test func moeActiveFractionFromNameDerivedCounts() {
+        // 35B total / A3B active (the Qwen3.6-35B-A3B naming convention).
+        let fraction = ChipProfileCalibration.moeActiveFraction(
+            totalParamsB: 35, activeParamsB: 3)
+        #expect(fraction != nil)
+        #expect(abs((fraction ?? 0) - 3.0 / 35.0) < 1e-12)
+
+        // Underivable or degenerate pairs → nil (callers suppress/fall back).
+        #expect(ChipProfileCalibration.moeActiveFraction(totalParamsB: nil, activeParamsB: 3) == nil)
+        #expect(ChipProfileCalibration.moeActiveFraction(totalParamsB: 35, activeParamsB: nil) == nil)
+        #expect(ChipProfileCalibration.moeActiveFraction(totalParamsB: 0, activeParamsB: 3) == nil)
+        #expect(ChipProfileCalibration.moeActiveFraction(totalParamsB: 35, activeParamsB: 0) == nil)
+        #expect(ChipProfileCalibration.moeActiveFraction(totalParamsB: 3, activeParamsB: 3) == nil)
+        #expect(ChipProfileCalibration.moeActiveFraction(totalParamsB: 3, activeParamsB: 35) == nil)
+    }
+
+    @Test func activeWeightsBytesScalesByTheMoEFraction() {
+        // A 23.1 GB 35B-A3B bundle reads ~3/35 of its bytes per token.
+        let total: Int64 = 23_100_000_000
+        let active = ChipProfileCalibration.estimatedActiveWeightsBytes(
+            totalWeightsBytes: total, totalParamsB: 35, activeParamsB: 3)
+        // Grouped as the implementation computes it: total × (active/total).
+        #expect(active == Int64(Double(total) * (3.0 / 35.0)))
+        // The scaled bytes feed the same estimator: 411 GB/s × 0.7 ÷ ~1.98 GB.
+        let tps = ChipProfileCalibration.estimatedDecodeTps(
+            weightsBytes: active, bandwidthGBps: 411)
+        #expect(abs(tps - 411e9 * 0.7 / Double(active)) < 1e-9)
+    }
+
+    @Test func denseModelsPassThroughUnchanged() {
+        // nil active params (no A<k>B token) → dense: full weights back.
+        #expect(
+            ChipProfileCalibration.estimatedActiveWeightsBytes(
+                totalWeightsBytes: 18_200_000_000, totalParamsB: 31, activeParamsB: nil)
+                == 18_200_000_000)
+        // nil total is equally underivable → full weights back.
+        #expect(
+            ChipProfileCalibration.estimatedActiveWeightsBytes(
+                totalWeightsBytes: 18_200_000_000, totalParamsB: nil, activeParamsB: 3)
+                == 18_200_000_000)
+    }
+
+    @Test func activeWeightsBytesGuardsDegenerateInputs() {
+        // Zero/negative sizes come back untouched (no divide, no negative math).
+        #expect(
+            ChipProfileCalibration.estimatedActiveWeightsBytes(
+                totalWeightsBytes: 0, totalParamsB: 35, activeParamsB: 3) == 0)
+        #expect(
+            ChipProfileCalibration.estimatedActiveWeightsBytes(
+                totalWeightsBytes: -1, totalParamsB: 35, activeParamsB: 3) == -1)
+        // active ≥ total is nonsense → dense treatment, never an upscale.
+        #expect(
+            ChipProfileCalibration.estimatedActiveWeightsBytes(
+                totalWeightsBytes: 1_000, totalParamsB: 3, activeParamsB: 35) == 1_000)
+        #expect(
+            ChipProfileCalibration.estimatedActiveWeightsBytes(
+                totalWeightsBytes: 1_000, totalParamsB: 0, activeParamsB: 0) == 1_000)
+    }
+
+    @Test func moeBundleDetectionReadsExpertKeys() throws {
+        let dir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("chip-moe-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let configURL = dir.appendingPathComponent("config.json")
+
+        // Dense config → false.
+        try JSONSerialization.data(withJSONObject: ["model_type": "gemma4"])
+            .write(to: configURL)
+        #expect(!ChipProfileCalibration.isMoEBundle(at: dir))
+
+        // Top-level expert count → true.
+        try JSONSerialization.data(
+            withJSONObject: ["model_type": "qwen3_5_moe", "num_experts": 128]
+        ).write(to: configURL)
+        #expect(ChipProfileCalibration.isMoEBundle(at: dir))
+
+        // Nested under text_config (VLM-style configs) → true.
+        try JSONSerialization.data(
+            withJSONObject: ["text_config": ["num_experts_per_tok": 8]]
+        ).write(to: configURL)
+        #expect(ChipProfileCalibration.isMoEBundle(at: dir))
+
+        // Missing config.json → false (never an error).
+        #expect(
+            !ChipProfileCalibration.isMoEBundle(
+                at: dir.appendingPathComponent("missing", isDirectory: true)))
+    }
+
     // MARK: - Spec table
 
     @Test func specTableCoversKnownChipsAndRejectsUnknown() {

@@ -175,7 +175,7 @@ final class ModelPickerItemCache: ObservableObject {
             options.append(.foundation())
         }
 
-        let localModels = await Task.detached(priority: .userInitiated) {
+        let (localModels, decodeEstimates) = await Task.detached(priority: .userInitiated) {
             // Exclude embedding/encoder-only bundles (e.g. potion-base-4M
             // pulled into the HF cache by the memory feature): they can't
             // generate chat completions. They remain visible in the Models
@@ -188,15 +188,23 @@ final class ModelPickerItemCache: ObservableObject {
             // main actor: `fromMLXModel` below reads both `isVLM` and
             // `isMLXFormat` on the MainActor, and a cold cache would otherwise
             // fault config.json / safetensors-header reads per model there.
+            // The decode estimate is computed here too — it stats the size
+            // cache and reads config.json (MoE check) for installed bundles,
+            // which must not happen per row on the MainActor.
+            let profile = ChipProfile.current
+            var estimates: [String: Double] = [:]
             for model in models {
                 _ = model.isVLM
                 _ = model.isMLXFormat
+                if let tps = ModelPickerItem.localDecodeEstimate(for: model, profile: profile) {
+                    estimates[model.id] = tps
+                }
             }
-            return models
+            return (models, estimates)
         }.value
 
         for model in localModels {
-            options.append(.fromMLXModel(model))
+            options.append(.fromMLXModel(model, estimatedDecodeTps: decodeEstimates[model.id]))
         }
 
         // On-device image-generation models (vMLXFlux). Only surface bundles

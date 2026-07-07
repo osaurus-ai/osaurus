@@ -93,6 +93,14 @@ struct ModelPickerItem: Identifiable, Hashable {
     /// Description of the model (optional)
     let description: String?
 
+    /// Bandwidth-derived decode-speed estimate (tok/s) for this model on this
+    /// Mac, computed at cache-build time for installed local models only
+    /// (see `estimatedDecodeTps(weightsBytes:repoId:isConfigDeclaredMoE:profile:)`).
+    /// `nil` for remote/foundation/image items, uninstalled bundles, and
+    /// whenever the inputs (bandwidth, weights size, MoE active fraction)
+    /// aren't derivable. Display-only.
+    let estimatedDecodeTps: Double?
+
     /// Input price in micro-USD per million tokens, parsed from the Osaurus
     /// router metadata. Used only to sort the Osaurus tab by price; `nil` for
     /// items without router pricing (foundation, local, plain remote).
@@ -123,6 +131,7 @@ struct ModelPickerItem: Identifiable, Hashable {
         isMLXFormat: Bool = true,
         isEmbedding: Bool = false,
         description: String? = nil,
+        estimatedDecodeTps: Double? = nil,
         inputPriceMicroPerMTok: Int64? = nil,
         outputPriceMicroPerMTok: Int64? = nil,
         contextLength: Int? = nil,
@@ -141,6 +150,7 @@ struct ModelPickerItem: Identifiable, Hashable {
         self.isMLXFormat = isMLXFormat
         self.isEmbedding = isEmbedding
         self.description = description
+        self.estimatedDecodeTps = estimatedDecodeTps
         self.inputPriceMicroPerMTok = inputPriceMicroPerMTok
         self.outputPriceMicroPerMTok = outputPriceMicroPerMTok
         self.contextLength = contextLength
@@ -179,7 +189,11 @@ extension ModelPickerItem {
     }
 
     /// Create a local MLX model picker item from an MLXModel.
-    static func fromMLXModel(_ model: MLXModel) -> ModelPickerItem {
+    /// `estimatedDecodeTps` is computed by the cache-build path (off the main
+    /// actor, see `ModelPickerItemCache`) via `localDecodeEstimate(for:profile:)`.
+    static func fromMLXModel(
+        _ model: MLXModel, estimatedDecodeTps: Double? = nil
+    ) -> ModelPickerItem {
         ModelPickerItem(
             id: model.id,
             displayName: model.name,
@@ -189,7 +203,8 @@ extension ModelPickerItem {
             isVLM: model.isVLM,
             isMLXFormat: model.isMLXFormat,
             isEmbedding: model.isEmbedding,
-            description: model.description
+            description: model.description,
+            estimatedDecodeTps: estimatedDecodeTps
         )
     }
 
@@ -253,6 +268,81 @@ extension ModelPickerItem {
     private static func displayName(fromModelId id: String) -> String {
         guard let slashIndex = id.lastIndex(of: "/") else { return id }
         return String(id[id.index(after: slashIndex)...])
+    }
+}
+
+// MARK: - Decode-speed estimate (installed local models)
+
+extension ModelPickerItem {
+    /// Pure item-level estimate: tok/s ≈ bandwidth × 0.7 ÷ bytes read per
+    /// token, where bytes-per-token is the weights size scaled down by the
+    /// name-derived MoE active fraction when the repo id carries an `A<k>B`
+    /// token (e.g. "…-35B-A3B" reads ~3/35 of its bytes each token).
+    ///
+    /// Returns nil when no bandwidth number exists for the machine (never
+    /// calibrated AND unknown chip), and — matching `osaurus show`'s
+    /// suppression rule — when the bundle is config-declared MoE but the
+    /// active fraction can't be derived from the name (a dense-formula
+    /// number would understate such models severalfold, which misleads
+    /// worse than no estimate).
+    static func estimatedDecodeTps(
+        weightsBytes: Int64,
+        repoId: String,
+        isConfigDeclaredMoE: Bool,
+        profile: ChipProfile
+    ) -> Double? {
+        guard weightsBytes > 0 else { return nil }
+        let totalParamsB = ModelMetadataParser.parameterCountBillions(from: repoId)
+        let activeParamsB = ModelMetadataParser.activeParameterCountBillions(from: repoId)
+        let fraction = ChipProfileCalibration.moeActiveFraction(
+            totalParamsB: totalParamsB, activeParamsB: activeParamsB)
+        if isConfigDeclaredMoE, fraction == nil { return nil }
+        let bytesPerToken = ChipProfileCalibration.estimatedActiveWeightsBytes(
+            totalWeightsBytes: weightsBytes, totalParamsB: totalParamsB,
+            activeParamsB: activeParamsB)
+        guard
+            let tps = ChipProfileCalibration.estimatedDecodeTps(
+                weightsBytes: bytesPerToken, profile: profile),
+            tps.isFinite, tps > 0
+        else { return nil }
+        return tps
+    }
+
+    /// Disk-facing wrapper used at cache-build time (off the main actor):
+    /// estimates only for installed bundles, taking the weights size from
+    /// the measured `ModelSizeCache` entry when one exists (exact download
+    /// bytes) and the model's own size estimate otherwise, and reading the
+    /// bundle config for the MoE declaration.
+    static func localDecodeEstimate(for model: MLXModel, profile: ChipProfile) -> Double? {
+        guard model.isDownloaded else { return nil }
+        guard
+            let weightsBytes = ModelSizeCache.bytes(forId: model.id)
+                ?? model.totalSizeEstimateBytes,
+            weightsBytes > 0
+        else { return nil }
+        return estimatedDecodeTps(
+            weightsBytes: weightsBytes,
+            repoId: model.id,
+            isConfigDeclaredMoE: ChipProfileCalibration.isMoEBundle(at: model.localDirectory),
+            profile: profile
+        )
+    }
+
+    /// Formatted estimate for UI text, e.g. "~120 tok/s". Nil when there is
+    /// no estimate or it would render as "~0 tok/s".
+    var formattedDecodeEstimate: String? {
+        guard let tps = estimatedDecodeTps, tps.isFinite, tps >= 0.5 else { return nil }
+        return String(format: "~%.0f tok/s", tps)
+    }
+
+    /// Picker-row subtitle: the existing description with the decode estimate
+    /// appended ("… · ~120 tok/s"), or the estimate alone when the model has
+    /// no description. Keeps the row's single metadata line — no layout
+    /// changes needed in the table cell.
+    var pickerSubtitle: String? {
+        guard let estimate = formattedDecodeEstimate else { return description }
+        guard let description, !description.isEmpty else { return estimate }
+        return "\(description) · \(estimate)"
     }
 }
 

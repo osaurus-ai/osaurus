@@ -149,7 +149,9 @@ struct ModelPickerView: View {
             modelId: model.id,
             sourceKey: model.source.uniqueKey,
             displayName: model.displayName,
-            description: model.description,
+            // Existing metadata line plus the bandwidth-derived decode
+            // estimate ("… · ~120 tok/s") for installed local models.
+            description: model.pickerSubtitle,
             parameterCount: model.parameterCount,
             quantization: model.quantization,
             isVLM: model.isVLM,

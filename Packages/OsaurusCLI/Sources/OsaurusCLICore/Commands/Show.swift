@@ -268,13 +268,28 @@ public struct ShowCommand: Command {
     /// a bandwidth number exists: a calibration record from
     /// `osaurus bench --calibrate`, else the chip's spec-sheet bandwidth.
     /// Decode is memory-bound, so tok/s ≈ bandwidth × 0.7 ÷ weights bytes
-    /// (see `MemoryBandwidthCalibration`). Silent otherwise: a missing
+    /// (see `MemoryBandwidthCalibration`). MoE bundles divide by the
+    /// name-derived ACTIVE weights instead (a 35B-A3B reads ~3/35 of its
+    /// bytes per token; the dense formula would understate it severalfold),
+    /// and stay suppressed when config.json declares experts but the id
+    /// carries no derivable `A<k>B`/total pair. Silent otherwise: a missing
     /// estimate must never break `show` for remote or unknown models.
     private static func printDecodeEstimateIfAvailable(modelArg: String, port: Int) async {
-        guard let weightsBytes = await localWeightsBytes(forModelId: modelArg, port: port),
-            weightsBytes > 0
+        guard let weights = await localWeights(forModelId: modelArg, port: port),
+            weights.bytes > 0
         else {
             return
+        }
+        var activeWeightsBytes: Int64?
+        if weights.isMoE {
+            let params = nameDerivedParamsBillions(fromModelId: modelArg)
+            guard
+                MemoryBandwidthCalibration.moeActiveFraction(
+                    totalParamsB: params.total, activeParamsB: params.active) != nil
+            else { return }  // MoE with no derivable active fraction: suppress.
+            activeWeightsBytes = MemoryBandwidthCalibration.estimatedActiveWeightsBytes(
+                totalWeightsBytes: weights.bytes,
+                totalParamsB: params.total, activeParamsB: params.active)
         }
         let bandwidthGBps: Double
         let sourceLabel: String
@@ -289,36 +304,92 @@ public struct ShowCommand: Command {
             return
         }
         let tps = MemoryBandwidthCalibration.estimatedDecodeTps(
-            weightsBytes: weightsBytes, bandwidthGBps: bandwidthGBps)
+            weightsBytes: activeWeightsBytes ?? weights.bytes, bandwidthGBps: bandwidthGBps)
         guard tps > 0, tps.isFinite else { return }
         print("")
-        print(String(
-            format: "  Estimated decode: ~%.0f tok/s on this Mac (%@ %.0f GB/s × %.1f ÷ %.1f GB weights)",
-            tps, sourceLabel, bandwidthGBps,
-            MemoryBandwidthCalibration.decodeEfficiency,
-            Double(weightsBytes) / 1e9))
+        print(decodeEstimateLine(
+            tps: tps, sourceLabel: sourceLabel, bandwidthGBps: bandwidthGBps,
+            weightsBytes: weights.bytes, activeWeightsBytes: activeWeightsBytes))
     }
 
-    /// Sum of local `.safetensors` file sizes for the model, or nil when the
+    /// Pure formatter for the estimate line (unit-tested with fixture
+    /// values). Dense:
+    ///   `  Estimated decode: ~34 tok/s on this Mac (measured 411 GB/s × 0.7 ÷ 8.5 GB weights)`
+    /// MoE (activeWeightsBytes non-nil and smaller than the total):
+    ///   `  Estimated decode: ~120 tok/s on this Mac (measured 411 GB/s × 0.7 ÷ 2.4 GB active weights of 23.1 GB total)`
+    static func decodeEstimateLine(
+        tps: Double, sourceLabel: String, bandwidthGBps: Double,
+        weightsBytes: Int64, activeWeightsBytes: Int64? = nil
+    ) -> String {
+        if let active = activeWeightsBytes, active < weightsBytes {
+            return String(
+                format:
+                    "  Estimated decode: ~%.0f tok/s on this Mac (%@ %.0f GB/s × %.1f ÷ %.1f GB active weights of %.1f GB total)",
+                tps, sourceLabel, bandwidthGBps,
+                MemoryBandwidthCalibration.decodeEfficiency,
+                Double(active) / 1e9, Double(weightsBytes) / 1e9)
+        }
+        return String(
+            format:
+                "  Estimated decode: ~%.0f tok/s on this Mac (%@ %.0f GB/s × %.1f ÷ %.1f GB weights)",
+            tps, sourceLabel, bandwidthGBps,
+            MemoryBandwidthCalibration.decodeEfficiency,
+            Double(weightsBytes) / 1e9)
+    }
+
+    /// Sum of local `.safetensors` file sizes for the model plus whether its
+    /// config declares a mixture-of-experts architecture, or nil when the
     /// model directory can't be located (not installed locally). The
     /// recursive walk covers sharded weights placed in subdirectories by
     /// `osaurus pull`.
-    static func localWeightsBytes(forModelId modelId: String, port: Int) async -> Int64? {
+    static func localWeights(
+        forModelId modelId: String, port: Int
+    ) async -> (bytes: Int64, isMoE: Bool)? {
         let baseDir = await modelsBaseDirectory(port: port)
-        guard let modelDir = resolveLocalModelDirectory(forModelId: modelId, under: baseDir)
+        guard let modelDir = resolveLocalModelDirectory(forModelId: modelId, under: baseDir),
+            let bytes = weightsBytes(under: modelDir)
         else { return nil }
-        // MoE models activate only a fraction of their weights per token, so
-        // the all-weights-streamed decode formula understates them severalfold
-        // (a 35B-A3B bundle showing ~12 tok/s while really decoding ~10x that
-        // misleads worse than no estimate). Suppress until the estimator
-        // learns active-parameter bytes; dense models keep their line.
-        guard !isMoEBundle(at: modelDir) else { return nil }
-        return weightsBytes(under: modelDir)
+        return (bytes: bytes, isMoE: isMoEBundle(at: modelDir))
+    }
+
+    // MARK: - Name-derived parameter counts
+
+    /// Total and MoE-active parameter counts (billions) parsed from the model
+    /// id, e.g. "qwen3.6-35b-a3b-mxfp4-mtp" → (total: 35, active: 3);
+    /// "…-a500m" → active 0.5. Standalone CLI copy of
+    /// `ModelMetadataParser.parameterCountBillions` /
+    /// `.activeParameterCountBillions` (OsaurusCore, which the CLI does not
+    /// link — cross-referenced there). Both counts are name-derived display
+    /// estimates only.
+    static func nameDerivedParamsBillions(
+        fromModelId modelId: String
+    ) -> (total: Double?, active: Double?) {
+        let text = modelId.lowercased()
+        // Boundaries are non-alphanumeric so the total pattern can never eat
+        // the active token (its digits are preceded by the letter "a") and
+        // "4bit"/"mxfp4" tokens never match (no trailing boundary after "b").
+        func first(matching pattern: String) -> Double? {
+            guard let regex = try? NSRegularExpression(pattern: pattern),
+                let match = regex.firstMatch(
+                    in: text, options: [], range: NSRange(text.startIndex..., in: text)),
+                let numRange = Range(match.range(at: 1), in: text),
+                let unitRange = Range(match.range(at: 2), in: text),
+                let number = Double(text[numRange])
+            else { return nil }
+            return text[unitRange] == "m" ? number / 1000.0 : number
+        }
+        return (
+            total: first(matching: #"(?:^|[^a-z0-9])(\d+(?:\.\d+)?)([bm])(?:$|[^a-z0-9])"#),
+            active: first(matching: #"(?:^|[^a-z0-9])a(\d+(?:\.\d+)?)([bm])(?:$|[^a-z0-9])"#)
+        )
     }
 
     /// True when the bundle's config.json declares a mixture-of-experts
     /// architecture (any of the expert-count keys used across families, at
-    /// the top level or under text_config).
+    /// the top level or under text_config). Standalone CLI copy of the
+    /// canonical `ChipProfileCalibration.isMoEBundle` (OsaurusCore, which
+    /// the CLI does not link — cross-referenced there); keep the key lists
+    /// identical.
     static func isMoEBundle(at modelDir: URL) -> Bool {
         let configURL = modelDir.appendingPathComponent("config.json")
         guard let data = try? Data(contentsOf: configURL),

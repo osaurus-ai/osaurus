@@ -116,6 +116,35 @@ enum MemoryBandwidthCalibration {
         return bandwidthGBps * 1e9 * decodeEfficiency / Double(weightsBytes)
     }
 
+    // MARK: - MoE active-weights estimate (name-derived, display only)
+
+    /// MoE active fraction from name-advertised parameter counts (e.g.
+    /// "…-35B-A3B" → 3/35); nil when either count is missing or the pair is
+    /// degenerate. Keep in sync with
+    /// `ChipProfileCalibration.moeActiveFraction` (OsaurusCore) — see the
+    /// rationale there for deriving this from the NAME instead of config
+    /// expert counts.
+    static func moeActiveFraction(totalParamsB: Double?, activeParamsB: Double?) -> Double? {
+        guard let totalParamsB, let activeParamsB,
+            totalParamsB > 0, activeParamsB > 0, activeParamsB < totalParamsB
+        else { return nil }
+        return activeParamsB / totalParamsB
+    }
+
+    /// Bytes a decode step reads: total × active fraction for MoE, the total
+    /// unchanged when the fraction isn't derivable (dense). Keep in sync
+    /// with `ChipProfileCalibration.estimatedActiveWeightsBytes`
+    /// (OsaurusCore).
+    static func estimatedActiveWeightsBytes(
+        totalWeightsBytes: Int64, totalParamsB: Double?, activeParamsB: Double?
+    ) -> Int64 {
+        guard totalWeightsBytes > 0,
+            let fraction = moeActiveFraction(
+                totalParamsB: totalParamsB, activeParamsB: activeParamsB)
+        else { return totalWeightsBytes }
+        return Int64(Double(totalWeightsBytes) * fraction)
+    }
+
     // MARK: - Bandwidth probe (STREAM copy)
 
     /// ~1 GiB per buffer so the system-level cache cannot hide DRAM behind

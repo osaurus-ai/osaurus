@@ -156,8 +156,9 @@ enum ChipProfileCalibration {
 
     /// tok/s ≈ bandwidth × efficiency ÷ bytes read per token. For a dense
     /// model every weight byte is read once per token, so bytes-per-token is
-    /// simply the on-disk weights size. (MoE models activate fewer bytes per
-    /// token; this estimate is a floor for them.)
+    /// simply the on-disk weights size. MoE models activate fewer bytes per
+    /// token — pass `estimatedActiveWeightsBytes(...)` instead of the full
+    /// size for them; fed the full size, this is a floor.
     static func estimatedDecodeTps(weightsBytes: Int64, bandwidthGBps: Double) -> Double {
         guard weightsBytes > 0 else { return 0 }
         return bandwidthGBps * 1e9 * decodeEfficiency / Double(weightsBytes)
@@ -171,6 +172,77 @@ enum ChipProfileCalibration {
             ?? specBandwidthGBps(brandString: profile.brandString)
         guard let bandwidth else { return nil }
         return estimatedDecodeTps(weightsBytes: weightsBytes, bandwidthGBps: bandwidth)
+    }
+
+    // MARK: - MoE active-weights estimate (pure, name-derived, display only)
+
+    /// Fraction of the weights a mixture-of-experts model activates per
+    /// decoded token, derived from the parameter counts a bundle NAME
+    /// advertises (e.g. "…-35B-A3B-…" → 3/35). Nil when either count is
+    /// missing or the pair is degenerate (non-positive, active ≥ total) —
+    /// callers must then fall back to dense treatment or suppress their
+    /// estimate entirely.
+    ///
+    /// Deliberately name-derived rather than config-derived: reconstructing
+    /// the active fraction from config.json expert counts
+    /// (`num_experts_per_tok` ÷ routed experts, applied only to the
+    /// MoE-layer share of the weights) is error-prone across model families,
+    /// while the `A<k>B` naming convention states the answer directly.
+    /// Display-only precision — never feed this into load/memory policy.
+    static func moeActiveFraction(totalParamsB: Double?, activeParamsB: Double?) -> Double? {
+        guard let totalParamsB, let activeParamsB,
+            totalParamsB > 0, activeParamsB > 0, activeParamsB < totalParamsB
+        else { return nil }
+        return activeParamsB / totalParamsB
+    }
+
+    /// Bytes of weights a decode step actually reads, estimated as
+    /// `totalWeightsBytes × (activeParamsB / totalParamsB)` when the
+    /// name-derived MoE fraction is available (see `moeActiveFraction`), and
+    /// `totalWeightsBytes` unchanged otherwise — dense models pass
+    /// `activeParamsB: nil` and get the full size back.
+    ///
+    /// Pure arithmetic for display estimates only; callers pass
+    /// `ModelMetadataParser.parameterCountBillions` /
+    /// `.activeParameterCountBillions` output for the two counts.
+    static func estimatedActiveWeightsBytes(
+        totalWeightsBytes: Int64, totalParamsB: Double?, activeParamsB: Double?
+    ) -> Int64 {
+        guard totalWeightsBytes > 0,
+            let fraction = moeActiveFraction(
+                totalParamsB: totalParamsB, activeParamsB: activeParamsB)
+        else { return totalWeightsBytes }
+        return Int64(Double(totalWeightsBytes) * fraction)
+    }
+
+    // MARK: - MoE bundle detection
+
+    /// True when the bundle's config.json declares a mixture-of-experts
+    /// architecture (any of the expert-count keys used across families, at
+    /// the top level or under text_config).
+    ///
+    /// Canonical copy; the CLI carries a standalone duplicate in
+    /// Packages/OsaurusCLI/Sources/OsaurusCLICore/Commands/Show.swift
+    /// (`ShowCommand.isMoEBundle`) because the CLI does not link OsaurusCore
+    /// — keep the two key lists identical.
+    static func isMoEBundle(at modelDir: URL) -> Bool {
+        let configURL = modelDir.appendingPathComponent("config.json")
+        guard let data = try? Data(contentsOf: configURL),
+            let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+        else { return false }
+        let expertKeys = [
+            "num_experts", "n_routed_experts", "num_local_experts", "num_experts_per_tok",
+        ]
+        func declaresExperts(_ object: [String: Any]) -> Bool {
+            expertKeys.contains { key in
+                (object[key] as? Int).map { $0 > 1 } ?? false
+            }
+        }
+        if declaresExperts(root) { return true }
+        if let textConfig = root["text_config"] as? [String: Any], declaresExperts(textConfig) {
+            return true
+        }
+        return false
     }
 
     // MARK: - Bandwidth probe (explicit CLI verb only — never automatic)

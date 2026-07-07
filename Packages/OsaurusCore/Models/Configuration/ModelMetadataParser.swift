@@ -18,6 +18,7 @@ enum ModelMetadataParser {
     // can be reached from background discovery tasks as well as the main actor.
     private static let cacheLock = NSLock()
     private nonisolated(unsafe) static var parameterCountCache: [String: String?] = [:]
+    nonisolated(unsafe) private static var activeParameterCountCache: [String: Double?] = [:]
     private nonisolated(unsafe) static var quantizationCache: [String: String?] = [:]
 
     private static let parameterCountRegexes: [NSRegularExpression] = {
@@ -58,6 +59,51 @@ enum ModelMetadataParser {
         let text = params.uppercased()
         guard let num = Double(text.dropLast()) else { return nil }
         return text.hasSuffix("M") ? num / 1000.0 : num
+    }
+
+    // MARK: - MoE active parameters (name-derived)
+
+    /// Matches the MoE active-parameter token in a repo ID — the `A<k>B`
+    /// convention, e.g. "Qwen3.6-35B-A3B" (3B active of 35B total) or an
+    /// "A2.5B" decimal variant. Boundaries are non-alphanumeric so "gemma"
+    /// or "llama-3b" never match.
+    private static let activeParameterCountRegex: NSRegularExpression? =
+        try? NSRegularExpression(
+            pattern: #"(?:^|[^a-z0-9])a(\d+(?:\.\d+)?)([bm])(?:$|[^a-z0-9])"#,
+            options: .caseInsensitive)
+
+    /// MoE active-parameter count in billions parsed from a repo ID's `A<k>B`
+    /// token (e.g. "…-35B-A3B-…" -> 3.0, "…-A500M" -> 0.5). Nil for dense
+    /// models (no token). Name-derived — an estimate for display only, like
+    /// `parameterCountBillions`. The CLI (which does not link OsaurusCore)
+    /// carries a standalone copy in `ShowCommand.nameDerivedParamsBillions`
+    /// (Packages/OsaurusCLI/…/Commands/Show.swift) — keep behavior aligned.
+    static func activeParameterCountBillions(from repoId: String) -> Double? {
+        cacheLock.lock()
+        if let cached = activeParameterCountCache[repoId] {
+            cacheLock.unlock()
+            return cached
+        }
+        cacheLock.unlock()
+
+        let result = computeActiveParameterCountBillions(from: repoId)
+
+        cacheLock.lock()
+        activeParameterCountCache[repoId] = result
+        cacheLock.unlock()
+        return result
+    }
+
+    private static func computeActiveParameterCountBillions(from repoId: String) -> Double? {
+        let text = repoId.lowercased()
+        guard let regex = activeParameterCountRegex,
+            let match = regex.firstMatch(
+                in: text, options: [], range: NSRange(text.startIndex..., in: text)),
+            let numRange = Range(match.range(at: 1), in: text),
+            let unitRange = Range(match.range(at: 2), in: text),
+            let number = Double(text[numRange])
+        else { return nil }
+        return text[unitRange] == "m" ? number / 1000.0 : number
     }
 
     private static func computeParameterCount(from repoId: String) -> String? {

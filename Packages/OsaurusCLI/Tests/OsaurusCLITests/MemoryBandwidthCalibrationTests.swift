@@ -120,6 +120,106 @@ final class MemoryBandwidthCalibrationTests: XCTestCase {
             1 << 30)
     }
 
+    /// MoE arithmetic parity with the Core copy
+    /// (`ChipProfileCalibration.moeActiveFraction` /
+    /// `.estimatedActiveWeightsBytes`): fraction from name-derived counts,
+    /// dense passthrough on nil active, guards on degenerate pairs.
+    func testMoEActiveWeightsParity() {
+        let total: Int64 = 23_100_000_000
+
+        // 35B-A3B → 3/35 of the bytes per token, grouped as the
+        // implementation computes it: total × (active/total).
+        XCTAssertEqual(
+            MemoryBandwidthCalibration.estimatedActiveWeightsBytes(
+                totalWeightsBytes: total, totalParamsB: 35, activeParamsB: 3),
+            Int64(Double(total) * (3.0 / 35.0)))
+
+        // Dense (nil active) and underivable (nil total) → unchanged.
+        XCTAssertEqual(
+            MemoryBandwidthCalibration.estimatedActiveWeightsBytes(
+                totalWeightsBytes: total, totalParamsB: 31, activeParamsB: nil), total)
+        XCTAssertEqual(
+            MemoryBandwidthCalibration.estimatedActiveWeightsBytes(
+                totalWeightsBytes: total, totalParamsB: nil, activeParamsB: 3), total)
+
+        // Degenerate pairs never scale (and never upscale).
+        XCTAssertNil(
+            MemoryBandwidthCalibration.moeActiveFraction(totalParamsB: 3, activeParamsB: 35))
+        XCTAssertNil(
+            MemoryBandwidthCalibration.moeActiveFraction(totalParamsB: 3, activeParamsB: 3))
+        XCTAssertNil(
+            MemoryBandwidthCalibration.moeActiveFraction(totalParamsB: 0, activeParamsB: 0))
+        XCTAssertEqual(
+            MemoryBandwidthCalibration.estimatedActiveWeightsBytes(
+                totalWeightsBytes: 0, totalParamsB: 35, activeParamsB: 3), 0)
+    }
+
+    /// `osaurus show`'s name-derived counts: total from the plain `<n>B`
+    /// token, active from `A<k>B`. Mirrors `ModelMetadataParser` in
+    /// OsaurusCore (cross-referenced), which the CLI does not link.
+    func testNameDerivedParamsParsing() {
+        let moe = ShowCommand.nameDerivedParamsBillions(
+            fromModelId: "qwen3.6-35b-a3b-mxfp4-mtp")
+        XCTAssertEqual(moe.total, 35)
+        XCTAssertEqual(moe.active, 3)
+
+        // org/name form and original casing both parse.
+        let cased = ShowCommand.nameDerivedParamsBillions(
+            fromModelId: "OsaurusAI/Qwen3.6-35B-A3B-MXFP4-MTP")
+        XCTAssertEqual(cased.total, 35)
+        XCTAssertEqual(cased.active, 3)
+
+        // Dense id: total only — "llama"/"qat" must not fake an A-token,
+        // "4bit"/"mxfp4" must not fake a total.
+        let dense = ShowCommand.nameDerivedParamsBillions(
+            fromModelId: "mlx-community/Llama-3.2-3B-Instruct-4bit")
+        XCTAssertEqual(dense.total, 3)
+        XCTAssertNil(dense.active)
+
+        // Decimal + M-suffix forms.
+        let small = ShowCommand.nameDerivedParamsBillions(fromModelId: "org/moe-2.7b-a500m")
+        XCTAssertEqual(small.total, 2.7)
+        XCTAssertEqual(small.active, 0.5)
+
+        // No size tokens at all → (nil, nil), which suppresses the MoE line.
+        let none = ShowCommand.nameDerivedParamsBillions(fromModelId: "org/some-moe-model")
+        XCTAssertNil(none.total)
+        XCTAssertNil(none.active)
+    }
+
+    /// The printed line, pinned with fixture values. MoE divides by the
+    /// ACTIVE weights and names both numbers; dense keeps the original form.
+    func testDecodeEstimateLineFormatting() {
+        // 23.1 GB 35B-A3B bundle on a 411 GB/s measured machine:
+        // active = 23.1 × 3/35 ≈ 1.98 GB → ~145 tok/s.
+        let weights: Int64 = 23_100_000_000
+        let active = MemoryBandwidthCalibration.estimatedActiveWeightsBytes(
+            totalWeightsBytes: weights, totalParamsB: 35, activeParamsB: 3)
+        let moeTps = MemoryBandwidthCalibration.estimatedDecodeTps(
+            weightsBytes: active, bandwidthGBps: 411)
+        XCTAssertEqual(
+            ShowCommand.decodeEstimateLine(
+                tps: moeTps, sourceLabel: "measured", bandwidthGBps: 411,
+                weightsBytes: weights, activeWeightsBytes: active),
+            "  Estimated decode: ~145 tok/s on this Mac "
+                + "(measured 411 GB/s × 0.7 ÷ 2.0 GB active weights of 23.1 GB total)")
+
+        // The documented example shape: ~120 tok/s from 2.4 GB active.
+        XCTAssertEqual(
+            ShowCommand.decodeEstimateLine(
+                tps: 119.9, sourceLabel: "measured", bandwidthGBps: 411,
+                weightsBytes: weights, activeWeightsBytes: 2_400_000_000),
+            "  Estimated decode: ~120 tok/s on this Mac "
+                + "(measured 411 GB/s × 0.7 ÷ 2.4 GB active weights of 23.1 GB total)")
+
+        // Dense (no active bytes): unchanged original format.
+        XCTAssertEqual(
+            ShowCommand.decodeEstimateLine(
+                tps: 15.0, sourceLabel: "spec", bandwidthGBps: 546,
+                weightsBytes: 18_200_000_000, activeWeightsBytes: nil),
+            "  Estimated decode: ~15 tok/s on this Mac (spec 546 GB/s × 0.7 ÷ 18.2 GB weights)")
+    }
+
     /// `osaurus show` prints the estimate only for locally installed models;
     /// the weights sum is the recursive `.safetensors` total.
     func testWeightsBytesSumsLocalSafetensors() throws {
