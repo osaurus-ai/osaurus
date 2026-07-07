@@ -296,6 +296,10 @@ struct FloatingInputCard: View {
     /// `SystemMonitorService` and re-rendering on every 2s tick.
     @State private var ramBannerUsagePercent: Int = 0
     @State private var ramBannerTotalGB: Int = 0
+    /// Model the user hid the tight-fit banner for via its dismiss button.
+    /// The banner stays hidden for that selection but returns when the pick
+    /// changes or the projection escalates to a hard block.
+    @State private var ramBannerDismissedForModel: String?
     // MARK: - Voice Input State
     @ObservedObject private var speechService = SpeechService.shared
     @ObservedObject private var speechModelManager = SpeechModelManager.shared
@@ -3438,7 +3442,10 @@ extension FloatingInputCard {
     /// floating overlay) wins when both apply.
     @ViewBuilder
     private var ramPressureRow: some View {
-        if !configContextTooSmall, let feasibility = pendingLoadFeasibility {
+        if !configContextTooSmall, let feasibility = pendingLoadFeasibility,
+            ramBannerDismissedForModel != selectedModel
+                || feasibility.loadPressureSeverity == .block
+        {
             ramPressureBanner(feasibility, pointerCenterX: 28)
                 .frame(width: Self.ramBannerWidth, alignment: .leading)
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -3496,7 +3503,9 @@ extension FloatingInputCard {
                 + message.foregroundColor(theme.primaryText))
             .font(theme.font(size: CGFloat(theme.captionSize), weight: .medium))
             .fixedSize(horizontal: false, vertical: true)
-        .padding(.horizontal, 14)
+        .padding(.leading, 14)
+        // Warn banners reserve room for the dismiss button in the corner.
+        .padding(.trailing, blocked ? 14 : 26)
         .padding(.top, 9)
         // The shape's bottom edge sits above the pointer, so reserve its
         // height inside the frame.
@@ -3508,12 +3517,41 @@ extension FloatingInputCard {
             }
         )
         .overlay(shape.stroke(tint.opacity(0.35), lineWidth: 1))
+        .overlay(alignment: .topTrailing) {
+            // The block banner gates sending, so it cannot be dismissed;
+            // only the warn variant gets the close affordance.
+            if !blocked {
+                dismissButton
+            }
+        }
         .shadow(color: Color.black.opacity(0.12), radius: 8, x: 0, y: 3)
         .accessibilityLabel(
             blocked
                 ? Text("Sending paused: not enough memory to load \(modelName)", bundle: .module)
                 : Text("Memory is tight for \(modelName)", bundle: .module)
         )
+    }
+
+    /// Close button for the warn-level tight-fit banner. Dismissal is scoped
+    /// to the current model selection; picking another model re-arms the
+    /// banner.
+    private var dismissButton: some View {
+        Button {
+            withAnimation(.easeOut(duration: 0.2)) {
+                ramBannerDismissedForModel = selectedModel
+            }
+        } label: {
+            Image(systemName: "xmark")
+                .font(.system(size: 8, weight: .bold))
+                .foregroundColor(theme.tertiaryText)
+                .padding(6)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .padding(.top, 2)
+        .padding(.trailing, 2)
+        .help(Text("Hide this warning for the selected model", bundle: .module))
+        .accessibilityLabel(Text("Dismiss memory warning", bundle: .module))
     }
 
     /// One-decimal GB formatting for the RAM banner (e.g. "12.4").
