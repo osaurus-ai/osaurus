@@ -328,8 +328,12 @@ public enum ModelIdleResidencyPolicy: Codable, Equatable, Hashable, Sendable {
         return .defaultWarm
     }
 
-    /// Settings picker presets.
+    /// Settings picker presets. Every value `tierDefault(physicalMemoryBytes:)`
+    /// can return must appear here, otherwise the Settings picker has no
+    /// matching tag on exactly the machines that tier targets (120 s is the
+    /// ≤ 16 GiB default).
     public static let presets: [ModelIdleResidencyPolicy] = [
+        .afterSeconds(120),
         .afterSeconds(300),
         .defaultWarm,
         .afterSeconds(1_800),
@@ -342,6 +346,8 @@ public enum ModelIdleResidencyPolicy: Codable, Equatable, Hashable, Sendable {
         switch self {
         case .immediately:
             return L("Immediately")
+        case .afterSeconds(120):
+            return L("2 minutes")
         case .afterSeconds(300):
             return L("5 minutes")
         case .afterSeconds(900):

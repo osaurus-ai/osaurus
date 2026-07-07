@@ -112,8 +112,11 @@ struct ServerConfigurationStoreTests {
             physicalMemoryBytes: ChipProfile.current.physicalMemoryBytes)
         #expect(ServerConfiguration.default.modelIdleResidencyPolicy == expected)
         #expect(ServerConfiguration.default.modelIdleResidencyPolicy != .immediately)
-        #expect(ModelIdleResidencyPolicy.presets.first == .afterSeconds(300))
+        #expect(ModelIdleResidencyPolicy.presets.first == .afterSeconds(120))
         #expect(ModelIdleResidencyPolicy.presets.contains(.immediately))
+        // The Settings picker can only render the host's default if it is
+        // one of the preset tags — this must hold for every tier default.
+        #expect(ModelIdleResidencyPolicy.presets.contains(expected))
     }
 
     @Test @MainActor func modelIdleResidencyPolicy_migratesLegacyImmediateOnce() async throws {
@@ -139,8 +142,14 @@ struct ServerConfigurationStoreTests {
             """
         try Data(legacyJSON.utf8).write(to: dir.appendingPathComponent("server.json"))
 
+        // Legacy `.immediately` migrates to the host's RAM-tier default —
+        // the same value a fresh install would get — not a flat
+        // `.defaultWarm`, so low-memory machines land on the short window.
         let migrated = try #require(ServerConfigurationStore.load())
-        #expect(migrated.modelIdleResidencyPolicy == .defaultWarm)
+        let tierDefault = ModelIdleResidencyPolicy.tierDefault(
+            physicalMemoryBytes: ChipProfile.current.physicalMemoryBytes)
+        #expect(migrated.modelIdleResidencyPolicy == tierDefault)
+        #expect(migrated.modelIdleResidencyPolicy != .immediately)
 
         var explicitImmediate = migrated
         explicitImmediate.modelIdleResidencyPolicy = .immediately
