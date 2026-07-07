@@ -190,7 +190,7 @@ public actor ModelRuntime {
     /// closes: long enough for an accidental-close reopen to stay warm, short
     /// enough that the model doesn't hog unified memory for the full idle
     /// policy (default 15 minutes) after the user walked away.
-    static let chatCloseUnloadGraceSeconds: TimeInterval = 60
+    static let chatCloseUnloadGraceSeconds: TimeInterval = 15
 
     private init() {}
 
