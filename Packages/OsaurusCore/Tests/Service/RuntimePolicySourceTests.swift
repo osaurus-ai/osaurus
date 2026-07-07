@@ -671,7 +671,13 @@ struct RuntimePolicySourceTests {
         // (vmlx-swift#119, `Generation.toolCallProgress`) that lets the
         // native chat show a live "Preparing tool call" card during a long
         // buffered tool write instead of a frozen typing indicator.
-        let expectedRuntimeHardenedRevision = "ff714f1d0033768e85d48435fad2d244d80c91d6"
+        // Now also carries vmlx-swift#123 (production crash-trap fixes):
+        // Qwen3VL low-rank position-id normalization + per-sequence rope
+        // delta broadcast, Gemma4/NemotronH guards against the rank-0/empty
+        // results a failed MLX op returns inside a withError scope, and
+        // non-trapping compiled-closure failure paths — so recorded MLX
+        // errors surface instead of dying in Swift bounds checks.
+        let expectedRuntimeHardenedRevision = "aa14267b11840f89f1976a273e553a3b7bbedf39"
         let manifestRevision = try Self.vmlxPinRevision(in: manifest)
         let workspaceRevision = try Self.vmlxPinRevision(in: workspaceResolved)
         let appRevision = try Self.vmlxPinRevision(in: appResolved)
