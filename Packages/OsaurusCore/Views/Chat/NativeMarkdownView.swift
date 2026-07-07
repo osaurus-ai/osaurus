@@ -1397,9 +1397,16 @@ final class StreamingCursorOverlay: NSView {
     }
 
     func updateColor(_ color: NSColor) {
+        // Skip when unchanged: this is called on every 50ms idle tick, and a
+        // top-level explicit CATransaction.commit synchronously flushes the
+        // whole window's pending layer tree to the render server — an
+        // observed multi-second hang on memory-starved machines. The color
+        // only actually changes on a theme switch.
+        let cgColor = color.cgColor
+        guard dotLayer.fillColor != cgColor else { return }
         CATransaction.begin()
         CATransaction.setDisableActions(true)
-        dotLayer.fillColor = color.cgColor
+        dotLayer.fillColor = cgColor
         CATransaction.commit()
     }
 
