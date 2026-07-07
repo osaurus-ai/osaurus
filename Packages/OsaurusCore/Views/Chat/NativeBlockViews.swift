@@ -558,7 +558,12 @@ final class NativeCodeBlockView: NSView {
     private var idleTimer: Timer?
     private var lastCodeRevealAt: Date?
     private var cursorColor: NSColor?
-    private static let cursorPauseThreshold: TimeInterval = 0.15
+    /// Deliberately much longer than the text cursor's 0.15s: local models
+    /// decode at ~100-150ms per token, so a threshold in that range sits right
+    /// on the natural inter-token gap and the dot flickers in and out on
+    /// every token. Inside a code block the dot should only appear on a
+    /// genuine stall (tool-call pause, prefill hiccup), not between tokens.
+    private static let cursorPauseThreshold: TimeInterval = 0.75
 
     // MARK: Streaming highlight throttle
 
