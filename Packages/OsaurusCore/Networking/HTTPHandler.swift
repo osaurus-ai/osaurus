@@ -4305,10 +4305,13 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
 
             let formatter = ISO8601DateFormatter()
             let effectiveModels = await MainActor.run {
+                // Duplicate-tolerant: two agent files can share an id (a
+                // manually copied definition), and uniqueKeysWithValues traps.
                 Dictionary(
-                    uniqueKeysWithValues: agents.map {
+                    agents.map {
                         ($0.id, AgentManager.shared.effectiveModel(for: $0.id))
-                    }
+                    },
+                    uniquingKeysWith: { first, _ in first }
                 )
             }
             let items = agents.map { agent in
