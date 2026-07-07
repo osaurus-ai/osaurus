@@ -121,7 +121,7 @@ struct DegenerationRetrySpliceTests {
         // The mapper checks the detector BEFORE yielding a content delta, so
         // a loop contained entirely in the first chunk aborts with zero
         // content forwarded — retry is transparent and therefore allowed.
-        let loopInOneDelta = String(repeating: "idea ", count: 30)
+        let loopInOneDelta = String(repeating: "idea ", count: 60)
         let probe = RetryProbe()
         let spliced = DegenerationRetry.withRetry(
             events: mapped([.chunk(loopInOneDelta)]),
@@ -143,7 +143,7 @@ struct DegenerationRetrySpliceTests {
         // by trigger time the consumer has already received content, so the
         // typed abort must propagate and the retry closure must not run.
         let events: [Generation] =
-            [.chunk("Sure thing. ")] + Array(repeating: .chunk("idea "), count: 30)
+            [.chunk("Sure thing. ")] + Array(repeating: .chunk("idea "), count: 60)
         let probe = RetryProbe()
         let spliced = DegenerationRetry.withRetry(
             events: mapped(events),
