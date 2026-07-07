@@ -1108,7 +1108,12 @@ struct ThemesView: View {
         let custom = sorted.filter { !$0.isBuiltIn }
 
         let reports = ThemeLibraryManagementService.validationReports(for: sorted)
-        let reportMap = Dictionary(uniqueKeysWithValues: reports.map { ($0.themeID, $0) })
+        // Two installed theme files can share an ID (e.g. a manually copied
+        // built-in), so tolerate duplicate keys — uniqueKeysWithValues traps.
+        let reportMap = Dictionary(
+            reports.map { ($0.themeID, $0) },
+            uniquingKeysWith: { first, _ in first }
+        )
         let reviewIDs = Set(reports.filter { $0.needsReview }.map { $0.themeID })
 
         let groups = ThemeLibraryManagementService.duplicateGroups(in: sorted)
