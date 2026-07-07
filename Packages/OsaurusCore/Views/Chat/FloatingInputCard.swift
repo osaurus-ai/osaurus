@@ -2691,6 +2691,9 @@ extension FloatingInputCard {
 
             guard let assessment, assessment.loadPressureSeverity != .none else {
                 if pendingLoadFeasibility != nil { pendingLoadFeasibility = nil }
+                // The tightness episode ended, so a dismissal has served its
+                // purpose; re-arm the banner for the next episode.
+                if ramBannerDismissedForModel != nil { ramBannerDismissedForModel = nil }
                 return
             }
             let monitor = SystemMonitorService.shared
