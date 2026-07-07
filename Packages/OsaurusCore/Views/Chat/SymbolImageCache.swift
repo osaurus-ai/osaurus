@@ -39,8 +39,19 @@ enum SymbolImageCache {
             return nil
         }
         lock.lock()
+        // The distinct-symbol working set is small; the cap is a safety net
+        // (reset-on-overflow, not LRU — entries are cheap to re-resolve).
+        if cache.count >= 512 { cache.removeAll() }
         cache[key] = image
         lock.unlock()
         return image
+    }
+
+    /// Drop all memoized symbols (memory-pressure response). Entries are
+    /// re-resolved lazily on next use.
+    static func clear() {
+        lock.lock()
+        cache.removeAll()
+        lock.unlock()
     }
 }

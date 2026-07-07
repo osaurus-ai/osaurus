@@ -108,6 +108,10 @@ struct FloatingInputCard: View {
     /// Identity of the conversation backing the history. Navigation state
     /// resets when it changes so a recalled index can't leak across chats.
     var inputHistoryKey: UUID?
+    /// When true, the model chip dot reflects warm-up state (yellow/green).
+    var warmModelsOnLoadEnabled: Bool = false
+    /// Warm-up state for the selected local model in this session.
+    @ObservedObject var warmupController: ChatWarmupController = ChatWarmupController()
 
     init(
         text: Binding<String>,
@@ -147,7 +151,9 @@ struct FloatingInputCard: View {
         remoteConnectionPending: Bool = false,
         isRemoteAgentRun: Bool = false,
         inputHistoryProvider: (() -> [String])? = nil,
-        inputHistoryKey: UUID? = nil
+        inputHistoryKey: UUID? = nil,
+        warmModelsOnLoadEnabled: Bool = false,
+        warmupController: ChatWarmupController = ChatWarmupController()
     ) {
         self._text = text
         self._selectedModel = selectedModel
@@ -187,6 +193,8 @@ struct FloatingInputCard: View {
         self.isRemoteAgentRun = isRemoteAgentRun
         self.inputHistoryProvider = inputHistoryProvider
         self.inputHistoryKey = inputHistoryKey
+        self.warmModelsOnLoadEnabled = warmModelsOnLoadEnabled
+        self._warmupController = ObservedObject(wrappedValue: warmupController)
     }
 
     // Observe managers for reactive updates
@@ -203,6 +211,8 @@ struct FloatingInputCard: View {
     /// gate is now per-agent (a child of Computer Use), read via `agentManager`.
     @ObservedObject private var frontmostApp = FrontmostAppTracker.shared
     @ObservedObject private var permissionService = SystemPermissionService.shared
+    /// Per-model warm-up progress (load / prefill %) for the chip tooltip.
+    @ObservedObject private var warmupProgressHub = WarmupProgressHub.shared
 
     // MARK: - Slash Command State
 
@@ -2224,6 +2234,44 @@ extension FloatingInputCard {
         return ModelManager.replacementForDeprecatedModel(id) != nil
     }
 
+    private var isSelectedModelLocal: Bool {
+        guard let id = selectedModel else { return false }
+        return ModelManager.findInstalledModel(named: id) != nil
+    }
+
+    private var modelWarmupDotColor: Color {
+        if warmModelsOnLoadEnabled, isSelectedModelLocal, !isRemoteAgentRun {
+            return warmupController.isWarmForDisplay ? .green : .yellow
+        }
+        return .green
+    }
+
+    private var modelWarmupDotHelp: String {
+        guard warmModelsOnLoadEnabled, isSelectedModelLocal, !isRemoteAgentRun else {
+            return String(localized: "Model ready", bundle: .module)
+        }
+        if warmupController.isWarmForDisplay {
+            return String(localized: "Model warm — ready for a fast first response", bundle: .module)
+        }
+        guard let model = selectedModel, let phase = warmupProgressHub.phases[model] else {
+            return String(localized: "Warming up…", bundle: .module)
+        }
+        switch phase {
+        case .loadingModel:
+            return String(localized: "Warming up — loading model…", bundle: .module)
+        case .prefilling(let state):
+            guard state.totalUnitCount > 0 else {
+                return String(localized: "Warming up — prefilling context…", bundle: .module)
+            }
+            let percent = Int(state.percentCompleted.rounded())
+            return String(
+                localized:
+                    "Warming up — prefilling context \(percent)% (\(state.completedUnitCount)/\(state.totalUnitCount) tokens)",
+                bundle: .module
+            )
+        }
+    }
+
     @ViewBuilder
     private var modelSelectorChip: some View {
         if isModelPinned {
@@ -2267,10 +2315,11 @@ extension FloatingInputCard {
                         .foregroundColor(.orange)
                         .localizedHelp("This model is outdated. Click to switch to a newer version.")
                 } else {
+                    // Tooltip comes from the chip-wide `.help` below — the
+                    // 6px dot is too small to be its own hover target.
                     Circle()
-                        .fill(Color.green)
+                        .fill(modelWarmupDotColor)
                         .frame(width: 6, height: 6)
-                        .localizedHelp("Model ready")
                 }
 
                 // Model name with metadata badges
@@ -2311,6 +2360,12 @@ extension FloatingInputCard {
                     .foregroundColor(theme.tertiaryText)
             }
         }
+        // Chip-wide hover target: the 6px dot alone is too small to hover.
+        .help(
+            isSelectedModelDeprecated
+                ? String(localized: "This model is outdated. Click to switch to a newer version.", bundle: .module)
+                : modelWarmupDotHelp
+        )
         .popover(isPresented: $showModelPicker, arrowEdge: .top) {
             ModelPickerView(
                 options: cachedPickerItems,

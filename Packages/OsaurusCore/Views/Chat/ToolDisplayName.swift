@@ -17,6 +17,14 @@ import Foundation
 
 enum ToolDisplayName {
 
+    /// Placeholder `pendingToolName` used while a local-MLX tool call is still
+    /// being generated and its parsed name isn't known yet (the engine buffers
+    /// the whole envelope, then emits the name once it closes). Prefixed with an
+    /// invisible separator so it can never collide with a real tool name, and it
+    /// is display-only — the committed name overwrites it before the call is
+    /// ever executed. See `ChatView`'s tool-call-progress branch.
+    static let pendingToolSentinel = "\u{2063}osaurus.pendingToolCall"
+
     /// Present-continuous + past phrasings for one tool.
     private struct ToolLabel {
         let running: String  // e.g. "Inserting into the database"
@@ -39,7 +47,24 @@ enum ToolDisplayName {
     /// `arguments` (the raw tool-call JSON) lets search-style tools hoist their
     /// query into the title — "Searching “foo”" / "Searched for “foo”" — so a
     /// column of otherwise identical "Search" rows stays distinguishable.
-    static func friendly(for rawName: String, running: Bool, arguments: String? = nil) -> String {
+    static func friendly(
+        for rawName: String,
+        running: Bool,
+        arguments: String? = nil,
+        failed: Bool = false
+    ) -> String {
+        if rawName == pendingToolSentinel {
+            // A call is being written but hasn't closed, so the tool isn't known
+            // yet. Present-continuous only — it always resolves to the real name.
+            return L("Preparing tool call")
+        }
+        // A completed call whose result was an error must not read as success:
+        // the past tense ("Wrote a file") would contradict the red error node
+        // when e.g. `file_write` returns `ok:false`. Name the tool and mark the
+        // failure instead. Only applies once the call has completed.
+        if failed, !running {
+            return String(format: L("Failed: %@"), humanize(rawName))
+        }
         if isSearchTool(rawName) {
             return searchLabel(rawName, running: running, arguments: arguments)
         }

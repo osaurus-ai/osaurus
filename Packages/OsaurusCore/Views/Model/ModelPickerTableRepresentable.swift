@@ -665,10 +665,10 @@ private final class ModelRowCellView: NSTableCellView, NSGestureRecognizerDelega
         let contentX = pad + 14 + 6
 
         var trailingX = w - pad
-        // The favourite control sits at the far trailing edge, vertically
-        // centred on the whole row so it reads the same on one- and two-line
-        // rows. Provider badge (and content) shrink to its left.
-        if accessoryKind != .none {
+        // Only the always-visible trash (Favourites tab) lives at the trailing
+        // edge. The hover heart is placed inline after the name below, so its
+        // appearance never shifts the right-aligned Vision/provider badges.
+        if accessoryKind == .trash {
             let side = Self.accessorySide
             accessoryButton.frame = CGRect(
                 x: trailingX - side,
@@ -699,6 +699,28 @@ private final class ModelRowCellView: NSTableCellView, NSGestureRecognizerDelega
             )
         } else {
             nameLabel.frame = CGRect(x: contentX, y: nameY, width: max(0, contentW), height: nameH)
+        }
+
+        // Heart sits right after the name text, clamped so it never runs into
+        // the right-aligned Vision badge (or the trailing edge). The button is
+        // framed at the symbol's natural size with its baseline (encoded in
+        // the image's alignment insets) placed on the title's baseline, so the
+        // glyph sits exactly on the text line instead of being box-centred.
+        if accessoryKind == .heart || accessoryKind == .heartFill {
+            let imgSize = accessoryButton.image?.size ?? .zero
+            let baselineInset = accessoryButton.image?.alignmentRect.origin.y ?? 0
+            let font = nameLabel.font ?? NSFont.systemFont(ofSize: 12, weight: .medium)
+            let lineH = font.ascender - font.descender
+            let baselineFromTop = (nameH - lineH) / 2 + font.ascender
+            let nameTextW = min(nameLabel.intrinsicContentSize.width, nameLabel.frame.width)
+            let limit = (vlmBadge.isHidden ? trailingX : vlmBadge.frame.minX) - imgSize.width - 4
+            let x = min(nameLabel.frame.minX + nameTextW + 6, limit)
+            accessoryButton.frame = CGRect(
+                x: max(contentX, x),
+                y: nameY + baselineFromTop - (imgSize.height - baselineInset) - 1,
+                width: imgSize.width,
+                height: imgSize.height
+            )
         }
 
         if hasMeta {

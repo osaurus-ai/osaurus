@@ -265,9 +265,10 @@ enum WorkspaceWriteSafety {
         oldLabel: String,
         newLabel: String
     ) -> (text: String, truncated: Bool) {
-        // Empty content must yield zero lines, not [""] — otherwise a new-file
-        // diff carries one phantom old line that the LCS matches against a
-        // blank line in the new content, rendering it as untinted context.
+        // An empty side has zero lines, not one empty line. `"".components(
+        // separatedBy:)` returns `[""]`, which would make creating a new file
+        // (empty `old`) diff as a phantom removal of one empty line — the card
+        // then shows `+1 −1` for a brand-new one-line file instead of `+1 −0`.
         let oldLines = old.isEmpty ? [] : old.components(separatedBy: .newlines)
         let newLines = new.isEmpty ? [] : new.components(separatedBy: .newlines)
         var lines: [String] = [

@@ -26,12 +26,15 @@ enum ModelRuntimeEvent: Sendable {
     /// cache lookup/restore work.
     case prefillProgress(PrefillProgressState)
     case toolInvocation(name: String, argsJSON: String)
-    /// Incremental raw text of a tool-call envelope still being generated
-    /// (vmlx `Generation.toolCallProgress`). Format-specific envelope bytes,
-    /// NOT parsed arguments — used by the chat UI to live-preview long calls
-    /// (e.g. a file write) while the model is still producing them. The
-    /// authoritative parsed call still arrives as `.toolInvocation`.
-    case toolInvocationProgress(String)
+    /// Incremental raw-envelope delta of a tool call still being generated.
+    ///
+    /// Translated from vmlx-swift's `Generation.toolCallProgress(String)` (local
+    /// MLX). The payload is the format-specific envelope text as it streams (not
+    /// parsed arguments), so a UI can preview a long call — e.g. a file write —
+    /// as it is written instead of showing a silent gap for the whole call. The
+    /// fully parsed call still arrives once as `.toolInvocation` when the
+    /// envelope closes, so `.toolInvocation` remains the actionable tool event.
+    case toolCallProgress(String)
     /// Completion stats for the just-finished generation.
     ///
     /// `unclosedReasoning` mirrors vmlx's `GenerateCompletionInfo.unclosedReasoning`:

@@ -178,6 +178,20 @@ public actor ModelRuntime {
     private var activeGenerationTasks: [UInt64: ActiveGenerationRecord] = [:]
     private var nextGenerationTaskID: UInt64 = 0
 
+    /// Last request source (chat UI / HTTP API / plugin / P2P) that generated
+    /// against each resident model. Read by the chat-window-close path so it
+    /// only accelerates idle unload of chat-sourced models — a model kept warm
+    /// by API clients must not have its residency shortened when an unrelated
+    /// chat window closes. `nil` (never generated — e.g. a warm preload) is
+    /// treated as chat-sourced, since preloads are chat-driven.
+    private var lastUseSource: [String: RequestSource] = [:]
+
+    /// Grace period applied when the last chat window referencing a model
+    /// closes: long enough for an accidental-close reopen to stay warm, short
+    /// enough that the model doesn't hog unified memory for the full idle
+    /// policy (default 15 minutes) after the user walked away.
+    static let chatCloseUnloadGraceSeconds: TimeInterval = 15
+
     private init() {}
 
     // MARK: - Public API
@@ -210,6 +224,102 @@ public actor ModelRuntime {
         }
         if modelCache[found.name] != nil { return }
         _ = try await loadContainer(id: found.id, name: found.name)
+        // A preload never acquires a generation lease, so without arming the
+        // idle timer here the model would stay resident FOREVER if no
+        // generation ever follows (the timer is otherwise only scheduled on
+        // lease release). Any subsequent generation's `markActive` cancels
+        // this timer and its release re-arms the policy normally.
+        if await ModelLease.shared.count(for: found.name) == 0 {
+            await scheduleIdleResidency(for: found.name)
+        }
+    }
+
+    /// Best-effort MLX freed-buffer pool trim under OS memory pressure.
+    ///
+    /// Skipped while any generation is in flight — the pool is being actively
+    /// reused, and the exclusive teardown gate would block behind the stream
+    /// anyway. This only returns already-freed buffers to the allocator; it
+    /// never touches resident weights or KV state.
+    func trimFreedBufferCacheUnderMemoryPressure() async {
+        guard activeGenerationTasks.isEmpty else { return }
+        await MetalGate.shared.enterModelTeardown(model: "memory-pressure-trim")
+        Stream.gpu.synchronize()
+        Memory.clearCache()
+        Stream.gpu.synchronize()
+        await MetalGate.shared.exitModelTeardown(model: "memory-pressure-trim")
+        genLog.info("memory pressure: trimmed MLX freed-buffer pool")
+    }
+
+    /// Unload every resident model with no active generation lease in
+    /// response to CRITICAL OS memory pressure. Returns the unloaded names.
+    ///
+    /// Respects the user's `.never` idle-residency policy: an explicit
+    /// opt-in to permanent residency is honored even under pressure (the
+    /// skip is logged so the behavior is observable). Models mid-generation
+    /// are left alone — their buffers cannot be freed anyway.
+    func unloadIdleModelsUnderMemoryPressure() async -> [String] {
+        let policy =
+            await ServerConfigurationStore.load()?.modelIdleResidencyPolicy
+            ?? ServerConfiguration.default.modelIdleResidencyPolicy
+        guard policy != .never else {
+            genLog.info(
+                "memory pressure: idle residency policy is 'never' — keeping resident models"
+            )
+            return []
+        }
+        var unloaded: [String] = []
+        for name in modelCache.keys {
+            guard await ModelLease.shared.count(for: name) == 0 else { continue }
+            genLog.info(
+                "memory pressure: unloading idle model \(name, privacy: .public)"
+            )
+            await unload(name: name)
+            unloaded.append(name)
+        }
+        return unloaded
+    }
+
+    /// Chat-window-close residency acceleration: shorten the pending idle
+    /// unload of chat-sourced resident models to `grace` seconds instead of
+    /// waiting out the full idle policy.
+    ///
+    /// Only applies under an `.afterSeconds` idle policy — `.immediately` is
+    /// handled by the caller's existing `unloadModelsNotIn` path, and `.never`
+    /// is an explicit user opt-in to permanent residency that must be
+    /// respected. Models whose last generation came from the HTTP API, a
+    /// plugin, or P2P are left untouched: an unrelated chat window closing
+    /// must never shorten residency an API client is relying on.
+    ///
+    /// Races with API traffic are resolved inside `ModelResidencyManager`:
+    /// a new generation's `markActive` cancels the accelerated timer, the
+    /// fire path re-checks the lease count, and `isModelStillWanted` is
+    /// re-evaluated at fire time so a window reopened during the grace
+    /// period keeps the model warm.
+    func accelerateIdleUnloadAfterChatClose(
+        keeping activeNames: Set<String>,
+        grace: TimeInterval = ModelRuntime.chatCloseUnloadGraceSeconds,
+        isModelStillWanted: @Sendable @escaping (String) async -> Bool
+    ) async {
+        let policy =
+            await ServerConfigurationStore.load()?.modelIdleResidencyPolicy
+            ?? ServerConfiguration.default.modelIdleResidencyPolicy
+        guard case .afterSeconds = policy else { return }
+
+        for name in modelCache.keys where !activeNames.contains(name) {
+            if let source = lastUseSource[name], source != .chatUI { continue }
+            guard await ModelLease.shared.count(for: name) == 0 else { continue }
+            await ModelResidencyManager.shared.accelerateIdleUnload(
+                modelName: name,
+                grace: grace,
+                unload: { name in await ModelRuntime.shared.unload(name: name) },
+                leaseCount: { name in await ModelLease.shared.count(for: name) },
+                isResident: { name in await ModelRuntime.shared.isResident(name: name) },
+                shouldStillUnload: { name in
+                    let stillWanted = await isModelStillWanted(name)
+                    return !stillWanted
+                }
+            )
+        }
     }
 
     func cachedModelSummaries(refreshTopology: Bool = false) async -> [ModelCacheSummary] {
@@ -279,6 +389,8 @@ public actor ModelRuntime {
         }
 
         await ModelResidencyManager.shared.markActive(modelName: holder.name)
+        // Live voice runs inside the chat UI, so its residency is chat-scoped.
+        lastUseSource[holder.name] = .chatUI
         await ModelLease.shared.acquire(holder.name)
         let soloLease = await MLXBatchAdapter.Registry.shared.acquireSoloLease(for: holder.name)
 
@@ -542,6 +654,21 @@ public actor ModelRuntime {
         // Cache tier config is entirely osaurus-internal — not user-visible.
         await installCacheCoordinator(on: holder)
 
+        // Native-MTP bundles historically ran their FIRST request in plain
+        // autoregressive mode (the registry's cold-warmup rule), so the one
+        // request most users judge a model by silently lost the speculative
+        // speedup. Pay that warmup here instead, with a hidden two-token
+        // greedy generation, so the first user request decodes with MTP.
+        // Failure is non-fatal: the request path's cold-warmup rule remains
+        // as the fallback.
+        await MLXBatchAdapter.warmupNativeMTPAtLoad(
+            modelName: name,
+            container: holder.container,
+            draftStrategy: holder.draftStrategy,
+            runtime: getConfig(),
+            maxBatchSize: InferenceFeatureFlags.mlxBatchEngineMaxBatchSize
+        )
+
         genLog.info(
             "loadContainer: loaded \(name, privacy: .public) isVLM=\(holder.isVLM, privacy: .public)"
         )
@@ -595,6 +722,7 @@ public actor ModelRuntime {
         autoreleasepool {
             _ = modelCache.removeValue(forKey: name)
         }
+        lastUseSource.removeValue(forKey: name)
         if currentModelName == name { currentModelName = nil }
 
         Memory.cacheLimit = mlxCacheLimit()
@@ -710,6 +838,7 @@ public actor ModelRuntime {
             }
             loadingTasks.removeAll()
             supersededLoadingTaskIDs.removeAll()
+            lastUseSource.removeAll()
             currentModelName = nil
             cachedConfig = nil
             return
@@ -728,6 +857,7 @@ public actor ModelRuntime {
         autoreleasepool {
             modelCache.removeAll()
         }
+        lastUseSource.removeAll()
         loadingTasks.removeAll()
         supersededLoadingTaskIDs.removeAll()
         currentModelName = nil
@@ -2125,6 +2255,7 @@ public actor ModelRuntime {
 
         genLog.info("generateEventStream: start model=\(modelName, privacy: .public)")
         await ModelResidencyManager.shared.markActive(modelName: modelName)
+        lastUseSource[modelName] = parameters.requestSource
 
         // Scoped start/finish around ONLY a cold container load. Hot
         // resident turns still call `loadContainer` to get the holder, but
@@ -2138,9 +2269,14 @@ public actor ModelRuntime {
             maxBatchSize: InferenceFeatureFlags.mlxBatchEngineMaxBatchSize
         )
         trace?.mark("load_container_start")
-        let shouldReportModelLoad = modelCache[modelName] == nil
+        let shouldReportModelLoad = modelCache[modelName] == nil && !parameters.suppressProgressUI
         if shouldReportModelLoad {
             InferenceProgressManager.shared.modelLoadWillStartAsync()
+        }
+        // Warm-up requests stay out of the global progress HUD but publish
+        // their load phase to the per-model side channel for the chip tooltip.
+        if modelCache[modelName] == nil && parameters.suppressProgressUI {
+            WarmupProgressHub.shared.modelLoadWillStart(model: modelName)
         }
         let holder: SessionHolder
         do {
@@ -2149,6 +2285,9 @@ public actor ModelRuntime {
             await ModelResidencyManager.shared.cancel(modelName: modelName)
             if shouldReportModelLoad {
                 InferenceProgressManager.shared.modelLoadDidFinishAsync()
+            }
+            if parameters.suppressProgressUI {
+                WarmupProgressHub.shared.finish(model: modelName)
             }
             throw error
         }
@@ -2196,7 +2335,11 @@ public actor ModelRuntime {
                 maxBatchSize: InferenceFeatureFlags.mlxBatchEngineMaxBatchSize
             )
         } catch {
-            InferenceProgressManager.shared.prefillDidFinishAsync()
+            if !parameters.suppressProgressUI {
+                InferenceProgressManager.shared.prefillDidFinishAsync()
+            } else {
+                WarmupProgressHub.shared.finish(model: modelName)
+            }
             await ModelLease.shared.release(modelName)
             await scheduleIdleResidency(for: modelName)
             throw error
@@ -2224,7 +2367,12 @@ public actor ModelRuntime {
         }
         activeGenerationTasks[genID] = ActiveGenerationRecord(modelName: modelName, task: activeTask)
 
-        return GenerationEventMapper.map(events: prepared.stream, modelName: modelName, trace: trace)
+        return GenerationEventMapper.map(
+            events: prepared.stream,
+            modelName: modelName,
+            trace: trace,
+            suppressProgressUI: parameters.suppressProgressUI
+        )
     }
 
     // MARK: - New message-based (OpenAI ChatMessage) APIs
@@ -2293,8 +2441,10 @@ public actor ModelRuntime {
                 pendingTools.append(
                     ServiceToolInvocation(toolName: name, jsonArguments: argsJSON)
                 )
-            case .toolInvocationProgress:
-                // Non-streaming caller — nothing to preview.
+            case .toolCallProgress:
+                // Non-streaming caller — the incremental envelope preview is a
+                // UI-only affordance; only the committed `.toolInvocation`
+                // matters here. Dropped, like `.reasoning`/`.prefillProgress`.
                 break
             case .completionInfo:
                 break
@@ -2444,15 +2594,19 @@ public actor ModelRuntime {
                         if pendingTool == nil {
                             continuation.yield(StreamingPrefillProgressHint.encode(progress))
                         }
-                    case .toolInvocationProgress(let delta):
-                        // Raw envelope delta while the model is still writing
-                        // the call. Forwarded as an args fragment so the chat
-                        // UI can live-preview file writes; the parsed
-                        // `.toolInvocation` below remains authoritative (its
-                        // full canonical argsJSON is re-sent and replaces the
-                        // preview accumulation downstream).
-                        if pendingTool == nil {
-                            continuation.yield(StreamingToolHint.encodeArgs(delta))
+                    case .toolCallProgress(let envelopeDelta):
+                        // Live preview of the tool-call envelope as it is
+                        // written. Emitted before the committed
+                        // `.toolInvocation`, so `pendingTool` is still nil here.
+                        // Encoded behind the `\u{FFFE}` sentinel so it never
+                        // reaches the visible token stream or the OpenAI wire —
+                        // only the native ChatView decodes it, to keep the
+                        // tool-call card alive instead of showing a frozen
+                        // spinner during a long file-write call.
+                        if pendingTool == nil, !envelopeDelta.isEmpty {
+                            continuation.yield(
+                                StreamingToolCallProgressHint.encode(envelopeDelta)
+                            )
                         }
                     case .toolInvocation(let name, let argsJSON):
                         // Surface the first tool call's hints immediately, then

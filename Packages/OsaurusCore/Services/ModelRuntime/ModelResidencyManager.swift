@@ -115,6 +115,71 @@ public actor ModelResidencyManager {
         )
     }
 
+    /// Shorten an already-scheduled idle unload to fire after `grace` seconds.
+    ///
+    /// Used when the last chat window referencing a model closes: instead of
+    /// waiting out the full idle policy (default 15 minutes), the model is
+    /// released after a short grace period that still covers a quick reopen.
+    ///
+    /// Semantics — all deliberate, to stay race-free against API traffic:
+    /// - Only ever SHORTENS a pending deadline; if the existing deadline is
+    ///   already sooner, this is a no-op.
+    /// - No-op when the model has no pending unload timer (model is actively
+    ///   generating, or policy is `.never`). An active generation's release
+    ///   re-arms the full policy afterwards, so API usage always wins.
+    /// - Participates in the generation counter: any `markActive` (a new
+    ///   chat/API generation starting) cancels the accelerated timer exactly
+    ///   like a policy timer.
+    /// - The fire path re-checks lease count, residency, and the optional
+    ///   `shouldStillUnload` guard (e.g. "no open chat window re-selected
+    ///   this model") before unloading.
+    public func accelerateIdleUnload(
+        modelName: String,
+        grace: TimeInterval,
+        now: Date = Date(),
+        unload: @Sendable @escaping (String) async -> Void,
+        leaseCount: @Sendable @escaping (String) async -> Int,
+        isResident: @Sendable @escaping (String) async -> Bool,
+        shouldStillUnload: @Sendable @escaping (String) async -> Bool = { _ in true }
+    ) {
+        guard let existing = entries[modelName],
+            existing.task != nil,
+            let existingUnloadAt = existing.unloadAt
+        else { return }
+
+        let clampedGrace = max(0, grace)
+        let target = now.addingTimeInterval(clampedGrace)
+        guard target < existingUnloadAt else { return }
+
+        nextGeneration &+= 1
+        let generation = nextGeneration
+        existing.task?.cancel()
+
+        let delayNanoseconds = UInt64(clampedGrace * 1_000_000_000)
+        let task = Task { [sleep] in
+            if delayNanoseconds > 0 {
+                await sleep(delayNanoseconds)
+            }
+            guard !Task.isCancelled else { return }
+            await self.fire(
+                modelName: modelName,
+                generation: generation,
+                unload: unload,
+                leaseCount: leaseCount,
+                isResident: isResident,
+                shouldStillUnload: shouldStillUnload
+            )
+        }
+
+        entries[modelName] = Entry(
+            generation: generation,
+            lastUsedAt: existing.lastUsedAt,
+            unloadAt: target,
+            policy: existing.policy,
+            task: task
+        )
+    }
+
     public func cancel(modelName: String) {
         entries[modelName]?.task?.cancel()
         entries.removeValue(forKey: modelName)
@@ -146,7 +211,8 @@ public actor ModelResidencyManager {
         generation: UInt64,
         unload: @Sendable @escaping (String) async -> Void,
         leaseCount: @Sendable @escaping (String) async -> Int,
-        isResident: @Sendable @escaping (String) async -> Bool
+        isResident: @Sendable @escaping (String) async -> Bool,
+        shouldStillUnload: @Sendable @escaping (String) async -> Bool = { _ in true }
     ) async {
         guard let entry = entries[modelName], entry.generation == generation else { return }
 
@@ -157,6 +223,15 @@ public actor ModelResidencyManager {
 
         guard await isResident(modelName) else {
             entries.removeValue(forKey: modelName)
+            return
+        }
+
+        // Caller-supplied late guard (e.g. chat-close acceleration re-checks
+        // that no reopened window wants the model). On refusal the entry is
+        // kept without a timer — the next generation's release re-arms the
+        // normal policy — mirroring the lease-held case above.
+        guard await shouldStillUnload(modelName) else {
+            clearCompletedTimer(modelName: modelName, generation: generation)
             return
         }
 

@@ -1015,10 +1015,14 @@ final class NativeToolCallRowView: NSView {
         } else {
             let titleFont = NSFont.systemFont(ofSize: 12, weight: .semibold)
             nameLabel.font = titleFont
+            // A completed call that returned an error keeps its red node but must
+            // not claim success in the title — reflect the failure verdict here.
+            let failed = item.result.map { isErrorResult($0, callId: item.call.id) } ?? false
             let past = ToolDisplayName.friendly(
                 for: item.call.function.name,
                 running: false,
-                arguments: item.call.function.arguments
+                arguments: item.call.function.arguments,
+                failed: failed
             )
             runningTitle = ToolDisplayName.friendly(
                 for: item.call.function.name,

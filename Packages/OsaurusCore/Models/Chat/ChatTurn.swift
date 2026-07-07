@@ -420,10 +420,12 @@ final class ChatTurn: ObservableObject, Identifiable {
             : updated
 
         // Accumulate the full args for file-writing tools AND while the tool
-        // name is still unknown — local models stream the raw envelope before
-        // any name hint, and the name is derived from this buffer.
+        // name is still unknown (nil or the neutral in-progress placeholder) —
+        // local models stream the raw envelope before any name hint, and the
+        // name is derived from this buffer.
         let wantsFull =
             pendingToolName == nil
+            || pendingToolName == ToolDisplayName.pendingToolSentinel
             || FileDiff.diffProducingToolNames.contains(pendingToolName!)
         if wantsFull {
             let full = pendingToolArgFull ?? ""

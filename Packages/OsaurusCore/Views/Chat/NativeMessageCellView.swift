@@ -266,6 +266,15 @@ final class NativeHeaderView: NSView {
     /// share the same key once stringified.
     private static var monogramCache: [String: NSImage] = [:]
     private static let monogramCacheLock = NSLock()
+
+    /// Drop all memoized monograms (memory-pressure response); re-rendered
+    /// lazily on next display.
+    static func clearMonogramCache() {
+        monogramCacheLock.lock()
+        monogramCache.removeAll()
+        monogramCacheLock.unlock()
+    }
+
     private static func monogramImage(
         name: String,
         tint: NSColor,
@@ -306,6 +315,9 @@ final class NativeHeaderView: NSView {
             return true
         }
         monogramCacheLock.lock()
+        // Safety-net cap (reset-on-overflow): keys vary by initial/tint/size,
+        // and monograms are cheap to re-render.
+        if monogramCache.count >= 256 { monogramCache.removeAll() }
         monogramCache[key] = image
         monogramCacheLock.unlock()
         return image
@@ -928,7 +940,9 @@ private final class UserMessageInlineEditView: NSView, NSTextViewDelegate {
     private var lastLayoutWidth: CGFloat = 0
 
     override init(frame frameRect: NSRect) {
-        let tv = CustomNSTextView()
+        // TextKit 1 from birth — avoids the lazy TextKit 2 → 1 downgrade on
+        // first `.layoutManager` access (see EditableTextView.makeNSView).
+        let tv = CustomNSTextView(usingTextLayoutManager: false)
         tv.maxHeight = 240
         tv.focusRingType = .none
         tv.isRichText = false

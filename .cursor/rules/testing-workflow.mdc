@@ -1,0 +1,38 @@
+---
+description: When to run tests — full suite only before PR submission, targeted tests during development
+alwaysApply: true
+---
+
+# Testing Workflow
+
+The full unit suite (`make test`, ~5000 tests) takes about 30 minutes. Do NOT
+run it during normal development iterations.
+
+## During development
+
+- Run only targeted tests scoped to what you changed, using `--filter`:
+
+```bash
+OSAURUS_DISABLE_KEYCHAIN_FOR_TESTS=1 \
+OSAURUS_TEST_ROOT=/tmp/osaurus-test \
+OSU_MODELS_DIR=/tmp/osaurus-test-models \
+swift test --package-path Packages/OsaurusCore --filter "SuiteOrTestName"
+```
+
+- A plain `swift build --package-path Packages/OsaurusCore` is enough to
+  verify compilation after edits.
+
+## Before submitting a PR
+
+- Run the full suite exactly once, right before the PR is created:
+
+```bash
+OSAURUS_DISABLE_KEYCHAIN_FOR_TESTS=1 \
+OSAURUS_TEST_ROOT=/tmp/osaurus-test \
+OSU_MODELS_DIR=/tmp/osaurus-test-models \
+make test
+```
+
+- Keychain-gated suites (e.g. `PluginAgentScopingTests`) fail by design under
+  `OSAURUS_DISABLE_KEYCHAIN_FOR_TESTS=1`; run those without the flag when
+  their area was touched.
