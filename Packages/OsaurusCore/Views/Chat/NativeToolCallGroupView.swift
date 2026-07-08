@@ -1581,9 +1581,13 @@ final class NativeToolCallRowView: NSView {
 
         chevron.translatesAutoresizingMaskIntoConstraints = false
         chevron.wantsLayer = true
-        chevron.image = SymbolImageCache.image("chevron.right", accessibilityDescription: nil)
+        chevron.image = SymbolImageCache.image(
+            "chevron.right", accessibilityDescription: nil, pointSize: 10, weight: .semibold)
         chevron.contentTintColor = .tertiaryLabelColor
-        chevron.imageScaling = .scaleProportionallyUpOrDown
+        // Down-only scaling + a fixed symbol point size keep the right and
+        // down chevrons visually the same size; proportional up-scaling into
+        // the square frame inflated whichever glyph was wider.
+        chevron.imageScaling = .scaleProportionallyDown
         chevron.setContentCompressionResistancePriority(.required, for: .horizontal)
         addSubview(chevron)
 
@@ -1971,7 +1975,8 @@ final class NativeToolCallRowView: NSView {
         // resets layer transforms, leaving an expanded row with a right-
         // pointing chevron (mirrors NativeFileDiffView's collapse chevron).
         let symbol = expanded ? "chevron.down" : "chevron.right"
-        chevron.image = SymbolImageCache.image(symbol, accessibilityDescription: nil)
+        chevron.image = SymbolImageCache.image(
+            symbol, accessibilityDescription: nil, pointSize: 10, weight: .semibold)
     }
 
     @objc private func tapped() { onToggle?() }

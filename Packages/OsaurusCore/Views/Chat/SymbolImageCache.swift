@@ -18,11 +18,17 @@ enum SymbolImageCache {
     private static let lock = NSLock()
     private nonisolated(unsafe) static var cache: [String: NSImage] = [:]
 
+    /// `pointSize`/`weight` bake a symbol configuration into the memoized
+    /// image, so glyphs that swap between symbols with different aspect
+    /// ratios (chevron.right ↔ chevron.down) share font metrics instead of
+    /// being force-fit into the image view's frame.
     static func image(
         _ name: String,
-        accessibilityDescription: String? = nil
+        accessibilityDescription: String? = nil,
+        pointSize: CGFloat? = nil,
+        weight: NSFont.Weight = .regular
     ) -> NSImage? {
-        let key = "\(name)\u{1}\(accessibilityDescription ?? "")"
+        let key = "\(name)\u{1}\(accessibilityDescription ?? "")\u{1}\(pointSize ?? -1)\u{1}\(weight.rawValue)"
         lock.lock()
         if let cached = cache[key] {
             lock.unlock()
@@ -31,12 +37,17 @@ enum SymbolImageCache {
         lock.unlock()
 
         guard
-            let image = NSImage(
+            var image = NSImage(
                 systemSymbolName: name,
                 accessibilityDescription: accessibilityDescription
             )
         else {
             return nil
+        }
+        if let pointSize,
+            let configured = image.withSymbolConfiguration(.init(pointSize: pointSize, weight: weight))
+        {
+            image = configured
         }
         lock.lock()
         // The distinct-symbol working set is small; the cap is a safety net
