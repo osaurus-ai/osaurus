@@ -682,7 +682,6 @@ extension ModelManager {
             id: "OsaurusAI/LFM2.5-8B-A1B-MXFP8",
             description:
                 "Liquid AI LFM2.5 8B hybrid MoE (~1B active), MXFP8 — high-precision, fast Apple Silicon chat. 128K context.",
-            isTopSuggestion: true,
             modelType: "lfm2_moe",
             releasedAt: date("2026-05-29"),
             useCase: .general
@@ -690,15 +689,20 @@ extension ModelManager {
 
         // MARK: Gemma 4 — multimodal
         //
-        // The Gemma 4 `qat-MXFP4` builds (E2B/E4B/12B/31B/26B-A4B) are
-        // demoted from Top Pick (2026-07-08): onboarding recommendations were
-        // moved off the Gemma-QAT spine onto the GUI-verified non-Gemma
-        // families (Ornith / Qwen 3.6 / Qwen AgentWorld / Nemotron), which
-        // cover every RAM tier. Per the curation rule, a *recommended* Gemma
-        // build must not be `qat` or plain `MXFP4` — only the higher-precision
-        // `12B-it-MXFP8` (below) and the `E4B-it-8bit` retention build stay
-        // Top Picks. The QAT builds remain in the catalog (still installable /
-        // selectable), just not surfaced or auto-selected in onboarding.
+        // Onboarding recommendation spine (2026-07-08, GUI-verified in the
+        // dev-built app — every model below loads, calls tools, reasons with
+        // thinking on, and leaks no markup into visible content):
+        //   • Larger RAM  → Ornith 1.0 MXFP8 (9B / 35B, below).
+        //   • Smaller RAM → official OsaurusAI Gemma 4 at the highest non-QAT,
+        //                    non-MXFP4 precision that exists: `12B-it-MXFP8`
+        //                    (the only MXFP8 Gemma the org ships) and the
+        //                    `E4B/E2B-it-8bit` retention builds (no E-series
+        //                    MXFP8 exists on the HF org).
+        // A *recommended* Gemma build must never be `qat` or plain `MXFP4`, so
+        // the 5 Gemma `qat-MXFP4` builds (E2B/E4B/12B/31B/26B-A4B) stay in the
+        // catalog but are not Top Picks. Qwen 3.6 (incl. MXFP8-MTP), Nemotron-3
+        // and LFM2.5 also remain catalog-only for now: they are installable and
+        // selectable, just not part of the auto-default recommendation spine.
 
         curated(
             id: "OsaurusAI/gemma-4-12B-it-MXFP8",
@@ -790,7 +794,6 @@ extension ModelManager {
             id: "OsaurusAI/Qwen3.6-27B-MXFP4",
             description:
                 "Qwen 3.6 27B dense vision model. MXFP4 — best quality per byte. The org's most-downloaded model. 256K context.",
-            isTopSuggestion: true,
             modelType: "qwen3_5",
             releasedAt: date("2026-05-20"),
             useCase: .vision
@@ -800,7 +803,6 @@ extension ModelManager {
             id: "OsaurusAI/Qwen3.6-27B-MXFP8-MTP",
             description:
                 "Qwen 3.6 27B dense vision model. MXFP8 + multi-token-prediction speculative decode — high precision, fast. 256K context.",
-            isTopSuggestion: true,
             modelType: "qwen3_5",
             releasedAt: date("2026-05-20"),
             useCase: .vision
@@ -810,7 +812,6 @@ extension ModelManager {
             id: "OsaurusAI/Qwen3.6-35B-A3B-MXFP8-MTP",
             description:
                 "Qwen 3.6 35B MoE (~3B active) vision model. MXFP8 + multi-token-prediction speculative decode — the precision-first sibling of the MXFP4 build. 256K context.",
-            isTopSuggestion: true,
             modelType: "qwen3_5_moe",
             releasedAt: date("2026-05-20"),
             useCase: .vision
@@ -927,7 +928,6 @@ extension ModelManager {
             id: "OsaurusAI/Nemotron-3-Nano-Omni-30B-A3B-MXFP4",
             description:
                 "NVIDIA Nemotron-3 30B Reasoning hybrid (Mamba-2 + MoE). MXFP4 quantization — fastest decode path. 262K context.",
-            isTopSuggestion: true,
             modelType: "nemotron_h",
             releasedAt: date("2026-04-28"),
             useCase: .reasoning

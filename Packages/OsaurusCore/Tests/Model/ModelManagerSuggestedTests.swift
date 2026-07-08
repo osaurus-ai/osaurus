@@ -135,7 +135,10 @@ struct ModelManagerSuggestedTests {
 
             #expect(mxfp8 != nil)
             #expect(mxfp8?.modelType == "lfm2_moe")
-            #expect(mxfp8?.isTopSuggestion == true)
+            // Catalog-only (2026-07-08): the recommendation spine is Ornith
+            // MXFP8 + official Gemma; LFM2.5 stays installable but is not a
+            // Top Pick.
+            #expect(mxfp8?.isTopSuggestion == false)
             // Sizes now come from `ModelSizeCache` (empty here), not literals.
             #expect(mxfp8?.downloadSizeBytes == nil)
             #expect(mxfp8?.releasedAt != nil)
@@ -231,36 +234,39 @@ struct ModelManagerSuggestedTests {
 
     // MARK: - Top-pick reorg (precision-first)
 
-    @Test @MainActor func topPicks_recommendVerifiedFamiliesNotGemmaQAT() async {
+    @Test @MainActor func topPicks_recommendOrnithMXFP8AndOfficialGemma() async {
         await withIsolatedModelSizeCache {
             let suggested = ModelManager().suggestedModels
             let topIds = Set(suggested.filter(\.isTopSuggestion).map { $0.id })
-            // GUI-verified-good families (coherent output + clean tool-calling /
-            // reasoning, no marker leakage — proven live in the dev app) plus the
-            // allowed-precision Gemma builds (MXFP8 / 8-bit) are the Top Picks.
-            for id in [
+            // Recommendation spine (2026-07-08, GUI-verified in the dev app —
+            // each loads, calls tools, reasons with thinking on, no marker
+            // leakage): Ornith 1.0 MXFP8 for the larger tiers, official
+            // OsaurusAI Gemma 4 at the highest non-QAT/non-MXFP4 precision that
+            // exists (12B-it-MXFP8; E4B/E2B-it-8bit — no E-series MXFP8 exists)
+            // for the smaller tiers. These are the ONLY Top Picks.
+            let expectedTopPicks: Set<String> = [
                 "OsaurusAI/Ornith-1.0-9B-MXFP8",
                 "OsaurusAI/Ornith-1.0-35B-MXFP8",
-                "OsaurusAI/Qwen3.6-27B-MXFP4",
-                "OsaurusAI/Qwen3.6-35B-A3B-MXFP8-MTP",
-                "OsaurusAI/Nemotron-3-Nano-Omni-30B-A3B-MXFP4",
                 "OsaurusAI/gemma-4-12B-it-MXFP8",
                 "OsaurusAI/gemma-4-E4B-it-8bit",
                 "OsaurusAI/gemma-4-E2B-it-8bit",
-            ] {
-                #expect(topIds.contains(id), "expected \(id) to be a Top Pick")
-            }
-            // The Gemma 4 QAT / plain-MXFP4 builds are dropped from Top Picks
-            // (2026-07-08): a recommended Gemma must be a non-QAT/non-MXFP4
-            // precision. They stay in the catalog, just unrecommended.
+            ]
+            #expect(topIds == expectedTopPicks, "Top Picks should be exactly Ornith MXFP8 + official Gemma; got \(topIds.sorted())")
+            // Gemma QAT/MXFP4, plus Qwen 3.6 / Nemotron-3 / LFM2.5, are
+            // catalog-only for now — installable and selectable, just not part
+            // of the auto-default recommendation spine.
             for id in [
                 "OsaurusAI/gemma-4-E2B-it-qat-MXFP4",
-                "OsaurusAI/gemma-4-E4B-it-qat-MXFP4",
                 "OsaurusAI/gemma-4-12B-it-qat-MXFP4",
                 "OsaurusAI/gemma-4-31B-it-qat-MXFP4",
                 "OsaurusAI/gemma-4-26B-A4B-it-qat-MXFP4",
+                "OsaurusAI/Qwen3.6-27B-MXFP4",
+                "OsaurusAI/Qwen3.6-27B-MXFP8-MTP",
+                "OsaurusAI/Qwen3.6-35B-A3B-MXFP8-MTP",
+                "OsaurusAI/Nemotron-3-Nano-Omni-30B-A3B-MXFP4",
+                "OsaurusAI/LFM2.5-8B-A1B-MXFP8",
             ] {
-                #expect(!topIds.contains(id), "expected \(id) to NOT be a Top Pick (Gemma QAT/MXFP4)")
+                #expect(!topIds.contains(id), "expected \(id) to NOT be a Top Pick (catalog-only)")
                 #expect(
                     suggested.contains { $0.id == id },
                     "expected \(id) to remain in the catalog")
