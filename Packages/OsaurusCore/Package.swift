@@ -59,7 +59,7 @@ let package = Package(
         // a Swift bounds check. Contains the previous ff714f1 pin.
         .package(
             url: "https://github.com/osaurus-ai/vmlx-swift",
-            revision: "2a5b790d95f05bf1fa294af362bdd0242dee79da"
+            revision: "5e071fe20ddfb3a58de664d770d04e7975a336a8"
         ),
         // FluidAudio 0.14.3 added a breaking `language:` parameter to TTS
         // calls that osaurus's `TTSService` doesn't pass. Pinning to the
