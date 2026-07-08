@@ -363,16 +363,29 @@ final class SearchAndExtractTool: OsaurusTool, @unchecked Sendable {
         for (index, hit) in outcome.hits.enumerated() {
             var entry = hit.toDict(rank: index + 1)
             let shouldExtract = index < extractCount && !hit.url.isEmpty && !Task.isCancelled
-            if shouldExtract,
-                let extraction = await SearchReadability.extract(url: hit.url, timeout: timeout) {
+            if shouldExtract {
+                let extraction = await SearchReadability.extract(url: hit.url, timeout: timeout)
                 if let title = extraction.title, !title.isEmpty { entry["title"] = title }
-                entry["markdown"] = extraction.markdown
+                if let canonicalURL = extraction.canonicalURL, !canonicalURL.isEmpty {
+                    entry["canonical_url"] = canonicalURL
+                }
+                entry["extract_status"] = extraction.status.rawValue
                 entry["word_count"] = extraction.wordCount
-                if let byline = extraction.byline { entry["byline"] = byline }
-                if let lang = extraction.lang { entry["lang"] = lang }
-                entry["extracted"] = true
+                if let total = extraction.totalWordCount {
+                    entry["word_count_total"] = total
+                }
+                entry["extracted"] = extraction.extracted
+                if extraction.extracted {
+                    entry["markdown"] = extraction.markdown
+                    entry["truncated"] = extraction.truncated
+                    if let byline = extraction.byline { entry["byline"] = byline }
+                    if let lang = extraction.lang { entry["lang"] = lang }
+                } else if let message = extraction.message, !message.isEmpty {
+                    entry["extract_error"] = message
+                }
             } else {
                 entry["extracted"] = false
+                if Task.isCancelled { entry["extract_status"] = SearchExtractionStatus.cancelled.rawValue }
             }
             enriched.append(entry)
         }

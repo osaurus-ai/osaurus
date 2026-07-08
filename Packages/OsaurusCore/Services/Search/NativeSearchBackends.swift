@@ -42,10 +42,10 @@ struct DDGScrapeBackend: SearchBackend {
         if let df = request.timeRange { url += "&df=\(df)" }
         let (status, data) = try await SearchHTTPClient.request(url: url)
         guard let html = String(data: data, encoding: .utf8), !html.isEmpty else {
-            throw SearchBackendError("DDG: empty response")
+            throw SearchBackendError("DDG: empty response", kind: .empty)
         }
         if Self.isChallengePage(status: status, html: html) {
-            throw SearchBackendError("DDG: challenge_page")
+            throw SearchBackendError("DDG: challenge_page", kind: .challenge)
         }
         let hits = Self.parseHTML(html, max: request.maxResults)
         return hits
@@ -114,10 +114,10 @@ struct DDGScrapeBackend: SearchBackend {
         let (_, bootData) = try await SearchHTTPClient.request(
             url: "https://duckduckgo.com/?q=\(q)&iax=images&ia=images")
         guard let bootHtml = String(data: bootData, encoding: .utf8) else {
-            throw SearchBackendError("DDG image bootstrap failed")
+            throw SearchBackendError("DDG image bootstrap failed", kind: .providerHTTP)
         }
         guard let vqd = SearchHTML.firstGroup(in: bootHtml, pattern: "vqd=([\"'])([^\"']+)\\1", group: 2) else {
-            throw SearchBackendError("Could not obtain DDG VQD token")
+            throw SearchBackendError("Could not obtain DDG VQD token", kind: .providerHTTP)
         }
 
         let url = "https://duckduckgo.com/i.js?l=wt-wt&o=json&q=\(q)&vqd=\(vqd)&p=1"
@@ -125,7 +125,12 @@ struct DDGScrapeBackend: SearchBackend {
             url: url, headers: ["Referer": "https://duckduckgo.com/"])
         guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
             let arr = json["results"] as? [[String: Any]]
-        else { throw SearchBackendError("DDG image API failed (status \(status))") }
+        else {
+            throw SearchBackendError(
+                "DDG image API failed (status \(status))",
+                kind: status == 401 || status == 403 ? .providerAuth : .providerHTTP
+            )
+        }
 
         return arr.prefix(request.maxResults).map { item in
             SearchHit(
@@ -156,10 +161,10 @@ struct BraveScrapeBackend: SearchBackend {
             : "https://search.brave.com/search?q=\(q)&source=web"
         let (_, data) = try await SearchHTTPClient.request(url: endpoint)
         guard let html = String(data: data, encoding: .utf8), !html.isEmpty else {
-            throw SearchBackendError("Brave HTML: empty response")
+            throw SearchBackendError("Brave HTML: empty response", kind: .empty)
         }
         if SearchHTML.isLikelyChallengePage(html) {
-            throw SearchBackendError("Brave HTML: challenge_page")
+            throw SearchBackendError("Brave HTML: challenge_page", kind: .challenge)
         }
         return Self.parseHTML(html, max: request.maxResults)
     }
@@ -240,10 +245,10 @@ struct BingScrapeBackend: SearchBackend {
             : "https://www.bing.com/search?q=\(q)&count=\(request.maxResults)"
         let (_, data) = try await SearchHTTPClient.request(url: endpoint)
         guard let html = String(data: data, encoding: .utf8), !html.isEmpty else {
-            throw SearchBackendError("Bing HTML: empty response")
+            throw SearchBackendError("Bing HTML: empty response", kind: .empty)
         }
         if Self.isChallengePage(html) {
-            throw SearchBackendError("Bing HTML: challenge_page")
+            throw SearchBackendError("Bing HTML: challenge_page", kind: .challenge)
         }
         return Self.parseHTML(html, max: request.maxResults)
     }

@@ -116,9 +116,29 @@ public struct SearchHit: Sendable, Equatable {
 
 // MARK: - Errors / attempts
 
+public enum SearchFailureKind: String, Sendable, Equatable {
+    case success
+    case empty
+    case challenge
+    case providerHTTP = "provider_http"
+    case providerAuth = "provider_auth"
+    case network
+    case timeout
+    case cancelled
+    case didNotComplete = "did_not_complete"
+    case unsupportedCategory = "unsupported_category"
+    case extractionFailed = "extraction_failed"
+    case blockedURL = "blocked_url"
+}
+
 public struct SearchBackendError: Error, Sendable, Equatable {
     public let message: String
-    public init(_ message: String) { self.message = message }
+    public let kind: SearchFailureKind
+
+    public init(_ message: String, kind: SearchFailureKind? = nil) {
+        self.message = SearchDiagnostics.redact(message)
+        self.kind = kind ?? SearchDiagnostics.classifyFailure(message)
+    }
 }
 
 /// Diagnostic record of one provider attempt in a cascade run.
@@ -126,20 +146,135 @@ public struct SearchAttempt: Sendable, Equatable {
     public var provider: String
     public var ok: Bool
     public var count: Int
+    public var kind: SearchFailureKind
     public var error: String?
 
-    public init(provider: String, ok: Bool, count: Int = 0, error: String? = nil) {
+    public init(
+        provider: String,
+        ok: Bool,
+        count: Int = 0,
+        kind: SearchFailureKind? = nil,
+        error: String? = nil
+    ) {
         self.provider = provider
         self.ok = ok
         self.count = count
-        self.error = error
+        self.kind = kind ?? SearchDiagnostics.kind(ok: ok, count: count, error: error)
+        self.error = error.map(SearchDiagnostics.redact)
     }
 
     public func toDict() -> [String: Any] {
-        var d: [String: Any] = ["provider": provider, "ok": ok]
+        var d: [String: Any] = ["provider": provider, "ok": ok, "kind": kind.rawValue]
         if ok { d["count"] = count }
         if let error { d["error"] = error }
         return d
+    }
+}
+
+enum SearchDiagnostics {
+    static func kind(ok: Bool, count: Int, error: String?) -> SearchFailureKind {
+        if ok { return count > 0 ? .success : .empty }
+        return classifyFailure(error ?? "")
+    }
+
+    static func classifyFailure(_ message: String) -> SearchFailureKind {
+        let m = message.lowercased()
+        if m.contains("did_not_complete") { return .didNotComplete }
+        if m.contains("cancel") { return .cancelled }
+        if m.contains("timed out") || m.contains("timeout") { return .timeout }
+        if m.contains("challenge") || m.contains("captcha") || m.contains("just a moment")
+            || m.contains("checking your browser") || m.contains("anomaly") {
+            return .challenge
+        }
+        if m.contains("empty response") || m == "empty" { return .empty }
+        if m.contains("does not support") { return .unsupportedCategory }
+        if m.contains("blocked") || m.contains("ssrf") || m.contains("private")
+            || m.contains("loopback") || m.contains("link-local") || m.contains("metadata") {
+            return .blockedURL
+        }
+        if m.contains("401") || m.contains("403") || m.contains("unauthorized")
+            || m.contains("forbidden") || m.contains("api key") || m.contains("auth")
+            || m.contains("not configured") {
+            return .providerAuth
+        }
+        if m.contains("timedout") { return .timeout }
+        if m.contains("offline") || m.contains("cannot connect") || m.contains("could not connect")
+            || m.contains("not connected") || m.contains("dns") || m.contains("host")
+            || m.contains("connection") {
+            return .network
+        }
+        return .providerHTTP
+    }
+
+    static func redact(_ input: String) -> String {
+        guard !input.isEmpty else { return input }
+        var output = redactURLs(in: input)
+        output = replace(
+            output,
+            pattern: #"(?i)\b(authorization|x-api-key|x-subscription-token|api-key)\s*[:=]\s*(bearer|bot|token)?\s*[A-Za-z0-9._~+/=-]{4,}"#,
+            template: "$1: [REDACTED]"
+        )
+        output = replace(
+            output,
+            pattern: #"(?i)\b(bearer|bot|token)\s+[A-Za-z0-9._~+/=-]{6,}"#,
+            template: "$1 [REDACTED]"
+        )
+        output = replace(
+            output,
+            pattern: #"(?i)\b(key|api_key|cx|client_secret|access_token|token|password|secret)=([^&\s]+)"#,
+            template: "$1=[REDACTED]"
+        )
+        output = replace(
+            output,
+            pattern: #"\b(tvly-[A-Za-z0-9._-]+|sk-[A-Za-z0-9._-]+|AIza[A-Za-z0-9._-]+)\b"#,
+            template: "[REDACTED]"
+        )
+        output = replace(
+            output,
+            pattern: #"\b[A-Za-z0-9_-]{32,}\b"#,
+            template: "[REDACTED]"
+        )
+        return output
+    }
+
+    static func truncate(_ text: String, maxCharacters: Int) -> (text: String, truncated: Bool) {
+        guard text.count > maxCharacters else { return (text, false) }
+        let end = text.index(text.startIndex, offsetBy: maxCharacters)
+        return (String(text[..<end]), true)
+    }
+
+    private static func redactURLs(in input: String) -> String {
+        guard let regex = try? NSRegularExpression(pattern: #"https?://[^\s<>"')\]]+"#) else {
+            return input
+        }
+        let nsInput = input as NSString
+        let result = NSMutableString(string: input)
+        let matches = regex.matches(in: input, range: NSRange(input.startIndex..., in: input)).reversed()
+        for match in matches {
+            let raw = nsInput.substring(with: match.range)
+            let redacted = redactURL(raw)
+            result.replaceCharacters(in: match.range, with: redacted)
+        }
+        return result as String
+    }
+
+    private static func redactURL(_ raw: String) -> String {
+        guard var components = URLComponents(string: raw), components.queryItems?.isEmpty == false else {
+            return raw
+        }
+        components.queryItems = components.queryItems?.map {
+            URLQueryItem(name: $0.name, value: "[REDACTED]")
+        }
+        return components.string ?? raw
+    }
+
+    private static func replace(_ input: String, pattern: String, template: String) -> String {
+        guard let regex = try? NSRegularExpression(pattern: pattern) else { return input }
+        return regex.stringByReplacingMatches(
+            in: input,
+            range: NSRange(input.startIndex..., in: input),
+            withTemplate: template
+        )
     }
 }
 
@@ -172,7 +307,9 @@ enum SearchHTTPClient {
         body: Data? = nil,
         timeout: TimeInterval = 8
     ) async throws -> (status: Int, data: Data) {
-        guard let u = URL(string: url) else { throw SearchBackendError("Invalid URL: \(url)") }
+        guard let u = URL(string: url) else {
+            throw SearchBackendError("Invalid URL: \(url)", kind: .network)
+        }
         var req = URLRequest(url: u, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: timeout)
         req.httpMethod = method
         req.httpBody = body
@@ -190,8 +327,17 @@ enum SearchHTTPClient {
             return (status, data)
         } catch is CancellationError {
             throw CancellationError()
+        } catch let error as URLError {
+            let kind: SearchFailureKind = {
+                switch error.code {
+                case .timedOut: return .timeout
+                case .cancelled: return .cancelled
+                default: return .network
+                }
+            }()
+            throw SearchBackendError(error.localizedDescription, kind: kind)
         } catch {
-            throw SearchBackendError(error.localizedDescription)
+            throw SearchBackendError(error.localizedDescription, kind: .network)
         }
     }
 }

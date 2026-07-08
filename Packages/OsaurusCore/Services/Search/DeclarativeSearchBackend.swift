@@ -21,7 +21,10 @@ struct DeclarativeSearchBackend: SearchBackend {
 
     func search(_ request: SearchRequest) async throws -> [SearchHit] {
         guard let endpoint = definition.endpoints?[request.category] else {
-            throw SearchBackendError("\(definition.name) does not support \(request.category) search")
+            throw SearchBackendError(
+                "\(definition.name) does not support \(request.category) search",
+                kind: .unsupportedCategory
+            )
         }
         try validateSecrets()
 
@@ -41,10 +44,11 @@ struct DeclarativeSearchBackend: SearchBackend {
             timeout: timeout
         )
         guard status == 200 else {
-            throw SearchBackendError("\(definition.name) returned status \(status)")
+            let kind: SearchFailureKind = (status == 401 || status == 403) ? .providerAuth : .providerHTTP
+            throw SearchBackendError("\(definition.name) returned status \(status)", kind: kind)
         }
         guard let json = try? JSONSerialization.jsonObject(with: data) else {
-            throw SearchBackendError("\(definition.name) returned a non-JSON response")
+            throw SearchBackendError("\(definition.name) returned a non-JSON response", kind: .providerHTTP)
         }
         return Self.mapResponse(
             json,
@@ -58,7 +62,7 @@ struct DeclarativeSearchBackend: SearchBackend {
         for field in definition.secrets ?? [] {
             let value = secrets[field.id]
             if value == nil || value?.isEmpty == true {
-                throw SearchBackendError("\(field.label) not configured")
+                throw SearchBackendError("\(field.label) not configured", kind: .providerAuth)
             }
         }
     }
@@ -106,7 +110,7 @@ struct DeclarativeSearchBackend: SearchBackend {
                 body[param.name] = resolved.jsonValue
             }
             guard let data = try? JSONSerialization.data(withJSONObject: body) else {
-                throw SearchBackendError("Failed to encode \(providerName) request")
+                throw SearchBackendError("Failed to encode \(providerName) request", kind: .providerHTTP)
             }
             bodyData = data
         }

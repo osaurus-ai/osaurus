@@ -136,7 +136,12 @@ public struct SearchEngine: Sendable {
                 }
             case .failure(let error):
                 attempts.append(
-                    SearchAttempt(provider: snapshot.definition.id, ok: false, error: error.message))
+                    SearchAttempt(
+                        provider: snapshot.definition.id,
+                        ok: false,
+                        kind: error.kind,
+                        error: error.message
+                    ))
             }
             if !deduped.isEmpty { break }
         }
@@ -171,6 +176,7 @@ public struct SearchEngine: Sendable {
                     SearchAttempt(
                         provider: provider.definition.id,
                         ok: false,
+                        kind: .unsupportedCategory,
                         error: "\(provider.definition.name) does not support \(request.category) search"
                     )
                 ],
@@ -190,7 +196,14 @@ public struct SearchEngine: Sendable {
             return SearchEngineOutcome(
                 hits: [],
                 provider: nil,
-                attempts: [SearchAttempt(provider: provider.definition.id, ok: false, error: error.message)],
+                attempts: [
+                    SearchAttempt(
+                        provider: provider.definition.id,
+                        ok: false,
+                        kind: error.kind,
+                        error: error.message
+                    )
+                ],
                 elapsed: Date().timeIntervalSince(started)
             )
         }
@@ -203,16 +216,20 @@ public struct SearchEngine: Sendable {
         request: SearchRequest
     ) async -> Result<[SearchHit], SearchBackendError> {
         guard let backend = backendFactory(snapshot.definition, snapshot.secrets) else {
-            return .failure(SearchBackendError("No backend available for \(snapshot.definition.id)"))
+            return .failure(
+                SearchBackendError(
+                    "No backend available for \(snapshot.definition.id)",
+                    kind: .providerHTTP
+                ))
         }
         do {
             return .success(try await backend.search(request))
         } catch let error as SearchBackendError {
             return .failure(error)
         } catch is CancellationError {
-            return .failure(SearchBackendError("cancelled"))
+            return .failure(SearchBackendError("cancelled", kind: .cancelled))
         } catch {
-            return .failure(SearchBackendError(error.localizedDescription))
+            return .failure(SearchBackendError(error.localizedDescription, kind: .network))
         }
     }
 
@@ -265,14 +282,20 @@ public struct SearchEngine: Sendable {
             // provider triggered the early exit; both read as did_not_complete
             // to avoid implying the request itself timed out.
             attempts.append(
-                SearchAttempt(provider: snapshot.definition.id, ok: false, error: "did_not_complete"))
+                SearchAttempt(
+                    provider: snapshot.definition.id,
+                    ok: false,
+                    kind: .didNotComplete,
+                    error: "did_not_complete"
+                ))
         }
         for (id, result) in done {
             switch result {
             case .success(let h):
                 attempts.append(SearchAttempt(provider: id, ok: true, count: h.count))
             case .failure(let error):
-                attempts.append(SearchAttempt(provider: id, ok: false, error: error.message))
+                attempts.append(
+                    SearchAttempt(provider: id, ok: false, kind: error.kind, error: error.message))
             }
         }
 
