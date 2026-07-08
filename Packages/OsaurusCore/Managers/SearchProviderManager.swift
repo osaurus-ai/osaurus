@@ -21,6 +21,19 @@ public final class SearchProviderManager: ObservableObject {
         case failed(String)
     }
 
+    /// Snapshot of the most recent full-cascade search this session — from a
+    /// live tool call or the Try-it playground. The Search tab's hub panel
+    /// uses it to show real health ("last search succeeded via …") instead of
+    /// claiming search works based purely on configuration. In-memory only:
+    /// per-session freshness is exactly what a health signal wants.
+    public struct LastSearchOutcome: Equatable {
+        public let date: Date
+        public let ok: Bool
+        /// Winning provider id (nil when every attempt failed).
+        public let providerId: String?
+        public let hitCount: Int
+    }
+
     @Published public private(set) var configuration: SearchProviderConfiguration
     @Published public private(set) var customDefinitions: [SearchProviderDefinition]
     /// Per-provider result of the most recent pinned test run.
@@ -28,6 +41,8 @@ public final class SearchProviderManager: ObservableObject {
     /// Providers whose declared secrets are all present in Keychain.
     /// Cached so schema composition doesn't hit Keychain per request.
     @Published public private(set) var configuredProviderIds: Set<String> = []
+    /// Most recent full-cascade outcome this session (nil until one runs).
+    @Published public private(set) var lastOutcome: LastSearchOutcome?
 
     private let engine: SearchEngine
 
@@ -226,7 +241,14 @@ public final class SearchProviderManager: ObservableObject {
     /// Full cascade for a request (used by the tools and the Try-it playground).
     public func runSearch(_ request: SearchRequest) async -> SearchEngineOutcome {
         let providers = snapshots(for: request.category)
-        return await engine.run(request: request, providers: providers)
+        let outcome = await engine.run(request: request, providers: providers)
+        lastOutcome = LastSearchOutcome(
+            date: Date(),
+            ok: !outcome.hits.isEmpty,
+            providerId: outcome.provider,
+            hitCount: outcome.hits.count
+        )
+        return outcome
     }
 
     /// Pinned single-provider run; updates the published `testStatus` so

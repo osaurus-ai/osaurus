@@ -5902,6 +5902,8 @@ struct ChatView: View {
                         AppDelegate.shared?.showManagementWindow(initialTab: .credits)
                     case .openImageGeneration:
                         AppDelegate.shared?.showManagementWindow(initialTab: .imageGeneration)
+                    case .openSearchSettings:
+                        AppDelegate.shared?.showManagementWindow(initialTab: .search)
                     case .openSubagentSettings:
                         // Land on the first custom (non-built-in) agent's
                         // Subagents tab (per-agent spawn / image config). With

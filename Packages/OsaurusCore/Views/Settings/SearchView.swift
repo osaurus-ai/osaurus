@@ -110,37 +110,99 @@ struct SearchView: View {
         manager.rankedProviders.contains { $0.provider.enabled }
     }
 
+    /// Health verdict for the hub panel. Configuration alone can't prove
+    /// search works (free scrapers may be challenge-blocked on this network),
+    /// so a config-on state stays neutral until a real search — from a tool
+    /// call or the Try-it box — verifies or contradicts it this session.
+    private enum SearchHealthState {
+        case off
+        case unverified
+        case healthy(SearchProviderManager.LastSearchOutcome)
+        case failing(SearchProviderManager.LastSearchOutcome)
+    }
+
+    private var healthState: SearchHealthState {
+        guard searchIsOn else { return .off }
+        guard let last = manager.lastOutcome else { return .unverified }
+        return last.ok ? .healthy(last) : .failing(last)
+    }
+
+    private var hubStatusIcon: (name: String, color: Color) {
+        switch healthState {
+        case .off: ("xmark.octagon.fill", theme.errorColor)
+        case .unverified: ("magnifyingglass.circle.fill", theme.accentColor)
+        case .healthy: ("checkmark.seal.fill", theme.successColor)
+        case .failing: ("exclamationmark.triangle.fill", theme.warningColor)
+        }
+    }
+
+    private var hubStatusTitle: LocalizedStringKey {
+        switch healthState {
+        case .off: "Web Search is off"
+        case .unverified, .healthy: "Web Search is on"
+        case .failing: "Web Search needs attention"
+        }
+    }
+
+    @ViewBuilder
+    private var hubStatusSubtitle: some View {
+        switch healthState {
+        case .off:
+            Text(
+                "Enable at least one source below to let agents search the web.",
+                bundle: .module)
+        case .unverified:
+            Text(
+                "Providers are tried in order; if one fails, the next takes over. Run a test search below to confirm everything works.",
+                bundle: .module)
+        case .healthy(let last):
+            Text(
+                "Last search succeeded via \(providerDisplayName(last.providerId)) \(relativeTime(last.date)) — \(last.hitCount) result\(last.hitCount == 1 ? "" : "s").",
+                bundle: .module)
+        case .failing(let last):
+            Text(
+                "The last search \(relativeTime(last.date)) returned no results. Try a test search below, or connect a provider for more reliable results.",
+                bundle: .module)
+        }
+    }
+
+    private func providerDisplayName(_ id: String?) -> String {
+        guard let id, !id.isEmpty else { return L("free sources") }
+        return manager.definition(id: id)?.name ?? id
+    }
+
+    private func relativeTime(_ date: Date) -> String {
+        let seconds = Date().timeIntervalSince(date)
+        if seconds < 60 { return L("just now") }
+        let formatter = RelativeDateTimeFormatter()
+        formatter.unitsStyle = .short
+        return formatter.localizedString(for: date, relativeTo: Date())
+    }
+
     private var hubPanel: some View {
         let readyAPI = apiProviderRows.filter {
             $0.provider.enabled && manager.configuredProviderIds.contains($0.definition.id)
         }.count
         let freeOn = freeProviderRows.filter { $0.provider.enabled }.count
         let categories = manager.availableCategories()
+        let status = hubStatusIcon
 
         return VStack(alignment: .leading, spacing: 14) {
             HStack(alignment: .center, spacing: 12) {
                 HStack(spacing: 10) {
-                    Image(systemName: searchIsOn ? "checkmark.seal.fill" : "xmark.octagon.fill")
+                    Image(systemName: status.name)
                         .font(.system(size: 16, weight: .semibold))
-                        .foregroundColor(searchIsOn ? theme.successColor : theme.errorColor)
+                        .foregroundColor(status.color)
                         .frame(width: 30, height: 30)
-                        .background(
-                            Circle().fill(
-                                (searchIsOn ? theme.successColor : theme.errorColor).opacity(0.12))
-                        )
+                        .background(Circle().fill(status.color.opacity(0.12)))
 
                     VStack(alignment: .leading, spacing: 2) {
-                        Text(searchIsOn ? "Web Search is on" : "Web Search is off", bundle: .module)
+                        Text(hubStatusTitle, bundle: .module)
                             .font(.system(size: 14, weight: .semibold))
                             .foregroundColor(theme.primaryText)
-                        Text(
-                            searchIsOn
-                                ? "Agents can search the web right now. Providers are tried in order; if one fails, the next takes over."
-                                : "Enable at least one source below to let agents search the web.",
-                            bundle: .module
-                        )
-                        .font(.system(size: 12))
-                        .foregroundColor(theme.secondaryText)
+                        hubStatusSubtitle
+                            .font(.system(size: 12))
+                            .foregroundColor(theme.secondaryText)
                     }
                 }
                 Spacer()
@@ -162,10 +224,7 @@ struct SearchView: View {
                 .fill(theme.secondaryBackground)
                 .overlay(
                     RoundedRectangle(cornerRadius: 12)
-                        .stroke(
-                            (searchIsOn ? theme.successColor : theme.errorColor).opacity(0.35),
-                            lineWidth: 1
-                        )
+                        .stroke(status.color.opacity(0.35), lineWidth: 1)
                 )
         )
     }

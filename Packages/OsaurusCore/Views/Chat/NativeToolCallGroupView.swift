@@ -795,6 +795,11 @@ final class NativeToolCallRowView: NSView {
     private let nameLabel = NSTextField(labelWithString: "")
     private let argPreviewLabel = NSTextField(labelWithString: "")
     private let chevron = NSImageView()
+    /// "Search settings" deep link shown on the collapsed header when a
+    /// `web_search` / `search_and_extract` call failed (including the
+    /// NO_RESULTS envelope) — first-time users otherwise never see the
+    /// remediation hint, which is only in the model-facing result JSON.
+    private let searchSettingsButton = NSButton()
 
     // Expanded content
     private let contentContainer = NSView()
@@ -1012,6 +1017,7 @@ final class NativeToolCallRowView: NSView {
             nameLabel.font = NSFont.monospacedSystemFont(ofSize: 12, weight: .semibold)
             runningTitle = item.call.function.name
             nameLabel.textColor = NSColor(theme.primaryText)
+            searchSettingsButton.isHidden = true
         } else {
             let titleFont = NSFont.systemFont(ofSize: 12, weight: .semibold)
             nameLabel.font = titleFont
@@ -1029,6 +1035,21 @@ final class NativeToolCallRowView: NSView {
                 running: true,
                 arguments: item.call.function.arguments
             )
+            // A failed search (error or NO_RESULTS envelope) gets a visible
+            // remediation link — the actionable "check Settings → Search"
+            // hint otherwise lives only in the model-facing result JSON.
+            let showSearchLink = failed && ToolDisplayName.isSearchTool(toolName)
+            if showSearchLink {
+                searchSettingsButton.attributedTitle = NSAttributedString(
+                    string: L("Search settings"),
+                    attributes: [
+                        .font: NSFont.systemFont(ofSize: 11, weight: .semibold),
+                        .foregroundColor: NSColor(theme.accentColor),
+                        .underlineStyle: NSUnderlineStyle.single.rawValue,
+                    ]
+                )
+            }
+            searchSettingsButton.isHidden = !showSearchLink
             // Append the recorded duration after an interpunct, dimmed.
             if let elapsed = item.duration {
                 let s = NSMutableAttributedString(
@@ -1627,6 +1648,20 @@ final class NativeToolCallRowView: NSView {
         headerButton.target = self; headerButton.action = #selector(tapped)
         addSubview(headerButton)  // added last → front of Z-order
 
+        // Search-failure deep link. Added AFTER the transparent header
+        // overlay so its clicks aren't swallowed by the expand/collapse
+        // toggle. Hidden by default; `configure` shows it only for failed
+        // search-tool rows in the collapsed state.
+        searchSettingsButton.translatesAutoresizingMaskIntoConstraints = false
+        searchSettingsButton.isBordered = false
+        searchSettingsButton.bezelStyle = .inline
+        searchSettingsButton.focusRingType = .none
+        searchSettingsButton.isHidden = true
+        searchSettingsButton.setContentCompressionResistancePriority(.required, for: .horizontal)
+        searchSettingsButton.target = self
+        searchSettingsButton.action = #selector(openSearchSettings)
+        addSubview(searchSettingsButton)
+
         let rowH = Self.rowHeaderHeight
 
         // self-sizing height constraint
@@ -1676,6 +1711,14 @@ final class NativeToolCallRowView: NSView {
             argPreviewLabel.leadingAnchor.constraint(equalTo: nameLabel.trailingAnchor, constant: 6),
             argPreviewLabel.centerYAnchor.constraint(equalTo: categoryBg.centerYAnchor),
             argPreviewLabel.trailingAnchor.constraint(lessThanOrEqualTo: chevron.leadingAnchor, constant: -8),
+
+            // Never co-visible with argPreviewLabel (that only shows when
+            // expanded; this only when collapsed), so both can anchor off
+            // nameLabel without a layout conflict.
+            searchSettingsButton.leadingAnchor.constraint(equalTo: nameLabel.trailingAnchor, constant: 10),
+            searchSettingsButton.centerYAnchor.constraint(equalTo: categoryBg.centerYAnchor),
+            searchSettingsButton.trailingAnchor.constraint(
+                lessThanOrEqualTo: chevron.leadingAnchor, constant: -8),
 
             chevron.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -12),
             chevron.centerYAnchor.constraint(equalTo: categoryBg.centerYAnchor),
@@ -1986,4 +2029,8 @@ final class NativeToolCallRowView: NSView {
     }
 
     @objc private func tapped() { onToggle?() }
+
+    @objc private func openSearchSettings() {
+        AppDelegate.shared?.showManagementWindow(initialTab: .search)
+    }
 }

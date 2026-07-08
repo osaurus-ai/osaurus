@@ -303,6 +303,48 @@ struct DeclarativeSearchBackendTests {
         #expect(hits[0].publishedDate == "2 hours ago")
     }
 
+    @Test func serperImagesBuildsSameBodyAndMapsImageFields() throws {
+        let endpoint = try #require(
+            SearchProviderCatalog.definition(id: "serper")?.endpoints?[SearchCategory.images])
+
+        let built = try DeclarativeSearchBackend.buildRequest(
+            endpoint: endpoint,
+            request: SearchRequest(query: "dinosaur", category: SearchCategory.images, maxResults: 12),
+            secrets: ["api_key": "serper-key"],
+            providerName: "Serper"
+        )
+        #expect(built.url == "https://google.serper.dev/images")
+        #expect(built.headers["X-API-KEY"] == "serper-key")
+        let body = try Self.bodyJSON(built)
+        #expect(body["q"] as? String == "dinosaur")
+        #expect(body["num"] as? Int == 12)
+
+        let fixture: [String: Any] = [
+            "images": [
+                [
+                    "title": "A T-Rex",
+                    "link": "https://dino.example/trex",
+                    "imageUrl": "https://dino.example/trex-full.jpg",
+                    "thumbnailUrl": "https://dino.example/trex-thumb.jpg",
+                    "domain": "dino.example",
+                    "source": "Dino Museum",
+                ]
+            ]
+        ]
+        let hits = DeclarativeSearchBackend.mapResponse(
+            fixture,
+            mapping: endpoint.response,
+            engine: "serper",
+            maxResults: 10
+        )
+        #expect(hits.count == 1)
+        #expect(hits[0].title == "A T-Rex")
+        #expect(hits[0].url == "https://dino.example/trex")
+        #expect(hits[0].imageURL == "https://dino.example/trex-full.jpg")
+        #expect(hits[0].thumbnailURL == "https://dino.example/trex-thumb.jpg")
+        #expect(hits[0].sourceDomain == "dino.example")
+    }
+
     @Test func mapResponseTruncatesToMaxResults() {
         let fixture: [String: Any] = [
             "results": (1...10).map {

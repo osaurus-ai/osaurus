@@ -279,10 +279,29 @@ public enum SearchProviderCatalog {
                 url: "https://google.serper.dev/news",
                 resultsPath: "news"
             ),
+            // Google Images through the same API — gives image search a
+            // keyed, trustworthy option (the only free image source is the
+            // last-resort DDG scraper).
+            SearchCategory.images: serperEndpoint(
+                url: "https://google.serper.dev/images",
+                resultsPath: "images",
+                item: SearchHitFieldPaths(
+                    title: "title",
+                    url: "link",
+                    snippet: "source",
+                    sourceDomain: "domain|source",
+                    imageURL: "imageUrl",
+                    thumbnailURL: "thumbnailUrl"
+                )
+            ),
         ]
     )
 
-    private static func serperEndpoint(url: String, resultsPath: String) -> SearchEndpoint {
+    private static func serperEndpoint(
+        url: String,
+        resultsPath: String,
+        item: SearchHitFieldPaths? = nil
+    ) -> SearchEndpoint {
         SearchEndpoint(
             url: url,
             method: "POST",
@@ -303,13 +322,14 @@ public enum SearchProviderCatalog {
             ],
             response: SearchResponseMapping(
                 resultsPath: resultsPath,
-                item: SearchHitFieldPaths(
-                    title: "title",
-                    url: "link",
-                    snippet: "snippet",
-                    publishedDate: "date",
-                    sourceDomain: "source"
-                )
+                item: item
+                    ?? SearchHitFieldPaths(
+                        title: "title",
+                        url: "link",
+                        snippet: "snippet",
+                        publishedDate: "date",
+                        sourceDomain: "source"
+                    )
             )
         )
     }

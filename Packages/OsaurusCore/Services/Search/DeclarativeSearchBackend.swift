@@ -244,7 +244,9 @@ struct DeclarativeSearchBackend: SearchBackend {
                 snippet: fields.snippet.flatMap { SearchJSONPath.string(at: $0, in: item) } ?? "",
                 publishedDate: fields.publishedDate.flatMap { SearchJSONPath.string(at: $0, in: item) },
                 sourceDomain: fields.sourceDomain.flatMap { SearchJSONPath.string(at: $0, in: item) },
-                engine: engine
+                engine: engine,
+                imageURL: fields.imageURL.flatMap { SearchJSONPath.string(at: $0, in: item) },
+                thumbnailURL: fields.thumbnailURL.flatMap { SearchJSONPath.string(at: $0, in: item) }
             )
             hits.append(hit)
             if hits.count >= maxResults { break }

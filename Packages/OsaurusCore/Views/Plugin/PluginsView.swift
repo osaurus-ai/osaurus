@@ -403,6 +403,15 @@ struct PluginsView: View {
             return
         }
 
+        // A superseded plugin that isn't installed has no Browse card to land
+        // on (native search replaced it) — send the deeplink to the Search
+        // settings tab instead of dead-ending.
+        if PluginManager.supersededPluginIds.contains(pluginId), !plugin.isInstalled {
+            managementState.pendingPluginDetailId = nil
+            AppDelegate.shared?.showManagementWindow(initialTab: .search)
+            return
+        }
+
         if !installedPlugins.contains(where: { $0.pluginId == pluginId }) {
             selectedTab = .browse
         }
@@ -897,7 +906,15 @@ struct PluginsView: View {
 
         let (browseResult, installedResult, claudeResult, marketplaceResult, chipCounts) =
             await Task.detached(priority: .userInitiated) {
-                let browse = currentPlugins.filter { Self.pluginMatchesQuery($0, query: query) }
+                // Superseded plugins (native search replaced osaurus.search)
+                // are hidden from Browse unless already installed — new users
+                // shouldn't be offered a plugin whose tools never register.
+                // Existing installs keep their card (with the "Built into
+                // Osaurus" banner) so the uninstall path stays reachable.
+                let browse = currentPlugins.filter {
+                    Self.pluginMatchesQuery($0, query: query)
+                        && ($0.isInstalled || !PluginManager.supersededPluginIds.contains($0.pluginId))
+                }
                 let installed =
                     currentPlugins
                     .filter { $0.isInstalled && Self.pluginMatchesQuery($0, query: query) }

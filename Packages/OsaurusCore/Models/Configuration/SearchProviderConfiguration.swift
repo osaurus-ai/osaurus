@@ -127,19 +127,26 @@ public struct SearchHitFieldPaths: Codable, Sendable, Equatable {
     public var snippet: String?
     public var publishedDate: String?
     public var sourceDomain: String?
+    /// Image-category endpoints: full-size image and thumbnail URLs.
+    public var imageURL: String?
+    public var thumbnailURL: String?
 
     public init(
         title: String? = nil,
         url: String? = nil,
         snippet: String? = nil,
         publishedDate: String? = nil,
-        sourceDomain: String? = nil
+        sourceDomain: String? = nil,
+        imageURL: String? = nil,
+        thumbnailURL: String? = nil
     ) {
         self.title = title
         self.url = url
         self.snippet = snippet
         self.publishedDate = publishedDate
         self.sourceDomain = sourceDomain
+        self.imageURL = imageURL
+        self.thumbnailURL = thumbnailURL
     }
 }
 
