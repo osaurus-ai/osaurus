@@ -28,12 +28,37 @@ struct TelegramWebhookDiagnostic: Equatable, Sendable {
     }
 }
 
+struct TelegramChatDiagnostic: Equatable, Sendable {
+    let id: String
+    let source: String
+    let readAllowed: Bool
+    let writeAllowed: Bool
+    let storedMessageCount: Int
+    let latestStoredAt: String?
+
+    var dictionary: [String: Any] {
+        var result: [String: Any] = [
+            "id": id,
+            "source": source,
+            "read_allowed": readAllowed,
+            "write_allowed": writeAllowed,
+            "stored_message_count": storedMessageCount,
+        ]
+        if let latestStoredAt {
+            result["latest_stored_at"] = latestStoredAt
+        }
+        return result
+    }
+}
+
 struct TelegramConnectionDiagnostics: Equatable, Sendable {
     let tokenSaved: Bool
     let bot: TelegramUser?
     let readableChatIds: [String]
     let writableChatIds: [String]
     let senderAllowlist: [String]
+    let configuredChats: [TelegramChatDiagnostic]
+    let storedDiscoveredChats: [TelegramChatDiagnostic]
     let writeEnabled: Bool
     let receiveStorageEnabled: Bool
     let longPollingEnabled: Bool
@@ -49,6 +74,8 @@ struct TelegramConnectionDiagnostics: Equatable, Sendable {
         readableChatIds: [String],
         writableChatIds: [String],
         senderAllowlist: [String],
+        configuredChats: [TelegramChatDiagnostic] = [],
+        storedDiscoveredChats: [TelegramChatDiagnostic] = [],
         writeEnabled: Bool,
         receiveStorageEnabled: Bool = false,
         longPollingEnabled: Bool = false,
@@ -62,6 +89,8 @@ struct TelegramConnectionDiagnostics: Equatable, Sendable {
         self.readableChatIds = readableChatIds
         self.writableChatIds = writableChatIds
         self.senderAllowlist = senderAllowlist
+        self.configuredChats = configuredChats
+        self.storedDiscoveredChats = storedDiscoveredChats
         self.writeEnabled = writeEnabled
         self.receiveStorageEnabled = receiveStorageEnabled
         self.longPollingEnabled = longPollingEnabled
@@ -78,6 +107,15 @@ struct TelegramConnectionDiagnostics: Equatable, Sendable {
             "readable_chat_ids": readableChatIds,
             "writable_chat_ids": writableChatIds,
             "sender_allowlist": senderAllowlist,
+            "configured_chats": configuredChats.map(\.dictionary),
+            "stored_discovered_chats": storedDiscoveredChats.map(\.dictionary),
+            "chat_discovery_source": "configuration_and_local_message_store_only",
+            "authorization": [
+                "sender_allowlist": senderAllowlist,
+                "room_allowlist": readableChatIds,
+                "authorize_before_storage": true,
+                "authorize_before_dispatch": true,
+            ],
             "write_enabled": writeEnabled,
             "receive_storage_enabled": receiveStorageEnabled,
             "long_polling_enabled": longPollingEnabled,
@@ -148,6 +186,7 @@ enum TelegramConnectionServiceError: LocalizedError, Equatable, Sendable {
     case chatNotWritable(String)
     case writeDisabled
     case sendConfirmationRequired
+    case sendBackpressure(String)
     case messageTooLong
     case emptyMessage
     case configurationSaveFailed(String)
@@ -169,6 +208,8 @@ enum TelegramConnectionServiceError: LocalizedError, Equatable, Sendable {
             return "Telegram write access is disabled in settings."
         case .sendConfirmationRequired:
             return "`confirm_send` must be true before Osaurus posts to Telegram."
+        case .sendBackpressure(let chatId):
+            return "A Telegram send is already in flight for chat `\(chatId)`. Retry after the current send completes."
         case .messageTooLong:
             return "Telegram messages must fit Telegram's 4096-character limit."
         case .emptyMessage:
@@ -289,6 +330,20 @@ private enum TelegramReceivePendingResult {
     case event(TelegramNormalizedInboundEvent)
 }
 
+private actor TelegramPerChatSendGate {
+    private var inFlight = Set<String>()
+
+    func begin(chatId: String) -> Bool {
+        guard !inFlight.contains(chatId) else { return false }
+        inFlight.insert(chatId)
+        return true
+    }
+
+    func finish(chatId: String) {
+        inFlight.remove(chatId)
+    }
+}
+
 final class TelegramConnectionService: @unchecked Sendable {
     static let nativeConnectionId = TelegramUpdateNormalizer.connectionId
     static let updatesCursorRoomId = "__telegram_updates__"
@@ -305,6 +360,7 @@ final class TelegramConnectionService: @unchecked Sendable {
     private let credentialStore: any TelegramCredentialStorage
     private let messageStore: AgentChannelMessageStore?
     private let recordMessageSnapshotsInline: Bool
+    private let sendGate = TelegramPerChatSendGate()
     private let botIdentityLock = NSLock()
     private var cachedBotId: Int64?
 
@@ -356,6 +412,7 @@ final class TelegramConnectionService: @unchecked Sendable {
 
     func diagnostics() async -> TelegramConnectionDiagnostics {
         let config = configuration()
+        let chatReadiness = chatDiagnostics(config: config)
         guard let token = credentialStore.botToken() else {
             return TelegramConnectionDiagnostics(
                 tokenSaved: false,
@@ -363,6 +420,8 @@ final class TelegramConnectionService: @unchecked Sendable {
                 readableChatIds: config.readableChatIds,
                 writableChatIds: config.writableChatIds,
                 senderAllowlist: config.senderAllowlist,
+                configuredChats: chatReadiness.configured,
+                storedDiscoveredChats: chatReadiness.stored,
                 writeEnabled: config.writeEnabled,
                 receiveStorageEnabled: config.receiveStorageEnabled,
                 longPollingEnabled: config.longPollingEnabled,
@@ -481,6 +540,8 @@ final class TelegramConnectionService: @unchecked Sendable {
             readableChatIds: config.readableChatIds,
             writableChatIds: config.writableChatIds,
             senderAllowlist: config.senderAllowlist,
+            configuredChats: chatReadiness.configured,
+            storedDiscoveredChats: chatReadiness.stored,
             writeEnabled: config.writeEnabled,
             receiveStorageEnabled: config.receiveStorageEnabled,
             longPollingEnabled: config.longPollingEnabled,
@@ -523,6 +584,46 @@ final class TelegramConnectionService: @unchecked Sendable {
             return "A webhook is registered for this bot (\(TelegramSecurity.redact(info.url, token: token))). Remove the webhook in Telegram settings or disable long polling."
         }
         return "Another getUpdates consumer is polling this bot token (for example a plugin or a second Osaurus instance). Stop the other consumer and retry."
+    }
+
+    private func chatDiagnostics(
+        config: TelegramConnectionConfiguration
+    ) -> (configured: [TelegramChatDiagnostic], stored: [TelegramChatDiagnostic]) {
+        let summaries: [AgentChannelStoredRoomSummary] = {
+            guard let messageStore else { return [] }
+            do {
+                try messageStore.openIfNeeded()
+                return try messageStore.roomSummaries(connectionId: Self.connectionId)
+            } catch {
+                return []
+            }
+        }()
+        let summariesByRoom = Dictionary(uniqueKeysWithValues: summaries.map { ($0.roomId, $0) })
+        let formatter = ISO8601DateFormatter()
+
+        let configured = config.configuredChatIds.map {
+            let summary = summariesByRoom[$0]
+            return TelegramChatDiagnostic(
+                id: $0,
+                source: "configuration",
+                readAllowed: config.canRead(chatId: $0),
+                writeAllowed: config.canWrite(chatId: $0),
+                storedMessageCount: summary?.messageCount ?? 0,
+                latestStoredAt: summary?.latestReceivedAt.map { formatter.string(from: $0) }
+            )
+        }
+
+        let stored = summaries.map { summary in
+            TelegramChatDiagnostic(
+                id: summary.roomId,
+                source: "local_message_store",
+                readAllowed: config.canRead(chatId: summary.roomId),
+                writeAllowed: config.canWrite(chatId: summary.roomId),
+                storedMessageCount: summary.messageCount,
+                latestStoredAt: summary.latestReceivedAt.map { formatter.string(from: $0) }
+            )
+        }
+        return (configured, stored)
     }
 
     func messageStoreDiagnostics() -> [String: Any] {
@@ -670,19 +771,28 @@ final class TelegramConnectionService: @unchecked Sendable {
         let config = configuration()
         let chatId = try requireWritableChat(request.chatId, config: config)
         let text = try validateMessageContent(request.text)
-        let message = try await client.sendMessage(
-            chatId: chatId,
-            text: text,
-            replyToMessageId: request.replyToMessageId,
-            token: token
-        )
-        recordMessages([Self.storedMessage(message, roomId: chatId, direction: .outbound)])
-        return [
-            "kind": "telegram_message_sent",
-            "chat_id": chatId,
-            "delivery_status": TelegramDeliveryStatus.sent.rawValue,
-            "message": Self.messageDictionary(message),
-        ]
+        guard await sendGate.begin(chatId: chatId) else {
+            throw TelegramConnectionServiceError.sendBackpressure(chatId)
+        }
+        do {
+            let message = try await client.sendMessage(
+                chatId: chatId,
+                text: text,
+                replyToMessageId: request.replyToMessageId,
+                token: token
+            )
+            await sendGate.finish(chatId: chatId)
+            recordMessages([Self.storedMessage(message, roomId: chatId, direction: .outbound)])
+            return [
+                "kind": "telegram_message_sent",
+                "chat_id": chatId,
+                "delivery_status": TelegramDeliveryStatus.sent.rawValue,
+                "message": Self.messageDictionary(message),
+            ]
+        } catch {
+            await sendGate.finish(chatId: chatId)
+            throw error
+        }
     }
 
     func processWebhookPayload(

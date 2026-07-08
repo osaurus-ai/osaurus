@@ -352,6 +352,25 @@ struct MCPHTTPHandlerTests {
         }
     }
 
+    @Test func stdio_mcp_execution_denies_agent_channel_tools() async throws {
+        for toolName in Self.agentChannelToolNames {
+            let text = try await MCPServerManager.executeToolAsExternalMCP(
+                name: toolName,
+                argumentsJSON: #"{"connection_id":"telegram","room_id":"-100111222333","content":"must not leak"}"#
+            )
+            let envelope = try JSONSerialization.jsonObject(
+                with: Data(text.utf8)
+            ) as? [String: Any]
+
+            #expect(envelope?["ok"] as? Bool == false, "\(toolName) should be denied")
+            #expect(envelope?["tool"] as? String == toolName)
+            #expect(EnvelopeAssertions.failureKind(text) == "rejected")
+            let message = EnvelopeAssertions.failureMessage(text) ?? ""
+            #expect(message.contains("external callers"))
+            #expect(!text.contains("must not leak"))
+        }
+    }
+
     @Test func mcp_call_rejects_disabled_tool() async throws {
         try await DynamicCatalogTestLock.shared.run {
             let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent(
