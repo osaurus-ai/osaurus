@@ -1154,17 +1154,17 @@ struct ToolFunction: Codable, Sendable {
 }
 
 /// tool_choice option
-enum ToolChoiceOption: Codable, Sendable {
+enum ToolChoiceOption: Codable, Sendable, Equatable {
     case auto
     case none
     case required
     case function(FunctionName)
 
-    struct FunctionName: Codable, Sendable {
+    struct FunctionName: Codable, Sendable, Equatable {
         let type: String
         let function: Name
     }
-    struct Name: Codable, Sendable { let name: String }
+    struct Name: Codable, Sendable, Equatable { let name: String }
 
     init(from decoder: Decoder) throws {
         let container = try decoder.singleValueContainer()

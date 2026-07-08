@@ -2331,12 +2331,26 @@ public actor RemoteProviderService: ToolCapableService {
         tools: [Tool]?,
         toolChoice: ToolChoiceOption?
     ) -> RemoteChatRequest {
-        let (effortValue, thinking) = Self.remoteChatReasoningControls(
+        let reasoningPolicy = RemoteReasoningPolicy.resolve(
             providerType: provider.providerType,
             host: provider.host,
-            model: model,
+            model: model
+        )
+        let (effortValue, thinking) = reasoningPolicy.controls(
             effort: parameters.modelOptions["reasoningEffort"]?.stringValue
         )
+        // DeepSeek thinking mode rejects forced tool choices (HTTP 400
+        // "Thinking mode does not support this tool_choice"); downgrade
+        // `.required`/`.function` to `.auto` there. See
+        // `RemoteReasoningPolicy.sanitizedToolChoice`.
+        let wireToolChoice = reasoningPolicy.sanitizedToolChoice(toolChoice, thinking: thinking)
+        if let toolChoice, wireToolChoice != toolChoice {
+            debugLog(
+                "[RemoteProviderService] tool_choice \(toolChoice) downgraded to "
+                    + "\(String(describing: wireToolChoice)) for thinking-mode provider "
+                    + "host=\(provider.host) model=\(model)"
+            )
+        }
         let allowsReasoningObject =
             Self.allowsChatCompletionsReasoningObject(
                 providerType: provider.providerType,
@@ -2388,7 +2402,7 @@ public actor RemoteProviderService: ToolCapableService {
             presence_penalty: isAgentRun ? nil : (isReasoningModel ? nil : parameters.presencePenalty),
             stop: nil,
             tools: wireTools,
-            tool_choice: toolChoice,
+            tool_choice: wireToolChoice,
             reasoning_effort: isAgentRun ? nil : effortValue,
             reasoning: isAgentRun
                 ? nil
