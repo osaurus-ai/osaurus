@@ -108,6 +108,7 @@ final class NativeHeaderView: NSView {
     private var currentAvatarSize: CGFloat = NativeHeaderView.defaultAvatarSize
 
     private var turnId: UUID = UUID()
+    private var messageTimestamp: Date = Date()
     private var onCopy: ((UUID) -> Void)?
     private var onRegenerate: ((UUID) -> Void)?
     private var onEdit: ((UUID) -> Void)?
@@ -115,6 +116,17 @@ final class NativeHeaderView: NSView {
     private var storedOnCancelEdit: (() -> Void)?
     private var currentRole: MessageRole = .assistant
     private var currentTheme: (any ThemeProtocol)?
+    /// The ellipsis "…" control, kept so its overflow menu can anchor to it.
+    private weak var overflowControl: HeaderCircleActionControl?
+
+    /// Formats the message timestamp for the overflow menu header, e.g.
+    /// "Jun 20, 10:17 PM". Localized template so order/separators follow locale.
+    /// Mirrors `NativeAssistantActionsView.timestampFormatter`.
+    private static let timestampFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.setLocalizedDateFormatFromTemplate("MMMd jmm")
+        return formatter
+    }()
 
     override init(frame: NSRect) {
         super.init(frame: frame)
@@ -185,6 +197,7 @@ final class NativeHeaderView: NSView {
         customAvatarPath: String?,
         isEditing: Bool,
         isHovered: Bool,
+        timestamp: Date = Date(),
         theme: any ThemeProtocol,
         onCopy: ((UUID) -> Void)?,
         onRegenerate: ((UUID) -> Void)?,
@@ -193,6 +206,7 @@ final class NativeHeaderView: NSView {
         onCancelEdit: (() -> Void)?
     ) {
         self.turnId = turnId
+        self.messageTimestamp = timestamp
         self.isEditing = isEditing
         self.onCopy = onCopy
         self.onRegenerate = onRegenerate
@@ -371,20 +385,50 @@ final class NativeHeaderView: NSView {
             self.onDelete?(self.turnId)
         }
 
+        // Overflow "…" carrying the message timestamp, mirroring the assistant
+        // footer's overflow menu (minus the assistant-only Inspect action).
+        overflowControl = addBtn(icon: "ellipsis", help: L("More"), theme: theme, tint: nil) { [weak self] in
+            self?.presentOverflowMenu()
+        }
+
         if isEditing, let onCancelEdit {
             addBtn(icon: "xmark", help: L("Cancel edit"), theme: theme, tint: nil, action: onCancelEdit)
         }
     }
 
+    /// Drops a menu under the "…" button whose single disabled header shows
+    /// when the user sent this message. Mirrors the assistant footer's overflow
+    /// menu, but omits the Inspect action (no request log for user turns).
+    private func presentOverflowMenu() {
+        guard let anchor = overflowControl else { return }
+        let menu = NSMenu()
+        menu.autoenablesItems = false
+
+        let header = NSMenuItem(
+            title: Self.timestampFormatter.string(from: messageTimestamp),
+            action: nil,
+            keyEquivalent: ""
+        )
+        header.isEnabled = false
+        menu.addItem(header)
+
+        // Anchor the menu's top-left just under the button's bottom-left so it
+        // opens downward like the assistant overflow menu. The button is a
+        // non-flipped NSView, so its bottom edge is y == 0 and the 4pt gap sits
+        // below it at a negative y.
+        menu.popUp(positioning: nil, at: NSPoint(x: 0, y: -4), in: anchor)
+    }
+
     private static let actionButtonSize: CGFloat = 28
 
+    @discardableResult
     private func addBtn(
         icon: String,
         help: String,
         theme: any ThemeProtocol,
         tint: NSColor?,
         action: @escaping () -> Void
-    ) {
+    ) -> HeaderCircleActionControl {
         let control = HeaderCircleActionControl(action: action)
         let pointSize = CGFloat(theme.captionSize) - 1
         let cfg = NSImage.SymbolConfiguration(pointSize: pointSize, weight: .medium)
@@ -402,6 +446,7 @@ final class NativeHeaderView: NSView {
             control.heightAnchor.constraint(equalToConstant: Self.actionButtonSize),
         ])
         actionStack.addArrangedSubview(control)
+        return control
     }
 }
 
@@ -2298,6 +2343,7 @@ final class NativeMessageCellView: NSTableCellView {
             customAvatarPath: nil,
             isEditing: context.editingTurnId == block.turnId,
             isHovered: context.isTurnHovered,
+            timestamp: timestamp,
             theme: context.theme,
             onCopy: context.onCopy,
             onRegenerate: context.onRegenerate,
