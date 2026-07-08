@@ -111,13 +111,13 @@ final class ModelDownloadService: ObservableObject {
             title = L("Repository unavailable")
             message =
                 L(
-                    "Couldn't reach this model on Hugging Face. The repo may be private, gated, removed, or temporarily unreachable. For gated repos or rate limits, add a Hugging Face token in Settings → Storage."
+                    "Couldn't reach this model on Hugging Face. The repo may be private, gated, removed, or temporarily unreachable. A Hugging Face access token (offered when a download starts) helps with gated repos and rate limits."
                 )
         } else if lower.hasPrefix("http ") {
             title = L("Repository unavailable")
             message =
                 L(
-                    "Hugging Face responded with \(rawError). For a gated or private repo, add a Hugging Face access token in Settings → Storage; otherwise try again in a moment."
+                    "Hugging Face responded with \(rawError). For a gated or private repo, add a Hugging Face access token — Osaurus offers this when a download starts; otherwise try again in a moment."
                 )
         } else if lower.contains("offline") || lower.contains("internet connection")
             || lower.contains("network") || lower.contains("timed out")
@@ -1027,6 +1027,15 @@ final class ModelDownloadService: ObservableObject {
                 stage: failureStage,
                 filePath: failureFilePath
             )
+            // A tokenless download that died on throttling or auth is the
+            // one moment the declined token offer is worth repeating.
+            let lower = error.lowercased()
+            if !HuggingFaceAuth.hasToken,
+                lower.contains("http 429") || lower.contains("http 401")
+                    || lower.contains("http 403")
+            {
+                HuggingFaceAuth.resetPromptDismissal()
+            }
         }
         return true
     }
