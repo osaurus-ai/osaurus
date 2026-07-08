@@ -420,13 +420,30 @@ final class ModelDownloadService: ObservableObject {
                     let resumeDataForFile: Data? =
                         (resuming?.inFlightFilePath == file.path) ? resuming?.resumeData : nil
 
-                    try await downloader.download(
-                        from: downloadURL,
-                        to: destination,
-                        expectedSize: file.size,
-                        resumeData: resumeDataForFile,
-                        onProgress: onProgress
-                    )
+                    var attempt = 1
+                    var resumeDataForAttempt = resumeDataForFile
+                    while true {
+                        do {
+                            try await downloader.download(
+                                from: downloadURL,
+                                to: destination,
+                                expectedSize: file.size,
+                                resumeData: resumeDataForAttempt,
+                                onProgress: onProgress
+                            )
+                            break
+                        } catch {
+                            // A failed attempt's URLSession temp file is gone;
+                            // any retry restarts this file from byte zero.
+                            resumeDataForAttempt = nil
+                            guard attempt < Self.maxTransferAttempts,
+                                Self.isRetryableTransferError(error)
+                            else { throw error }
+                            let delay = Self.transferRetryDelay(attempt: attempt, error: error)
+                            attempt += 1
+                            try await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
+                        }
+                    }
                     completedFileBytes += file.size
                     inFlightFilePath = nil
                 }
@@ -850,6 +867,46 @@ final class ModelDownloadService: ObservableObject {
         return true
     }
 
+    // MARK: - Transfer retry policy
+
+    /// Attempts per file: one initial try plus up to three retries. Transient
+    /// failures (Hugging Face rate limiting, connection blips) otherwise kill
+    /// a multi-GB download that's 90% done and force a manual Retry.
+    nonisolated static let maxTransferAttempts = 4
+
+    nonisolated static func isRetryableTransferError(_ error: Error) -> Bool {
+        if error is DirectDownloader.PauseInfo || error is CancellationError { return false }
+        if let status = error as? DirectDownloader.HTTPStatusError {
+            return status.statusCode == 408 || status.statusCode == 429
+                || (500 ... 599).contains(status.statusCode)
+        }
+        if let urlError = error as? URLError {
+            switch urlError.code {
+            case .timedOut, .networkConnectionLost, .cannotConnectToHost,
+                .cannotFindHost, .dnsLookupFailed, .notConnectedToInternet,
+                .cannotDecodeContentData:
+                // .cannotDecodeContentData is the downloader's size-mismatch
+                // error: a truncated transfer, which a fresh attempt fixes.
+                return true
+            default:
+                return false
+            }
+        }
+        return false
+    }
+
+    /// Delay before retry number `attempt` (1-based): the server's
+    /// `Retry-After` when it sent one (capped at 120s), otherwise
+    /// exponential backoff capped at 15s.
+    nonisolated static func transferRetryDelay(attempt: Int, error: Error) -> TimeInterval {
+        if let status = error as? DirectDownloader.HTTPStatusError,
+            let after = status.retryAfterSeconds, after > 0
+        {
+            return min(after, 120)
+        }
+        return min(pow(2.0, Double(attempt - 1)), 15)
+    }
+
     nonisolated static func resolveURL(repoId: String, path: String) -> URL? {
         guard let safePath = HuggingFaceService.normalizedRemoteFilePath(path) else { return nil }
         var comps = URLComponents()
@@ -1142,6 +1199,15 @@ final class DirectDownloader: NSObject, URLSessionDownloadDelegate, @unchecked S
         let bytesDownloaded: Int64
     }
 
+    /// Non-2xx terminal response, carrying enough for the retry policy to
+    /// distinguish transient throttling (429/5xx, optional `Retry-After`)
+    /// from permanent failures (404/401/403).
+    struct HTTPStatusError: LocalizedError {
+        let statusCode: Int
+        let retryAfterSeconds: Double?
+        var errorDescription: String? { "HTTP \(statusCode)" }
+    }
+
     private let lock = NSLock()
     private var currentContinuation: CheckedContinuation<Void, Error>?
     private var currentDownloadTask: URLSessionDownloadTask?
@@ -1312,9 +1378,10 @@ final class DirectDownloader: NSObject, URLSessionDownloadDelegate, @unchecked S
             !(200 ..< 300).contains(http.statusCode)
         {
             continuation.resume(
-                throwing: URLError(
-                    .badServerResponse,
-                    userInfo: [NSLocalizedDescriptionKey: "HTTP \(http.statusCode)"]
+                throwing: HTTPStatusError(
+                    statusCode: http.statusCode,
+                    retryAfterSeconds: http.value(forHTTPHeaderField: "Retry-After")
+                        .flatMap(Double.init)
                 )
             )
             return

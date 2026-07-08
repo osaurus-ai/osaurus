@@ -128,16 +128,39 @@ actor HuggingFaceService {
         var req = URLRequest(url: url)
         req.setValue("application/json", forHTTPHeaderField: "Accept")
         HuggingFaceAuth.authorize(&req)
-        do {
-            let (data, response) = try await GlobalProxySettings.sharedSession().data(for: req)
-            guard let http = response as? HTTPURLResponse, (200 ..< 300).contains(http.statusCode) else {
+
+        // This fetch gates every download, and it's the request Hugging Face
+        // rate-limits hardest for anonymous clients — retry transient
+        // failures (429/5xx, network blips) with backoff instead of failing
+        // the whole download on the first throttled response.
+        let maxAttempts = 3
+        for attempt in 1 ... maxAttempts {
+            var retryAfter: Double?
+            do {
+                let (data, response) = try await GlobalProxySettings.sharedSession().data(for: req)
+                guard let http = response as? HTTPURLResponse else { return nil }
+                if (200 ..< 300).contains(http.statusCode) {
+                    let nodes = try JSONDecoder().decode([TreeNode].self, from: data)
+                    return nodes.isEmpty ? nil : nodes
+                }
+                guard http.statusCode == 429 || (500 ... 599).contains(http.statusCode) else {
+                    return nil
+                }
+                retryAfter = http.value(forHTTPHeaderField: "Retry-After").flatMap(Double.init)
+            } catch is CancellationError {
+                return nil
+            } catch {
+                // Transient network or decode error: fall through to the backoff.
+            }
+            guard attempt < maxAttempts else { return nil }
+            let delay = min(max(retryAfter ?? pow(2.0, Double(attempt - 1)), 1), 30)
+            do {
+                try await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
+            } catch {
                 return nil
             }
-            let nodes = try JSONDecoder().decode([TreeNode].self, from: data)
-            return nodes.isEmpty ? nil : nodes
-        } catch {
-            return nil
         }
+        return nil
     }
 
     /// Fetch files from a Hugging Face repo that match the given glob patterns.
