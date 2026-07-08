@@ -513,6 +513,17 @@ struct PluginsView: View {
             title: L("Plugins"),
             subtitle: L("Browse and manage plugins")
         ) {
+            if totalUpdatesAvailable > 0 {
+                HeaderIconButton(
+                    "arrow.up.circle",
+                    isLoading: isUpdatingAll,
+                    help: isUpdatingAll
+                        ? L("Updating...")
+                        : L("Update all plugins")
+                ) {
+                    Task { await updateAllPlugins() }
+                }
+            }
             HeaderIconButton(
                 "arrow.clockwise",
                 isLoading: isRefreshButtonLoading,
