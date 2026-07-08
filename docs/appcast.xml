@@ -3,6 +3,169 @@
   <channel>
     <title>Osaurus</title>
         <item>
+            <title>0.21.11</title>
+            <pubDate>Wed, 08 Jul 2026 17:43:57 +0000</pubDate>
+            <sparkle:channel>release</sparkle:channel>
+            <sparkle:version>0.21.11</sparkle:version>
+            <sparkle:shortVersionString>0.21.11</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
+            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+            <enclosure url="https://github.com/osaurus-ai/osaurus/releases/download/0.21.11/Osaurus-0.21.11.dmg" length="57765124" type="application/octet-stream" sparkle:edSignature="3LEEsHHg0dT873LV9mtYalpK0VvcZLVSDJPV9NuUwvyDoKonGmPRztShbu0bSjNF4QBeesuDDUjdD/Q7xDVXCQ=="/>
+            <description sparkle:format="markdown"><![CDATA[
+## What's Changed
+
+- added timestamps to user message cells (#1939) by @RaajeevChandran
+- Onboarding: recommend Ornith MXFP8 + official OsaurusAI Gemma; drop Gemma QAT/MXFP4 (#1936) by @jjang-ai
+- speed up Hugging Face model downloads (#1937) by @RaajeevChandran
+- Polish release UX details (#1931) by @mimeding
+- Add provider connectivity issue triage (#1895) by @mimeding
+- Add `osaurus bench`: standardized TTFT/prefill/decode benchmark CLI (#1863) by @mimeding
+- Add Agent Channels live proof readiness (#1882) by @mimeding
+- Repin vmlx-swift: default-on hybrid-SSM prefix cache reuse (#1930) by @jjang-ai
+
+## 🚀 Features
+
+- Native web search: pluggable providers + Search settings tab (#1938) by @tpae
+
+## 🐛 Bug Fixes
+
+- Fix DeepSeek thinking-mode tool\_choice HTTP 400 (#1940) by @tpae
+
+## 🧰 Maintenance
+
+- chat UI polish (#1932) by @RaajeevChandran
+
+**Full Changelog**: https://github.com/osaurus-ai/osaurus/compare/0.21.10...0.21.11
+]]></description>
+        </item>
+        <item>
+            <title>0.21.10</title>
+            <pubDate>Tue, 07 Jul 2026 21:42:25 +0000</pubDate>
+            <sparkle:channel>release</sparkle:channel>
+            <sparkle:version>0.21.10</sparkle:version>
+            <sparkle:shortVersionString>0.21.10</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
+            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+            <enclosure url="https://github.com/osaurus-ai/osaurus/releases/download/0.21.10/Osaurus-0.21.10.dmg" length="57291211" type="application/octet-stream" sparkle:edSignature="DUUp9H6QR0Sdg+D3M/mhl9IBtl3H9RGWIVNNjPADMk4wVUNnnyCY2dKgGYPiz+KmymI5Xt5rI8q13WKE5HxECg=="/>
+            <description sparkle:format="markdown"><![CDATA[
+## What's Changed
+
+- Update Simplified Chinese and Traditional Chinese translations (#1909) by @ftzahao
+- added ram banner dismiss button (#1924) by @RaajeevChandran
+
+**Full Changelog**: https://github.com/osaurus-ai/osaurus/compare/0.21.9...0.21.10
+]]></description>
+        </item>
+        <item>
+            <title>0.21.9</title>
+            <pubDate>Tue, 07 Jul 2026 18:18:57 +0000</pubDate>
+            <sparkle:channel>release</sparkle:channel>
+            <sparkle:version>0.21.9</sparkle:version>
+            <sparkle:shortVersionString>0.21.9</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
+            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+            <enclosure url="https://github.com/osaurus-ai/osaurus/releases/download/0.21.9/Osaurus-0.21.9.dmg" length="57278993" type="application/octet-stream" sparkle:edSignature="I3YAwHYJ56QpwuMIrGOOshVRbn9V8I5utnGjKL+TDdPchqs/qqlLtYEwIBhFO4XRNr9xcHLSLBDw0ohzzA/KDw=="/>
+            <description sparkle:format="markdown"><![CDATA[
+## What's Changed
+
+## 🐛 Bug Fixes
+
+- fixed sentry hangs \& crashes (#1920) by @RaajeevChandran
+- Skip proactive model warm-up when the projected load exceeds the hard RAM ceiling (#1918) by @tpae
+
+**Full Changelog**: https://github.com/osaurus-ai/osaurus/compare/0.21.8...0.21.9
+]]></description>
+        </item>
+        <item>
+            <title>0.21.8</title>
+            <pubDate>Tue, 07 Jul 2026 14:06:19 +0000</pubDate>
+            <sparkle:channel>release</sparkle:channel>
+            <sparkle:version>0.21.8</sparkle:version>
+            <sparkle:shortVersionString>0.21.8</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
+            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+            <enclosure url="https://github.com/osaurus-ai/osaurus/releases/download/0.21.8/Osaurus-0.21.8.dmg" length="57283790" type="application/octet-stream" sparkle:edSignature="MRNmmePbyDu4JxJkodDJR5CtJSFS+6yN45GqZt0bg7Quyob4D5HatvUHomnj8CSJf5lRQJsqq5AM9YDqEELIDg=="/>
+            <description sparkle:format="markdown"><![CDATA[
+## What's Changed
+
+- improved ram tight fit banner UI (#1910) by @RaajeevChandran
+- Add RAM tight-fit send gate and make model switches immediate (#1908) by @tpae
+- Add Trendshift badge to README (#1906) by @tpae
+- Run native-MTP cold warmup at model load, not on the first user request (#1903) by @mimeding
+- Show live tool-call progress card during buffered tool generation (#1894) by @jjang-ai
+
+## 🚀 Features
+
+- Proactive model warm-up: prefill-ahead KV caching for faster TTFT (#1897) by @tpae
+
+## 🐛 Bug Fixes
+
+- qwen3.5 agent-loop nudge + JANGTQ\_K unblock + ZAYA tool-arg parser repin (#1907) by @jjang-ai
+- Fix folder file-write bugs: firmlinked-root rejection + new-file diff count (#1900) by @jjang-ai
+- Reflect tool-call failure in the collapsed card title (#1899) by @jjang-ai
+- Fix 0.21.7 Sentry issues: notch display-reconfig hangs and TextKit downgrade crash (#1898) by @tpae
+- improved favorite models UI (#1889) by @RaajeevChandran
+
+## 🧰 Maintenance
+
+- improved chat thread performance (#1891) by @RaajeevChandran
+- Shorten chat-close unload grace from 60s to 15s (#1904) by @tpae
+- Free model memory on chat close, respond to memory pressure, and cap unbounded caches (#1901) by @tpae
+- added per-model API exposure controls with a Models tab in Server settings (#1893) by @tpae
+
+**Full Changelog**: https://github.com/osaurus-ai/osaurus/compare/0.21.7...0.21.8
+]]></description>
+        </item>
+        <item>
+            <title>0.21.7</title>
+            <pubDate>Mon, 06 Jul 2026 15:32:51 +0000</pubDate>
+            <sparkle:channel>release</sparkle:channel>
+            <sparkle:version>0.21.7</sparkle:version>
+            <sparkle:shortVersionString>0.21.7</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
+            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+            <enclosure url="https://github.com/osaurus-ai/osaurus/releases/download/0.21.7/Osaurus-0.21.7.dmg" length="57194018" type="application/octet-stream" sparkle:edSignature="TdEqvkjqwMxteoyhLKeMzHz2pzeenGQofFVmilkaMIQXsAM5doVOJdSMNYpbRd7v4VN7f4obe52HS4YXhDKgBg=="/>
+            <description sparkle:format="markdown"><![CDATA[
+## What's Changed
+
+- Backfill compatibility leaderboard with previously tested models (#1868) by @tpae
+- Ornith 1.0 optimization loop: hybrid-family fix, recorded evals, community compatibility leaderboard (#1864) by @tpae
+- Improve Telegram connection diagnostics (#1856) by @mimeding
+- Cap sandbox plugin tool expansion (#1839) by @mimeding
+- Pin agent run prompt injection contract (#1836) by @mimeding
+- Add agent chat generation settings regression (#1835) by @mimeding
+- Clarify memory ingestion diagnostics (#1834) by @mimeding
+- Add support diagnostics bundle scaffold (#1829) by @mimeding
+- Discover custom external model folders (#1850) by @mimeding
+- updated chinese translations (#1858) by @ftzahao
+
+## 🚀 Features
+
+- added terminal style input history navigation with arrow keys in chat input text field (#1885) by @RaajeevChandran
+- added full text conversation search and in-chat find with Cmd+F (#1883) by @RaajeevChandran
+- added option to expand thinking while streaming (#1871) by @RaajeevChandran
+
+## 🐛 Bug Fixes
+
+- fixed plugin search matching unrelated plugins (#1880) by @RaajeevChandran
+- fixed image attachments being blocked or silently dropped for remote provider model (#1879) by @RaajeevChandran
+- fixed capabilities toggle initial render (#1878) by @RaajeevChandran
+- fixed notch overlay covering the menu bar and improved its hover/ dismiss behavior (#1874) by @RaajeevChandran
+- Repin vmlx-swift to merged main (class-killer #116 + norm #117 + Theme 3) — fixes Metal concurrency crash class (#1866) by @jjang-ai
+- fixed sentry hangs (#1867) by @RaajeevChandran
+- Fix ExternalPlugin shutdown teardown race and recurring app-side hangs (#1862) by @tpae
+- Fix self-scheduled runs not auto-starting; fresh chat per wake (#1855) by @tpae
+
+## 🧰 Maintenance
+
+- Agent DB: sandbox file paths, db\_export, and token-efficiency fixes (#1869) by @tpae
+- Harden MCP surfaces: session recovery, OAuth single-flight, stdio death detection, external-surface enforcement (#1870) by @tpae
+- Polish model catalog cards and promote Ornith Top Picks (#1860) by @tpae
+
+**Full Changelog**: https://github.com/osaurus-ai/osaurus/compare/0.21.6...0.21.7
+]]></description>
+        </item>
+        <item>
             <title>0.21.6</title>
             <pubDate>Sat, 04 Jul 2026 15:49:35 +0000</pubDate>
             <sparkle:channel>release</sparkle:channel>

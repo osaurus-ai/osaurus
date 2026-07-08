@@ -67,6 +67,12 @@ struct PluginsView: View {
     @State private var selectedCategory: String?
     /// Search + category filtered marketplace entries.
     @State private var filteredMarketplaceEntries: [MarketplacePlugin] = []
+    /// Chip counts derived from the search-matched (but not category-filtered)
+    /// marketplace entries, so the "All" total and per-category counts track
+    /// the active query instead of always showing the full catalog. Nil until
+    /// the first filter pass; the chips fall back to the service's catalog
+    /// counts.
+    @State private var marketplaceChipCounts: (total: Int, byCategory: [String: Int])?
     /// Detail navigation for a browsable (not-yet-installed) marketplace entry.
     @State private var selectedMarketplaceEntry: MarketplacePlugin?
 
@@ -397,6 +403,15 @@ struct PluginsView: View {
             return
         }
 
+        // A superseded plugin that isn't installed has no Browse card to land
+        // on (native search replaced it) — send the deeplink to the Search
+        // settings tab instead of dead-ending.
+        if PluginManager.supersededPluginIds.contains(pluginId), !plugin.isInstalled {
+            managementState.pendingPluginDetailId = nil
+            AppDelegate.shared?.showManagementWindow(initialTab: .search)
+            return
+        }
+
         if !installedPlugins.contains(where: { $0.pluginId == pluginId }) {
             selectedTab = .browse
         }
@@ -670,8 +685,13 @@ struct PluginsView: View {
             VStack(alignment: .leading, spacing: 16) {
                 if !claudeMarketplace.categories.isEmpty {
                     MarketplaceCategoryChips(
-                        categories: claudeMarketplace.categories,
-                        totalCount: claudeMarketplace.entries.count,
+                        categories: claudeMarketplace.categories.map { category in
+                            ClaudeMarketplaceCategory(
+                                id: category.id,
+                                count: marketplaceChipCounts?.byCategory[category.id] ?? category.count
+                            )
+                        },
+                        totalCount: marketplaceChipCounts?.total ?? claudeMarketplace.entries.count,
                         selected: $selectedCategory
                     )
                 }
@@ -821,14 +841,19 @@ struct PluginsView: View {
 
     // MARK: - Helpers
 
+    // Matching policy for all three plugin lists: fuzzy subsequence matching
+    // is reserved for short identifier fields (name / id), where it enables
+    // abbreviation-style queries. Prose fields (description, keywords,
+    // author, category) use token / substring matching only — a query's
+    // characters almost always appear in order somewhere in a description,
+    // so subsequence matching there surfaced completely unrelated plugins.
+
     nonisolated private static func pluginMatchesQuery(_ plugin: PluginState, query: String) -> Bool {
         guard !query.isEmpty else { return true }
-        let queryLower = query.lowercased()
-        return [
-            plugin.pluginId.lowercased(),
-            (plugin.name ?? "").lowercased(),
-            (plugin.pluginDescription ?? "").lowercased(),
-        ].contains { SearchService.fuzzyMatch(query: queryLower, in: $0) }
+        let prepared = SearchService.PreparedQuery(query)
+        return SearchService.matches(prepared, in: plugin.pluginId)
+            || SearchService.matches(prepared, in: plugin.name ?? "")
+            || SearchService.matches(prepared, in: plugin.pluginDescription ?? "", allowFuzzy: false)
     }
 
     nonisolated private static func claudePluginMatchesQuery(
@@ -836,22 +861,20 @@ struct PluginsView: View {
         query: String
     ) -> Bool {
         guard !query.isEmpty else { return true }
-        let queryLower = query.lowercased()
-        var candidates: [String] = [
-            plugin.displayName.lowercased(),
-            plugin.pluginId.lowercased(),
-            plugin.sourceLabel.lowercased(),
-        ]
-        if let snap = plugin.snapshot {
-            if let description = snap.description {
-                candidates.append(description.lowercased())
-            }
-            candidates.append(contentsOf: snap.keywords.map { $0.lowercased() })
-            if let authorName = snap.authorName {
-                candidates.append(authorName.lowercased())
-            }
+        let prepared = SearchService.PreparedQuery(query)
+        if SearchService.matches(prepared, in: plugin.displayName)
+            || SearchService.matches(prepared, in: plugin.pluginId)
+            || SearchService.matches(prepared, in: plugin.sourceLabel, allowFuzzy: false)
+        {
+            return true
         }
-        return candidates.contains { SearchService.fuzzyMatch(query: queryLower, in: $0) }
+        guard let snap = plugin.snapshot else { return false }
+        var proseCandidates: [String] = snap.keywords
+        if let description = snap.description { proseCandidates.append(description) }
+        if let authorName = snap.authorName { proseCandidates.append(authorName) }
+        return proseCandidates.contains {
+            SearchService.matches(prepared, in: $0, allowFuzzy: false)
+        }
     }
 
     nonisolated private static func marketplaceEntryMatchesQuery(
@@ -859,13 +882,15 @@ struct PluginsView: View {
         query: String
     ) -> Bool {
         guard !query.isEmpty else { return true }
-        let queryLower = query.lowercased()
-        var candidates: [String] = [entry.name.lowercased()]
-        if let description = entry.description { candidates.append(description.lowercased()) }
-        if let author = entry.author?.name { candidates.append(author.lowercased()) }
-        if let category = entry.category { candidates.append(category.lowercased()) }
-        candidates.append(contentsOf: (entry.keywords ?? []).map { $0.lowercased() })
-        return candidates.contains { SearchService.fuzzyMatch(query: queryLower, in: $0) }
+        let prepared = SearchService.PreparedQuery(query)
+        if SearchService.matches(prepared, in: entry.name) { return true }
+        var proseCandidates: [String] = entry.keywords ?? []
+        if let description = entry.description { proseCandidates.append(description) }
+        if let author = entry.author?.name { proseCandidates.append(author) }
+        if let category = entry.category { proseCandidates.append(category) }
+        return proseCandidates.contains {
+            SearchService.matches(prepared, in: $0, allowFuzzy: false)
+        }
     }
 
     private func updateFilteredLists() async {
@@ -879,9 +904,17 @@ struct PluginsView: View {
         let installedPluginIds = Set(currentClaudePlugins.map { $0.pluginId })
         let marketplaceRepo = claudeMarketplace.repo
 
-        let (browseResult, installedResult, claudeResult, marketplaceResult) =
+        let (browseResult, installedResult, claudeResult, marketplaceResult, chipCounts) =
             await Task.detached(priority: .userInitiated) {
-                let browse = currentPlugins.filter { Self.pluginMatchesQuery($0, query: query) }
+                // Superseded plugins (native search replaced osaurus.search)
+                // are hidden from Browse unless already installed — new users
+                // shouldn't be offered a plugin whose tools never register.
+                // Existing installs keep their card (with the "Built into
+                // Osaurus" banner) so the uninstall path stays reachable.
+                let browse = currentPlugins.filter {
+                    Self.pluginMatchesQuery($0, query: query)
+                        && ($0.isInstalled || !PluginManager.supersededPluginIds.contains($0.pluginId))
+                }
                 let installed =
                     currentPlugins
                     .filter { $0.isInstalled && Self.pluginMatchesQuery($0, query: query) }
@@ -890,26 +923,33 @@ struct PluginsView: View {
                     currentClaudePlugins
                     .filter { Self.claudePluginMatchesQuery($0, query: query) }
                     .sorted { $0.displayName.lowercased() < $1.displayName.lowercased() }
+                // Search-matched marketplace entries BEFORE the category
+                // filter: the grid applies the selected category on top, while
+                // the chips derive their counts from this set so every
+                // category count (and the "All" total) tracks the query.
+                let searchMatched = currentMarketplace.filter { entry in
+                    let isInstalled: Bool = {
+                        guard let marketplaceRepo else { return false }
+                        let id = ClaudePluginInstaller.pluginId(
+                            repo: marketplaceRepo,
+                            pluginName: entry.name
+                        )
+                        return installedPluginIds.contains(id)
+                    }()
+                    return !isInstalled && Self.marketplaceEntryMatchesQuery(entry, query: query)
+                }
                 let marketplace =
-                    currentMarketplace
+                    searchMatched
                     .filter { entry in
-                        let categoryMatches =
-                            category == nil
+                        category == nil
                             || ClaudeMarketplaceService.categoryKey(for: entry) == category
-                        let isInstalled: Bool = {
-                            guard let marketplaceRepo else { return false }
-                            let id = ClaudePluginInstaller.pluginId(
-                                repo: marketplaceRepo,
-                                pluginName: entry.name
-                            )
-                            return installedPluginIds.contains(id)
-                        }()
-                        return categoryMatches
-                            && !isInstalled
-                            && Self.marketplaceEntryMatchesQuery(entry, query: query)
                     }
                     .sorted { $0.name.lowercased() < $1.name.lowercased() }
-                return (browse, installed, claude, marketplace)
+                var byCategory: [String: Int] = [:]
+                for entry in searchMatched {
+                    byCategory[ClaudeMarketplaceService.categoryKey(for: entry), default: 0] += 1
+                }
+                return (browse, installed, claude, marketplace, (searchMatched.count, byCategory))
             }.value
 
         guard !Task.isCancelled else { return }
@@ -918,6 +958,7 @@ struct PluginsView: View {
         installedPlugins = installedResult
         filteredClaudePlugins = claudeResult
         filteredMarketplaceEntries = marketplaceResult
+        marketplaceChipCounts = chipCounts
 
         var permissionCount = 0
         var missingPerms: [String: [SystemPermission]] = [:]
@@ -1205,7 +1246,13 @@ private struct PluginCard: View {
 
     @ViewBuilder
     private var statusBadge: some View {
-        if plugin.hasLoadError {
+        if PluginManager.supersededPluginIds.contains(plugin.pluginId) && plugin.isInstalled {
+            StatusCapsuleBadge(
+                icon: "checkmark.seal.fill",
+                text: L("Built into Osaurus"),
+                color: theme.accentColor
+            )
+        } else if plugin.hasLoadError {
             StatusCapsuleBadge(icon: "exclamationmark.triangle.fill", text: L("Error"), color: .red)
         } else if hasMissingSecrets {
             StatusCapsuleBadge(icon: "key.fill", text: L("Key Required"), color: theme.warningColor)
@@ -1430,15 +1477,19 @@ private struct PluginDetailView: View {
                     heroHeader
                         .padding(.bottom, 8)
 
+                    if isSuperseded {
+                        supersededBanner
+                    }
+
                     if plugin.hasLoadError {
                         errorSection
                     }
 
-                    if hasMissingSecrets && !plugin.hasLoadError {
+                    if hasMissingSecrets && !plugin.hasLoadError && !isSuperseded {
                         secretsBanner
                     }
 
-                    if !missingPermissions.isEmpty && !plugin.hasLoadError {
+                    if !missingPermissions.isEmpty && !plugin.hasLoadError && !isSuperseded {
                         permissionsBanner
                     }
 
@@ -1832,6 +1883,53 @@ private struct PluginDetailView: View {
                         }
                     }
                 }
+            }
+        }
+    }
+
+    // MARK: - Superseded Banner
+
+    private var isSuperseded: Bool {
+        PluginManager.supersededPluginIds.contains(plugin.pluginId) && plugin.isInstalled
+    }
+
+    /// Native search replaced this plugin's tools; point the user at the
+    /// Search settings tab instead of the plugin's own configuration.
+    private var supersededBanner: some View {
+        detailCard {
+            HStack(spacing: 12) {
+                Image(systemName: "checkmark.seal.fill")
+                    .font(.system(size: 20))
+                    .foregroundColor(theme.accentColor)
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Built into Osaurus", bundle: .module)
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundColor(theme.primaryText)
+                    Text(
+                        "Web search is now a native feature. This plugin's tools are no longer loaded — configure providers in Settings → Search. You can uninstall this plugin.",
+                        bundle: .module
+                    )
+                    .font(.system(size: 12))
+                    .foregroundColor(theme.secondaryText)
+                }
+
+                Spacer()
+
+                Button {
+                    AppDelegate.shared?.showManagementWindow(initialTab: .search)
+                } label: {
+                    HStack(spacing: 4) {
+                        Image(systemName: "magnifyingglass").font(.system(size: 10))
+                        Text("Open Search Settings", bundle: .module)
+                            .font(.system(size: 12, weight: .semibold))
+                    }
+                    .foregroundColor(.white)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 8)
+                    .background(RoundedRectangle(cornerRadius: 6).fill(theme.accentColor))
+                }
+                .buttonStyle(PlainButtonStyle())
             }
         }
     }

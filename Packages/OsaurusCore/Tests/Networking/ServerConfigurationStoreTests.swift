@@ -59,6 +59,33 @@ struct ServerConfigurationStoreTests {
         #expect(loaded == config)
     }
 
+    @Test @MainActor func updateAppearanceMode_preservesOtherServerSettings() async throws {
+        let base = URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true)
+        let dir = base.appendingPathComponent(
+            "osaurus-config-tests-\(UUID().uuidString)",
+            isDirectory: true
+        )
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        ServerConfigurationStore.overrideDirectory = dir
+        defer {
+            ServerConfigurationStore.overrideDirectory = nil
+            try? FileManager.default.removeItem(at: dir)
+        }
+
+        var config = ServerConfiguration.default
+        config.port = 5555
+        config.exposeToNetwork = true
+        config.appearanceMode = .dark
+        ServerConfigurationStore.save(config)
+
+        ServerConfigurationStore.updateAppearanceMode(.system)
+        let loaded = try #require(ServerConfigurationStore.load())
+
+        #expect(loaded.appearanceMode == .system)
+        #expect(loaded.port == 5555)
+        #expect(loaded.exposeToNetwork == true)
+    }
+
     /// Decoding pre-migration JSON files that contained now-removed cache*
     /// and gen* fields should succeed silently — unknown keys are ignored
     /// by the decoder. This test simulates that migration by feeding JSON
@@ -192,6 +219,32 @@ struct ServerConfigurationStoreTests {
 
         #expect(decoded.modelLoadRAMSoftThreshold == 0.40)
         #expect(decoded.modelLoadRAMHardThreshold == 1.0)
+    }
+
+    @Test func modelLoadRAMThresholds_repairsPersistedLegacySoftDefault() async throws {
+        // Saves persist the resolved soft threshold, so upgraded installs
+        // carry the old 0.70 default on disk; decode repairs it to the
+        // current default while leaving deliberate custom values alone.
+        let legacyJSON = """
+            {
+                "modelLoadRAMSoftThreshold": 0.70,
+                "modelLoadRAMHardThreshold": 0.90
+            }
+            """
+        let legacy = try JSONDecoder().decode(ServerConfiguration.self, from: Data(legacyJSON.utf8))
+        #expect(
+            legacy.modelLoadRAMSoftThreshold
+                == ServerConfiguration.defaultModelLoadRAMSoftThreshold
+        )
+
+        let customJSON = """
+            {
+                "modelLoadRAMSoftThreshold": 0.65,
+                "modelLoadRAMHardThreshold": 0.90
+            }
+            """
+        let custom = try JSONDecoder().decode(ServerConfiguration.self, from: Data(customJSON.utf8))
+        #expect(custom.modelLoadRAMSoftThreshold == 0.65)
     }
 
     @Test func modelIdleResidencyPolicy_encodesStableJSON() async throws {

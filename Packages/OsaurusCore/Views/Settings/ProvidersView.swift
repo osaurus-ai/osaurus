@@ -630,6 +630,14 @@ private struct ProviderCard: View {
                                     .foregroundColor(theme.secondaryText)
                                     .lineLimit(1)
                                     .truncationMode(.tail)
+                            } else if isConnected, let connectedAt = state?.lastConnectedAt {
+                                Text(
+                                    "Connected \(connectedAt.formatted(date: .abbreviated, time: .shortened))",
+                                    bundle: .module
+                                )
+                                .font(.system(size: 11))
+                                .foregroundColor(theme.secondaryText)
+                                .lineLimit(1)
                             }
                         }
 
@@ -925,6 +933,18 @@ private struct ProviderCard: View {
             .padding(.horizontal, 6)
             .padding(.vertical, 2)
             .background(Capsule().fill(theme.successColor.opacity(0.12)))
+        } else if state?.isAutoReconnecting == true {
+            HStack(spacing: 4) {
+                ProgressView()
+                    .scaleEffect(0.4)
+                    .frame(width: 6, height: 6)
+                Text("Reconnecting…", bundle: .module)
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundColor(theme.accentColor)
+            }
+            .padding(.horizontal, 6)
+            .padding(.vertical, 2)
+            .background(Capsule().fill(theme.accentColor.opacity(0.12)))
         } else if isConnecting {
             HStack(spacing: 4) {
                 ProgressView()

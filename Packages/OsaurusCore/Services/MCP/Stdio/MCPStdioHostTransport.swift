@@ -21,6 +21,7 @@
     import Foundation
     import MCP
     import System
+    import Darwin
 
     /// Spawn-and-pipe wrapper that ends up holding (a) the running `Process`
     /// and (b) the `MCP.StdioTransport` connected to its stdio. Callers
@@ -33,6 +34,15 @@
         private let process: Process
         private let stdinPipe: Pipe
         private let stdoutPipe: Pipe
+        private let stderrPipe: Pipe
+        private let stderrCapture = MCPStdioStderrCapture()
+
+        private var onProcessExitHandler: (@Sendable (Int32) -> Void)?
+
+        /// Called once when the subprocess exits unexpectedly while the runner is alive.
+        public func setProcessExitHandler(_ handler: @escaping @Sendable (Int32) -> Void) {
+            onProcessExitHandler = handler
+        }
 
         /// The transport object the `MCP.Client` connects to. Owned by the
         /// runner so its file descriptors stay alive for the subprocess's
@@ -55,15 +65,14 @@
 
             let stdinPipe = Pipe()
             let stdoutPipe = Pipe()
+            let stderrPipe = Pipe()
             let process = Process()
             process.executableURL = URL(fileURLWithPath: executablePath)
             process.arguments = provider.args
             process.environment = mergedEnv
             process.standardInput = stdinPipe
             process.standardOutput = stdoutPipe
-            // Inherit stderr — MCP servers tend to log diagnostic JSON there
-            // and we surface it in the host logs (which the user can tail).
-            process.standardError = FileHandle.standardError
+            process.standardError = stderrPipe
             if let cwd = provider.workingDirectory, !cwd.isEmpty {
                 process.currentDirectoryURL = URL(
                     fileURLWithPath: Self.expandUserPath(cwd),
@@ -74,6 +83,7 @@
             self.process = process
             self.stdinPipe = stdinPipe
             self.stdoutPipe = stdoutPipe
+            self.stderrPipe = stderrPipe
 
             // Wrap the pipe FDs in `MCP.StdioTransport`. The transport reads
             // from the subprocess's stdout (our `stdoutPipe.fileHandleForReading`)
@@ -181,21 +191,67 @@
             try await MCPChildSpawnLimiter.shared.acquire()
             spawnSlotHeld = true
             do {
+                process.terminationHandler = { [weak self] proc in
+                    let code = proc.terminationStatus
+                    Task { await self?.handleProcessExit(exitCode: code) }
+                }
+                startStderrPump()
                 try process.run()
             } catch {
                 // Release the slot we just reserved — the child never launched.
                 await MCPChildSpawnLimiter.shared.release()
                 spawnSlotHeld = false
+                stopStderrPump()
                 throw MCPStdioTransportError.processSpawnFailed(error.localizedDescription)
             }
         }
 
+        /// Drain stderr into the ring buffer via `readabilityHandler` — the
+        /// callback runs on a dispatch queue, so no thread blocks on the read.
+        private nonisolated func startStderrPump() {
+            let capture = stderrCapture
+            stderrPipe.fileHandleForReading.readabilityHandler = { handle in
+                let data = handle.availableData
+                if data.isEmpty {
+                    // EOF: subprocess closed its stderr (usually exit).
+                    handle.readabilityHandler = nil
+                    return
+                }
+                capture.append(data)
+            }
+        }
+
+        private nonisolated func stopStderrPump() {
+            stderrPipe.fileHandleForReading.readabilityHandler = nil
+        }
+
+        private func handleProcessExit(exitCode: Int32) {
+            stopStderrPump()
+            onProcessExitHandler?(exitCode)
+        }
+
+        public func lastStderrTail() -> String {
+            stderrCapture.tail()
+        }
+
         /// Tear down the subprocess. Idempotent — safe to call from
         /// `disconnect()` paths even if `start()` failed.
-        public func stop() async {
+        public func stop(forceKillGraceSeconds: TimeInterval = 2.0) async {
+            // Intentional teardown: never route through the "unexpected exit"
+            // handler, which would mark the provider as crashed.
+            onProcessExitHandler = nil
+            process.terminationHandler = nil
             await transport.disconnect()
+            stopStderrPump()
             if process.isRunning {
                 process.terminate()
+                let deadline = Date().addingTimeInterval(forceKillGraceSeconds)
+                while process.isRunning && Date() < deadline {
+                    try? await Task.sleep(nanoseconds: 50_000_000)
+                }
+                if process.isRunning {
+                    kill(process.processIdentifier, SIGKILL)
+                }
             }
             if spawnSlotHeld {
                 spawnSlotHeld = false

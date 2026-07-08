@@ -585,6 +585,74 @@ struct AgentTaskStateTests {
         #expect(bias.contains("file_write"))
     }
 
+    /// Reworded planning loop: `todo` re-issued with a DIFFERENT checklist each
+    /// turn (as the qwen3.5 AgentWorld/Ornith models do) evades the
+    /// identical-args counter — every list is a fresh signature — yet makes no
+    /// progress. The same-NAME run detector must still arm at the 3rd call.
+    @Test func planningLoop_rewordedTodoArmsNudgeAtThird() {
+        let state = AgentTaskState()
+        func todo(_ n: Int) -> String {
+            ToolEnvelope.success(tool: "todo", text: "Todo updated: 0/\(n) complete.")
+        }
+        state.record(name: "todo", argsJSON: #"{"markdown":"- [ ] a"}"#, result: todo(5))
+        #expect(state.nextStepBias() == nil, "first todo: no nudge")
+        state.record(name: "todo", argsJSON: #"{"markdown":"- [ ] a\n- [ ] b"}"#, result: todo(4))
+        #expect(state.nextStepBias() == nil, "second (reworded) todo: no nudge")
+        state.record(name: "todo", argsJSON: #"{"markdown":"- [ ] x\n- [ ] y\n- [ ] z"}"#, result: todo(3))
+        let bias = state.nextStepBias() ?? ""
+        #expect(bias.contains("todo"), "third reworded todo: nudge names the tool")
+        #expect(bias.contains("Re-planning is not progress"), "nudge steers toward action")
+    }
+
+    /// False-positive guard: a productive tool (`file_write`) issued 3× to
+    /// DIFFERENT paths is legitimate work, not a planning loop — the same-name
+    /// run detector must NOT fire for it (only the identical-args detector may,
+    /// and only on identical args, which these are not).
+    @Test func planningLoop_productiveMultiTargetNotNudged() {
+        let state = AgentTaskState()
+        state.record(name: "file_write", argsJSON: #"{"path":"a.txt","content":"1"}"#,
+            result: ToolEnvelope.success(tool: "file_write", text: "ok"))
+        state.record(name: "file_write", argsJSON: #"{"path":"b.txt","content":"2"}"#,
+            result: ToolEnvelope.success(tool: "file_write", text: "ok"))
+        state.record(name: "file_write", argsJSON: #"{"path":"c.txt","content":"3"}"#,
+            result: ToolEnvelope.success(tool: "file_write", text: "ok"))
+        #expect(state.nextStepBias() == nil, "multi-file writes are progress, not a loop")
+    }
+
+    /// A productive action between planning calls disarms the run — the model
+    /// that plans, acts, then plans again is progressing, not stuck.
+    @Test func planningLoop_intervalActionDisarms() {
+        let state = AgentTaskState()
+        let todoEnv = ToolEnvelope.success(tool: "todo", text: "Todo updated.")
+        state.record(name: "todo", argsJSON: #"{"markdown":"- [ ] a"}"#, result: todoEnv)
+        state.record(name: "todo", argsJSON: #"{"markdown":"- [ ] b"}"#, result: todoEnv)
+        state.record(name: "file_write", argsJSON: #"{"path":"a.txt","content":"x"}"#,
+            result: ToolEnvelope.success(tool: "file_write", text: "ok"))
+        state.record(name: "todo", argsJSON: #"{"markdown":"- [ ] c"}"#, result: todoEnv)
+        #expect(state.nextStepBias() == nil, "interleaved action resets the planning run")
+    }
+
+    /// False-positive guard for the allowlist scope: a NON-planning tool
+    /// (e.g. `db_insert`, `image`, `web_search`, `capabilities_load`) issued
+    /// 3× in a row with varied args is legitimate consecutive work, NOT a
+    /// stalled plan — the planning detector is an allowlist (`todo` only), so
+    /// it must never arm for these. This also guarantees the planning nudge
+    /// cannot mask/contradict the `image` gen→edit continuation nudge.
+    @Test func planningLoop_consecutiveNonPlanningToolNotNudged() {
+        for tool in ["db_insert", "image", "web_search", "capabilities_load"] {
+            let state = AgentTaskState()
+            state.record(name: tool, argsJSON: #"{"q":"1"}"#,
+                result: ToolEnvelope.success(tool: tool, text: "ok"))
+            state.record(name: tool, argsJSON: #"{"q":"2"}"#,
+                result: ToolEnvelope.success(tool: tool, text: "ok"))
+            state.record(name: tool, argsJSON: #"{"q":"3"}"#,
+                result: ToolEnvelope.success(tool: tool, text: "ok"))
+            #expect(
+                state.nextStepBias() == nil,
+                "3 consecutive \(tool) calls are work, not a planning loop")
+        }
+    }
+
     /// A different call between repeats disarms the pending nudge — the
     /// notice describes the MOST RECENT call only.
     @Test func repeatedCall_differentCallDisarms() {

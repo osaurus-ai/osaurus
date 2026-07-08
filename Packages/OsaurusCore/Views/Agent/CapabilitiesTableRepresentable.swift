@@ -270,8 +270,27 @@ extension CapabilitiesTableRepresentable {
             return false
         }
 
+        /// Bounded retry for reconfigures that land before the table's first
+        /// in-window layout. The Capabilities tab hydrates its enabled-state
+        /// sets synchronously in `onAppear`, which fires before AppKit lays
+        /// the table out — at that instant `visibleRowIndices()` is empty, so
+        /// without a retry the correction is silently dropped and cells keep
+        /// their stale all-off payload until scrolling re-dequeues them.
+        private var pendingReconfigureRetries = 0
+
         private func reconfigureVisibleCells() {
-            for row in visibleRowIndices() {
+            let visible = visibleRowIndices()
+            guard !visible.isEmpty else {
+                if pendingReconfigureRetries < 5 {
+                    pendingReconfigureRetries += 1
+                    DispatchQueue.main.async { [weak self] in
+                        self?.reconfigureVisibleCells()
+                    }
+                }
+                return
+            }
+            pendingReconfigureRetries = 0
+            for row in visible {
                 reconfigureCell(at: row)
             }
         }
@@ -695,6 +714,40 @@ struct GroupHeaderCell: View {
     }
 }
 
+/// Pure-SwiftUI switch for rows hosted inside the capabilities NSTableView.
+/// The stock `SwitchToggleStyle` is backed by an AppKit `NSSwitch`, which
+/// renders as a knobless solid capsule whenever its hosting view is created
+/// before the table's first layout or re-attached by a row diff (group
+/// expand/collapse), and only heals when different content is dequeued into
+/// the cell. Drawing the switch with shapes sidesteps the AppKit control
+/// entirely, so it renders correctly at any point in the cell lifecycle.
+struct CapabilitySwitch: View {
+    let isOn: Bool
+    let tint: Color
+    var disabled: Bool = false
+    let onToggle: () -> Void
+
+    var body: some View {
+        Button(action: { if !disabled { onToggle() } }) {
+            Capsule()
+                .fill(isOn ? tint : Color.primary.opacity(0.2))
+                .frame(width: 26, height: 15)
+                .overlay(alignment: isOn ? .trailing : .leading) {
+                    Circle()
+                        .fill(Color.white)
+                        .frame(width: 11, height: 11)
+                        .padding(2)
+                        .shadow(color: .black.opacity(0.25), radius: 0.5, y: 0.5)
+                }
+                .animation(.easeInOut(duration: 0.15), value: isOn)
+        }
+        .buttonStyle(.plain)
+        .disabled(disabled)
+        .opacity(disabled ? 0.4 : 1.0)
+        .frame(width: 36)
+    }
+}
+
 /// Tool row cell rendered in the NSTableView.
 struct ToolRowCell: View {
     let name: String
@@ -716,12 +769,12 @@ struct ToolRowCell: View {
 
     var body: some View {
         HStack(spacing: 12) {
-            Toggle("", isOn: Binding(get: { enabled }, set: { _ in onToggle() }))
-                .toggleStyle(SwitchToggleStyle(tint: theme.accentColor))
-                .scaleEffect(0.7)
-                .frame(width: 36)
-                .disabled(isAgentRestricted)
-                .opacity(isAgentRestricted ? 0.4 : 1.0)
+            CapabilitySwitch(
+                isOn: enabled,
+                tint: theme.accentColor,
+                disabled: isAgentRestricted,
+                onToggle: onToggle
+            )
 
             VStack(alignment: .leading, spacing: 3) {
                 HStack(spacing: 6) {
@@ -788,10 +841,11 @@ struct SkillRowCell: View {
 
     var body: some View {
         HStack(spacing: 12) {
-            Toggle("", isOn: Binding(get: { enabled }, set: { _ in onToggle() }))
-                .toggleStyle(SwitchToggleStyle(tint: theme.accentColor))
-                .scaleEffect(0.7)
-                .frame(width: 36)
+            CapabilitySwitch(
+                isOn: enabled,
+                tint: theme.accentColor,
+                onToggle: onToggle
+            )
 
             VStack(alignment: .leading, spacing: 3) {
                 HStack(spacing: 6) {

@@ -763,6 +763,10 @@ extension AgentManager {
                 renderChartEnabled: false,
                 speakEnabled: false,
                 searchMemoryEnabled: false,
+                // Native web search stays on for the default agent — free
+                // providers work with zero config and this replaces the
+                // osaurus.search plugin's always-available tools.
+                webSearchEnabled: true,
                 selfSchedulingEnabled: false,
                 computerUseEnabled: false,
                 screenContextEnabled: false
@@ -777,6 +781,7 @@ extension AgentManager {
             renderChartEnabled: agent.settings.renderChartEnabled,
             speakEnabled: agent.settings.speakEnabled,
             searchMemoryEnabled: agent.settings.searchMemoryEnabled,
+            webSearchEnabled: agent.settings.webSearchEnabled,
             selfSchedulingEnabled: agent.settings.selfSchedulingEnabled,
             computerUseEnabled: agent.settings.computerUseEnabled,
             // Screen context is a child of Computer Use: both the per-agent

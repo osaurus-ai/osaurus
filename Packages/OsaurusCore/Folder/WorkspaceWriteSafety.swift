@@ -265,8 +265,12 @@ enum WorkspaceWriteSafety {
         oldLabel: String,
         newLabel: String
     ) -> (text: String, truncated: Bool) {
-        let oldLines = old.components(separatedBy: .newlines)
-        let newLines = new.components(separatedBy: .newlines)
+        // An empty side has zero lines, not one empty line. `"".components(
+        // separatedBy:)` returns `[""]`, which would make creating a new file
+        // (empty `old`) diff as a phantom removal of one empty line — the card
+        // then shows `+1 −1` for a brand-new one-line file instead of `+1 −0`.
+        let oldLines = old.isEmpty ? [] : old.components(separatedBy: .newlines)
+        let newLines = new.isEmpty ? [] : new.components(separatedBy: .newlines)
         var lines: [String] = [
             "--- \(path) (\(oldLabel))",
             "+++ \(path) (\(newLabel))",

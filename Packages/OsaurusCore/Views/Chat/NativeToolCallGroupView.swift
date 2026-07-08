@@ -795,6 +795,11 @@ final class NativeToolCallRowView: NSView {
     private let nameLabel = NSTextField(labelWithString: "")
     private let argPreviewLabel = NSTextField(labelWithString: "")
     private let chevron = NSImageView()
+    /// "Search settings" deep link shown on the collapsed header when a
+    /// `web_search` / `search_and_extract` call failed (including the
+    /// NO_RESULTS envelope) — first-time users otherwise never see the
+    /// remediation hint, which is only in the model-facing result JSON.
+    private let searchSettingsButton = NSButton()
 
     // Expanded content
     private let contentContainer = NSView()
@@ -1012,19 +1017,39 @@ final class NativeToolCallRowView: NSView {
             nameLabel.font = NSFont.monospacedSystemFont(ofSize: 12, weight: .semibold)
             runningTitle = item.call.function.name
             nameLabel.textColor = NSColor(theme.primaryText)
+            searchSettingsButton.isHidden = true
         } else {
             let titleFont = NSFont.systemFont(ofSize: 12, weight: .semibold)
             nameLabel.font = titleFont
+            // A completed call that returned an error keeps its red node but must
+            // not claim success in the title — reflect the failure verdict here.
+            let failed = item.result.map { isErrorResult($0, callId: item.call.id) } ?? false
             let past = ToolDisplayName.friendly(
                 for: item.call.function.name,
                 running: false,
-                arguments: item.call.function.arguments
+                arguments: item.call.function.arguments,
+                failed: failed
             )
             runningTitle = ToolDisplayName.friendly(
                 for: item.call.function.name,
                 running: true,
                 arguments: item.call.function.arguments
             )
+            // A failed search (error or NO_RESULTS envelope) gets a visible
+            // remediation link — the actionable "check Settings → Search"
+            // hint otherwise lives only in the model-facing result JSON.
+            let showSearchLink = failed && ToolDisplayName.isSearchTool(toolName)
+            if showSearchLink {
+                searchSettingsButton.attributedTitle = NSAttributedString(
+                    string: L("Search settings"),
+                    attributes: [
+                        .font: NSFont.systemFont(ofSize: 11, weight: .semibold),
+                        .foregroundColor: NSColor(theme.accentColor),
+                        .underlineStyle: NSUnderlineStyle.single.rawValue,
+                    ]
+                )
+            }
+            searchSettingsButton.isHidden = !showSearchLink
             // Append the recorded duration after an interpunct, dimmed.
             if let elapsed = item.duration {
                 let s = NSMutableAttributedString(
@@ -1577,9 +1602,13 @@ final class NativeToolCallRowView: NSView {
 
         chevron.translatesAutoresizingMaskIntoConstraints = false
         chevron.wantsLayer = true
-        chevron.image = SymbolImageCache.image("chevron.right", accessibilityDescription: nil)
+        chevron.image = SymbolImageCache.image(
+            "chevron.right", accessibilityDescription: nil, pointSize: 10, weight: .semibold)
         chevron.contentTintColor = .tertiaryLabelColor
-        chevron.imageScaling = .scaleProportionallyUpOrDown
+        // Down-only scaling + a fixed symbol point size keep the right and
+        // down chevrons visually the same size; proportional up-scaling into
+        // the square frame inflated whichever glyph was wider.
+        chevron.imageScaling = .scaleProportionallyDown
         chevron.setContentCompressionResistancePriority(.required, for: .horizontal)
         addSubview(chevron)
 
@@ -1618,6 +1647,20 @@ final class NativeToolCallRowView: NSView {
         headerButton.focusRingType = .none
         headerButton.target = self; headerButton.action = #selector(tapped)
         addSubview(headerButton)  // added last → front of Z-order
+
+        // Search-failure deep link. Added AFTER the transparent header
+        // overlay so its clicks aren't swallowed by the expand/collapse
+        // toggle. Hidden by default; `configure` shows it only for failed
+        // search-tool rows in the collapsed state.
+        searchSettingsButton.translatesAutoresizingMaskIntoConstraints = false
+        searchSettingsButton.isBordered = false
+        searchSettingsButton.bezelStyle = .inline
+        searchSettingsButton.focusRingType = .none
+        searchSettingsButton.isHidden = true
+        searchSettingsButton.setContentCompressionResistancePriority(.required, for: .horizontal)
+        searchSettingsButton.target = self
+        searchSettingsButton.action = #selector(openSearchSettings)
+        addSubview(searchSettingsButton)
 
         let rowH = Self.rowHeaderHeight
 
@@ -1669,10 +1712,20 @@ final class NativeToolCallRowView: NSView {
             argPreviewLabel.centerYAnchor.constraint(equalTo: categoryBg.centerYAnchor),
             argPreviewLabel.trailingAnchor.constraint(lessThanOrEqualTo: chevron.leadingAnchor, constant: -8),
 
+            // Never co-visible with argPreviewLabel (that only shows when
+            // expanded; this only when collapsed), so both can anchor off
+            // nameLabel without a layout conflict.
+            searchSettingsButton.leadingAnchor.constraint(equalTo: nameLabel.trailingAnchor, constant: 10),
+            searchSettingsButton.centerYAnchor.constraint(equalTo: categoryBg.centerYAnchor),
+            searchSettingsButton.trailingAnchor.constraint(
+                lessThanOrEqualTo: chevron.leadingAnchor, constant: -8),
+
             chevron.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -12),
             chevron.centerYAnchor.constraint(equalTo: categoryBg.centerYAnchor),
-            chevron.widthAnchor.constraint(equalToConstant: 10),
-            chevron.heightAnchor.constraint(equalToConstant: 10),
+            // 12pt square fits both 10pt chevron orientations (9×11 and 11×9)
+            // without downscaling — a 10pt frame shrank whichever was wider.
+            chevron.widthAnchor.constraint(equalToConstant: 12),
+            chevron.heightAnchor.constraint(equalToConstant: 12),
 
             // Expanded divider aligns with the ARGUMENTS text (right of the rail).
             separatorView.leadingAnchor.constraint(
@@ -1963,17 +2016,21 @@ final class NativeToolCallRowView: NSView {
     }
 
     private func updateChevron(expanded: Bool, animated: Bool) {
-        let angle: CGFloat = expanded ? .pi / 2 : 0
-        if animated {
-            NSAnimationContext.runAnimationGroup { ctx in
-                ctx.duration = 0.2
-                ctx.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
-                chevron.layer?.setAffineTransform(CGAffineTransform(rotationAngle: angle))
-            }
-        } else {
-            chevron.layer?.setAffineTransform(CGAffineTransform(rotationAngle: angle))
-        }
+        // Swap the symbol instead of rotating the layer: table-cell relayout
+        // resets layer transforms, leaving an expanded row with a right-
+        // pointing chevron (mirrors NativeFileDiffView's collapse chevron).
+        // The down state is the right chevron rotated (not chevron.down, a
+        // differently-proportioned glyph) so both states are the same size.
+        chevron.image =
+            expanded
+            ? SymbolImageCache.rotatedDownChevron(pointSize: 10, weight: .semibold)
+            : SymbolImageCache.image(
+                "chevron.right", accessibilityDescription: nil, pointSize: 10, weight: .semibold)
     }
 
     @objc private func tapped() { onToggle?() }
+
+    @objc private func openSearchSettings() {
+        AppDelegate.shared?.showManagementWindow(initialTab: .search)
+    }
 }

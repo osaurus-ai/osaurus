@@ -12,10 +12,11 @@ public enum MCPLocalProviderDiagnostics {
         report: ProviderDiagnosticReport,
         provider: MCPProvider,
         healthSnapshot: MCPProviderHealthSnapshot?,
+        state: MCPProviderState? = nil,
         captureDecision: MCPCapturePolicyDecision = MCPCaptureCapabilityPolicy.defaultScreenshotDecision
     ) -> ProviderDiagnosticReport {
         var rows = report.rows
-        rows.append(healthSnapshotRow(provider: provider, snapshot: healthSnapshot))
+        rows.append(healthSnapshotRow(provider: provider, snapshot: healthSnapshot, state: state))
         rows.append(capturePolicyRow(captureDecision))
         return ProviderDiagnosticReport(
             title: report.title,
@@ -26,7 +27,8 @@ public enum MCPLocalProviderDiagnostics {
 
     public static func healthSnapshotRow(
         provider: MCPProvider,
-        snapshot: MCPProviderHealthSnapshot?
+        snapshot: MCPProviderHealthSnapshot?,
+        state: MCPProviderState? = nil
     ) -> ProviderDiagnosticRow {
         guard let snapshot else {
             return ProviderDiagnosticRow(
@@ -41,14 +43,23 @@ public enum MCPLocalProviderDiagnostics {
         }
 
         let result = snapshot.lastProbe
+        var detail =
+            result.succeeded
+            ? L("\(result.toolCount) tool(s) discovered via \(snapshot.transportSummary).")
+            : result.redactedMessage
+        if let state, state.isConnected != result.succeeded {
+            detail += " "
+            detail +=
+                state.isConnected
+                ? L("Currently connected, but the last probe failed.")
+                : L("The last probe succeeded, but the provider is not connected.")
+        }
         return ProviderDiagnosticRow(
             id: "local-health",
             title: L("Last probe"),
             value: result.reasonCode.rawValue,
             severity: result.succeeded ? .ok : .blocked,
-            detail: result.succeeded
-                ? L("\(result.toolCount) tool(s) discovered via \(snapshot.transportSummary).")
-                : result.redactedMessage,
+            detail: detail,
             action: result.redactedAction
         )
     }

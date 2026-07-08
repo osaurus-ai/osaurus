@@ -1,0 +1,15 @@
+{
+  "id": "capability_search.web-search-natural",
+  "domain": "capability_search",
+  "label": "capability search • web search (natural language)",
+  "query": "look up the latest news about swift 6 online",
+  "fixtures": {},
+  "expect": {
+    "capabilitySearch": {
+      "expectedTools": {
+        "anyOf": ["web_search", "search_and_extract"],
+        "minMatches": 1
+      }
+    }
+  }
+}

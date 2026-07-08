@@ -180,7 +180,7 @@ struct ContentBlockDisplayTests {
         )
 
         let userText = blocks.compactMap { block -> String? in
-            guard case let .userMessage(text, _) = block.kind else { return nil }
+            guard case let .userMessage(text, _, _, _) = block.kind else { return nil }
             return text
         }.first
 

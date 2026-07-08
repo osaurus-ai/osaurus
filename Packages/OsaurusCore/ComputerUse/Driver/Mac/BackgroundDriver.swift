@@ -90,6 +90,11 @@ private enum BundleClass {
         "org.chromium.Chromium",
     ]
 
+    /// Prune threshold: pids recycle over time, so entries for dead
+    /// processes are both stale (a reused pid could classify wrongly) and a
+    /// slow leak. When the cache crosses this size, drop dead-pid entries.
+    private static let pruneThreshold = 64
+
     static func classify(pid: pid_t) -> AppClass {
         lock.lock()
         if let cached = cache[pid] {
@@ -101,6 +106,11 @@ private enum BundleClass {
         let result = computeClass(for: pid)
 
         lock.lock()
+        if cache.count >= pruneThreshold {
+            // `NSRunningApplication(processIdentifier:)` returns nil for dead
+            // pids; that also evicts any entry a recycled pid would have hit.
+            cache = cache.filter { NSRunningApplication(processIdentifier: $0.key) != nil }
+        }
         cache[pid] = result
         lock.unlock()
         return result

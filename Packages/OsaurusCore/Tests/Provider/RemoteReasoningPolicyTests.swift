@@ -139,6 +139,79 @@ struct RemoteReasoningPolicyTests {
         #expect(controls.thinking == nil)
     }
 
+    // MARK: - sanitizedToolChoice (DeepSeek thinking-mode contract)
+
+    private static let namedChoice = ToolChoiceOption.function(
+        ToolChoiceOption.FunctionName(
+            type: "function",
+            function: ToolChoiceOption.Name(name: "file_read")
+        )
+    )
+
+    @Test func sanitizedToolChoice_deepSeekThinking_downgradesForcedChoices() {
+        let policy = RemoteReasoningPolicy.resolve(
+            providerType: .openaiLegacy,
+            host: "api.deepseek.com",
+            model: "deepseek-v4-pro"
+        )
+        // Thinking active on the wire (reasoning_effort high/max) or by
+        // default (no thinking object at all): forced choices become auto.
+        for thinking: ThinkingConfig? in [nil, ThinkingConfig(type: "enabled")] {
+            #expect(policy.sanitizedToolChoice(.required, thinking: thinking) == .auto)
+            #expect(policy.sanitizedToolChoice(Self.namedChoice, thinking: thinking) == .auto)
+            #expect(policy.sanitizedToolChoice(.auto, thinking: thinking) == .auto)
+            #expect(policy.sanitizedToolChoice(ToolChoiceOption.none, thinking: thinking) == ToolChoiceOption.none)
+            #expect(policy.sanitizedToolChoice(nil, thinking: thinking) == nil)
+        }
+    }
+
+    @Test func sanitizedToolChoice_deepSeekInstruct_preservesForcedChoices() {
+        let policy = RemoteReasoningPolicy.resolve(
+            providerType: .openaiLegacy,
+            host: "api.deepseek.com",
+            model: "deepseek-v4-pro"
+        )
+        let disabled = ThinkingConfig(type: "disabled")
+        #expect(policy.sanitizedToolChoice(.required, thinking: disabled) == .required)
+        #expect(policy.sanitizedToolChoice(Self.namedChoice, thinking: disabled) == Self.namedChoice)
+    }
+
+    @Test func sanitizedToolChoice_deepSeekModelOnAggregatorHost_downgrades() {
+        // OpenRouter/AtlasCloud serve DeepSeek models under a non-deepseek
+        // host; thinking cannot be disabled there, so forced choices would
+        // 400 at the upstream just the same.
+        let policy = RemoteReasoningPolicy.resolve(
+            providerType: .openaiLegacy,
+            host: "openrouter.ai",
+            model: "deepseek/deepseek-v4-pro"
+        )
+        #expect(policy.sanitizedToolChoice(.required, thinking: nil) == .auto)
+        #expect(policy.sanitizedToolChoice(Self.namedChoice, thinking: nil) == .auto)
+    }
+
+    @Test func sanitizedToolChoice_nonDeepSeekHosts_passThrough() {
+        for host in ["api.openai.com", "api.mistral.ai", "api.minimax.io", "api.x.ai"] {
+            let policy = RemoteReasoningPolicy.resolve(
+                providerType: .openaiLegacy,
+                host: host,
+                model: "some-model"
+            )
+            #expect(policy.sanitizedToolChoice(.required, thinking: nil) == .required)
+            #expect(policy.sanitizedToolChoice(Self.namedChoice, thinking: nil) == Self.namedChoice)
+        }
+    }
+
+    @Test func sanitizedToolChoice_nonOpenAICompatProviders_passThrough() {
+        for providerType: RemoteProviderType in [.anthropic, .openResponses, .openAICodex, .gemini, .osaurus, .osaurusRouter] {
+            let policy = RemoteReasoningPolicy.resolve(
+                providerType: providerType,
+                host: "api.deepseek.com",
+                model: "deepseek-v4-pro"
+            )
+            #expect(policy.sanitizedToolChoice(.required, thinking: nil) == .required)
+        }
+    }
+
     @Test func allowsReasoningObject_matchesLegacyRule() {
         #expect(
             RemoteReasoningPolicy.resolve(providerType: .openaiLegacy, host: "openrouter.ai", model: "x")

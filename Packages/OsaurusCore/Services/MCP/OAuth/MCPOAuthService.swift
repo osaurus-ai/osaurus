@@ -87,6 +87,9 @@ public enum MCPOAuthService {
     /// gives a hint. `offline_access` is requested so the AS issues a refresh token.
     public static let defaultScopes: [String] = ["offline_access"]
 
+    /// Maximum time to wait for the browser OAuth callback on the loopback listener.
+    public static let signInCallbackTimeout: TimeInterval = 300
+
     /// Run the full OAuth sign-in flow for `provider`.
     ///
     /// - Parameters:
@@ -220,10 +223,23 @@ public enum MCPOAuthService {
             throw MCPOAuthError.browserOpenFailed
         }
 
-        // 6. Wait for callback.
+        // 6. Wait for callback (bounded so a closed browser tab can't hang forever).
         let callback: OAuthCallbackResult
         do {
-            callback = try await server.waitForCallback()
+            callback = try await withThrowingTaskGroup(of: OAuthCallbackResult.self) { group in
+                group.addTask { try await server.waitForCallback() }
+                group.addTask {
+                    try await Task.sleep(
+                        nanoseconds: UInt64(Self.signInCallbackTimeout * 1_000_000_000)
+                    )
+                    throw OAuthLoopbackError.callbackTimeout
+                }
+                guard let result = try await group.next() else {
+                    throw OAuthLoopbackError.callbackTimeout
+                }
+                group.cancelAll()
+                return result
+            }
         } catch let error as OAuthLoopbackError {
             throw MCPOAuthError.loopback(error)
         }
@@ -265,10 +281,27 @@ public enum MCPOAuthService {
 
     /// Refresh OAuth tokens using the cached configuration. Saves the result to Keychain
     /// when `persist` is true. Throws if the provider has no refresh_token.
+    ///
+    /// Concurrent refresh calls for the same provider are coalesced via
+    /// `MCPOAuthRefreshGate` so rotating refresh tokens aren't invalidated
+    /// by parallel tool calls.
     public static func refresh(
         provider: MCPProvider,
         tokens: MCPOAuthTokens,
         persist: Bool = true
+    ) async throws -> MCPOAuthTokens {
+        try await MCPOAuthRefreshGate.shared.refresh(
+            provider: provider,
+            tokens: tokens,
+            persist: persist
+        )
+    }
+
+    /// Single-flight refresh implementation. Call through `refresh(...)` or the gate.
+    static func performRefresh(
+        provider: MCPProvider,
+        tokens: MCPOAuthTokens,
+        persist: Bool
     ) async throws -> MCPOAuthTokens {
         guard let oauth = provider.oauth else {
             throw MCPOAuthError.missingClientId
@@ -315,6 +348,15 @@ public enum MCPOAuthService {
             MCPProviderKeychain.saveOAuthTokens(refreshed, for: provider.id)
         }
         return refreshed
+    }
+
+    /// True when a token-endpoint failure means cached credentials are permanently
+    /// invalid and the user must sign in again (`invalid_grant`, `invalid_token`).
+    public static func isPermanentAuthFailure(_ error: Error) -> Bool {
+        guard case MCPOAuthError.tokenRequestFailed(let code, let body) = error else { return false }
+        guard code == 400 || code == 401 else { return false }
+        let lowered = body?.lowercased() ?? ""
+        return lowered.contains("invalid_grant") || lowered.contains("invalid_token")
     }
 
     // MARK: - Internal helpers (also used by tests)

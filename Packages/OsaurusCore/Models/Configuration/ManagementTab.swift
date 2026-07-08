@@ -41,7 +41,7 @@ public enum ManagementSection: String, CaseIterable, Identifiable, Sendable {
         case .models: [.models, .providers, .imageGeneration]
         case .agentsAutomation:
             [
-                .agents, .agentChannels, .memory, .tools, .skills, .commands, .plugins,
+                .agents, .agentChannels, .memory, .tools, .search, .skills, .commands, .plugins,
                 .schedules, .watchers, .sandbox, .computerUse,
             ]
         case .server: [.server]
@@ -66,6 +66,7 @@ public enum ManagementTab: String, CaseIterable, Identifiable, Sendable {
     case agentChannels
     case memory
     case tools
+    case search
     case skills
     case commands
     case plugins
@@ -93,7 +94,7 @@ public enum ManagementTab: String, CaseIterable, Identifiable, Sendable {
         switch self {
         case .settings, .chat, .voice, .themes: .general
         case .models, .providers, .imageGeneration: .models
-        case .agents, .agentChannels, .memory, .tools, .skills, .commands, .plugins,
+        case .agents, .agentChannels, .memory, .tools, .search, .skills, .commands, .plugins,
             .schedules, .watchers, .sandbox, .computerUse:
             .agentsAutomation
         case .server: .server
@@ -122,6 +123,7 @@ public enum ManagementTab: String, CaseIterable, Identifiable, Sendable {
         case .plugins: "puzzlepiece.extension.fill"
         case .sandbox: "shippingbox.fill"
         case .tools: "wrench.and.screwdriver.fill"
+        case .search: "magnifyingglass"
         case .skills: "sparkles"
         case .commands: "command"
         case .memory: "brain.head.profile.fill"
@@ -152,6 +154,7 @@ public enum ManagementTab: String, CaseIterable, Identifiable, Sendable {
         case .plugins: L("Plugins")
         case .sandbox: L("Sandbox")
         case .tools: L("Tools")
+        case .search: L("Search")
         case .skills: L("Skills")
         case .commands: L("Commands")
         case .memory: L("Memory")

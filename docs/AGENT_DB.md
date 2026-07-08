@@ -64,9 +64,9 @@ Every table the agent creates via `db_create_table` is augmented with three rese
 | `_updated_at`  | `TEXT` ISO  | host         | Refreshed on `db_update` / `db_upsert` writes. |
 | `_deleted_at`  | `TEXT` ISO  | host         | `NULL` for live rows; ISO timestamp once soft-deleted. |
 
-`db_delete` is a **soft delete**: it stamps `_deleted_at` rather than removing the row. `db_restore` clears the stamp. `db_query` filters out rows with a non-null `_deleted_at` by default — pass `includeDeleted: true` to see them.
+`db_delete` is a **soft delete**: it stamps `_deleted_at` rather than removing the row. `db_restore` clears the stamp. Typed mutation tools (`db_update`, etc.) hide soft-deleted rows by default. **`db_query` runs your SQL as written** — add `_deleted_at IS NULL` to the WHERE when you want to exclude tombstones.
 
-The Data tab's `Active` / `Deleted` / `All` segmented control (in [`AgentDBTabViews.swift`](../Packages/OsaurusCore/Views/Agent/AgentDBTabViews.swift)) maps directly to that flag: `Active` hides tombstones (the agent's default), `Deleted` only shows tombstones, `All` shows both with the soft-deleted rows dimmed.
+The Data tab's `Active` / `Deleted` / `All` segmented control (in [`AgentDBTabViews.swift`](../Packages/OsaurusCore/Views/Agent/AgentDBTabViews.swift)) maps to that filter in the UI: `Active` hides tombstones, `Deleted` only shows tombstones, `All` shows both with the soft-deleted rows dimmed.
 
 There is **no hard-delete tool**. If you need to actually purge a row, do it from the host (the migrator or a developer console) — the model can't.
 
@@ -91,7 +91,8 @@ All `db_*` tools live in [`Tools/Database/DatabaseTools.swift`](../Packages/Osau
 | ------------ | --------------------------------------------------------------------- |
 | `db_insert`  | Insert one row (`row`) **or many** (`rows[]`) in a single call.       |
 | `db_upsert`  | Insert-or-update keyed by an explicit conflict column set; also accepts `rows[]`. |
-| `db_import`  | Host-mediated bulk load from a working-folder file (CSV/TSV/JSON/JSONL). See [Bulk Ingestion at Scale](#bulk-ingestion-at-scale). |
+| `db_import`  | Host-mediated bulk load from a sandbox-workspace or working-folder file (CSV/TSV/JSON/JSONL). See [Bulk Ingestion at Scale](#bulk-ingestion-at-scale). |
+| `db_export`  | Host-mediated bulk export: run a read-only SELECT and write CSV/JSON/JSONL to a sandbox-workspace or working-folder file. Mirror of `db_import`. |
 | `db_update`  | Update rows matching a typed `where` clause.                          |
 | `db_delete`  | **Soft-delete** — stamp `_deleted_at`. Restorable via `db_restore`.   |
 | `db_restore` | Clear `_deleted_at` to bring a row back into the live set.            |
@@ -101,7 +102,7 @@ All `db_*` tools live in [`Tools/Database/DatabaseTools.swift`](../Packages/Osau
 | Tool             | Role                                                                                      |
 | ---------------- | ----------------------------------------------------------------------------------------- |
 | `db_query`       | Run a read-only SELECT. Accepts `limit` / `offset` for paging; rows are capped (hard max **5000**) and a `truncated` flag flips when the cap or an oversized payload kicks in. |
-| `db_execute`     | First-class SQL, including **multi-statement** transform scripts (`INSERT … SELECT`, CTEs, window functions) inside one transaction. Restricted by host policy (see below); reach for the typed tools first. |
+| `db_execute`     | First-class SQL, including **multi-statement** transform scripts (`INSERT … SELECT`, CTEs, window functions) inside one transaction. Pass `path` instead of `sql` to run a `.sql` script from disk. Restricted by host policy (see below); reach for the typed tools first. |
 | `db_define_view` | Save a parameterised SELECT under a name. Surfaces in the Views tab.                       |
 | `db_run_view`    | Execute a saved view with arguments.                                                       |
 | `db_list_views`  | Enumerate saved views.                                                                     |
@@ -124,13 +125,13 @@ The agent DB's first wall used to be data movement: a model that needed to load 
 
 ### Three ways to load data
 
-1. **`db_import(table, path, …)` — host-mediated file load.** When the data already lives in a file in the agent's working folder, this is the right tool. The host resolves the path (same root as `file_read`, via [`FolderToolManager`](../Packages/OsaurusCore/Services/Folder/FolderToolManager.swift)), reads and parses it (CSV/TSV/JSON/JSONL, auto-detected), creates the table from the file's columns when needed, and bulk-loads every row — in **one** tool call, with **zero** row bytes in the model context. Pass `keyColumns` to upsert instead of append. Parsing and schema resolution are shared with the UI importer through [`AgentImportRunner`](../Packages/OsaurusCore/Tools/Database/AgentImportRunner.swift).
+1. **`db_import(table, path, …)` — host-mediated file load.** When the data already lives in a file in the agent's sandbox workspace (`/workspace/...`) or host working folder, this is the right tool. The host resolves the path (sandbox agent dir or [`FolderToolManager`](../Packages/OsaurusCore/Services/Folder/FolderToolManager.swift) root), reads and parses it (CSV/TSV/JSON/JSONL, auto-detected), creates the table from the file's columns when needed, and bulk-loads every row — in **one** tool call, with **zero** row bytes in the model context. Pass `keyColumns` to upsert instead of append. Parsing and schema resolution are shared with the UI importer through [`AgentImportRunner`](../Packages/OsaurusCore/Tools/Database/AgentImportRunner.swift).
 2. **`db_insert` / `db_upsert` with `rows[]` — in-context bulk write.** When the rows are something the model *computed* (not a file), it can hand the whole batch over in a single call instead of looping. Backed by [`AgentDatabase.insertMany` / `upsertMany`](../Packages/OsaurusCore/Storage/AgentDatabase.swift), which chunk the write and run it inside one transaction.
 3. **`db_execute` multi-statement transforms — don't move the data at all.** For aggregation/derivation, the most efficient path is to compute *in SQL* (`INSERT INTO totals SELECT … GROUP BY …`) rather than pulling rows into context. The whole script runs in one transaction.
 
 ### Reading back without blowing the budget
 
-`db_query` takes `limit` and `offset` so the model can page through a large result set instead of slurping it. Results are capped at a hard maximum of **5000** rows, and the tool independently trims the response when the encoded JSON would be too large — in both cases the result's `truncated` flag is set and a paging hint is returned so the model knows to ask for the next page.
+`db_query` takes `limit` and `offset` so the model can page through a large result set instead of slurping it. Results are capped at a hard maximum of **5000** rows, and the tool independently trims the response when the encoded JSON would be too large — in both cases the result's `truncated` flag is set and a paging hint is returned so the model knows to ask for the next page. For large extracts to a file, use **`db_export(sql, path)`** instead — the host streams rows to CSV/JSON/JSONL on disk and returns a summary only.
 
 ### The data-movement budget refund
 

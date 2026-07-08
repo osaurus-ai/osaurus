@@ -572,8 +572,26 @@ public struct SchemaValidator {
             else { continue }
             out[declared] = out.removeValue(forKey: key)
         }
+        // Synonym rescue: local models routinely emit `filename` /
+        // `file_path` for a schema declaring `path` (observed live: a
+        // sandbox_write_file rejected with "Missing required property:
+        // path", forcing a full re-stream of the file). Same guards as
+        // the fold rescue — the alias must not itself be declared, the
+        // declared key must be absent from the arguments.
+        for (declared, aliases) in Self.keySynonyms {
+            guard propsDict[declared] != nil, out[declared] == nil else { continue }
+            for alias in aliases where propsDict[alias] == nil && out[alias] != nil {
+                out[declared] = out.removeValue(forKey: alias)
+                break
+            }
+        }
         return out
     }
+
+    /// Declared key → alias spellings models commonly substitute for it.
+    static let keySynonyms: [String: [String]] = [
+        "path": ["filename", "file_name", "filepath", "file_path", "file"]
+    ]
 
     /// Alphanumeric fold used for key-spelling rescue: lowercase, keep
     /// only letters and digits (drops `_`, `-`, and other separators).

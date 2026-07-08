@@ -32,6 +32,8 @@ public enum WhatsNewAction: Hashable, Sendable {
     case openImageGeneration
     /// Open Settings (where the Subagents / Spawn card lives).
     case openSubagentSettings
+    /// Open Settings → Search (native web search providers).
+    case openSearchSettings
 }
 
 public struct WhatsNewPage: Identifiable, Hashable, Sendable {
@@ -90,6 +92,7 @@ public enum WhatsNewContent {
         osaurusCloud_0_20_1,
         computerUse_0_20_7,
         imageAndSpawn_0_21_0,
+        nativeSearch_0_21_11,
     ]
 
     /// First-launch announcement for the Privacy Filter feature.
@@ -230,6 +233,33 @@ public enum WhatsNewContent {
                 systemImage: "memorychip",
                 actionLabel: "Open Subagent settings",
                 action: .openSubagentSettings
+            ),
+        ]
+    )
+
+    /// First-launch announcement for native web search in 0.21.11.
+    /// Two pages: search now works out of the box (superseding the
+    /// osaurus.search plugin, whose API keys were migrated automatically),
+    /// and the new Search settings tab for connecting keyed providers.
+    /// The final CTA deep-links to Settings → Search.
+    private static let nativeSearch_0_21_11 = WhatsNewRelease(
+        version: "0.21.11",
+        pages: [
+            WhatsNewPage(
+                id: "native-search-0.21.11:summary",
+                title: "Web search is now built in",
+                description:
+                    "Your agents can search the web out of the box — no plugin, no API key required. Free sources are on by default, and if you used the search plugin before, your API keys were carried over automatically.",
+                systemImage: "magnifyingglass"
+            ),
+            WhatsNewPage(
+                id: "native-search-0.21.11:providers",
+                title: "Bring your own provider",
+                description:
+                    "For faster, higher-quality results, connect a provider like Tavily or Exa in the new Search tab — most have free tiers. Providers are tried in your order, with free sources as backup, and you can test any query right from settings.",
+                systemImage: "antenna.radiowaves.left.and.right",
+                actionLabel: "Open Search settings",
+                action: .openSearchSettings
             ),
         ]
     )

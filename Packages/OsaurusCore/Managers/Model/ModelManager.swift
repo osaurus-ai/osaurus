@@ -682,27 +682,27 @@ extension ModelManager {
             id: "OsaurusAI/LFM2.5-8B-A1B-MXFP8",
             description:
                 "Liquid AI LFM2.5 8B hybrid MoE (~1B active), MXFP8 — high-precision, fast Apple Silicon chat. 128K context.",
-            isTopSuggestion: true,
             modelType: "lfm2_moe",
             releasedAt: date("2026-05-29"),
             useCase: .general
         ),
 
-        // MARK: Gemma 4 — multimodal (onboarding default spine)
+        // MARK: Gemma 4 — multimodal
         //
-        // The dense Gemma 4 QAT line (E2B/E4B/12B/31B, `qat-MXFP4`) is the
-        // onboarding auto-default spine: quantization-aware training beats
-        // post-training quant at equal bit-width, and these are the newest
-        // Gemma builds. `ConfigureAIState.recommendedLocalPick` auto-selects
-        // the largest *dense* QAT model that comfortably fits. The 26B-A4B
-        // QAT MoE below stays a Top Pick but is intentionally excluded from
-        // the auto-default (its footprint is the 36%-bounce risk), and the
-        // E-series QAT entries are excluded from the auto-default until the
-        // 8-bit-vs-QAT-4bit retention A/B clears (small tiers stay on the
-        // 8-bit builds). Top-Pick promotion of the QAT line is gated on the
-        // required AgentLoop tool-use proof for the active Gemma 4 QAT
-        // checkpoint (load, executed tool, tool-result continuation, clean
-        // visible text, no marker leakage, cache telemetry).
+        // Onboarding recommendation spine (2026-07-08, GUI-verified in the
+        // dev-built app — every model below loads, calls tools, reasons with
+        // thinking on, and leaks no markup into visible content):
+        //   • Larger RAM  → Ornith 1.0 MXFP8 (9B / 35B, below).
+        //   • Smaller RAM → official OsaurusAI Gemma 4 at the highest non-QAT,
+        //                    non-MXFP4 precision that exists: `12B-it-MXFP8`
+        //                    (the only MXFP8 Gemma the org ships) and the
+        //                    `E4B/E2B-it-8bit` retention builds (no E-series
+        //                    MXFP8 exists on the HF org).
+        // A *recommended* Gemma build must never be `qat` or plain `MXFP4`, so
+        // the 5 Gemma `qat-MXFP4` builds (E2B/E4B/12B/31B/26B-A4B) stay in the
+        // catalog but are not Top Picks. Qwen 3.6 (incl. MXFP8-MTP), Nemotron-3
+        // and LFM2.5 also remain catalog-only for now: they are installable and
+        // selectable, just not part of the auto-default recommendation spine.
 
         curated(
             id: "OsaurusAI/gemma-4-12B-it-MXFP8",
@@ -717,8 +717,7 @@ extension ModelManager {
         curated(
             id: "OsaurusAI/gemma-4-E2B-it-qat-MXFP4",
             description:
-                "Gemma 4 E2B QAT — quantization-aware 4-bit. Smallest multimodal floor; better quality-per-byte than post-training 4-bit. Runs on any Mac. 128K context.",
-            isTopSuggestion: true,
+                "Gemma 4 E2B QAT — quantization-aware 4-bit. Smallest multimodal floor. Catalog build; not an onboarding recommendation (QAT/MXFP4 excluded). 128K context.",
             modelType: "gemma4",
             releasedAt: date("2026-06-09"),
             useCase: .smallest
@@ -727,8 +726,7 @@ extension ModelManager {
         curated(
             id: "OsaurusAI/gemma-4-E4B-it-qat-MXFP4",
             description:
-                "Gemma 4 E4B QAT — quantization-aware 4-bit multimodal edge model. Images, video, and audio. 128K context.",
-            isTopSuggestion: true,
+                "Gemma 4 E4B QAT — quantization-aware 4-bit multimodal edge model. Catalog build; not an onboarding recommendation (QAT/MXFP4 excluded). 128K context.",
             modelType: "gemma4",
             releasedAt: date("2026-06-09"),
             useCase: .vision
@@ -737,8 +735,7 @@ extension ModelManager {
         curated(
             id: "OsaurusAI/gemma-4-12B-it-qat-MXFP4",
             description:
-                "Gemma 4 12B dense QAT — quantization-aware 4-bit. The mainstream multimodal default for 16–24 GB Macs. 128K context.",
-            isTopSuggestion: true,
+                "Gemma 4 12B dense QAT — quantization-aware 4-bit. Catalog build; not an onboarding recommendation (QAT/MXFP4 excluded — prefer the 12B-it-MXFP8 build). 128K context.",
             modelType: "gemma4",
             releasedAt: date("2026-06-09"),
             useCase: .vision
@@ -747,8 +744,7 @@ extension ModelManager {
         curated(
             id: "OsaurusAI/gemma-4-31B-it-qat-MXFP4",
             description:
-                "Gemma 4 31B dense QAT — quantization-aware 4-bit. Top-tier multimodal quality for 32 GB+ Macs. 128K context.",
-            isTopSuggestion: true,
+                "Gemma 4 31B dense QAT — quantization-aware 4-bit. Catalog build; not an onboarding recommendation (QAT/MXFP4 excluded). 128K context.",
             modelType: "gemma4",
             releasedAt: date("2026-06-09"),
             useCase: .vision
@@ -757,8 +753,7 @@ extension ModelManager {
         curated(
             id: "OsaurusAI/gemma-4-26B-A4B-it-qat-MXFP4",
             description:
-                "Gemma 4 26B-A4B QAT — quantization-aware 4-bit MoE (~4B active) vision model. Selectable Top Pick; excluded from the low-RAM auto-default. 128K context.",
-            isTopSuggestion: true,
+                "Gemma 4 26B-A4B QAT — quantization-aware 4-bit MoE (~4B active) vision model. Catalog build; not an onboarding recommendation (QAT/MXFP4 excluded). 128K context.",
             modelType: "gemma4",
             releasedAt: date("2026-06-09"),
             useCase: .vision
@@ -799,7 +794,6 @@ extension ModelManager {
             id: "OsaurusAI/Qwen3.6-27B-MXFP4",
             description:
                 "Qwen 3.6 27B dense vision model. MXFP4 — best quality per byte. The org's most-downloaded model. 256K context.",
-            isTopSuggestion: true,
             modelType: "qwen3_5",
             releasedAt: date("2026-05-20"),
             useCase: .vision
@@ -809,7 +803,6 @@ extension ModelManager {
             id: "OsaurusAI/Qwen3.6-27B-MXFP8-MTP",
             description:
                 "Qwen 3.6 27B dense vision model. MXFP8 + multi-token-prediction speculative decode — high precision, fast. 256K context.",
-            isTopSuggestion: true,
             modelType: "qwen3_5",
             releasedAt: date("2026-05-20"),
             useCase: .vision
@@ -819,7 +812,6 @@ extension ModelManager {
             id: "OsaurusAI/Qwen3.6-35B-A3B-MXFP8-MTP",
             description:
                 "Qwen 3.6 35B MoE (~3B active) vision model. MXFP8 + multi-token-prediction speculative decode — the precision-first sibling of the MXFP4 build. 256K context.",
-            isTopSuggestion: true,
             modelType: "qwen3_5_moe",
             releasedAt: date("2026-05-20"),
             useCase: .vision
@@ -834,6 +826,36 @@ extension ModelManager {
                 "Qwen 3.6 35B MoE vision model. MXFP4 quantization — best quality per byte. 256K context.",
             modelType: "qwen3_5_moe",
             releasedAt: date("2026-04-16"),
+            useCase: .vision
+        ),
+
+        // MARK: Ornith 1.0 (DeepReinforce, Qwen 3.5 hybrid backbone)
+        //
+        // Vision-language agentic-coding models on the Qwen 3.5 hybrid
+        // architecture (Gated-DeltaNet linear attention + full attention),
+        // so they reuse the existing `qwen3_5` / `qwen3_5_moe` runtime
+        // classes. MXFP8 is the curated Top Pick representative per family
+        // (precision-first, matching the Qwen 3.6 convention); the MXFP4 and
+        // JANG_4M siblings stay auto-fetched and collapse into each family
+        // card's Versions picker.
+
+        curated(
+            id: "OsaurusAI/Ornith-1.0-9B-MXFP8",
+            description:
+                "Ornith 1.0 9B vision-language model, tuned for agentic coding on a Qwen 3.5 hybrid backbone. MXFP8 — near-lossless precision. 256K context.",
+            isTopSuggestion: true,
+            modelType: "qwen3_5",
+            releasedAt: date("2026-06-26"),
+            useCase: .vision
+        ),
+
+        curated(
+            id: "OsaurusAI/Ornith-1.0-35B-MXFP8",
+            description:
+                "Ornith 1.0 35B vision-language MoE, state-of-the-art open agentic coding for its size. MXFP8 — near-lossless precision. 256K context.",
+            isTopSuggestion: true,
+            modelType: "qwen3_5_moe",
+            releasedAt: date("2026-06-26"),
             useCase: .vision
         ),
 
@@ -906,7 +928,6 @@ extension ModelManager {
             id: "OsaurusAI/Nemotron-3-Nano-Omni-30B-A3B-MXFP4",
             description:
                 "NVIDIA Nemotron-3 30B Reasoning hybrid (Mamba-2 + MoE). MXFP4 quantization — fastest decode path. 262K context.",
-            isTopSuggestion: true,
             modelType: "nemotron_h",
             releasedAt: date("2026-04-28"),
             useCase: .reasoning

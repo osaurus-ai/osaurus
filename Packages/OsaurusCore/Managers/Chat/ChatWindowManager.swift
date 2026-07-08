@@ -743,12 +743,35 @@ public final class ChatWindowManager: NSObject, ObservableObject {
                 // next compose pass.
                 await MemoryContextAssembler.shared.invalidateCache(agentId: aid.uuidString)
             }
+            // Residency on window close (note: hotkey HIDE is not close — a
+            // hidden window keeps its model warm for the quick-toggle flow):
+            // - .immediately: unload anything no remaining window references.
+            // - .afterSeconds: evict chat-sourced models immediately (zero
+            //   grace) instead of waiting out the policy, so a closed chat
+            //   doesn't pin gigabytes of unified memory. Models last used by
+            //   the HTTP API keep their full residency; the fire-time guard
+            //   re-checks lease count and open windows, so an in-flight
+            //   generation or an instant reopen keeps the model warm.
+            // - .never: explicit user opt-in to permanent residency.
             let idlePolicy =
                 ServerConfigurationStore.load()?.modelIdleResidencyPolicy
                 ?? ServerConfiguration.default.modelIdleResidencyPolicy
-            if idlePolicy == .immediately {
+            switch idlePolicy {
+            case .immediately:
                 let active = self.activeLocalModelNames()
                 await ModelRuntime.shared.unloadModelsNotIn(active)
+            case .afterSeconds:
+                let active = self.activeLocalModelNames()
+                await ModelRuntime.shared.accelerateIdleUnloadAfterChatClose(
+                    keeping: active,
+                    isModelStillWanted: { name in
+                        await MainActor.run {
+                            ChatWindowManager.shared.activeLocalModelNames().contains(name)
+                        }
+                    }
+                )
+            case .never:
+                break
             }
         }
 
