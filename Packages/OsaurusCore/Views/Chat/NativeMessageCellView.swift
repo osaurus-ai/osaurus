@@ -2588,10 +2588,10 @@ final class NativeMessageCellView: NSTableCellView {
             nativeFileDiffView = dv
         }
         let blockId = block.id
-        // Diff cards default to expanded; the shared `expandedIds` set is reused
-        // with inverted meaning — presence marks a card the user has collapsed.
-        // The height estimator applies the same inversion.
-        let collapsed = context.expandedIds.contains(blockId)
+        // Diff cards default to collapsed; presence in the shared `expandedIds`
+        // set marks a card the user has expanded. The height estimator applies
+        // the same rule.
+        let collapsed = !context.expandedIds.contains(blockId)
         nativeFileDiffView?.onToggleCollapse = {
             context.onToggleExpand(blockId)
         }
@@ -3098,12 +3098,12 @@ enum NativeCellHeightEstimator {
             return h
 
         case let .fileDiff(diff):
-            // Diff cards reuse `expandedIds` with inverted meaning, so
-            // `isExpanded == true` here marks a card the user collapsed.
-            // configureAsFileDiff reports measuredCardHeight(...) + 12 for the
-            // cell top/bottom inset — match that.
+            // Diff cards default to collapsed and only expand when the user
+            // opted in via `expandedIds`. configureAsFileDiff reports
+            // measuredCardHeight(...) + 12 for the cell top/bottom inset —
+            // match that.
             let header = NativeFileDiffView.headerHeight
-            if isExpanded { return header + 12 }
+            if !isExpanded { return header + 12 }
             let innerW = max(width - 32 - 14 - 8, 100)
             let chars = max(Int(innerW / 7), 20)
             var lineRows = 0

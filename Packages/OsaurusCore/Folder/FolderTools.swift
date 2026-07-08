@@ -1413,7 +1413,7 @@ struct FileReadTool: OsaurusTool {
 struct FileWriteTool: OsaurusTool, PermissionedTool {
     let name = "file_write"
     let description =
-        "Create a new UTF-8 text file or overwrite an existing text file with the provided content. "
+        "Create or overwrite a UTF-8 text file — always pass `path` (that exact key) as the FIRST argument, before `content`. "
         + "Parent directories are created automatically. You MUST provide the file contents in the "
         + "`content` parameter. Pass `dry_run: true` to preview the diff and risk warnings without "
         + "writing. Not for structured `.xlsx` / `.pdf` / `.pptx` outputs — write text formats such "
@@ -1560,7 +1560,8 @@ struct FileWriteTool: OsaurusTool, PermissionedTool {
 struct FileEditTool: OsaurusTool, PermissionedTool {
     let name = "file_edit"
     let description =
-        "Edit a file by replacing specific text. `old_string` must uniquely match exactly one "
+        "Edit a file by replacing specific text — always pass `path` (that exact key) as the FIRST argument. "
+        + "`old_string` must uniquely match exactly one "
         + "location in the file — include surrounding context lines if needed to ensure uniqueness. "
         + "Copy the RAW file text only: never include the `N|` line-number prefixes shown in "
         + "`file_read` output. Fails if `old_string` is not found or matches multiple locations. "

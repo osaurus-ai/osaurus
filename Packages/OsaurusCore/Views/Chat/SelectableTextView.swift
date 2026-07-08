@@ -1288,9 +1288,12 @@ final class SelectableNSTextView: NSTextView {
                 yRadius: 6
             ).fill()
 
+            // Inset the bar 2pt from the background's top/bottom so it stays
+            // inside the corner curvature (radius 6 from x:4) instead of
+            // poking past the rounded corners.
             blockquoteBarColor.setFill()
             NSBezierPath(
-                roundedRect: NSRect(x: 6, y: rect.origin.y - 2, width: 3, height: rect.height + 4),
+                roundedRect: NSRect(x: 6, y: rect.origin.y, width: 3, height: rect.height),
                 xRadius: 1.5,
                 yRadius: 1.5
             ).fill()

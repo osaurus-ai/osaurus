@@ -677,7 +677,15 @@ struct RuntimePolicySourceTests {
         // results a failed MLX op returns inside a withError scope, and
         // non-trapping compiled-closure failure paths — so recorded MLX
         // errors surface instead of dying in Swift bounds checks.
-        let expectedRuntimeHardenedRevision = "aa14267b11840f89f1976a273e553a3b7bbedf39"
+        // Now also carries the default-on hybrid-SSM prefix-cache reuse
+        // (vmlx-swift#125, gen-suffix-stripped store + post-answer SSM
+        // re-derive, proven cache-ON == cache-OFF byte-identical on
+        // qwen3_5_moe GatedDeltaNet MoE + nemotron Mamba-2, inert on dense),
+        // the completed split-subscript crash-guard sweep across every
+        // SSM/hybrid mixer (vmlx-swift#126), and the ZAYA tool-aware template
+        // activation from source_model.architecture (vmlx-swift#127) that
+        // stops JANGTQ ZAYA bundles leaking raw tool-call XML.
+        let expectedRuntimeHardenedRevision = "5e071fe20ddfb3a58de664d770d04e7975a336a8"
         let manifestRevision = try Self.vmlxPinRevision(in: manifest)
         let workspaceRevision = try Self.vmlxPinRevision(in: workspaceResolved)
         let appRevision = try Self.vmlxPinRevision(in: appResolved)

@@ -1534,7 +1534,8 @@ private func shellEscapeSingleQuoted(_ s: String) -> String {
 private struct SandboxWriteFileTool: OsaurusTool, @unchecked Sendable {
     let name = "sandbox_write_file"
     let description =
-        "Write a file, or edit it in place. Provide `content` to write/replace the whole file; "
+        "Write a file, or edit it in place — always pass `path` (that exact key) as the FIRST argument. "
+        + "Provide `content` to write/replace the whole file; "
         + "provide `old_string` (+`new_string`) to replace one exact match. **Use this instead of "
         + "`echo`/`cat` heredoc / `sed` / `awk` in `sandbox_exec`.** Creates parent directories as "
         + "needed. For an edit, `old_string` must uniquely match one location — include surrounding "

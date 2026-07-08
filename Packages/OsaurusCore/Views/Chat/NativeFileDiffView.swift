@@ -96,6 +96,9 @@ final class NativeFileDiffView: NSView {
     /// Literal "</>" code glyph — drawn as text so it renders regardless of SF
     /// Symbol availability, shown before the file name in every state.
     private let iconLabel = NSTextField(labelWithString: "</>")
+    /// Shown in place of the code glyph while a collapsed card is still
+    /// receiving streamed content, so the header signals work in progress.
+    private let loadingIndicator = NSProgressIndicator()
     private let fileLabel = NSTextField(labelWithString: "")
     private let addedLabel = NSTextField(labelWithString: "")
     private let removedLabel = NSTextField(labelWithString: "")
@@ -199,6 +202,12 @@ final class NativeFileDiffView: NSView {
         iconLabel.drawsBackground = false
         headerView.addSubview(iconLabel)
 
+        loadingIndicator.translatesAutoresizingMaskIntoConstraints = false
+        loadingIndicator.style = .spinning
+        loadingIndicator.controlSize = .small
+        loadingIndicator.isDisplayedWhenStopped = false
+        headerView.addSubview(loadingIndicator)
+
         for label in [fileLabel, addedLabel, removedLabel, previewBadge] {
             label.translatesAutoresizingMaskIntoConstraints = false
             label.isEditable = false
@@ -254,6 +263,11 @@ final class NativeFileDiffView: NSView {
 
             iconLabel.leadingAnchor.constraint(equalTo: headerView.leadingAnchor, constant: 10),
             iconLabel.centerYAnchor.constraint(equalTo: headerView.centerYAnchor),
+
+            loadingIndicator.centerXAnchor.constraint(equalTo: iconLabel.centerXAnchor),
+            loadingIndicator.centerYAnchor.constraint(equalTo: headerView.centerYAnchor),
+            loadingIndicator.widthAnchor.constraint(equalToConstant: 14),
+            loadingIndicator.heightAnchor.constraint(equalToConstant: 14),
 
             fileLabel.leadingAnchor.constraint(equalTo: iconLabel.trailingAnchor, constant: 7),
             fileLabel.centerYAnchor.constraint(equalTo: headerView.centerYAnchor),
@@ -354,7 +368,19 @@ final class NativeFileDiffView: NSView {
         )
         iconLabel.textColor = NSColor(theme.tertiaryText)
 
-        fileLabel.stringValue = diff.fileName
+        // Collapsed + still streaming: swap the code glyph for a spinner so the
+        // header shows the write is in flight even with the body hidden.
+        let showSpinner = isCollapsed && diff.isStreamingPreview
+        iconLabel.isHidden = showSpinner
+        if showSpinner {
+            loadingIndicator.startAnimation(nil)
+        } else {
+            loadingIndicator.stopAnimation(nil)
+        }
+
+        // The path argument may not have streamed yet — hold the name slot with
+        // an ellipsis so the header doesn't render as a bare count.
+        fileLabel.stringValue = diff.fileName.isEmpty ? "…" : diff.fileName
         fileLabel.font = NSFont.systemFont(ofSize: CGFloat(theme.captionSize), weight: .semibold)
         fileLabel.textColor = NSColor(theme.primaryText)
 
@@ -369,7 +395,11 @@ final class NativeFileDiffView: NSView {
         addedLabel.textColor = NSColor(theme.successColor)
         removedLabel.textColor = NSColor(theme.errorColor)
 
-        if diff.isStreamingPreview || diff.isPreview {
+        // The spinner already signals streaming; the "…" badge would duplicate it.
+        if showSpinner {
+            previewBadge.stringValue = ""
+            previewBadge.isHidden = true
+        } else if diff.isStreamingPreview || diff.isPreview {
             previewBadge.stringValue = diff.isStreamingPreview ? "…" : L("preview")
             previewBadge.font = NSFont.systemFont(ofSize: CGFloat(theme.captionSize) - 2, weight: .medium)
             previewBadge.textColor = NSColor(theme.tertiaryText)

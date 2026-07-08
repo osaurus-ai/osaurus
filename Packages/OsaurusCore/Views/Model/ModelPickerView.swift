@@ -23,10 +23,10 @@ struct ModelPickerView: View {
     @ObservedObject private var favoritesStore = FavoriteModelsStore.shared
     @Environment(\.theme) private var theme
 
-    /// Stable key/title for the synthetic Favourites tab. It only exists while
+    /// Stable key/title for the synthetic Favorites tab. It only exists while
     /// the user has at least one favourite among the currently visible models.
     private static let favoritesTabKey = "favorites"
-    private static let favoritesTabTitle = "Favourites"
+    private static let favoritesTabTitle = "Favorites"
 
     // MARK: - Test Mode
 
@@ -623,10 +623,10 @@ struct ModelPickerView: View {
                 }
 
                 Group {
-                    // The Favourites tab has a fixed, translatable title; every
+                    // The Favorites tab has a fixed, translatable title; every
                     // other tab shows a provider name rendered verbatim.
                     if isFavorites {
-                        Text("Favourites", bundle: .module)
+                        Text("Favorites", bundle: .module)
                     } else {
                         Text(tab.title)
                     }
