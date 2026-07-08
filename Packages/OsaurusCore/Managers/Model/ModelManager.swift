@@ -688,21 +688,17 @@ extension ModelManager {
             useCase: .general
         ),
 
-        // MARK: Gemma 4 — multimodal (onboarding default spine)
+        // MARK: Gemma 4 — multimodal
         //
-        // The dense Gemma 4 QAT line (E2B/E4B/12B/31B, `qat-MXFP4`) is the
-        // onboarding auto-default spine: quantization-aware training beats
-        // post-training quant at equal bit-width, and these are the newest
-        // Gemma builds. `ConfigureAIState.recommendedLocalPick` auto-selects
-        // the largest *dense* QAT model that comfortably fits. The 26B-A4B
-        // QAT MoE below stays a Top Pick but is intentionally excluded from
-        // the auto-default (its footprint is the 36%-bounce risk), and the
-        // E-series QAT entries are excluded from the auto-default until the
-        // 8-bit-vs-QAT-4bit retention A/B clears (small tiers stay on the
-        // 8-bit builds). Top-Pick promotion of the QAT line is gated on the
-        // required AgentLoop tool-use proof for the active Gemma 4 QAT
-        // checkpoint (load, executed tool, tool-result continuation, clean
-        // visible text, no marker leakage, cache telemetry).
+        // The Gemma 4 `qat-MXFP4` builds (E2B/E4B/12B/31B/26B-A4B) are
+        // demoted from Top Pick (2026-07-08): onboarding recommendations were
+        // moved off the Gemma-QAT spine onto the GUI-verified non-Gemma
+        // families (Ornith / Qwen 3.6 / Qwen AgentWorld / Nemotron), which
+        // cover every RAM tier. Per the curation rule, a *recommended* Gemma
+        // build must not be `qat` or plain `MXFP4` — only the higher-precision
+        // `12B-it-MXFP8` (below) and the `E4B-it-8bit` retention build stay
+        // Top Picks. The QAT builds remain in the catalog (still installable /
+        // selectable), just not surfaced or auto-selected in onboarding.
 
         curated(
             id: "OsaurusAI/gemma-4-12B-it-MXFP8",
@@ -717,8 +713,7 @@ extension ModelManager {
         curated(
             id: "OsaurusAI/gemma-4-E2B-it-qat-MXFP4",
             description:
-                "Gemma 4 E2B QAT — quantization-aware 4-bit. Smallest multimodal floor; better quality-per-byte than post-training 4-bit. Runs on any Mac. 128K context.",
-            isTopSuggestion: true,
+                "Gemma 4 E2B QAT — quantization-aware 4-bit. Smallest multimodal floor. Catalog build; not an onboarding recommendation (QAT/MXFP4 excluded). 128K context.",
             modelType: "gemma4",
             releasedAt: date("2026-06-09"),
             useCase: .smallest
@@ -727,8 +722,7 @@ extension ModelManager {
         curated(
             id: "OsaurusAI/gemma-4-E4B-it-qat-MXFP4",
             description:
-                "Gemma 4 E4B QAT — quantization-aware 4-bit multimodal edge model. Images, video, and audio. 128K context.",
-            isTopSuggestion: true,
+                "Gemma 4 E4B QAT — quantization-aware 4-bit multimodal edge model. Catalog build; not an onboarding recommendation (QAT/MXFP4 excluded). 128K context.",
             modelType: "gemma4",
             releasedAt: date("2026-06-09"),
             useCase: .vision
@@ -737,8 +731,7 @@ extension ModelManager {
         curated(
             id: "OsaurusAI/gemma-4-12B-it-qat-MXFP4",
             description:
-                "Gemma 4 12B dense QAT — quantization-aware 4-bit. The mainstream multimodal default for 16–24 GB Macs. 128K context.",
-            isTopSuggestion: true,
+                "Gemma 4 12B dense QAT — quantization-aware 4-bit. Catalog build; not an onboarding recommendation (QAT/MXFP4 excluded — prefer the 12B-it-MXFP8 build). 128K context.",
             modelType: "gemma4",
             releasedAt: date("2026-06-09"),
             useCase: .vision
@@ -747,8 +740,7 @@ extension ModelManager {
         curated(
             id: "OsaurusAI/gemma-4-31B-it-qat-MXFP4",
             description:
-                "Gemma 4 31B dense QAT — quantization-aware 4-bit. Top-tier multimodal quality for 32 GB+ Macs. 128K context.",
-            isTopSuggestion: true,
+                "Gemma 4 31B dense QAT — quantization-aware 4-bit. Catalog build; not an onboarding recommendation (QAT/MXFP4 excluded). 128K context.",
             modelType: "gemma4",
             releasedAt: date("2026-06-09"),
             useCase: .vision
@@ -757,8 +749,7 @@ extension ModelManager {
         curated(
             id: "OsaurusAI/gemma-4-26B-A4B-it-qat-MXFP4",
             description:
-                "Gemma 4 26B-A4B QAT — quantization-aware 4-bit MoE (~4B active) vision model. Selectable Top Pick; excluded from the low-RAM auto-default. 128K context.",
-            isTopSuggestion: true,
+                "Gemma 4 26B-A4B QAT — quantization-aware 4-bit MoE (~4B active) vision model. Catalog build; not an onboarding recommendation (QAT/MXFP4 excluded). 128K context.",
             modelType: "gemma4",
             releasedAt: date("2026-06-09"),
             useCase: .vision

@@ -231,20 +231,39 @@ struct ModelManagerSuggestedTests {
 
     // MARK: - Top-pick reorg (precision-first)
 
-    @Test @MainActor func topPicks_includeGemmaQATSpineAndPrecisionFirstFlagships() async {
+    @Test @MainActor func topPicks_recommendVerifiedFamiliesNotGemmaQAT() async {
         await withIsolatedModelSizeCache {
             let suggested = ModelManager().suggestedModels
             let topIds = Set(suggested.filter(\.isTopSuggestion).map { $0.id })
+            // GUI-verified-good families (coherent output + clean tool-calling /
+            // reasoning, no marker leakage — proven live in the dev app) plus the
+            // allowed-precision Gemma builds (MXFP8 / 8-bit) are the Top Picks.
             for id in [
+                "OsaurusAI/Ornith-1.0-9B-MXFP8",
+                "OsaurusAI/Ornith-1.0-35B-MXFP8",
+                "OsaurusAI/Qwen3.6-27B-MXFP4",
+                "OsaurusAI/Qwen3.6-35B-A3B-MXFP8-MTP",
+                "OsaurusAI/Nemotron-3-Nano-Omni-30B-A3B-MXFP4",
+                "OsaurusAI/gemma-4-12B-it-MXFP8",
+                "OsaurusAI/gemma-4-E4B-it-8bit",
+                "OsaurusAI/gemma-4-E2B-it-8bit",
+            ] {
+                #expect(topIds.contains(id), "expected \(id) to be a Top Pick")
+            }
+            // The Gemma 4 QAT / plain-MXFP4 builds are dropped from Top Picks
+            // (2026-07-08): a recommended Gemma must be a non-QAT/non-MXFP4
+            // precision. They stay in the catalog, just unrecommended.
+            for id in [
+                "OsaurusAI/gemma-4-E2B-it-qat-MXFP4",
+                "OsaurusAI/gemma-4-E4B-it-qat-MXFP4",
                 "OsaurusAI/gemma-4-12B-it-qat-MXFP4",
                 "OsaurusAI/gemma-4-31B-it-qat-MXFP4",
                 "OsaurusAI/gemma-4-26B-A4B-it-qat-MXFP4",
-                "OsaurusAI/gemma-4-E4B-it-8bit",
-                "OsaurusAI/gemma-4-E2B-it-8bit",
-                "OsaurusAI/Qwen3.6-27B-MXFP4",
-                "OsaurusAI/Qwen3.6-35B-A3B-MXFP8-MTP",
             ] {
-                #expect(topIds.contains(id), "expected \(id) to be a Top Pick")
+                #expect(!topIds.contains(id), "expected \(id) to NOT be a Top Pick (Gemma QAT/MXFP4)")
+                #expect(
+                    suggested.contains { $0.id == id },
+                    "expected \(id) to remain in the catalog")
             }
         }
     }
@@ -359,45 +378,37 @@ struct ModelManagerSuggestedTests {
 
     // MARK: - Onboarding default scenario matrix (Phase 4c)
 
-    @Test @MainActor func onboardingDefault_landsOnGemmaQATSpinePerRAMTier() async {
+    @Test @MainActor func onboardingDefault_picksLargestComfortableVerifiedTopPick() async {
         await withIsolatedModelSizeCache {
             // Fetch candidates under the isolated (empty) size cache so estimates
             // come from the deterministic param heuristic, not a machine's cached
             // on-disk sizes.
             let candidates = ModelManager().suggestedModels.filter(\.isTopSuggestion)
-            let pick: (Double) -> String? = { gb in
-                ConfigureAIState.recommendedLocalPick(from: candidates, totalMemoryGB: gb)?.id
-            }
-            // Small tier stays on the 8-bit retention build (gated until the
-            // QAT-4bit-vs-8bit bounce A/B clears).
-            #expect(pick(8) == "OsaurusAI/gemma-4-E4B-it-8bit")
-            // Mainstream tiers: the dense 12B QAT default.
-            #expect(pick(16) == "OsaurusAI/gemma-4-12B-it-qat-MXFP4")
-            #expect(pick(18) == "OsaurusAI/gemma-4-12B-it-qat-MXFP4")
-            #expect(pick(24) == "OsaurusAI/gemma-4-12B-it-qat-MXFP4")
-            // Large tiers: the dense 31B QAT ceiling.
-            #expect(pick(32) == "OsaurusAI/gemma-4-31B-it-qat-MXFP4")
-            #expect(pick(36) == "OsaurusAI/gemma-4-31B-it-qat-MXFP4")
-            #expect(pick(48) == "OsaurusAI/gemma-4-31B-it-qat-MXFP4")
-            #expect(pick(64) == "OsaurusAI/gemma-4-31B-it-qat-MXFP4")
-        }
-    }
-
-    @Test @MainActor func onboardingDefault_neverAutoSelectsMoEorLargerFlagship() async {
-        await withIsolatedModelSizeCache {
-            let candidates = ModelManager().suggestedModels.filter(\.isTopSuggestion)
-            let excluded: Set<String> = [
-                "OsaurusAI/gemma-4-26B-A4B-it-qat-MXFP4",
-                "OsaurusAI/Qwen3.6-35B-A3B-MXFP8-MTP",
-                "OsaurusAI/Qwen3.6-27B-MXFP8-MTP",
-            ]
             for gb in stride(from: 8.0, through: 128.0, by: 2.0) {
-                let id = ConfigureAIState.recommendedLocalPick(
-                    from: candidates,
-                    totalMemoryGB: gb
-                )?.id
-                if let id {
-                    #expect(!excluded.contains(id), "auto-default \(id) at \(gb)GB must not be a MoE/flagship")
+                guard
+                    let pick = ConfigureAIState.recommendedLocalPick(
+                        from: candidates, totalMemoryGB: gb)
+                else { continue }
+                // Never a dropped Gemma QAT / plain-MXFP4 build.
+                let lower = pick.id.lowercased()
+                let droppedGemma =
+                    lower.contains("gemma-4")
+                    && (lower.contains("qat") || lower.hasSuffix("mxfp4"))
+                #expect(
+                    !droppedGemma,
+                    "auto-default \(pick.id) at \(gb)GB must not be a Gemma QAT/MXFP4 build")
+
+                // The pick is the LARGEST Top Pick that comfortably fits — the
+                // strongest proven model for this RAM tier. (When nothing is
+                // comfortable, the fallback smallest-candidate is allowed.)
+                let comfortable = candidates.filter {
+                    $0.compatibility(totalMemoryGB: gb) == .compatible
+                }
+                if !comfortable.isEmpty {
+                    let maxMem = comfortable.compactMap(\.estimatedMemoryGB).max() ?? 0
+                    #expect(
+                        (pick.estimatedMemoryGB ?? -1) == maxMem,
+                        "auto-default at \(gb)GB should be the largest comfortable Top Pick")
                 }
             }
         }
