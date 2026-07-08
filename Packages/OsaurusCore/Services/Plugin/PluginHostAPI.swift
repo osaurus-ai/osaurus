@@ -2458,9 +2458,12 @@ final class PluginHostContext: @unchecked Sendable {
     func listModels() -> String {
         Self.blockingAsync(fallback: Self.pluginHostTimeoutJSON(kind: "list_models")) {
             var models: [[String: Any]] = []
+            let exposure = ModelExposureStore.shared
 
             // Apple Foundation Model
-            if FoundationModelService.isDefaultModelAvailable() {
+            if FoundationModelService.isDefaultModelAvailable(),
+                exposure.isExposed(id: "foundation", kind: .local)
+            {
                 models.append([
                     "id": "foundation",
                     "name": "Apple Foundation Model",
@@ -2470,8 +2473,9 @@ final class PluginHostContext: @unchecked Sendable {
                 ])
             }
 
-            // Local MLX models
-            for name in MLXService.getAvailableModels() {
+            // Local MLX models (filtered by the per-model exposure settings)
+            for name in MLXService.getAvailableModels()
+            where exposure.isExposed(id: name, kind: .local) {
                 models.append([
                     "id": name,
                     "name": name,

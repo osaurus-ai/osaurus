@@ -214,11 +214,11 @@ struct MemorySafetySection: View {
 
     private func modeTitle(_ mode: VMLXMemorySafetyMode) -> String {
         switch mode {
-        case .performance: return "Performance"
-        case .balanced: return "Balanced"
-        case .safeAuto: return "Safe Auto"
-        case .strict: return "Strict"
-        case .diagnosticDangerous: return "Diagnostic / Dangerous"
+        case .performance: return L("Performance")
+        case .balanced: return L("Balanced")
+        case .safeAuto: return L("Safe Auto")
+        case .strict: return L("Strict")
+        case .diagnosticDangerous: return L("Diagnostic / Dangerous")
         }
     }
 }

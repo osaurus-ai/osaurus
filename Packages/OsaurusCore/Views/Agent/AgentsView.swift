@@ -1016,6 +1016,8 @@ struct AgentDetailView: View {
     @State private var renderChartEnabled: Bool = false
     @State private var speakEnabled: Bool = false
     @State private var searchMemoryEnabled: Bool = false
+    /// Native `web_search` gate — default ON (free providers need no setup).
+    @State private var webSearchEnabled: Bool = true
     @State private var selfSchedulingEnabled: Bool = false
     /// Per-agent subagent capability toggles, keyed by the capability
     /// registry's `PerAgentFlag` (computer_use, spawn, image). Hydrated in
@@ -2548,19 +2550,19 @@ struct AgentDetailView: View {
 
     private static func scheduleModeTitle(_ mode: AgentScheduleMode) -> String {
         switch mode {
-        case .ambient: return "Ambient"
-        case .reactive: return "Reactive"
-        case .project: return "Project"
-        case .manual: return "Manual"
+        case .ambient: return L("Ambient")
+        case .reactive: return L("Reactive")
+        case .project: return L("Project")
+        case .manual: return L("Manual")
         }
     }
 
     private static func scheduleModeTagline(_ mode: AgentScheduleMode) -> String {
         switch mode {
-        case .ambient: return "Background helper"
-        case .reactive: return "Quick reflexes"
-        case .project: return "Deep work"
-        case .manual: return "Self-scheduling off"
+        case .ambient: return L("Background helper")
+        case .reactive: return L("Quick reflexes")
+        case .project: return L("Deep work")
+        case .manual: return L("Self-scheduling off")
         }
     }
 
@@ -2571,13 +2573,13 @@ struct AgentDetailView: View {
     private static func scheduleModePresetSummary(_ mode: AgentScheduleMode) -> String {
         switch mode {
         case .ambient:
-            return "Up to 6 runs/day · at most once an hour · quiet 10pm–7am."
+            return L("Up to 6 runs/day · at most once an hour · quiet 10pm–7am.")
         case .reactive:
-            return "Up to 48 runs/day · as often as every 5 min · no quiet hours."
+            return L("Up to 48 runs/day · as often as every 5 min · no quiet hours.")
         case .project:
-            return "Up to 4 runs/day · at most once an hour · quiet 10pm–7am."
+            return L("Up to 4 runs/day · at most once an hour · quiet 10pm–7am.")
         case .manual:
-            return "The agent only runs when you ask. Scheduled API calls from the agent are rejected."
+            return L("The agent only runs when you ask. Scheduled API calls from the agent are rejected.")
         }
     }
 
@@ -2722,6 +2724,18 @@ struct AgentDetailView: View {
                             subtitle:
                                 "Let the agent search its own memory mid-conversation to pull up past details on demand. Separate from Memory above, which only auto-injects and saves.",
                             isOn: $searchMemoryEnabled
+                        )
+                    }
+
+                    featureGroup(
+                        "Web",
+                        description: "Live information from the internet."
+                    ) {
+                        featureToggleRow(
+                            title: "Web Search",
+                            subtitle:
+                                "Let the agent search the web through your search providers. Works out of the box with free sources; configure providers in Settings > Search.",
+                            isOn: $webSearchEnabled
                         )
                     }
 
@@ -6076,6 +6090,7 @@ struct AgentDetailView: View {
         renderChartEnabled = agent.settings.renderChartEnabled
         speakEnabled = agent.settings.speakEnabled
         searchMemoryEnabled = agent.settings.searchMemoryEnabled
+        webSearchEnabled = agent.settings.webSearchEnabled
         selfSchedulingEnabled = agent.settings.selfSchedulingEnabled
         subagentToggles = SubagentCapabilityRegistry.perAgentToggleFlags.reduce(into: [:]) {
             acc,
@@ -6284,6 +6299,7 @@ struct AgentDetailView: View {
                 renderChartEnabled: renderChartEnabled,
                 speakEnabled: speakEnabled,
                 searchMemoryEnabled: searchMemoryEnabled,
+                webSearchEnabled: webSearchEnabled,
                 selfSchedulingEnabled: selfSchedulingEnabled,
                 computerUseEnabled: computerUseEnabled,
                 computerUseCeiling: computerUseEnabled ? computerUseCeiling : nil,

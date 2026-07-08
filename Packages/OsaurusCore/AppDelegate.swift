@@ -269,6 +269,12 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
         // leaves a unified-log breadcrumb diagnosable without a debugger.
         MainThreadWatchdog.shared.start()
 
+        // Respond to macOS memory pressure: free reconstructible UI caches on
+        // warning, and additionally unload idle (lease-free) model weights on
+        // critical, so local models never push the system into swap while
+        // sitting unused.
+        MemoryPressureResponder.shared.start()
+
         // Initialize directory access early so security-scoped bookmark is active
         _ = DirectoryPickerService.shared
 
@@ -340,6 +346,10 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
             if !keychainDisabledTestMode {
                 await MCPProviderManager.shared.connectEnabledProviders()
                 await RemoteProviderManager.shared.connectEnabledProviders()
+                // Touch the search-provider manager so its one-time migration
+                // of osaurus.search plugin keys runs at launch, not lazily on
+                // the first web_search call / Settings visit.
+                _ = SearchProviderManager.shared
             }
             await ModelPickerItemCache.shared.prewarmModelCache()
         }
@@ -1819,7 +1829,12 @@ extension AppDelegate {
                 )
                 alert.alertStyle = .warning
                 alert.addButton(withTitle: "OK")
-                alert.runModal()
+                // `runModal` intentionally blocks the main run loop until the
+                // user dismisses the alert; pause the hang watchdog so the
+                // wait isn't reported as an app hang (Sentry APPLE-MACOS-VE).
+                CrashReportingService.shared.withAppHangTrackingPaused {
+                    _ = alert.runModal()
+                }
                 return
             }
 

@@ -58,8 +58,15 @@ struct ModelDownloadView: View {
     /// Shared model manager for handling downloads and model state
     @ObservedObject private var modelManager = ModelManager.shared
 
-    /// System resource monitor for hardware info display
-    @ObservedObject private var systemMonitor = SystemMonitorService.shared
+    /// System resource monitor for hardware info. Deliberately NOT
+    /// `@ObservedObject`: observing it here re-evaluated the entire model
+    /// grid on every 2s monitor tick (each card re-reading `totalMemoryGB`
+    /// plus gradients/metadata), enough aggregate work to trip the app-hang
+    /// watchdog on slow machines. Only the status bar needs live values, so
+    /// observation lives in `LiveSystemStatusBar` below; the grid reads
+    /// `totalMemoryGB` — set synchronously at service init and effectively
+    /// constant — as a plain value.
+    private var systemMonitor: SystemMonitorService { SystemMonitorService.shared }
 
     /// Theme manager for consistent UI styling
     @ObservedObject private var themeManager = ThemeManager.shared
@@ -108,6 +115,7 @@ struct ModelDownloadView: View {
 
     /// Import-from-Hugging-Face sheet state
     @State private var showImportSheet = false
+
 
     /// Index of the leading Top Picks card the edge arrows scroll to. Desktop
     /// mice can't scroll horizontally, so the carousel is driven by these
@@ -159,13 +167,8 @@ struct ModelDownloadView: View {
             headerView(lists: lists)
                 .managerHeaderEntrance(hasAppeared: hasAppeared)
 
-            SystemStatusBar(
-                totalMemoryGB: systemMonitor.totalMemoryGB,
-                usedMemoryGB: systemMonitor.usedMemoryGB,
-                availableStorageGB: systemMonitor.availableStorageGB,
-                totalStorageGB: systemMonitor.totalStorageGB
-            )
-            .opacity(hasAppeared ? 1 : 0)
+            LiveSystemStatusBar()
+                .opacity(hasAppeared ? 1 : 0)
 
             modelListView(lists: lists)
                 .opacity(hasAppeared ? 1 : 0)
@@ -738,10 +741,18 @@ struct ModelDownloadView: View {
 
             ScrollViewReader { proxy in
                 ScrollView(.horizontal, showsIndicators: false) {
-                    LazyHStack(spacing: 12) {
+                    // Non-lazy HStack: a LazyHStack lets the scroll view settle
+                    // its height from the first cards it measures, clipping any
+                    // taller card that scrolls in later. Top Picks is a small
+                    // curated set, so measuring every card up front is cheap.
+                    // `ModelRowView`'s fixed-slot body gives every card the
+                    // same natural height, and `fixedSize` guarantees each one
+                    // gets it regardless of the proposed height.
+                    HStack(alignment: .top, spacing: 12) {
                         ForEach(models, id: \.id) { model in
                             modelCard(for: model)
                                 .frame(width: 280)
+                                .fixedSize(horizontal: false, vertical: true)
                                 .id(model.id)
                         }
                     }
@@ -928,7 +939,10 @@ struct ModelDownloadView: View {
                             } else {
                                 switch selectedTab {
                                 case .all:
-                                    catalogContent(lists: lists)
+                                    VStack(alignment: .leading, spacing: 16) {
+                                        HuggingFaceTokenCard()
+                                        catalogContent(lists: lists)
+                                    }
                                 case .downloaded:
                                     modelGrid(models: lists.downloaded)
                                 }
@@ -1598,11 +1612,20 @@ struct ModelDownloadView: View {
         // (when searching) anything matching the query. without the latter two,
         // imported/pasted repos inserted into `availableModels` are filtered
         // out and never appear
+        //
+        // AppleScript bundles only ever emit AppleScript (dedicated subagent
+        // models, not chat models), so they never surface in the Catalog tab —
+        // same rule as the chat model picker. They install and manage through
+        // Computer Use → Models instead; the On Device tab still lists an
+        // installed one so it stays deletable from here.
         let hasQuery = !searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         let allTabBase = input.availableModels.filter { model in
-            isOsaurusAI(model) || isUserModel(model) || hasQuery
+            guard !AppleScriptModelCatalog.isAppleScriptModel(id: model.id) else { return false }
+            return isOsaurusAI(model) || isUserModel(model) || hasQuery
         }
-        let osaurusSuggested = input.suggestedModels.filter { isOsaurusAI($0) }
+        let osaurusSuggested = input.suggestedModels.filter {
+            isOsaurusAI($0) && !AppleScriptModelCatalog.isAppleScriptModel(id: $0.id)
+        }
 
         let availSearched = SearchService.filterModels(allTabBase, with: searchText)
         let availFiltered = filterState.apply(to: availSearched, totalMemoryGB: mem)
@@ -1806,6 +1829,24 @@ struct ModelDownloadView: View {
         return activeProgress.reduce(0, +) / Double(activeProgress.count)
     }
 
+}
+
+// MARK: - Live System Status Bar
+
+/// Thin wrapper that scopes `SystemMonitorService` observation to just the
+/// status bar, so the monitor's periodic publishes re-render only this row
+/// instead of the whole model grid above it.
+private struct LiveSystemStatusBar: View {
+    @ObservedObject private var systemMonitor = SystemMonitorService.shared
+
+    var body: some View {
+        SystemStatusBar(
+            totalMemoryGB: systemMonitor.totalMemoryGB,
+            usedMemoryGB: systemMonitor.usedMemoryGB,
+            availableStorageGB: systemMonitor.availableStorageGB,
+            totalStorageGB: systemMonitor.totalStorageGB
+        )
+    }
 }
 
 // MARK: - Skeleton Loading Card

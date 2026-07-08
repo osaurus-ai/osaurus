@@ -95,4 +95,46 @@ struct ResolvePathScopeTests {
         let resolved = try FolderToolHelpers.resolvePath("out/new.txt", rootPath: root)
         #expect(resolved.lastPathComponent == "new.txt")
     }
+
+    /// Create a root addressed via the literal `/private/tmp` path — the form
+    /// the macOS folder picker hands back for a folder under `/tmp`. This is
+    /// the firmlink form that `resolvingSymlinksInPath()` rewrites (to `/tmp`)
+    /// only when the whole path exists, so `FileManager.temporaryDirectory`
+    /// (which yields the `/var/folders` form) never exercises it.
+    private func makePrivateTmpRoot() -> URL {
+        let dir = URL(fileURLWithPath: "/private/tmp")
+            .appendingPathComponent("osaurus-resolvepath-firmlink-\(UUID().uuidString)")
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        return dir
+    }
+
+    @Test func allowsNewFileDirectlyUnderFirmlinkedPrivateTmpRoot() throws {
+        // Regression: a bare new filename under a `/private/tmp` root was
+        // falsely rejected as "outside the working directory" because the
+        // fully-existing root resolved to the `/tmp` firmlink side while the
+        // not-yet-created target kept the `/private/tmp` side, so the two
+        // landed on opposite sides of the firmlink. The deepest-existing-
+        // ancestor resolution keeps both sides symmetric.
+        let root = makePrivateTmpRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let resolved = try FolderToolHelpers.resolvePath("out.txt", rootPath: root)
+        #expect(resolved.lastPathComponent == "out.txt")
+    }
+
+    @Test func stillRejectsSymlinkEscapeUnderFirmlinkedPrivateTmpRoot() throws {
+        // The firmlink fix must not weaken the escaping-symlink guard.
+        let root = makePrivateTmpRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let outside = makeRoot()
+        defer { try? FileManager.default.removeItem(at: outside) }
+        let secret = outside.appendingPathComponent("id_rsa")
+        try "PRIVATE KEY".write(to: secret, atomically: true, encoding: .utf8)
+        let link = root.appendingPathComponent("notes.txt")
+        try FileManager.default.createSymbolicLink(at: link, withDestinationURL: secret)
+
+        #expect(throws: FolderToolError.self) {
+            _ = try FolderToolHelpers.resolvePath("notes.txt", rootPath: root)
+        }
+    }
 }

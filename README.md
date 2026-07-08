@@ -10,6 +10,10 @@
 </p>
 
 <p align="center">
+  <a href="https://trendshift.io/repositories/22454?utm_source=repository-badge&amp;utm_medium=badge&amp;utm_campaign=badge-repository-22454" target="_blank" rel="noopener noreferrer"><img src="https://trendshift.io/api/badge/repositories/22454" alt="osaurus-ai%2Fosaurus | Trendshift" width="250" height="55"/></a>
+</p>
+
+<p align="center">
   <a href="https://github.com/osaurus-ai/osaurus/releases/latest"><img src="https://img.shields.io/github/v/release/osaurus-ai/osaurus?sort=semver" alt="Release"></a>
   <a href="https://github.com/osaurus-ai/osaurus/releases"><img src="https://img.shields.io/github/downloads/osaurus-ai/osaurus/total" alt="Downloads"></a>
   <a href="https://github.com/osaurus-ai/osaurus/blob/main/LICENSE"><img src="https://img.shields.io/github/license/osaurus-ai/osaurus" alt="License"></a>

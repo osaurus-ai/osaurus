@@ -228,8 +228,34 @@ public struct BenchCommand: Command {
         let target = options.promptTokens.max() ?? 8_192
         let file = tuningFileURL()
         let previous = readTuningRecords(at: file)[model]
+        let backup = URL(fileURLWithPath: file.path + ".tune-backup")
 
-        fputs("Tuning prefill step for \(model) at ~\(target) prompt tokens (candidates \(options.tuneCandidates), \(options.runs) run(s) each)…\n", stderr)
+        // The sweep mutates the LIVE tuning file before each measurement, so
+        // an interruption would otherwise leave a probe candidate installed
+        // permanently. Before the first mutation: (1) write a sidecar backup
+        // of the pre-sweep file so even SIGKILL is hand-recoverable, and
+        // (2) install SIGINT/SIGTERM handlers that restore the pre-sweep
+        // record (or remove the key when none existed) and exit non-zero.
+        do {
+            try FileManager.default.createDirectory(
+                at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
+            let originalData = (try? Data(contentsOf: file)) ?? Data("{}".utf8)
+            try originalData.write(to: backup, options: .atomic)
+        } catch {
+            fputs("Cannot write backup \(backup.path): \(error.localizedDescription)\n", stderr)
+            exit(EXIT_FAILURE)
+        }
+        tuneSweepRestore = (file: file, model: model, previous: previous, backup: backup)
+        signal(SIGINT) { _ in
+            BenchCommand.tuneSweepAbortRestore()
+            _Exit(EXIT_FAILURE)
+        }
+        signal(SIGTERM) { _ in
+            BenchCommand.tuneSweepAbortRestore()
+            _Exit(EXIT_FAILURE)
+        }
+
+        fputs("Tuning prefill step for \(model) at ~\(target) prompt tokens (candidates \(options.tuneCandidates), \(options.runs) run(s) each; backup: \(backup.path))…\n", stderr)
 
         // Warm the model (and its engine) so the first candidate doesn't
         // absorb the cold model load.
@@ -245,6 +271,8 @@ public struct BenchCommand: Command {
                     at: file, model: model,
                     record: ["prefillStepSize": step, "note": "candidate under test"])
             } catch {
+                // Leave no half-tuned candidate behind on this exit either.
+                tuneSweepAbortRestore()
                 fputs("Cannot write \(file.path): \(error.localizedDescription)\n", stderr)
                 exit(EXIT_FAILURE)
             }
@@ -268,9 +296,9 @@ public struct BenchCommand: Command {
                          ttfts.map { String(format: "%.0f", $0) }.joined(separator: "/")), stderr)
         }
 
-        guard let winner = results.min(by: { $0.medianTTFTMs < $1.medianTTFTMs }) else {
+        guard let winner = selectTuneWinner(results) else {
             // Leave no half-tuned candidate behind.
-            restoreTuningRecord(at: file, model: model, previous: previous)
+            tuneSweepAbortRestore()
             fputs("All candidates failed; nothing persisted.\n", stderr)
             exit(EXIT_FAILURE)
         }
@@ -285,13 +313,56 @@ public struct BenchCommand: Command {
         do {
             try writeTuningRecord(at: file, model: model, record: record)
         } catch {
+            tuneSweepAbortRestore()
             fputs("Cannot persist result: \(error.localizedDescription)\n", stderr)
             exit(EXIT_FAILURE)
         }
+        // Clean completion: the winner is persisted, so the interruption
+        // safety net (sidecar backup + signal restore) is no longer wanted.
+        tuneSweepRestore = nil
+        signal(SIGINT, SIG_DFL)
+        signal(SIGTERM, SIG_DFL)
+        try? FileManager.default.removeItem(at: backup)
         fputs(String(
             format: "Winner: prefillStepSize=%d (median TTFT %.0f ms). Persisted to %@ — applies to the next request, no restart needed.\n",
             winner.step, winner.medianTTFTMs, file.path), stderr)
         exit(EXIT_SUCCESS)
+    }
+
+    // MARK: - Sweep interruption safety
+
+    /// State the SIGINT/SIGTERM handlers need to undo a half-finished sweep.
+    /// A C signal handler cannot capture context, so it lives in static
+    /// storage that the (non-capturing) handler closures read.
+    nonisolated(unsafe) static var tuneSweepRestore:
+        (file: URL, model: String, previous: [String: Any]?, backup: URL)?
+
+    /// Restores the pre-sweep tuning record (or removes the key when none
+    /// existed) and deletes the sidecar backup. Called from every early-exit
+    /// path of `tunePrefill` and from the SIGINT/SIGTERM handlers; a no-op
+    /// once the sweep has completed cleanly.
+    static func tuneSweepAbortRestore() {
+        guard let state = tuneSweepRestore else { return }
+        tuneSweepRestore = nil
+        restoreTuningRecord(at: state.file, model: state.model, previous: state.previous)
+        try? FileManager.default.removeItem(at: state.backup)
+    }
+
+    /// Winner selection with a noise-floor tie-break: among candidates whose
+    /// median TTFT is within `tuneNoiseTolerance` of the best, pick the
+    /// SMALLEST step. Near-ties resolve toward vmlx's default-adjacent value;
+    /// 3% is under the tool's observed run-to-run noise, so a "win" inside
+    /// that band is not evidence the larger step is actually faster.
+    static let tuneNoiseTolerance = 0.03
+
+    static func selectTuneWinner(
+        _ results: [(step: Int, medianTTFTMs: Double)]
+    ) -> (step: Int, medianTTFTMs: Double)? {
+        guard let best = results.min(by: { $0.medianTTFTMs < $1.medianTTFTMs }) else {
+            return nil
+        }
+        let cutoff = best.medianTTFTMs * (1 + tuneNoiseTolerance)
+        return results.filter { $0.medianTTFTMs <= cutoff }.min { $0.step < $1.step }
     }
 
     /// The server-side reader is `ModelPrefillTuningStore` (OsaurusCore);
@@ -302,14 +373,14 @@ public struct BenchCommand: Command {
             .appendingPathComponent("prefill-tuning.json")
     }
 
-    private static func readTuningRecords(at url: URL) -> [String: [String: Any]] {
+    static func readTuningRecords(at url: URL) -> [String: [String: Any]] {
         guard let data = try? Data(contentsOf: url),
             let obj = try? JSONSerialization.jsonObject(with: data) as? [String: [String: Any]]
         else { return [:] }
         return obj
     }
 
-    private static func writeTuningRecord(
+    static func writeTuningRecord(
         at url: URL, model: String, record: [String: Any]
     ) throws {
         var records = readTuningRecords(at: url)
@@ -321,7 +392,7 @@ public struct BenchCommand: Command {
         try data.write(to: url, options: .atomic)
     }
 
-    private static func restoreTuningRecord(
+    static func restoreTuningRecord(
         at url: URL, model: String, previous: [String: Any]?
     ) {
         var records = readTuningRecords(at: url)

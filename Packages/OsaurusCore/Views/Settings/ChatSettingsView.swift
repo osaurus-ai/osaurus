@@ -36,12 +36,20 @@ struct ChatSettingsView: View {
     @State private var tempChatTopP: String = ""
     @State private var tempChatMaxToolAttempts: String = ""
     @State private var tempEnableClipboardMonitoring: Bool = false
+    @State private var tempWarmModelsOnLoad: Bool = true
     /// Smooth streaming: pace the visible reveal at ~180 tok/s regardless
     /// of how fast / bursty the network delivers tokens. Default on.
     /// Bound to `UserDefaults` key `chatSmoothStreamingEnabled` which
     /// `StreamingDeltaProcessor` reads per delta. Applied immediately, so
     /// it's excluded from the debounced save baseline.
     @AppStorage("chatSmoothStreamingEnabled") private var smoothStreamingEnabled: Bool = true
+    /// Auto-expand the thinking block while the model is actively reasoning
+    /// and collapse it again once the answer starts. Default off. Bound to
+    /// `UserDefaults` key `chatExpandThinkingWhileStreamingEnabled` which
+    /// `ChatSession` reads on every visible-blocks rebuild. Applied
+    /// immediately, so it's excluded from the debounced save baseline.
+    @AppStorage("chatExpandThinkingWhileStreamingEnabled")
+    private var expandThinkingWhileStreamingEnabled: Bool = false
     /// Free-text "voice" instruction for AI-generated empty-state
     /// greetings — the global default voice. The on/off is per-agent
     /// (`AgentSettings.generativeGreetingsEnabled`). Empty = use the
@@ -175,10 +183,24 @@ struct ChatSettingsView: View {
                 )
 
                 SettingsToggle(
+                    title: L("Expand Thinking While Streaming"),
+                    description:
+                        "Keep the model's reasoning expanded while it is actively thinking, then collapse it automatically once the response begins. Useful for monitoring long-running agent tasks in real time.",
+                    isOn: $expandThinkingWhileStreamingEnabled
+                )
+
+                SettingsToggle(
                     title: L("Clipboard Monitoring"),
                     description:
                         "Automatically detect and offer text from any app as context. Includes 'grab selection' feature when summoning Osaurus.",
                     isOn: $tempEnableClipboardMonitoring
+                )
+
+                SettingsToggle(
+                    title: L("Automatically Warm Models on Load"),
+                    description:
+                        "Preload the selected local model and prefill your chat context so the first response starts faster. The model selector shows yellow while warming and green when ready.",
+                    isOn: $tempWarmModelsOnLoad
                 )
 
                 SettingsDivider()
@@ -351,6 +373,7 @@ struct ChatSettingsView: View {
         tempChatTopP = chat.topPOverride.map { String($0) } ?? ""
         tempChatMaxToolAttempts = chat.maxToolAttempts.map(String.init) ?? ""
         tempEnableClipboardMonitoring = chat.enableClipboardMonitoring
+        tempWarmModelsOnLoad = chat.warmModelsOnLoad
         // Storage convention: empty string = "use the built-in default."
         // The editor never displays an empty state — we hydrate it with the
         // built-in default so the text is editable in place. `saveConfiguration`
@@ -378,6 +401,7 @@ struct ChatSettingsView: View {
         tempChatTopP = ""
         tempChatMaxToolAttempts = ""
         tempEnableClipboardMonitoring = chatDefaults.enableClipboardMonitoring
+        tempWarmModelsOnLoad = chatDefaults.warmModelsOnLoad
         tempGreetingPersona = GenerativeGreetingService.defaultPersonaInstruction
 
         showSuccess("Chat settings restored to defaults")
@@ -394,6 +418,7 @@ struct ChatSettingsView: View {
         var topP: String
         var maxToolAttempts: String
         var enableClipboardMonitoring: Bool
+        var warmModelsOnLoad: Bool
         var greetingPersona: String
     }
 
@@ -406,6 +431,7 @@ struct ChatSettingsView: View {
             topP: tempChatTopP,
             maxToolAttempts: tempChatMaxToolAttempts,
             enableClipboardMonitoring: tempEnableClipboardMonitoring,
+            warmModelsOnLoad: tempWarmModelsOnLoad,
             greetingPersona: tempGreetingPersona
         )
     }
@@ -478,6 +504,7 @@ struct ChatSettingsView: View {
         chatCfg.topPOverride = parsedTopP
         chatCfg.maxToolAttempts = parsedMaxToolAttempts
         chatCfg.enableClipboardMonitoring = tempEnableClipboardMonitoring
+        chatCfg.warmModelsOnLoad = tempWarmModelsOnLoad
         chatCfg.greetingPersona = {
             // Collapse an unedited built-in default back to "" so storage stays
             // in "inherit the default" mode.

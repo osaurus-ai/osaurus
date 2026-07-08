@@ -632,6 +632,14 @@ public actor MemoryService {
         // Quick global gate before queuing — signals stale-by-the-time-
         // we-run is not an issue because `performDistillSession`
         // re-reads from `pending_signals` inside the coordinator body.
+        //
+        // Whatever the outcome, this attempt consumed the debounce entry:
+        // drop the task reference so `debounceTasks` doesn't accumulate one
+        // entry per conversation for the process lifetime (several early
+        // outcomes — disabled, not-resident, no-signals — used to leak it).
+        // A newer turn re-arms its own entry via `bufferTurn`.
+        defer { debounceTasks[conversationId] = nil }
+
         let config = MemoryConfigurationStore.load()
         guard config.enabled else { return .skipped(reason: "memory_disabled") }
 

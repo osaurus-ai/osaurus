@@ -2331,12 +2331,26 @@ public actor RemoteProviderService: ToolCapableService {
         tools: [Tool]?,
         toolChoice: ToolChoiceOption?
     ) -> RemoteChatRequest {
-        let (effortValue, thinking) = Self.remoteChatReasoningControls(
+        let reasoningPolicy = RemoteReasoningPolicy.resolve(
             providerType: provider.providerType,
             host: provider.host,
-            model: model,
+            model: model
+        )
+        let (effortValue, thinking) = reasoningPolicy.controls(
             effort: parameters.modelOptions["reasoningEffort"]?.stringValue
         )
+        // DeepSeek thinking mode rejects forced tool choices (HTTP 400
+        // "Thinking mode does not support this tool_choice"); downgrade
+        // `.required`/`.function` to `.auto` there. See
+        // `RemoteReasoningPolicy.sanitizedToolChoice`.
+        let wireToolChoice = reasoningPolicy.sanitizedToolChoice(toolChoice, thinking: thinking)
+        if let toolChoice, wireToolChoice != toolChoice {
+            debugLog(
+                "[RemoteProviderService] tool_choice \(toolChoice) downgraded to "
+                    + "\(String(describing: wireToolChoice)) for thinking-mode provider "
+                    + "host=\(provider.host) model=\(model)"
+            )
+        }
         let allowsReasoningObject =
             Self.allowsChatCompletionsReasoningObject(
                 providerType: provider.providerType,
@@ -2388,7 +2402,7 @@ public actor RemoteProviderService: ToolCapableService {
             presence_penalty: isAgentRun ? nil : (isReasoningModel ? nil : parameters.presencePenalty),
             stop: nil,
             tools: wireTools,
-            tool_choice: toolChoice,
+            tool_choice: wireToolChoice,
             reasoning_effort: isAgentRun ? nil : effortValue,
             reasoning: isAgentRun
                 ? nil
@@ -2910,6 +2924,33 @@ public actor RemoteProviderService: ToolCapableService {
     static func hasMeaningfulText(_ text: String?) -> Bool {
         guard let text else { return false }
         return !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    /// Translate an OpenAI-style `image_url` value (a `data:` URI or a plain
+    /// http(s) URL) into an Anthropic image content block. Returns nil for
+    /// malformed URIs so a bad part degrades to "image omitted" rather than a
+    /// provider 400.
+    static func anthropicImageBlock(fromImageUrl url: String) -> AnthropicImageBlock? {
+        if url.hasPrefix("data:") {
+            let afterScheme = url.dropFirst("data:".count)
+            guard let commaIndex = afterScheme.firstIndex(of: ",") else { return nil }
+            // Header is e.g. "image/png;base64".
+            let header = afterScheme[..<commaIndex]
+            let mediaType = header.split(separator: ";").first.map(String.init) ?? "image/png"
+            let base64 = String(afterScheme[afterScheme.index(after: commaIndex)...])
+            guard !base64.isEmpty else { return nil }
+            return AnthropicImageBlock(
+                type: "image",
+                source: .init(type: "base64", media_type: mediaType, data: base64, url: nil)
+            )
+        }
+        if url.hasPrefix("http://") || url.hasPrefix("https://") {
+            return AnthropicImageBlock(
+                type: "image",
+                source: .init(type: "url", media_type: nil, data: nil, url: url)
+            )
+        }
+        return nil
     }
 
     /// The non-whitespace placeholder a truthful empty/nil tool result rides
@@ -3564,13 +3605,24 @@ struct RemoteChatRequest: Encodable {
             case "user":
                 // Flush any pending tool results before user message
                 flushToolResults()
-                // Convert user messages
-                if let content = msg.content {
+                // Convert user messages, translating any OpenAI-style
+                // image_url content parts into Anthropic image blocks.
+                // Reading only the flat `content` string silently dropped
+                // attached images — and dropped the whole message when the
+                // user sent an image with no accompanying text.
+                var userBlocks: [AnthropicContentBlock] = msg.imageUrls.compactMap { url in
+                    RemoteProviderService.anthropicImageBlock(fromImageUrl: url).map { .image($0) }
+                }
+                if let content = msg.content, RemoteProviderService.hasMeaningfulText(content) {
+                    userBlocks.append(.text(AnthropicTextBlock(text: content)))
+                }
+                if userBlocks.count == 1, case .text(let textBlock) = userBlocks[0] {
                     anthropicMessages.append(
-                        AnthropicMessage(
-                            role: "user",
-                            content: .text(content)
-                        )
+                        AnthropicMessage(role: "user", content: .text(textBlock.text))
+                    )
+                } else if !userBlocks.isEmpty {
+                    anthropicMessages.append(
+                        AnthropicMessage(role: "user", content: .blocks(userBlocks))
                     )
                 }
 
@@ -4067,10 +4119,28 @@ struct RemoteChatRequest: Encodable {
                 }
 
             case "user":
-                // User messages become message input items
-                if let content = msg.content {
-                    let msgContent = OpenResponsesMessageContent.text(content)
-                    inputItems.append(.message(OpenResponsesMessageItem(role: "user", content: msgContent)))
+                // User messages become message input items. Image content
+                // parts translate to `input_image` parts (the Responses API
+                // accepts data URIs in `image_url`); reading only the flat
+                // `content` string dropped attached images, and dropped the
+                // whole message when the user sent an image with no text.
+                let imageParts: [OpenResponsesContentPart] = msg.imageUrls.map {
+                    .inputImage(OpenResponsesInputImagePart(imageUrl: $0))
+                }
+                if imageParts.isEmpty {
+                    if let content = msg.content {
+                        let msgContent = OpenResponsesMessageContent.text(content)
+                        inputItems.append(.message(OpenResponsesMessageItem(role: "user", content: msgContent)))
+                    }
+                } else {
+                    var parts: [OpenResponsesContentPart] = []
+                    if let content = msg.content, RemoteProviderService.hasMeaningfulText(content) {
+                        parts.append(.inputText(OpenResponsesInputTextPart(text: content)))
+                    }
+                    parts.append(contentsOf: imageParts)
+                    inputItems.append(
+                        .message(OpenResponsesMessageItem(role: "user", content: .parts(parts)))
+                    )
                 }
 
             case "assistant":
@@ -4182,11 +4252,15 @@ struct RemoteChatRequest: Encodable {
             }
         }
 
-        // Determine input format
+        // Determine input format. The shorthand only applies to plain-text
+        // content: flattening a parts message through `plainText` would strip
+        // its input_image parts.
         let input: OpenResponsesInput
-        if !alwaysUseInputItems, inputItems.count == 1, case .message(let msg) = inputItems[0], msg.role == "user" {
-            // Single user message - use text shorthand
-            input = .text(msg.content.plainText)
+        if !alwaysUseInputItems, inputItems.count == 1, case .message(let msg) = inputItems[0],
+            msg.role == "user", case .text(let text) = msg.content
+        {
+            // Single text-only user message - use text shorthand
+            input = .text(text)
         } else {
             input = .items(inputItems)
         }

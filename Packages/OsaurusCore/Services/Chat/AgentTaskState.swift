@@ -109,6 +109,16 @@ public final class AgentTaskState {
     /// before failing.
     private static let execLikeTools: Set<String> = ["shell_run", "sandbox_exec"]
 
+    /// Planning/meta tools whose whole purpose is (re)stating intent rather
+    /// than acting on the world. Re-issuing one of these repeatedly — even
+    /// with a reworded body each turn — is re-planning without progress, and
+    /// is what the reworded-`todo` stall does. Deliberately an ALLOWLIST, not
+    /// "everything that isn't read/write/exec/search": tools like `image`,
+    /// `db_*`, `capabilities_load`, `spawn`, and `web_*` are legitimately
+    /// called several times in a row (three images, three row inserts, three
+    /// capability loads) and must NOT be treated as a stalled plan.
+    private static let planningLikeTools: Set<String> = ["todo"]
+
     /// Tools whose `invalid_args` / `not_found` failures are DETERMINISTIC
     /// given an unchanged filesystem / capability catalog: re-issuing the
     /// identical call must return the identical error. Their held errors are
@@ -194,6 +204,12 @@ public final class AgentTaskState {
     /// Set when the most recent recorded call was a non-read tool repeated
     /// to (or past) `repeatedCallThreshold`; cleared by any other call.
     private var repeatedCallName: String?
+    /// Set when a planning/meta tool (not read/write/exec/search) has been
+    /// called `repeatedCallThreshold`+ times in a row REGARDLESS of arguments;
+    /// cleared by any productive call or a different tool. Drives the
+    /// reworded-planning-loop nudge (e.g. `todo` re-issued every turn).
+    private var planningRunName: String?
+    private var planningRunCount = 0
 
     public init(biasEnabled: Bool = true) {
         self.biasEnabled = biasEnabled
@@ -215,6 +231,8 @@ public final class AgentTaskState {
         consecutiveListingsWithoutRead = 0
         nonReadCallCounts.removeAll(keepingCapacity: true)
         repeatedCallName = nil
+        planningRunName = nil
+        planningRunCount = 0
     }
 
     // MARK: Dedupe
@@ -268,6 +286,7 @@ public final class AgentTaskState {
         let sig = signature(name: name, argsJSON: argsJSON)
         let resultClass = Self.classify(result)
 
+        let previousToolName = lastToolName
         lastResultEnvelope = result
         lastResultClass = resultClass
         lastToolName = name
@@ -338,6 +357,25 @@ public final class AgentTaskState {
             repeatedCallName = count >= Self.repeatedCallThreshold ? name : nil
         }
 
+        // Same-NAME run for a planning/meta tool (an explicit allowlist —
+        // `todo` today): re-issuing one repeatedly — even with a reworded body
+        // each turn — is re-planning without progress. This catches the
+        // reworded-`todo` loop the identical-args `nonReadCallCounts` counter
+        // above cannot: every new checklist is a fresh signature, so that
+        // counter never fires while the model burns turns re-planning. Every
+        // non-planning tool DISARMS the run — that keeps legitimate consecutive
+        // work (three `image` generations, three `db_insert`s, three
+        // `capabilities_load`s) from being mislabeled a stalled plan, and
+        // ensures the planning nudge never masks another result-class nudge
+        // (e.g. the `image` gen→edit continuation). Advisory only.
+        if Self.planningLikeTools.contains(name) {
+            planningRunCount = (previousToolName == name) ? planningRunCount + 1 : 1
+            planningRunName = planningRunCount >= Self.repeatedCallThreshold ? name : nil
+        } else {
+            planningRunName = nil
+            planningRunCount = 0
+        }
+
         // Wandering counter: a listing is a step that hasn't reached a file
         // yet, so it increments. ONLY a successful file read counts as
         // progress and resets it. A `not_found` / `error` is a FAILED read —
@@ -391,6 +429,15 @@ public final class AgentTaskState {
         if let name = repeatedCallName {
             return
                 "You have now made the exact same `\(name)` call with identical arguments \(Self.repeatedCallThreshold)+ times. Repeating it will not change the outcome — change your approach, or report what is blocking you."
+        }
+
+        // Reworded planning loop: a meta/planning tool (e.g. `todo`) re-issued
+        // repeatedly with DIFFERENT arguments each turn — the identical-args
+        // check above never catches it, yet no external progress is made.
+        // Reactive (3rd consecutive call) and advisory: the call still ran.
+        if let name = planningRunName {
+            return
+                "You have called `\(name)` \(Self.repeatedCallThreshold)+ times in a row without taking any other action. Re-planning is not progress — if you already have what you need, execute the next concrete step or finish the task; otherwise call a different tool. Do not issue another `\(name)` now."
         }
 
         // Listing nudges are reactive: suppressed until the model is observed

@@ -42,13 +42,41 @@ public struct Configuration {
             return nil
         }
 
-        struct PartialConfig: Decodable { let port: Int? }
+        struct PartialConfig: Decodable {
+            let port: Int?
+            let exposeToNetwork: Bool?
+        }
         do {
             let data = try Data(contentsOf: configURL)
             let cfg = try JSONDecoder().decode(PartialConfig.self, from: data)
             return cfg.port
         } catch {
             return nil
+        }
+    }
+
+    /// Whether the Osaurus HTTP server is exposed beyond loopback. Used by
+    /// `osaurus mcp` to avoid printing a misleading loopback-trust message.
+    public static func resolveExposeToNetwork() -> Bool {
+        let fm = FileManager.default
+        let root = root()
+        let oldRoot = legacyRoot()
+        let candidates: [URL] = [
+            root.appendingPathComponent("config/server.json"),
+            root.appendingPathComponent("ServerConfiguration.json"),
+            oldRoot.appendingPathComponent("config/server.json"),
+            oldRoot.appendingPathComponent("ServerConfiguration.json"),
+        ]
+        guard let configURL = candidates.first(where: { fm.fileExists(atPath: $0.path) }) else {
+            return false
+        }
+        struct PartialConfig: Decodable { let exposeToNetwork: Bool? }
+        do {
+            let data = try Data(contentsOf: configURL)
+            let cfg = try JSONDecoder().decode(PartialConfig.self, from: data)
+            return cfg.exposeToNetwork ?? false
+        } catch {
+            return false
         }
     }
 

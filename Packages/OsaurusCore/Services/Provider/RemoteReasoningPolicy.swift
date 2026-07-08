@@ -207,6 +207,43 @@ struct RemoteReasoningPolicy {
         }
     }
 
+    /// Downgrade `tool_choice` values the provider rejects while thinking
+    /// mode is active.
+    ///
+    /// DeepSeek V4 (`deepseek-v4-pro`/`-flash`) enables thinking by default
+    /// and returns HTTP 400 `"Thinking mode does not support this
+    /// tool_choice"` for `tool_choice: "required"` and named-function
+    /// choices; only `"auto"`/`"none"` are accepted. Forced choices work
+    /// only in non-thinking mode, i.e. when `thinking: {"type":"disabled"}`
+    /// is on the wire. This is a wire-compatibility translation of the same
+    /// kind as the Anthropic `.required -> .any` mapping, not an
+    /// output-shaping guard: the caller's intent ("call a tool now") is
+    /// preserved as closely as the provider's thinking-mode contract allows.
+    func sanitizedToolChoice(
+        _ choice: ToolChoiceOption?,
+        thinking: ThinkingConfig?
+    ) -> ToolChoiceOption? {
+        guard let choice else { return nil }
+        switch providerType {
+        case .openaiLegacy, .azureOpenAI:
+            break
+        case .anthropic, .openResponses, .openAICodex, .gemini, .osaurus, .osaurusRouter:
+            return choice
+        }
+        guard Self.matches(needle: "deepseek", host: host, model: model) else {
+            return choice
+        }
+        // Thinking explicitly disabled (Instruct mode): forced choices are legal.
+        guard thinking?.type != "disabled" else { return choice }
+
+        switch choice {
+        case .required, .function:
+            return .auto
+        case .auto, .none:
+            return choice
+        }
+    }
+
     /// Translate the local DSV4 `reasoningEffort` value into the wire fields.
     ///
     /// `DSV4ReasoningProfile` exposes `instruct` / `high` / `max`, but DeepSeek's

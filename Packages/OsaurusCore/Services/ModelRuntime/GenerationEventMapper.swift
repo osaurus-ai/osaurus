@@ -40,7 +40,8 @@ enum GenerationEventMapper {
     static func map(
         events: AsyncStream<Generation>,
         modelName: String = "",
-        trace: TTFTTrace? = nil
+        trace: TTFTTrace? = nil,
+        suppressProgressUI: Bool = false
     ) -> AsyncThrowingStream<ModelRuntimeEvent, Error> {
         let (stream, continuation) = AsyncThrowingStream<ModelRuntimeEvent, Error>.makeStream()
         let task = Task {
@@ -75,6 +76,17 @@ enum GenerationEventMapper {
                 trace?.mark("first_model_output")
             }
 
+            // Route the "prefill is done" signal to the surface that started
+            // it: the global HUD for real requests, the per-model warm-up
+            // side channel for suppressed (background warm-up) requests.
+            func reportPrefillFinished() {
+                if !suppressProgressUI {
+                    InferenceProgressManager.shared.prefillDidFinishAsync()
+                } else {
+                    WarmupProgressHub.shared.finish(model: modelName)
+                }
+            }
+
             for await event in events {
                 if case .info(let info) = event {
                     sawCompletionInfo = true
@@ -99,7 +111,7 @@ enum GenerationEventMapper {
                     markFirstModelOutput()
                     if firstChunk {
                         firstChunk = false
-                        InferenceProgressManager.shared.prefillDidFinishAsync()
+                        reportPrefillFinished()
                     }
                     estimatedTextTokens += max(1, text.count / 4)
                     continuation.yield(.tokens(text))
@@ -119,7 +131,7 @@ enum GenerationEventMapper {
                     // channel.
                     if firstChunk {
                         firstChunk = false
-                        InferenceProgressManager.shared.prefillDidFinishAsync()
+                        reportPrefillFinished()
                     }
                     continuation.yield(.reasoning(text))
 
@@ -130,7 +142,11 @@ enum GenerationEventMapper {
                         totalUnitCount: progress.totalUnitCount,
                         detail: progress.detail
                     )
-                    InferenceProgressManager.shared.prefillDidUpdateAsync(state)
+                    if !suppressProgressUI {
+                        InferenceProgressManager.shared.prefillDidUpdateAsync(state)
+                    } else {
+                        WarmupProgressHub.shared.prefillDidUpdate(model: modelName, state: state)
+                    }
                     if state.stage.rawValue != lastPrefillStage {
                         lastPrefillStage = state.stage.rawValue
                         PrefillDebugLog.shared.log(
@@ -151,6 +167,22 @@ enum GenerationEventMapper {
                     continuation.yield(
                         .toolInvocation(name: call.function.name, argsJSON: argsJSON)
                     )
+
+                case .toolCallProgress(let envelopeDelta):
+                    // Raw envelope preview while the call is still being
+                    // written. Keeps the stream alive during a long file-write
+                    // call (which otherwise buffers silently until it closes)
+                    // so the chat can render progress instead of a frozen
+                    // indicator. Marks first output so the prefill spinner
+                    // clears — the model IS producing, just inside a tool
+                    // envelope. The parsed call still lands as `.toolInvocation`.
+                    guard !envelopeDelta.isEmpty else { continue }
+                    markFirstModelOutput()
+                    if firstChunk {
+                        firstChunk = false
+                        InferenceProgressManager.shared.prefillDidFinishAsync()
+                    }
+                    continuation.yield(.toolCallProgress(envelopeDelta))
 
                 case .info:
                     continue
@@ -208,7 +240,7 @@ enum GenerationEventMapper {
                     + "decodeTps=\(String(format: "%.1f", decodeTps)) totalMs=\(durationMs)"
             )
 
-            InferenceProgressManager.shared.prefillDidFinishAsync()
+            reportPrefillFinished()
             continuation.finish()
         }
         continuation.onTermination = { @Sendable _ in

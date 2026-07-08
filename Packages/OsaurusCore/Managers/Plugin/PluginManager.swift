@@ -287,9 +287,14 @@ final class PluginManager {
                 loadedPluginPaths.insert(entry.url.path)
                 loadedNew = true
 
-                // Register tools
-                for tool in loaded.tools {
-                    ToolRegistry.shared.registerPluginTool(tool)
+                // Register tools — except for plugins whose functionality is
+                // now built into Osaurus (native search supersedes
+                // osaurus.search); their dylib stays loaded for routes/skills
+                // but the tools would collide with the native surface.
+                if !Self.supersededPluginIds.contains(loaded.plugin.id) {
+                    for tool in loaded.tools {
+                        ToolRegistry.shared.registerPluginTool(tool)
+                    }
                 }
 
                 // Register plugin skills
@@ -343,6 +348,13 @@ final class PluginManager {
     /// to read from any actor / queue, including plugin-author tests
     /// that match against it from a non-MainActor context.
     nonisolated static let abiProbeKey = "__osaurus_abi_probe__"
+
+    /// Plugins whose functionality has been absorbed into Osaurus itself.
+    /// Their tools are NOT registered (the native implementation owns the
+    /// tool names); the Plugins UI shows a "built into Osaurus" notice
+    /// instead of the usual tool list. `nonisolated` so views and the
+    /// migration path can consult it from any context.
+    nonisolated static let supersededPluginIds: Set<String> = ["osaurus.search"]
 
     /// Per-plugin first-delivery sweep. The synthetic ABI probe is
     /// delivered SYNCHRONOUSLY inside a `.currently_loading` marker so

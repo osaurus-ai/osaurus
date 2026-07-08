@@ -70,6 +70,14 @@ public final class FrontmostAppTracker: ObservableObject {
         if app.processIdentifier == selfPid { return }
         if let bundleId = app.bundleIdentifier, bundleId == selfBundleId { return }
         lastNonSelfPid = app.processIdentifier
-        lastNonSelfAppName = app.localizedName ?? app.bundleIdentifier
+        // Skip the no-op publish: assigning an unchanged `@Published` value
+        // still fires the whole Combine/SwiftUI fan-out synchronously inside
+        // this NSWorkspace notification callback, which showed up as a
+        // main-thread hang under load (Sentry APPLE-MACOS-RQ). Re-activating
+        // the same app (the common case) shouldn't redo any downstream work.
+        let name = app.localizedName ?? app.bundleIdentifier
+        if lastNonSelfAppName != name {
+            lastNonSelfAppName = name
+        }
     }
 }

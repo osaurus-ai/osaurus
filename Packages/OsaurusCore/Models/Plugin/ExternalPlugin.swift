@@ -563,6 +563,24 @@ final class ExternalPlugin: @unchecked Sendable {
     /// the winner of this latch frees `ctx`.
     private let didDestroy = OSAllocatedUnfairLock<Bool>(initialState: false)
 
+    /// Tracks plugin callbacks that can run OUTSIDE the queues `shutdown()`
+    /// drains: main-actor invocations (`dispatchPluginCallOnMainActor` never
+    /// touches `invokeQueue`) and task-event deliveries whose per-task queue
+    /// was created after `shutdown()` took its snapshot (or whose body read
+    /// `isShutDown == false` just before the mid-drain flip). Either could
+    /// still be executing plugin code when the drain group completed, so
+    /// `destroy(ctx)` freed the context under a live callback — the
+    /// use-after-free behind production crash APPLE-MACOS-9T (EXC_BAD_ACCESS
+    /// inside the plugin's destroy/teardown path).
+    ///
+    /// Contract: callers `enter()` BEFORE reading the `isShutDown` latch and
+    /// `leave()` when the callback returns. `shutdown()` flips the latch
+    /// (inside the drain), then waits on this group before `destroy`. The
+    /// enter-before-check ordering makes that sound: a callback either
+    /// entered before the wait began (so the wait covers it) or observes the
+    /// flipped latch and bails without touching `ctx`.
+    private let inFlightCallbacks = DispatchGroup()
+
     /// Per-plugin concurrent queue for C ABI calls. Each plugin gets its own
     /// queue so that long-running operations (e.g. agentic inference) in one
     /// plugin don't block other plugins or additional requests to the same plugin.
@@ -646,6 +664,13 @@ final class ExternalPlugin: @unchecked Sendable {
     var hasTaskEventHandler: Bool { abiVersion >= 2 && api.on_task_event != nil }
 
     #if DEBUG
+        /// Test-only: flipped once `shutdown()` has captured its task-event
+        /// queue snapshot. Lets `PluginShutdownRaceTests` deterministically
+        /// deliver a task event on a queue created AFTER the snapshot — the
+        /// exact window where only `inFlightCallbacks` (not the drain group)
+        /// keeps `destroy(ctx)` from freeing the context under the callback.
+        let shutdownSnapshotTakenForTesting = OSAllocatedUnfairLock<Bool>(initialState: false)
+
         /// Test-only: synchronously drains every per-task event queue and the
         /// config event queue, then returns. Intended to be called from the
         /// matched `removeLoadedPluginForTesting` cleanup so that any
@@ -693,6 +718,9 @@ final class ExternalPlugin: @unchecked Sendable {
         let queues: [DispatchQueue] = taskEventQueuesLock.withLock {
             Array(taskEventQueues.values)
         }
+        #if DEBUG
+            shutdownSnapshotTakenForTesting.withLock { $0 = true }
+        #endif
 
         await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
             let group = DispatchGroup()
@@ -718,6 +746,16 @@ final class ExternalPlugin: @unchecked Sendable {
                 group.leave()
             }
             group.notify(flags: .barrier, queue: self.invokeQueue) { [self] in
+                // Wait for callbacks the drain above cannot see: main-actor
+                // invocations and task-event deliveries on queues created
+                // after the snapshot. `isShutDown` is already true here (the
+                // configEventQueue marker flipped it before the group
+                // completed), so no NEW callback can pass its latch check —
+                // this wait only covers ones already inside plugin code.
+                // Safe to block: we're on an invokeQueue worker (never the
+                // main thread), and the waited-on callbacks never dispatch
+                // to invokeQueue themselves.
+                self.inFlightCallbacks.wait()
                 // Destroy exactly once. Concurrent shutdown attempts (re-entry
                 // from PluginManager hot reload, etc.) all drain and await here,
                 // but only the winner of `didDestroy` frees `ctx`.
@@ -734,7 +772,17 @@ final class ExternalPlugin: @unchecked Sendable {
                 // same plugin path does not see stale "already delivered"
                 // entries against a fresh ctx pointer.
                 self.lastDeliveredConfig.withLock { $0.removeAll(keepingCapacity: false) }
-                self.api.destroy?(self.ctx)
+                // Scope TLS to this plugin for the duration of `destroy`:
+                // plugin teardown code routinely calls host trampolines
+                // (config_get("api_key"), http_request for a final webhook
+                // delete, ...) and without TLS those resolve through the
+                // global `lastDispatchedPluginId` fallback — potentially a
+                // DIFFERENT plugin's context, or none at all — giving the
+                // dying plugin values it never wrote (or nil where it always
+                // saw a value), which some plugins dereference and crash on.
+                PluginHostContext.withTLSScope(pluginId: self.id, agentId: nil) {
+                    self.api.destroy?(self.ctx)
+                }
                 continuation.resume()
             }
         }
@@ -805,6 +853,12 @@ final class ExternalPlugin: @unchecked Sendable {
         errorMessage: String,
         _ call: @Sendable (osr_plugin_ctx_t) -> UnsafePointer<CChar>?
     ) throws -> String {
+        // Main-actor invocations never touch `invokeQueue`, so `shutdown()`'s
+        // barrier drain cannot see them. Enter the in-flight group BEFORE the
+        // latch check (see `inFlightCallbacks`) so `destroy(ctx)` waits for
+        // this call instead of freeing the context under it.
+        inFlightCallbacks.enter()
+        defer { inFlightCallbacks.leave() }
         guard !isShutDown.withLock({ $0 }) else {
             throw NSError(
                 domain: "ExternalPlugin",
@@ -1084,6 +1138,12 @@ final class ExternalPlugin: @unchecked Sendable {
         let isTerminal = eventType == .completed || eventType == .failed || eventType == .cancelled
 
         eventQueue(for: taskId).async { [self] in
+            // Enter BEFORE the latch check (see `inFlightCallbacks`): this
+            // queue may not be in `shutdown()`'s drain snapshot (created
+            // after it), so the group is what keeps `destroy(ctx)` from
+            // running while this delivery is inside plugin code.
+            self.inFlightCallbacks.enter()
+            defer { self.inFlightCallbacks.leave() }
             guard !self.isShutDown.withLock({ $0 }) else { return }
             PluginHostContext.withTLSScope(pluginId: pluginId, agentId: agentId) {
                 taskId.withCString { taskIdPtr in

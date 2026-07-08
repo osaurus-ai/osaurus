@@ -228,6 +228,9 @@ struct SidebarSearchField: View {
     @Binding var text: String
     let placeholder: LocalizedStringKey
     var isFocused: FocusState<Bool>.Binding
+    /// Shows a small trailing spinner while an asynchronous search pass
+    /// (e.g. the chat sidebar's full-text conversation lookup) is in flight.
+    var isSearching: Bool = false
 
     @Environment(\.theme) private var theme
 
@@ -235,6 +238,12 @@ struct SidebarSearchField: View {
         HStack(spacing: 8) {
             searchIcon
             searchTextField
+            if isSearching {
+                ProgressView()
+                    .controlSize(.mini)
+                    .frame(width: 12, height: 12)
+                    .transition(.opacity)
+            }
             clearButton
         }
         .padding(.horizontal, 10)
@@ -243,6 +252,7 @@ struct SidebarSearchField: View {
         .overlay(focusBorder)
         .animation(theme.animationQuick(), value: isFocused.wrappedValue)
         .animation(theme.animationQuick(), value: text.isEmpty)
+        .animation(theme.animationQuick(), value: isSearching)
     }
 
     private var searchIcon: some View {
