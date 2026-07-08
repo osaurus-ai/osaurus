@@ -693,7 +693,7 @@ public enum ComputerUseLoop {
                     if let reason = dragBoundaryViolation(start: resolvedElement, destination: destinationElement) {
                         metrics.blocked += 1
                         feed.emit(
-                            FeedEvent(
+                            SubagentActivityEvent(
                                 step: step + 1,
                                 kind: .blocked,
                                 title: "Blocked drag across boundary",
