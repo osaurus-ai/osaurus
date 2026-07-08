@@ -135,7 +135,13 @@ struct FileDiff: Equatable {
             !body.isEmpty
         else { return nil }
 
-        let path = partialStringField("path", in: partialArgs) ?? ""
+        // Models sometimes emit an alias key for the path (`filename`,
+        // `file_path`, …); the executed call is rescued by
+        // `SchemaValidator.normalizeKeySpelling`, so the live preview must
+        // accept the same spellings or the header shows no name.
+        let pathKeys = ["path", "filename", "file_name", "filepath", "file_path"]
+        let path = pathKeys.lazy.compactMap { partialStringField($0, in: partialArgs) }
+            .first(where: { !$0.isEmpty }) ?? ""
         let lines = body.components(separatedBy: "\n").map { Line(kind: .added, text: $0) }
         return FileDiff(
             path: path,
