@@ -1679,8 +1679,10 @@ final class NativeToolCallRowView: NSView {
 
             chevron.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -12),
             chevron.centerYAnchor.constraint(equalTo: categoryBg.centerYAnchor),
-            chevron.widthAnchor.constraint(equalToConstant: 10),
-            chevron.heightAnchor.constraint(equalToConstant: 10),
+            // 12pt square fits both 10pt chevron orientations (9×11 and 11×9)
+            // without downscaling — a 10pt frame shrank whichever was wider.
+            chevron.widthAnchor.constraint(equalToConstant: 12),
+            chevron.heightAnchor.constraint(equalToConstant: 12),
 
             // Expanded divider aligns with the ARGUMENTS text (right of the rail).
             separatorView.leadingAnchor.constraint(
