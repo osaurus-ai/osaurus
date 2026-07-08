@@ -43,23 +43,20 @@ struct HuggingFaceTokenPromptSheet: View {
             .fixedSize(horizontal: false, vertical: true)
 
             VStack(alignment: .leading, spacing: 6) {
-                stepRow(1, text: L("Sign in (or sign up free) at huggingface.co"))
-                stepRow(2, text: L("Create a Read token — the link below opens the form"))
-                stepRow(3, text: L("Paste it below — it stays in your macOS Keychain"))
-            }
-
-            // Deep-links straight to Hugging Face's new-token form with the
-            // Read type preselected.
-            if let tokensURL = URL(string: "https://huggingface.co/settings/tokens/new?tokenType=read") {
-                Link(destination: tokensURL) {
-                    HStack(spacing: 5) {
-                        Image(systemName: "arrow.up.forward.square")
-                            .font(.system(size: 11, weight: .medium))
-                        Text("Create a Read token on huggingface.co", bundle: .module)
-                            .font(.system(size: 12, weight: .medium))
-                    }
-                    .foregroundColor(theme.accentColor)
-                }
+                stepRow(1, text: Text("Sign in (or sign up free) at huggingface.co", bundle: .module))
+                // Markdown link deep-links straight to Hugging Face's
+                // new-token form with the Read type preselected.
+                stepRow(
+                    2,
+                    text: Text(
+                        .init(
+                            L(
+                                "Create a Read token using [this link](https://huggingface.co/settings/tokens/new?tokenType=read)"
+                            )
+                        )
+                    )
+                )
+                stepRow(3, text: Text("Paste it below. It stays in your macOS Keychain", bundle: .module))
             }
 
             HuggingFaceTokenField(tokenInput: $tokenInput) { saveAndContinue() }
@@ -98,16 +95,17 @@ struct HuggingFaceTokenPromptSheet: View {
         .background(theme.primaryBackground)
     }
 
-    private func stepRow(_ number: Int, text: String) -> some View {
+    private func stepRow(_ number: Int, text: Text) -> some View {
         HStack(alignment: .firstTextBaseline, spacing: 8) {
             Text("\(number)")
                 .font(.system(size: 10, weight: .bold, design: .monospaced))
                 .foregroundColor(theme.accentColor)
                 .frame(width: 16, height: 16)
                 .background(Circle().fill(theme.accentColor.opacity(0.15)))
-            Text(text)
+            text
                 .font(.system(size: 12))
                 .foregroundColor(theme.primaryText)
+                .tint(theme.accentColor)
                 .fixedSize(horizontal: false, vertical: true)
         }
     }
