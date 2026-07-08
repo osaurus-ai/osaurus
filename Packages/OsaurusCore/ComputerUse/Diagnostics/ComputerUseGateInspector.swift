@@ -129,7 +129,9 @@ enum ComputerUseGateInspector {
             app: appName,
             ceiling: input.ceiling
         )
-        let dangerousConfirm = effect >= .navigate && input.policy.requiresForcedConfirm(app: appName)
+        let dangerousConfirm =
+            effect >= .navigate
+            && input.policy.requiresForcedConfirm(app: appName, targetLabel: targetLabel)
         let finalDisposition: AutonomyDisposition?
         let decision: GateDecision
         let decisionText: String

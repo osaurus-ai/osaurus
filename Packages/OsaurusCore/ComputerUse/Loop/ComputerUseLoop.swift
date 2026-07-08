@@ -1424,6 +1424,9 @@ public enum ComputerUseLoop {
             }
             return nil
         case (nil, nil):
+            // Real app-window elements inherit a window id from capture. A nil/nil
+            // pair is reserved for non-window surfaces such as menu-bar items, so
+            // it cannot prove a cross-window drag and is allowed only by that invariant.
             return nil
         default:
             return "Only one drag endpoint has a window id, so the loop cannot prove both endpoints are in "

@@ -189,6 +189,24 @@ final class DangerousAppGuardrailTests: XCTestCase {
         XCTAssertEqual(preview.appName, "com.apple.Terminal")
     }
 
+    /// Launcher clicks are driven in Dock/Finder/Spotlight, but the target label
+    /// still names the sensitive app being opened.
+    func testClickingDangerousAppLauncherConfirmsEvenUnderAutonomous() async {
+        let gate = ComputerUseGate(policy: AutonomyPolicy(globalPreset: .autonomous))
+        let action = AgentAction(verb: .click, target: AgentTarget(describe: "Terminal"))
+        let decision = await gate.evaluate(
+            action: action,
+            effect: .navigate,
+            appName: "Dock",
+            targetLabel: "Terminal"
+        )
+        guard case .confirm(let preview) = decision else {
+            return XCTFail("clicking a Terminal launcher should force a confirm under autonomous")
+        }
+        XCTAssertEqual(preview.appName, "Dock")
+        XCTAssertEqual(preview.targetLabel, "Terminal")
+    }
+
     /// The guardrail only TIGHTENS: a read-only policy that denies edits still
     /// denies them in a dangerous app (a confirm floor can't loosen a deny).
     func testGuardrailCannotLoosenADeny() async {
