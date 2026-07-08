@@ -195,6 +195,7 @@ final class ModelDownloadService: ObservableObject {
     }
 
     init() {
+        HuggingFaceAuth.preloadInBackground()
         refreshTotalDownloadedSize()
         // Recompute whenever a download completes, a model is deleted, or the
         // models directory changes — all of which already post this.
@@ -1185,7 +1186,9 @@ final class DirectDownloader: NSObject, URLSessionDownloadDelegate, @unchecked S
             if let resumeData {
                 task = session.downloadTask(withResumeData: resumeData)
             } else {
-                task = session.downloadTask(with: url)
+                var request = URLRequest(url: url)
+                HuggingFaceAuth.authorize(&request)
+                task = session.downloadTask(with: request)
             }
             self.currentDownloadTask = task
             lock.unlock()
@@ -1231,6 +1234,24 @@ final class DirectDownloader: NSObject, URLSessionDownloadDelegate, @unchecked S
     }
 
     func invalidate() { session.invalidateAndCancel() }
+
+    /// `resolve/main` URLs 302-redirect to Hugging Face's CDN. Don't leak the
+    /// user's access token to that (or any other) third-party host: the
+    /// Authorization header only travels while the request stays on the host
+    /// it was originally sent to. Mirrors what `huggingface_hub` does.
+    func urlSession(
+        _: URLSession,
+        task: URLSessionTask,
+        willPerformHTTPRedirection _: HTTPURLResponse,
+        newRequest request: URLRequest,
+        completionHandler: @escaping (URLRequest?) -> Void
+    ) {
+        var redirected = request
+        if redirected.url?.host != task.originalRequest?.url?.host {
+            redirected.setValue(nil, forHTTPHeaderField: "Authorization")
+        }
+        completionHandler(redirected)
+    }
 
     func urlSession(
         _: URLSession,

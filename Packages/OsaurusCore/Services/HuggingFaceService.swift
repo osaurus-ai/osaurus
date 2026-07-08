@@ -127,6 +127,7 @@ actor HuggingFaceService {
 
         var req = URLRequest(url: url)
         req.setValue("application/json", forHTTPHeaderField: "Accept")
+        HuggingFaceAuth.authorize(&req)
         do {
             let (data, response) = try await GlobalProxySettings.sharedSession().data(for: req)
             guard let http = response as? HTTPURLResponse, (200 ..< 300).contains(http.statusCode) else {
@@ -198,6 +199,7 @@ actor HuggingFaceService {
 
         var req = URLRequest(url: url)
         req.setValue("text/plain", forHTTPHeaderField: "Accept")
+        HuggingFaceAuth.authorize(&req)
         do {
             let (data, response) = try await GlobalProxySettings.sharedSession().data(for: req)
             guard let http = response as? HTTPURLResponse, (200 ..< 300).contains(http.statusCode),
@@ -473,6 +475,7 @@ actor HuggingFaceService {
 
         var req = URLRequest(url: url)
         req.setValue("application/json", forHTTPHeaderField: "Accept")
+        HuggingFaceAuth.authorize(&req)
 
         do {
             let (data, response) = try await GlobalProxySettings.sharedSession().data(for: req)
@@ -567,6 +570,7 @@ actor HuggingFaceService {
 
         var req = URLRequest(url: url)
         req.setValue("application/json", forHTTPHeaderField: "Accept")
+        HuggingFaceAuth.authorize(&req)
         do {
             let (data, response) = try await GlobalProxySettings.sharedSession().data(for: req)
             guard let http = response as? HTTPURLResponse, (200 ..< 300).contains(http.statusCode) else {
@@ -702,6 +706,7 @@ actor HuggingFaceService {
 
         var req = URLRequest(url: url)
         req.setValue("application/json", forHTTPHeaderField: "Accept")
+        HuggingFaceAuth.authorize(&req)
         do {
             let (data, response) = try await GlobalProxySettings.sharedSession().data(for: req)
             guard let http = response as? HTTPURLResponse, (200 ..< 300).contains(http.statusCode) else {
