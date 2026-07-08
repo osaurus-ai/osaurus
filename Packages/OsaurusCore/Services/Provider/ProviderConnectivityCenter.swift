@@ -98,7 +98,10 @@ public struct ProviderConnectivityIssueKind: Sendable, Equatable, Hashable, Iden
     }
 
     public static func kind(forDiagnosticRowID rowID: String) -> ProviderConnectivityIssueKind {
-        knownByRowID[rowID] ?? ProviderConnectivityIssueKind(id: "\(unknownPrefix)\(rowID)")
+        if let failureKind = ProviderFailureClassifier.connectivityIssueKind(forFailureRowID: rowID) {
+            return failureKind
+        }
+        return knownByRowID[rowID] ?? ProviderConnectivityIssueKind(id: "\(unknownPrefix)\(rowID)")
     }
 
     private static let unknownPrefix = "unknown:"

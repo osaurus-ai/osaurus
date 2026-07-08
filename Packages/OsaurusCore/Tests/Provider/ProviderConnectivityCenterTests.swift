@@ -107,6 +107,15 @@ struct ProviderConnectivityCenterTests {
         #expect(ProviderConnectivityIssueKind.kind(forDiagnosticRowID: "proxy") == .proxy)
         #expect(ProviderConnectivityIssueKind.kind(forDiagnosticRowID: "transport") == .transport)
         #expect(ProviderConnectivityIssueKind.kind(forDiagnosticRowID: "repro") == .repro)
+        #expect(ProviderConnectivityIssueKind.kind(forDiagnosticRowID: "failure-auth") == .authentication)
+        #expect(ProviderConnectivityIssueKind.kind(forDiagnosticRowID: "failure-oauth") == .oauthContext)
+        #expect(ProviderConnectivityIssueKind.kind(forDiagnosticRowID: "failure-connection") == .connection)
+        #expect(ProviderConnectivityIssueKind.kind(forDiagnosticRowID: "failure-tls") == .connection)
+        #expect(ProviderConnectivityIssueKind.kind(forDiagnosticRowID: "failure-timeout") == .connection)
+        #expect(ProviderConnectivityIssueKind.kind(forDiagnosticRowID: "failure-models") == .models)
+        #expect(ProviderConnectivityIssueKind.kind(forDiagnosticRowID: "failure-format") == .format)
+        #expect(ProviderConnectivityIssueKind.kind(forDiagnosticRowID: "failure-proxy") == .proxy)
+        #expect(ProviderConnectivityIssueKind.kind(forDiagnosticRowID: "failure-response") == .connection)
 
         let unknown = ProviderConnectivityIssueKind.kind(forDiagnosticRowID: "future-row")
         #expect(unknown.id == "unknown:future-row")
@@ -124,11 +133,55 @@ struct ProviderConnectivityCenterTests {
             "repro",
             "request-evidence",
             "transport",
+            "failure-auth",
+            "failure-oauth",
+            "failure-connection",
+            "failure-tls",
+            "failure-timeout",
+            "failure-models",
+            "failure-format",
+            "failure-proxy",
+            "failure-response",
         ]
 
         for rowID in emittedIDs {
             #expect(!ProviderConnectivityIssueKind.kind(forDiagnosticRowID: rowID).isUnknown)
         }
+    }
+
+    @Test func connectedProviderWithStaleReplayEvidenceDoesNotNeedAttention() throws {
+        let provider = RemoteProvider(
+            name: "Recovered API",
+            host: "api.example.test",
+            authType: .none,
+            providerType: .openaiLegacy
+        )
+        let url = try #require(URL(string: "https://api.example.test/v1/models"))
+        var request = URLRequest(url: url)
+        request.setValue("Bearer sk-old-secret-12345", forHTTPHeaderField: "Authorization")
+        var state = RemoteProviderState(providerId: provider.id)
+        state.isConnected = true
+        state.discoveredModels = ["model-a"]
+        state.lastReplayDiagnostics = ProviderReplayDiagnosticBundle(
+            phase: "previous_failure",
+            request: request,
+            transportError: URLError(.timedOut)
+        )
+
+        let report = ProviderConnectivityCenter.providerReport(
+            provider: provider,
+            state: state,
+            proxy: .disabled,
+            credentialPresence: RemoteProviderCredentialPresence()
+        )
+
+        #expect(report.status == .connected)
+        #expect(report.highestSeverity == .info)
+        #expect(report.issueKinds.isEmpty)
+        #expect(report.primaryIssueKind == nil)
+        #expect(!report.isAttentionWorthy)
+        #expect(report.diagnostics.rows.first { $0.id == "request-evidence" }?.severity == .info)
+        #expect(!report.diagnostics.pasteboardText.contains("sk-old-secret-12345"))
     }
 
     @Test func unknownIssueBucketsKeepCountsReconciled() {
@@ -302,22 +355,30 @@ struct ProviderConnectivityCenterTests {
         let url = try #require(URL(string: "http://127.0.0.1:8000/api/v1/models?access_token=url-secret"))
         var request = URLRequest(url: url)
         request.setValue("Bearer sk-report-secret-12345", forHTTPHeaderField: "Authorization")
+        request.setValue("custom-report-secret", forHTTPHeaderField: "X-Provider-Debug")
         let response = try #require(
             HTTPURLResponse(
                 url: url,
                 statusCode: 401,
                 httpVersion: nil,
-                headerFields: ["Content-Type": "application/json"]
+                headerFields: [
+                    "Content-Type": "application/json",
+                    "X-Provider-Debug": "response-custom-secret",
+                ]
             )
         )
         let diagnostics = ProviderReplayDiagnosticBundle(
             phase: "model_discovery",
             request: request,
             response: response,
-            responseData: Data(#"{"error":{"message":"invalid api_key=sk-report-body-12345"}}"#.utf8)
+            responseData: Data(
+                #"{"error":{"message":"invalid api_key=sk-report-body-12345 at /Users/mmeding/.osaurus/private.json file:///Users/mmeding/.ssh/id_rsa"}}"#
+                    .utf8
+            ),
+            configuredSecretHeaderKeys: ["X-Provider-Debug"]
         )
         var state = RemoteProviderState(providerId: provider.id)
-        state.lastError = #"HTTP 401: {"access_token":"state-secret"}"#
+        state.lastError = #"HTTP 401: {"access_token":"state-secret"} /Users/mmeding/.osaurus/token.json"#
         state.lastReplayDiagnostics = diagnostics
 
         let snapshot = ProviderConnectivityCenter.snapshot(
@@ -330,13 +391,23 @@ struct ProviderConnectivityCenterTests {
         )
 
         let copied = snapshot.groupedPasteboardText(issueKind: .connection)
+        let allCopied = snapshot.pasteboardText
         #expect(copied.contains("provider-connectivity-issue-diagnostics"))
         #expect(copied.contains("Local API"))
         #expect(copied.contains("Provider request evidence:"))
-        #expect(!copied.contains("url-secret"))
-        #expect(!copied.contains("sk-report-secret-12345"))
-        #expect(!copied.contains("sk-report-body-12345"))
-        #expect(!copied.contains("state-secret"))
+        for text in [copied, allCopied] {
+            #expect(!text.contains("url-secret"))
+            #expect(!text.contains("sk-report-secret-12345"))
+            #expect(!text.contains("sk-report-body-12345"))
+            #expect(!text.contains("state-secret"))
+            #expect(!text.contains("custom-report-secret"))
+            #expect(!text.contains("response-custom-secret"))
+            #expect(!text.contains("/Users/mmeding"))
+            #expect(!text.contains("file:///Users"))
+            #expect(!text.contains("id_rsa"))
+            #expect(!text.contains("private.json"))
+            #expect(!text.contains("token.json"))
+        }
     }
 }
 

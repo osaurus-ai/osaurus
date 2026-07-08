@@ -32,6 +32,7 @@ public struct ProviderReplayDiagnosticBundle: Sendable, Equatable {
     public let request: ProviderReplayDiagnosticRequest
     public let response: ProviderReplayDiagnosticResponse?
     public let transportError: String?
+    public let transportErrorCode: String?
 
     public init(
         phase: String,
@@ -69,6 +70,7 @@ public struct ProviderReplayDiagnosticBundle: Sendable, Equatable {
         self.transportError = transportError.map {
             ProviderDiagnosticRedactor.safe($0.localizedDescription, maxLength: 500)
         }
+        self.transportErrorCode = ProviderReplayDiagnosticBundle.transportErrorCode(transportError)
     }
 
     public var summary: String {
@@ -102,7 +104,19 @@ public struct ProviderReplayDiagnosticBundle: Sendable, Equatable {
         if let transportError {
             lines.append("transport_error: \(transportError)")
         }
+        if let transportErrorCode {
+            lines.append("transport_error_code: \(transportErrorCode)")
+        }
         return lines.joined(separator: "\n")
+    }
+
+    private static func transportErrorCode(_ error: Error?) -> String? {
+        guard let error else { return nil }
+        if let urlError = error as? URLError {
+            return "URLError:\(urlError.errorCode)"
+        }
+        let nsError = error as NSError
+        return "\(ProviderDiagnosticRedactor.safe(nsError.domain, maxLength: 120)):\(nsError.code)"
     }
 
     private func formatSeconds(_ value: TimeInterval) -> String {
@@ -214,6 +228,8 @@ enum ProviderDiagnosticRedactor {
             (#"\beyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\b"#, "jwt=***"),
             (#"\bsk-[A-Za-z0-9._-]{8,}\b"#, "sk-***"),
             (#"\bosk-[A-Za-z0-9._-]{8,}\b"#, "osk-***"),
+            (#"(?i)file://(?:localhost)?/(Users|private/var|var/folders|private/tmp|tmp|var/root)[^,;:(){}\[\]<>"'\r\n]*"#, "file://[redacted-local-path]"),
+            (#"(?i)/(Users|private/var|var/folders|private/tmp|tmp|var/root)/[^,;:(){}\[\]<>"'\r\n]*"#, "/[redacted-local-path]"),
         ]
 
         for replacement in replacements {

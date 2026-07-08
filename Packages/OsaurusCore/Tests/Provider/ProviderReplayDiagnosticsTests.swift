@@ -164,4 +164,57 @@ struct ProviderReplayDiagnosticsTests {
         #expect(lines.filter { $0.hasPrefix("request_headers:") }.count == 1)
         #expect(lines.filter { $0.hasPrefix("response_body:") }.count == 1)
     }
+
+    @Test func bundleRedactsLocalPathsFileURLsAndCustomHeaders() throws {
+        let url = try #require(
+            URL(string: "file:///Users/mmeding/.osaurus/provider-cache.json?token=file-query-secret")
+        )
+        var request = URLRequest(url: url)
+        request.setValue("visible", forHTTPHeaderField: "X-Debug")
+        request.setValue("custom-secret-value", forHTTPHeaderField: "X-Provider-Debug")
+        request.httpBody = Data(
+            #"{"log_path":"/Users/mmeding/Library/Application Support/osaurus/Secrets/private.json","file":"file:///Users/mmeding/My Documents/keys/id_rsa","api_key":"sk-local-path-body-secret"}"#
+                .utf8
+        )
+        let error = NSError(
+            domain: NSCocoaErrorDomain,
+            code: 4,
+            userInfo: [
+                NSLocalizedDescriptionKey:
+                    "Could not read (/Users/mmeding/Library/Application Support/osaurus/Secrets/token.json), at:/Users/mmeding/My Documents/keys/id_rsa, path/Users/mmeding/secrets.json, or /var/root/token.txt",
+            ]
+        )
+
+        let bundle = ProviderReplayDiagnosticBundle(
+            phase: "model_discovery /Users/mmeding/Library/Application Support/osaurus/Secrets/provider-cache.json",
+            request: request,
+            transportError: error,
+            configuredSecretHeaderKeys: ["X-Provider-Debug"]
+        )
+        let copied = bundle.pasteboardText
+
+        #expect(copied.contains("file://[redacted-local-path]"))
+        #expect(copied.contains("/[redacted-local-path]"))
+        #expect(copied.contains("X-Provider-Debug=***"))
+        #expect(copied.contains("X-Debug=visible"))
+        #expect(copied.contains(#""api_key":"***""#))
+        #expect(copied.contains("transport_error_code: NSCocoaErrorDomain:4"))
+        for leak in [
+            "/Users/mmeding",
+            "file:///Users",
+            "Application Support",
+            "My Documents",
+            "Secrets",
+            "provider-cache.json",
+            "private.json",
+            "id_rsa",
+            "secrets.json",
+            "token.txt",
+            "custom-secret-value",
+            "sk-local-path-body-secret",
+            "file-query-secret",
+        ] {
+            #expect(!copied.contains(leak))
+        }
+    }
 }

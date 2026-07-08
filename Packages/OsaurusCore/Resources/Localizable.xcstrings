@@ -191359,6 +191359,411 @@
           }
         }
       }
+    },
+    "TurboQuant" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "TurboQuant"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "TurboQuant"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "TurboQuant"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "TurboQuant"
+          }
+        }
+      },
+      "shouldTranslate" : false
+    },
+    "Shell" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Shell"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Shell"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Shell"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Терминал"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Shell"
+          }
+        }
+      },
+      "comment" : "Onboarding plugin picker display name for terminal command access."
+    },
+    "See and create events on your Mac." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "See and create events on your Mac."
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "See and create events on your Mac."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "See and create events on your Mac."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Просматривает и создаёт события на вашем Mac."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "See and create events on your Mac."
+          }
+        }
+      },
+      "comment" : "Onboarding plugin picker blurb for Calendar."
+    },
+    "Make and check off your Reminders." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Make and check off your Reminders."
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Make and check off your Reminders."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Make and check off your Reminders."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Создаёт напоминания и отмечает их выполненными."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Make and check off your Reminders."
+          }
+        }
+      },
+      "comment" : "Onboarding plugin picker blurb for Reminders."
+    },
+    "Send iMessages from your Mac." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Send iMessages from your Mac."
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Send iMessages from your Mac."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Send iMessages from your Mac."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Отправляет сообщения iMessage с вашего Mac."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Send iMessages from your Mac."
+          }
+        }
+      },
+      "comment" : "Onboarding plugin picker blurb for Messages."
+    },
+    "%lld models ready" : {
+      "localizations" : {
+        "de" : {
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "needs_review",
+                  "value" : "%lld Modell bereit"
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "needs_review",
+                  "value" : "%lld Modelle bereit"
+                }
+              }
+            }
+          }
+        },
+        "en" : {
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld model ready"
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld models ready"
+                }
+              }
+            }
+          }
+        },
+        "ko" : {
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld개의 모델 준비됨"
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld개의 모델 준비됨"
+                }
+              }
+            }
+          }
+        },
+        "ru" : {
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld модель готова"
+                }
+              },
+              "few" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld модели готовы"
+                }
+              },
+              "many" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld моделей готово"
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld модели готовы"
+                }
+              }
+            }
+          }
+        },
+        "zh-Hans" : {
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld 个模型已就绪"
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld 个模型已就绪"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "Add manual model IDs if this OpenAI-compatible provider does not expose /models." : {
+      "shouldTranslate" : false
+    },
+    "Authentication rejected" : {
+      "shouldTranslate" : false
+    },
+    "Bad provider response" : {
+      "shouldTranslate" : false
+    },
+    "Check the endpoint certificate, HTTPS setting, and any TLS-intercepting proxy." : {
+      "shouldTranslate" : false
+    },
+    "Check the host, port, base path, DNS, VPN, and whether a local server is running." : {
+      "shouldTranslate" : false
+    },
+    "Confirm the endpoint returns an OpenAI-shaped model list or add manual model IDs." : {
+      "shouldTranslate" : false
+    },
+    "Copy diagnostics and include the redacted request evidence when reporting this issue." : {
+      "shouldTranslate" : false
+    },
+    "Copy diagnostics with the redacted response and check provider status or compatibility." : {
+      "shouldTranslate" : false
+    },
+    "Endpoint unreachable" : {
+      "shouldTranslate" : false
+    },
+    "HTTP %lld authentication rejection. Evidence: %@" : {
+      "shouldTranslate" : false
+    },
+    "HTTP %lld from provider. Evidence: %@" : {
+      "shouldTranslate" : false
+    },
+    "HTTP %lld from the models endpoint. Evidence: %@" : {
+      "shouldTranslate" : false
+    },
+    "HTTP %lld suggests the provider rejected the request shape. Evidence: %@" : {
+      "shouldTranslate" : false
+    },
+    "Invalid proxy" : {
+      "shouldTranslate" : false
+    },
+    "Likely failure" : {
+      "shouldTranslate" : false
+    },
+    "Missing credential" : {
+      "shouldTranslate" : false
+    },
+    "Model unavailable" : {
+      "shouldTranslate" : false
+    },
+    "Models endpoint unavailable" : {
+      "shouldTranslate" : false
+    },
+    "Models response mismatch" : {
+      "shouldTranslate" : false
+    },
+    "No API key or secret credential header is available for this provider." : {
+      "shouldTranslate" : false
+    },
+    "No OAuth tokens are available for this provider." : {
+      "shouldTranslate" : false
+    },
+    "OAuth token missing" : {
+      "shouldTranslate" : false
+    },
+    "Proxy connection failed" : {
+      "shouldTranslate" : false
+    },
+    "Request format rejected" : {
+      "shouldTranslate" : false
+    },
+    "Request timed out" : {
+      "shouldTranslate" : false
+    },
+    "Retry after confirming the endpoint is reachable and not blocked by a firewall or proxy." : {
+      "shouldTranslate" : false
+    },
+    "Review provider compatibility for unsupported request fields, tools, or response formats." : {
+      "shouldTranslate" : false
+    },
+    "Save an API key or secret credential header, then test again." : {
+      "shouldTranslate" : false
+    },
+    "Select a model exposed by this provider or add the correct manual model ID." : {
+      "shouldTranslate" : false
+    },
+    "Sign in again and test after OAuth tokens are saved." : {
+      "shouldTranslate" : false
+    },
+    "Test with the proxy disabled or verify the proxy host, port, and authentication." : {
+      "shouldTranslate" : false
+    },
+    "The models endpoint responded with an unexpected schema. Evidence: %@" : {
+      "shouldTranslate" : false
+    },
+    "The provider endpoint could not be reached. Evidence: %@" : {
+      "shouldTranslate" : false
+    },
+    "The provider rejected the selected model. Evidence: %@" : {
+      "shouldTranslate" : false
+    },
+    "The provider request timed out. Evidence: %@" : {
+      "shouldTranslate" : false
+    },
+    "The provider response did not match the expected schema. Evidence: %@" : {
+      "shouldTranslate" : false
+    },
+    "The request failed while the global proxy was active. Evidence: %@" : {
+      "shouldTranslate" : false
+    },
+    "TLS failure" : {
+      "shouldTranslate" : false
+    },
+    "TLS or certificate validation failed. Evidence: %@" : {
+      "shouldTranslate" : false
+    },
+    "Unclassified failure" : {
+      "shouldTranslate" : false
+    },
+    "Verify the credential, account access, and provider-specific auth header." : {
+      "shouldTranslate" : false
+    },
+    "%@ Evidence: %@" : {
+      "shouldTranslate" : false
+    },
+    "%lld deployment/model ID(s) are available." : {
+      "shouldTranslate" : false
     }
   },
   "version" : "1.1"
