@@ -35,12 +35,30 @@ struct HuggingFaceTokenPromptSheet: View {
             }
 
             Text(
-                "Downloads without a token are rate-limited by Hugging Face and can be slow or fail under load. A free access token raises those limits and lets you download gated models you have access to. Create a read-only token at huggingface.co/settings/tokens — it's stored in your macOS Keychain and only sent to Hugging Face.",
+                "Downloads without a token are rate-limited by Hugging Face and can be slow or fail under load.",
                 bundle: .module
             )
             .font(.system(size: 12))
             .foregroundColor(theme.secondaryText)
             .fixedSize(horizontal: false, vertical: true)
+
+            VStack(alignment: .leading, spacing: 6) {
+                stepRow(1, text: L("Sign in (or sign up free) at huggingface.co"))
+                stepRow(2, text: L("Open Settings → Access Tokens and create a Read token"))
+                stepRow(3, text: L("Paste it below — it stays in your macOS Keychain"))
+            }
+
+            if let tokensURL = URL(string: "https://huggingface.co/settings/tokens") {
+                Link(destination: tokensURL) {
+                    HStack(spacing: 5) {
+                        Image(systemName: "arrow.up.forward.square")
+                            .font(.system(size: 11, weight: .medium))
+                        Text("Open huggingface.co/settings/tokens", bundle: .module)
+                            .font(.system(size: 12, weight: .medium))
+                    }
+                    .foregroundColor(theme.accentColor)
+                }
+            }
 
             HuggingFaceTokenField(tokenInput: $tokenInput) { saveAndContinue() }
 
@@ -76,6 +94,20 @@ struct HuggingFaceTokenPromptSheet: View {
         .padding(24)
         .frame(width: 460)
         .background(theme.primaryBackground)
+    }
+
+    private func stepRow(_ number: Int, text: String) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
+            Text("\(number)")
+                .font(.system(size: 10, weight: .bold, design: .monospaced))
+                .foregroundColor(theme.accentColor)
+                .frame(width: 16, height: 16)
+                .background(Circle().fill(theme.accentColor.opacity(0.15)))
+            Text(text)
+                .font(.system(size: 12))
+                .foregroundColor(theme.primaryText)
+                .fixedSize(horizontal: false, vertical: true)
+        }
     }
 
     private var trimmedToken: String {
