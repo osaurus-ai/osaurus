@@ -59,6 +59,33 @@ struct ServerConfigurationStoreTests {
         #expect(loaded == config)
     }
 
+    @Test @MainActor func updateAppearanceMode_preservesOtherServerSettings() async throws {
+        let base = URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true)
+        let dir = base.appendingPathComponent(
+            "osaurus-config-tests-\(UUID().uuidString)",
+            isDirectory: true
+        )
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        ServerConfigurationStore.overrideDirectory = dir
+        defer {
+            ServerConfigurationStore.overrideDirectory = nil
+            try? FileManager.default.removeItem(at: dir)
+        }
+
+        var config = ServerConfiguration.default
+        config.port = 5555
+        config.exposeToNetwork = true
+        config.appearanceMode = .dark
+        ServerConfigurationStore.save(config)
+
+        ServerConfigurationStore.updateAppearanceMode(.system)
+        let loaded = try #require(ServerConfigurationStore.load())
+
+        #expect(loaded.appearanceMode == .system)
+        #expect(loaded.port == 5555)
+        #expect(loaded.exposeToNetwork == true)
+    }
+
     /// Decoding pre-migration JSON files that contained now-removed cache*
     /// and gen* fields should succeed silently — unknown keys are ignored
     /// by the decoder. This test simulates that migration by feeding JSON

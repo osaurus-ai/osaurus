@@ -5212,11 +5212,18 @@ struct ChatView: View {
     private var windowId: UUID { windowState.windowId }
 
     /// True while any prompt overlay (secret, clarify) is mounted.
-    /// Drives the dim/blur on the message thread + main input bar so
-    /// the prompt visibly takes the foreground. Single source of truth
-    /// is `session.promptQueue.current`.
+    /// Drives hit-testing on the message thread + main input bar so the
+    /// active card owns the interaction. Single source of truth is
+    /// `session.promptQueue.current`.
     private var isPromptOverlayActive: Bool {
         session.promptQueue.current != nil
+    }
+
+    /// Secret prompts intentionally obscure the thread; clarify prompts
+    /// do not, because the user often needs the previous assistant text
+    /// to understand why they are being asked to choose an option.
+    private var promptOverlayObscuresConversation: Bool {
+        session.promptQueue.current?.obscuresConversation == true
     }
 
     /// Picker items filtered to the active Bonjour provider's models when a
@@ -5509,7 +5516,11 @@ struct ChatView: View {
         ZStack {
             if current != nil {
                 Color.black
-                    .opacity(theme.isDark ? 0.28 : 0.18)
+                    .opacity(
+                        current?.obscuresConversation == true
+                            ? (theme.isDark ? 0.28 : 0.18)
+                            : (theme.isDark ? 0.10 : 0.06)
+                    )
                     .ignoresSafeArea()
                     .transition(.opacity)
                     .allowsHitTesting(true)
@@ -5626,10 +5637,10 @@ struct ChatView: View {
                                 // visibly takes the foreground without
                                 // letting taps leak through.
                                 messageThread(effectiveContentWidth)
-                                    .blur(radius: isPromptOverlayActive ? 1.5 : 0)
+                                    .blur(radius: promptOverlayObscuresConversation ? 1.5 : 0)
                                     .allowsHitTesting(!isPromptOverlayActive)
                                     .transition(.opacity.combined(with: .move(edge: .bottom)))
-                                    .animation(theme.springAnimation(), value: isPromptOverlayActive)
+                                    .animation(theme.springAnimation(), value: promptOverlayObscuresConversation)
                             }
 
                             // Mode 2 connection status (connecting / error +

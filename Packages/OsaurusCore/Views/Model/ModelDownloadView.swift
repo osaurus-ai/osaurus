@@ -116,6 +116,7 @@ struct ModelDownloadView: View {
     /// Import-from-Hugging-Face sheet state
     @State private var showImportSheet = false
 
+
     /// Index of the leading Top Picks card the edge arrows scroll to. Desktop
     /// mice can't scroll horizontally, so the carousel is driven by these
     /// buttons; the index is clamped to the model count on every step.
@@ -938,7 +939,10 @@ struct ModelDownloadView: View {
                             } else {
                                 switch selectedTab {
                                 case .all:
-                                    catalogContent(lists: lists)
+                                    VStack(alignment: .leading, spacing: 16) {
+                                        HuggingFaceTokenCard()
+                                        catalogContent(lists: lists)
+                                    }
                                 case .downloaded:
                                     modelGrid(models: lists.downloaded)
                                 }

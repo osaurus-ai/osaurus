@@ -1,0 +1,145 @@
+{
+  "hardware" : {
+    "chip" : "Apple M5 Max",
+    "generation" : 5,
+    "gpu_core_count" : 40,
+    "gpu_neural_accelerators" : true,
+    "physical_memory_bytes" : 137438953472,
+    "recommended_max_working_set_bytes" : 115448725504,
+    "tier" : "max"
+  },
+  "max_tokens" : 128,
+  "methodology" : {
+    "decode_tps" : "(completion_tokens - 1) \/ (last delta - first delta)",
+    "prefill_tps" : "prompt_tokens \/ uncached TTFT (includes template + tokenize)",
+    "sampling" : "temperature 0 (greedy)",
+    "token_counts" : "server usage via stream_options.include_usage",
+    "ttft" : "request start → first non-empty content delta"
+  },
+  "model" : "gemma-4-e2b-it-4bit",
+  "runs" : 3,
+  "scenarios" : [
+    {
+      "actual_prompt_tokens" : [
+        1030,
+        1030,
+        1030
+      ],
+      "cached" : {
+        "decode_tps" : {
+          "median" : 193.62854515041172,
+          "samples" : [
+            192.27011952183577,
+            193.62854515041172,
+            194.89325533993986
+          ]
+        },
+        "prefill_tps" : {
+          "median" : 10788.644689603885,
+          "samples" : [
+            8181.9490713388504,
+            10788.644689603885,
+            10956.752336910391
+          ]
+        },
+        "ttft_ms" : {
+          "median" : 95.470749999999995,
+          "samples" : [
+            125.886875,
+            95.470749999999995,
+            94.005958000000007
+          ]
+        }
+      },
+      "target_prompt_tokens" : 1024,
+      "uncached" : {
+        "decode_tps" : {
+          "median" : 194.24766197039128,
+          "samples" : [
+            195.5800707689101,
+            193.95759173288954,
+            194.24766197039128
+          ]
+        },
+        "prefill_tps" : {
+          "median" : 5617.5038978114308,
+          "samples" : [
+            229.64806502483444,
+            5617.5038978114308,
+            5700.4983198528353
+          ]
+        },
+        "ttft_ms" : {
+          "median" : 183.355458,
+          "samples" : [
+            4485.123791,
+            183.355458,
+            180.685958
+          ]
+        }
+      }
+    },
+    {
+      "actual_prompt_tokens" : [
+        8209,
+        8209,
+        8209
+      ],
+      "cached" : {
+        "decode_tps" : {
+          "median" : 177.89769400114153,
+          "samples" : [
+            177.89769400114153,
+            173.55377877196239,
+            232.6265136968475
+          ]
+        },
+        "prefill_tps" : {
+          "median" : 64527.285947294979,
+          "samples" : [
+            67186.95401392247,
+            64527.285947294979,
+            62405.310641001743
+          ]
+        },
+        "ttft_ms" : {
+          "median" : 127.2175,
+          "samples" : [
+            122.18145800000001,
+            127.2175,
+            131.54329200000001
+          ]
+        }
+      },
+      "target_prompt_tokens" : 8192,
+      "uncached" : {
+        "decode_tps" : {
+          "median" : 174.15710067670773,
+          "samples" : [
+            175.26400211376176,
+            174.15710067670773,
+            173.7525112667644
+          ]
+        },
+        "prefill_tps" : {
+          "median" : 11105.739075672815,
+          "samples" : [
+            11048.45468915677,
+            11105.739075672815,
+            13736.67442388
+          ]
+        },
+        "ttft_ms" : {
+          "median" : 739.16737499999999,
+          "samples" : [
+            742.99983399999996,
+            739.16737499999999,
+            597.59733300000005
+          ]
+        }
+      }
+    }
+  ],
+  "schema" : "osaurus-bench\/1",
+  "timestamp" : "2026-07-06T02:41:02Z"
+}
