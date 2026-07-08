@@ -111,13 +111,13 @@ final class ModelDownloadService: ObservableObject {
             title = L("Repository unavailable")
             message =
                 L(
-                    "Couldn't reach this model on Hugging Face. The repo may be private, gated, removed, or temporarily unreachable."
+                    "Couldn't reach this model on Hugging Face. The repo may be private, gated, removed, or temporarily unreachable. For gated repos or rate limits, add a Hugging Face token in Settings → Storage."
                 )
         } else if lower.hasPrefix("http ") {
             title = L("Repository unavailable")
             message =
                 L(
-                    "Hugging Face responded with \(rawError). Private or gated repos aren't supported yet; otherwise try again in a moment."
+                    "Hugging Face responded with \(rawError). For a gated or private repo, add a Hugging Face access token in Settings → Storage; otherwise try again in a moment."
                 )
         } else if lower.contains("offline") || lower.contains("internet connection")
             || lower.contains("network") || lower.contains("timed out")
@@ -786,6 +786,10 @@ final class ModelDownloadService: ObservableObject {
         downloadTokens[modelId] = nil
         progressSamples[modelId] = nil
         lastKnownSpeed[modelId] = nil
+        fileTransferProgress[modelId] = nil
+        fileTransferBase[modelId] = nil
+        fileTransferTotal[modelId] = nil
+        pauseRequestedModels.remove(modelId)
         if let metrics = downloadMetrics[modelId] {
             downloadMetrics[modelId] = DownloadMetrics(
                 bytesReceived: metrics.bytesReceived,
