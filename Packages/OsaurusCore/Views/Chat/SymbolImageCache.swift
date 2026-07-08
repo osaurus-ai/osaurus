@@ -58,6 +58,49 @@ enum SymbolImageCache {
         return image
     }
 
+    /// A 90°-clockwise-rotated copy of `image(name, ...)`, memoized. Used for
+    /// the expand chevron: chevron.right and chevron.down are distinct glyphs
+    /// with different proportions (9×11 vs 11×8 at 10pt), so swapping symbols
+    /// visibly changes size — rotating the right chevron keeps the exact same
+    /// glyph mass. Baked into the bitmap (unlike a layer transform) so
+    /// table-cell relayout can't reset it.
+    static func rotatedDownChevron(pointSize: CGFloat, weight: NSFont.Weight) -> NSImage? {
+        let key = "chevron.right\u{1}rot90\u{1}\(pointSize)\u{1}\(weight.rawValue)"
+        lock.lock()
+        if let cached = cache[key] {
+            lock.unlock()
+            return cached
+        }
+        lock.unlock()
+
+        guard let base = image("chevron.right", pointSize: pointSize, weight: weight) else {
+            return nil
+        }
+        let size = NSSize(width: base.size.height, height: base.size.width)
+        // Drawing-handler image: re-renders at the destination context's
+        // scale, so the rotated glyph stays crisp on retina displays.
+        let rotated = NSImage(size: size, flipped: false) { _ in
+            let transform = NSAffineTransform()
+            transform.translateX(by: size.width / 2, yBy: size.height / 2)
+            transform.rotate(byDegrees: -90)
+            transform.concat()
+            base.draw(
+                at: NSPoint(x: -base.size.width / 2, y: -base.size.height / 2),
+                from: .zero,
+                operation: .sourceOver,
+                fraction: 1
+            )
+            return true
+        }
+        rotated.isTemplate = base.isTemplate
+
+        lock.lock()
+        if cache.count >= 512 { cache.removeAll() }
+        cache[key] = rotated
+        lock.unlock()
+        return rotated
+    }
+
     /// Drop all memoized symbols (memory-pressure response). Entries are
     /// re-resolved lazily on next use.
     static func clear() {

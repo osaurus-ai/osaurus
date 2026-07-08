@@ -341,9 +341,13 @@ final class NativeThinkingView: NSView {
         // Swap the symbol instead of rotating the layer: table-cell relayout
         // resets layer transforms, leaving an expanded row with a right-
         // pointing chevron (mirrors NativeFileDiffView's collapse chevron).
-        let symbol = expanded ? "chevron.down" : "chevron.right"
-        chevronView.image = SymbolImageCache.image(
-            symbol, accessibilityDescription: nil, pointSize: 10, weight: .semibold)
+        // The down state is the right chevron rotated (not chevron.down, a
+        // differently-proportioned glyph) so both states are the same size.
+        chevronView.image =
+            expanded
+            ? SymbolImageCache.rotatedDownChevron(pointSize: 10, weight: .semibold)
+            : SymbolImageCache.image(
+                "chevron.right", accessibilityDescription: nil, pointSize: 10, weight: .semibold)
     }
 
     @objc private func headerTapped() { onToggle?() }
