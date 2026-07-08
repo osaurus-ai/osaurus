@@ -44,16 +44,18 @@ struct HuggingFaceTokenPromptSheet: View {
 
             VStack(alignment: .leading, spacing: 6) {
                 stepRow(1, text: L("Sign in (or sign up free) at huggingface.co"))
-                stepRow(2, text: L("Open Settings → Access Tokens and create a Read token"))
+                stepRow(2, text: L("Create a Read token — the link below opens the form"))
                 stepRow(3, text: L("Paste it below — it stays in your macOS Keychain"))
             }
 
-            if let tokensURL = URL(string: "https://huggingface.co/settings/tokens") {
+            // Deep-links straight to Hugging Face's new-token form with the
+            // Read type preselected.
+            if let tokensURL = URL(string: "https://huggingface.co/settings/tokens/new?tokenType=read") {
                 Link(destination: tokensURL) {
                     HStack(spacing: 5) {
                         Image(systemName: "arrow.up.forward.square")
                             .font(.system(size: 11, weight: .medium))
-                        Text("Open huggingface.co/settings/tokens", bundle: .module)
+                        Text("Create a Read token on huggingface.co", bundle: .module)
                             .font(.system(size: 12, weight: .medium))
                     }
                     .foregroundColor(theme.accentColor)
