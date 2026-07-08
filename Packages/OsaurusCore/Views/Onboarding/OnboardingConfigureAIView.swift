@@ -304,18 +304,20 @@ final class ConfigureAIState: ObservableObject {
     /// top-pick `candidates` and the machine RAM, returns the model onboarding
     /// should pre-select (or `nil` when there are no candidates).
     ///
-    /// Preference order, all restricted to the **comfortable** (`.compatible`)
-    /// band so we never auto-default into `.tight`:
-    ///   1. The largest dense Gemma 4 QAT build (12B/31B `qat-MXFP4`) — the
-    ///      auto-default spine.
-    ///   2. The largest Gemma 4 E-series 8-bit retention build — the gated
-    ///      small-tier fallback (until the QAT-4bit-vs-8bit A/B clears).
-    ///   3. The smallest comfortable top pick; or, if nothing is comfortable,
-    ///      the smallest candidate overall (never the largest).
+    /// Rule: auto-default to the **largest** curated Top Pick that
+    /// **comfortably** fits (`.compatible`, so never into the `.tight` band).
+    /// Every curated Top Pick is a GUI-verified-good model — coherent output
+    /// with clean tool-calling and reasoning and no control-marker leakage
+    /// (verified live in the dev app across the Ornith / Qwen 3.6 / Qwen
+    /// AgentWorld / Nemotron families) — so "largest that comfortably fits"
+    /// lands each RAM tier on the strongest proven model for that Mac. When
+    /// nothing is comfortable (very low RAM), fall back to the smallest
+    /// candidate overall so onboarding never dead-ends.
     ///
-    /// The 26B-A4B QAT MoE and the larger Qwen/Nemotron flagships are
-    /// intentionally excluded from (1)/(2): they stay selectable Top Picks but
-    /// are never auto-selected.
+    /// This replaced the earlier Gemma-4-QAT auto-default spine: the Gemma 4
+    /// `qat-MXFP4` builds are no longer curated Top Picks, so they are neither
+    /// shown nor auto-selected in onboarding (a recommended Gemma build must be
+    /// a non-QAT/non-MXFP4 precision, e.g. `12B-it-MXFP8` / `E4B-it-8bit`).
     static func recommendedLocalPick(
         from candidates: [MLXModel],
         totalMemoryGB: Double
@@ -334,13 +336,7 @@ final class ConfigureAIState: ObservableObject {
             })
         }
 
-        if let denseQAT = largest(comfortable.filter(\.isDenseGemmaQATAutoDefault)) {
-            return denseQAT
-        }
-        if let eSeries8bit = largest(comfortable.filter(\.isGemmaESeries8bitAutoDefault)) {
-            return eSeries8bit
-        }
-        return smallest(comfortable) ?? smallest(candidates)
+        return largest(comfortable) ?? smallest(candidates)
     }
 
     /// Collapses same-family quant variants — rows whose titles collapse to

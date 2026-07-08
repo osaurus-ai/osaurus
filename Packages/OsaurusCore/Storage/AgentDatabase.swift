@@ -18,8 +18,10 @@
 //    - Every table gets `_created_at`, `_updated_at`, `_deleted_at`.
 //    - Soft delete is the default; `softDelete` writes `_deleted_at`.
 //    - Triggers auto-update `_updated_at` on UPDATE.
-//    - All `query()` calls auto-filter `_deleted_at IS NULL` unless the
-//      caller passes `includeDeleted = true`.
+//    - Typed mutation paths (`update`, `softDelete`, …) auto-filter
+//      `_deleted_at IS NULL` unless `includeDeleted = true`. Raw
+//      `query()` / `db_query` SQL does not rewrite the statement — add
+//      `_deleted_at IS NULL` yourself when you want to hide tombstones.
 //
 //  Concurrency: one serial queue per `AgentDatabase`. The
 //  `LocalAgentBridge` further serializes all mutations across this
@@ -271,10 +273,14 @@ public struct AgentQueryResult: Codable, Sendable, Equatable {
 public struct AgentExecuteResult: Codable, Sendable, Equatable {
     public var rowsAffected: Int
     public var warning: String?
+    /// When `execute()` drains a SELECT result set, this counts the rows
+    /// that were not returned — callers should use `query()` instead.
+    public var selectRowsDrained: Int?
 
-    public init(rowsAffected: Int, warning: String? = nil) {
+    public init(rowsAffected: Int, warning: String? = nil, selectRowsDrained: Int? = nil) {
         self.rowsAffected = rowsAffected
         self.warning = warning
+        self.selectRowsDrained = selectRowsDrained
     }
 }
 
@@ -1495,6 +1501,73 @@ public final class AgentDatabase: @unchecked Sendable {
         }
     }
 
+    /// Validate that SQL is a read-only SELECT/WITH suitable for export
+    /// or saved views. Reuses the same guardrails as `defineView`.
+    public static func validateReadOnlyQuery(_ sql: String) throws {
+        guard !sql.isEmpty else {
+            throw AgentDatabaseError.invalidArgument("SQL must not be empty")
+        }
+        if let reason = forbiddenReason(in: sql) {
+            throw AgentDatabaseError.forbidden(reason)
+        }
+        let head = collapseWhitespace(stripComments(sql))
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .uppercased()
+        guard head.hasPrefix("SELECT") || head.hasPrefix("WITH") else {
+            throw AgentDatabaseError.invalidArgument(
+                "Read-only export/query SQL must be SELECT or WITH ... SELECT only."
+            )
+        }
+    }
+
+    /// Stream every row from a read-only query without the `query()` row
+    /// cap. The handler receives column names once, then each row; return
+    /// `false` from the handler to stop early (e.g. export byte budget).
+    public func forEachQueryRow(
+        sql: String,
+        params: [AgentSQLValue] = [],
+        handler: (_ columns: [String], _ row: [AgentSQLValue]) throws -> Bool
+    ) throws -> Int {
+        try Self.validateReadOnlyQuery(sql)
+        return try queue.sync {
+            guard let connection = db else { throw AgentDatabaseError.notOpen }
+            try Self.executeRawOn(connection: connection, sql: "BEGIN DEFERRED")
+            defer { try? Self.executeRawOn(connection: connection, sql: "ROLLBACK") }
+
+            var stmt: OpaquePointer?
+            guard sqlite3_prepare_v2(connection, sql, -1, &stmt, nil) == SQLITE_OK,
+                let prepared = stmt
+            else {
+                throw AgentDatabaseError.failedToPrepare(String(cString: sqlite3_errmsg(connection)))
+            }
+            defer { sqlite3_finalize(prepared) }
+
+            for (i, value) in params.enumerated() {
+                Self.bind(prepared, index: i + 1, value: value)
+            }
+
+            let colCount = Int(sqlite3_column_count(prepared))
+            var columns: [String] = []
+            columns.reserveCapacity(colCount)
+            for c in 0 ..< colCount {
+                let name = sqlite3_column_name(prepared, Int32(c)).map { String(cString: $0) } ?? ""
+                columns.append(name)
+            }
+
+            var count = 0
+            while sqlite3_step(prepared) == SQLITE_ROW {
+                var row: [AgentSQLValue] = []
+                row.reserveCapacity(colCount)
+                for c in 0 ..< colCount {
+                    row.append(Self.readColumn(prepared, index: c))
+                }
+                count += 1
+                if try !handler(columns, row) { break }
+            }
+            return count
+        }
+    }
+
     /// Raw SQL escape hatch (spec §6.2). Rejects the absolute-disaster
     /// statements (`DROP TABLE`, `TRUNCATE`, `DELETE` with no WHERE on
     /// any user table) and logs everything else to `_changelog` with
@@ -1528,6 +1601,7 @@ public final class AgentDatabase: @unchecked Sendable {
             // deltas so non-DML statements (CREATE/PRAGMA) don't inflate the
             // total.
             let before = Int(sqlite3_total_changes(connection))
+            var selectRowsDrained = 0
             try sql.withCString { (base: UnsafePointer<CChar>) in
                 var cursor: UnsafePointer<CChar>? = base
                 while let current = cursor, current.pointee != 0 {
@@ -1559,7 +1633,10 @@ public final class AgentDatabase: @unchecked Sendable {
                     // surface the rows (`query` exists for that); drain to
                     // DONE so the transaction can commit cleanly.
                     if step == SQLITE_ROW {
-                        while sqlite3_step(prepared) == SQLITE_ROW { /* drain */  }
+                        selectRowsDrained += 1
+                        while sqlite3_step(prepared) == SQLITE_ROW {
+                            selectRowsDrained += 1
+                        }
                     } else if step != SQLITE_DONE {
                         throw AgentDatabaseError.failedToExecute(
                             "execute: step returned \(step): "
@@ -1581,7 +1658,19 @@ public final class AgentDatabase: @unchecked Sendable {
                 sql: sql
             )
 
-            return AgentExecuteResult(rowsAffected: affected, warning: warning)
+            if selectRowsDrained > 0 {
+                let selectHint =
+                    "SELECT returned \(selectRowsDrained) row(s) that were not included "
+                    + "in this result. Use `db_query` to read rows."
+                warning =
+                    warning.map { $0 + " " + selectHint }
+                    ?? selectHint
+            }
+            return AgentExecuteResult(
+                rowsAffected: affected,
+                warning: warning,
+                selectRowsDrained: selectRowsDrained > 0 ? selectRowsDrained : nil
+            )
         }
     }
 

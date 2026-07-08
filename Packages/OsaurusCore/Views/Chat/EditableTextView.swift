@@ -77,7 +77,12 @@ struct EditableTextView: NSViewRepresentable {
         scrollView.focusRingType = .none
         scrollView.borderType = .noBorder
 
-        let textView = CustomNSTextView()
+        // TextKit 1 from birth. The default init builds a TextKit 2 view whose
+        // first `.layoutManager` access (see `contentHeight`) triggers a lazy
+        // compatibility downgrade mid-lifecycle; AppKit key-binding code can
+        // then hit a stale layout-manager/text-container pairing and throw
+        // (Sentry APPLE-MACOS-YG: NSLayoutManager glyphRangeForTextContainer).
+        let textView = CustomNSTextView(usingTextLayoutManager: false)
         textView.focusRingType = .none
         textView.delegate = context.coordinator
         textView.maxHeight = maxHeight

@@ -312,7 +312,12 @@ public final class PrivacyFilterModelDownloader: NSObject, ObservableObject {
         bytesAlreadyDownloaded: Int64,
         bytesTotal: Int64
     ) async throws -> URL {
-        let task = session.downloadTask(with: url)
+        // Send the user's Hugging Face token so this download gets the same
+        // higher rate limits as the model catalog. The redirect delegate
+        // below strips it before the request follows the 302 to the CDN.
+        var request = URLRequest(url: url)
+        HuggingFaceAuth.authorize(&request)
+        let task = session.downloadTask(with: request)
         let observer = task.progress.observe(\.fractionCompleted, options: [.new]) {
             [weak self] progress, _ in
             guard let self else { return }
@@ -397,6 +402,24 @@ extension PrivacyFilterModelDownloader: URLSessionDownloadDelegate {
         }
     }
 
+    /// `resolve/main` URLs 302-redirect to Hugging Face's CDN. Don't leak the
+    /// user's access token to that (or any other) third-party host — strip
+    /// the Authorization header when the redirect changes host. Mirrors the
+    /// model-catalog downloader.
+    public nonisolated func urlSession(
+        _ session: URLSession,
+        task: URLSessionTask,
+        willPerformHTTPRedirection response: HTTPURLResponse,
+        newRequest request: URLRequest,
+        completionHandler: @escaping (URLRequest?) -> Void
+    ) {
+        var redirected = request
+        if redirected.url?.host != task.originalRequest?.url?.host {
+            redirected.setValue(nil, forHTTPHeaderField: "Authorization")
+        }
+        completionHandler(redirected)
+    }
+
     private func resumeContinuation(taskId: Int, with result: Result<URL, Error>) {
         guard let continuation = inflightContinuations.removeValue(forKey: taskId) else { return }
         inflightObservers.removeValue(forKey: taskId)?.invalidate()
@@ -436,6 +459,7 @@ private enum HuggingFaceTreeService {
 
         var req = URLRequest(url: url)
         req.setValue("application/json", forHTTPHeaderField: "Accept")
+        HuggingFaceAuth.authorize(&req)
         do {
             let (data, response) = try await GlobalProxySettings.sharedSession().data(for: req)
             guard let http = response as? HTTPURLResponse, (200 ..< 300).contains(http.statusCode) else {

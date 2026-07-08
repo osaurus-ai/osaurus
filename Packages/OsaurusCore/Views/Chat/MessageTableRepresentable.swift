@@ -106,6 +106,10 @@ struct MessageTableRepresentable: NSViewRepresentable {
     /// scrubbed anything in this window yet.
     var sessionRedactions: [String: String] = [:]
 
+    /// Active in-conversation find query (Cmd+F); empty when the find bar is
+    /// closed. Threaded into every cell so match occurrences are highlighted.
+    var searchHighlightQuery: String = ""
+
     // MARK: - NSViewRepresentable Lifecycle
 
     func makeCoordinator() -> Coordinator { Coordinator() }
@@ -233,6 +237,7 @@ struct MessageTableRepresentable: NSViewRepresentable {
             onUserImagePreview: onUserImagePreview,
             onDocumentPreview: onDocumentPreview,
             sessionRedactions: sessionRedactions,
+            searchHighlightQuery: searchHighlightQuery,
             hasChartBeenDrawn: { [weak coordinator] id in
                 coordinator?.drawnChartBlockIds.contains(id) ?? false
             },
@@ -277,7 +282,8 @@ struct MessageTableRepresentable: NSViewRepresentable {
             onSpeak: onSpeak,
             onUserImagePreview: onUserImagePreview,
             onDocumentPreview: onDocumentPreview,
-            sessionRedactions: sessionRedactions
+            sessionRedactions: sessionRedactions,
+            searchHighlightQuery: searchHighlightQuery
         )
     }
 
@@ -614,8 +620,11 @@ extension MessageTableRepresentable {
             noteRowHeightsChanged(rows)
         }
 
-        /// Re-measure specific rows without animation.
-        private func noteRowHeightsChanged(_ rows: IndexSet) {
+        /// Re-measure specific rows. Non-animated by default; the streaming
+        /// row passes `animated: true` so line-by-line growth eases in instead
+        /// of snapping (height changes land a few times a second when a new
+        /// line wraps, so the short animation reads as smooth expansion).
+        private func noteRowHeightsChanged(_ rows: IndexSet, animated: Bool = false) {
             guard let tableView else { return }
             ChatPerfTrace.shared.count("noteHeightOfRows")
             ChatPerfTrace.shared.count("noteHeightOfRows.rows", rows.count)
@@ -624,7 +633,12 @@ extension MessageTableRepresentable {
                 if let h = heightCache[bid] { lastNotedHeight[bid] = h }
             }
             NSAnimationContext.beginGrouping()
-            NSAnimationContext.current.duration = 0
+            NSAnimationContext.current.duration = animated ? 0.15 : 0
+            if animated {
+                NSAnimationContext.current.timingFunction =
+                    CAMediaTimingFunction(name: .easeOut)
+                NSAnimationContext.current.allowsImplicitAnimation = true
+            }
             tableView.noteHeightOfRows(withIndexesChanged: rows)
             NSAnimationContext.endGrouping()
         }
@@ -667,6 +681,7 @@ extension MessageTableRepresentable {
             let widthChanged = abs(ctx.width - context.width) > 1.0
             let expandedIdsChanged = context.expandedIds != ctx.expandedIds
             let previousEditingTurnId = ctx.editingTurnId
+            let previousSearchHighlightQuery = ctx.searchHighlightQuery
             let previousStreaming = ctx.isStreaming
             let previousLastAssistantTurnId = ctx.lastAssistantTurnId
             // NSView backed cells snapshot the theme
@@ -694,6 +709,13 @@ extension MessageTableRepresentable {
                 reconfigureCellsForTurn(context.editingTurnId)
             }
 
+            // Find-highlight query also lives in the context, not the blocks.
+            // Repaint every materialized cell when it changes so matches
+            // highlight (and un-highlight on close) immediately.
+            if context.searchHighlightQuery != previousSearchHighlightQuery {
+                reconfigureAllCellsFromLookup(blockLookup)
+            }
+
             let newIds = blocks.map(\.id)
             // Drop chart "already animated" entries that are no longer in
             // the thread (covers chat switch / session reload).
@@ -710,6 +732,18 @@ extension MessageTableRepresentable {
                     for key in toolGroupViewCache.keys where !newIdSet.contains(key) {
                         toolGroupViewCache[key]?.removeFromSuperview()
                         toolGroupViewCache.removeValue(forKey: key)
+                    }
+                }
+                // Drop measured heights for blocks that left the thread —
+                // without this, chat switches / session reloads accumulate
+                // stale entries until a width or theme change wipes the cache.
+                if !heightCache.isEmpty || !lastNotedHeight.isEmpty {
+                    let newIdSet = Set(newIds)
+                    for key in heightCache.keys where !newIdSet.contains(key) {
+                        heightCache.removeValue(forKey: key)
+                    }
+                    for key in lastNotedHeight.keys where !newIdSet.contains(key) {
+                        lastNotedHeight.removeValue(forKey: key)
                     }
                 }
             }
@@ -1094,7 +1128,7 @@ extension MessageTableRepresentable {
                     }
                 }
 
-                self.noteRowHeightsChanged(IndexSet(integer: row))
+                self.noteRowHeightsChanged(IndexSet(integer: row), animated: true)
 
                 if self.scrollAnchor.isPinnedToBottom {
                     ChatPerfTrace.shared.count("scrollToBottom.streaming")

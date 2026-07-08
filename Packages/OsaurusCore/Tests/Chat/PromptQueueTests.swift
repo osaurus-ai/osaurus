@@ -183,4 +183,13 @@ struct PromptQueueTests {
             Issue.record("expected clarify to be current after advance")
         }
     }
+
+    @Test
+    func promptItemsOnlyObscureConversationForSecrets() {
+        let secret = makeSecret("API_KEY")
+        let clarify = makeClarify("Use Postgres or SQLite?")
+
+        #expect(PromptItem.secret(secret).obscuresConversation == true)
+        #expect(PromptItem.clarify(clarify).obscuresConversation == false)
+    }
 }

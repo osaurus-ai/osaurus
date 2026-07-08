@@ -58,7 +58,10 @@ public enum ToolOutputCompressor {
     /// O(n) passes would add latency there, and any payload this large is
     /// already past the universal cap (`ToolOutputCaps.universalResult`) and
     /// will be head/tail truncated regardless — crushing it first cannot save
-    /// it. Trailing-whitespace stripping is a single cheap pass and still runs.
+    /// it. The same bound gates the trailing-whitespace strip: an unbounded
+    /// scalar walk over a multi-hundred-MB payload on the main-actor registry
+    /// path is an observed multi-second UI hang, and anything past this bound
+    /// is truncated to the universal cap anyway.
     static let maximumJSONScanBytes = 512 * 1024
 
     /// Returns `raw` with insignificant formatting removed, preserving meaning
@@ -66,7 +69,7 @@ public enum ToolOutputCompressor {
     public static func compact(_ raw: String) -> String {
         guard isEnabled else { return raw }
         let byteCount = raw.utf8.count
-        guard byteCount >= minimumLength else { return raw }
+        guard byteCount >= minimumLength, byteCount <= maximumJSONScanBytes else { return raw }
 
         // Classify on the first non-whitespace scalar. JSON is the high-value,
         // provably-safe target; everything else only gets trailing-strip.
@@ -75,9 +78,7 @@ public enum ToolOutputCompressor {
             return raw
         }
         let first = scalars[firstIdx]
-        if (first == "{" || first == "["), byteCount <= maximumJSONScanBytes,
-            let crushed = crushedJSONIfValid(raw)
-        {
+        if (first == "{" || first == "["), let crushed = crushedJSONIfValid(raw) {
             return crushed
         }
         return strippedTrailingWhitespace(raw)

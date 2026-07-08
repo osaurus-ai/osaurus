@@ -39,9 +39,27 @@ let package = Package(
         // serialized disk-restore evals (#113) — together closing the
         // client-disconnect crash train (engine teardown returns only after
         // producers are off the GPU; restores can't race input tokenization).
+        // Now also carries #116 (serialize GPU-stream drivers — re-locks
+        // eval/asyncEval/item + synchronize/clearCache to kill the Metal
+        // concurrent-encoder crash class) and #117 (NormConventionResolver:
+        // an unrecognized norm_convention defers to the vote instead of
+        // silently disabling the (1+weight) shift). Now also carries the
+        // incremental tool-call envelope progress event (`Generation
+        // .toolCallProgress`) so the app can show a live "preparing tool call"
+        // card during a long buffered tool write (e.g. a large file) instead of
+        // a frozen typing indicator. Additive — existing consumers unaffected.
+        // Now also carries #123 (production crash-trap fixes): Qwen3VL
+        // rotary embedding accepts low-rank position ids and the decode-path
+        // rope delta broadcasts per sequence (stale deltas fall back to cache
+        // offsets); Gemma4 maskedScatter and NemotronH mambaForward guard the
+        // rank-0/empty results a failed MLX op hands back inside a withError
+        // scope; the compile() overloads and innerCall degrade to empty
+        // results instead of trapping on a failed closure evaluation — so a
+        // recorded MLX error reaches the error-scope exit instead of dying in
+        // a Swift bounds check. Contains the previous ff714f1 pin.
         .package(
             url: "https://github.com/osaurus-ai/vmlx-swift",
-            revision: "8dffa0a8e69d7617d68f0843635158684120a3dc"
+            revision: "5e071fe20ddfb3a58de664d770d04e7975a336a8"
         ),
         // FluidAudio 0.14.3 added a breaking `language:` parameter to TTS
         // calls that osaurus's `TTSService` doesn't pass. Pinning to the

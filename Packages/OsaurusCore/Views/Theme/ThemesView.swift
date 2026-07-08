@@ -914,7 +914,7 @@ struct ThemesView: View {
     }
 
     private func card(for themeItem: CustomTheme) -> some View {
-        let isActive = themeManager.activeCustomTheme?.metadata.id == themeItem.metadata.id
+        let isActive = isThemeActive(themeItem)
         return ThemePreviewCard(
             theme: themeItem,
             isActive: isActive,
@@ -922,7 +922,11 @@ struct ThemesView: View {
             validationReport: validationByID[themeItem.metadata.id],
             isDuplicate: duplicateIDs.contains(themeItem.metadata.id),
             onApply: {
-                themeManager.applyCustomTheme(themeItem)
+                if let mode = ThemeManager.appearanceMode(forBuiltInTheme: themeItem) {
+                    themeManager.setAppearanceMode(mode, clearActiveTheme: true)
+                } else {
+                    themeManager.applyCustomTheme(themeItem)
+                }
                 showToast(L("Applied \"\(themeItem.metadata.name)\""))
             },
             onEdit: { openEditor(for: themeItem) },
@@ -931,6 +935,13 @@ struct ThemesView: View {
             onDuplicate: { duplicateTheme(themeItem) },
             onDelete: themeItem.isBuiltIn ? nil : { confirmDelete(themeItem) }
         )
+    }
+
+    private func isThemeActive(_ themeItem: CustomTheme) -> Bool {
+        if let mode = ThemeManager.appearanceMode(forBuiltInTheme: themeItem) {
+            return themeManager.activeCustomTheme == nil && themeManager.appearanceMode == mode
+        }
+        return themeManager.activeCustomTheme?.metadata.id == themeItem.metadata.id
     }
 
     // MARK: - Empty / No-result States
@@ -1108,7 +1119,12 @@ struct ThemesView: View {
         let custom = sorted.filter { !$0.isBuiltIn }
 
         let reports = ThemeLibraryManagementService.validationReports(for: sorted)
-        let reportMap = Dictionary(uniqueKeysWithValues: reports.map { ($0.themeID, $0) })
+        // Two installed theme files can share an ID (e.g. a manually copied
+        // built-in), so tolerate duplicate keys — uniqueKeysWithValues traps.
+        let reportMap = Dictionary(
+            reports.map { ($0.themeID, $0) },
+            uniquingKeysWith: { first, _ in first }
+        )
         let reviewIDs = Set(reports.filter { $0.needsReview }.map { $0.themeID })
 
         let groups = ThemeLibraryManagementService.duplicateGroups(in: sorted)

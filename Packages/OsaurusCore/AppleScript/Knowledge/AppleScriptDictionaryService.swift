@@ -41,11 +41,30 @@ enum AppleScriptDictionaryService {
 
     private static let cacheLock = NSLock()
     nonisolated(unsafe) private static var cache: [String: CacheEntry] = [:]
+    /// LRU order: least-recently-used bundle path first. Summaries are capped
+    /// at `maxSummaryChars` each, but the set of scripted apps is open-ended —
+    /// without a bound, one entry per app the agent ever touched accumulates
+    /// for the process lifetime.
+    nonisolated(unsafe) private static var cacheAccessOrder: [String] = []
+    private static let maxCachedBundles = 16
+
+    /// Must be called with `cacheLock` held.
+    private static func touchLocked(_ path: String) {
+        if let index = cacheAccessOrder.firstIndex(of: path) {
+            cacheAccessOrder.remove(at: index)
+        }
+        cacheAccessOrder.append(path)
+        while cacheAccessOrder.count > maxCachedBundles {
+            let evicted = cacheAccessOrder.removeFirst()
+            cache.removeValue(forKey: evicted)
+        }
+    }
 
     // MARK: - Public entry
 
     /// The distilled scripting-dictionary summary for the app at `bundleURL`,
-    /// or `nil` when the app has no usable dictionary. Cached per bundle.
+    /// or `nil` when the app has no usable dictionary. Cached per bundle
+    /// (LRU-bounded to `maxCachedBundles` apps).
     static func dictionarySummary(appName: String, bundleURL: URL) -> String? {
         let path = bundleURL.path
         let modified =
@@ -54,6 +73,7 @@ enum AppleScriptDictionaryService {
         cacheLock.lock()
         if let entry = cache[path], entry.modified == modified {
             let cached = entry.summary
+            touchLocked(path)
             cacheLock.unlock()
             return cached
         }
@@ -63,6 +83,7 @@ enum AppleScriptDictionaryService {
 
         cacheLock.lock()
         cache[path] = CacheEntry(modified: modified, summary: summary)
+        touchLocked(path)
         cacheLock.unlock()
         return summary
     }

@@ -119,8 +119,8 @@ struct ModelPickerTableRepresentable: NSViewRepresentable {
     let rows: [ModelPickerRow]
     let theme: ThemeProtocol
     var selectedModelId: String?
-    /// True while the Favourites tab is active: the trailing control becomes an
-    /// always-visible trash (remove) instead of a hover-only heart (toggle).
+    /// True while the Favorites tab is active: the trailing control becomes an
+    /// always-visible filled heart (remove) instead of a hover-only heart (toggle).
     var isFavoritesTab: Bool = false
     var onSelectModel: ((String) -> Void)?
     var onSwitchTab: ((Int) -> Void)?
@@ -322,12 +322,12 @@ private final class PickerBadgeView: NSView {
 }
 
 /// The trailing favourite control shown on a row, if any. A hover-only heart
-/// in normal tabs, an always-visible trash in the Favourites tab.
+/// in normal tabs, an always-visible filled heart (remove) in the Favorites tab.
 private enum RowAccessoryKind: Equatable {
     case none
     case heart  // not yet favourited — outline, shown on hover
     case heartFill  // favourited — filled, shown persistently
-    case trash  // Favourites tab — remove, always shown
+    case favoritesRemove  // Favorites tab — filled heart, removes, always shown
 }
 
 /// Model row cell with hover/selection background.
@@ -447,7 +447,6 @@ private final class ModelRowCellView: NSTableCellView, NSGestureRecognizerDelega
         eyeImage: NSImage?,
         heartImage: NSImage?,
         heartFillImage: NSImage?,
-        trashImage: NSImage?,
         regularFont: NSFont,
         semiboldFont: NSFont,
         descFont: NSFont,
@@ -578,15 +577,15 @@ private final class ModelRowCellView: NSTableCellView, NSGestureRecognizerDelega
         cachedIsHovered = isHovered
         cachedIsHighlighted = isHighlighted
 
-        // Trailing favourite control. In the Favourites tab it's an
-        // always-visible trash (remove); elsewhere it's a heart — shown filled
-        // and persistent once favourited, and as an outline on hover so an
-        // un-favourited row can be bookmarked. `RowAccessoryKind` is compared
+        // Trailing favourite control. In the Favorites tab it's an
+        // always-visible filled heart (remove); elsewhere it's a heart — shown
+        // filled and persistent once favourited, and as an outline on hover so
+        // an un-favourited row can be bookmarked. `RowAccessoryKind` is compared
         // against the last value so an unchanged hover/selection pass skips the
         // image swap and the relayout.
         let newAccessoryKind: RowAccessoryKind
         if favoritesMode {
-            newAccessoryKind = .trash
+            newAccessoryKind = .favoritesRemove
         } else if isFavorite {
             newAccessoryKind = .heartFill
         } else if isHovered {
@@ -607,13 +606,13 @@ private final class ModelRowCellView: NSTableCellView, NSGestureRecognizerDelega
                 accessoryButton.image = heartFillImage
                 accessoryButton.contentTintColor = colors.accentColor
                 accessoryButton.isHidden = false
-            case .trash:
-                accessoryButton.image = trashImage
-                accessoryButton.contentTintColor = colors.secondaryText
+            case .favoritesRemove:
+                accessoryButton.image = heartFillImage
+                accessoryButton.contentTintColor = colors.accentColor
                 accessoryButton.isHidden = false
             }
             accessoryButton.toolTip =
-                newAccessoryKind == .trash
+                newAccessoryKind == .favoritesRemove
                 ? L("Remove from favourites")
                 : (newAccessoryKind == .heartFill
                     ? L("Remove from favourites")
@@ -665,10 +664,10 @@ private final class ModelRowCellView: NSTableCellView, NSGestureRecognizerDelega
         let contentX = pad + 14 + 6
 
         var trailingX = w - pad
-        // The favourite control sits at the far trailing edge, vertically
-        // centred on the whole row so it reads the same on one- and two-line
-        // rows. Provider badge (and content) shrink to its left.
-        if accessoryKind != .none {
+        // Only the always-visible remove heart (Favorites tab) lives at the
+        // trailing edge. The hover heart is placed inline after the name below,
+        // so its appearance never shifts the right-aligned Vision/provider badges.
+        if accessoryKind == .favoritesRemove {
             let side = Self.accessorySide
             accessoryButton.frame = CGRect(
                 x: trailingX - side,
@@ -699,6 +698,28 @@ private final class ModelRowCellView: NSTableCellView, NSGestureRecognizerDelega
             )
         } else {
             nameLabel.frame = CGRect(x: contentX, y: nameY, width: max(0, contentW), height: nameH)
+        }
+
+        // Heart sits right after the name text, clamped so it never runs into
+        // the right-aligned Vision badge (or the trailing edge). The button is
+        // framed at the symbol's natural size with its baseline (encoded in
+        // the image's alignment insets) placed on the title's baseline, so the
+        // glyph sits exactly on the text line instead of being box-centred.
+        if accessoryKind == .heart || accessoryKind == .heartFill {
+            let imgSize = accessoryButton.image?.size ?? .zero
+            let baselineInset = accessoryButton.image?.alignmentRect.origin.y ?? 0
+            let font = nameLabel.font ?? NSFont.systemFont(ofSize: 12, weight: .medium)
+            let lineH = font.ascender - font.descender
+            let baselineFromTop = (nameH - lineH) / 2 + font.ascender
+            let nameTextW = min(nameLabel.intrinsicContentSize.width, nameLabel.frame.width)
+            let limit = (vlmBadge.isHidden ? trailingX : vlmBadge.frame.minX) - imgSize.width - 4
+            let x = min(nameLabel.frame.minX + nameTextW + 6, limit)
+            accessoryButton.frame = CGRect(
+                x: max(contentX, x),
+                y: nameY + baselineFromTop - (imgSize.height - baselineInset) - 1,
+                width: imgSize.width,
+                height: imgSize.height
+            )
         }
 
         if hasMeta {
@@ -779,8 +800,8 @@ extension ModelPickerTableRepresentable {
         var onToggleFavorite: ((ModelPickerRow) -> Void)?
         var onDismiss: (() -> Void)?
 
-        /// True while the Favourites tab is active: rows show an always-visible
-        /// trash control instead of the hover-only heart.
+        /// True while the Favorites tab is active: rows show an always-visible
+        /// filled-heart remove control instead of the hover-only heart.
         var isFavoritesTab = false
 
         private var hoveredRowId: String?
@@ -818,11 +839,6 @@ extension ModelPickerTableRepresentable {
 
         private lazy var heartFillImage: NSImage? = NSImage(
             systemSymbolName: "heart.fill",
-            accessibilityDescription: nil
-        )?.withSymbolConfiguration(.init(pointSize: 12, weight: .medium))
-
-        private lazy var trashImage: NSImage? = NSImage(
-            systemSymbolName: "trash",
             accessibilityDescription: nil
         )?.withSymbolConfiguration(.init(pointSize: 12, weight: .medium))
 
@@ -936,7 +952,7 @@ extension ModelPickerTableRepresentable {
             reconfigureVisibleCells()
         }
 
-        /// Switch the trailing control between hover-heart and always-on trash.
+        /// Switch the trailing control between hover-heart and always-on remove heart.
         /// Only repaints when the mode actually flips; `applyRows` covers the
         /// row-content refresh that normally accompanies a tab change.
         func updateFavoritesTab(_ newValue: Bool) {
@@ -1057,7 +1073,6 @@ extension ModelPickerTableRepresentable {
                 eyeImage: eyeImage,
                 heartImage: heartImage,
                 heartFillImage: heartFillImage,
-                trashImage: trashImage,
                 regularFont: regularFont,
                 semiboldFont: semiboldFont,
                 descFont: descFont,

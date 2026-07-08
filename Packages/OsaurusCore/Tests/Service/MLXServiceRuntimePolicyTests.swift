@@ -142,17 +142,21 @@ struct MLXServiceRuntimePolicyTests {
         }
     }
 
-    @Test func policyRejectsKnownBadZayaVLJANGTQKDiagnosticArtifact() {
-        #expect(throws: MLXService.RuntimePolicyError.self) {
-            try MLXService.validateRuntimePolicy(
-                modelName: "zaya1-vl-8b-jangtq_k",
-                modelId: "JANGQ/ZAYA1-VL-8B-JANGTQ_K",
-                messages: [ChatMessage(role: "user", content: "Compute 7 + 8 - 11.")],
-                parameters: GenerationParameters(temperature: nil, maxTokens: 16),
-                tools: [],
-                runtime: VMLXServerRuntimeSettings()
-            )
-        }
+    /// The `zaya1-vl-8b-jangtq_k` hard block was removed: its stated reason
+    /// ("proven first-token fidelity failure") was disproven live — the model
+    /// streams coherent text with correct first tokens (the original failure was
+    /// a since-fixed runtime issue, not the quant). It must now pass runtime
+    /// policy like any other text-coherent bundle; this guards against silently
+    /// re-introducing the stale block.
+    @Test func policyNoLongerBlocksZayaVLJANGTQK() throws {
+        try MLXService.validateRuntimePolicy(
+            modelName: "zaya1-vl-8b-jangtq_k",
+            modelId: "JANGQ/ZAYA1-VL-8B-JANGTQ_K",
+            messages: [ChatMessage(role: "user", content: "Compute 7 + 8 - 11.")],
+            parameters: GenerationParameters(temperature: nil, maxTokens: 16),
+            tools: [],
+            runtime: VMLXServerRuntimeSettings()
+        )
     }
 
     @Test func policyRejectsGemma3nToolsInsteadOfLeakingTemplateMarkers() {

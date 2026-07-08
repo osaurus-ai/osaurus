@@ -1067,6 +1067,19 @@ struct MLXBatchAdapterTests {
             )
         )
         #expect(
+            !MLXBatchAdapter.shouldEnableCompiledBatchDecode(
+                modelName: "OsaurusAI/Ornith-1.0-9B-MXFP4",
+                maxBatchSize: 1
+            ),
+            "Ornith is the qwen3_5 family under a different bundle id; the same hybrid compiled-trace opt-out must apply"
+        )
+        #expect(
+            !MLXBatchAdapter.shouldEnableCompiledBatchDecode(
+                modelName: "ornith-1.0-35b-mxfp4",
+                maxBatchSize: 1
+            )
+        )
+        #expect(
             MLXBatchAdapter.shouldEnableCompiledBatchDecode(
                 modelName: "mlx-community/Llama-3.2-3B-Instruct-4bit",
                 maxBatchSize: 1
@@ -2147,6 +2160,96 @@ struct MLXBatchAdapterTests {
         let defaults = UserDefaults(suiteName: suiteName)!
         defaults.removePersistentDomain(forName: suiteName)
         return defaults
+    }
+
+    // MARK: - Warm-up prompt truncation
+
+    /// Renders a fixed generation-prompt suffix of [90, 91]: probe render
+    /// without the generation prompt returns the message tokens, with it
+    /// appends the suffix. Mirrors how a real chat template's
+    /// `add_generation_prompt` branch behaves.
+    private struct SuffixProbeTokenizer: MLXLMCommon.GenerationPromptControllableTokenizer {
+        func encode(text: String, addSpecialTokens: Bool) -> [Int] { [] }
+        func decode(tokenIds: [Int], skipSpecialTokens: Bool) -> String { "" }
+        func convertTokenToId(_ token: String) -> Int? { nil }
+        func convertIdToToken(_ id: Int) -> String? { nil }
+        var bosToken: String? { nil }
+        var eosToken: String? { nil }
+        var unknownToken: String? { nil }
+
+        func applyChatTemplate(
+            messages: [[String: any Sendable]],
+            tools: [[String: any Sendable]]?,
+            additionalContext: [String: any Sendable]?
+        ) throws -> [Int] {
+            try applyChatTemplate(
+                messages: messages,
+                tools: tools,
+                additionalContext: additionalContext,
+                addGenerationPrompt: true
+            )
+        }
+
+        func applyChatTemplate(
+            messages: [[String: any Sendable]],
+            tools: [[String: any Sendable]]?,
+            additionalContext: [String: any Sendable]?,
+            addGenerationPrompt: Bool
+        ) throws -> [Int] {
+            let body = [1, 10, 20]
+            return addGenerationPrompt ? body + [90, 91] : body
+        }
+    }
+
+    @Test func warmupTruncation_usesCanonicalBoundaryWhenProcessorProvidesIt() {
+        let boundary = MLXBatchAdapter.warmupCacheBoundary(
+            tokens: [1, 5, 6, 7, 90, 91],
+            cachePrefixTokenCounts: [4],
+            tokenizer: nil,
+            additionalContext: nil
+        )
+
+        #expect(boundary == 4)
+    }
+
+    /// VLM processors (e.g. Gemma 4) never populate `cachePrefixTokenCounts`,
+    /// which is exactly the live "warm dot but prefill from 0" failure: the
+    /// warm-up stored a full prompt ending in generation tokens that the real
+    /// send could never extend. The fallback derives the generation-prompt
+    /// suffix from the tokenizer's own template and strips it.
+    @Test func warmupTruncation_fallsBackToTokenizerDerivedGenerationPromptSuffix() {
+        let boundary = MLXBatchAdapter.warmupCacheBoundary(
+            tokens: [1, 5, 6, 7, 90, 91],
+            cachePrefixTokenCounts: [],
+            tokenizer: SuffixProbeTokenizer(),
+            additionalContext: nil
+        )
+
+        #expect(boundary == 4)
+    }
+
+    @Test func warmupTruncation_reportsNoBoundaryWhenSuffixDoesNotMatch() {
+        // Prompt does not end with the template's generation-prompt suffix —
+        // the helper must never guess a boundary in that case.
+        let boundary = MLXBatchAdapter.warmupCacheBoundary(
+            tokens: [1, 5, 6, 7, 8],
+            cachePrefixTokenCounts: [],
+            tokenizer: SuffixProbeTokenizer(),
+            additionalContext: nil
+        )
+
+        #expect(boundary == nil)
+    }
+
+    @Test func warmupTruncation_reportsNoBoundaryWithoutControllableTokenizer() {
+        let boundary = MLXBatchAdapter.warmupCacheBoundary(
+            tokens: [1, 5, 6, 7, 90, 91],
+            cachePrefixTokenCounts: [],
+            tokenizer: nil,
+            additionalContext: nil
+        )
+
+        #expect(boundary == nil)
     }
 
     // MARK: - Laguna serving-loop defaults

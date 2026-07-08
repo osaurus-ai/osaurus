@@ -340,53 +340,34 @@ private struct SmallSpinnerShape: Shape {
 
 // MARK: - Completed Checkmark Icon
 
+/// SF Symbol checkmark with a spring pop-in. The symbol centers itself via
+/// font metrics — the previous hand-drawn trim-animated path sat visibly
+/// off-center inside the circle at small sizes — and matches the `xmark`
+/// symbol the failed state uses.
 private struct CompletedCheckmarkIcon: View {
     let theme: ThemeProtocol
     let size: CGFloat
 
-    @State private var checkmarkProgress: CGFloat = 0
+    @State private var revealed = false
 
     var body: some View {
         ZStack {
             Circle()
                 .fill(theme.successColor)
                 .frame(width: size, height: size)
-                .scaleEffect(checkmarkProgress > 0 ? 1 : 0.5)
+                .scaleEffect(revealed ? 1 : 0.5)
 
-            // Checkmark path
-            CheckmarkShape()
-                .trim(from: 0, to: checkmarkProgress)
-                .stroke(Color.white, style: StrokeStyle(lineWidth: 2, lineCap: .round, lineJoin: .round))
-                .frame(width: size * 0.5, height: size * 0.5)
+            Image(systemName: "checkmark")
+                .font(.system(size: size * 0.5, weight: .bold))
+                .foregroundColor(.white)
+                .scaleEffect(revealed ? 1 : 0.4)
+                .opacity(revealed ? 1 : 0)
         }
         .onAppear {
             withAnimation(.spring(response: 0.4, dampingFraction: 0.6)) {
-                checkmarkProgress = 1
+                revealed = true
             }
         }
-    }
-}
-
-// MARK: - Checkmark Shape
-
-/// Custom shape for animated checkmark drawing
-private struct CheckmarkShape: Shape {
-    func path(in rect: CGRect) -> Path {
-        var path = Path()
-
-        let width = rect.width
-        let height = rect.height
-
-        // Start at left point
-        path.move(to: CGPoint(x: width * 0.1, y: height * 0.5))
-
-        // Line to bottom point
-        path.addLine(to: CGPoint(x: width * 0.4, y: height * 0.85))
-
-        // Line to top-right point
-        path.addLine(to: CGPoint(x: width * 0.95, y: height * 0.15))
-
-        return path
     }
 }
 

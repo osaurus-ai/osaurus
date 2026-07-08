@@ -101,6 +101,17 @@ struct FloatingInputCard: View {
     /// sandbox, working folder, screen-context, and the thinking / model-option
     /// chips — because none of them are sent to (or honored by) the remote peer.
     var isRemoteAgentRun: Bool = false
+    /// Terminal-style input history (Up/Down arrows recall previously sent
+    /// messages). Returns the current conversation's sent inputs, newest
+    /// first; nil disables the feature.
+    var inputHistoryProvider: (() -> [String])?
+    /// Identity of the conversation backing the history. Navigation state
+    /// resets when it changes so a recalled index can't leak across chats.
+    var inputHistoryKey: UUID?
+    /// When true, the model chip dot reflects warm-up state (yellow/green).
+    var warmModelsOnLoadEnabled: Bool = false
+    /// Warm-up state for the selected local model in this session.
+    @ObservedObject var warmupController: ChatWarmupController = ChatWarmupController()
 
     init(
         text: Binding<String>,
@@ -138,7 +149,11 @@ struct FloatingInputCard: View {
         isModelPinned: Bool = false,
         pinnedModelLabel: String? = nil,
         remoteConnectionPending: Bool = false,
-        isRemoteAgentRun: Bool = false
+        isRemoteAgentRun: Bool = false,
+        inputHistoryProvider: (() -> [String])? = nil,
+        inputHistoryKey: UUID? = nil,
+        warmModelsOnLoadEnabled: Bool = false,
+        warmupController: ChatWarmupController = ChatWarmupController()
     ) {
         self._text = text
         self._selectedModel = selectedModel
@@ -176,6 +191,10 @@ struct FloatingInputCard: View {
         self.pinnedModelLabel = pinnedModelLabel
         self.remoteConnectionPending = remoteConnectionPending
         self.isRemoteAgentRun = isRemoteAgentRun
+        self.inputHistoryProvider = inputHistoryProvider
+        self.inputHistoryKey = inputHistoryKey
+        self.warmModelsOnLoadEnabled = warmModelsOnLoadEnabled
+        self._warmupController = ObservedObject(wrappedValue: warmupController)
     }
 
     // Observe managers for reactive updates
@@ -192,11 +211,18 @@ struct FloatingInputCard: View {
     /// gate is now per-agent (a child of Computer Use), read via `agentManager`.
     @ObservedObject private var frontmostApp = FrontmostAppTracker.shared
     @ObservedObject private var permissionService = SystemPermissionService.shared
+    /// Per-model warm-up progress (load / prefill %) for the chip tooltip.
+    @ObservedObject private var warmupProgressHub = WarmupProgressHub.shared
 
     // MARK: - Slash Command State
 
     private var slashRegistry = SlashCommandRegistry.shared
     @State private var slashSelectedIndex: Int = 0
+
+    // MARK: - Input History State
+
+    /// Terminal-style history navigation position + stashed draft.
+    @State private var inputHistoryState = ChatInputHistoryState()
 
     /// Non-nil when the cursor is inside a slash command token (e.g. "/tr" or "hello /tr").
     /// The slash must be at the start of text or immediately after whitespace.
@@ -257,6 +283,23 @@ struct FloatingInputCard: View {
     @State private var clipboardPulseOpacity: Double = 0.0
     // Cache picker items to prevent popover refresh during streaming
     @State private var cachedPickerItems: [ModelPickerItem] = []
+
+    // MARK: - RAM Tight-Fit State
+
+    /// Latest candidate-load RAM projection for the selected local model.
+    /// Non-nil only when the projection crosses the soft threshold (warn) or
+    /// hard ceiling (block). `nil` = resident model, remote model, or a
+    /// comfortable fit — no banner, no gate.
+    @State private var pendingLoadFeasibility: ModelRuntime.RAMFeasibility?
+    /// Host memory usage captured alongside the feasibility refresh so the
+    /// banner shows a live percentage without this (large) view observing
+    /// `SystemMonitorService` and re-rendering on every 2s tick.
+    @State private var ramBannerUsagePercent: Int = 0
+    @State private var ramBannerTotalGB: Int = 0
+    /// Model the user hid the tight-fit banner for via its dismiss button.
+    /// The banner stays hidden for that selection but returns when the pick
+    /// changes or the projection escalates to a hard block.
+    @State private var ramBannerDismissedForModel: String?
     // MARK: - Voice Input State
     @ObservedObject private var speechService = SpeechService.shared
     @ObservedObject private var speechModelManager = SpeechModelManager.shared
@@ -356,6 +399,13 @@ struct FloatingInputCard: View {
         // let the inline notice explain, instead of silently degrading to a
         // tool-less chat that can't configure anything.
         guard !configContextTooSmall else { return false }
+
+        // RAM gate: loading the selected model would cross the hard RAM
+        // ceiling (documented `modelLoadRAMHardThreshold` setting). Block the
+        // send and let the floating banner explain; the periodic feasibility
+        // re-check lifts the block as memory frees. UI-only — the HTTP API
+        // and the runtime load path stay advisory.
+        guard !ramBlocked else { return false }
 
         let hasText = !localText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         let hasContent = hasText || !pendingAttachments.isEmpty
@@ -480,6 +530,13 @@ struct FloatingInputCard: View {
 
     private var mainContent: some View {
         VStack(spacing: 12) {
+            // RAM tight-fit banner is a real row above the selector row (not a
+            // floating overlay) so it sits directly above the model picker
+            // chip it refers to and can never overlap the chip or token count.
+            if !showVoiceOverlay {
+                ramPressureRow
+            }
+
             // Read-only screen-context indicator sits on its OWN row above the
             // selector row, right-aligned so it stacks directly over the
             // context-token count, rendered as quiet muted text (not a chip)
@@ -574,7 +631,15 @@ struct FloatingInputCard: View {
                 configContextErrorOverlay
             }
             .animation(.easeOut(duration: 0.2), value: configContextTooSmall)
+            .modifier(
+                RAMTightFitModifier(
+                    severity: ramPressureSeverity,
+                    selectedModel: selectedModel,
+                    refresh: refreshLoadFeasibility
+                )
+            )
             .onAppear {
+                refreshLoadFeasibility()
                 let isReappear = !localText.isEmpty || voiceInputState != .idle
                 localText = text
                 print("[VoiceDebug] FloatingInputCard onAppear (reappear=\(isReappear))")
@@ -866,6 +931,78 @@ fileprivate func voiceDebugLog(
 }
 
 // MARK: - Voice Debug Observers
+
+/// Groups the RAM tight-fit banner overlay and its refresh triggers into one
+/// modifier so the already-enormous `FloatingInputCard.body` chain doesn't
+/// gain four more inference nodes (the type-checker times out otherwise).
+/// The RAM tight-fit banner's full popover silhouette: a rounded rectangle
+/// whose bottom edge flows into a downward pointer triangle as one continuous
+/// path, so stroking it draws a single unbroken border around banner and
+/// pointer alike (no border line across the triangle's flat top).
+private struct RAMBannerShape: Shape {
+    static let pointerWidth: CGFloat = 18
+    static let pointerHeight: CGFloat = 8
+    static let cornerRadius: CGFloat = 14
+
+    /// X position of the pointer's tip, in the shape's own coordinates.
+    let pointerCenterX: CGFloat
+
+    func path(in rect: CGRect) -> Path {
+        let r = Self.cornerRadius
+        let halfPointer = Self.pointerWidth / 2
+        let bodyBottom = rect.maxY - Self.pointerHeight
+
+        var path = Path()
+        path.move(to: CGPoint(x: rect.minX + r, y: rect.minY))
+        path.addLine(to: CGPoint(x: rect.maxX - r, y: rect.minY))
+        path.addArc(
+            center: CGPoint(x: rect.maxX - r, y: rect.minY + r),
+            radius: r, startAngle: .degrees(-90), endAngle: .degrees(0), clockwise: false
+        )
+        path.addLine(to: CGPoint(x: rect.maxX, y: bodyBottom - r))
+        path.addArc(
+            center: CGPoint(x: rect.maxX - r, y: bodyBottom - r),
+            radius: r, startAngle: .degrees(0), endAngle: .degrees(90), clockwise: false
+        )
+        path.addLine(to: CGPoint(x: pointerCenterX + halfPointer, y: bodyBottom))
+        path.addLine(to: CGPoint(x: pointerCenterX, y: rect.maxY))
+        path.addLine(to: CGPoint(x: pointerCenterX - halfPointer, y: bodyBottom))
+        path.addLine(to: CGPoint(x: rect.minX + r, y: bodyBottom))
+        path.addArc(
+            center: CGPoint(x: rect.minX + r, y: bodyBottom - r),
+            radius: r, startAngle: .degrees(90), endAngle: .degrees(180), clockwise: false
+        )
+        path.addLine(to: CGPoint(x: rect.minX, y: rect.minY + r))
+        path.addArc(
+            center: CGPoint(x: rect.minX + r, y: rect.minY + r),
+            radius: r, startAngle: .degrees(180), endAngle: .degrees(270), clockwise: false
+        )
+        path.closeSubpath()
+        return path
+    }
+}
+
+private struct RAMTightFitModifier: ViewModifier {
+    let severity: ModelRuntime.RAMFeasibility.LoadPressureSeverity
+    let selectedModel: String?
+    let refresh: () -> Void
+
+    func body(content: Content) -> some View {
+        content
+            // The tight-fit banner itself is an in-flow row above the model
+            // picker chip (`ramPressureRow`); this modifier only owns the
+            // refresh triggers and the show/hide animation.
+            .animation(.easeOut(duration: 0.2), value: severity)
+            .onChange(of: selectedModel) { _, _ in
+                refresh()
+            }
+            // 2s host-memory tick: re-projects the tight-fit assessment so
+            // the warn/block banner clears on its own as RAM frees.
+            .onReceive(SystemMonitorService.shared.$memoryUsage) { _ in
+                refresh()
+            }
+    }
+}
 
 /// Watches the four properties that feed into isVoiceConfigured / isVoiceAvailable
 /// and emits a debug log line whenever any of them change.
@@ -1410,7 +1547,73 @@ extension FloatingInputCard {
         textViewFocusController.lockFocus(for: 0.3)
         localText = ""
         text = ""
+        // Sending resets history navigation; the sent text becomes the
+        // newest history entry once its turn lands.
+        inputHistoryState = ChatInputHistoryState()
         onSend(message)
+    }
+
+    // MARK: - Input History (terminal-style Up/Down recall)
+
+    private func handleHistoryArrowUp() -> Bool {
+        guard let provider = inputHistoryProvider, caretIsOnFirstLine else { return false }
+        guard
+            let result = ChatInputHistory.recall(
+                state: inputHistoryState,
+                entries: provider(),
+                currentDraft: localText
+            )
+        else { return false }
+        inputHistoryState = result.state
+        applyHistoryText(result.text)
+        return true
+    }
+
+    private func handleHistoryArrowDown() -> Bool {
+        guard inputHistoryState.index != nil, caretIsOnLastLine else { return false }
+        guard
+            let result = ChatInputHistory.advance(
+                state: inputHistoryState,
+                entries: inputHistoryProvider?() ?? []
+            )
+        else { return false }
+        inputHistoryState = result.state
+        applyHistoryText(result.text)
+        return true
+    }
+
+    /// Replace the composer text with a recalled entry and put the caret at
+    /// the end, matching terminal behavior.
+    private func applyHistoryText(_ newText: String) {
+        localText = newText
+        text = newText
+        DispatchQueue.main.async {
+            guard let tv = textViewFocusController.textView else { return }
+            let end = (tv.string as NSString).length
+            tv.setSelectedRange(NSRange(location: end, length: 0))
+            tv.scrollRangeToVisible(NSRange(location: end, length: 0))
+        }
+    }
+
+    /// True when the caret is a plain insertion point on the first line of
+    /// the composer. History recall only triggers there, so Up still moves
+    /// the caret inside a multi-line draft.
+    private var caretIsOnFirstLine: Bool {
+        guard let tv = textViewFocusController.textView else { return false }
+        let range = tv.selectedRange()
+        guard range.length == 0 else { return false }
+        let ns = tv.string as NSString
+        return !ns.substring(to: min(range.location, ns.length)).contains("\n")
+    }
+
+    /// True when the caret is a plain insertion point on the last line of
+    /// the composer. Walking history forward only triggers there.
+    private var caretIsOnLastLine: Bool {
+        guard let tv = textViewFocusController.textView else { return false }
+        let range = tv.selectedRange()
+        guard range.length == 0 else { return false }
+        let ns = tv.string as NSString
+        return !ns.substring(from: min(range.location, ns.length)).contains("\n")
     }
 
     // MARK: - Slash Commands
@@ -2142,6 +2345,44 @@ extension FloatingInputCard {
         return ModelManager.replacementForDeprecatedModel(id) != nil
     }
 
+    private var isSelectedModelLocal: Bool {
+        guard let id = selectedModel else { return false }
+        return ModelManager.findInstalledModel(named: id) != nil
+    }
+
+    private var modelWarmupDotColor: Color {
+        if warmModelsOnLoadEnabled, isSelectedModelLocal, !isRemoteAgentRun {
+            return warmupController.isWarmForDisplay ? .green : .yellow
+        }
+        return .green
+    }
+
+    private var modelWarmupDotHelp: String {
+        guard warmModelsOnLoadEnabled, isSelectedModelLocal, !isRemoteAgentRun else {
+            return String(localized: "Model ready", bundle: .module)
+        }
+        if warmupController.isWarmForDisplay {
+            return String(localized: "Model warm — ready for a fast first response", bundle: .module)
+        }
+        guard let model = selectedModel, let phase = warmupProgressHub.phases[model] else {
+            return String(localized: "Warming up…", bundle: .module)
+        }
+        switch phase {
+        case .loadingModel:
+            return String(localized: "Warming up — loading model…", bundle: .module)
+        case .prefilling(let state):
+            guard state.totalUnitCount > 0 else {
+                return String(localized: "Warming up — prefilling context…", bundle: .module)
+            }
+            let percent = Int(state.percentCompleted.rounded())
+            return String(
+                localized:
+                    "Warming up — prefilling context \(percent)% (\(state.completedUnitCount)/\(state.totalUnitCount) tokens)",
+                bundle: .module
+            )
+        }
+    }
+
     @ViewBuilder
     private var modelSelectorChip: some View {
         if isModelPinned {
@@ -2185,10 +2426,11 @@ extension FloatingInputCard {
                         .foregroundColor(.orange)
                         .localizedHelp("This model is outdated. Click to switch to a newer version.")
                 } else {
+                    // Tooltip comes from the chip-wide `.help` below — the
+                    // 6px dot is too small to be its own hover target.
                     Circle()
-                        .fill(Color.green)
+                        .fill(modelWarmupDotColor)
                         .frame(width: 6, height: 6)
-                        .localizedHelp("Model ready")
                 }
 
                 // Model name with metadata badges
@@ -2229,6 +2471,12 @@ extension FloatingInputCard {
                     .foregroundColor(theme.tertiaryText)
             }
         }
+        // Chip-wide hover target: the 6px dot alone is too small to hover.
+        .help(
+            isSelectedModelDeprecated
+                ? String(localized: "This model is outdated. Click to switch to a newer version.", bundle: .module)
+                : modelWarmupDotHelp
+        )
         .popover(isPresented: $showModelPicker, arrowEdge: .top) {
             ModelPickerView(
                 options: cachedPickerItems,
@@ -2411,6 +2659,61 @@ extension FloatingInputCard {
     private var configContextTooSmall: Bool {
         guard isDefaultConfigAgent, let model = selectedModel else { return false }
         return ContextSizeResolver.resolve(modelId: model).sizeClass.disablesTools
+    }
+
+    // MARK: - RAM Tight-Fit Gate
+
+    private var ramPressureSeverity: ModelRuntime.RAMFeasibility.LoadPressureSeverity {
+        pendingLoadFeasibility?.loadPressureSeverity ?? .none
+    }
+
+    /// Send is blocked while loading the selected model would cross the hard
+    /// RAM ceiling. Cleared automatically by the periodic feasibility
+    /// re-check as memory frees (or when the user picks a smaller model).
+    private var ramBlocked: Bool {
+        ramPressureSeverity == .block
+    }
+
+    /// Re-project the selected model's load feasibility. Called on appear,
+    /// on model change, and on `SystemMonitorService`'s 2s memory tick — the
+    /// tick is what auto-clears the warn/block state when RAM frees. The
+    /// runtime memoizes the bundle-size scan, so steady-state re-checks cost
+    /// one actor hop and a `vm_statistics64` read.
+    private func refreshLoadFeasibility() {
+        guard !isRemoteAgentRun, let model = selectedModel, isSelectedModelLocal else {
+            if pendingLoadFeasibility != nil { pendingLoadFeasibility = nil }
+            return
+        }
+        Task { @MainActor in
+            let assessment = await ModelRuntime.shared.projectedLoadFeasibility(for: model)
+            // The selection may have moved while we were on the runtime actor.
+            guard selectedModel == model else { return }
+
+            guard let assessment, assessment.loadPressureSeverity != .none else {
+                if pendingLoadFeasibility != nil { pendingLoadFeasibility = nil }
+                // The tightness episode ended, so a dismissal has served its
+                // purpose; re-arm the banner for the next episode.
+                if ramBannerDismissedForModel != nil { ramBannerDismissedForModel = nil }
+                return
+            }
+            let monitor = SystemMonitorService.shared
+            let usagePercent = Int(monitor.memoryUsage.rounded())
+            let totalGB = Int(monitor.totalMemoryGB.rounded())
+            // Only touch @State when something the banner displays actually
+            // changed, so idle ticks don't re-render the card.
+            let changed =
+                pendingLoadFeasibility?.loadPressureSeverity != assessment.loadPressureSeverity
+                || pendingLoadFeasibility?.modelName != assessment.modelName
+                || pendingLoadFeasibility?.requiredAvailableBytes
+                    != assessment.requiredAvailableBytes
+                || ramBannerUsagePercent != usagePercent
+                || ramBannerTotalGB != totalGB
+            if changed {
+                pendingLoadFeasibility = assessment
+                ramBannerUsagePercent = usagePercent
+                ramBannerTotalGB = totalGB
+            }
+        }
     }
 
     private var isSandboxAvailable: Bool {
@@ -3128,6 +3431,138 @@ extension FloatingInputCard {
                 .alignmentGuide(.top) { dimensions in dimensions.height + 10 }
                 .transition(.opacity.combined(with: .move(edge: .bottom)))
         }
+    }
+
+    /// Fixed banner width so a short model name (e.g. "gpt-5.5") never shrinks
+    /// the banner into a cramped container.
+    private static let ramBannerWidth: CGFloat = 320
+
+    /// In-flow wrapper for `ramPressureBanner`: a fixed-width, popover-style
+    /// toast at the top of the composer stack, left-aligned with the model
+    /// picker chip it refers to (same 20pt leading inset), with the pointer
+    /// fixed near the banner's left so it lands on the front of the chip
+    /// regardless of the chip's width. The config-context error (still a
+    /// floating overlay) wins when both apply.
+    @ViewBuilder
+    private var ramPressureRow: some View {
+        if !configContextTooSmall, let feasibility = pendingLoadFeasibility,
+            ramBannerDismissedForModel != selectedModel
+                || feasibility.loadPressureSeverity == .block
+        {
+            ramPressureBanner(feasibility, pointerCenterX: 28)
+                .frame(width: Self.ramBannerWidth, alignment: .leading)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.leading, 20)
+                .padding(.top, 8)
+                // The pointer is inside the banner's frame now; the negative
+                // padding cancels most of the stack spacing + selector row top
+                // padding so the pointer tip sits ~4pt above the chip.
+                .padding(.bottom, -16)
+                .transition(.opacity.combined(with: .move(edge: .bottom)))
+        }
+    }
+
+    /// Foundation-style disclaimer shown above the card when loading the
+    /// selected model would be a tight RAM fit. Orange = warn (send allowed),
+    /// red = blocked (send paused until memory frees; the 2s feasibility
+    /// re-check clears it automatically).
+    private func ramPressureBanner(
+        _ feasibility: ModelRuntime.RAMFeasibility,
+        pointerCenterX: CGFloat
+    ) -> some View {
+        let blocked = feasibility.loadPressureSeverity == .block
+        let tint: Color = blocked ? .red : .orange
+        let modelName = selectedPickerItem?.displayName ?? feasibility.modelName
+        let neededGB = Self.formatGigabytes(feasibility.requiredAvailableBytes)
+        let usage = "\(ramBannerUsagePercent)"
+        let total = "\(ramBannerTotalGB)"
+
+        let message: Text =
+            blocked
+            ? Text(
+                "This model needs ~\(neededGB) GB to load, but memory is at \(usage)% of \(total) GB. Sending is paused until memory frees — close other apps or pick a smaller model.",
+                bundle: .module
+            )
+            : Text(
+                "This model needs ~\(neededGB) GB to load and memory is at \(usage)% of \(total) GB. Close other apps for best performance.",
+                bundle: .module
+            )
+
+        // One continuous popover silhouette: the rounded rect and the pointer
+        // triangle are a single shape, so the fill and the border flow around
+        // the combined outline with no seam where they meet.
+        let clampedX = min(
+            max(pointerCenterX, 14 + RAMBannerShape.pointerWidth / 2),
+            Self.ramBannerWidth - 14 - RAMBannerShape.pointerWidth / 2
+        )
+        let shape = RAMBannerShape(pointerCenterX: clampedX)
+
+        // Icon is concatenated into the text as a first-line prefix (not an
+        // HStack sibling) so wrapped lines use the banner's full width.
+        return
+            (Text(Image(systemName: blocked ? "memorychip.fill" : "memorychip"))
+                .foregroundColor(tint)
+                + Text(verbatim: "  ")
+                + message.foregroundColor(theme.primaryText))
+            .font(theme.font(size: CGFloat(theme.captionSize), weight: .medium))
+            .fixedSize(horizontal: false, vertical: true)
+        .padding(.leading, 14)
+        // Warn banners reserve room for the dismiss button in the corner.
+        .padding(.trailing, blocked ? 14 : 32)
+        .padding(.top, 9)
+        // The shape's bottom edge sits above the pointer, so reserve its
+        // height inside the frame.
+        .padding(.bottom, 9 + RAMBannerShape.pointerHeight)
+        .background(
+            ZStack {
+                shape.fill(.regularMaterial)
+                shape.fill(tint.opacity(0.12))
+            }
+        )
+        .overlay(shape.stroke(tint.opacity(0.35), lineWidth: 1))
+        .overlay(alignment: .topTrailing) {
+            // The block banner gates sending, so it cannot be dismissed;
+            // only the warn variant gets the close affordance.
+            if !blocked {
+                dismissButton
+            }
+        }
+        .shadow(color: Color.black.opacity(0.12), radius: 8, x: 0, y: 3)
+        .accessibilityLabel(
+            blocked
+                ? Text("Sending paused: not enough memory to load \(modelName)", bundle: .module)
+                : Text("Memory is tight for \(modelName)", bundle: .module)
+        )
+    }
+
+    /// Close button for the warn-level tight-fit banner. Dismissal is scoped
+    /// to the current model selection; picking another model re-arms the
+    /// banner.
+    private var dismissButton: some View {
+        Button {
+            withAnimation(.easeOut(duration: 0.2)) {
+                ramBannerDismissedForModel = selectedModel
+            }
+        } label: {
+            Image(systemName: "xmark")
+                .font(.system(size: 8, weight: .bold))
+                .foregroundColor(theme.tertiaryText)
+                .padding(5)
+                .background(
+                    Circle().stroke(theme.tertiaryText.opacity(0.35), lineWidth: 1)
+                )
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .padding(.top, 6)
+        .padding(.trailing, 8)
+        .help(Text("Hide this warning for the selected model", bundle: .module))
+        .accessibilityLabel(Text("Dismiss memory warning", bundle: .module))
+    }
+
+    /// One-decimal GB formatting for the RAM banner (e.g. "12.4").
+    private static func formatGigabytes(_ bytes: Int64) -> String {
+        String(format: "%.1f", Double(bytes) / 1_073_741_824.0)
     }
 
     /// Compact, floating toast shown above the card when the Default agent's
@@ -4070,13 +4505,13 @@ extension FloatingInputCard {
                 ? {
                     slashSelectedIndex = max(0, slashSelectedIndex - 1)
                     return true
-                } : nil,
+                } : { handleHistoryArrowUp() },
             onArrowDown: showSlashPopup
                 ? {
                     let maxIndex = slashFilteredCommands.count - 1
                     slashSelectedIndex = min(maxIndex, slashSelectedIndex + 1)
                     return true
-                } : nil,
+                } : { handleHistoryArrowDown() },
             onEscape: showSlashPopup
                 ? {
                     // Dismiss popup by clearing the slash prefix
@@ -4093,6 +4528,12 @@ extension FloatingInputCard {
             }
         )
         .frame(maxHeight: maxHeight)
+        // A different conversation now backs the composer — drop any
+        // in-flight history navigation so its index can't recall entries
+        // from the previous chat.
+        .onChange(of: inputHistoryKey) { _, _ in
+            inputHistoryState = ChatInputHistoryState()
+        }
         .overlay(alignment: .topLeading) {
             // Placeholder - uses theme body size
             if showPlaceholder {

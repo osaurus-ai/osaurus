@@ -117,17 +117,17 @@ struct ConfigureAIStateResourceTests {
         let large = makeModel(tag: "large", sizeBytes: 8 * gb, isTopSuggestion: true)
         let candidates = [large, small]
 
-        // Neither candidate is a dense Gemma QAT / E-series build, so the
-        // policy lands on the smallest comfortable pick.
+        // Both fit comfortably on 16 GB, so the policy lands on the LARGEST
+        // comfortable pick — the strongest proven model this Mac can run.
         let recommended = ConfigureAIState.recommendedLocalPick(
             from: candidates,
             totalMemoryGB: 16
         )
-        #expect(recommended?.id == small.id)
+        #expect(recommended?.id == large.id)
 
         #expect(
             ConfigureAIState.isRecommendedSelection(
-                small,
+                large,
                 candidates: candidates,
                 totalMemoryGB: 16
             ) == true
@@ -136,7 +136,7 @@ struct ConfigureAIStateResourceTests {
         // not claim "picked for your specs".
         #expect(
             ConfigureAIState.isRecommendedSelection(
-                large,
+                small,
                 candidates: candidates,
                 totalMemoryGB: 16
             ) == false
@@ -281,11 +281,11 @@ struct ConfigureAIStateResourceTests {
         #expect(deduped.map(\.id) == [highPrecision.id, solo.id])
     }
 
-    /// The auto-default (`recommendedLocalPick`) survives dedupe even when a
-    /// sibling has higher quality — otherwise the "Picked for your Mac" badge
-    /// would point at a hidden row and contradict the home card.
-    @Test func dedupeKeepsRecommendedVariantOverHigherQualitySibling() {
-        // No solo model here: the smallest comfortable pick (the efficient
+    /// The auto-default (`recommendedLocalPick`) survives dedupe — otherwise
+    /// the "Picked for your Mac" badge would point at a hidden row and
+    /// contradict the home card.
+    @Test func dedupeKeepsRecommendedVariantVisible() {
+        // No solo model here: the largest comfortable pick (the high-precision
         // build) *is* the recommendation, and must represent the family.
         let highPrecision = makeModel(tag: "twin-hp", name: "Twin 9B MXFP8", sizeBytes: 8 * gb)
         let efficient = makeModel(tag: "twin-eff", name: "Twin 9B qat MXFP4", sizeBytes: 4 * gb)
@@ -293,14 +293,14 @@ struct ConfigureAIStateResourceTests {
             from: [highPrecision, efficient],
             totalMemoryGB: 64
         )
-        #expect(recommended?.id == efficient.id)
+        #expect(recommended?.id == highPrecision.id)
 
         let deduped = ConfigureAIState.dedupedTopPicks(
             from: [highPrecision, efficient],
             totalMemoryGB: 64,
             selectedId: nil
         )
-        #expect(deduped.map(\.id) == [efficient.id])
+        #expect(deduped.map(\.id) == [highPrecision.id])
     }
 
     /// A family whose every build is too large collapses to its smallest

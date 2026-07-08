@@ -47,6 +47,12 @@ enum ServerConfigurationStore {
         }
     }
 
+    static func updateAppearanceMode(_ mode: AppearanceMode) {
+        var configuration = load() ?? ServerConfiguration.default
+        configuration.appearanceMode = mode
+        save(configuration)
+    }
+
     private static func configurationFileURL() -> URL {
         if let dir = overrideDirectory {
             return dir.appendingPathComponent("server.json")

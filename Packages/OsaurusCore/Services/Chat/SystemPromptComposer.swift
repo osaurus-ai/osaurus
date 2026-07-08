@@ -1584,7 +1584,7 @@ public struct SystemPromptComposer: Sendable {
     /// users who never enable the feature.
     static let agentDBToolNames: Set<String> = [
         "db_schema", "db_create_table", "db_alter_table", "db_migrate",
-        "db_insert", "db_upsert", "db_import", "db_update", "db_delete", "db_restore",
+        "db_insert", "db_upsert", "db_import", "db_export", "db_update", "db_delete", "db_restore",
         "db_query", "db_execute",
         // Saved views (spec §6.3 / phase 2).
         "db_define_view", "db_run_view", "db_list_views", "db_drop_view",
@@ -2091,6 +2091,11 @@ public struct SystemPromptComposer: Sendable {
             }
             if !snapshot.searchMemoryEnabled, !keep.contains("search_memory") {
                 byName.removeValue(forKey: "search_memory")
+            }
+            if !snapshot.webSearchEnabled {
+                for name in ["web_search", "search_and_extract"] where !keep.contains(name) {
+                    byName.removeValue(forKey: name)
+                }
             }
             if !snapshot.selfSchedulingEnabled {
                 for name in schedulerToolNames where !keep.contains(name) {

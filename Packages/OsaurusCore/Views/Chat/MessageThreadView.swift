@@ -53,6 +53,8 @@ struct MessageThreadView: View {
     /// empty so callers without a chat session (preview / mock)
     /// don't have to thread it.
     var sessionRedactions: [String: String] = [:]
+    /// Active in-conversation find query (Cmd+F); empty when the bar is closed.
+    var searchHighlightQuery: String = ""
 
     @Environment(\.theme) private var theme
 
@@ -111,7 +113,8 @@ struct MessageThreadView: View {
             onVisibleTopUserTurnChanged: onVisibleTopUserTurnChanged,
             scrollToTurnId: scrollToTurnId,
             scrollToTurnTrigger: scrollToTurnTrigger,
-            sessionRedactions: sessionRedactions
+            sessionRedactions: sessionRedactions,
+            searchHighlightQuery: searchHighlightQuery
         )
     }
 }

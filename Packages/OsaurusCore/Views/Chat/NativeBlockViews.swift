@@ -200,6 +200,11 @@ final class NativeTypingIndicatorView: NSView {
             sandbox.$isProvisioning.map { _ in () }.eraseToAnyPublisher(),
             agents.$activeAgentId.map { _ in () }.eraseToAnyPublisher(),
             agents.$agents.map { _ in () }.eraseToAnyPublisher(),
+            // Warm-up generations run with `suppressProgressUI` and publish
+            // load/prefill progress to this side channel instead of the
+            // global HUD. A send waiting on the pre-send handshake shows this
+            // indicator, so the warm-up's model load must surface here too.
+            WarmupProgressHub.shared.$phases.map { _ in () }.eraseToAnyPublisher(),
         ]
 
         cancellables.append(
@@ -227,6 +232,18 @@ final class NativeTypingIndicatorView: NSView {
         if agentUsesSandbox && sandboxBooting { return .sandbox }
         if let prefillProgress = cachedPrefill { return .prefill(prefillProgress) }
         if progress.loadInFlightCount > 0 { return .modelLoad }
+
+        // Fall back to warm-up progress: while a send waits on the pre-send
+        // handshake, the model load/prefill in flight belongs to a suppressed
+        // warm-up request whose progress only reaches WarmupProgressHub.
+        let warmupPhases = WarmupProgressHub.shared.phases.values
+        if warmupPhases.contains(.loadingModel) { return .modelLoad }
+        if case .prefilling(let state)? = warmupPhases.first(where: {
+            if case .prefilling = $0 { return true }
+            return false
+        }) {
+            return .prefill(state)
+        }
         return nil
     }
 
@@ -549,7 +566,30 @@ final class NativeCodeBlockView: NSView {
     private var lastLang: String? = nil
     private var lastWidth: CGFloat = 0
     private var lastThemeId = ""
+    private var lastIsStreaming = false
     private var copyResetTask: Task<Void, Never>?
+
+    // MARK: Streaming cursor state
+
+    private var streamingCursor: StreamingCursorOverlay?
+    private var idleTimer: Timer?
+    private var lastCodeRevealAt: Date?
+    private var cursorColor: NSColor?
+    /// Deliberately much longer than the text cursor's 0.15s: local models
+    /// decode at ~100-150ms per token, so a threshold in that range sits right
+    /// on the natural inter-token gap and the dot flickers in and out on
+    /// every token. Inside a code block the dot should only appear on a
+    /// genuine stall (tool-call pause, prefill hiccup), not between tokens.
+    private static let cursorPauseThreshold: TimeInterval = 0.75
+
+    // MARK: Streaming highlight throttle
+
+    /// Pending mid-stream highlight pass. Per-tick updates append plain text;
+    /// this work item re-runs a full highlight over the current code at a
+    /// bounded cadence so colors appear progressively without paying the
+    /// JavaScriptCore cost on every delta.
+    private var streamingHighlightWork: DispatchWorkItem?
+    private static let streamingHighlightInterval: TimeInterval = 0.4
 
     // MARK: Init
 
@@ -560,21 +600,40 @@ final class NativeCodeBlockView: NSView {
 
     required init?(coder: NSCoder) { fatalError() }
 
+    /// Recycled/offscreen instances must not keep the idle timer alive.
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        if window == nil { exitStreamingMode() }
+    }
+
     // MARK: Configure
 
-    func configure(code: String, language: String?, width: CGFloat, theme: any ThemeProtocol) {
+    /// `isStreaming: true` marks a code block whose fence is still open and
+    /// growing: syntax highlighting is skipped (a full Highlightr pass per
+    /// delta stalls the main thread) and a blinking cursor mirrors the text
+    /// path's "still going" signal during stream pauses. The one real
+    /// highlight pass runs when the flag flips back to false.
+    func configure(
+        code: String,
+        language: String?,
+        width: CGFloat,
+        theme: any ThemeProtocol,
+        isStreaming: Bool = false
+    ) {
         let resolvedHL = theme.codeHighlightTheme ?? (theme.isDark ? "auto-dark" : "auto-light")
         let themeId = "\(theme.monoFontName)|\(theme.codeSize)|\(resolvedHL)"
         let codeChanged = code != lastCode || language != lastLang
         let widthChanged = abs(width - lastWidth) > 0.5
         let themeChanged = themeId != lastThemeId
+        let streamingChanged = isStreaming != lastIsStreaming
 
-        guard codeChanged || widthChanged || themeChanged else { return }
+        guard codeChanged || widthChanged || themeChanged || streamingChanged else { return }
 
         lastCode = code
         lastLang = language
         lastWidth = width
         lastThemeId = themeId
+        lastIsStreaming = isStreaming
 
         ensureHighlightrTheme(for: theme)
         let bgColor = highlightrThemeBackgroundNSColor()
@@ -590,9 +649,86 @@ final class NativeCodeBlockView: NSView {
         if widthChanged {
             cv.textContainer?.containerSize = NSSize(width: width - 24, height: .greatestFiniteMagnitude)
         }
-        if codeChanged || themeChanged || widthChanged {
-            applyHighlighting(to: cv, code: code, language: language, theme: theme)
+        if codeChanged || themeChanged || widthChanged || streamingChanged {
+            if isStreaming {
+                applyStreamingText(
+                    to: cv,
+                    code: code,
+                    theme: theme,
+                    fullRebuild: widthChanged || themeChanged
+                )
+                scheduleStreamingHighlight(theme: theme)
+            } else {
+                // Stream over (or static content): one authoritative,
+                // cache-backed highlight pass.
+                applyHighlighting(to: cv, code: code, language: language, theme: theme)
+            }
         }
+
+        if isStreaming {
+            if codeChanged { notifyCodeReveal() }
+            enterStreamingMode(theme: theme)
+        } else {
+            exitStreamingMode()
+        }
+    }
+
+    /// Per-tick text update while the fence is still open. Appends the new
+    /// tail with the trailing character's attributes when the previous
+    /// content is a prefix of the new code (the overwhelmingly common case),
+    /// avoiding a full TextKit rebuild per delta. Falls back to a full plain
+    /// rebuild otherwise.
+    private func applyStreamingText(
+        to cv: CodeNSTextView,
+        code: String,
+        theme: any ThemeProtocol,
+        fullRebuild: Bool
+    ) {
+        let current = cv.textStorage?.string ?? ""
+        if !fullRebuild, !current.isEmpty, code.hasPrefix(current), let storage = cv.textStorage {
+            let suffix = String(code.dropFirst(current.count))
+            if !suffix.isEmpty {
+                let attrs = storage.attributes(at: storage.length - 1, effectiveRange: nil)
+                storage.append(NSAttributedString(string: suffix, attributes: attrs))
+            }
+        } else {
+            cv.textStorage?.setAttributedString(
+                CodeContentView.attributedString(
+                    code: code,
+                    language: lastLang,
+                    baseWidth: lastWidth - 24,
+                    theme: theme,
+                    highlight: false
+                )
+            )
+        }
+        refreshMetricsAndHeight(cv, code: code, theme: theme)
+    }
+
+    /// Leading-edge throttle for the mid-stream highlight wave: if a pass is
+    /// already pending, let it fire on schedule. Each pass re-highlights the
+    /// full current code (self-correcting for tokens whose context changed
+    /// retroactively, e.g. an unclosed block comment) and skips the shared
+    /// highlight cache so streaming prefixes don't pollute it.
+    private func scheduleStreamingHighlight(theme: any ThemeProtocol) {
+        guard streamingHighlightWork == nil else { return }
+        let work = DispatchWorkItem { [weak self] in
+            guard let self else { return }
+            self.streamingHighlightWork = nil
+            guard self.lastIsStreaming, let cv = self.codeView else { return }
+            self.applyHighlighting(
+                to: cv,
+                code: self.lastCode,
+                language: self.lastLang,
+                theme: theme,
+                cacheHighlight: false
+            )
+        }
+        streamingHighlightWork = work
+        DispatchQueue.main.asyncAfter(
+            deadline: .now() + Self.streamingHighlightInterval,
+            execute: work
+        )
     }
 
     /// TextKit-only height for parents (`NativeMarkdownView.measuredHeight`) — must not call
@@ -702,15 +838,21 @@ final class NativeCodeBlockView: NSView {
         to cv: CodeNSTextView,
         code: String,
         language: String?,
-        theme: any ThemeProtocol
+        theme: any ThemeProtocol,
+        cacheHighlight: Bool = true
     ) {
         let attrStr = CodeContentView.attributedString(
             code: code,
             language: language,
             baseWidth: lastWidth - 24,
-            theme: theme
+            theme: theme,
+            cacheHighlight: cacheHighlight
         )
         cv.textStorage?.setAttributedString(attrStr)
+        refreshMetricsAndHeight(cv, code: code, theme: theme)
+    }
+
+    private func refreshMetricsAndHeight(_ cv: CodeNSTextView, code: String, theme: any ThemeProtocol) {
         // must match CodeContentView.buildAttributedString: gutter + headIndent use
         // bodySize * Typography.scale * 0.85 — not theme.codeSize, or drawn line
         // numbers use different metrics than the text and crowd the code when narrow
@@ -729,6 +871,98 @@ final class NativeCodeBlockView: NSView {
             // notify parent that height has changed
             onHeightChanged?()
         }
+    }
+
+    // MARK: - Streaming cursor (mirrors NativeMarkdownView's interpunct)
+
+    /// Start the idle-check timer; the cursor itself only shows once the
+    /// stream has been quiet past the pause threshold (see `idleTick`).
+    private func enterStreamingMode(theme: any ThemeProtocol) {
+        cursorColor = NSColor(theme.primaryText)
+        guard idleTimer == nil else { return }
+        idleTimer = Timer.scheduledTimer(withTimeInterval: 0.05, repeats: true) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                self?.idleTick()
+            }
+        }
+    }
+
+    private func exitStreamingMode() {
+        idleTimer?.invalidate()
+        idleTimer = nil
+        lastCodeRevealAt = nil
+        streamingCursor?.removeFromSuperview()
+        streamingCursor = nil
+        streamingHighlightWork?.cancel()
+        streamingHighlightWork = nil
+    }
+
+    /// New code landed — actively revealing is the opposite of "waiting".
+    private func notifyCodeReveal() {
+        lastCodeRevealAt = Date()
+        streamingCursor?.removeFromSuperview()
+        streamingCursor = nil
+    }
+
+    private func idleTick() {
+        guard idleTimer != nil else { return }
+        let elapsed = lastCodeRevealAt.map { Date().timeIntervalSince($0) }
+            ?? (Self.cursorPauseThreshold + 1)
+        if elapsed > Self.cursorPauseThreshold {
+            if streamingCursor == nil, let color = cursorColor {
+                let overlay = StreamingCursorOverlay()
+                overlay.updateColor(color)
+                addSubview(overlay)
+                streamingCursor = overlay
+            }
+            repositionStreamingCursor()
+        } else if streamingCursor != nil {
+            streamingCursor?.removeFromSuperview()
+            streamingCursor = nil
+        }
+    }
+
+    /// Park the dot just past the last glyph of the code text, vertically
+    /// centered on that line's cap-height band (same math as the markdown
+    /// text cursor).
+    private func repositionStreamingCursor() {
+        guard let cursor = streamingCursor, let cv = codeView,
+            let lm = cv.layoutManager, let tc = cv.textContainer,
+            let storage = cv.textStorage
+        else { return }
+        lm.ensureLayout(for: tc)
+
+        let origin = cv.textContainerOrigin
+        let font: NSFont =
+            storage.length > 0
+            ? (storage.attribute(.font, at: storage.length - 1, effectiveRange: nil) as? NSFont)
+                ?? .monospacedSystemFont(ofSize: 12, weight: .regular)
+            : .monospacedSystemFont(ofSize: 12, weight: .regular)
+        let slotWidth: CGFloat = StreamingCursorOverlay.dotDiameter + 4
+        let slotHeight: CGFloat = StreamingCursorOverlay.dotDiameter
+
+        let trailingX: CGFloat
+        let baselineInTV: CGFloat
+        if storage.length == 0 {
+            trailingX = origin.x + 6
+            baselineInTV = origin.y + font.ascender
+        } else {
+            let lastGlyphIdx = lm.glyphIndexForCharacter(at: storage.length - 1)
+            let usedRect = lm.lineFragmentUsedRect(forGlyphAt: lastGlyphIdx, effectiveRange: nil)
+            let lineFragRect = lm.lineFragmentRect(forGlyphAt: lastGlyphIdx, effectiveRange: nil)
+            let baselineOffset = lm.location(forGlyphAt: lastGlyphIdx).y
+            trailingX = usedRect.maxX + origin.x + 6
+            baselineInTV = lineFragRect.minY + baselineOffset + origin.y
+        }
+
+        let textMiddleInTV = baselineInTV - font.capHeight / 2
+        let centerInSelf = cv.convert(NSPoint(x: trailingX, y: textMiddleInTV), to: self)
+        cursor.frame = NSRect(
+            x: centerInSelf.x,
+            y: centerInSelf.y - slotHeight / 2,
+            width: slotWidth,
+            height: slotHeight
+        )
     }
 
     // MARK: - Mouse tracking for copy button visibility

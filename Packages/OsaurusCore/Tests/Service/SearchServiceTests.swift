@@ -97,6 +97,18 @@ struct SearchServiceTests {
         #expect(!SearchService.matches(query: "claude", in: "gpt-4o"))
     }
 
+    @Test func matches_proseRejectsScatteredSubsequence() {
+        // A query's characters almost always appear in order somewhere in a
+        // prose-length description — the plugin search bug (#1875). With
+        // fuzzy disabled the description must actually contain the query.
+        let description =
+            "For inspecting records, each created row and worksheet list syncs to the base."
+        #expect(SearchService.fuzzyMatch(query: "firecrawl", in: description))
+        #expect(!SearchService.matches(query: "firecrawl", in: description, allowFuzzy: false))
+        #expect(SearchService.matches(query: "worksheet list", in: description, allowFuzzy: false))
+        #expect(SearchService.matches(query: "records", in: description, allowFuzzy: false))
+    }
+
     // MARK: - Tokenized Match
 
     @Test func tokenizedMatch_allTokensRequired() {

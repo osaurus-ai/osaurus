@@ -27,6 +27,7 @@ struct RemoteProvidersView: View {
     @State private var showReorderSheet = false
     @State private var hasAppeared = false
     @State private var providerFilter: ProviderConnectivityFilter = .all
+    @State private var selectedIssueKind: ProviderConnectivityIssueKind?
     @State private var credentialPresence: [UUID: RemoteProviderCredentialPresence] = [:]
     @State private var reconnectingAll = false
     @State private var reconnectingProviderIds: Set<UUID> = []
@@ -167,7 +168,24 @@ struct RemoteProvidersView: View {
     }
 
     private var visibleProviderReports: [ProviderConnectivityProviderReport] {
-        connectivitySnapshot.filtered(by: providerFilter)
+        connectivitySnapshot.filtered(
+            by: providerFilter,
+            issueKind: activeIssueKind
+        )
+    }
+
+    private var activeIssueKind: ProviderConnectivityIssueKind? {
+        switch providerFilter {
+        case .all, .attention:
+            guard let selectedIssueKind,
+                connectivitySnapshot.issueKindCounts(for: providerFilter)[selectedIssueKind, default: 0] > 0
+            else {
+                return nil
+            }
+            return selectedIssueKind
+        case .connected, .disabled:
+            return nil
+        }
     }
 
     private func presentAPIKeyPicker() {
@@ -236,9 +254,12 @@ struct RemoteProvidersView: View {
     private var connectivityCenterView: some View {
         ProviderConnectivityCenterPanel(
             snapshot: connectivitySnapshot,
+            statusFilter: providerFilter,
+            selectedIssueKind: activeIssueKind,
             isReconnecting: reconnectingAll,
             onReconnectAll: reconnectAllProviders,
-            onCopyReport: copyConnectivityReport
+            onCopyReport: copyConnectivityReport,
+            onSelectIssueKind: { selectedIssueKind = $0 }
         )
     }
 
@@ -339,7 +360,11 @@ struct RemoteProvidersView: View {
     }
 
     private func copyConnectivityReport() {
-        copyText(connectivitySnapshot.pasteboardText)
+        if activeIssueKind != nil {
+            copyText(connectivitySnapshot.groupedPasteboardText(issueKind: activeIssueKind))
+        } else {
+            copyText(connectivitySnapshot.pasteboardText)
+        }
     }
 
     private func copyDiagnostics(_ report: ProviderDiagnosticReport) {
@@ -359,9 +384,12 @@ private struct ProviderConnectivityCenterPanel: View {
     @Environment(\.theme) private var theme
 
     let snapshot: ProviderConnectivitySnapshot
+    let statusFilter: ProviderConnectivityFilter
+    let selectedIssueKind: ProviderConnectivityIssueKind?
     let isReconnecting: Bool
     let onReconnectAll: () -> Void
     let onCopyReport: () -> Void
+    let onSelectIssueKind: (ProviderConnectivityIssueKind?) -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
@@ -435,6 +463,36 @@ private struct ProviderConnectivityCenterPanel: View {
                     color: theme.infoColor
                 )
             }
+
+            if showsIssueFilters {
+                Divider()
+                    .background(theme.primaryBorder)
+
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 8) {
+                        ProviderConnectivityIssueChip(
+                            title: L("All"),
+                            count: snapshot.issueReportCount(for: statusFilter),
+                            color: theme.warningColor,
+                            isSelected: selectedIssueKind == nil
+                        ) {
+                            onSelectIssueKind(nil)
+                        }
+
+                        ForEach(snapshot.sortedIssueKinds(for: statusFilter)) { kind in
+                            ProviderConnectivityIssueChip(
+                                title: kind.displayName,
+                                count: snapshot.issueKindCounts(for: statusFilter)[kind, default: 0],
+                                color: issueColor(kind),
+                                isSelected: selectedIssueKind == kind
+                            ) {
+                                onSelectIssueKind(kind)
+                            }
+                        }
+                    }
+                    .padding(.vertical, 1)
+                }
+            }
         }
         .padding(16)
         .background(
@@ -478,6 +536,31 @@ private struct ProviderConnectivityCenterPanel: View {
             "\(snapshot.connectedCount)/\(snapshot.totalCount) connected - \(snapshot.attentionCount) attention - \(snapshot.modelCount) models"
         )
     }
+
+    private var showsIssueFilters: Bool {
+        switch statusFilter {
+        case .all, .attention:
+            return !snapshot.issueKindCounts(for: statusFilter).isEmpty
+        case .connected, .disabled:
+            return false
+        }
+    }
+
+    private func issueColor(_ kind: ProviderConnectivityIssueKind) -> Color {
+        if kind == .authentication || kind == .oauthContext {
+            return theme.errorColor
+        }
+        if kind == .connection || kind == .requestEvidence || kind == .proxy || kind == .repro {
+            return theme.warningColor
+        }
+        if kind == .models {
+            return theme.accentColor
+        }
+        if kind == .format || kind == .transport {
+            return theme.infoColor
+        }
+        return Color.orange
+    }
 }
 
 private struct ProviderConnectivityMetricPill: View {
@@ -499,6 +582,45 @@ private struct ProviderConnectivityMetricPill: View {
         .padding(.horizontal, 10)
         .padding(.vertical, 6)
         .background(Capsule().fill(color.opacity(0.1)))
+    }
+}
+
+private struct ProviderConnectivityIssueChip: View {
+    @Environment(\.theme) private var theme
+
+    let title: String
+    let count: Int
+    let color: Color
+    let isSelected: Bool
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 6) {
+                Text(title)
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundColor(isSelected ? color : theme.secondaryText)
+                    .lineLimit(1)
+
+                Text("\(count)")
+                    .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                    .foregroundColor(color)
+                    .padding(.horizontal, 5)
+                    .padding(.vertical, 1)
+                    .background(Capsule().fill(color.opacity(0.12)))
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 6)
+            .background(
+                Capsule()
+                    .fill(isSelected ? color.opacity(0.12) : theme.tertiaryBackground)
+                    .overlay(
+                        Capsule()
+                            .stroke(isSelected ? color.opacity(0.45) : theme.primaryBorder, lineWidth: 1)
+                    )
+            )
+        }
+        .buttonStyle(PlainButtonStyle())
     }
 }
 
@@ -567,6 +689,12 @@ private struct ProviderCardView: View {
                             .foregroundColor(theme.primaryText)
 
                         statusBadge
+
+                        if let primaryIssueKind = report.primaryIssueKind,
+                            provider.enabled,
+                            report.hasAttention {
+                            issueBadge(primaryIssueKind)
+                        }
 
                         if provider.providerType == .osaurus {
                             // Osaurus peers talk through the Secure Channel —
@@ -786,6 +914,31 @@ private struct ProviderCardView: View {
             .padding(.horizontal, 8)
             .padding(.vertical, 3)
             .background(Capsule().fill(color.opacity(0.12)))
+    }
+
+    private func issueBadge(_ kind: ProviderConnectivityIssueKind) -> some View {
+        Text(kind.displayName)
+            .font(.system(size: 11, weight: .medium))
+            .foregroundColor(issueColor(kind))
+            .padding(.horizontal, 8)
+            .padding(.vertical, 3)
+            .background(Capsule().fill(issueColor(kind).opacity(0.12)))
+    }
+
+    private func issueColor(_ kind: ProviderConnectivityIssueKind) -> Color {
+        if kind == .authentication || kind == .oauthContext {
+            return theme.errorColor
+        }
+        if kind == .connection || kind == .requestEvidence || kind == .proxy || kind == .repro {
+            return theme.warningColor
+        }
+        if kind == .models {
+            return theme.accentColor
+        }
+        if kind == .format || kind == .transport {
+            return theme.infoColor
+        }
+        return Color.orange
     }
 }
 

@@ -1,0 +1,61 @@
+{
+  "id": "agentdb.execute-sql-script",
+  "domain": "agent_loop",
+  "label": "agentdb • run a .sql script from disk via db_execute path mode",
+  "query": "Your working folder contains a SQL script named transform.sql that builds a daily_totals table from the raw_events table already in your agent database. Run the script with a single db_execute call by passing its path — do NOT read the file into your context or paste its SQL inline. Then tell me the total for the busiest day.",
+  "notes": "db_execute path-mode proof: the script must run from disk (path arg) without its SQL passing through tokens. argsMustContain pins the path was passed; argsMustNotContain 'select' (case-insensitive audit) fails any trajectory that inlined the script's SQL instead; mustNotCallTools forbids the file_read-then-paste fallback and the per-row db_insert fallback. dbState pins the derived table's shape and busiest-day row, so a pass means the on-disk script really executed.",
+  "fixtures": {
+    "agentCapabilities": {
+      "dbEnabled": true
+    },
+    "workspaceFiles": [
+      {
+        "path": "transform.sql",
+        "contents": "CREATE TABLE daily_totals (day TEXT, total INTEGER);\nINSERT INTO daily_totals (day, total) SELECT day, SUM(amount) FROM raw_events GROUP BY day;\n"
+      }
+    ],
+    "seedSql": [
+      "CREATE TABLE raw_events (day TEXT, amount INTEGER); INSERT INTO raw_events (day, amount) VALUES ('2026-06-20',10),('2026-06-20',20),('2026-06-20',30),('2026-06-21',5),('2026-06-21',5);"
+    ]
+  },
+  "expect": {
+    "agentLoop": {
+      "maxIterations": 10,
+      "mustCallTools": [
+        "db_execute"
+      ],
+      "mustNotCallTools": [
+        "file_read",
+        "db_insert"
+      ],
+      "toolUsageAudit": [
+        {
+          "tool": "db_execute",
+          "maxCalls": 1,
+          "argsMustContain": "transform.sql",
+          "argsMustNotContain": "select"
+        }
+      ],
+      "dbState": [
+        {
+          "sql": "SELECT COUNT(*) FROM daily_totals",
+          "expectFirstValue": "2"
+        },
+        {
+          "sql": "SELECT day, total FROM daily_totals ORDER BY total DESC",
+          "expectColumns": [
+            "day",
+            "total"
+          ],
+          "expectValues": [
+            "2026-06-20",
+            "60"
+          ]
+        }
+      ],
+      "finalTextContains": [
+        "60"
+      ]
+    }
+  }
+}

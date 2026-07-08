@@ -65,6 +65,12 @@ final class ChatImageCache: @unchecked Sendable {
             Task { await decode(a.data, id: a.id) }
         }
     }
+
+    /// Drop every decoded thumbnail (memory-pressure response). Thumbnails
+    /// are re-decoded lazily from attachment data on next display.
+    func removeAll() {
+        cache.removeAllObjects()
+    }
 }
 
 // MARK: - Actor-based in-flight task registry
