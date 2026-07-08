@@ -159,7 +159,10 @@ public enum ChatSessionExporter {
             for (turnIdx, turn) in session.turns.enumerated() {
                 for (attIdx, att) in turn.attachments.enumerated() {
                     guard let bytes = bytes(for: att) else { continue }
-                    let base = att.filename ?? "turn\(turnIdx)-att\(attIdx)"
+                    let base = exportFilename(
+                        for: att,
+                        fallback: "turn\(turnIdx)-att\(attIdx)"
+                    )
                     let name = uniqueFilename(base, taken: &writtenNames)
                     try bytes.write(to: attachmentsDir.appendingPathComponent(name), options: .atomic)
                 }
@@ -186,14 +189,16 @@ public enum ChatSessionExporter {
         if let data = attachment.loadImageData() { return data }
         if let data = attachment.loadAudioData() { return data }
         if let data = attachment.loadVideoData() { return data }
+        if let text = attachment.loadDocumentContent() { return Data(text.utf8) }
         return nil
     }
 
     private static func describe(_ att: Attachment) -> String {
-        if att.isImage { return "image: \(att.filename ?? "untitled")" }
-        if att.isAudio { return "audio: \(att.filename ?? "untitled")" }
-        if att.isDocument { return "document: \(att.filename ?? "untitled")" }
-        return att.filename ?? "attachment"
+        let name = att.redactedFilename ?? "untitled"
+        if att.isImage { return "image: \(name)" }
+        if att.isAudio { return "audio: \(name)" }
+        if att.isDocument { return "document: \(name)" }
+        return att.redactedFilename ?? "attachment"
     }
 
     /// Resolves the session's agent name for assistant role labels. Returns
@@ -290,9 +295,26 @@ public enum ChatSessionExporter {
     /// Strip filesystem-hostile characters.
     private static func sanitizeFilename(_ raw: String) -> String {
         let invalid = CharacterSet(charactersIn: "/\\:*?\"<>|")
-        let cleaned = raw.components(separatedBy: invalid).joined(separator: "_")
+        let basename = Attachment.redactedFilename(from: raw)
+        let cleaned = basename.components(separatedBy: invalid).joined(separator: "_")
             .trimmingCharacters(in: .whitespacesAndNewlines)
-        return cleaned.isEmpty ? "chat" : String(cleaned.prefix(60))
+        let clipped = String(cleaned.prefix(60))
+        if clipped.isEmpty || clipped == "." || clipped == ".." {
+            return "chat"
+        }
+        return clipped
+    }
+
+    private static func exportFilename(for attachment: Attachment, fallback: String) -> String {
+        let base = attachment.redactedFilename ?? fallback
+        guard case .documentRef = attachment.kind else { return base }
+        let ext = (base as NSString).pathExtension
+        if ext.lowercased() == "txt" {
+            return base
+        }
+        let stem = (base as NSString).deletingPathExtension
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        return "\((stem.isEmpty ? "document" : stem)).txt"
     }
 
     /// Append `-2`, `-3`, ... on collision.

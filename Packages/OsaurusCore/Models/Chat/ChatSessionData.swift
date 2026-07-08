@@ -119,7 +119,7 @@ public struct ChatSessionData: Codable, Identifiable, Sendable {
         }
         let content = firstUserTurn.content.trimmingCharacters(in: .whitespacesAndNewlines)
         if content.isEmpty {
-            return "New Chat"
+            return generateAttachmentTitle(from: firstUserTurn.attachments)
         }
         // Take first line and truncate to reasonable length
         let firstLine = content.components(separatedBy: .newlines).first ?? content
@@ -127,5 +127,19 @@ public struct ChatSessionData: Codable, Identifiable, Sendable {
             return firstLine
         }
         return String(firstLine.prefix(47)) + "..."
+    }
+
+    private static func generateAttachmentTitle(from attachments: [Attachment]) -> String {
+        guard let first = attachments.first else { return "New Chat" }
+        let label = first.titleLabel
+        let title: String
+        if attachments.count == 1 {
+            title = label
+        } else if attachments.count == 2 {
+            title = "\(label) and \(attachments[1].titleLabel)"
+        } else {
+            title = "\(label) and \(attachments.count - 1) attachments"
+        }
+        return title.count <= 50 ? title : String(title.prefix(47)) + "..."
     }
 }

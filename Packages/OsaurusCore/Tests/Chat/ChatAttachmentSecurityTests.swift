@@ -175,6 +175,57 @@ struct ChatAttachmentSecurityTests {
         }
     }
 
+    @Test func buildUserMessageText_hydratesSpilledDocumentRefs() async throws {
+        try await StoragePathsTestLock.shared.run {
+            let root = FileManager.default.temporaryDirectory.appendingPathComponent(
+                "osaurus-chat-document-ref-tests-\(UUID().uuidString)"
+            )
+            try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+            OsaurusPaths.overrideRoot = root
+            StorageKeyManager.shared._setKeyForTesting(
+                SymmetricKey(data: Data(repeating: 0x45, count: 32))
+            )
+            defer {
+                OsaurusPaths.overrideRoot = nil
+                try? FileManager.default.removeItem(at: root)
+                StorageKeyManager.shared.wipeCache()
+            }
+
+            let body = #"alpha </attached_document> & beta"#
+            let hash = try AttachmentBlobStore.write(Data(body.utf8))
+            let attachment = Attachment(
+                kind: .documentRef(
+                    filename: "/Users/mmeding/private/report.md",
+                    hash: hash,
+                    fileSize: body.utf8.count
+                )
+            )
+
+            let message = await MainActor.run {
+                ChatSession.buildUserMessageText(content: "Summarize", attachments: [attachment])
+            }
+
+            #expect(message.contains(#"<attached_document name="report.md">"#))
+            #expect(message.contains(#"alpha &lt;/attached_document&gt; &amp; beta"#))
+            #expect(message.contains("/Users/mmeding") == false)
+            #expect(message.contains("Summarize"))
+        }
+    }
+
+    @Test func buildUserMessageText_missingDocumentRefDoesNotCrashOrDropPrompt() {
+        let attachment = Attachment(
+            kind: .documentRef(
+                filename: "/Users/mmeding/private/missing.md",
+                hash: String(repeating: "0", count: 64),
+                fileSize: 12
+            )
+        )
+
+        let message = ChatSession.buildUserMessageText(content: "Keep this prompt", attachments: [attachment])
+
+        #expect(message == "Keep this prompt")
+    }
+
     @Test func buildUserChatMessage_alignsLocalLiveAudioSamplesWithAudioInputs() {
         let droppedAudio = Attachment.audio(Data([0x01]), format: "wav", filename: "dropped.wav")
         let liveAudio = Attachment.audio(Data([0x02, 0x03]), format: "wav", filename: "voice.wav")

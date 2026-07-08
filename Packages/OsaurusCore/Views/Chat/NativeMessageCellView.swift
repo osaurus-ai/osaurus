@@ -3013,7 +3013,7 @@ private final class UserDocumentChipView: NSView {
             .withSymbolConfiguration(config)
         iconView.contentTintColor = NSColor(theme.accentColor)
 
-        nameField.stringValue = attachment.filename ?? "Document"
+        nameField.stringValue = attachment.redactedFilename ?? "Document"
         nameField.textColor = NSColor(theme.primaryText)
 
         sizeField.stringValue = summary?.chipDetailLabel ?? attachment.fileSizeFormatted ?? ""

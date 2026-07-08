@@ -121,7 +121,7 @@ struct PastedContentSheet: View {
         if attachment.isPastedContent {
             return Text(isEditable ? "Edit pasted content" : "Pasted content", bundle: .module)
         }
-        if let name = attachment.filename, !name.isEmpty {
+        if let name = attachment.redactedFilename, !name.isEmpty {
             return Text(verbatim: name)
         }
         return Text("Document", bundle: .module)

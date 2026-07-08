@@ -1234,8 +1234,8 @@ final class ChatSession: ObservableObject {
 
         var parts: [String] = []
         for doc in docs {
-            if let name = doc.filename, let text = doc.documentContent {
-                let attributes = attachedDocumentAttributes(for: doc, rawName: name)
+            if let text = doc.loadDocumentContent() {
+                let attributes = attachedDocumentAttributes(for: doc)
                 let safeText = xmlEscape(text)
                 parts.append("<attached_document \(attributes)>\n\(safeText)\n</attached_document>")
             }
@@ -1338,19 +1338,9 @@ final class ChatSession: ObservableObject {
         }
     }
 
-    private static func escapeAttachmentName(_ raw: String) -> String {
-        xmlEscape(normalizedAttachmentName(raw))
-    }
-
-    private static func normalizedAttachmentName(_ raw: String) -> String {
-        let basename = (raw as NSString).lastPathComponent
-        let trimmed = basename.trimmingCharacters(in: .whitespacesAndNewlines)
-        return trimmed.isEmpty ? "attachment" : trimmed
-    }
-
-    private static func attachedDocumentAttributes(for attachment: Attachment, rawName: String) -> String {
+    private static func attachedDocumentAttributes(for attachment: Attachment) -> String {
         var attributes: [(name: String, value: String)] = [
-            ("name", normalizedAttachmentName(rawName))
+            ("name", attachment.redactedFilename ?? "attachment")
         ]
         if attachment.structuredDocumentMetadata != nil {
             if let summary = attachment.businessDocumentSummary {

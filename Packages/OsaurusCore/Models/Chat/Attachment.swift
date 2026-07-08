@@ -311,6 +311,38 @@ public struct Attachment: Codable, Sendable, Equatable, Identifiable {
         }
     }
 
+    /// Basename-only filename for user-visible chat surfaces. This strips
+    /// absolute directories before titles, prompts, and exports can persist
+    /// local paths.
+    public var redactedFilename: String? {
+        guard let filename else { return nil }
+        return Self.redactedFilename(from: filename)
+    }
+
+    /// Basename-only display label for attachment-only chat titles.
+    public var titleLabel: String {
+        redactedFilename ?? genericKindLabel
+    }
+
+    public static func redactedFilename(from raw: String, fallback: String = "attachment") -> String {
+        let basename = (raw as NSString).lastPathComponent
+        let trimmed = basename.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? fallback : trimmed
+    }
+
+    private var genericKindLabel: String {
+        switch kind {
+        case .image, .imageRef:
+            return "image"
+        case .document, .documentRef:
+            return "document"
+        case .audio, .audioRef:
+            return "audio"
+        case .video, .videoRef:
+            return "video"
+        }
+    }
+
     /// Audio format hint ("wav" / "mp3" / "m4a" / etc.). The host uses
     /// this both for display and to populate `MessageContentPart.audioInput.format`,
     /// which becomes the temp-file extension that drives vmlx's
@@ -456,7 +488,7 @@ public struct Attachment: Codable, Sendable, Equatable, Identifiable {
             // the send-budget gate (a 70 KB screenshot slipped under, a JPEG of
             // the same picture did not). Derive from pixel dimensions instead.
             return Attachment.estimatedImageTokens(forEncodedImage: data)
-        case .imageRef(_, _):
+        case .imageRef:
             // Spilled to the blob store: pixel dimensions aren't available here
             // (only the on-disk byte count), so fall back to a conservative
             // per-image constant rather than the misleading byte-based figure.
