@@ -206,10 +206,11 @@ final class ComputerUseRunMetricsTests: XCTestCase {
         m.recordTextInputRoute(.axValue)
         m.recordTextInputRoute(.pidFocusedKeyboard)
         m.recordTextInputRoute(.pidFocusedKeyboard)
+        m.recordTextInputRoute(.hidKeyboard)
 
         XCTAssertEqual(m.textInputRoutes[.axValue], 1)
         XCTAssertEqual(m.textInputRoutes[.pidFocusedKeyboard], 2)
-        XCTAssertNil(m.textInputRoutes[.hidKeyboard])
+        XCTAssertEqual(m.textInputRoutes[.hidKeyboard], 1)
     }
 }
 
