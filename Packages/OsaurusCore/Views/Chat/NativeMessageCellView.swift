@@ -451,9 +451,10 @@ final class NativeHeaderView: NSView {
     }
 
     @objc private func inspectResponseFromMenu() {
-        // Focus the reply's request/response log. Gated behind `hasLog` when the
-        // menu was built, but re-check + surface the alert in case the in-memory
-        // log ring evicted it between menu build and click.
+        // Focus the reply's request/response log. The menu only gates on a
+        // reply turn existing (no log scan on the popover path), so resolve the
+        // log lazily here and surface the alert when it's absent (never
+        // recorded, or evicted from the in-memory ring since the turn ran).
         guard let responseTurnId else { return }
         MainActor.assumeIsolated {
             if InsightsService.shared.focus(turnId: responseTurnId) {

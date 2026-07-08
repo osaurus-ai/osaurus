@@ -35,7 +35,7 @@ enum ContentBlockKind: Equatable {
     case toolCallGroup(calls: [ToolCallItem])
     case thinking(index: Int, text: String, isStreaming: Bool, duration: TimeInterval?)
     /// `responseTurnId` is the assistant turn that answered this message (the
-    /// final turn of the following assistant group), used by the overflow menu's
+    /// first assistant turn that follows it), used by the overflow menu's
     /// "Inspect response" to open that reply's request/response log. Nil when the
     /// message has no assistant reply yet.
     case userMessage(text: String, attachments: [Attachment], timestamp: Date, responseTurnId: UUID?)
@@ -423,18 +423,18 @@ extension ContentBlock {
 
             // User messages are emitted as a single unified block
             if turn.role == .user {
-                // The reply this message produced = the final turn of the
-                // following consecutive assistant group (the turn the
-                // assistant footer's Inspect also keys on). Nil until a reply
-                // exists. Powers the overflow menu's "Inspect response".
-                var responseTurnId: UUID?
-                var lookahead = index + 1
-                while lookahead < filteredTurns.count,
-                    filteredTurns[lookahead].role == .assistant
-                {
-                    responseTurnId = filteredTurns[lookahead].id
-                    lookahead += 1
-                }
+                // The reply this message produced = the first assistant turn
+                // that follows it (the direct response to this message). Nil
+                // until a reply exists. Powers the overflow menu's "Inspect
+                // response". Deliberately the *first* reply turn, not the last
+                // of the group: the incremental block cache only ever rebuilds
+                // this block while the first reply turn is the sole one present,
+                // so keying on the first turn stays consistent between live
+                // streaming and a full rebuild on chat reopen.
+                let next = index + 1
+                let responseTurnId: UUID? =
+                    next < filteredTurns.count && filteredTurns[next].role == .assistant
+                    ? filteredTurns[next].id : nil
                 blocks.append(
                     .userMessage(
                         turnId: turn.id,
