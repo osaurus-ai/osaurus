@@ -378,7 +378,9 @@ final class NativeFileDiffView: NSView {
             loadingIndicator.stopAnimation(nil)
         }
 
-        fileLabel.stringValue = diff.fileName
+        // The path argument may not have streamed yet — hold the name slot with
+        // an ellipsis so the header doesn't render as a bare count.
+        fileLabel.stringValue = diff.fileName.isEmpty ? "…" : diff.fileName
         fileLabel.font = NSFont.systemFont(ofSize: CGFloat(theme.captionSize), weight: .semibold)
         fileLabel.textColor = NSColor(theme.primaryText)
 
