@@ -34,7 +34,7 @@ enum ContentBlockKind: Equatable {
     case paragraph(index: Int, text: String, isStreaming: Bool, role: MessageRole)
     case toolCallGroup(calls: [ToolCallItem])
     case thinking(index: Int, text: String, isStreaming: Bool, duration: TimeInterval?)
-    case userMessage(text: String, attachments: [Attachment])
+    case userMessage(text: String, attachments: [Attachment], timestamp: Date)
     case sharedArtifact(artifact: SharedArtifact)
     case pendingToolCall(toolName: String, argPreview: String?, argSize: Int)
     /// Generation benchmarks footer for a completed assistant turn.
@@ -90,7 +90,8 @@ enum ContentBlockKind: Equatable {
             guard lText.count == rText.count else { return false }
             return lText == rText
 
-        case let (.userMessage(lText, lAttach), .userMessage(rText, rAttach)):
+        case let (.userMessage(lText, lAttach, lTime), .userMessage(rText, rAttach, rTime)):
+            guard lTime == rTime else { return false }
             guard lText.count == rText.count else { return false }
             guard lAttach.count == rAttach.count else { return false }
             return lText == rText && lAttach == rAttach
@@ -258,12 +259,13 @@ struct ContentBlock: Identifiable, Equatable, Hashable {
         turnId: UUID,
         text: String,
         attachments: [Attachment],
+        timestamp: Date,
         position: BlockPosition
     ) -> ContentBlock {
         ContentBlock(
             id: "usermsg-\(turnId.uuidString)",
             turnId: turnId,
-            kind: .userMessage(text: text, attachments: attachments),
+            kind: .userMessage(text: text, attachments: attachments, timestamp: timestamp),
             position: position
         )
     }
@@ -413,6 +415,7 @@ extension ContentBlock {
                         turnId: turn.id,
                         text: turn.content,
                         attachments: turn.attachments,
+                        timestamp: turn.createdAt,
                         position: .only
                     )
                 )

@@ -1635,11 +1635,12 @@ final class NativeMessageCellView: NSTableCellView {
         case let .toolCallGroup(calls):
             configureAsToolCallGroup(block: block, calls: calls, context: context, sameKind: sameKind)
 
-        case let .userMessage(text, attachments):
+        case let .userMessage(text, attachments, timestamp):
             configureAsUserMessage(
                 block: block,
                 text: text,
                 attachments: attachments,
+                timestamp: timestamp,
                 context: context,
                 sameKind: sameKind
             )
@@ -1983,6 +1984,7 @@ final class NativeMessageCellView: NSTableCellView {
         block: ContentBlock,
         text: String,
         attachments: [Attachment],
+        timestamp: Date,
         context: CellRenderingContext,
         sameKind: Bool
     ) {
@@ -3014,7 +3016,7 @@ enum NativeCellHeightEstimator {
             let lines = max(1, (text.count + chars - 1) / chars)
             return CGFloat(lines) * 22 + 24
 
-        case let .userMessage(text, attachments):
+        case let .userMessage(text, attachments, _):
             var h: CGFloat = 8  // outerTopGap
             let innerW = max(width - 32, 100)
 
