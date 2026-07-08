@@ -109,6 +109,9 @@ final class NativeHeaderView: NSView {
 
     private var turnId: UUID = UUID()
     private var messageTimestamp: Date = Date()
+    /// Assistant turn that answered this message; backs the overflow menu's
+    /// "Inspect response". Nil when there's no reply yet.
+    private var responseTurnId: UUID?
     private var onCopy: ((UUID) -> Void)?
     private var onRegenerate: ((UUID) -> Void)?
     private var onEdit: ((UUID) -> Void)?
@@ -198,6 +201,7 @@ final class NativeHeaderView: NSView {
         isEditing: Bool,
         isHovered: Bool,
         timestamp: Date = Date(),
+        responseTurnId: UUID? = nil,
         theme: any ThemeProtocol,
         onCopy: ((UUID) -> Void)?,
         onRegenerate: ((UUID) -> Void)?,
@@ -207,6 +211,7 @@ final class NativeHeaderView: NSView {
     ) {
         self.turnId = turnId
         self.messageTimestamp = timestamp
+        self.responseTurnId = responseTurnId
         self.isEditing = isEditing
         self.onCopy = onCopy
         self.onRegenerate = onRegenerate
@@ -396,9 +401,16 @@ final class NativeHeaderView: NSView {
         }
     }
 
-    /// Drops a menu under the "…" button whose single disabled header shows
-    /// when the user sent this message. Mirrors the assistant footer's overflow
-    /// menu, but omits the Inspect action (no request log for user turns).
+    /// Drops a menu under the "…" button mirroring the assistant footer's
+    /// overflow menu: a disabled header showing when the message was sent, then
+    /// an "Inspect response" action that opens the reply's request/response log.
+    /// A user turn has no log of its own, so Inspect keys on the assistant reply
+    /// rather than this turn, and is shown whenever a reply turn exists.
+    ///
+    /// The item is gated only on the O(1) `responseTurnId != nil` check — no log
+    /// lookup happens here, so building/showing the popover never scans the log
+    /// ring on the main thread. Whether the log still exists is resolved lazily
+    /// on click (`inspectResponseFromMenu`), exactly like the assistant menu.
     private func presentOverflowMenu() {
         guard let anchor = overflowControl else { return }
         let menu = NSMenu()
@@ -412,11 +424,68 @@ final class NativeHeaderView: NSView {
         header.isEnabled = false
         menu.addItem(header)
 
+        if responseTurnId != nil {
+            menu.addItem(.separator())
+            let inspect = NSMenuItem(
+                title: L("Inspect response"),
+                action: #selector(inspectResponseFromMenu),
+                keyEquivalent: ""
+            )
+            inspect.target = self
+            if let theme = currentTheme {
+                let pointSize = CGFloat(theme.captionSize)
+                let cfg = NSImage.SymbolConfiguration(pointSize: pointSize, weight: .regular)
+                inspect.image = SymbolImageCache.image(
+                    "waveform.path.ecg.magnifyingglass",
+                    accessibilityDescription: nil
+                )?.withSymbolConfiguration(cfg)
+            }
+            menu.addItem(inspect)
+        }
+
         // Anchor the menu's top-left just under the button's bottom-left so it
         // opens downward like the assistant overflow menu. The button is a
         // non-flipped NSView, so its bottom edge is y == 0 and the 4pt gap sits
         // below it at a negative y.
         menu.popUp(positioning: nil, at: NSPoint(x: 0, y: -4), in: anchor)
+    }
+
+    @objc private func inspectResponseFromMenu() {
+        // Focus the reply's request/response log. Gated behind `hasLog` when the
+        // menu was built, but re-check + surface the alert in case the in-memory
+        // log ring evicted it between menu build and click.
+        guard let responseTurnId else { return }
+        MainActor.assumeIsolated {
+            if InsightsService.shared.focus(turnId: responseTurnId) {
+                AppDelegate.shared?.showManagementWindow(initialTab: .insights)
+            } else {
+                presentLogUnavailableAlert()
+            }
+        }
+    }
+
+    @MainActor
+    private func presentLogUnavailableAlert() {
+        // Scope the alert to this chat window when we can resolve it, so it
+        // dims and centers over the chat rather than another surface.
+        let scope: ThemedAlertScope =
+            window.flatMap { ChatWindowManager.shared.windowId(for: $0) }
+            .map { .chat($0) } ?? .content
+        let requestId = UUID()
+        ThemedAlertCenter.shared.present(
+            ThemedAlertRequest(
+                id: requestId,
+                title: L("Insights Unavailable"),
+                message: L(
+                    "Detailed request logs are kept only for a short duration to save storage, so there's nothing to show for this response."
+                ),
+                buttons: [.primary(L("OK")) {}],
+                onDismiss: {
+                    ThemedAlertCenter.shared.dismiss(scope: scope, id: requestId)
+                }
+            ),
+            scope: scope
+        )
     }
 
     private static let actionButtonSize: CGFloat = 28
@@ -1680,12 +1749,13 @@ final class NativeMessageCellView: NSTableCellView {
         case let .toolCallGroup(calls):
             configureAsToolCallGroup(block: block, calls: calls, context: context, sameKind: sameKind)
 
-        case let .userMessage(text, attachments, timestamp):
+        case let .userMessage(text, attachments, timestamp, responseTurnId):
             configureAsUserMessage(
                 block: block,
                 text: text,
                 attachments: attachments,
                 timestamp: timestamp,
+                responseTurnId: responseTurnId,
                 context: context,
                 sameKind: sameKind
             )
@@ -2030,6 +2100,7 @@ final class NativeMessageCellView: NSTableCellView {
         text: String,
         attachments: [Attachment],
         timestamp: Date,
+        responseTurnId: UUID?,
         context: CellRenderingContext,
         sameKind: Bool
     ) {
@@ -2344,6 +2415,7 @@ final class NativeMessageCellView: NSTableCellView {
             isEditing: context.editingTurnId == block.turnId,
             isHovered: context.isTurnHovered,
             timestamp: timestamp,
+            responseTurnId: responseTurnId,
             theme: context.theme,
             onCopy: context.onCopy,
             onRegenerate: context.onRegenerate,
@@ -3062,7 +3134,7 @@ enum NativeCellHeightEstimator {
             let lines = max(1, (text.count + chars - 1) / chars)
             return CGFloat(lines) * 22 + 24
 
-        case let .userMessage(text, attachments, _):
+        case let .userMessage(text, attachments, _, _):
             var h: CGFloat = 8  // outerTopGap
             let innerW = max(width - 32, 100)
 

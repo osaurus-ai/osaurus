@@ -34,7 +34,11 @@ enum ContentBlockKind: Equatable {
     case paragraph(index: Int, text: String, isStreaming: Bool, role: MessageRole)
     case toolCallGroup(calls: [ToolCallItem])
     case thinking(index: Int, text: String, isStreaming: Bool, duration: TimeInterval?)
-    case userMessage(text: String, attachments: [Attachment], timestamp: Date)
+    /// `responseTurnId` is the assistant turn that answered this message (the
+    /// final turn of the following assistant group), used by the overflow menu's
+    /// "Inspect response" to open that reply's request/response log. Nil when the
+    /// message has no assistant reply yet.
+    case userMessage(text: String, attachments: [Attachment], timestamp: Date, responseTurnId: UUID?)
     case sharedArtifact(artifact: SharedArtifact)
     case pendingToolCall(toolName: String, argPreview: String?, argSize: Int)
     /// Generation benchmarks footer for a completed assistant turn.
@@ -90,8 +94,11 @@ enum ContentBlockKind: Equatable {
             guard lText.count == rText.count else { return false }
             return lText == rText
 
-        case let (.userMessage(lText, lAttach, lTime), .userMessage(rText, rAttach, rTime)):
-            guard lTime == rTime else { return false }
+        case let (
+            .userMessage(lText, lAttach, lTime, lResp),
+            .userMessage(rText, rAttach, rTime, rResp)
+        ):
+            guard lTime == rTime && lResp == rResp else { return false }
             guard lText.count == rText.count else { return false }
             guard lAttach.count == rAttach.count else { return false }
             return lText == rText && lAttach == rAttach
@@ -260,12 +267,18 @@ struct ContentBlock: Identifiable, Equatable, Hashable {
         text: String,
         attachments: [Attachment],
         timestamp: Date,
+        responseTurnId: UUID?,
         position: BlockPosition
     ) -> ContentBlock {
         ContentBlock(
             id: "usermsg-\(turnId.uuidString)",
             turnId: turnId,
-            kind: .userMessage(text: text, attachments: attachments, timestamp: timestamp),
+            kind: .userMessage(
+                text: text,
+                attachments: attachments,
+                timestamp: timestamp,
+                responseTurnId: responseTurnId
+            ),
             position: position
         )
     }
@@ -410,12 +423,25 @@ extension ContentBlock {
 
             // User messages are emitted as a single unified block
             if turn.role == .user {
+                // The reply this message produced = the final turn of the
+                // following consecutive assistant group (the turn the
+                // assistant footer's Inspect also keys on). Nil until a reply
+                // exists. Powers the overflow menu's "Inspect response".
+                var responseTurnId: UUID?
+                var lookahead = index + 1
+                while lookahead < filteredTurns.count,
+                    filteredTurns[lookahead].role == .assistant
+                {
+                    responseTurnId = filteredTurns[lookahead].id
+                    lookahead += 1
+                }
                 blocks.append(
                     .userMessage(
                         turnId: turn.id,
                         text: turn.content,
                         attachments: turn.attachments,
                         timestamp: turn.createdAt,
+                        responseTurnId: responseTurnId,
                         position: .only
                     )
                 )
