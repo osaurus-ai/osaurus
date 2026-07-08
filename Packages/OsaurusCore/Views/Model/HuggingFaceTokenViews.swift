@@ -6,7 +6,7 @@
 //  rate-limited hard by Hugging Face; a free token raises those limits and
 //  unlocks gated repos. Two surfaces: a one-time prompt offered when the
 //  user starts a download without a token, and a card on the Models →
-//  On Device tab for managing an already-configured token.
+//  Catalog tab for managing an already-configured token.
 //
 
 import SwiftUI
@@ -127,9 +127,9 @@ struct HuggingFaceTokenPromptSheet: View {
     }
 }
 
-// MARK: - On Device tab card
+// MARK: - Catalog tab card
 
-/// Shown at the top of Models → On Device when a token is configured.
+/// Shown at the top of Models → Catalog when a token is configured.
 /// Lets the user replace or remove it.
 struct HuggingFaceAccountCard: View {
     @Environment(\.theme) private var theme

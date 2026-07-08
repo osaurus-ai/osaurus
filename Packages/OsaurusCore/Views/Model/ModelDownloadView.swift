@@ -117,7 +117,7 @@ struct ModelDownloadView: View {
     @State private var showImportSheet = false
 
     /// Whether a Hugging Face token is configured — drives the account card
-    /// on the On Device tab. Resolved off-main (the first read can hit the
+    /// on the Catalog tab. Resolved off-main (the first read can hit the
     /// keychain) on appear and on tab changes.
     @State private var hfTokenConfigured = false
 
@@ -945,16 +945,16 @@ struct ModelDownloadView: View {
                             } else {
                                 switch selectedTab {
                                 case .all:
-                                    catalogContent(lists: lists)
-                                case .downloaded:
                                     VStack(alignment: .leading, spacing: 16) {
                                         if hfTokenConfigured {
                                             HuggingFaceAccountCard {
                                                 hfTokenConfigured = false
                                             }
                                         }
-                                        modelGrid(models: lists.downloaded)
+                                        catalogContent(lists: lists)
                                     }
+                                case .downloaded:
+                                    modelGrid(models: lists.downloaded)
                                 }
                             }
                         }
