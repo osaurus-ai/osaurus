@@ -21,6 +21,7 @@ struct PluginsView: View {
     @State private var isRefreshButtonLoading = false
 
     @State private var isRepoRefreshing = false
+    @State private var isUpdatingAll = false
     @State private var updatesAvailableCount = 0
     @State private var repoLastError: String?
     @State private var missingPermissionsPerPlugin: [String: [SystemPermission]] = [:]
@@ -357,6 +358,54 @@ struct PluginsView: View {
         await claudeSkillManager.refresh()
         claudeAggregator.refresh()
         await updateFilteredLists()
+    }
+
+    /// The combined number of installed plugins (repo + Claude) that have an
+    /// update available. Drives both the badge and the "Update all" button's
+    /// visibility.
+    private var totalUpdatesAvailable: Int {
+        updatesAvailableCount + claudeAggregator.plugins.filter { $0.hasUpdate }.count
+    }
+
+    /// Upgrade every installed plugin that has an update available, across both
+    /// the repository plugins and the imported Claude plugins. Updates run
+    /// serially so we don't hammer GitHub or race on the shared skill / plugin
+    /// managers; a single failure is skipped rather than aborting the rest.
+    /// Surfaces a summary toast when finished.
+    private func updateAllPlugins() async {
+        guard !isUpdatingAll else { return }
+        isUpdatingAll = true
+        defer { isUpdatingAll = false }
+
+        let outdatedRepo = repoService.plugins.filter { $0.hasUpdate }
+        let outdatedClaude = claudeAggregator.plugins.filter { $0.hasUpdate }
+        let total = outdatedRepo.count + outdatedClaude.count
+        guard total > 0 else { return }
+
+        var succeeded = 0
+        for plugin in outdatedRepo {
+            do {
+                try await repoService.upgrade(pluginId: plugin.pluginId)
+                succeeded += 1
+            } catch {
+                // Skip this plugin and continue with the rest.
+            }
+        }
+        for plugin in outdatedClaude {
+            do {
+                try await updateClaudePlugin(plugin)
+                succeeded += 1
+            } catch {
+                // Skip this plugin and continue with the rest.
+            }
+        }
+
+        reload()
+        if succeeded == total {
+            showSuccess(L("Updated \(succeeded) plugins"))
+        } else {
+            showSuccess(L("Updated \(succeeded) of \(total) plugins"))
+        }
     }
 
     private func uninstallClaudePlugin(_ plugin: ClaudePluginInstalled) async {
