@@ -90,7 +90,7 @@ enum ToolDisplayName {
 
     /// Whether `rawName` is a search tool whose title should embed its query.
     static func isSearchTool(_ rawName: String) -> Bool {
-        rawName == "search" || rawName == "web_search"
+        rawName == "search" || rawName == "web_search" || rawName == "search_and_extract"
     }
 
     /// The single `image` tool both generates and edits; show the right verb by
@@ -113,7 +113,7 @@ enum ToolDisplayName {
     }
 
     private static func searchLabel(_ rawName: String, running: Bool, arguments: String?) -> String {
-        let onWeb = rawName == "web_search"
+        let onWeb = rawName == "web_search" || rawName == "search_and_extract"
         guard let query = searchQuery(from: arguments) else {
             // No query parsed yet (e.g. arguments still streaming) — fall back
             // to a clean verb-only form rather than a dangling "Searched for".

@@ -4,7 +4,7 @@
   "label": "capability search • extract webpage contents (natural language)",
   "query": "extract webpage contents",
   "fixtures": {
-    "requirePlugins": ["osaurus.fetch", "osaurus.search"]
+    "requirePlugins": ["osaurus.fetch"]
   },
   "expect": {
     "capabilitySearch": {

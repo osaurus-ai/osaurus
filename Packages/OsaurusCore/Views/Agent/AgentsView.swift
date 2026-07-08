@@ -1016,6 +1016,8 @@ struct AgentDetailView: View {
     @State private var renderChartEnabled: Bool = false
     @State private var speakEnabled: Bool = false
     @State private var searchMemoryEnabled: Bool = false
+    /// Native `web_search` gate — default ON (free providers need no setup).
+    @State private var webSearchEnabled: Bool = true
     @State private var selfSchedulingEnabled: Bool = false
     /// Per-agent subagent capability toggles, keyed by the capability
     /// registry's `PerAgentFlag` (computer_use, spawn, image). Hydrated in
@@ -2722,6 +2724,18 @@ struct AgentDetailView: View {
                             subtitle:
                                 "Let the agent search its own memory mid-conversation to pull up past details on demand. Separate from Memory above, which only auto-injects and saves.",
                             isOn: $searchMemoryEnabled
+                        )
+                    }
+
+                    featureGroup(
+                        "Web",
+                        description: "Live information from the internet."
+                    ) {
+                        featureToggleRow(
+                            title: "Web Search",
+                            subtitle:
+                                "Let the agent search the web through your search providers. Works out of the box with free sources; configure providers in Settings > Search.",
+                            isOn: $webSearchEnabled
                         )
                     }
 
@@ -6076,6 +6090,7 @@ struct AgentDetailView: View {
         renderChartEnabled = agent.settings.renderChartEnabled
         speakEnabled = agent.settings.speakEnabled
         searchMemoryEnabled = agent.settings.searchMemoryEnabled
+        webSearchEnabled = agent.settings.webSearchEnabled
         selfSchedulingEnabled = agent.settings.selfSchedulingEnabled
         subagentToggles = SubagentCapabilityRegistry.perAgentToggleFlags.reduce(into: [:]) {
             acc,
@@ -6284,6 +6299,7 @@ struct AgentDetailView: View {
                 renderChartEnabled: renderChartEnabled,
                 speakEnabled: speakEnabled,
                 searchMemoryEnabled: searchMemoryEnabled,
+                webSearchEnabled: webSearchEnabled,
                 selfSchedulingEnabled: selfSchedulingEnabled,
                 computerUseEnabled: computerUseEnabled,
                 computerUseCeiling: computerUseEnabled ? computerUseCeiling : nil,

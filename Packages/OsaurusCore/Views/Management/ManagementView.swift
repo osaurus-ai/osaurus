@@ -196,6 +196,8 @@ private extension ManagementView {
             SandboxView()
         case .tools:
             ToolsManagerView()
+        case .search:
+            SearchView()
         case .skills:
             SkillsView()
         case .commands:

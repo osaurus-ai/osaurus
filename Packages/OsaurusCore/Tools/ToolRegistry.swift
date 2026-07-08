@@ -200,6 +200,11 @@ public final class ToolRegistry: ObservableObject {
             CapabilitiesLoadTool(),
             // Persistent memory recall — one tool, dispatched by `scope`.
             SearchMemoryTool(),
+            // Native web search (Settings → Search providers). Always loaded;
+            // the composer strips it per-agent via `webSearchEnabled`. Its
+            // sibling `search_and_extract` is registered as a dynamic native
+            // tool below (large payloads; loaded via capabilities on demand).
+            WebSearchTool(),
             // Inline data visualization rendered as a chart card.
             RenderChartTool(),
             // Text-delegation family: `spawn_agent` hands a task to a configured
@@ -288,6 +293,10 @@ public final class ToolRegistry: ObservableObject {
         for tool in Self.agentChannelTools {
             registerNativeDynamicTool(tool)
         }
+
+        // Web-search companion: search + Readability extraction. Dynamic so
+        // its large schema/results stay out of the always-loaded baseline.
+        registerNativeDynamicTool(SearchAndExtractTool())
     }
 
     private static let agentChannelTools: [OsaurusTool] = [
@@ -1890,6 +1899,9 @@ extension ToolRegistry {
     /// a newly registered domain expands the set automatically, and stable
     /// across a session for KV-cache reuse.
     static var defaultAgentAllowedToolNames: Set<String> {
-        configureToolNames.union(["todo", "complete", "clarify"])
+        // `web_search` joins the baseline deliberately: native search is the
+        // one tool every agent gets (Settings → Search), and the free
+        // providers make it usable with zero configuration.
+        configureToolNames.union(["todo", "complete", "clarify", "web_search"])
     }
 }

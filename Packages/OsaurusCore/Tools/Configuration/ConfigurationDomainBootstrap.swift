@@ -26,6 +26,7 @@ enum ConfigurationDomainBootstrap {
         registry.register(ProviderConfigurationDomain.domain)
         registry.register(ModelConfigurationDomain.domain)
         registry.register(MCPProviderConfigurationDomain.domain)
+        registry.register(SearchProviderConfigurationDomain.domain)
         registry.register(PluginConfigurationDomain.domain)
         registry.register(ScheduleConfigurationDomain.domain)
         registry.register(AgentConfigurationDomain.domain)

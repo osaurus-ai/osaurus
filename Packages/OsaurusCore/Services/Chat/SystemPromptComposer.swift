@@ -2092,6 +2092,11 @@ public struct SystemPromptComposer: Sendable {
             if !snapshot.searchMemoryEnabled, !keep.contains("search_memory") {
                 byName.removeValue(forKey: "search_memory")
             }
+            if !snapshot.webSearchEnabled {
+                for name in ["web_search", "search_and_extract"] where !keep.contains(name) {
+                    byName.removeValue(forKey: name)
+                }
+            }
             if !snapshot.selfSchedulingEnabled {
                 for name in schedulerToolNames where !keep.contains(name) {
                     byName.removeValue(forKey: name)
