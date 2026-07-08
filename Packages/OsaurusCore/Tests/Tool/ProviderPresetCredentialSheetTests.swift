@@ -83,6 +83,30 @@ struct ProviderPresetCredentialSheetTests {
     }
 
     @Test
+    func siliconFlowPreset_usesApiKeyAndOpenAICompatibleHost() {
+        let request = ProviderCredentialRequest(
+            preset: .siliconflow,
+            providerName: "SiliconFlow",
+            mode: .addNew
+        )
+        #expect(request.preset == .siliconflow)
+        #expect(request.providerType == .openaiLegacy)
+        #expect(request.instructions.authMethod == .apiKey)
+        #expect(request.instructions.presetId == "siliconflow")
+        #expect(ProviderPreset.siliconflow.configuration.host == "api.siliconflow.com")
+        #expect(ProviderPreset.siliconflow.configuration.basePath == "/v1")
+    }
+
+    @Test
+    func siliconFlowCatalogEntry_usesApiKeyStorageAuth() {
+        let entry = ProviderCredentialInstructionsCatalog.entry(for: .siliconflow)
+        #expect(entry.storageAuthType == .apiKey)
+        #expect(entry.authMethod == .apiKey)
+        #expect(entry.getKeyURL?.absoluteString == "https://cloud.siliconflow.com/account/ak")
+        #expect(entry.keyFormatHint?.contains("cloud.siliconflow.com/account/ak") == true)
+    }
+
+    @Test
     func customPreset_requiresHostExtraField() {
         let request = ProviderCredentialRequest(
             preset: .custom,
@@ -276,6 +300,15 @@ struct ProviderPresetCredentialSheetTests {
             return
         }
         #expect(preset == .openrouter)
+    }
+
+    @Test
+    func resolver_resolvesSiliconFlowToSiliconFlowPreset() {
+        guard case .preset(let preset) = ProviderToolShared.resolve("siliconflow") else {
+            Issue.record("siliconflow must resolve to a preset")
+            return
+        }
+        #expect(preset == .siliconflow)
     }
 
     @Test

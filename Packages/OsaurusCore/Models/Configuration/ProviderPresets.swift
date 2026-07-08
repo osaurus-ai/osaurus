@@ -20,6 +20,7 @@ public enum ProviderPreset: String, CaseIterable, Identifiable, Sendable {
     case deepseek
     case mistral
     case minimax
+    case siliconflow
     case venice
     case openrouter
     case ollama
@@ -39,6 +40,7 @@ public enum ProviderPreset: String, CaseIterable, Identifiable, Sendable {
         case .deepseek: return "DeepSeek"
         case .mistral: return "Mistral"
         case .minimax: return "MiniMax"
+        case .siliconflow: return "SiliconFlow"
         case .venice: return "Venice AI"
         case .openrouter: return "OpenRouter"
         case .ollama: return "Ollama"
@@ -58,6 +60,7 @@ public enum ProviderPreset: String, CaseIterable, Identifiable, Sendable {
         case .deepseek: return "deepseek-v4-pro / v4-flash"
         case .mistral: return L("Mistral Small/Medium models")
         case .minimax: return L("MiniMax M-series models")
+        case .siliconflow: return "DeepSeek, Qwen, GLM, Kimi"
         case .venice: return L("Privacy-first AI")
         case .openrouter: return L("Multi-provider")
         case .ollama: return L("Run models locally via Ollama")
@@ -77,6 +80,7 @@ public enum ProviderPreset: String, CaseIterable, Identifiable, Sendable {
         case .deepseek: return "cpu"
         case .mistral: return "wind"
         case .minimax: return "m.square.fill"
+        case .siliconflow: return "bolt.horizontal.circle.fill"
         case .venice: return "lock.shield.fill"
         case .openrouter: return "arrow.triangle.branch"
         case .ollama: return "shippingbox.fill"
@@ -96,6 +100,7 @@ public enum ProviderPreset: String, CaseIterable, Identifiable, Sendable {
         case .deepseek: return [Color(red: 0.18, green: 0.36, blue: 0.95), Color(red: 0.34, green: 0.52, blue: 0.98)]
         case .mistral: return [Color(red: 0.98, green: 0.42, blue: 0.11), Color(red: 0.87, green: 0.24, blue: 0.09)]
         case .minimax: return [Color(red: 0.93, green: 0.27, blue: 0.23), Color(red: 0.83, green: 0.15, blue: 0.18)]
+        case .siliconflow: return [Color(red: 0.08, green: 0.55, blue: 0.82), Color(red: 0.1, green: 0.72, blue: 0.62)]
         case .venice: return [Color(red: 0.83, green: 0.66, blue: 0.33), Color(red: 0.72, green: 0.53, blue: 0.17)]
         case .openrouter: return [Color(red: 0.95, green: 0.55, blue: 0.25), Color(red: 0.85, green: 0.4, blue: 0.2)]
         case .ollama: return [Color(red: 0.36, green: 0.36, blue: 0.4), Color(red: 0.22, green: 0.22, blue: 0.26)]
@@ -115,6 +120,7 @@ public enum ProviderPreset: String, CaseIterable, Identifiable, Sendable {
         case .deepseek: return "https://platform.deepseek.com/api_keys"
         case .mistral: return "https://console.mistral.ai/api-keys"
         case .minimax: return "https://platform.minimax.io/user-center/basic-information/interface-key"
+        case .siliconflow: return "https://cloud.siliconflow.com/account/ak"
         case .venice: return "https://venice.ai/settings/api"
         case .openrouter: return "https://openrouter.ai/keys"
         case .ollama: return "https://ollama.com/download"
@@ -126,6 +132,7 @@ public enum ProviderPreset: String, CaseIterable, Identifiable, Sendable {
     var badge: String? {
         switch self {
         case .azureOpenAI: return "Azure"
+        case .siliconflow: return "OpenAI-compatible"
         case .venice: return L("Privacy")
         case .ollama: return L("Local")
         default: return nil
@@ -140,6 +147,7 @@ public enum ProviderPreset: String, CaseIterable, Identifiable, Sendable {
         case .deepseek: return "https://api-docs.deepseek.com/"
         case .mistral: return "https://docs.mistral.ai/api"
         case .minimax: return "https://platform.minimax.io/docs/api-reference/api-overview"
+        case .siliconflow: return "https://docs.siliconflow.com/en/userguide/quickstart"
         case .venice: return "https://docs.venice.ai"
         case .ollama: return "https://github.com/ollama/ollama"
         default: return nil
@@ -205,6 +213,14 @@ public enum ProviderPreset: String, CaseIterable, Identifiable, Sendable {
                 L("Go to the Mistral console API keys page"),
                 L("Sign in or create an account"),
                 L("Create a new API key"),
+                L("Copy and paste it here"),
+            ]
+        case .siliconflow:
+            return [
+                L("Go to the SiliconFlow API Keys page"),
+                L("Sign in or create an account"),
+                L("Create a new API key"),
+                L("Osaurus connects to https://api.siliconflow.com/v1 automatically"),
                 L("Copy and paste it here"),
             ]
         case .ollama:
@@ -396,6 +412,16 @@ public enum ProviderPreset: String, CaseIterable, Identifiable, Sendable {
                     "MiniMax-M2.1",
                     "MiniMax-M2",
                 ]
+            )
+        case .siliconflow:
+            return ProviderPresetConfiguration(
+                name: "SiliconFlow",
+                host: "api.siliconflow.com",
+                providerProtocol: .https,
+                port: nil,
+                basePath: "/v1",
+                authType: .apiKey,
+                providerType: .openaiLegacy
             )
         case .venice:
             return ProviderPresetConfiguration(
