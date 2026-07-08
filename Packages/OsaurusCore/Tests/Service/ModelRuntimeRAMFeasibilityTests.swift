@@ -218,4 +218,57 @@ struct ModelRuntimeRAMFeasibilityTests {
         let empty = await ModelRuntime.shared.projectedLoadFeasibility(for: "   ")
         #expect(empty == nil)
     }
+
+    // MARK: - Projection suppression (resident / in-flight aliasing)
+
+    @Test("Resident model suppresses the projection regardless of casing")
+    func residentModelSuppressesProjection() {
+        // The runtime caches under the canonical lowercased repo name; the
+        // chat picker resolves a full catalog id down to the same canonical
+        // form. Both must hit the resident check.
+        #expect(
+            ModelRuntime.isProjectionSuppressed(
+                canonicalName: "qwen3.6-35b-a3b-mxfp4-mtp",
+                residentNames: ["qwen3.6-35b-a3b-mxfp4-mtp"],
+                inflightNames: []
+            )
+        )
+        // Defensive: a cache key that kept original casing still matches.
+        #expect(
+            ModelRuntime.isProjectionSuppressed(
+                canonicalName: "qwen3.6-35b-a3b-mxfp4-mtp",
+                residentNames: ["Qwen3.6-35B-A3B-MXFP4-MTP"],
+                inflightNames: []
+            )
+        )
+    }
+
+    @Test("In-flight load of the same model suppresses the projection")
+    func inflightLoadSuppressesProjection() {
+        #expect(
+            ModelRuntime.isProjectionSuppressed(
+                canonicalName: "qwen3.6-35b-a3b-mxfp4-mtp",
+                residentNames: [],
+                inflightNames: ["qwen3.6-35b-a3b-mxfp4-mtp"]
+            )
+        )
+    }
+
+    @Test("Other resident or in-flight models do not suppress the projection")
+    func otherModelsDoNotSuppressProjection() {
+        #expect(
+            !ModelRuntime.isProjectionSuppressed(
+                canonicalName: "qwen3.6-35b-a3b-mxfp4-mtp",
+                residentNames: ["gemma-4-12b-qat"],
+                inflightNames: ["llama-4-8b-4bit"]
+            )
+        )
+        #expect(
+            !ModelRuntime.isProjectionSuppressed(
+                canonicalName: "qwen3.6-35b-a3b-mxfp4-mtp",
+                residentNames: [],
+                inflightNames: []
+            )
+        )
+    }
 }

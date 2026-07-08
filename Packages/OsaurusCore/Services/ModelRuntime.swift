@@ -1285,6 +1285,19 @@ public actor ModelRuntime {
         }
     }
 
+    /// True when no fresh cold load would happen for `canonicalName`, so the
+    /// tight-fit projection must not run: the model is already resident or a
+    /// load for it is in flight. Static and sequence-driven so unit tests can
+    /// exercise the alias/casing boundary without a real model load.
+    static func isProjectionSuppressed(
+        canonicalName: String,
+        residentNames: some Sequence<String>,
+        inflightNames: some Sequence<String>
+    ) -> Bool {
+        residentNames.contains { $0.caseInsensitiveCompare(canonicalName) == .orderedSame }
+            || inflightNames.contains { $0.caseInsensitiveCompare(canonicalName) == .orderedSame }
+    }
+
     /// Projected RAM feasibility for loading `name`, computed WITHOUT loading
     /// anything. Backs the chat input's tight-fit disclaimer and send gate.
     ///
@@ -1299,31 +1312,48 @@ public actor ModelRuntime {
         guard !trimmed.isEmpty else { return nil }
         guard modelCache[trimmed] == nil else { return nil }
         guard let found = ModelManager.findInstalledModel(named: trimmed) else { return nil }
+        // The runtime caches residents under the canonical installed-bundle
+        // name (lowercased repo, e.g. `qwen3-8b-4bit`), while the chat picker
+        // passes the full catalog id (`mlx-community/Qwen3-8B-4bit`). Checking
+        // only the raw string treated an already-resident model as a fresh
+        // cold load — its own footprint had shrunk `available`, so the banner
+        // warned that loading it "again" would be tight and never cleared.
+        // An in-flight load is likewise a decision already made; projecting
+        // "will it fit" against memory the load itself is consuming
+        // double-counts it, and the post-load re-check settles the banner.
+        guard
+            !Self.isProjectionSuppressed(
+                canonicalName: found.name,
+                residentNames: modelCache.keys,
+                inflightNames: inflightLoadWeights.keys
+            )
+        else { return nil }
         guard let localURL = Self.findLocalDirectory(forModelId: found.id) else { return nil }
 
         let physical = Int64(ProcessInfo.processInfo.physicalMemory)
         guard physical > 0 else { return nil }
-        let weightsBytes = candidateWeightsSizeBytes(modelName: trimmed, directory: localURL)
+        let weightsBytes = candidateWeightsSizeBytes(modelName: found.name, directory: localURL)
         guard weightsBytes > 0 else { return nil }
 
         let loadFootprintBytes = Self.effectiveLoadFootprintBytes(
             rawWeightsBytes: weightsBytes,
             modelDirectory: localURL,
-            modelName: trimmed
+            modelName: found.name
         )
         let kvHeadroom = Self.estimatedKVHeadroomBytes(
             forWeights: loadFootprintBytes,
             modelDirectory: localURL,
-            modelName: trimmed
+            modelName: found.name
         )
 
         // Strict single-model evicts the current resident before the load
         // starts, so the projection must not double-count it. Flexible
-        // (multi-model) residency keeps other models around.
+        // (multi-model) residency keeps other models around. Exclusions use
+        // the canonical name — the key the runtime actually caches under.
         let policy =
             await ServerConfigurationStore.load()?.modelEvictionPolicy ?? .strictSingleModel
-        let resident = policy == .strictSingleModel ? 0 : residentWeightBytes(excluding: trimmed)
-        let inflightOther = inflightLoadWeightBytes(excluding: trimmed)
+        let resident = policy == .strictSingleModel ? 0 : residentWeightBytes(excluding: found.name)
+        let inflightOther = inflightLoadWeightBytes(excluding: found.name)
 
         return Self.buildRAMFeasibility(
             modelName: trimmed,
