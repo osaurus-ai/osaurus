@@ -203,8 +203,19 @@ public enum FrameScrubber {
         ruleset: RegexEntityDetector.EffectiveRuleSet
     ) async -> OCRScan {
         await withCheckedContinuation { (continuation: CheckedContinuation<OCRScan, Never>) in
-            let request = VNRecognizeTextRequest { request, _ in
-                let observations = (request.results as? [VNRecognizedTextObservation]) ?? []
+            let request = VNRecognizeTextRequest { request, error in
+                guard error == nil, let observations = request.results as? [VNRecognizedTextObservation] else {
+                    continuation.resume(
+                        returning: OCRScan(
+                            regions: [],
+                            categories: [:],
+                            textRegions: 0,
+                            ocrSucceeded: false,
+                            observations: []
+                        )
+                    )
+                    return
+                }
                 var regions: [CGRect] = []
                 var categories: [String: Int] = [:]
                 var scanned: [OCRObservation] = []
