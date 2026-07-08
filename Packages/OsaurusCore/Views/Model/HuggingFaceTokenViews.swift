@@ -4,23 +4,25 @@
 //
 //  UI for the optional Hugging Face access token. Anonymous downloads are
 //  rate-limited hard by Hugging Face; a free token raises those limits and
-//  unlocks gated repos. Two surfaces: a one-time prompt offered when the
-//  user starts a download without a token, and a card on the Models →
-//  Catalog tab for managing an already-configured token.
+//  unlocks gated repos. A single card on the Models → Catalog tab is the
+//  permanent home: it offers an Add flow when no token is set and lets the
+//  user replace or remove an existing one. The Add button opens the token
+//  sheet below.
 //
 
 import SwiftUI
 
-// MARK: - Download-time prompt
+// MARK: - Add-token sheet
 
-/// One-time sheet offered when a download starts and no token is
-/// configured. Either path (saving a token or continuing without one)
-/// marks the prompt dismissed and starts the download.
+/// Sheet presented from the Catalog card's Add button. Explains the
+/// benefit, links to Hugging Face's Read-token form, and saves the pasted
+/// token to the Keychain.
 struct HuggingFaceTokenPromptSheet: View {
     @Environment(\.theme) private var theme
+    @Environment(\.dismiss) private var dismiss
 
-    /// Starts the pending download; called after the user's choice lands.
-    let onContinue: () -> Void
+    /// Called after a token is saved so the host can reflect the new state.
+    let onSaved: () -> Void
 
     @State private var tokenInput: String = ""
 
@@ -59,11 +61,11 @@ struct HuggingFaceTokenPromptSheet: View {
                 stepRow(3, text: Text("Paste it below. It stays in your macOS Keychain", bundle: .module))
             }
 
-            HuggingFaceTokenField(tokenInput: $tokenInput) { saveAndContinue() }
+            HuggingFaceTokenField(tokenInput: $tokenInput) { save() }
 
             HStack(spacing: 12) {
-                Button(action: continueWithout) {
-                    Text("Continue without token", bundle: .module)
+                Button(action: { dismiss() }) {
+                    Text("Cancel", bundle: .module)
                         .font(.system(size: 13, weight: .medium))
                         .foregroundColor(theme.secondaryText)
                 }
@@ -71,11 +73,11 @@ struct HuggingFaceTokenPromptSheet: View {
 
                 Spacer()
 
-                Button(action: saveAndContinue) {
+                Button(action: save) {
                     HStack(spacing: 6) {
-                        Image(systemName: "arrow.down.circle")
+                        Image(systemName: "checkmark.circle")
                             .font(.system(size: 13))
-                        Text("Save & Download", bundle: .module)
+                        Text("Save token", bundle: .module)
                             .font(.system(size: 13, weight: .semibold))
                     }
                     .foregroundColor(.white)
@@ -114,145 +116,209 @@ struct HuggingFaceTokenPromptSheet: View {
         tokenInput.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
-    private func saveAndContinue() {
+    private func save() {
         guard !trimmedToken.isEmpty else { return }
         HuggingFaceAuth.setToken(trimmedToken)
-        onContinue()
-    }
-
-    private func continueWithout() {
-        onContinue()
+        onSaved()
+        dismiss()
     }
 }
 
 // MARK: - Catalog tab card
 
-/// Shown at the top of Models → Catalog when a token is configured.
-/// Lets the user replace or remove it.
-struct HuggingFaceAccountCard: View {
+/// Permanent card at the top of Models → Catalog. Offers an Add flow when
+/// no token is configured, and Replace / Remove when one is. Owns its own
+/// token-presence state so it can flip in place. Renders nothing until the
+/// first (off-main) keychain read resolves, avoiding a disconnected flash
+/// for users who already have a token.
+struct HuggingFaceTokenCard: View {
     @Environment(\.theme) private var theme
 
-    /// Fired after the token is removed so the host can hide the card.
-    let onRemoved: () -> Void
-
-    @State private var isEditing = false
-    @State private var tokenInput: String = ""
-    @State private var statusText: String?
+    /// nil = still resolving, true/false = known token presence.
+    @State private var hasToken: Bool?
+    @State private var showAddSheet = false
+    @State private var isReplacing = false
+    @State private var replaceInput: String = ""
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        Group {
+            switch hasToken {
+            case .some(true): connectedCard
+            case .some(false): disconnectedCard
+            case .none: EmptyView()
+            }
+        }
+        .task {
+            // First token access can read the keychain; keep it off main.
+            let present = await Task.detached(priority: .userInitiated) {
+                HuggingFaceAuth.hasToken
+            }.value
+            hasToken = present
+        }
+        .sheet(isPresented: $showAddSheet) {
+            HuggingFaceTokenPromptSheet {
+                hasToken = true
+            }
+            .environment(\.theme, theme)
+        }
+    }
+
+    // MARK: Disconnected
+
+    private var disconnectedCard: some View {
+        cardSurface {
             HStack(spacing: 10) {
                 Text("🤗")
                     .font(.system(size: 16))
 
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("Hugging Face token connected", bundle: .module)
+                    Text("Faster model downloads", bundle: .module)
                         .font(.system(size: 13, weight: .semibold))
                         .foregroundColor(theme.primaryText)
                     Text(
-                        "Model downloads use your account's higher rate limits and gated-repo access.",
+                        "A free Hugging Face token raises rate limits so models download faster.",
                         bundle: .module
                     )
                     .font(.system(size: 11))
                     .foregroundColor(theme.tertiaryText)
+                    .fixedSize(horizontal: false, vertical: true)
                 }
 
                 Spacer(minLength: 8)
 
-                Button {
-                    withAnimation(.easeOut(duration: 0.15)) {
-                        isEditing.toggle()
-                        tokenInput = ""
-                        statusText = nil
+                Button { showAddSheet = true } label: {
+                    HStack(spacing: 5) {
+                        Image(systemName: "plus.circle")
+                            .font(.system(size: 12, weight: .semibold))
+                        Text("Add token", bundle: .module)
+                            .font(.system(size: 12, weight: .semibold))
                     }
-                } label: {
-                    Text(isEditing ? "Cancel" : "Replace…", bundle: .module)
-                        .font(.system(size: 12, weight: .medium))
-                        .foregroundColor(theme.secondaryText)
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 6)
-                        .background(
-                            RoundedRectangle(cornerRadius: 6)
-                                .fill(theme.tertiaryBackground.opacity(0.6))
-                        )
-                }
-                .buttonStyle(PlainButtonStyle())
-
-                Button {
-                    HuggingFaceAuth.setToken(nil)
-                    onRemoved()
-                } label: {
-                    Text("Remove", bundle: .module)
-                        .font(.system(size: 12, weight: .medium))
-                        .foregroundColor(.red)
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 6)
-                        .background(
-                            RoundedRectangle(cornerRadius: 6)
-                                .fill(Color.red.opacity(0.12))
-                        )
+                    .foregroundColor(.white)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 7)
+                    .background(RoundedRectangle(cornerRadius: 6).fill(theme.accentColor))
                 }
                 .buttonStyle(PlainButtonStyle())
             }
+        }
+    }
 
-            if isEditing {
-                HStack(spacing: 8) {
-                    HuggingFaceTokenField(tokenInput: $tokenInput) { replaceToken() }
+    // MARK: Connected
 
-                    Button(action: replaceToken) {
-                        Text("Save", bundle: .module)
-                            .font(.system(size: 12, weight: .semibold))
-                            .foregroundColor(.white)
-                            .padding(.horizontal, 12)
-                            .padding(.vertical, 7)
+    private var connectedCard: some View {
+        cardSurface {
+            VStack(alignment: .leading, spacing: 10) {
+                HStack(spacing: 10) {
+                    Text("🤗")
+                        .font(.system(size: 16))
+
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Hugging Face token connected", bundle: .module)
+                            .font(.system(size: 13, weight: .semibold))
+                            .foregroundColor(theme.primaryText)
+                        Text(
+                            "Model downloads use your account's higher rate limits and gated-repo access.",
+                            bundle: .module
+                        )
+                        .font(.system(size: 11))
+                        .foregroundColor(theme.tertiaryText)
+                    }
+
+                    Spacer(minLength: 8)
+
+                    Button {
+                        withAnimation(.easeOut(duration: 0.15)) {
+                            isReplacing.toggle()
+                            replaceInput = ""
+                        }
+                    } label: {
+                        Text(isReplacing ? "Cancel" : "Replace…", bundle: .module)
+                            .font(.system(size: 12, weight: .medium))
+                            .foregroundColor(theme.secondaryText)
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 6)
                             .background(
                                 RoundedRectangle(cornerRadius: 6)
-                                    .fill(
-                                        theme.accentColor.opacity(trimmedToken.isEmpty ? 0.4 : 1.0)
-                                    )
+                                    .fill(theme.tertiaryBackground.opacity(0.6))
                             )
                     }
                     .buttonStyle(PlainButtonStyle())
-                    .disabled(trimmedToken.isEmpty)
+
+                    Button {
+                        HuggingFaceAuth.setToken(nil)
+                        withAnimation(.easeOut(duration: 0.15)) {
+                            isReplacing = false
+                            hasToken = false
+                        }
+                    } label: {
+                        Text("Remove", bundle: .module)
+                            .font(.system(size: 12, weight: .medium))
+                            .foregroundColor(.red)
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 6)
+                            .background(RoundedRectangle(cornerRadius: 6).fill(Color.red.opacity(0.12)))
+                    }
+                    .buttonStyle(PlainButtonStyle())
+                }
+
+                if isReplacing {
+                    HStack(spacing: 8) {
+                        HuggingFaceTokenField(tokenInput: $replaceInput) { replaceToken() }
+
+                        Button(action: replaceToken) {
+                            Text("Save", bundle: .module)
+                                .font(.system(size: 12, weight: .semibold))
+                                .foregroundColor(.white)
+                                .padding(.horizontal, 12)
+                                .padding(.vertical, 7)
+                                .background(
+                                    RoundedRectangle(cornerRadius: 6)
+                                        .fill(
+                                            theme.accentColor.opacity(
+                                                trimmedReplace.isEmpty ? 0.4 : 1.0
+                                            )
+                                        )
+                                )
+                        }
+                        .buttonStyle(PlainButtonStyle())
+                        .disabled(trimmedReplace.isEmpty)
+                    }
                 }
             }
-
-            if let statusText {
-                Text(statusText)
-                    .font(.system(size: 11))
-                    .foregroundColor(theme.secondaryText)
-            }
         }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 12)
-        .background(
-            RoundedRectangle(cornerRadius: 10)
-                .fill(theme.tertiaryBackground.opacity(0.4))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 10)
-                        .stroke(theme.cardBorder.opacity(0.6), lineWidth: 1)
-                )
-        )
     }
 
-    private var trimmedToken: String {
-        tokenInput.trimmingCharacters(in: .whitespacesAndNewlines)
+    private func cardSurface<Content: View>(@ViewBuilder _ content: () -> Content) -> some View {
+        content()
+            .padding(.horizontal, 14)
+            .padding(.vertical, 12)
+            .background(
+                RoundedRectangle(cornerRadius: 10)
+                    .fill(theme.tertiaryBackground.opacity(0.4))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 10)
+                            .stroke(theme.cardBorder.opacity(0.6), lineWidth: 1)
+                    )
+            )
+    }
+
+    private var trimmedReplace: String {
+        replaceInput.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     private func replaceToken() {
-        guard !trimmedToken.isEmpty else { return }
-        HuggingFaceAuth.setToken(trimmedToken)
+        guard !trimmedReplace.isEmpty else { return }
+        HuggingFaceAuth.setToken(trimmedReplace)
         withAnimation(.easeOut(duration: 0.15)) {
-            isEditing = false
-            tokenInput = ""
-            statusText = L("Token updated.")
+            isReplacing = false
+            replaceInput = ""
         }
     }
 }
 
 // MARK: - Shared token field
 
-/// Masked token input shared by the prompt sheet and the account card.
+/// Masked token input shared by the add sheet and the card's replace row.
 struct HuggingFaceTokenField: View {
     @Environment(\.theme) private var theme
 

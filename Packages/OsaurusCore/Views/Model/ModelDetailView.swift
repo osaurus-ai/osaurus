@@ -100,10 +100,6 @@ struct ModelDetailView: View, Identifiable {
     /// shared cache in `init` so a warm cache shows the checkmark immediately.
     @State private var resolvedIsDownloaded: Bool
 
-    /// One-time Hugging Face token offer, shown when Download is tapped
-    /// with no token configured (see `HuggingFaceAuth.shouldOfferTokenPrompt`).
-    @State private var showTokenPrompt = false
-
     init(model: MLXModel, variants: [MLXModel] = []) {
         self._selectedModel = State(initialValue: model)
         self.variants = variants
@@ -181,14 +177,6 @@ struct ModelDetailView: View, Identifiable {
             // The shared cache is invalidated on this notification; re-resolve
             // off-main so the checkmark stays in sync after a download or delete.
             Task { await loadDownloadState() }
-        }
-        .sheet(isPresented: $showTokenPrompt) {
-            HuggingFaceTokenPromptSheet {
-                showTokenPrompt = false
-                modelManager.downloadModel(model)
-                dismiss()
-            }
-            .environment(\.theme, themeManager.currentTheme)
         }
     }
 
@@ -1151,12 +1139,8 @@ struct ModelDetailView: View, Identifiable {
             Spacer()
 
             Button(action: {
-                if HuggingFaceAuth.shouldOfferTokenPrompt {
-                    showTokenPrompt = true
-                } else {
-                    modelManager.downloadModel(model)
-                    dismiss()
-                }
+                modelManager.downloadModel(model)
+                dismiss()
             }) {
                 HStack(spacing: 6) {
                     Image(systemName: "arrow.down.circle")

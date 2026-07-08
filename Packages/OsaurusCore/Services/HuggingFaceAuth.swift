@@ -60,15 +60,6 @@ enum HuggingFaceAuth {
         Task.detached(priority: .utility) { _ = token }
     }
 
-    // MARK: - Download-time prompt
-
-    /// Whether starting a download should first offer the token prompt.
-    /// Offered on every download until a token is configured — the speed
-    /// difference is large enough that a one-time offer undersells it.
-    static var shouldOfferTokenPrompt: Bool {
-        !hasToken
-    }
-
     /// Attach `Authorization: Bearer <token>` when a token is configured.
     static func authorize(_ request: inout URLRequest) {
         guard let token else { return }

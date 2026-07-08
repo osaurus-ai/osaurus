@@ -116,10 +116,6 @@ struct ModelDownloadView: View {
     /// Import-from-Hugging-Face sheet state
     @State private var showImportSheet = false
 
-    /// Whether a Hugging Face token is configured — drives the account card
-    /// on the Catalog tab. Resolved off-main (the first read can hit the
-    /// keychain) on appear and on tab changes.
-    @State private var hfTokenConfigured = false
 
     /// Index of the leading Top Picks card the edge arrows scroll to. Desktop
     /// mice can't scroll horizontally, so the carousel is driven by these
@@ -202,7 +198,6 @@ struct ModelDownloadView: View {
             }
 
             refreshGridLists()
-            refreshHFTokenPresence()
         }
         .onDisappear {
             gridListsRefreshTask?.cancel()
@@ -210,7 +205,6 @@ struct ModelDownloadView: View {
         }
         .onChange(of: selectedTab) { _, _ in
             refreshGridLists()
-            refreshHFTokenPresence()
         }
         .onChange(of: sortOption) { _, _ in refreshGridLists() }
         .onChange(of: filterState) { _, _ in refreshGridLists() }
@@ -946,11 +940,7 @@ struct ModelDownloadView: View {
                                 switch selectedTab {
                                 case .all:
                                     VStack(alignment: .leading, spacing: 16) {
-                                        if hfTokenConfigured {
-                                            HuggingFaceAccountCard {
-                                                hfTokenConfigured = false
-                                            }
-                                        }
+                                        HuggingFaceTokenCard()
                                         catalogContent(lists: lists)
                                     }
                                 case .downloaded:
@@ -1735,17 +1725,6 @@ struct ModelDownloadView: View {
             guard !Task.isCancelled else { return }
             applyGridLists(lists)
             gridListsRefreshTask = nil
-        }
-    }
-
-    /// Re-resolve whether a Hugging Face token is configured. The first
-    /// access can read the keychain, so it runs off the main thread.
-    private func refreshHFTokenPresence() {
-        Task { @MainActor in
-            let present = await Task.detached(priority: .userInitiated) {
-                HuggingFaceAuth.hasToken
-            }.value
-            hfTokenConfigured = present
         }
     }
 
