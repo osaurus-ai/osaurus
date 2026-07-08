@@ -115,6 +115,7 @@ struct ModelDownloadView: View {
 
     /// Import-from-Hugging-Face sheet state
     @State private var showImportSheet = false
+    @State private var showExternalModelsPanel = false
 
     /// Index of the leading Top Picks card the edge arrows scroll to. Desktop
     /// mice can't scroll horizontally, so the carousel is driven by these
@@ -975,7 +976,10 @@ struct ModelDownloadView: View {
     }
 
     private var externalModelsImportPanel: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        DisclosureGroup(isExpanded: $showExternalModelsPanel) {
+            ExternalModelsSettingsView()
+                .padding(.top, 10)
+        } label: {
             HStack(spacing: 8) {
                 Image(systemName: "externaldrive.badge.plus")
                     .font(.system(size: 13, weight: .semibold))
@@ -988,8 +992,6 @@ struct ModelDownloadView: View {
 
                 Spacer()
             }
-
-            ExternalModelsSettingsView()
         }
         .padding(14)
         .background(
