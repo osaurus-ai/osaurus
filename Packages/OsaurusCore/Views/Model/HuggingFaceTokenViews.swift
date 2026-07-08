@@ -128,32 +128,31 @@ struct HuggingFaceTokenPromptSheet: View {
 
 /// Permanent card at the top of Models → Catalog. Offers an Add flow when
 /// no token is configured, and Replace / Remove when one is. Owns its own
-/// token-presence state so it can flip in place. Renders nothing until the
-/// first (off-main) keychain read resolves, avoiding a disconnected flash
-/// for users who already have a token.
+/// token-presence state so it can flip in place.
 struct HuggingFaceTokenCard: View {
     @Environment(\.theme) private var theme
 
-    /// nil = still resolving, true/false = known token presence.
-    @State private var hasToken: Bool?
+    /// Token presence, seeded synchronously at init. `HuggingFaceAuth`
+    /// caches the token in memory and is preloaded off-main at app launch,
+    /// so this read is warm by the time Models opens — no keychain hit on
+    /// the render path, and no async flash. The value only changes through
+    /// this card's own actions, which set it directly.
+    @State private var hasToken: Bool
     @State private var showAddSheet = false
     @State private var isReplacing = false
     @State private var replaceInput: String = ""
 
+    init() {
+        _hasToken = State(initialValue: HuggingFaceAuth.hasToken)
+    }
+
     var body: some View {
         Group {
-            switch hasToken {
-            case .some(true): connectedCard
-            case .some(false): disconnectedCard
-            case .none: EmptyView()
+            if hasToken {
+                connectedCard
+            } else {
+                disconnectedCard
             }
-        }
-        .task {
-            // First token access can read the keychain; keep it off main.
-            let present = await Task.detached(priority: .userInitiated) {
-                HuggingFaceAuth.hasToken
-            }.value
-            hasToken = present
         }
         .sheet(isPresented: $showAddSheet) {
             HuggingFaceTokenPromptSheet {
