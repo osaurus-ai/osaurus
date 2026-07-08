@@ -1967,16 +1967,11 @@ final class NativeToolCallRowView: NSView {
     }
 
     private func updateChevron(expanded: Bool, animated: Bool) {
-        let angle: CGFloat = expanded ? .pi / 2 : 0
-        if animated {
-            NSAnimationContext.runAnimationGroup { ctx in
-                ctx.duration = 0.2
-                ctx.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
-                chevron.layer?.setAffineTransform(CGAffineTransform(rotationAngle: angle))
-            }
-        } else {
-            chevron.layer?.setAffineTransform(CGAffineTransform(rotationAngle: angle))
-        }
+        // Swap the symbol instead of rotating the layer: table-cell relayout
+        // resets layer transforms, leaving an expanded row with a right-
+        // pointing chevron (mirrors NativeFileDiffView's collapse chevron).
+        let symbol = expanded ? "chevron.down" : "chevron.right"
+        chevron.image = SymbolImageCache.image(symbol, accessibilityDescription: nil)
     }
 
     @objc private func tapped() { onToggle?() }

@@ -334,16 +334,11 @@ final class NativeThinkingView: NSView {
     }
 
     private func updateChevron(expanded: Bool, animated: Bool) {
-        let angle: CGFloat = expanded ? .pi / 2 : 0
-        if animated {
-            NSAnimationContext.runAnimationGroup { ctx in
-                ctx.duration = 0.25
-                ctx.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
-                chevronView.layer?.setAffineTransform(CGAffineTransform(rotationAngle: angle))
-            }
-        } else {
-            chevronView.layer?.setAffineTransform(CGAffineTransform(rotationAngle: angle))
-        }
+        // Swap the symbol instead of rotating the layer: table-cell relayout
+        // resets layer transforms, leaving an expanded row with a right-
+        // pointing chevron (mirrors NativeFileDiffView's collapse chevron).
+        let symbol = expanded ? "chevron.down" : "chevron.right"
+        chevronView.image = SymbolImageCache.image(symbol, accessibilityDescription: nil)
     }
 
     @objc private func headerTapped() { onToggle?() }
