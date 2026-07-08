@@ -344,12 +344,12 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
 
         Task { @MainActor in
             if !keychainDisabledTestMode {
+                await MCPProviderManager.shared.connectEnabledProviders()
+                await RemoteProviderManager.shared.connectEnabledProviders()
                 // Touch the search-provider manager so its one-time migration
                 // of osaurus.search plugin keys runs at launch, not lazily on
                 // the first web_search call / Settings visit.
                 _ = SearchProviderManager.shared
-                await MCPProviderManager.shared.connectEnabledProviders()
-                await RemoteProviderManager.shared.connectEnabledProviders()
             }
             await ModelPickerItemCache.shared.prewarmModelCache()
         }

@@ -202,6 +202,7 @@ final class WebSearchTool: OsaurusTool, @unchecked Sendable {
             "type": .string("object"),
             "properties": .object(properties),
             "required": .array([.string("query")]),
+            "additionalProperties": .bool(false),
         ])
     }
 
@@ -306,6 +307,7 @@ final class SearchAndExtractTool: OsaurusTool, @unchecked Sendable {
             ]),
         ]),
         "required": .array([.string("query")]),
+        "additionalProperties": .bool(false),
     ])
 
     func execute(argumentsJSON: String) async throws -> String {
