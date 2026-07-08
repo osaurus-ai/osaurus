@@ -173,10 +173,22 @@ final class ModelDownloadService: ObservableObject {
     ]
 
     private var activeDownloadTasks: [String: Task<Void, Never>] = [:]
-    private var activeDownloaders: [String: DirectDownloader] = [:]
+    /// Live downloaders keyed by model id, then by remote file path — one
+    /// per in-flight file, since several files transfer concurrently.
+    private var activeDownloaders: [String: [String: DirectDownloader]] = [:]
     private var downloadTokens: [String: UUID] = [:]
     private var progressSamples: [String: [(timestamp: TimeInterval, completed: Int64)]] = [:]
     private var lastKnownSpeed: [String: Double] = [:]
+    /// Per-model transfer accounting for aggregate progress: bytes from
+    /// files already fully on disk (`fileTransferBase`), live per-file byte
+    /// counts (`fileTransferProgress`), and the manifest total.
+    private var fileTransferProgress: [String: [String: Int64]] = [:]
+    private var fileTransferBase: [String: Int64] = [:]
+    private var fileTransferTotal: [String: Int64] = [:]
+    /// Models whose user-initiated pause is in flight. Transfers sleeping in
+    /// a retry backoff have no URLSession task to cancel, so they check this
+    /// flag at their next loop iteration instead.
+    private var pauseRequestedModels: Set<String> = []
     /// In-memory pause snapshot. Survives a pause within an app session, but
     /// is intentionally not persisted across launches in v1 — `URLSession`
     /// resume data references temporary cache files that don't necessarily
@@ -186,12 +198,18 @@ final class ModelDownloadService: ObservableObject {
     private var hasRunTopUp = false
 
     /// Snapshot captured at the moment the user paused, used by `resume(_:)`
-    /// to feed the in-flight file's `cancelByProducingResumeData` blob back
+    /// to feed each in-flight file's `cancelByProducingResumeData` blob back
     /// into a fresh `URLSession` download task so the download continues
     /// from the same byte offset.
     private struct PausedSnapshot {
-        let inFlightFilePath: String?
-        let resumeData: Data?
+        let resumeDataByFile: [String: Data]
+    }
+
+    /// Result of one file's transfer inside the download task group.
+    private enum FileTransferOutcome {
+        case completed
+        case paused(path: String, resumeData: Data?)
+        case failed(path: String, error: Error)
     }
 
     init() {
@@ -214,7 +232,7 @@ final class ModelDownloadService: ObservableObject {
         startOrchestration(model: model, resuming: nil)
     }
 
-    /// Resumes a previously paused download, picking up the in-flight file
+    /// Resumes a previously paused download, picking up each in-flight file
     /// from its exact byte offset when `URLSession` resume data is available
     /// and falling back to the per-file skip-if-already-on-disk path
     /// otherwise.
@@ -246,7 +264,8 @@ final class ModelDownloadService: ObservableObject {
         }
 
         activeDownloadTasks[model.id]?.cancel()
-        activeDownloaders[model.id]?.invalidate()
+        invalidateDownloaders(for: model.id)
+        pauseRequestedModels.remove(model.id)
         let token = UUID()
         downloadTokens[model.id] = token
 
@@ -258,9 +277,6 @@ final class ModelDownloadService: ObservableObject {
             etaSeconds: nil
         )
         progressSamples[model.id] = []
-
-        let downloader = DirectDownloader()
-        activeDownloaders[model.id] = downloader
 
         let task = Task { [weak self, resuming] in
             guard let self = self else { return }
@@ -289,12 +305,6 @@ final class ModelDownloadService: ObservableObject {
                 }
                 return
             }
-
-            // Mutable window into the orchestration loop so the catch
-            // handlers (pause / cancel / failure) know which file was
-            // mid-flight and how many bytes had completed before it.
-            var inFlightFilePath: String? = nil
-            var inFlightFileBaseBytes: Int64 = 0
 
             defer {
                 Task { @MainActor [weak self] in
@@ -372,6 +382,9 @@ final class ModelDownloadService: ObservableObject {
 
                 await MainActor.run {
                     guard self.downloadTokens[model.id] == token else { return }
+                    self.fileTransferBase[model.id] = completedFileBytes
+                    self.fileTransferProgress[model.id] = [:]
+                    self.fileTransferTotal[model.id] = totalBytes
                     let fraction = totalBytes > 0 ? Double(completedFileBytes) / Double(totalBytes) : 0
                     self.downloadStates[model.id] = .downloading(progress: fraction)
                     self.downloadMetrics[model.id] = DownloadMetrics(
@@ -382,70 +395,100 @@ final class ModelDownloadService: ObservableObject {
                     )
                 }
 
-                for file in filesToDownload {
-                    try Task.checkCancellation()
+                // Transfer up to three files at once. Per-connection
+                // throughput to the Hugging Face CDN is the bottleneck on
+                // most links, and the multi-shard repos are the ones users
+                // wait on. Completion order stops mattering — the manifest
+                // check below is authoritative.
+                let maxConcurrentFiles = 3
+                var pausedFiles: [(path: String, resumeData: Data?)] = []
+                var firstFailure: (path: String, error: Error)? = nil
 
-                    guard
-                        let destination = HuggingFaceService.destinationURL(
-                            forRemotePath: file.path,
-                            under: model.localDirectory
-                        )
-                    else {
-                        continue
-                    }
-                    guard let downloadURL = Self.resolveURL(repoId: model.id, path: file.path)
-                    else { continue }
+                await withTaskGroup(of: FileTransferOutcome.self) { group in
+                    var nextIndex = 0
+                    var stopScheduling = false
 
-                    let baseCompleted = completedFileBytes
-                    inFlightFilePath = file.path
-                    inFlightFileBaseBytes = baseCompleted
-
-                    let onProgress: @Sendable (Int64, Int64) -> Void = {
-                        [weak self] bytesWritten, _ in
-                        Task { @MainActor [weak self] in
-                            guard let self else { return }
-                            self.updateDownloadProgress(
-                                modelId: model.id,
+                    while nextIndex < min(maxConcurrentFiles, filesToDownload.count) {
+                        let file = filesToDownload[nextIndex]
+                        nextIndex += 1
+                        let resumeData = resuming?.resumeDataByFile[file.path]
+                        group.addTask {
+                            await self.transferFile(
+                                file,
+                                model: model,
                                 token: token,
-                                completedBytes: baseCompleted + bytesWritten,
-                                totalBytes: totalBytes
+                                resumeData: resumeData
                             )
                         }
                     }
 
-                    // Only the file that was actually mid-flight when the
-                    // user paused gets URLSession resume data. Other files
-                    // start fresh — with the per-file skip path above
-                    // having already short-circuited fully-downloaded ones.
-                    let resumeDataForFile: Data? =
-                        (resuming?.inFlightFilePath == file.path) ? resuming?.resumeData : nil
-
-                    var attempt = 1
-                    var resumeDataForAttempt = resumeDataForFile
-                    while true {
-                        do {
-                            try await downloader.download(
-                                from: downloadURL,
-                                to: destination,
-                                expectedSize: file.size,
-                                resumeData: resumeDataForAttempt,
-                                onProgress: onProgress
-                            )
+                    while let outcome = await group.next() {
+                        switch outcome {
+                        case .completed:
                             break
-                        } catch {
-                            // A failed attempt's URLSession temp file is gone;
-                            // any retry restarts this file from byte zero.
-                            resumeDataForAttempt = nil
-                            guard attempt < Self.maxTransferAttempts,
-                                Self.isRetryableTransferError(error)
-                            else { throw error }
-                            let delay = Self.transferRetryDelay(attempt: attempt, error: error)
-                            attempt += 1
-                            try await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
+                        case .paused(let path, let resumeData):
+                            pausedFiles.append((path, resumeData))
+                            stopScheduling = true
+                        case .failed(let path, let error):
+                            stopScheduling = true
+                            if firstFailure == nil, !(error is CancellationError) {
+                                firstFailure = (path, error)
+                                // Abort the sister transfers promptly; they
+                                // surface as cancellations, which the
+                                // aggregation above ignores.
+                                await MainActor.run {
+                                    self.invalidateDownloaders(for: model.id)
+                                }
+                            }
+                        }
+                        if !stopScheduling, nextIndex < filesToDownload.count {
+                            let file = filesToDownload[nextIndex]
+                            nextIndex += 1
+                            let resumeData = resuming?.resumeDataByFile[file.path]
+                            group.addTask {
+                                await self.transferFile(
+                                    file,
+                                    model: model,
+                                    token: token,
+                                    resumeData: resumeData
+                                )
+                            }
                         }
                     }
-                    completedFileBytes += file.size
-                    inFlightFilePath = nil
+                }
+
+                try Task.checkCancellation()
+
+                if !pausedFiles.isEmpty {
+                    var resumeDataByFile: [String: Data] = [:]
+                    for paused in pausedFiles {
+                        if let data = paused.resumeData {
+                            resumeDataByFile[paused.path] = data
+                        }
+                    }
+                    await MainActor.run {
+                        self.commitPause(
+                            modelId: model.id,
+                            token: token,
+                            resumeDataByFile: resumeDataByFile
+                        )
+                    }
+                    return
+                }
+
+                if let firstFailure {
+                    await MainActor.run {
+                        self.finalizeOrchestration(
+                            modelId: model.id,
+                            token: token,
+                            finalState: .failed(
+                                error: firstFailure.error.localizedDescription
+                            ),
+                            failureStage: "file-transfer",
+                            failureFilePath: firstFailure.path
+                        )
+                    }
+                    return
                 }
 
                 // Manifest driven completion check. `model.isDownloaded` only
@@ -529,19 +572,6 @@ final class ModelDownloadService: ObservableObject {
                         NotificationCenter.default.post(name: .localModelsChanged, object: nil)
                     }
                 }
-            } catch let pauseInfo as DirectDownloader.PauseInfo {
-                let snapshotPath = inFlightFilePath
-                let baseBytes = inFlightFileBaseBytes
-                await MainActor.run {
-                    self.commitPause(
-                        modelId: model.id,
-                        token: token,
-                        bytesDownloadedInFile: pauseInfo.bytesDownloaded,
-                        baseBytesBeforeFile: baseBytes,
-                        inFlightFilePath: snapshotPath,
-                        resumeData: pauseInfo.resumeData
-                    )
-                }
             } catch is CancellationError {
                 await MainActor.run {
                     self.finalizeOrchestration(
@@ -551,14 +581,12 @@ final class ModelDownloadService: ObservableObject {
                     )
                 }
             } catch {
-                let snapshotPath = inFlightFilePath
                 await MainActor.run {
                     self.finalizeOrchestration(
                         modelId: model.id,
                         token: token,
                         finalState: .failed(error: error.localizedDescription),
-                        failureStage: snapshotPath != nil ? "file-transfer" : "orchestration",
-                        failureFilePath: snapshotPath
+                        failureStage: "orchestration"
                     )
                 }
             }
@@ -567,23 +595,147 @@ final class ModelDownloadService: ObservableObject {
         activeDownloadTasks[model.id] = task
     }
 
+    /// Downloads one manifest file, retrying transient failures. Runs as a
+    /// task-group child; being a method on this `@MainActor` service keeps
+    /// every touch of the shared accounting state serialized.
+    private func transferFile(
+        _ file: HuggingFaceService.MatchedFile,
+        model: MLXModel,
+        token: UUID,
+        resumeData: Data?
+    ) async -> FileTransferOutcome {
+        guard
+            let destination = HuggingFaceService.destinationURL(
+                forRemotePath: file.path,
+                under: model.localDirectory
+            ),
+            let downloadURL = Self.resolveURL(repoId: model.id, path: file.path)
+        else {
+            // Unresolvable path: skip; the manifest completion check reports it.
+            return .completed
+        }
+
+        let downloader = DirectDownloader()
+        activeDownloaders[model.id, default: [:]][file.path] = downloader
+        defer {
+            activeDownloaders[model.id]?[file.path] = nil
+            downloader.invalidate()
+        }
+
+        let onProgress: @Sendable (Int64, Int64) -> Void = { [weak self] bytesWritten, _ in
+            Task { @MainActor [weak self] in
+                self?.recordFileProgress(
+                    modelId: model.id,
+                    token: token,
+                    path: file.path,
+                    bytes: bytesWritten
+                )
+            }
+        }
+
+        var attempt = 1
+        var resumeDataForAttempt = resumeData
+        while true {
+            if pauseRequestedModels.contains(model.id) {
+                return .paused(path: file.path, resumeData: resumeDataForAttempt)
+            }
+            guard downloadTokens[model.id] == token else {
+                return .failed(path: file.path, error: CancellationError())
+            }
+            do {
+                try await downloader.download(
+                    from: downloadURL,
+                    to: destination,
+                    expectedSize: file.size,
+                    resumeData: resumeDataForAttempt,
+                    onProgress: onProgress
+                )
+                finishFileTransfer(modelId: model.id, token: token, path: file.path, size: file.size)
+                return .completed
+            } catch let pauseInfo as DirectDownloader.PauseInfo {
+                notePausedFileBytes(
+                    modelId: model.id,
+                    token: token,
+                    path: file.path,
+                    bytes: pauseInfo.bytesDownloaded
+                )
+                return .paused(path: file.path, resumeData: pauseInfo.resumeData)
+            } catch {
+                // A failed attempt's URLSession temp file is gone; any retry
+                // restarts this file from byte zero.
+                resumeDataForAttempt = nil
+                guard attempt < Self.maxTransferAttempts, Self.isRetryableTransferError(error)
+                else {
+                    return .failed(path: file.path, error: error)
+                }
+                let delay = Self.transferRetryDelay(attempt: attempt, error: error)
+                attempt += 1
+                do {
+                    try await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
+                } catch {
+                    return .failed(path: file.path, error: CancellationError())
+                }
+            }
+        }
+    }
+
+    /// Record live byte progress for one in-flight file and republish the
+    /// model's aggregate progress.
+    private func recordFileProgress(modelId: String, token: UUID, path: String, bytes: Int64) {
+        guard downloadTokens[modelId] == token else { return }
+        fileTransferProgress[modelId, default: [:]][path] = bytes
+        guard !pauseRequestedModels.contains(modelId) else { return }
+        publishAggregateProgress(modelId: modelId, token: token)
+    }
+
+    /// Freeze a paused file's byte count without republishing `.downloading`
+    /// state — `commitPause` reads it for the final paused metrics.
+    private func notePausedFileBytes(modelId: String, token: UUID, path: String, bytes: Int64) {
+        guard downloadTokens[modelId] == token else { return }
+        fileTransferProgress[modelId, default: [:]][path] = bytes
+    }
+
+    /// Fold a finished file into the completed-bytes base.
+    private func finishFileTransfer(modelId: String, token: UUID, path: String, size: Int64) {
+        guard downloadTokens[modelId] == token else { return }
+        fileTransferProgress[modelId]?[path] = nil
+        fileTransferBase[modelId, default: 0] += size
+        guard !pauseRequestedModels.contains(modelId) else { return }
+        publishAggregateProgress(modelId: modelId, token: token)
+    }
+
+    private func publishAggregateProgress(modelId: String, token: UUID) {
+        let completed =
+            (fileTransferBase[modelId] ?? 0)
+            + (fileTransferProgress[modelId]?.values.reduce(0, +) ?? 0)
+        updateDownloadProgress(
+            modelId: modelId,
+            token: token,
+            completedBytes: completed,
+            totalBytes: fileTransferTotal[modelId] ?? 0
+        )
+    }
+
+    private func invalidateDownloaders(for modelId: String) {
+        activeDownloaders[modelId]?.values.forEach { $0.invalidate() }
+        activeDownloaders[modelId] = nil
+    }
+
     /// Token-guarded transition from `.downloading` → `.paused`. Freezes
     /// `downloadMetrics` (clears speed/ETA, keeps received/total bytes so
-    /// the user still sees "X / Y"), drops the live downloader/task, and
-    /// stashes the in-flight file's resume-data blob so a later
-    /// `resume(_:)` can hand it to a fresh `URLSessionDownloadTask`.
+    /// the user still sees "X / Y"), drops the live downloaders/task, and
+    /// stashes each in-flight file's resume-data blob so a later
+    /// `resume(_:)` can hand them to fresh `URLSessionDownloadTask`s.
     private func commitPause(
         modelId: String,
         token: UUID,
-        bytesDownloadedInFile: Int64,
-        baseBytesBeforeFile: Int64,
-        inFlightFilePath: String?,
-        resumeData: Data?
+        resumeDataByFile: [String: Data]
     ) {
         guard downloadTokens[modelId] == token else { return }
-        let metrics = downloadMetrics[modelId]
-        let total = metrics?.totalBytes ?? 0
-        let completed = baseBytesBeforeFile + bytesDownloadedInFile
+        let total = fileTransferTotal[modelId] ?? downloadMetrics[modelId]?.totalBytes ?? 0
+        let completed =
+            (fileTransferBase[modelId] ?? 0)
+            + (fileTransferProgress[modelId]?.values.reduce(0, +) ?? 0)
         let fraction =
             total > 0
             ? min(1.0, max(0.0, Double(completed) / Double(total)))
@@ -591,18 +743,18 @@ final class ModelDownloadService: ObservableObject {
         downloadStates[modelId] = .paused(progress: fraction)
         downloadMetrics[modelId] = DownloadMetrics(
             bytesReceived: completed,
-            totalBytes: metrics?.totalBytes,
+            totalBytes: total > 0 ? total : nil,
             bytesPerSecond: nil,
             etaSeconds: nil
         )
         progressSamples[modelId] = []
         lastKnownSpeed[modelId] = nil
-        pausedDownloads[modelId] = PausedSnapshot(
-            inFlightFilePath: inFlightFilePath,
-            resumeData: resumeData
-        )
-        activeDownloaders[modelId]?.invalidate()
-        activeDownloaders[modelId] = nil
+        fileTransferProgress[modelId] = nil
+        fileTransferBase[modelId] = nil
+        fileTransferTotal[modelId] = nil
+        pauseRequestedModels.remove(modelId)
+        pausedDownloads[modelId] = PausedSnapshot(resumeDataByFile: resumeDataByFile)
+        invalidateDownloaders(for: modelId)
         activeDownloadTasks[modelId] = nil
     }
 
@@ -615,8 +767,14 @@ final class ModelDownloadService: ObservableObject {
     func pause(_ modelId: String) {
         guard case .downloading(let progress) = downloadStates[modelId] else { return }
 
-        if let downloader = activeDownloaders[modelId] {
-            downloader.pause()
+        if let downloaders = activeDownloaders[modelId], !downloaders.isEmpty {
+            // Flag first: transfers waiting in a retry backoff have no live
+            // URLSession task for `pause()` to cancel, and pick the flag up
+            // at their next loop iteration instead.
+            pauseRequestedModels.insert(modelId)
+            for downloader in downloaders.values {
+                downloader.pause()
+            }
             return
         }
 
@@ -636,7 +794,7 @@ final class ModelDownloadService: ObservableObject {
                 etaSeconds: nil
             )
         }
-        pausedDownloads[modelId] = PausedSnapshot(inFlightFilePath: nil, resumeData: nil)
+        pausedDownloads[modelId] = PausedSnapshot(resumeDataByFile: [:])
         downloadStates[modelId] = .paused(progress: progress)
     }
 
@@ -822,6 +980,10 @@ final class ModelDownloadService: ObservableObject {
         downloadMetrics[modelId] = nil
         progressSamples[modelId] = nil
         lastKnownSpeed[modelId] = nil
+        fileTransferProgress[modelId] = nil
+        fileTransferBase[modelId] = nil
+        fileTransferTotal[modelId] = nil
+        pauseRequestedModels.remove(modelId)
     }
 
     /// Cancels the orchestration `Task` and tears down the per-model
@@ -832,8 +994,7 @@ final class ModelDownloadService: ObservableObject {
     private func releaseOrchestrationResources(for modelId: String) {
         activeDownloadTasks[modelId]?.cancel()
         activeDownloadTasks[modelId] = nil
-        activeDownloaders[modelId]?.invalidate()
-        activeDownloaders[modelId] = nil
+        invalidateDownloaders(for: modelId)
     }
 
     /// Token-guarded terminal cleanup. Used by the orchestration `Task`'s
@@ -854,8 +1015,7 @@ final class ModelDownloadService: ObservableObject {
         downloadStates[modelId] = finalState
         clearDownloadTracking(for: modelId)
         pausedDownloads[modelId] = nil
-        activeDownloaders[modelId]?.invalidate()
-        activeDownloaders[modelId] = nil
+        invalidateDownloaders(for: modelId)
         if case .failed(let error) = finalState {
             downloadAlert = Self.makeAlert(
                 modelId: modelId,
