@@ -1538,7 +1538,8 @@ private struct SandboxWriteFileTool: OsaurusTool, @unchecked Sendable {
         + "provide `old_string` (+`new_string`) to replace one exact match. **Use this instead of "
         + "`echo`/`cat` heredoc / `sed` / `awk` in `sandbox_exec`.** Creates parent directories as "
         + "needed. For an edit, `old_string` must uniquely match one location — include surrounding "
-        + "context lines if needed; it fails if `old_string` is missing or matches multiple locations."
+        + "context lines if needed; it fails if `old_string` is missing or matches multiple locations. "
+        + "Always emit `path` as the FIRST argument, before `content`/`old_string`."
     let agentName: String
     let home: String
 

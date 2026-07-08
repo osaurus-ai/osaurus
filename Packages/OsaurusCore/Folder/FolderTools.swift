@@ -1418,6 +1418,7 @@ struct FileWriteTool: OsaurusTool, PermissionedTool {
         + "`content` parameter. Pass `dry_run: true` to preview the diff and risk warnings without "
         + "writing. Not for structured `.xlsx` / `.pdf` / `.pptx` outputs — write text formats such "
         + "as CSV/TSV/Markdown instead. "
+        + "Always emit `path` as the FIRST argument, before `content`. "
         + "Example: {\"path\": \"notes/summary.md\", \"content\": \"# Summary\\n...\"}"
     let parameters: JSONValue? = .object([
         "type": .string("object"),
@@ -1565,6 +1566,7 @@ struct FileEditTool: OsaurusTool, PermissionedTool {
         + "Copy the RAW file text only: never include the `N|` line-number prefixes shown in "
         + "`file_read` output. Fails if `old_string` is not found or matches multiple locations. "
         + "Pass `dry_run: true` to preview the diff without modifying the file. "
+        + "Always emit `path` as the FIRST argument, before `old_string`/`new_string`. "
         + "Example: {\"path\": \"config.py\", \"old_string\": \"debug = True\", \"new_string\": \"debug = False\"}"
     let parameters: JSONValue? = .object([
         "type": .string("object"),
