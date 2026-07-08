@@ -53,6 +53,7 @@ public struct StorageSettingsView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 24) {
                     modelStorageSection
+                    huggingFaceSection
                     externalModelsSection
                     postureCard
                         .settingsLandingAnchor("storage.encryption")
@@ -126,6 +127,19 @@ public struct StorageSettingsView: View {
     private var modelStorageSection: some View {
         SettingsSection(title: "Models Directory", icon: "cube.box", anchorId: "storage.location") {
             DirectoryPickerView()
+        }
+    }
+
+    /// Optional Hugging Face access token for faster (higher-rate-limit)
+    /// and gated-repo downloads.
+    private var huggingFaceSection: some View {
+        SettingsSection(
+            title: "Hugging Face",
+            icon: "arrow.down.circle",
+            anchorId: "storage.huggingFaceToken"
+        ) {
+            HuggingFaceTokenSettingsView()
+                .environment(\.theme, themeManager.currentTheme)
         }
     }
 
