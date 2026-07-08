@@ -117,12 +117,10 @@ struct HuggingFaceTokenPromptSheet: View {
     private func saveAndContinue() {
         guard !trimmedToken.isEmpty else { return }
         HuggingFaceAuth.setToken(trimmedToken)
-        HuggingFaceAuth.markPromptDismissed()
         onContinue()
     }
 
     private func continueWithout() {
-        HuggingFaceAuth.markPromptDismissed()
         onContinue()
     }
 }

@@ -62,26 +62,11 @@ enum HuggingFaceAuth {
 
     // MARK: - Download-time prompt
 
-    private static let promptDismissedDefaultsKey = "HuggingFaceTokenPromptDismissed"
-
-    /// Whether starting a download should first offer the token prompt:
-    /// only when no token is configured and the user hasn't already
-    /// declined the offer once.
+    /// Whether starting a download should first offer the token prompt.
+    /// Offered on every download until a token is configured — the speed
+    /// difference is large enough that a one-time offer undersells it.
     static var shouldOfferTokenPrompt: Bool {
-        !hasToken && !UserDefaults.standard.bool(forKey: promptDismissedDefaultsKey)
-    }
-
-    /// Remember that the user saw the download-time prompt (saved a token
-    /// or chose to continue without one) so it never nags again.
-    static func markPromptDismissed() {
-        UserDefaults.standard.set(true, forKey: promptDismissedDefaultsKey)
-    }
-
-    /// Re-arm the download-time prompt. Called when a tokenless download
-    /// fails with a rate-limit/auth error — the one moment the offer is
-    /// clearly worth repeating.
-    static func resetPromptDismissal() {
-        UserDefaults.standard.removeObject(forKey: promptDismissedDefaultsKey)
+        !hasToken
     }
 
     /// Attach `Authorization: Bearer <token>` when a token is configured.

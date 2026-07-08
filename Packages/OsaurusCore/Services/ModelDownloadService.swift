@@ -1027,15 +1027,6 @@ final class ModelDownloadService: ObservableObject {
                 stage: failureStage,
                 filePath: failureFilePath
             )
-            // A tokenless download that died on throttling or auth is the
-            // one moment the declined token offer is worth repeating.
-            let lower = error.lowercased()
-            if !HuggingFaceAuth.hasToken,
-                lower.contains("http 429") || lower.contains("http 401")
-                    || lower.contains("http 403")
-            {
-                HuggingFaceAuth.resetPromptDismissal()
-            }
         }
         return true
     }
