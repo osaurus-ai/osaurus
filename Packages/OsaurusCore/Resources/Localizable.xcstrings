@@ -7625,7 +7625,38 @@
       }
     },
     "A free Hugging Face token raises rate limits so models download faster." : {
-
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ein kostenloser Hugging-Face-Token erhöht die Ratenlimits, sodass Modelle schneller heruntergeladen werden."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "무료 Hugging Face 토큰은 속도 제한을 높여 모델을 더 빠르게 다운로드합니다."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Бесплатный токен Hugging Face повышает лимиты запросов, ускоряя загрузку моделей."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "免费的 Hugging Face 令牌可提高速率限制，让模型下载更快。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "免費的 Hugging Face 權杖可提高速率限制，讓模型下載更快。"
+          }
+        }
+      }
     },
     "A friendly all-rounder for everyday questions and tasks." : {
       "localizations" : {
@@ -10731,7 +10762,38 @@
       }
     },
     "Add token" : {
-
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Token hinzufügen"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "토큰 추가"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Добавить токен"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "添加令牌"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "新增權杖"
+          }
+        }
+      }
     },
     "Add Tool" : {
       "localizations" : {
@@ -38436,7 +38498,38 @@
       }
     },
     "Couldn't reach this model on Hugging Face. The repo may be private, gated, removed, or temporarily unreachable. Adding a Hugging Face token from the Catalog tab helps with gated repos and rate limits." : {
-
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Dieses Modell konnte auf Hugging Face nicht erreicht werden. Das Repository ist möglicherweise privat, zugangsbeschränkt, entfernt oder vorübergehend nicht erreichbar. Das Hinzufügen eines Hugging-Face-Tokens im Tab „Katalog“ hilft bei zugangsbeschränkten Repositorys und Ratenlimits."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Hugging Face에서 이 모델에 연결할 수 없습니다. 리포지토리가 비공개이거나 접근이 제한되었거나 삭제되었거나 일시적으로 연결할 수 없을 수 있습니다. 카탈로그 탭에서 Hugging Face 토큰을 추가하면 접근 제한 리포지토리와 속도 제한에 도움이 됩니다."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Не удалось получить доступ к этой модели на Hugging Face. Репозиторий может быть приватным, с ограниченным доступом, удалённым или временно недоступным. Добавление токена Hugging Face на вкладке «Каталог» помогает с репозиториями с ограниченным доступом и лимитами запросов."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "无法在 Hugging Face 上访问此模型。该存储库可能是私有的、受限的、已删除或暂时无法访问。在“目录”标签页中添加 Hugging Face 令牌有助于访问受限存储库并缓解速率限制。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "無法在 Hugging Face 上存取此模型。該存儲庫可能是私人的、受限的、已移除或暫時無法存取。在「目錄」標籤頁中新增 Hugging Face 權杖有助於存取受限存儲庫並緩解速率限制。"
+          }
+        }
+      }
     },
     "Couldn't save default agent settings" : {
       "localizations" : {
@@ -38889,7 +38982,38 @@
       }
     },
     "Create a Read token using [this link](https://huggingface.co/settings/tokens/new?tokenType=read)" : {
-
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Erstelle einen Read-Token über [diesen Link](https://huggingface.co/settings/tokens/new?tokenType=read)"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "[이 링크](https://huggingface.co/settings/tokens/new?tokenType=read)로 Read 토큰을 생성하세요"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Создайте токен Read по [этой ссылке](https://huggingface.co/settings/tokens/new?tokenType=read)"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "使用[此链接](https://huggingface.co/settings/tokens/new?tokenType=read)创建一个 Read 令牌"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "使用[此連結](https://huggingface.co/settings/tokens/new?tokenType=read)建立一個 Read 權杖"
+          }
+        }
+      }
     },
     "Create a Slack app at api.slack.com/apps" : {
       "localizations" : {
@@ -48091,7 +48215,38 @@
       }
     },
     "Downloads without a token are rate-limited by Hugging Face and can be slow or fail under load." : {
-
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Downloads ohne Token werden von Hugging Face durch Ratenlimits gedrosselt und können langsam sein oder unter Last fehlschlagen."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "토큰 없이 다운로드하면 Hugging Face의 속도 제한이 적용되어 느리거나 부하 시 실패할 수 있습니다."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Загрузки без токена ограничиваются Hugging Face по частоте запросов и могут быть медленными или прерываться при нагрузке."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "没有令牌的下载会受到 Hugging Face 的速率限制，可能很慢或在高负载时失败。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "沒有權杖的下載會受到 Hugging Face 的速率限制，可能很慢或在高負載時失敗。"
+          }
+        }
+      }
     },
     "Draft and send texts" : {
       "localizations" : {
@@ -57590,10 +57745,72 @@
       }
     },
     "Faster downloads with a Hugging Face token" : {
-
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Schnellere Downloads mit einem Hugging-Face-Token"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Hugging Face 토큰으로 더 빠른 다운로드"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Более быстрые загрузки с токеном Hugging Face"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "使用 Hugging Face 令牌加快下载速度"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "使用 Hugging Face 權杖加快下載速度"
+          }
+        }
+      }
     },
     "Faster model downloads" : {
-
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Schnellere Modell-Downloads"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "더 빠른 모델 다운로드"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Более быстрая загрузка моделей"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "更快的模型下载"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "更快的模型下載"
+          }
+        }
+      }
     },
     "Favourites" : {
       "localizations" : {
@@ -65440,7 +65657,38 @@
       }
     },
     "Hugging Face responded with %@. For a gated or private repo, add a Hugging Face access token from the Catalog tab; otherwise try again in a moment." : {
-
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Hugging Face hat mit %@ geantwortet. Füge für ein zugangsbeschränktes oder privates Repository im Tab „Katalog“ einen Hugging-Face-Zugriffstoken hinzu; andernfalls versuche es in Kürze erneut."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Hugging Face가 %@(으)로 응답했습니다. 접근 제한 또는 비공개 리포지토리의 경우 카탈로그 탭에서 Hugging Face 액세스 토큰을 추가하세요. 그렇지 않으면 잠시 후 다시 시도하세요."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Hugging Face ответил: %@. Для репозитория с ограниченным доступом или приватного добавьте токен доступа Hugging Face на вкладке «Каталог»; иначе повторите попытку чуть позже."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Hugging Face 返回了 %@。对于受限或私有存储库，请在“目录”标签页中添加 Hugging Face 访问令牌；否则请稍后再试。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Hugging Face 回應了 %@。對於受限或私人存儲庫，請在「目錄」標籤頁中新增 Hugging Face 存取權杖；否則請稍後再試。"
+          }
+        }
+      }
     },
     "Hugging Face responded with %@. Private or gated repos aren't supported yet; otherwise try again in a moment." : {
       "extractionState" : "stale",
@@ -65478,7 +65726,38 @@
       }
     },
     "Hugging Face token connected" : {
-
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Hugging-Face-Token verbunden"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Hugging Face 토큰 연결됨"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Токен Hugging Face подключён"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已连接 Hugging Face 令牌"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已連接 Hugging Face 權杖"
+          }
+        }
+      }
     },
     "Human-readable name shown in the channel list." : {
       "localizations" : {
@@ -82940,7 +83219,38 @@
       }
     },
     "Model downloads use your account's higher rate limits and gated-repo access." : {
-
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Modell-Downloads nutzen die höheren Ratenlimits und den Zugang zu zugangsbeschränkten Repositorys deines Kontos."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "모델 다운로드에 계정의 더 높은 속도 제한과 접근 제한 리포지토리 접근 권한이 사용됩니다."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Загрузка моделей использует повышенные лимиты запросов вашего аккаунта и доступ к репозиториям с ограниченным доступом."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "模型下载将使用您账户更高的速率限制和受限存储库访问权限。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "模型下載將使用您帳戶更高的速率限制和受限存儲庫存取權限。"
+          }
+        }
+      }
     },
     "Model Family" : {
       "localizations" : {
@@ -99992,7 +100302,38 @@
       }
     },
     "Paste it below. It stays in your macOS Keychain" : {
-
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Füge ihn unten ein. Er bleibt in deinem macOS-Schlüsselbund."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "아래에 붙여넣으세요. macOS 키체인에 저장됩니다."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Вставьте его ниже. Он останется в связке ключей macOS."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "将其粘贴在下方。它会保存在您的 macOS 钥匙串中。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "將其貼在下方。它會保存在您的 macOS 鑰匙圈中。"
+          }
+        }
+      }
     },
     "Paste sample text to preview exactly what Osaurus would redact with your current rules — before anything reaches a provider." : {
       "comment" : "A description under the text field in the",
@@ -126633,7 +126974,38 @@
       }
     },
     "Save token" : {
-
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Token speichern"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "토큰 저장"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Сохранить токен"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "保存令牌"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "保存權杖"
+          }
+        }
+      }
     },
     "Save Token" : {
       "comment" : "A button label that saves a bot token.",
@@ -134808,7 +135180,38 @@
       }
     },
     "Sign in (or sign up free) at huggingface.co" : {
-
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Melde dich bei huggingface.co an (oder registriere dich kostenlos)."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "huggingface.co에서 로그인하세요(또는 무료로 가입하세요)."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Войдите (или зарегистрируйтесь бесплатно) на huggingface.co."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "在 huggingface.co 登录（或免费注册）。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "在 huggingface.co 登入（或免費註冊）。"
+          }
+        }
+      }
     },
     "Sign in from the provider row." : {
       "localizations" : {
