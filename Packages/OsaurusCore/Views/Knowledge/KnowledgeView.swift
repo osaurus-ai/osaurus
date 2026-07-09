@@ -46,18 +46,18 @@ struct KnowledgeView: View {
                         examples: [
                             .init(
                                 icon: "doc.text",
-                                title: L("Team Standards"),
-                                description: L("Coding and testing guidelines agents must follow")
+                                title: L("Guides & Policies"),
+                                description: L("How your team does things, written down")
                             ),
                             .init(
                                 icon: "square.on.square",
                                 title: L("Templates"),
-                                description: L("Master templates referenced when building")
+                                description: L("Wording you reuse, like email replies")
                             ),
                             .init(
                                 icon: "book",
-                                title: L("How-to Guides"),
-                                description: L("SOPs and runbooks for recurring tasks")
+                                title: L("How-To Steps"),
+                                description: L("Simple instructions for everyday tasks")
                             ),
                         ],
                         primaryAction: .init(
