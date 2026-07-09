@@ -207,6 +207,10 @@ public final class ToolRegistry: ObservableObject {
             WebSearchTool(),
             // Inline data visualization rendered as a chart card.
             RenderChartTool(),
+            // Current date/time. Local models have no clock in-context, so a
+            // plain "what is the time?" (a common first-message smoke test)
+            // otherwise makes them guess. Always loaded; no side effects.
+            CurrentTimeTool(),
             // Text-delegation family: `spawn_agent` hands a task to a configured
             // agent (its prompt + model); `spawn_model` hands a task to a bare
             // spawnable model id. Both gate per-agent (their pools) in
