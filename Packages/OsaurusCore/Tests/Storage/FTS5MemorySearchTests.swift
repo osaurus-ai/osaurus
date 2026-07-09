@@ -99,11 +99,14 @@ struct FTS5MemorySearchTests {
 
     @Test
     func querySanitizerStripsSQLOperators() {
-        // Single-word queries get quoted; multi-word with operator-ish
-        // characters should still produce safe quoted tokens.
-        #expect(MemoryDatabase.ftsMatchQuery("foo AND bar OR baz") == "\"foo\" \"AND\" \"bar\" \"OR\" \"baz\"")
-        #expect(MemoryDatabase.ftsMatchQuery("(rm -rf /)") == "\"rm\" \"-rf\"")
-        #expect(MemoryDatabase.ftsMatchQuery("\u{0}\"NEAR\"") == "\"NEAR\"")
+        // Terms are quoted, prefix-matched, and OR-joined; operator-ish
+        // characters embedded by the user become safe literal tokens.
+        #expect(
+            MemoryDatabase.ftsMatchQuery("foo AND bar OR baz")
+                == "\"foo\"* OR \"AND\"* OR \"bar\"* OR \"OR\"* OR \"baz\"*"
+        )
+        #expect(MemoryDatabase.ftsMatchQuery("(rm -rf /)") == "\"rm\"* OR \"-rf\"*")
+        #expect(MemoryDatabase.ftsMatchQuery("\u{0}\"NEAR\"") == "\"NEAR\"*")
         #expect(MemoryDatabase.ftsMatchQuery("   ") == nil)
     }
 }
