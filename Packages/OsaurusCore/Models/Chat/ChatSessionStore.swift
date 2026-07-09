@@ -73,6 +73,20 @@ enum ChatSessionStore {
         }
     }
 
+    /// Non-blocking variant of `save`. Hands the write to the database's serial
+    /// queue and returns immediately so a main-actor caller never stalls on the
+    /// encode + transaction. Falls back to the same deferred-save queue when the
+    /// DB isn't open yet, so no write is lost across a key rotation.
+    static func saveAsync(_ session: ChatSessionData) {
+        guard !pendingDeletes.contains(session.id) else { return }
+        ensureOpen()
+        guard didOpen else {
+            pendingSaves[session.id] = session
+            return
+        }
+        ChatHistoryDatabase.shared.saveSessionAsync(session)
+    }
+
     /// Sessions whose writes were deferred because the chat-history DB wasn't
     /// open yet. Keyed by id so repeated saves of the same session collapse to
     /// the latest snapshot. Drained by `flushPendingSaves()`.

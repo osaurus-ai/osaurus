@@ -1943,7 +1943,13 @@ final class ChatSession: ObservableObject {
         }
 
         let data = toSessionData()
-        ChatSessionsManager.shared.save(data)
+        // Persist off the main actor: serializing a long conversation and
+        // running the DB transaction synchronously here (this runs on the main
+        // actor, and `completeRunCleanup`/`stop` call it during run teardown)
+        // can block the main thread past the 3s app-hang watchdog. The
+        // in-memory session list is still updated synchronously inside
+        // `saveAsync`, so the UI stays consistent.
+        ChatSessionsManager.shared.saveAsync(data)
         onSessionChanged?()
     }
 
