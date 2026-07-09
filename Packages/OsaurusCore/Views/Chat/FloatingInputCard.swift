@@ -38,8 +38,11 @@ struct FloatingInputCard: View {
     var contextBreakdown: ContextBreakdown = .zero
     /// Total micro-USD spent on the Osaurus Router this session.
     var sessionSpendMicro: Int = 0
-    /// Whether to show the session spend chip (true only for Osaurus Router sessions).
-    var showSessionSpend: Bool = false
+    /// True when this session's spend is billed via the Osaurus Router (the
+    /// managed cloud provider is the selected model). Drives the credits chip's
+    /// low/empty escalation and the wallet panel's session-spend row; the chip
+    /// itself is shown in every session where the router is usable.
+    var isRouterBilledSession: Bool = false
     @Binding var imageComposerSettings: ImageComposerSettings
     let onSend: (String?) -> Void
     let onStop: () -> Void
@@ -77,7 +80,7 @@ struct FloatingInputCard: View {
     var onSendNow: (() -> Void)?
     /// Discard the queued send without sending it. Called by the chip's ×.
     var onCancelQueued: (() -> Void)?
-    /// Invoked when the user taps the credits chip (opens the top-up sheet).
+    /// Invoked by the wallet panel's "Add credits" button (opens the top-up sheet).
     var onAddCredits: (() -> Void)?
     /// Mode 2 (remote agent run): the model is pinned to the remote agent's own
     /// model and the user must not change it. Renders the model chip as a
@@ -128,7 +131,7 @@ struct FloatingInputCard: View {
         estimatedContextTokens: Int,
         contextBreakdown: ContextBreakdown = .zero,
         sessionSpendMicro: Int = 0,
-        showSessionSpend: Bool = false,
+        isRouterBilledSession: Bool = false,
         imageComposerSettings: Binding<ImageComposerSettings> = .constant(ImageComposerSettings()),
         onSend: @escaping (String?) -> Void,
         onStop: @escaping () -> Void,
@@ -169,7 +172,7 @@ struct FloatingInputCard: View {
         self.estimatedContextTokens = estimatedContextTokens
         self.contextBreakdown = contextBreakdown
         self.sessionSpendMicro = sessionSpendMicro
-        self.showSessionSpend = showSessionSpend
+        self.isRouterBilledSession = isRouterBilledSession
         self._imageComposerSettings = imageComposerSettings
         self.onSend = onSend
         self.onStop = onStop
@@ -203,9 +206,12 @@ struct FloatingInputCard: View {
     @ObservedObject private var sandboxState = SandboxManager.State.shared
     @ObservedObject private var clipboardService = ClipboardService.shared
     @ObservedObject private var appConfig = AppConfiguration.shared
-    /// Drives the composer credits chip (balance + low-balance tinting) for
-    /// Osaurus Router sessions.
+    /// Drives the composer credits chip (balance + low-balance tinting) and the
+    /// wallet panel's recent-activity list.
     @ObservedObject private var accountService = OsaurusRouterAccountService.shared
+    /// Master-switch mirror for the Osaurus Router; the credits chip shows in
+    /// every session while the router is usable (switch on + identity present).
+    @ObservedObject private var remoteProviders = RemoteProviderManager.shared
     /// Frontmost-app source + Accessibility status for the read-only
     /// screen-context chip (shown only on the empty/welcome screen). The opt-in
     /// gate is now per-agent (a child of Computer Use), read via `agentManager`.
@@ -273,8 +279,19 @@ struct FloatingInputCard: View {
     /// period to travel from the trigger into the popover (which lives in its
     /// own window, so hovering it doesn't keep the trigger "hovered").
     @State private var contextDismissTask: Task<Void, Never>?
-    @State private var showBalanceBreakdown = false
+    /// Wallet panel presentation. Hovering the credits chip opens it as a
+    /// passive preview (dismissed on hover exit); clicking pins it so its
+    /// actions (Add credits, View all) are reachable.
+    @State private var showWalletPanel = false
+    /// True when the wallet panel was opened by click; hover exit no longer
+    /// dismisses it, only outside-click / an action does.
+    @State private var walletPanelPinned = false
     @State private var balanceHoverTask: Task<Void, Never>?
+    /// Delayed dismiss for the hover-opened wallet panel. Gives the cursor a
+    /// grace period to travel from the chip into the panel (which lives in its
+    /// own window, so hovering it doesn't keep the chip "hovered"); the panel's
+    /// own hover cancels it so its buttons stay clickable.
+    @State private var walletDismissTask: Task<Void, Never>?
     @State private var isSandboxHovered = false
     @State private var sandboxPulseAmount: CGFloat = 1.0
     @State private var sandboxPulseTask: Task<Void, Never>? = nil
@@ -525,7 +542,16 @@ struct FloatingInputCard: View {
             || isSandboxAvailable
             || isDefaultConfigAgent
             || (appConfig.chatConfig.enableClipboardMonitoring && clipboardService.hasNewContent)
-            || showSessionSpend
+            || showCreditsChip
+    }
+
+    /// Whether the credits chip (and its wallet panel) is available at all:
+    /// the router master switch is on and a signing identity exists — the same
+    /// gate `RemoteProviderManager` uses for the managed router provider. Shown
+    /// in every session (not just router-billed ones) because credits are the
+    /// account-level wallet other routed services will draw from too.
+    private var showCreditsChip: Bool {
+        remoteProviders.isOsaurusRouterEnabled && OsaurusIdentity.existsCached()
     }
 
     private var mainContent: some View {
@@ -2011,7 +2037,7 @@ extension FloatingInputCard {
     private var metaCluster: some View {
         // Hide the balance/credits chip while a remote agent is connecting —
         // it's not actionable yet and competes with the connect affordance.
-        let showCredits = showSessionSpend && !remoteConnectionPending
+        let showCredits = showCreditsChip && !remoteConnectionPending
         // Mode 2 hides the context-budget chip + popover entirely: a remote
         // agent composes its own system prompt / tools server-side, so a local
         // token breakdown (system prompt, tools, history) doesn't reflect what
@@ -2040,7 +2066,8 @@ extension FloatingInputCard {
     /// text that blends into the meta cluster); low and empty escalate to an
     /// amber pill so a top-up is easy to notice. Empty/frozen reads as an "Add
     /// credits" call to action — deliberately amber, never error-red, so it
-    /// invites action instead of looking like a failure.
+    /// invites action instead of looking like a failure. The escalation only
+    /// applies to router-billed sessions; see `creditsStyle(for:)`.
     private enum BalanceLevel {
         case healthy
         case low
@@ -2074,6 +2101,20 @@ extension FloatingInputCard {
 
     private func creditsStyle(for level: BalanceLevel) -> CreditsChipStyle {
         let amber = theme.warningColor
+        // Outside router-billed sessions the chip never escalates: the balance
+        // doesn't block the current session, so a $0/unknown wallet reads as
+        // quiet muted "Add credits" text instead of an amber call to action.
+        guard isRouterBilledSession else {
+            return CreditsChipStyle(
+                iconName: "creditcard",
+                iconColor: theme.tertiaryText,
+                textColor: theme.secondaryText,
+                weight: .medium,
+                pill: nil,
+                glow: .clear,
+                showsAmount: level != .empty
+            )
+        }
         switch level {
         case .healthy:
             return CreditsChipStyle(
@@ -2118,18 +2159,20 @@ extension FloatingInputCard {
     }
 
     /// Accessibility text for the credits chip. Describes the router balance the
-    /// chip shows and the tap action; session spend lives in the popover.
+    /// chip shows and the tap action; session spend lives in the wallet panel.
     private var creditsHelpText: Text {
         if accountService.isFrozen {
             return Text("Account paused - add credits to resume.", bundle: .module)
         }
-        return Text("\(accountService.formattedBalance) router balance. Click to add credits.", bundle: .module)
+        return Text("\(accountService.formattedBalance) router balance. Click to open the wallet.", bundle: .module)
     }
 
-    /// Balance indicator for Osaurus Router sessions. Tapping opens the top-up
-    /// sheet; the balance best-effort refreshes on appear so it isn't blank.
-    /// Quiet plain text when funded, escalating to an amber pill / "Add credits"
-    /// CTA as the balance runs low or hits zero (see `BalanceLevel`).
+    /// Balance indicator shown in every session where the router is usable.
+    /// Hovering previews the wallet panel; clicking pins it so its actions
+    /// (Add credits → top-up sheet, View all → Credits tab) are reachable.
+    /// Quiet plain text normally, escalating to an amber pill / "Add credits"
+    /// CTA as the balance runs low or hits zero — router-billed sessions only
+    /// (see `BalanceLevel` / `creditsStyle(for:)`).
     @ViewBuilder
     private var creditsChip: some View {
         let level = balanceLevel
@@ -2140,7 +2183,18 @@ extension FloatingInputCard {
         let showIcon = !isCompact || level == .empty
 
         Button {
-            onAddCredits?()
+            // Click pins the wallet panel (rather than jumping straight to the
+            // top-up sheet) so its actions stay reachable; a second click while
+            // pinned closes it.
+            balanceHoverTask?.cancel()
+            walletDismissTask?.cancel()
+            if showWalletPanel && walletPanelPinned {
+                showWalletPanel = false
+                walletPanelPinned = false
+            } else {
+                walletPanelPinned = true
+                showWalletPanel = true
+            }
         } label: {
             HStack(spacing: 4) {
                 if showIcon {
@@ -2187,28 +2241,68 @@ extension FloatingInputCard {
         .onHover { hovering in
             balanceHoverTask?.cancel()
             if hovering {
+                walletDismissTask?.cancel()
                 balanceHoverTask = Task { @MainActor in
                     try? await Task.sleep(nanoseconds: 300_000_000)
                     guard !Task.isCancelled else { return }
-                    showBalanceBreakdown = true
+                    showWalletPanel = true
                 }
-            } else {
-                showBalanceBreakdown = false
+            } else if !walletPanelPinned {
+                scheduleWalletDismiss()
             }
         }
-        .popover(isPresented: $showBalanceBreakdown, arrowEdge: .top) {
-            BalanceBreakdownPopover(
-                sessionSpend: sessionSpendDisplay,
-                balance: accountService.formattedBalance,
-                isAttention: level != .healthy,
-                isFrozen: accountService.isFrozen
+        .popover(isPresented: $showWalletPanel, arrowEdge: .top) {
+            WalletPopover(
+                sessionSpend: isRouterBilledSession ? sessionSpendDisplay : nil,
+                isAttention: isRouterBilledSession && level != .healthy,
+                onAddCredits: {
+                    closeWalletPanel()
+                    onAddCredits?()
+                },
+                onViewAll: {
+                    closeWalletPanel()
+                    AppDelegate.shared?.showManagementWindow(initialTab: .credits)
+                }
             )
+            // Keep the panel alive while the cursor is over it, so the user
+            // can travel from the chip and click Add credits / View all.
+            .onHover { hovering in
+                if hovering {
+                    walletDismissTask?.cancel()
+                } else if !walletPanelPinned {
+                    scheduleWalletDismiss()
+                }
+            }
         }
-        .task(id: showSessionSpend) {
-            if showSessionSpend {
+        .onChange(of: showWalletPanel) { _, isShown in
+            // Outside-click dismissal flips the binding directly; unpin so the
+            // next hover preview behaves normally.
+            if !isShown { walletPanelPinned = false }
+        }
+        .task(id: showCreditsChip) {
+            if showCreditsChip {
                 await accountService.refreshBalance()
             }
         }
+    }
+
+    /// Dismiss the hover-opened wallet panel after a grace period, giving the
+    /// cursor time to cross the gap into the panel window.
+    private func scheduleWalletDismiss() {
+        balanceHoverTask?.cancel()
+        walletDismissTask?.cancel()
+        walletDismissTask = Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 250_000_000)
+            guard !Task.isCancelled else { return }
+            showWalletPanel = false
+        }
+    }
+
+    private func closeWalletPanel() {
+        walletDismissTask?.cancel()
+        balanceHoverTask?.cancel()
+        showWalletPanel = false
+        walletPanelPinned = false
     }
 
     // MARK: - Context Indicator
@@ -5464,78 +5558,286 @@ private struct ContextBreakdownPopover: View {
 
 }
 
-// MARK: - Balance Breakdown Popover
+// MARK: - Wallet Popover
 
-/// Hover card for the composer balance chip, styled to match
-/// `ContextBreakdownPopover` (rounded glass card, 11pt header, hairline
-/// dividers, monospaced values). Replaces the plain OS tooltip so the router
-/// balance reads like the Context Budget breakdown beside it. The balance is
-/// the hero figure (paralleling the budget bar) and tints amber when low/empty.
-private struct BalanceBreakdownPopover: View {
-    let sessionSpend: String
-    let balance: String
+/// The composer wallet panel, styled to match `ContextBreakdownPopover`
+/// (rounded glass card, 11pt headers, hairline dividers, monospaced values).
+/// Opens from the credits chip as a hover preview or a pinned click-through
+/// panel: balance hero, per-session router spend, recent account activity
+/// (model requests + ledger transactions), and Add credits / View all actions.
+/// This is the surface agent-initiated credit transactions will land in — new
+/// ledger `entry_type`s render here via `WalletActivityProjector` without UI
+/// rework.
+private struct WalletPopover: View {
+    /// This session's router spend; nil outside router-billed sessions.
+    let sessionSpend: String?
+    /// True when a low/empty balance should tint amber (router-billed sessions
+    /// only — a $0 wallet doesn't block a local-model chat).
     let isAttention: Bool
-    let isFrozen: Bool
+    let onAddCredits: () -> Void
+    let onViewAll: () -> Void
 
+    @ObservedObject private var accountService = OsaurusRouterAccountService.shared
     @Environment(\.theme) private var theme
 
-    private var accent: Color { theme.accentColor }
+    /// Shared so each row doesn't allocate a formatter; relative labels like
+    /// "3h ago" only need minute resolution.
+    private static let relativeFormatter: RelativeDateTimeFormatter = {
+        let formatter = RelativeDateTimeFormatter()
+        formatter.unitsStyle = .abbreviated
+        return formatter
+    }()
 
-    private var footerText: Text {
-        isFrozen
-            ? Text("Account paused - add credits to resume.", bundle: .module)
-            : Text("Click to add credits", bundle: .module)
+    private var rows: [WalletActivityRow] {
+        WalletActivityProjector().rows(
+            usageItems: accountService.usage,
+            transactions: accountService.transactions
+        )
     }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
+            header
+            if let sessionSpend {
+                divider
+                sessionSpendRow(sessionSpend)
+            }
+            divider
+            activitySection
+            divider
+            footerActions
+        }
+        .frame(width: 272)
+        .popoverCard()
+        .task {
+            await accountService.refreshBalance()
+            await accountService.refreshUsage(reset: true)
+            await accountService.refreshTransactions(reset: true)
+        }
+    }
+
+    // MARK: Sections
+
+    /// Hero balance over a soft accent wash — the "card face" of the wallet.
+    private var header: some View {
+        VStack(alignment: .leading, spacing: 3) {
             HStack(spacing: 6) {
-                Image(systemName: "chart.bar.fill")
+                Image(systemName: "creditcard.fill")
+                    .font(.system(size: 9, weight: .semibold))
+                    .foregroundColor(theme.accentColor.opacity(0.85))
+                Text("Wallet", bundle: .module)
                     .font(.system(size: 10, weight: .semibold))
                     .foregroundColor(theme.secondaryText)
-                Text("This Session", bundle: .module)
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundColor(theme.secondaryText)
-            }
-            .padding(.horizontal, 12)
-            .padding(.top, 10)
-            .padding(.bottom, 8)
-
-            HStack(spacing: 8) {
-                RoundedRectangle(cornerRadius: 2)
-                    .fill(accent.opacity(0.85))
-                    .frame(width: 3, height: 16)
-                Text(verbatim: sessionSpend)
-                    .font(.system(size: 15, weight: .semibold, design: .monospaced))
-                    .foregroundColor(theme.primaryText)
+                    .textCase(.uppercase)
+                    .kerning(0.8)
                 Spacer(minLength: 0)
+                if accountService.isFrozen {
+                    Text("Paused", bundle: .module)
+                        .font(.system(size: 9, weight: .semibold))
+                        .foregroundColor(theme.warningColor)
+                        .padding(.horizontal, 7)
+                        .padding(.vertical, 2)
+                        .background(
+                            Capsule()
+                                .fill(theme.warningColor.opacity(0.14))
+                                .overlay(
+                                    Capsule().strokeBorder(
+                                        theme.warningColor.opacity(0.35), lineWidth: 1)
+                                )
+                        )
+                }
             }
-            .padding(.horizontal, 12)
-            .padding(.bottom, 10)
+            .padding(.bottom, 5)
 
-            divider
-            HStack(spacing: 0) {
-                Text("Router balance", bundle: .module)
-                    .font(.system(size: 11))
-                    .foregroundColor(theme.secondaryText)
-                Spacer()
-                Text(verbatim: balance)
-                    .font(.system(size: 11, weight: .medium, design: .monospaced))
-                    .foregroundColor(isAttention ? theme.warningColor : theme.primaryText)
+            Text(verbatim: accountService.formattedBalance)
+                .font(.system(size: 24, weight: .semibold, design: .monospaced))
+                .foregroundColor(
+                    (isAttention || accountService.isFrozen)
+                        ? theme.warningColor : theme.primaryText
+                )
+                .contentTransition(.numericText())
+
+            if accountService.isFrozen {
+                Text("Account paused - add credits to resume.", bundle: .module)
+                    .font(.system(size: 10))
+                    .foregroundColor(theme.tertiaryText)
+                    .fixedSize(horizontal: false, vertical: true)
+            } else {
+                Text("Available balance", bundle: .module)
+                    .font(.system(size: 10))
+                    .foregroundColor(theme.tertiaryText)
             }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 8)
-
-            divider
-            footerText
-                .font(.system(size: 10))
-                .foregroundColor(theme.tertiaryText)
-                .fixedSize(horizontal: false, vertical: true)
-                .padding(.horizontal, 12)
-                .padding(.vertical, 8)
         }
-        .frame(width: 200)
-        .popoverCard()
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 14)
+        .padding(.top, 12)
+        .padding(.bottom, 11)
+        .background(
+            LinearGradient(
+                colors: [theme.accentColor.opacity(0.10), theme.accentColor.opacity(0.02)],
+                startPoint: .top,
+                endPoint: .bottom
+            )
+        )
+    }
+
+    private func sessionSpendRow(_ spend: String) -> some View {
+        HStack(spacing: 6) {
+            Image(systemName: "chart.bar.fill")
+                .font(.system(size: 8))
+                .foregroundColor(theme.tertiaryText)
+            Text("This session", bundle: .module)
+                .font(.system(size: 11))
+                .foregroundColor(theme.secondaryText)
+            Spacer()
+            Text(verbatim: spend)
+                .font(.system(size: 11, weight: .medium, design: .monospaced))
+                .foregroundColor(theme.primaryText)
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 8)
+    }
+
+    private var activitySection: some View {
+        VStack(alignment: .leading, spacing: 9) {
+            Text("Recent activity", bundle: .module)
+                .font(.system(size: 9, weight: .semibold))
+                .foregroundColor(theme.tertiaryText)
+                .textCase(.uppercase)
+                .kerning(0.8)
+
+            if rows.isEmpty {
+                emptyActivity
+            } else {
+                VStack(alignment: .leading, spacing: 9) {
+                    ForEach(rows) { row in
+                        activityRow(row)
+                    }
+                }
+            }
+        }
+        .padding(.horizontal, 14)
+        .padding(.top, 10)
+        .padding(.bottom, 11)
+    }
+
+    private var emptyActivity: some View {
+        HStack(spacing: 7) {
+            Image(systemName: "moon.zzz")
+                .font(.system(size: 11))
+                .foregroundColor(theme.tertiaryText.opacity(0.7))
+            Text("No activity yet", bundle: .module)
+                .font(.system(size: 11))
+                .foregroundColor(theme.tertiaryText)
+        }
+        .frame(maxWidth: .infinity, alignment: .center)
+        .padding(.vertical, 6)
+    }
+
+    private func activityRow(_ row: WalletActivityRow) -> some View {
+        HStack(alignment: .center, spacing: 8) {
+            ZStack {
+                Circle()
+                    .fill(badgeTint(for: row).opacity(0.13))
+                Image(systemName: iconName(for: row))
+                    .font(.system(size: 8, weight: .semibold))
+                    .foregroundColor(badgeTint(for: row))
+            }
+            .frame(width: 20, height: 20)
+
+            VStack(alignment: .leading, spacing: 1) {
+                // Transaction titles are the projector's fixed vocabulary
+                // ("Credits added", ...) and localize via key lookup. Usage
+                // titles are model/provider ids and must render verbatim —
+                // LocalizedStringKey would treat underscores in ids as
+                // markdown emphasis.
+                Group {
+                    if row.kind == .transaction {
+                        Text(LocalizedStringKey(row.title), bundle: .module)
+                    } else {
+                        Text(verbatim: row.title)
+                    }
+                }
+                .font(.system(size: 11, weight: .medium))
+                .foregroundColor(theme.primaryText)
+                .lineLimit(1)
+                .truncationMode(.middle)
+                if let timeLabel = timeLabel(for: row) {
+                    Text(verbatim: timeLabel)
+                        .font(.system(size: 9))
+                        .foregroundColor(theme.tertiaryText)
+                }
+            }
+
+            Spacer(minLength: 8)
+
+            Text(verbatim: row.amountLabel)
+                .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                .foregroundColor(row.isCredit ? theme.successColor : theme.secondaryText)
+        }
+    }
+
+    private var footerActions: some View {
+        HStack(spacing: 8) {
+            Button(action: onAddCredits) {
+                HStack(spacing: 4) {
+                    Image(systemName: "plus")
+                        .font(.system(size: 9, weight: .bold))
+                    Text("Add credits", bundle: .module)
+                        .font(.system(size: 11, weight: .semibold))
+                }
+                .foregroundColor(.white)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 6)
+                .background(Capsule().fill(theme.accentColor))
+            }
+            .buttonStyle(.plain)
+            .pointingHandCursor()
+
+            Spacer(minLength: 0)
+
+            Button(action: onViewAll) {
+                HStack(spacing: 3) {
+                    Text("View all", bundle: .module)
+                        .font(.system(size: 11, weight: .medium))
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 7, weight: .semibold))
+                }
+                .foregroundColor(theme.secondaryText)
+            }
+            .buttonStyle(.plain)
+            .pointingHandCursor()
+            .localizedHelp("Open the Credits tab for full usage and transaction history.")
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 10)
+    }
+
+    // MARK: Row styling
+
+    private func iconName(for row: WalletActivityRow) -> String {
+        switch row.kind {
+        case .transaction:
+            return row.isCredit ? "arrow.down.left" : "arrow.up.right"
+        case .usage:
+            return "sparkles"
+        }
+    }
+
+    /// Badge + icon tint. Money-in reads green; spends stay neutral unless the
+    /// request itself needs attention (stopped/error states from the ledger).
+    private func badgeTint(for row: WalletActivityRow) -> Color {
+        if row.isCredit { return theme.successColor }
+        switch row.stateKind {
+        case .warning: return theme.warningColor
+        case .error: return theme.errorColor
+        case .success, .secondary: return theme.secondaryText
+        }
+    }
+
+    private func timeLabel(for row: WalletActivityRow) -> String? {
+        guard let date = row.date else { return nil }
+        return Self.relativeFormatter.localizedString(for: date, relativeTo: Date())
     }
 
     private var divider: some View {

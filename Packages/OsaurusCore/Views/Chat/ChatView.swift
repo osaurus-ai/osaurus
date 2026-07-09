@@ -5687,7 +5687,7 @@ struct ChatView: View {
                                 estimatedContextTokens: observedSession.estimatedContextTokens,
                                 contextBreakdown: observedSession.estimatedContextBreakdown,
                                 sessionSpendMicro: observedSession.sessionRouterSpendMicro,
-                                showSessionSpend: observedSession.isOsaurusRouterSession,
+                                isRouterBilledSession: observedSession.isOsaurusRouterSession,
                                 imageComposerSettings: $observedSession.imageComposerSettings,
                                 onSend: { manualText in
                                     if let manualText = manualText {

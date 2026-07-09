@@ -2157,6 +2157,7 @@
       }
     },
     "%@ router balance. Click to add credits." : {
+      "extractionState" : "stale",
       "localizations" : {
         "de" : {
           "stringUnit" : {
@@ -2186,6 +2187,40 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "%@ 路由器餘額。點擊添加積分。"
+          }
+        }
+      }
+    },
+    "%@ router balance. Click to open the wallet." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ Router-Guthaben. Klicken Sie, um das Wallet zu öffnen."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "라우터 잔액 %@. 클릭하여 지갑을 여세요."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Баланс Router: %@. Нажмите, чтобы открыть кошелёк."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "路由器余额 %@。点击打开钱包。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "路由器餘額 %@。點擊打開錢包。"
           }
         }
       }
@@ -3694,6 +3729,7 @@
       }
     },
     "%lld model%@ ready" : {
+      "extractionState" : "stale",
       "localizations" : {
         "de" : {
           "stringUnit" : {
@@ -3716,12 +3752,6 @@
         "ru" : {
           "variations" : {
             "plural" : {
-              "one" : {
-                "stringUnit" : {
-                  "state" : "translated",
-                  "value" : "%1$lld модель готова"
-                }
-              },
               "few" : {
                 "stringUnit" : {
                   "state" : "translated",
@@ -3732,6 +3762,12 @@
                 "stringUnit" : {
                   "state" : "translated",
                   "value" : "%1$lld моделей готово"
+                }
+              },
+              "one" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%1$lld модель готова"
                 }
               },
               "other" : {
@@ -3780,12 +3816,6 @@
         "ru" : {
           "variations" : {
             "plural" : {
-              "one" : {
-                "stringUnit" : {
-                  "state" : "translated",
-                  "value" : "%lld модель"
-                }
-              },
               "few" : {
                 "stringUnit" : {
                   "state" : "translated",
@@ -3796,6 +3826,12 @@
                 "stringUnit" : {
                   "state" : "translated",
                   "value" : "%lld моделей"
+                }
+              },
+              "one" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld модель"
                 }
               },
               "other" : {
@@ -3868,12 +3904,6 @@
         "ru" : {
           "variations" : {
             "plural" : {
-              "one" : {
-                "stringUnit" : {
-                  "state" : "translated",
-                  "value" : "%1$lld модель • %2$@"
-                }
-              },
               "few" : {
                 "stringUnit" : {
                   "state" : "translated",
@@ -3884,6 +3914,12 @@
                 "stringUnit" : {
                   "state" : "translated",
                   "value" : "%1$lld моделей • %2$@"
+                }
+              },
+              "one" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%1$lld модель • %2$@"
                 }
               },
               "other" : {
@@ -3905,6 +3941,112 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "%1$lld 模型 • %2$@"
+          }
+        }
+      }
+    },
+    "%lld models ready" : {
+      "localizations" : {
+        "de" : {
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "needs_review",
+                  "value" : "%lld Modell bereit"
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "needs_review",
+                  "value" : "%lld Modelle bereit"
+                }
+              }
+            }
+          }
+        },
+        "en" : {
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld model ready"
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld models ready"
+                }
+              }
+            }
+          }
+        },
+        "ko" : {
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld개의 모델 준비됨"
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld개의 모델 준비됨"
+                }
+              }
+            }
+          }
+        },
+        "ru" : {
+          "variations" : {
+            "plural" : {
+              "few" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld модели готовы"
+                }
+              },
+              "many" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld моделей готово"
+                }
+              },
+              "one" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld модель готова"
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld модели готовы"
+                }
+              }
+            }
+          }
+        },
+        "zh-Hans" : {
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld 个模型已就绪"
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld 个模型已就绪"
+                }
+              }
+            }
           }
         }
       }
@@ -10391,6 +10533,7 @@
     },
     "Add credits and see what each Osaurus Router request costs." : {
       "comment" : "Subtitle of the Credits view.",
+      "extractionState" : "stale",
       "localizations" : {
         "de" : {
           "stringUnit" : {
@@ -11116,6 +11259,40 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "調整語音檢測的靈敏度"
+          }
+        }
+      }
+    },
+    "Adjustment" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Korrektur"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "조정"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Корректировка"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "调整"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "調整"
           }
         }
       }
@@ -19544,6 +19721,40 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "可用"
+          }
+        }
+      }
+    },
+    "Available balance" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Verfügbares Guthaben"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "사용 가능한 잔액"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Доступный баланс"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "可用余额"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "可用餘額"
           }
         }
       }
@@ -30543,6 +30754,7 @@
     },
     "Click to add credits" : {
       "comment" : "Footer hint in the chat composer router-balance popover.",
+      "extractionState" : "stale",
       "localizations" : {
         "de" : {
           "stringUnit" : {
@@ -40381,6 +40593,7 @@
     },
     "Credit balance" : {
       "comment" : "The label for the credit balance in the Credits view.",
+      "extractionState" : "stale",
       "isCommentAutoGenerated" : true,
       "localizations" : {
         "de" : {
@@ -40520,37 +40733,70 @@
         }
       }
     },
-    "Credits pay for cloud models and provider load-balancing routed through Osaurus." : {
-      "comment" : "Explanation of what Osaurus credits are used for.",
+    "Credits granted" : {
       "localizations" : {
         "de" : {
           "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Credits pay for cloud models and provider load-balancing routed through Osaurus."
+            "state" : "translated",
+            "value" : "Credits gutgeschrieben"
           }
         },
         "ko" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "크레딧은 클라우드 모델 및 Osaurus를 통해 라우팅되는 제공자 로드 밸런싱에 사용됩니다."
+            "value" : "크레딧이 지급되었습니다"
           }
         },
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Кредиты оплачивают облачные модели и балансировку нагрузки провайдеров через Osaurus."
+            "value" : "Кредиты начислены"
           }
         },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "积分用于支付通过Osaurs路由的云模型和提供商负载均衡。"
+            "value" : "积分已发放"
           }
         },
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "積分用於支付通過Osaurs路由的雲模型和提供商負載均衡。"
+            "value" : "積分已發放"
+          }
+        }
+      }
+    },
+    "Credits let Osaurus transact on your behalf - cloud model access today, with more routed services to come." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Mit Credits kann Osaurus in Ihrem Namen Transaktionen durchführen – heute Zugang zu Cloud-Modellen, künftig weitere geroutete Dienste."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "크레딧을 통해 Osaurus가 사용자를 대신해 결제합니다. 현재는 클라우드 모델 액세스이며, 더 많은 라우팅 서비스가 추가될 예정입니다."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Кредиты позволяют Osaurus совершать операции от вашего имени: сегодня это доступ к облачным моделям, а в будущем — другие сервисы."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "积分让Osaurus代表您进行交易 - 目前用于云模型访问，未来将支持更多路由服务。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "積分讓Osaurus代表您進行交易 - 目前用於雲模型訪問，未來將支持更多路由服務。"
           }
         }
       }
@@ -70388,12 +70634,6 @@
         "ru" : {
           "variations" : {
             "plural" : {
-              "one" : {
-                "stringUnit" : {
-                  "state" : "translated",
-                  "value" : "Установить %lld инструмент"
-                }
-              },
               "few" : {
                 "stringUnit" : {
                   "state" : "translated",
@@ -70404,6 +70644,12 @@
                 "stringUnit" : {
                   "state" : "translated",
                   "value" : "Установить %lld инструментов"
+                }
+              },
+              "one" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "Установить %lld инструмент"
                 }
               },
               "other" : {
@@ -75256,6 +75502,40 @@
         }
       }
     },
+    "Lets Osaurus transact on your behalf - cloud models, provider load-balancing, and future routed services; requests spend credits. Keeping it on helps support Osaurus development - thank you." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ermöglicht Osaurus, in Ihrem Namen Transaktionen durchzuführen – Cloud-Modelle, Anbieter-Lastausgleich und künftige geroutete Dienste; Anfragen verbrauchen Credits. Eingeschaltet zu bleiben unterstützt die Entwicklung von Osaurus – danke."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Osaurus가 사용자를 대신해 결제할 수 있게 합니다. 클라우드 모델, 제공자 로드 밸런싱, 향후 라우팅 서비스가 포함되며 요청 시 크레딧이 소모됩니다. 이 기능을 켜두시면 Osaurus 개발에 도움이 됩니다. 감사합니다."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Позволяет Osaurus совершать операции от вашего имени: облачные модели, балансировка нагрузки провайдеров и будущие сервисы; запросы расходуют кредиты. Оставляя эту функцию включённой, вы поддерживаете развитие Osaurus — спасибо."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "让Osaurus代表您进行交易 - 云模型、提供商负载均衡以及未来的路由服务；请求会消耗积分。保持开启有助于支持 Osaurus 的开发 - 感谢。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "讓Osaurus代表您進行交易 - 雲模型、提供商負載均衡以及未來的路由服務；請求會消耗積分。保持開啓有助於支持 Osaurus 的開發 - 感謝。"
+          }
+        }
+      }
+    },
     "Lets your dino install packages, run scripts, and work with files like a real machine." : {
       "extractionState" : "stale",
       "localizations" : {
@@ -78698,6 +78978,41 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "維護"
+          }
+        }
+      }
+    },
+    "Make and check off your Reminders." : {
+      "comment" : "Onboarding plugin picker blurb for Reminders.",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Make and check off your Reminders."
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Make and check off your Reminders."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Make and check off your Reminders."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Создаёт напоминания и отмечает их выполненными."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Make and check off your Reminders."
           }
         }
       }
@@ -84133,6 +84448,74 @@
         }
       }
     },
+    "Model request" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Modellanfrage"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "모델 요청"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Запрос модели"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "模型请求"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "模型請求"
+          }
+        }
+      }
+    },
+    "Model requests and balance changes, newest first. Open the chat or Insights when this Mac has the matching copy." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Modellanfragen und Guthabenänderungen, neueste zuerst. Öffnen Sie den Chat oder Insights, wenn dieser Mac die passende Kopie hat."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "모델 요청과 잔액 변동이며 최신순입니다. 이 Mac에 일치하는 사본이 있는 경우 채팅 또는 Insights를 엽니다."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Запросы моделей и изменения баланса, сначала самые новые. Откройте чат или Insights, когда на этом Mac есть соответствующая копия."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "模型请求和余额变动，按最新排序。当此Mac有匹配的副本时，打开聊天或洞察。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "模型請求和餘額變動，按最新排序。當此Mac有匹配的副本時，打開聊天或洞察。"
+          }
+        }
+      }
+    },
     "Model residency" : {
       "localizations" : {
         "de" : {
@@ -87290,6 +87673,40 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "沒有可用於存儲截圖的活動聊天會話。"
+          }
+        }
+      }
+    },
+    "No activity yet" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Noch keine Aktivität"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "아직 활동이 없습니다"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Пока нет активности"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "暂无活动"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "暫無活動"
           }
         }
       }
@@ -97135,6 +97552,40 @@
         }
       }
     },
+    "Open the Credits tab for full usage and transaction history." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Öffnen Sie den Credits-Tab für die vollständige Nutzungs- und Transaktionshistorie."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "전체 사용 및 거래 내역을 보려면 크레딧 탭을 여세요."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Откройте вкладку «Кредиты», чтобы увидеть полную историю использования и транзакций."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "打开积分标签页查看完整的使用和交易记录。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "打開積分標籤頁查看完整的使用和交易記錄。"
+          }
+        }
+      }
+    },
     "Open the Images pane in Settings" : {
       "comment" : "Description text in the EmptyStateView for the \"Images\" tab.",
       "extractionState" : "stale",
@@ -104604,6 +105055,41 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "PK"
+          }
+        }
+      }
+    },
+    "Place the task-progress notch overlay on the menu bar. When off, it sits just below the menu bar so it never covers the clock, battery, or other system status controls." : {
+      "comment" : "Description for the toggle that controls whether the task-progress notch overlay sits on or below the menu bar.",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Platziert das Notch-Overlay für den Aufgabenfortschritt in der Menüleiste. Wenn deaktiviert, sitzt es direkt unter der Menüleiste und verdeckt so nie Uhr, Batterie oder andere Systemstatus-Elemente."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "작업 진행 상황 노치 오버레이를 메뉴 막대에 배치합니다. 끄면 메뉴 막대 바로 아래에 표시되어 시계, 배터리 또는 기타 시스템 상태 항목을 가리지 않습니다."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Размещает оверлей выреза с ходом выполнения задачи в строке меню. Когда выключено, он располагается прямо под строкой меню и не закрывает часы, батарею и другие элементы состояния системы."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "将任务进度刘海浮层放置在菜单栏上。关闭时，它位于菜单栏正下方，因此绝不会遮挡时钟、电池或其他系统状态控件。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "將任務進度瀏海浮層放置在選單列上。關閉時，它位於選單列正下方，因此絕不會遮擋時鐘、電池或其他系統狀態控制項。"
           }
         }
       }
@@ -116610,6 +117096,40 @@
         }
       }
     },
+    "Refund" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Rückerstattung"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "환불"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Возврат"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "退款"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "退款"
+          }
+        }
+      }
+    },
     "Regenerate" : {
       "localizations" : {
         "de" : {
@@ -119888,6 +120408,7 @@
     },
     "Requests routed through Osaurus, newest first. Open the chat or Insights when this Mac has the matching copy." : {
       "comment" : "Subtitle for the recent activity list.",
+      "extractionState" : "stale",
       "localizations" : {
         "de" : {
           "stringUnit" : {
@@ -123880,6 +124401,7 @@
       }
     },
     "Router balance" : {
+      "extractionState" : "stale",
       "localizations" : {
         "de" : {
           "stringUnit" : {
@@ -125528,42 +126050,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "隨處運行"
-          }
-        }
-      }
-    },
-    "Runs cloud models and provider load-balancing; requests spend credits. Keeping it on helps support Osaurus development - thank you." : {
-      "comment" : "A description of the function of the Osaurus Router.",
-      "isCommentAutoGenerated" : true,
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Führt Cloud-Modelle und Anbieter-Lastausgleich aus; fordert Ausgabengutschriften an. Wenn man es anhält, unterstützt es die Entwicklung von Osaurus - danke."
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "클라우드 모델 및 제공자 로드 밸런싱을 실행합니다. 요청 시 크레딧이 소모됩니다. 이 기능을 켜두시면 Osaurus 개발에 도움이 됩니다. 감사합니다."
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Запускает облачные модели и балансировку нагрузки провайдера; просит потратить кредиты. Сохранение его помогает поддерживать развитие Osaurus — спасибо."
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "运行云模型和提供商负载均衡；消耗请求信用额度。保持开启有助于支持 Osaurus 的开发 - 感谢。"
-          }
-        },
-        "zh-Hant" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "運行雲模型和提供商負載均衡；消耗請求信用額度。保持開啓有助於支持 Osaurus 的開發 - 感謝。"
           }
         }
       }
@@ -131275,6 +131761,41 @@
         }
       }
     },
+    "See and create events on your Mac." : {
+      "comment" : "Onboarding plugin picker blurb for Calendar.",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "See and create events on your Mac."
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "See and create events on your Mac."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "See and create events on your Mac."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Просматривает и создаёт события на вашем Mac."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "See and create events on your Mac."
+          }
+        }
+      }
+    },
     "See other options" : {
       "comment" : "Localized help text for the button that allows users to see more options for configuring a local model.",
       "extractionState" : "stale",
@@ -132440,6 +132961,41 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "發送崩潰報告"
+          }
+        }
+      }
+    },
+    "Send iMessages from your Mac." : {
+      "comment" : "Onboarding plugin picker blurb for Messages.",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Send iMessages from your Mac."
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Send iMessages from your Mac."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Send iMessages from your Mac."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Отправляет сообщения iMessage с вашего Mac."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Send iMessages from your Mac."
           }
         }
       }
@@ -134794,6 +135350,41 @@
         }
       }
     },
+    "Shell" : {
+      "comment" : "Onboarding plugin picker display name for terminal command access.",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Shell"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Shell"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Shell"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Терминал"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Shell"
+          }
+        }
+      }
+    },
     "Shell command run after dependencies are installed" : {
       "localizations" : {
         "de" : {
@@ -135493,41 +136084,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "在選單列顯示瀏海浮層"
-          }
-        }
-      }
-    },
-    "Place the task-progress notch overlay on the menu bar. When off, it sits just below the menu bar so it never covers the clock, battery, or other system status controls." : {
-      "comment" : "Description for the toggle that controls whether the task-progress notch overlay sits on or below the menu bar.",
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Platziert das Notch-Overlay für den Aufgabenfortschritt in der Menüleiste. Wenn deaktiviert, sitzt es direkt unter der Menüleiste und verdeckt so nie Uhr, Batterie oder andere Systemstatus-Elemente."
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "작업 진행 상황 노치 오버레이를 메뉴 막대에 배치합니다. 끄면 메뉴 막대 바로 아래에 표시되어 시계, 배터리 또는 기타 시스템 상태 항목을 가리지 않습니다."
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Размещает оверлей выреза с ходом выполнения задачи в строке меню. Когда выключено, он располагается прямо под строкой меню и не закрывает часы, батарею и другие элементы состояния системы."
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "将任务进度刘海浮层放置在菜单栏上。关闭时，它位于菜单栏正下方，因此绝不会遮挡时钟、电池或其他系统状态控件。"
-          }
-        },
-        "zh-Hant" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "將任務進度瀏海浮層放置在選單列上。關閉時，它位於選單列正下方，因此絕不會遮擋時鐘、電池或其他系統狀態控制項。"
           }
         }
       }
@@ -150926,7 +151482,42 @@
         }
       }
     },
+    "This session" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Diese Sitzung"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "이 세션"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Эта сессия"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "当前会话"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "當前會話"
+          }
+        }
+      }
+    },
     "This Session" : {
+      "extractionState" : "stale",
       "localizations" : {
         "de" : {
           "stringUnit" : {
@@ -155172,6 +155763,36 @@
           }
         }
       }
+    },
+    "TurboQuant" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "TurboQuant"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "TurboQuant"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "TurboQuant"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "TurboQuant"
+          }
+        }
+      },
+      "shouldTranslate" : false
     },
     "TurboQuant compressions" : {
       "localizations" : {
@@ -160215,6 +160836,40 @@
         }
       }
     },
+    "View all" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Alle anzeigen"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "전체 보기"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Показать все"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "查看全部"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "查看全部"
+          }
+        }
+      }
+    },
     "View All %lld Episodes" : {
       "localizations" : {
         "de" : {
@@ -161891,20 +162546,20 @@
       "localizations" : {
         "de" : {
           "stringUnit" : {
-            "state" : "needs_review",
+            "state" : "translated",
             "value" : "Wallet"
           }
         },
         "ko" : {
           "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Wallet"
+            "state" : "translated",
+            "value" : "지갑"
           }
         },
         "ru" : {
           "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Wallet"
+            "state" : "translated",
+            "value" : "Кошелёк"
           }
         },
         "zh-Hans" : {
@@ -163534,6 +164189,40 @@
         }
       }
     },
+    "When you add credits or use an Osaurus Router model, it shows up here with its amount. If this Mac made a request, you can jump to the chat or Insights." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Wenn Sie Credits hinzufügen oder ein Osaurus-Router-Modell verwenden, erscheint es hier mit dem Betrag. Wenn dieser Mac eine Anfrage gestellt hat, können Sie zum Chat oder zu Insights springen."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "크레딧을 추가하거나 Osaurus Router 모델을 사용하면 금액과 함께 여기에 표시됩니다. 이 Mac에서 요청을 한 경우 채팅 또는 Insights로 바로 이동할 수 있습니다."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Когда вы пополняете баланс или используете модель Osaurus Router, это отображается здесь с суммой. Если запрос был сделан с этого Mac, можно перейти к чату или Insights."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "当您添加积分或使用Osaurus路由器模型时，它会连同金额显示在这里。如果这台 Mac 提出了请求，您可以跳转到聊天或 Insights。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "當您添加積分或使用Osaurus路由器模型時，它會連同金額顯示在這裡。如果這臺 Mac 提出了請求，您可以跳轉到聊天或 Insights。"
+          }
+        }
+      }
+    },
     "When you turn it on for an agent, Computer Use lets that agent operate macOS apps for you — working through a goal step by step and showing every action in a live feed." : {
       "localizations" : {
         "de" : {
@@ -163570,6 +164259,7 @@
     },
     "When you use an Osaurus Router model, each request shows up here with its cost and tokens. If this Mac made the request, you can jump to the chat or Insights." : {
       "comment" : "Empty-state body for the Credits activity list.",
+      "extractionState" : "stale",
       "localizations" : {
         "de" : {
           "stringUnit" : {
@@ -166920,6 +167610,40 @@
         }
       }
     },
+    "Your wallet for Osaurus-routed services - add credits and track every request and top-up." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ihr Wallet für über Osaurus geroutete Dienste – fügen Sie Credits hinzu und verfolgen Sie jede Anfrage und Aufladung."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Osaurus를 통해 라우팅되는 서비스를 위한 지갑입니다. 크레딧을 추가하고 모든 요청과 충전 내역을 확인하세요."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ваш кошелёк для сервисов, работающих через Osaurus: пополняйте баланс и отслеживайте каждый запрос и пополнение."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "用于Osaurus路由服务的钱包 - 添加积分并跟踪每个请求和充值。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "用於Osaurus路由服務的錢包 - 添加積分並跟蹤每個請求和充值。"
+          }
+        }
+      }
+    },
     "Zip Bundle" : {
       "localizations" : {
         "de" : {
@@ -166956,282 +167680,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Zip 捆綁包"
-          }
-        }
-      }
-    },
-    "TurboQuant" : {
-      "extractionState" : "stale",
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "TurboQuant"
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "TurboQuant"
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "TurboQuant"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "TurboQuant"
-          }
-        }
-      },
-      "shouldTranslate" : false
-    },
-    "Shell" : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Shell"
-          }
-        },
-        "en" : {
-          "stringUnit" : {
-            "state" : "new",
-            "value" : "Shell"
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Shell"
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Терминал"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Shell"
-          }
-        }
-      },
-      "comment" : "Onboarding plugin picker display name for terminal command access."
-    },
-    "See and create events on your Mac." : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "See and create events on your Mac."
-          }
-        },
-        "en" : {
-          "stringUnit" : {
-            "state" : "new",
-            "value" : "See and create events on your Mac."
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "See and create events on your Mac."
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Просматривает и создаёт события на вашем Mac."
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "See and create events on your Mac."
-          }
-        }
-      },
-      "comment" : "Onboarding plugin picker blurb for Calendar."
-    },
-    "Make and check off your Reminders." : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Make and check off your Reminders."
-          }
-        },
-        "en" : {
-          "stringUnit" : {
-            "state" : "new",
-            "value" : "Make and check off your Reminders."
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Make and check off your Reminders."
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Создаёт напоминания и отмечает их выполненными."
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Make and check off your Reminders."
-          }
-        }
-      },
-      "comment" : "Onboarding plugin picker blurb for Reminders."
-    },
-    "Send iMessages from your Mac." : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Send iMessages from your Mac."
-          }
-        },
-        "en" : {
-          "stringUnit" : {
-            "state" : "new",
-            "value" : "Send iMessages from your Mac."
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Send iMessages from your Mac."
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Отправляет сообщения iMessage с вашего Mac."
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Send iMessages from your Mac."
-          }
-        }
-      },
-      "comment" : "Onboarding plugin picker blurb for Messages."
-    },
-    "%lld models ready" : {
-      "localizations" : {
-        "de" : {
-          "variations" : {
-            "plural" : {
-              "one" : {
-                "stringUnit" : {
-                  "state" : "needs_review",
-                  "value" : "%lld Modell bereit"
-                }
-              },
-              "other" : {
-                "stringUnit" : {
-                  "state" : "needs_review",
-                  "value" : "%lld Modelle bereit"
-                }
-              }
-            }
-          }
-        },
-        "en" : {
-          "variations" : {
-            "plural" : {
-              "one" : {
-                "stringUnit" : {
-                  "state" : "translated",
-                  "value" : "%lld model ready"
-                }
-              },
-              "other" : {
-                "stringUnit" : {
-                  "state" : "translated",
-                  "value" : "%lld models ready"
-                }
-              }
-            }
-          }
-        },
-        "ko" : {
-          "variations" : {
-            "plural" : {
-              "one" : {
-                "stringUnit" : {
-                  "state" : "translated",
-                  "value" : "%lld개의 모델 준비됨"
-                }
-              },
-              "other" : {
-                "stringUnit" : {
-                  "state" : "translated",
-                  "value" : "%lld개의 모델 준비됨"
-                }
-              }
-            }
-          }
-        },
-        "ru" : {
-          "variations" : {
-            "plural" : {
-              "one" : {
-                "stringUnit" : {
-                  "state" : "translated",
-                  "value" : "%lld модель готова"
-                }
-              },
-              "few" : {
-                "stringUnit" : {
-                  "state" : "translated",
-                  "value" : "%lld модели готовы"
-                }
-              },
-              "many" : {
-                "stringUnit" : {
-                  "state" : "translated",
-                  "value" : "%lld моделей готово"
-                }
-              },
-              "other" : {
-                "stringUnit" : {
-                  "state" : "translated",
-                  "value" : "%lld модели готовы"
-                }
-              }
-            }
-          }
-        },
-        "zh-Hans" : {
-          "variations" : {
-            "plural" : {
-              "one" : {
-                "stringUnit" : {
-                  "state" : "translated",
-                  "value" : "%lld 个模型已就绪"
-                }
-              },
-              "other" : {
-                "stringUnit" : {
-                  "state" : "translated",
-                  "value" : "%lld 个模型已就绪"
-                }
-              }
-            }
           }
         }
       }
