@@ -7,6 +7,7 @@
 
 import AppKit
 import Foundation
+import os
 
 public enum OpenAICodexOAuthError: LocalizedError, Sendable {
     case invalidAuthorizationCallback
@@ -148,6 +149,48 @@ public enum OpenAICodexOAuthService {
         "gpt-5.1",
     ]
 
+    /// Why a live `/models` entry was excluded from the Codex catalog.
+    public enum ModelFilterReason: String, Sendable, Equatable {
+        case hiddenVisibility
+        case shellToolDisabled
+        case nonCodexSlug
+
+        /// Short human-readable label for provider diagnostics.
+        public var label: String {
+            switch self {
+            case .hiddenVisibility: return L("hidden from picker")
+            case .shellToolDisabled: return L("shell tool disabled")
+            case .nonCodexSlug: return L("chat-only slug")
+            }
+        }
+    }
+
+    /// Result of the most recent live `/models` discovery: how many entries
+    /// the backend returned, how many survived the Codex-compatibility filter,
+    /// and which slugs were dropped and why. Surfaced through provider
+    /// diagnostics so "N models" mismatches can be attributed to specific
+    /// filtered entries instead of guessed at.
+    public struct ModelDiscoverySummary: Sendable, Equatable {
+        public struct FilteredModel: Sendable, Equatable {
+            public let slug: String
+            public let reason: ModelFilterReason
+        }
+
+        public let rawEntryCount: Int
+        public let compatibleCount: Int
+        public let filteredModels: [FilteredModel]
+        public let fetchedAt: Date
+    }
+
+    private static let lastDiscoverySummaryBox = OSAllocatedUnfairLock<ModelDiscoverySummary?>(initialState: nil)
+
+    /// Most recent live-catalog discovery result, or nil before the first
+    /// successful post-sign-in fetch. Process-global: there is one ChatGPT/
+    /// Codex catalog endpoint regardless of how many providers point at it.
+    public static var lastModelDiscoverySummary: ModelDiscoverySummary? {
+        lastDiscoverySummaryBox.withLock { $0 }
+    }
+
     /// Live model catalog fetched from the ChatGPT/Codex backend, matching what
     /// `codex-rs`'s `ModelsClient.list_models` does. Filters out chat-only
     /// models so callers only see Codex-Responses-compatible slugs.
@@ -168,40 +211,68 @@ public enum OpenAICodexOAuthService {
         request.setValue("responses=experimental", forHTTPHeaderField: "OpenAI-Beta")
 
         let data = try await performRequest(request, operation: .modelCatalog)
+        let (models, summary) = try decodeModelCatalog(data)
+        lastDiscoverySummaryBox.withLock { $0 = summary }
+        return models
+    }
+
+    /// Decode a live `/models` payload into the Codex-compatible slug list
+    /// plus a summary of what was filtered out and why. Split from the network
+    /// call so the filter can be exercised against wire fixtures in tests.
+    static func decodeModelCatalog(_ data: Data) throws -> (models: [String], summary: ModelDiscoverySummary) {
         guard let decoded = try? JSONDecoder().decode(ModelsResponse.self, from: data) else {
             let preview = String(data: data.prefix(200), encoding: .utf8) ?? "non-text response"
             throw OpenAICodexOAuthError.modelCatalogDecodeFailed(preview)
         }
 
-        return decoded.models
-            .filter(isCodexCompatible)
+        var compatible: [ModelEntry] = []
+        var filtered: [ModelDiscoverySummary.FilteredModel] = []
+        for entry in decoded.models {
+            guard !entry.slug.isEmpty else { continue }
+            if let reason = incompatibilityReason(for: entry) {
+                filtered.append(.init(slug: entry.slug, reason: reason))
+            } else {
+                compatible.append(entry)
+            }
+        }
+
+        let models: [String] =
+            compatible
             .sorted { ($0.priority ?? .max) < ($1.priority ?? .max) }
             .map(\.slug)
             .uniqued()
+        let summary = ModelDiscoverySummary(
+            rawEntryCount: decoded.models.count,
+            compatibleCount: models.count,
+            filteredModels: filtered,
+            fetchedAt: Date()
+        )
+        return (models, summary)
     }
 
-    /// True when a `/models` entry can be used through the Codex Responses
-    /// backend with a ChatGPT subscription. The same endpoint also returns
-    /// chat-only models (e.g. `gpt-5-4-thinking`), which fail with
-    /// `HTTP 400 "model is not supported when using Codex with a ChatGPT
-    /// account"` if we surface them.
-    private static func isCodexCompatible(_ entry: ModelEntry) -> Bool {
-        guard !entry.slug.isEmpty else { return false }
-
+    /// Nil when a `/models` entry can be used through the Codex Responses
+    /// backend with a ChatGPT subscription; otherwise the reason it must be
+    /// excluded. The same endpoint also returns chat-only models (e.g.
+    /// `gpt-5-4-thinking`), which fail with `HTTP 400 "model is not supported
+    /// when using Codex with a ChatGPT account"` if we surface them.
+    private static func incompatibilityReason(for entry: ModelEntry) -> ModelFilterReason? {
         // Must be a picker-visible model.
-        guard (entry.visibility ?? "list").lowercased() == "list" else { return false }
+        guard (entry.visibility ?? "list").lowercased() == "list" else { return .hiddenVisibility }
 
         // Codex requires shell-tool support. Chat-only models come back with
         // `shell_type: "disabled"`. Treat a missing field as "unknown -> allow"
         // and rely on the slug check below to catch it.
         if let shellType = entry.shell_type, shellType.lowercased() == "disabled" {
-            return false
+            return .shellToolDisabled
         }
 
         // Codex slugs always use a dotted version (e.g. "gpt-5.4-codex").
         // Chat-only slugs use dashes throughout (e.g. "gpt-5-4-thinking",
         // "gpt-4o"). Match the dotted "<family>-<major>.<minor>" prefix.
-        return entry.slug.range(of: #"^gpt-\d+\.\d+"#, options: .regularExpression) != nil
+        if entry.slug.range(of: #"^gpt-\d+\.\d+"#, options: .regularExpression) == nil {
+            return .nonCodexSlug
+        }
+        return nil
     }
 
     /// Convenience wrapper used by call sites that want a single "best

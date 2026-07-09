@@ -577,7 +577,14 @@ public struct SystemPromptComposer: Sendable {
             contextDisable: contextDisable,
             sizeClass: window.sizeClass,
             effectiveToolsOff: effectiveToolsOff,
-            capabilityPromptSectionsEnabled: !isTrivialInput,
+            // Tied to the tool-schema fast path, NOT to `isTrivialInput`
+            // alone: capability prose sections are static prefix content, so
+            // dropping them for a trivial query in a session that keeps its
+            // tool schema (sandbox mode, existing history, frozen state)
+            // would rewrite the cached prefix — busting the warm-up KV on a
+            // "hey" first send and the whole conversation KV on any
+            // mid-session "thanks"/"ok" turn, with zero prefill savings.
+            capabilityPromptSectionsEnabled: !suppressTrivialToolSchema,
             prefersCompactPrompt: window.prefersCompactPrompt
         )
     }
@@ -1111,9 +1118,17 @@ public struct SystemPromptComposer: Sendable {
         // current tool kit is incomplete. The gate follows the actual
         // schema, not the mode label: manual-mode agents still carry
         // `capabilities_discover` / `capabilities_load` as pragmatic
-        // always-loaded tools. Trivial first turns suppress this prompt
-        // section through `capabilityPromptSectionsEnabled` without hiding
-        // the callable discovery tools themselves.
+        // always-loaded tools.
+        //
+        // KV-cache stability: `capabilityPromptSectionsEnabled` goes false
+        // ONLY on the greeting-only cold first turn in `.none` mode where
+        // the whole tool schema is dropped too (the #1161 fast path — the
+        // `capabilities_discover` check below would fail there anyway). Like
+        // `pluginCreator`, this section must NOT vanish for a trivial query
+        // in a session that keeps its schema: warm-up composes with
+        // `query: ""` and includes it, so dropping it on a "hey" send (or a
+        // mid-session "thanks") would rewrite the static prefix and force a
+        // full re-prefill.
         if toolset.capabilityPromptSectionsEnabled,
             !effectiveToolsOff,
             tools.contains(where: { $0.function.name == "capabilities_discover" })
@@ -1737,12 +1752,12 @@ public struct SystemPromptComposer: Sendable {
     /// freeze.
     ///
     /// Known, deliberate divergence: `capabilityPromptSectionsEnabled` is
-    /// hardcoded `true` here, while a trivial first send ("hi", "thanks")
-    /// suppresses the capability nudge (see `isTrivialUserQuery`). The
-    /// popover therefore prices the prompt a *real task* will produce —
-    /// slightly overstating a greeting-only first turn is the honest side
-    /// to err on, and pricing against `""` already means "unknown next
-    /// input" rather than "greeting".
+    /// hardcoded `true` here, while a greeting-only cold first send in
+    /// `.none` mode drops the schema AND the capability nudge (see
+    /// `shouldSuppressTrivialToolSchema`). The popover therefore prices the
+    /// prompt a *real task* will produce — slightly overstating that one
+    /// fast-path turn is the honest side to err on, and pricing against
+    /// `""` already means "unknown next input" rather than "greeting".
     @MainActor
     private static func previewToolset(
         snapshot: AgentConfigSnapshot,

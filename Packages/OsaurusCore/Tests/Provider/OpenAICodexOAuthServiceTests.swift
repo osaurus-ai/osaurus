@@ -91,6 +91,40 @@ struct OpenAICodexOAuthServiceTests {
         }
     }
 
+    @Test func decodeModelCatalog_attributesEachDropReasonInSummary() throws {
+        let payload = """
+            {"models":[
+                {"slug":"gpt-5.5","visibility":"list","priority":2,"shell_type":"local"},
+                {"slug":"gpt-5.3-codex","visibility":"list","priority":1},
+                {"slug":"gpt-5.2"},
+                {"slug":"gpt-5-4-thinking","visibility":"list","priority":3,"shell_type":"disabled"},
+                {"slug":"gpt-4o","visibility":"list","priority":4},
+                {"slug":"gpt-5.5-internal","visibility":"hidden","priority":5},
+                {"slug":""},
+                {"slug":"gpt-5.5","visibility":"list","priority":6}
+            ]}
+            """
+        let (models, summary) = try OpenAICodexOAuthService.decodeModelCatalog(Data(payload.utf8))
+
+        // Sorted by priority (missing -> last), duplicates dropped.
+        #expect(models == ["gpt-5.3-codex", "gpt-5.5", "gpt-5.2"])
+        #expect(summary.rawEntryCount == 8)
+        #expect(summary.compatibleCount == 3)
+        #expect(
+            summary.filteredModels == [
+                .init(slug: "gpt-5-4-thinking", reason: .shellToolDisabled),
+                .init(slug: "gpt-4o", reason: .nonCodexSlug),
+                .init(slug: "gpt-5.5-internal", reason: .hiddenVisibility),
+            ]
+        )
+    }
+
+    @Test func decodeModelCatalog_throwsTypedErrorForUnreadablePayload() {
+        #expect(throws: OpenAICodexOAuthError.self) {
+            _ = try OpenAICodexOAuthService.decodeModelCatalog(Data(#"{"models":"unexpected"}"#.utf8))
+        }
+    }
+
     @Test func diagnostics_redactOAuthSecretsFromPasteableMessages() {
         let raw = """
             Authorization: Bearer access.secret

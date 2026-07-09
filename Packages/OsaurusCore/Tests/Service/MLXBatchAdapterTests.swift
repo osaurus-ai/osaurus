@@ -2252,6 +2252,123 @@ struct MLXBatchAdapterTests {
         #expect(boundary == nil)
     }
 
+    // MARK: - Warm-up send-invariant prefix (probe renders)
+
+    @Test func warmupSendInvariantBoundary_cutsAtFirstDivergentToken() {
+        let boundary = MLXBatchAdapter.warmupSendInvariantBoundary(
+            probeA: [1, 2, 3, 50, 7, 90, 91],
+            probeB: [1, 2, 3, 50, 8, 90, 91]
+        )
+
+        #expect(boundary == 4)
+    }
+
+    @Test func warmupSendInvariantBoundary_rejectsImmediateDivergence() {
+        // Renders share nothing — e.g. one probe fell back to a different
+        // template family. There is no stable prefix worth storing.
+        let boundary = MLXBatchAdapter.warmupSendInvariantBoundary(
+            probeA: [9, 9, 9],
+            probeB: [1, 2, 3]
+        )
+
+        #expect(boundary == nil)
+    }
+
+    @Test func warmupSendInvariantBoundary_rejectsNonDivergingProbes() {
+        // Identical renders cannot prove where probe-derived tokens begin,
+        // and a probe that is a full prefix of the other proves nothing
+        // about the generation-prompt suffix either.
+        #expect(
+            MLXBatchAdapter.warmupSendInvariantBoundary(
+                probeA: [1, 2, 3],
+                probeB: [1, 2, 3]
+            ) == nil
+        )
+        #expect(
+            MLXBatchAdapter.warmupSendInvariantBoundary(
+                probeA: [1, 2],
+                probeB: [1, 2, 3]
+            ) == nil
+        )
+        #expect(
+            MLXBatchAdapter.warmupSendInvariantBoundary(probeA: [], probeB: []) == nil
+        )
+    }
+
+    /// Simulates the Ornith / qwen3_5 failure: the native template REQUIRES
+    /// a user message, so a history-only render silently falls back to a
+    /// different template whose bytes share nothing with the real send.
+    /// The probe path appends a user turn before rendering, so it always
+    /// renders native, and the stored prefix must be a true token-prefix of
+    /// the real send's render.
+    private enum UserQueryRequiredTemplate {
+        static let systemAndTools = [1, 2, 3, 4, 5, 6]
+        static let userHeader = [50]
+        static let userFooter = [80]
+        static let generationSuffix = [90, 91]
+        /// What the bridge's substituted fallback template renders for a
+        /// history-only message list (native raises 'No user query found').
+        static let fallbackRender = [7, 7, 7, 7, 7]
+
+        static func nativeRender(userText: String) -> [Int] {
+            systemAndTools + userHeader
+                + userText.unicodeScalars.map { Int($0.value) }
+                + userFooter + generationSuffix
+        }
+    }
+
+    @Test func warmupProbePrefix_isTruePrefixOfRealSendForUserQueryRequiredTemplate() async {
+        let chat: [MLXLMCommon.Chat.Message] = [.system("You are an agent.")]
+
+        let warmupTokens = await MLXBatchAdapter.warmupSendInvariantPrefixTokens(chat: chat) {
+            UserQueryRequiredTemplate.nativeRender(userText: $0)
+        }
+
+        // The invariant prefix is everything up to and including the
+        // user-turn header — nothing probe-derived and no generation suffix.
+        #expect(
+            warmupTokens
+                == UserQueryRequiredTemplate.systemAndTools
+                + UserQueryRequiredTemplate.userHeader
+        )
+
+        // The real send extends the stored prefix byte-for-byte.
+        let sendTokens = UserQueryRequiredTemplate.nativeRender(userText: "hey")
+        if let warmupTokens {
+            #expect(Array(sendTokens.prefix(warmupTokens.count)) == warmupTokens)
+        }
+
+        // The history-only render (what the old path would have stored)
+        // shares no prefix with the send — the regression this guards.
+        #expect(
+            Array(sendTokens.prefix(1))
+                != Array(UserQueryRequiredTemplate.fallbackRender.prefix(1))
+        )
+    }
+
+    @Test func warmupProbePrefix_bailsWhenHistoryEndsInUserTurn() async {
+        let chat: [MLXLMCommon.Chat.Message] = [
+            .system("You are an agent."),
+            .user("dangling"),
+        ]
+
+        let warmupTokens = await MLXBatchAdapter.warmupSendInvariantPrefixTokens(chat: chat) {
+            UserQueryRequiredTemplate.nativeRender(userText: $0)
+        }
+
+        #expect(warmupTokens == nil)
+    }
+
+    @Test func warmupProbePrefix_bailsWhenProbeRenderFails() async {
+        let chat: [MLXLMCommon.Chat.Message] = [.system("You are an agent.")]
+
+        let warmupTokens = await MLXBatchAdapter.warmupSendInvariantPrefixTokens(chat: chat) {
+            _ in nil
+        }
+
+        #expect(warmupTokens == nil)
+    }
+
     // MARK: - Laguna serving-loop defaults
 
     @Test func isLagunaFamily_matchesBothLinesAndRejectsLookalikes() {

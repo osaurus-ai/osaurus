@@ -2467,6 +2467,8 @@ private struct EditProviderFlow: View {
             do {
                 // xAI OAuth tokens cannot list models (HTTP 403); the manager
                 // short-circuits to the built-in catalog for `.xaiOAuth`.
+                // Passing the provider id lets ChatGPT/Codex use the stored
+                // OAuth tokens to query the live catalog when signed in.
                 let models = try await RemoteProviderManager.shared.testConnection(
                     host: trimmedHost,
                     providerProtocol: providerProtocol,
@@ -2476,7 +2478,8 @@ private struct EditProviderFlow: View {
                     providerType: providerType,
                     apiKey: testApiKey,
                     headers: HeaderEntry.buildHeaders(from: customHeaders),
-                    manualModelIds: parseManualModelIds(manualModelIdsText)
+                    manualModelIds: parseManualModelIds(manualModelIdsText),
+                    providerId: provider.id
                 )
                 await MainActor.run {
                     testResult = .success(models)

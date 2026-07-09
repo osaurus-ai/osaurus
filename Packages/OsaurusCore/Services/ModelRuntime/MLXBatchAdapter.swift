@@ -1373,6 +1373,117 @@ struct MLXBatchAdapter {
         let promptTokens: [Int]
     }
 
+    /// Prepare a warm-up prompt as the send-invariant prefix of the NEXT
+    /// real send's rendering.
+    ///
+    /// The warm-up payload is history-only (system + completed turns); the
+    /// real send appends a user turn whose text is unknown at warm-up time.
+    /// Rendering the history alone is not template-safe: some native
+    /// templates require a user query (Ornith / qwen3_5 raises
+    /// `'No user query found in messages.'`) and the tokenizer bridge then
+    /// silently substitutes a built-in fallback template — the warm-up
+    /// stores KV for a byte sequence the real send never renders, and the
+    /// cache misses in full. Index-sensitive templates (reasoning replay
+    /// keyed off the last user index) have the same divergence in milder
+    /// form.
+    ///
+    /// Instead, render the history PLUS a probe user turn twice with two
+    /// different probe texts, and keep the longest common token prefix.
+    /// Whatever the template renders identically for both probes is by
+    /// construction independent of the user text — the exact prefix the
+    /// real send extends (system + tools + completed turns + the user-turn
+    /// header). No template shape is assumed and nothing user-text-derived
+    /// can leak into the stored prefix: any divergent token ends the LCP.
+    ///
+    /// Returns nil (caller falls back to
+    /// ``truncatingToCanonicalCacheBoundary``) when the chat carries media,
+    /// already ends in a user turn, a probe render fails, or the two probe
+    /// renders share no usable prefix.
+    static func prepareWarmupInputAtSendInvariantPrefix(
+        chat: [MLXLMCommon.Chat.Message],
+        toolsSpec: [[String: any Sendable]]?,
+        additionalContext: [String: any Sendable],
+        processor: any MLXLMCommon.UserInputProcessor
+    ) async -> LMInput? {
+        let hasMedia = chat.contains {
+            !$0.images.isEmpty || !$0.videos.isEmpty || !$0.audios.isEmpty
+        }
+        guard !hasMedia else { return nil }
+
+        let prefix = await warmupSendInvariantPrefixTokens(chat: chat) { probeText in
+            var probeChat = chat
+            probeChat.append(.user(probeText))
+            let input = MLXLMCommon.UserInput(
+                chat: probeChat,
+                processing: .init(),
+                tools: toolsSpec,
+                additionalContext: additionalContext
+            )
+            guard let prepared = try? await processor.prepare(input: input),
+                !prepared.hasMediaContent
+            else { return nil }
+            return prepared.text.tokenIds
+                ?? MLXCacheIOLock.withSerializedMLXCacheIO {
+                    prepared.text.tokens.asArray(Int.self)
+                }
+        }
+
+        guard let prefix else {
+            batchAdapterLog.info(
+                "warmupPrefill: probe renders unavailable or share no prefix; falling back to canonical boundary truncation"
+            )
+            return nil
+        }
+
+        // The scope salt is derived from additionalContext alone, so the
+        // probe render's salt matches the real send's.
+        let scopeSalt = MLXLMCommon.cacheScopeSalt(from: additionalContext)
+        batchAdapterLog.info(
+            "warmupPrefill: truncated prompt to send-invariant prefix of \(prefix.count, privacy: .public) tokens"
+        )
+        // Prompt tokens are batch-shaped [1, N] by processor contract (see
+        // `truncatingToCanonicalCacheBoundary`).
+        return LMInput(
+            tokens: MLXArray(prefix).expandedDimensions(axis: 0),
+            tokenIds: prefix,
+            cacheScopeSalt: scopeSalt,
+            cachePrefixTokenCounts: [],
+            toolSchemas: toolsSpec
+        )
+    }
+
+    /// Token-level core of ``prepareWarmupInputAtSendInvariantPrefix``:
+    /// render the history plus two different probe user turns and return
+    /// their longest common token prefix. Returns nil when the history
+    /// already ends in a user turn (the next send would not simply append
+    /// one), a probe render fails, or the renders share no usable prefix.
+    static func warmupSendInvariantPrefixTokens(
+        chat: [MLXLMCommon.Chat.Message],
+        renderProbe: (String) async -> [Int]?
+    ) async -> [Int]? {
+        guard chat.last?.role != .user else { return nil }
+        // Probe texts start with different characters so their first content
+        // tokens differ and the LCP ends exactly at the user-turn header.
+        guard let probeA = await renderProbe("0"),
+            let probeB = await renderProbe("z"),
+            let boundary = warmupSendInvariantBoundary(probeA: probeA, probeB: probeB)
+        else { return nil }
+        return Array(probeA.prefix(boundary))
+    }
+
+    /// Longest common token prefix of the two probe renders, or nil when it
+    /// is unusable: empty (renders diverge immediately — nothing stable to
+    /// store) or covering an entire probe render (the probes failed to
+    /// diverge, so the boundary cannot be proven to exclude probe-derived
+    /// tokens or the generation prompt).
+    static func warmupSendInvariantBoundary(probeA: [Int], probeB: [Int]) -> Int? {
+        let n = min(probeA.count, probeB.count)
+        var lcp = 0
+        while lcp < n, probeA[lcp] == probeB[lcp] { lcp += 1 }
+        guard lcp > 0, lcp < probeA.count, lcp < probeB.count else { return nil }
+        return lcp
+    }
+
     /// Truncate a warm-up prompt to the processor's canonical history cache
     /// boundary (the render WITHOUT the generation prompt).
     ///
@@ -1597,14 +1708,35 @@ struct MLXBatchAdapter {
 
                 trace?.mark("batch_tokenization_start")
                 do {
-                    let prepared = try await context.processor.prepare(input: userInput)
-                    lmInput = prepared.withToolSchemas(toolsSpec)
-                    if generation.warmupPrefill {
-                        lmInput = Self.truncatingToCanonicalCacheBoundary(
-                            lmInput,
-                            tokenizer: context.tokenizer,
-                            additionalContext: additionalContext
+                    // Warm-up prompts must be rendered exactly like the next
+                    // real send, then cut to the send-invariant prefix. The
+                    // probe path appends a synthetic user turn before
+                    // rendering, because several native templates (e.g.
+                    // Ornith / qwen3_5's `raise_exception('No user query
+                    // found in messages.')`) refuse a history-only message
+                    // list — the tokenizer bridge then silently renders with
+                    // a built-in fallback template whose bytes share nothing
+                    // with the real send, so the stored KV can never be
+                    // restored. See `prepareWarmupInputAtSendInvariantPrefix`.
+                    if generation.warmupPrefill,
+                        let probeTruncated = await Self.prepareWarmupInputAtSendInvariantPrefix(
+                            chat: chat,
+                            toolsSpec: toolsSpec,
+                            additionalContext: additionalContext,
+                            processor: context.processor
                         )
+                    {
+                        lmInput = probeTruncated
+                    } else {
+                        let prepared = try await context.processor.prepare(input: userInput)
+                        lmInput = prepared.withToolSchemas(toolsSpec)
+                        if generation.warmupPrefill {
+                            lmInput = Self.truncatingToCanonicalCacheBoundary(
+                                lmInput,
+                                tokenizer: context.tokenizer,
+                                additionalContext: additionalContext
+                            )
+                        }
                     }
                 } catch {
                     let detail =
