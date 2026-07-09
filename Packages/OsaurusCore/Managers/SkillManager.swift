@@ -720,7 +720,51 @@ public final class SkillManager {
             }
         }
 
+        let supportInventory = await buildSupportFileInventory(for: skill)
+        if !supportInventory.isEmpty {
+            sections.append("\n## Skill Package Files\n\n\(supportInventory)")
+        }
+
         return sections.joined(separator: "\n")
+    }
+
+    private func buildSupportFileInventory(for skill: Skill) async -> String {
+        let supportFiles = await Task.detached(priority: .utility) {
+            SkillStore.supportFiles(from: skill)
+        }.value
+        guard !supportFiles.isEmpty else { return "" }
+
+        var lines = [
+            "Supporting files are listed for orientation only; loading a skill never executes them or reads their contents from scripts, assets, or templates.",
+            "Reference materials, when present, are loaded separately above.",
+            "Paths are relative to the skill package root. Inspect text scripts before running them, and run helper scripts only through an enabled execution tool when the user explicitly asks for execution.",
+            "The inventory is capped at \(SkillStore.supportFileInventoryLimit) support files.",
+            "",
+        ]
+
+        for file in supportFiles {
+            lines.append("- \(promptSafeSkillPath(file.relativePath)) (\(formatSize(file.size)))")
+        }
+
+        return lines.joined(separator: "\n")
+    }
+
+    private func promptSafeSkillPath(_ path: String) -> String {
+        let directionalFormattingControls = CharacterSet(
+            charactersIn: "\u{202A}\u{202B}\u{202C}\u{202D}\u{202E}\u{2066}\u{2067}\u{2068}\u{2069}"
+        )
+        var sanitized = String.UnicodeScalarView()
+        for scalar in path.unicodeScalars {
+            let shouldReplace = CharacterSet.controlCharacters.contains(scalar)
+                || CharacterSet.newlines.contains(scalar)
+                || directionalFormattingControls.contains(scalar)
+            if shouldReplace {
+                sanitized.append(contentsOf: "?".unicodeScalars)
+            } else {
+                sanitized.append(scalar)
+            }
+        }
+        return String(sanitized)
     }
 
     private func loadReferenceContents(for skill: Skill) async -> String {

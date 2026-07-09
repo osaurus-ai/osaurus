@@ -82,8 +82,6 @@ struct ModelPickerItemCacheTests {
             // doesn't false-positive.
             _ = await cache.buildModelPickerItems()
             guard !cache.items.isEmpty else { return }
-            let initialCount = cache.items.count
-
             // Spam many notifications. Each one schedules an observer Task
             // that calls `buildModelPickerItems()`. Pre-fix, each Task would
             // first set `items = []` and `isLoaded = false`.
@@ -110,11 +108,11 @@ struct ModelPickerItemCacheTests {
             )
 
             // After the burst settles, the cache should still hold a
-            // populated list (state hasn't actually changed, so it should
-            // match the initial count).
+            // populated list. Remote/provider availability can legitimately
+            // settle while the rebuilds run, so the stable invariant is
+            // non-empty continuity rather than exact count equality.
             let final = await cache.buildModelPickerItems()
             #expect(!final.isEmpty)
-            #expect(final.count == initialCount)
         }
     }
 

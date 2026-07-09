@@ -1052,9 +1052,10 @@ public final class ClaudePluginInstaller {
 
     /// Decide whether a file should land under `references/` (indexed and
     /// loaded into context by `SkillManager.loadReferenceContents`) or
-    /// `assets/` (carried alongside the skill but not surfaced as part of
-    /// the prompt). Text-y extensions go to references so the agent can
-    /// read them; everything else goes to assets.
+    /// `assets/` (carried alongside the skill and surfaced only as metadata
+    /// in the support-file inventory). Text-y extensions, including helper
+    /// scripts, go to references so the agent can read them; everything else
+    /// goes to assets.
     nonisolated fileprivate static func shouldStoreAsReference(_ name: String) -> Bool {
         let textExtensions: Set<String> = [
             "md", "txt", "json", "yaml", "yml", "xml", "html", "css",
