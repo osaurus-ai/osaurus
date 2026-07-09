@@ -460,6 +460,8 @@ private struct KnowledgeCollectionCard: View {
                     .font(.system(size: 10))
                 Text(title, bundle: .module)
                     .font(.system(size: 11, weight: .medium))
+                    .lineLimit(1)
+                    .fixedSize(horizontal: true, vertical: false)
             }
             .foregroundColor(destructive ? .red : theme.secondaryText)
             .padding(.horizontal, 8)
