@@ -107,11 +107,11 @@ struct KnowledgeView: View {
                                                 .okfNonconformingDocuments(collectionId: collection.id.uuidString)
                                             await MainActor.run {
                                                 if failing.isEmpty {
-                                                    showSuccess("OKF conformant: every document carries a type")
+                                                    showSuccess("Every document has a category (type)")
                                                 } else {
                                                     let sample = failing.prefix(3).joined(separator: ", ")
                                                     showSuccess(
-                                                        "\(failing.count) document(s) missing a frontmatter type: \(sample)\(failing.count > 3 ? "…" : "")"
+                                                        "\(failing.count) document(s) need a category — add a `type:` line to: \(sample)\(failing.count > 3 ? "…" : "")"
                                                     )
                                                 }
                                             }
@@ -385,8 +385,10 @@ private struct KnowledgeCollectionCard: View {
 
     private var okfLabel: String {
         switch okfStatus {
-        case .nonconforming(let count): return "OKF · \(count)"
-        default: return "OKF"
+        case .conformant: return "All categorized"
+        case .nonconforming(let count):
+            return count == 1 ? "1 doc needs a category" : "\(count) docs need a category"
+        case .unknown: return "Checking categories…"
         }
     }
 
@@ -401,11 +403,13 @@ private struct KnowledgeCollectionCard: View {
     private var okfHelp: String {
         switch okfStatus {
         case .conformant:
-            return "OKF: every document carries a frontmatter type. Click to re-check."
+            return
+                "Every document has a category, so agents can filter the library by it. Following the Open Knowledge Format (OKF)."
         case .nonconforming(let count):
-            return "OKF: \(count) document(s) missing a frontmatter type. Click for details."
+            return
+                "\(count) document(s) have no category. Add a `type:` line (e.g. `type: policy`) to the top of each file so agents can filter by it. Click for the list."
         case .unknown:
-            return "Check that every document carries a frontmatter type (OKF)."
+            return "Checking that every document declares a category (its `type`)…"
         }
     }
 
