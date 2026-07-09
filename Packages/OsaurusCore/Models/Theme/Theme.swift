@@ -549,6 +549,14 @@ extension Notification.Name {
 @MainActor
 public class ThemeManager: ObservableObject {
     public static let shared = ThemeManager()
+    private static let builtInDarkThemeID = UUID(uuid: (0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1))
+    private static let builtInLightThemeID = UUID(uuid: (0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2))
+
+    struct StartupThemeSelection {
+        var appearanceMode: AppearanceMode
+        var activeTheme: CustomTheme?
+        var shouldClearActiveTheme: Bool
+    }
 
     @Published var currentTheme: ThemeProtocol
     @Published var chatTheme: ThemeProtocol
@@ -564,6 +572,16 @@ public class ThemeManager: ObservableObject {
 
         // Load saved appearance mode (cheap config read).
         let config = ServerConfigurationStore.load() ?? ServerConfiguration.default
+        let savedActiveTheme = ThemeConfigurationStore.loadActiveTheme()
+        let startupSelection = Self.startupSelection(
+            savedActiveTheme: savedActiveTheme,
+            configuredAppearanceMode: config.appearanceMode
+        )
+
+        if startupSelection.shouldClearActiveTheme {
+            ThemeConfigurationStore.saveActiveThemeId(nil)
+            ServerConfigurationStore.updateAppearanceMode(startupSelection.appearanceMode)
+        }
 
         // Resolve the *initial* theme synchronously with as little disk work
         // as possible. `.shared` is constructed during `osaurusApp` struct
@@ -576,7 +594,7 @@ public class ThemeManager: ObservableObject {
         //  • Otherwise: seed the compiled-in Dark/Light default. The
         //    disk-installed built-in (identical palette) is swapped in by the
         //    deferred load below once it finishes — invisible to the user.
-        if let customTheme = ThemeConfigurationStore.loadActiveTheme() {
+        if let customTheme = startupSelection.activeTheme {
             print("[Osaurus] ThemeManager: Restoring active theme '\(customTheme.metadata.name)'")
             self.activeCustomTheme = customTheme
             let themeInstance = CustomizableTheme(config: customTheme)
@@ -584,7 +602,7 @@ public class ThemeManager: ObservableObject {
             self.chatTheme = themeInstance
         } else {
             let fallbackTheme =
-                Self.isDarkMode(for: config.appearanceMode) ? CustomTheme.darkDefault : CustomTheme.lightDefault
+                Self.isDarkMode(for: startupSelection.appearanceMode) ? CustomTheme.darkDefault : CustomTheme.lightDefault
             let themeInstance = CustomizableTheme(config: fallbackTheme)
             self.currentTheme = themeInstance
             self.chatTheme = themeInstance
@@ -592,7 +610,7 @@ public class ThemeManager: ObservableObject {
 
         // Now we can assign to self properties. `installedThemes` is published
         // empty and filled in by the deferred load.
-        self.appearanceMode = config.appearanceMode
+        self.appearanceMode = startupSelection.appearanceMode
         self.installedThemes = []
 
         // Observe system appearance changes (Distributed Notification)
@@ -610,7 +628,7 @@ public class ThemeManager: ObservableObject {
         // no longer blocks `osaurusApp` struct construction. It then publishes
         // `installedThemes` and upgrades the initial fallback to the disk
         // built-in when ready.
-        let appearanceMode = config.appearanceMode
+        let appearanceMode = startupSelection.appearanceMode
         Task { @MainActor [weak self] in
             ThemeConfigurationStore.installBuiltInThemesIfNeeded()
             // Decoding every installed theme's JSON synchronously on the main
@@ -629,8 +647,7 @@ public class ThemeManager: ObservableObject {
             // Only swap the live theme if the user hasn't picked a custom one;
             // matching the original synchronous built-in resolution.
             if self.activeCustomTheme == nil,
-                let builtIn = Self.resolveBuiltInTheme(for: appearanceMode, from: loaded)
-            {
+                let builtIn = Self.resolveBuiltInTheme(for: appearanceMode, from: loaded) {
                 let themeInstance = CustomizableTheme(config: builtIn)
                 self.currentTheme = themeInstance
                 self.chatTheme = themeInstance
@@ -640,40 +657,71 @@ public class ThemeManager: ObservableObject {
         print("[Osaurus] ThemeManager: Initialization complete")
     }
 
+    static func startupSelection(
+        savedActiveTheme: CustomTheme?,
+        configuredAppearanceMode: AppearanceMode
+    ) -> StartupThemeSelection {
+        guard let savedActiveTheme else {
+            return StartupThemeSelection(
+                appearanceMode: configuredAppearanceMode,
+                activeTheme: nil,
+                shouldClearActiveTheme: false
+            )
+        }
+        guard let builtInMode = appearanceMode(forBuiltInTheme: savedActiveTheme) else {
+            return StartupThemeSelection(
+                appearanceMode: configuredAppearanceMode,
+                activeTheme: savedActiveTheme,
+                shouldClearActiveTheme: false
+            )
+        }
+        return StartupThemeSelection(
+            appearanceMode: builtInMode,
+            activeTheme: nil,
+            shouldClearActiveTheme: true
+        )
+    }
+
     /// Find the appropriate built-in theme based on appearance mode
     private static func resolveBuiltInTheme(for mode: AppearanceMode, from themes: [CustomTheme]) -> CustomTheme? {
         // Find the built-in Dark or Light theme based on appearance
-        let targetId =
-            isDarkMode(for: mode)
-            ? UUID(uuidString: "00000000-0000-0000-0000-000000000001")  // Dark theme ID
-            : UUID(uuidString: "00000000-0000-0000-0000-000000000002")  // Light theme ID
+        let targetId = isDarkMode(for: mode) ? builtInDarkThemeID : builtInLightThemeID
 
         return themes.first { $0.metadata.id == targetId }
     }
 
+    public static func appearanceMode(forBuiltInTheme theme: CustomTheme) -> AppearanceMode? {
+        guard theme.isBuiltIn else { return nil }
+        switch theme.metadata.id {
+        case builtInDarkThemeID:
+            return .dark
+        case builtInLightThemeID:
+            return .light
+        default:
+            return nil
+        }
+    }
+
     /// Update the appearance mode and apply the theme
-    func setAppearanceMode(_ mode: AppearanceMode) {
+    public func setAppearanceMode(
+        _ mode: AppearanceMode,
+        clearActiveTheme: Bool = false,
+        persist: Bool = true
+    ) {
         appearanceMode = mode
+
+        if persist {
+            ServerConfigurationStore.updateAppearanceMode(mode)
+        }
+        if clearActiveTheme {
+            activeCustomTheme = nil
+            ThemeConfigurationStore.saveActiveThemeId(nil)
+        }
 
         // If a user-selected custom theme is active, don't change it based on appearance mode
         guard activeCustomTheme == nil else { return }
 
-        // Apply the appropriate built-in theme
-        if let builtInTheme = Self.resolveBuiltInTheme(for: mode, from: installedThemes) {
-            let themeInstance = CustomizableTheme(config: builtInTheme)
-            withAnimation(.easeInOut(duration: 0.3)) {
-                currentTheme = themeInstance
-                chatTheme = themeInstance
-            }
-        } else {
-            // Fallback to default CustomTheme
-            let fallbackTheme = Self.isDarkMode(for: mode) ? CustomTheme.darkDefault : CustomTheme.lightDefault
-            let themeInstance = CustomizableTheme(config: fallbackTheme)
-            withAnimation(.easeInOut(duration: 0.3)) {
-                currentTheme = themeInstance
-                chatTheme = themeInstance
-            }
-        }
+        applyResolvedTheme(for: mode, animated: true)
         NotificationCenter.default.post(name: .globalThemeChanged, object: nil)
     }
 
@@ -711,33 +759,7 @@ public class ThemeManager: ObservableObject {
             ThemeConfigurationStore.saveActiveThemeId(nil)
         }
 
-        // Apply the appropriate built-in theme based on current appearance mode
-        if let builtInTheme = Self.resolveBuiltInTheme(for: appearanceMode, from: installedThemes) {
-            let themeInstance = CustomizableTheme(config: builtInTheme)
-            if animated {
-                withAnimation(.easeInOut(duration: 0.3)) {
-                    currentTheme = themeInstance
-                    chatTheme = themeInstance
-                }
-            } else {
-                currentTheme = themeInstance
-                chatTheme = themeInstance
-            }
-        } else {
-            // Fallback to default CustomTheme
-            let fallbackTheme =
-                Self.isDarkMode(for: appearanceMode) ? CustomTheme.darkDefault : CustomTheme.lightDefault
-            let themeInstance = CustomizableTheme(config: fallbackTheme)
-            if animated {
-                withAnimation(.easeInOut(duration: 0.3)) {
-                    currentTheme = themeInstance
-                    chatTheme = themeInstance
-                }
-            } else {
-                currentTheme = themeInstance
-                chatTheme = themeInstance
-            }
-        }
+        applyResolvedTheme(for: appearanceMode, animated: animated)
         NotificationCenter.default.post(name: .globalThemeChanged, object: nil)
     }
 
@@ -827,23 +849,25 @@ public class ThemeManager: ObservableObject {
         // Only update if we're following system appearance and no user-selected theme is active
         guard appearanceMode == .system, activeCustomTheme == nil else { return }
 
-        // Apply the appropriate built-in theme
-        if let builtInTheme = Self.resolveBuiltInTheme(for: .system, from: installedThemes) {
-            let themeInstance = CustomizableTheme(config: builtInTheme)
+        applyResolvedTheme(for: .system, animated: true)
+        NotificationCenter.default.post(name: .globalThemeChanged, object: nil)
+    }
+
+    private func applyResolvedTheme(for mode: AppearanceMode, animated: Bool) {
+        let resolvedTheme =
+            Self.resolveBuiltInTheme(for: mode, from: installedThemes)
+            ?? (Self.isDarkMode(for: mode) ? CustomTheme.darkDefault : CustomTheme.lightDefault)
+        let themeInstance = CustomizableTheme(config: resolvedTheme)
+
+        if animated {
             withAnimation(.easeInOut(duration: 0.3)) {
                 currentTheme = themeInstance
                 chatTheme = themeInstance
             }
         } else {
-            // Fallback to default CustomTheme
-            let fallbackTheme = Self.isDarkMode(for: .system) ? CustomTheme.darkDefault : CustomTheme.lightDefault
-            let themeInstance = CustomizableTheme(config: fallbackTheme)
-            withAnimation(.easeInOut(duration: 0.3)) {
-                currentTheme = themeInstance
-                chatTheme = themeInstance
-            }
+            currentTheme = themeInstance
+            chatTheme = themeInstance
         }
-        NotificationCenter.default.post(name: .globalThemeChanged, object: nil)
     }
 
     // MARK: - Chat Theme (Agent-specific)

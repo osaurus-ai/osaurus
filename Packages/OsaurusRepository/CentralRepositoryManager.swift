@@ -17,9 +17,106 @@ public struct CentralRepository {
     }
 }
 
+public struct CentralRepositoryRefreshResult: Equatable, Sendable {
+    public let succeeded: Bool
+    public let repositoryURL: String
+    public let attemptedArchiveURLs: [String]
+    public let refreshedAt: Date?
+    public let cacheAvailable: Bool
+    public let cacheUpdatedAt: Date?
+    public let failure: CentralRepositoryRefreshFailure?
+
+    public var userMessage: String? {
+        failure?.userMessage
+    }
+}
+
+public struct CentralRepositoryRefreshFailure: Equatable, LocalizedError, Sendable {
+    public enum Kind: String, Sendable {
+        case unsupportedRepository
+        case notFound
+        case unauthorized
+        case rateLimited
+        case serverError
+        case networkUnavailable
+        case timedOut
+        case tlsTrust
+        case cancelled
+        case malformedArchive
+        case unzipFailed
+        case fileSystem
+        case unknown
+    }
+
+    public let kind: Kind
+    public let message: String
+    public let repositoryURL: String
+    public let attemptedArchiveURLs: [String]
+    public let failedArchiveURL: String?
+    public let httpStatusCode: Int?
+    public let retryable: Bool
+    public let cacheAvailable: Bool
+    public let cacheUpdatedAt: Date?
+
+    public var errorDescription: String? { message }
+
+    public var userMessage: String {
+        let cacheSuffix: String
+        if cacheAvailable {
+            if let cacheUpdatedAt {
+                let formattedDate = DateFormatter.localizedString(
+                    from: cacheUpdatedAt,
+                    dateStyle: .medium,
+                    timeStyle: .short
+                )
+                cacheSuffix = " Showing cached plugin list from \(formattedDate)."
+            } else {
+                cacheSuffix = " Showing cached plugin list."
+            }
+        } else {
+            cacheSuffix = " No cached plugin list is available yet."
+        }
+
+        let retrySuffix = retryable
+            ? " You can retry after the connection or service recovers."
+            : " Check the repository URL or configuration before retrying."
+
+        switch kind {
+        case .unsupportedRepository:
+            return "Plugin repository URL is unsupported. Osaurus can refresh GitHub repositories only.\(cacheSuffix)"
+        case .notFound:
+            return "Plugin repository archive was not found for the configured branch.\(cacheSuffix)\(retrySuffix)"
+        case .unauthorized:
+            return "Plugin repository rejected the request as unauthorized.\(cacheSuffix)\(retrySuffix)"
+        case .rateLimited:
+            return "Plugin repository rate limit was reached.\(cacheSuffix)\(retrySuffix)"
+        case .serverError:
+            return "Plugin repository is temporarily unavailable.\(cacheSuffix)\(retrySuffix)"
+        case .networkUnavailable:
+            return "Plugin repository is unreachable from this network.\(cacheSuffix)\(retrySuffix)"
+        case .timedOut:
+            return "Plugin repository refresh timed out.\(cacheSuffix)\(retrySuffix)"
+        case .tlsTrust:
+            return "Plugin repository connection failed certificate validation.\(cacheSuffix)\(retrySuffix)"
+        case .cancelled:
+            return "Plugin repository refresh was cancelled.\(cacheSuffix)\(retrySuffix)"
+        case .malformedArchive:
+            return "Plugin repository downloaded an invalid registry archive.\(cacheSuffix)\(retrySuffix)"
+        case .unzipFailed:
+            return "Plugin repository archive could not be unpacked.\(cacheSuffix)\(retrySuffix)"
+        case .fileSystem:
+            return "Plugin repository cache could not be updated on disk.\(cacheSuffix)\(retrySuffix)"
+        case .unknown:
+            return "Plugin repository refresh failed.\(cacheSuffix)\(retrySuffix)"
+        }
+    }
+}
+
 public final class CentralRepositoryManager: @unchecked Sendable {
     public static let shared = CentralRepositoryManager()
     private init() {}
+
+    static nonisolated(unsafe) var downloadFileOverride: (@Sendable (URL, URL) throws -> Void)?
 
     public var central: CentralRepository = .init(
         url: "https://github.com/osaurus-ai/osaurus-tools.git",
@@ -38,12 +135,52 @@ public final class CentralRepositoryManager: @unchecked Sendable {
     /// missing `plugins/` dir) the existing on-disk copy is left untouched.
     @discardableResult
     public func refresh() -> Bool {
+        refreshWithDiagnostics().succeeded
+    }
+
+    /// Refreshes the local plugin registry and returns a typed diagnostic that
+    /// callers can surface in UI/support bundles without parsing logs.
+    @discardableResult
+    public func refreshWithDiagnostics() -> CentralRepositoryRefreshResult {
         do {
-            try performRefresh()
-            return true
+            let attemptedURLs = try performRefresh()
+            return CentralRepositoryRefreshResult(
+                succeeded: true,
+                repositoryURL: Self.redactedURLString(central.url),
+                attemptedArchiveURLs: attemptedURLs.map { Self.redactedURLString($0.absoluteString) },
+                refreshedAt: Date(),
+                cacheAvailable: hasCachedSpecs(),
+                cacheUpdatedAt: cacheUpdatedAt(),
+                failure: nil
+            )
+        } catch let attemptError as RefreshAttemptError {
+            let failure = makeFailure(
+                from: attemptError.underlying,
+                attemptedURLs: attemptError.attemptedURLs,
+                failedURL: attemptError.failedURL
+            )
+            NSLog("[Osaurus] Registry refresh failed: %@", failure.message)
+            return CentralRepositoryRefreshResult(
+                succeeded: false,
+                repositoryURL: failure.repositoryURL,
+                attemptedArchiveURLs: failure.attemptedArchiveURLs,
+                refreshedAt: nil,
+                cacheAvailable: failure.cacheAvailable,
+                cacheUpdatedAt: failure.cacheUpdatedAt,
+                failure: failure
+            )
         } catch {
-            NSLog("[Osaurus] Registry refresh failed: %@", String(describing: error))
-            return false
+            let failure = makeFailure(from: error, attemptedURLs: [], failedURL: nil)
+            NSLog("[Osaurus] Registry refresh failed: %@", failure.message)
+            return CentralRepositoryRefreshResult(
+                succeeded: false,
+                repositoryURL: failure.repositoryURL,
+                attemptedArchiveURLs: failure.attemptedArchiveURLs,
+                refreshedAt: nil,
+                cacheAvailable: failure.cacheAvailable,
+                cacheUpdatedAt: failure.cacheUpdatedAt,
+                failure: failure
+            )
         }
     }
 
@@ -57,7 +194,7 @@ public final class CentralRepositoryManager: @unchecked Sendable {
 
     // MARK: - Refresh pipeline
 
-    private func performRefresh() throws {
+    private func performRefresh() throws -> [URL] {
         let fm = FileManager.default
         let root = ToolsPaths.pluginSpecsRoot()
         try fm.createDirectoryIfNeeded(at: root)
@@ -75,43 +212,58 @@ public final class CentralRepositoryManager: @unchecked Sendable {
 
         let zipURL = stagingDir.appendingPathComponent(Path.archiveZip, isDirectory: false)
 
-        // try candidates in order, falling through on 404 so a repo whose
+        // Try candidates in order, falling through on 404 so a repo whose
         // default branch is master still resolves when no branch is pinned
-        var lastError: Error?
+        var attemptedURLs: [URL] = []
         for (index, url) in archiveURLs.enumerated() {
+            attemptedURLs.append(url)
             do {
                 try downloadFile(from: url, to: zipURL)
-                lastError = nil
                 break
             } catch RefreshError.httpStatus(404) where index < archiveURLs.count - 1 {
-                lastError = RefreshError.httpStatus(404)
                 continue
             } catch {
-                throw error
+                throw RefreshAttemptError(underlying: error, attemptedURLs: attemptedURLs, failedURL: url)
             }
         }
-        if let lastError { throw lastError }
 
         let extractDir = stagingDir.appendingPathComponent(Path.extracted, isDirectory: true)
-        try fm.createDirectory(at: extractDir, withIntermediateDirectories: true)
-        try unzip(zipURL: zipURL, to: extractDir)
+        do {
+            try fm.createDirectory(at: extractDir, withIntermediateDirectories: true)
+            try unzip(zipURL: zipURL, to: extractDir)
+        } catch {
+            throw RefreshAttemptError(underlying: error, attemptedURLs: attemptedURLs, failedURL: nil)
+        }
 
         // GitHub source archives wrap their contents in a single top-level directory
         // named `<repo>-<branch>/`.
         guard let innerRoot = locateInnerArchiveRoot(in: extractDir) else {
-            throw RefreshError.malformedArchive("no inner directory inside \(extractDir.path)")
+            throw RefreshAttemptError(
+                underlying: RefreshError.malformedArchive("no inner directory inside \(extractDir.path)"),
+                attemptedURLs: attemptedURLs,
+                failedURL: nil
+            )
         }
 
         // Integrity check: the inner root must contain a `plugins/` directory with at
         // least one JSON file that decodes as a valid `PluginSpec`. Prevents accidentally
         // installing an unrelated repository as the registry.
         guard !decodeSpecs(in: pluginsDirectory(under: innerRoot)).isEmpty else {
-            throw RefreshError.malformedArchive(
-                "no decodable plugin specs under \(innerRoot.path)/\(Path.plugins)"
+            throw RefreshAttemptError(
+                underlying: RefreshError.malformedArchive(
+                    "no decodable plugin specs under \(innerRoot.path)/\(Path.plugins)"
+                ),
+                attemptedURLs: attemptedURLs,
+                failedURL: nil
             )
         }
 
-        try replaceDirectoryAtomically(at: centralCloneDirectory, with: innerRoot)
+        do {
+            try replaceDirectoryAtomically(at: centralCloneDirectory, with: innerRoot)
+        } catch {
+            throw RefreshAttemptError(underlying: error, attemptedURLs: attemptedURLs, failedURL: nil)
+        }
+        return attemptedURLs
     }
 
     // MARK: - URL derivation
@@ -125,12 +277,12 @@ public final class CentralRepositoryManager: @unchecked Sendable {
         guard let comps = URLComponents(string: central.url),
             let host = comps.host?.lowercased(),
             host == "github.com" || host.hasSuffix(".github.com")
-        else { throw RefreshError.unsupportedURL(central.url) }
+        else { throw RefreshError.unsupportedURL(Self.redactedURLString(central.url)) }
 
         var path = comps.path
         if path.hasSuffix(".git") { path = String(path.dropLast(4)) }
         let segments = path.split(separator: "/", omittingEmptySubsequences: true)
-        guard segments.count >= 2 else { throw RefreshError.unsupportedURL(central.url) }
+        guard segments.count >= 2 else { throw RefreshError.unsupportedURL(Self.redactedURLString(central.url)) }
 
         let owner = String(segments[0])
         let repo = String(segments[1])
@@ -140,7 +292,7 @@ public final class CentralRepositoryManager: @unchecked Sendable {
             let encoded = branch.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? branch
             return URL(string: "https://github.com/\(owner)/\(repo)/archive/refs/heads/\(encoded).zip")
         }
-        guard !urls.isEmpty else { throw RefreshError.unsupportedURL(central.url) }
+        guard !urls.isEmpty else { throw RefreshError.unsupportedURL(Self.redactedURLString(central.url)) }
         return urls
     }
 
@@ -149,6 +301,11 @@ public final class CentralRepositoryManager: @unchecked Sendable {
     /// Synchronously downloads `url` to `destination`. Callers invoke `refresh()`
     /// from a background thread (e.g. `Task.detached`) so blocking is acceptable.
     private func downloadFile(from url: URL, to destination: URL) throws {
+        if let override = Self.downloadFileOverride {
+            try override(url, destination)
+            return
+        }
+
         let outcome = SyncDownloadOutcome()
         let semaphore = DispatchSemaphore(value: 0)
         RepositoryGlobalProxySettings.sharedSession().downloadTask(with: url) { tempURL, response, error in
@@ -259,6 +416,125 @@ public final class CentralRepositoryManager: @unchecked Sendable {
         root.appendingPathComponent(Path.plugins, isDirectory: true)
     }
 
+    private func hasCachedSpecs() -> Bool {
+        !decodeSpecs(in: pluginsDirectory(under: centralCloneDirectory)).isEmpty
+    }
+
+    private func cacheUpdatedAt() -> Date? {
+        guard FileManager.default.fileExists(atPath: centralCloneDirectory.path) else { return nil }
+        return try? centralCloneDirectory.resourceValues(forKeys: [.contentModificationDateKey])
+            .contentModificationDate
+    }
+
+    private func makeFailure(from error: Error, attemptedURLs: [URL], failedURL: URL?)
+        -> CentralRepositoryRefreshFailure
+    {
+        let cacheAvailable = hasCachedSpecs()
+        let cacheUpdatedAt = cacheUpdatedAt()
+        let mapped = mapFailure(error)
+        let statusCode: Int?
+        if case .httpStatus(let code)? = error as? RefreshError {
+            statusCode = code
+        } else {
+            statusCode = nil
+        }
+
+        return CentralRepositoryRefreshFailure(
+            kind: mapped.kind,
+            message: Self.sanitizedDiagnosticMessage(mapped.message),
+            repositoryURL: Self.redactedURLString(central.url),
+            attemptedArchiveURLs: attemptedURLs.map { Self.redactedURLString($0.absoluteString) },
+            failedArchiveURL: failedURL.map { Self.redactedURLString($0.absoluteString) },
+            httpStatusCode: statusCode,
+            retryable: mapped.retryable,
+            cacheAvailable: cacheAvailable,
+            cacheUpdatedAt: cacheUpdatedAt
+        )
+    }
+
+    private func mapFailure(_ error: Error) -> (
+        kind: CentralRepositoryRefreshFailure.Kind,
+        message: String,
+        retryable: Bool
+    ) {
+        if let refreshError = error as? RefreshError {
+            switch refreshError {
+            case .unsupportedURL:
+                return (.unsupportedRepository, refreshError.description, false)
+            case .httpStatus(let code):
+                if code == 404 {
+                    return (.notFound, refreshError.description, false)
+                } else if code == 401 || code == 403 {
+                    return (.unauthorized, refreshError.description, false)
+                } else if code == 429 {
+                    return (.rateLimited, refreshError.description, true)
+                } else if code >= 500 {
+                    return (.serverError, refreshError.description, true)
+                }
+                return (.unknown, refreshError.description, false)
+            case .unzipFailed:
+                return (.unzipFailed, refreshError.description, false)
+            case .malformedArchive:
+                return (.malformedArchive, refreshError.description, false)
+            }
+        }
+
+        if let urlError = error as? URLError {
+            switch urlError.code {
+            case .notConnectedToInternet, .cannotFindHost, .cannotConnectToHost,
+                 .networkConnectionLost, .dnsLookupFailed:
+                return (.networkUnavailable, urlError.localizedDescription, true)
+            case .timedOut:
+                return (.timedOut, urlError.localizedDescription, true)
+            case .secureConnectionFailed, .serverCertificateHasBadDate,
+                 .serverCertificateUntrusted, .serverCertificateHasUnknownRoot,
+                 .serverCertificateNotYetValid, .clientCertificateRejected,
+                 .clientCertificateRequired:
+                return (.tlsTrust, urlError.localizedDescription, false)
+            case .cancelled:
+                return (.cancelled, urlError.localizedDescription, true)
+            default:
+                return (.unknown, urlError.localizedDescription, true)
+            }
+        }
+
+        let nsError = error as NSError
+        if nsError.domain == NSCocoaErrorDomain || nsError.domain == NSPOSIXErrorDomain {
+            return (.fileSystem, nsError.localizedDescription, false)
+        }
+
+        return (.unknown, String(describing: error), true)
+    }
+
+    private static func sanitizedDiagnosticMessage(_ message: String) -> String {
+        var sanitized = message
+        for (prefix, replacement) in pathRedactionPrefixes() where !prefix.isEmpty {
+            sanitized = sanitized.replacingOccurrences(of: prefix, with: replacement)
+        }
+        if sanitized.count > 600 {
+            let end = sanitized.index(sanitized.startIndex, offsetBy: 600)
+            sanitized = String(sanitized[..<end]) + "..."
+        }
+        return sanitized
+    }
+
+    private static func pathRedactionPrefixes() -> [(String, String)] {
+        [
+            (ToolsPaths.root().path, "<osaurus-data>"),
+            (FileManager.default.homeDirectoryForCurrentUser.path, "~"),
+            (FileManager.default.temporaryDirectory.path, "<tmp>"),
+        ]
+    }
+
+    private static func redactedURLString(_ string: String) -> String {
+        guard var components = URLComponents(string: string) else { return "<repository-url>" }
+        components.user = nil
+        components.password = nil
+        components.query = nil
+        components.fragment = nil
+        return components.string ?? "<repository-url>"
+    }
+
     private enum Path {
         static let central = "central"
         static let plugins = "plugins"
@@ -268,9 +544,15 @@ public final class CentralRepositoryManager: @unchecked Sendable {
     }
 }
 
+private struct RefreshAttemptError: Error {
+    let underlying: Error
+    let attemptedURLs: [URL]
+    let failedURL: URL?
+}
+
 // MARK: - Errors
 
-private enum RefreshError: Error, CustomStringConvertible {
+enum RefreshError: Error, CustomStringConvertible {
     case unsupportedURL(String)
     case httpStatus(Int)
     case unzipFailed(Int, String)

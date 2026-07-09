@@ -13,9 +13,12 @@
 //  Gating: registered as a built-in so the runtime can execute it and ChatView
 //  can intercept its feed, but the system prompt composer strips it
 //  authoritatively (delegation family) unless the agent has AppleScript enabled
-//  AND a model installed. Unlike `computer_use`, no OS permission is preflighted
-//  here: AppleScript's Automation/Apple Events consent is triggered by the OS at
-//  script-send time and attributed to Osaurus.
+//  AND a model installed. Unlike `computer_use`, no blanket OS permission is
+//  preflighted at the tool boundary: AppleScript's Automation/Apple Events
+//  consent is triggered by the OS at script-send time and attributed to
+//  Osaurus, and the loop preflights the Accessibility grant PER SCRIPT — only
+//  when a proposed script actually uses System Events UI scripting (see
+//  `AppleScriptAccessibility`), since most AppleScript needs no such grant.
 //
 
 import Foundation

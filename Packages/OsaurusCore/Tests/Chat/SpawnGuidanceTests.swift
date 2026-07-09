@@ -135,6 +135,42 @@ struct SpawnGuidanceTests {
         #expect(!agentsOnly.contains("`spawn_model(input, model)`"))
     }
 
+    // MARK: - Renderer: tool reach + parallelism policy
+
+    @Test("tool-reach line tracks the launching agent's SpawnToolAccess")
+    func toolReachLineTracksAccess() {
+        let textOnly = SystemPromptTemplates.spawnGuidance(
+            agents: [agent("helper")],
+            models: [],
+            toolAccess: SpawnToolAccess.none
+        )
+        #expect(textOnly.contains("Workers are text-only"))
+        #expect(!textOnly.contains("Workers CAN read files"))
+
+        let readOnly = SystemPromptTemplates.spawnGuidance(
+            agents: [agent("helper")],
+            models: [],
+            toolAccess: .readOnly
+        )
+        #expect(readOnly.contains("Workers CAN read files"))
+        #expect(readOnly.contains("file_read"))
+        #expect(!readOnly.contains("Workers are text-only"))
+    }
+
+    @Test("context-offload framing, self-contained input rule, and the parallel policy are always present")
+    func coreRulesAlwaysPresent() {
+        let text = SystemPromptTemplates.spawnGuidance(
+            agents: [agent("helper")],
+            models: []
+        )
+        #expect(text.contains("compact result digest"))
+        #expect(text.contains("bulk reading + summarization"))
+        #expect(text.contains("COMPLETE task as a self-contained prompt"))
+        #expect(text.contains("not this conversation"))
+        #expect(text.contains("may run in parallel"))
+        #expect(text.contains("local targets run one at a time"))
+    }
+
     @Test("a note is only rendered when present (no dangling em-dash for note-less models)")
     func noteOnlyRendersWhenPresent() {
         let text = SystemPromptTemplates.spawnGuidance(

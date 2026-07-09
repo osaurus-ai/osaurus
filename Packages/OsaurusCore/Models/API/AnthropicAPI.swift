@@ -23,6 +23,23 @@ struct AnthropicMessagesRequest: Codable, Sendable {
     let tools: [AnthropicTool]?
     let tool_choice: AnthropicToolChoice?
     let metadata: AnthropicMetadata?
+    /// Top-level automatic prompt caching ("cache_control": {"type": "ephemeral"}).
+    /// Anthropic places the cache breakpoint on the last cacheable block and
+    /// moves it forward as the conversation grows — cache reads bill at 0.1x
+    /// input price. Optional + default nil so the server-side Anthropic-compat
+    /// decode path and existing construction sites are unaffected; the
+    /// synthesized Codable omits the key when nil.
+    var cache_control: AnthropicCacheControl? = nil
+}
+
+/// `{"type": "ephemeral"}` cache-control marker. Only "ephemeral" exists in
+/// the API today (5-minute TTL, refreshed on each hit).
+struct AnthropicCacheControl: Codable, Sendable {
+    let type: String
+
+    init(type: String = "ephemeral") {
+        self.type = type
+    }
 }
 
 /// System content can be a string or array of content blocks
@@ -433,6 +450,12 @@ enum AnthropicResponseContentBlock: Codable, Sendable {
 struct AnthropicUsage: Codable, Sendable {
     let input_tokens: Int
     let output_tokens: Int
+    /// Prompt-caching split reported by Anthropic when `cache_control` is in
+    /// play: tokens written to the cache this request (billed 1.25x) and
+    /// tokens read from it (billed 0.1x). Optional — absent on the
+    /// server-side compat writer and on providers that don't cache.
+    var cache_creation_input_tokens: Int? = nil
+    var cache_read_input_tokens: Int? = nil
 
     init(inputTokens: Int, outputTokens: Int) {
         self.input_tokens = inputTokens

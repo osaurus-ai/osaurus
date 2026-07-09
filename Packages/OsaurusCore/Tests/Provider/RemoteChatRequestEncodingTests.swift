@@ -868,6 +868,133 @@ struct RemoteChatRequestEncodingTests {
         #expect(toolEntries.first?["content"] as? String == "ok\n\n[System Notice] nudge")
     }
 
+    @Test func toOpenResponsesRequest_translatesUserImagePartsToInputImageParts() throws {
+        let pixel = Data([0x89, 0x50, 0x4E, 0x47])
+        let request = Self.makeRequest(
+            model: "gpt-5.5",
+            maxTokens: 1024,
+            messages: [
+                ChatMessage(role: "user", text: "describe this image", imageData: [pixel])
+            ]
+        )
+
+        let responses = request.toOpenResponsesRequest()
+
+        guard case .items(let items) = responses.input, items.count == 1,
+            case .message(let message) = items[0],
+            case .parts(let parts) = message.content
+        else {
+            Issue.record("expected a single user message with parts content")
+            return
+        }
+        let images = parts.compactMap { part -> OpenResponsesInputImagePart? in
+            if case .inputImage(let image) = part { return image }
+            return nil
+        }
+        #expect(images.count == 1)
+        #expect(images.first?.image_url == "data:image/png;base64,\(pixel.base64EncodedString())")
+        let texts = parts.compactMap { part -> String? in
+            if case .inputText(let text) = part { return text.text }
+            return nil
+        }
+        #expect(texts == ["describe this image"])
+    }
+
+    @Test func toOpenResponsesRequest_keepsTextShorthandForTextOnlyUserMessage() throws {
+        let request = Self.makeRequest(
+            model: "gpt-5.5",
+            maxTokens: 1024,
+            messages: [ChatMessage(role: "user", content: "just text")]
+        )
+
+        let responses = request.toOpenResponsesRequest()
+
+        guard case .text(let text) = responses.input else {
+            Issue.record("expected text shorthand input")
+            return
+        }
+        #expect(text == "just text")
+    }
+
+    @Test func toAnthropicRequest_translatesUserImagePartsToImageBlocks() throws {
+        let pixel = Data([0x89, 0x50, 0x4E, 0x47])
+        let request = Self.makeRequest(
+            model: "claude-3-5-sonnet-20241022",
+            maxTokens: 1024,
+            messages: [
+                ChatMessage(role: "user", text: "describe this image", imageData: [pixel])
+            ]
+        )
+
+        let anthropic = request.toAnthropicRequest()
+
+        #expect(anthropic.messages.count == 1)
+        guard case .blocks(let blocks) = anthropic.messages[0].content else {
+            Issue.record("expected block content for a user message with an image part")
+            return
+        }
+        let images = blocks.compactMap { block -> AnthropicImageBlock? in
+            if case .image(let image) = block { return image }
+            return nil
+        }
+        #expect(images.count == 1)
+        #expect(images.first?.source.type == "base64")
+        #expect(images.first?.source.media_type == "image/png")
+        #expect(images.first?.source.data == pixel.base64EncodedString())
+
+        let texts = blocks.compactMap { block -> String? in
+            if case .text(let text) = block { return text.text }
+            return nil
+        }
+        #expect(texts == ["describe this image"])
+    }
+
+    @Test func toAnthropicRequest_keepsImageOnlyUserMessage() throws {
+        // An image with no accompanying text has a nil `content` string; the
+        // encoder used to drop the entire message.
+        let pixel = Data([0x89, 0x50, 0x4E, 0x47])
+        let request = Self.makeRequest(
+            model: "claude-3-5-sonnet-20241022",
+            maxTokens: 1024,
+            messages: [
+                ChatMessage(role: "user", text: "", imageData: [pixel])
+            ]
+        )
+
+        let anthropic = request.toAnthropicRequest()
+
+        #expect(anthropic.messages.count == 1)
+        guard case .blocks(let blocks) = anthropic.messages[0].content else {
+            Issue.record("expected block content for an image-only user message")
+            return
+        }
+        #expect(blocks.count == 1)
+        guard case .image(let image) = blocks[0] else {
+            Issue.record("expected an image block")
+            return
+        }
+        #expect(image.source.data == pixel.base64EncodedString())
+    }
+
+    @Test func toAnthropicRequest_keepsPlainStringForTextOnlyUserMessage() throws {
+        let request = Self.makeRequest(
+            model: "claude-3-5-sonnet-20241022",
+            maxTokens: 1024,
+            messages: [
+                ChatMessage(role: "user", content: "just text")
+            ]
+        )
+
+        let anthropic = request.toAnthropicRequest()
+
+        #expect(anthropic.messages.count == 1)
+        guard case .text(let text) = anthropic.messages[0].content else {
+            Issue.record("expected plain string content for a text-only user message")
+            return
+        }
+        #expect(text == "just text")
+    }
+
     @Test func toAnthropicRequest_emitsSingleToolResultPerToolUseId() throws {
         let request = Self.makeRequest(
             model: "claude-3-5-sonnet-20241022",
@@ -1578,6 +1705,112 @@ struct RemoteChatRequestEncodingTests {
         #expect(!openAICompatBody.contains("\"clamp_to_balance\""))
     }
 
+    // MARK: - prompt_cache_key (session-scoped OpenAI prompt-cache routing)
+
+    @Test func supportsPromptCacheKey_onlyForGenuineOpenAIHosts() throws {
+        #expect(
+            RemoteProviderService.supportsPromptCacheKey(
+                providerType: .openaiLegacy,
+                host: "api.openai.com"
+            )
+        )
+        #expect(
+            RemoteProviderService.supportsPromptCacheKey(
+                providerType: .openaiLegacy,
+                host: "eu.api.openai.com"
+            )
+        )
+        // Third-party OpenAI-compat schemas can be strict about unknown
+        // fields — same rationale as router-only `idempotency_key`.
+        #expect(
+            !RemoteProviderService.supportsPromptCacheKey(
+                providerType: .openaiLegacy,
+                host: "api.x.ai"
+            )
+        )
+        #expect(
+            !RemoteProviderService.supportsPromptCacheKey(
+                providerType: .osaurusRouter,
+                host: "router.osaurus.ai"
+            )
+        )
+        #expect(
+            !RemoteProviderService.supportsPromptCacheKey(
+                providerType: .anthropic,
+                host: "api.anthropic.com"
+            )
+        )
+    }
+
+    @Test func wireBody_carriesPromptCacheKeyOnlyWhenSet() throws {
+        var request = Self.makeRequest(model: "gpt-5.2", maxTokens: 128)
+        let bare = try JSONEncoder.osaurusCanonical().encode(request)
+        #expect(!String(decoding: bare, as: UTF8.self).contains("prompt_cache_key"))
+
+        request.promptCacheKey = "osaurus-session-ABC"
+        let payload = try Self.decodeAsDictionary(
+            try JSONEncoder.osaurusCanonical().encode(request)
+        )
+        #expect(payload["prompt_cache_key"] as? String == "osaurus-session-ABC")
+    }
+
+    @Test func buildChatRequest_setsSessionScopedPromptCacheKeyForOpenAIOnly() async throws {
+        func service(host: String, providerType: RemoteProviderType) -> RemoteProviderService {
+            RemoteProviderService(
+                provider: RemoteProvider(
+                    name: "p",
+                    host: host,
+                    providerProtocol: .https,
+                    port: nil,
+                    basePath: "/v1",
+                    authType: .none,
+                    providerType: providerType
+                ),
+                models: ["gpt-5.2"],
+                resolvedHeaders: [:]
+            )
+        }
+        let params = GenerationParameters(
+            temperature: 0.7,
+            maxTokens: 256,
+            sessionId: "SESSION-1"
+        )
+
+        let openAIReq = await service(host: "api.openai.com", providerType: .openaiLegacy)
+            .buildChatRequest(
+                messages: [ChatMessage(role: "user", content: "hi")],
+                parameters: params,
+                model: "gpt-5.2",
+                stream: true,
+                tools: nil,
+                toolChoice: nil
+            )
+        #expect(openAIReq.promptCacheKey == "osaurus-session-SESSION-1")
+
+        let compatReq = await service(host: "api.x.ai", providerType: .openaiLegacy)
+            .buildChatRequest(
+                messages: [ChatMessage(role: "user", content: "hi")],
+                parameters: params,
+                model: "grok-4",
+                stream: true,
+                tools: nil,
+                toolChoice: nil
+            )
+        #expect(compatReq.promptCacheKey == nil)
+
+        // No session id → no key, even on the genuine OpenAI host.
+        let noSessionReq = await service(host: "api.openai.com", providerType: .openaiLegacy)
+            .buildChatRequest(
+                messages: [ChatMessage(role: "user", content: "hi")],
+                parameters: GenerationParameters(temperature: 0.7, maxTokens: 256),
+                model: "gpt-5.2",
+                stream: true,
+                tools: nil,
+                toolChoice: nil
+            )
+        #expect(noSessionReq.promptCacheKey == nil)
+    }
+
     @Test func wireBody_routerMatchesVeniceToolRequest_exceptRouterOnlyFields() throws {
         let priorCall = ToolCall(
             id: "call_write_1",
@@ -1842,6 +2075,149 @@ struct RemoteChatRequestEncodingTests {
 
         #expect(payload["thinking"] == nil)
         #expect(payload["reasoning_effort"] as? String == "high")
+    }
+
+    // MARK: - DeepSeek thinking-mode tool_choice sanitization
+    //
+    // DeepSeek V4 enables thinking by default and rejects forced tool
+    // choices with HTTP 400 "Thinking mode does not support this
+    // tool_choice"; only `auto`/`none` are legal while thinking is active.
+    // `buildChatRequest` must downgrade `.required`/`.function` to `.auto`
+    // there, and leave them intact when thinking is explicitly disabled
+    // (Instruct mode) or on non-DeepSeek hosts.
+
+    private static func makeService(host: String, model: String) -> RemoteProviderService {
+        RemoteProviderService(
+            provider: RemoteProvider(
+                name: "p",
+                host: host,
+                providerProtocol: .https,
+                port: nil,
+                basePath: "/v1",
+                authType: .none,
+                providerType: .openaiLegacy
+            ),
+            models: [model],
+            resolvedHeaders: [:]
+        )
+    }
+
+    private static let namedFileReadChoice = ToolChoiceOption.function(
+        ToolChoiceOption.FunctionName(
+            type: "function",
+            function: ToolChoiceOption.Name(name: "get_weather")
+        )
+    )
+
+    @Test func buildChatRequest_deepSeekThinking_downgradesForcedToolChoiceToAuto() async throws {
+        let service = Self.makeService(host: "api.deepseek.com", model: "deepseek-v4-pro")
+        for effort in ["high", "max"] {
+            for forced in [ToolChoiceOption.required, Self.namedFileReadChoice] {
+                let req = await service.buildChatRequest(
+                    messages: [ChatMessage(role: "user", content: "read the file")],
+                    parameters: GenerationParameters(
+                        temperature: 0.7,
+                        maxTokens: 256,
+                        modelOptions: ["reasoningEffort": .string(effort)]
+                    ),
+                    model: "deepseek-v4-pro",
+                    stream: true,
+                    tools: [Self.weatherTool],
+                    toolChoice: forced
+                )
+                #expect(req.tool_choice == .auto)
+                #expect(req.reasoning_effort == effort)
+                #expect(req.thinking == nil)
+            }
+        }
+
+        // Wire body proof: tool_choice serializes as the string "auto".
+        let req = await service.buildChatRequest(
+            messages: [ChatMessage(role: "user", content: "read the file")],
+            parameters: GenerationParameters(
+                temperature: 0.7,
+                maxTokens: 256,
+                modelOptions: ["reasoningEffort": .string("high")]
+            ),
+            model: "deepseek-v4-pro",
+            stream: true,
+            tools: [Self.weatherTool],
+            toolChoice: .required
+        )
+        let payload = try Self.encodeAsDictionary(req)
+        #expect(payload["tool_choice"] as? String == "auto")
+        #expect(payload["reasoning_effort"] as? String == "high")
+    }
+
+    @Test func buildChatRequest_deepSeekThinkingDefault_downgradesWithoutEffort() async {
+        // No reasoningEffort at all: V4 still defaults to thinking mode, so
+        // forced choices must be downgraded.
+        let service = Self.makeService(host: "api.deepseek.com", model: "deepseek-v4-pro")
+        let req = await service.buildChatRequest(
+            messages: [ChatMessage(role: "user", content: "read the file")],
+            parameters: GenerationParameters(temperature: 0.7, maxTokens: 256),
+            model: "deepseek-v4-pro",
+            stream: true,
+            tools: [Self.weatherTool],
+            toolChoice: .required
+        )
+        #expect(req.tool_choice == .auto)
+    }
+
+    @Test func buildChatRequest_deepSeekInstruct_preservesForcedToolChoice() async throws {
+        let service = Self.makeService(host: "api.deepseek.com", model: "deepseek-v4-pro")
+        let req = await service.buildChatRequest(
+            messages: [ChatMessage(role: "user", content: "read the file")],
+            parameters: GenerationParameters(
+                temperature: 0.7,
+                maxTokens: 256,
+                modelOptions: ["reasoningEffort": .string("instruct")]
+            ),
+            model: "deepseek-v4-pro",
+            stream: true,
+            tools: [Self.weatherTool],
+            toolChoice: .required
+        )
+        #expect(req.tool_choice == .required)
+        #expect(req.thinking == ThinkingConfig(type: "disabled"))
+        #expect(req.reasoning_effort == nil)
+
+        let payload = try Self.encodeAsDictionary(req)
+        #expect(payload["tool_choice"] as? String == "required")
+        let thinking = try #require(payload["thinking"] as? [String: Any])
+        #expect(thinking["type"] as? String == "disabled")
+    }
+
+    @Test func buildChatRequest_nonDeepSeekHost_keepsForcedToolChoice() async {
+        let service = Self.makeService(host: "api.openai.com", model: "gpt-5.2")
+        let req = await service.buildChatRequest(
+            messages: [ChatMessage(role: "user", content: "read the file")],
+            parameters: GenerationParameters(
+                temperature: 0.7,
+                maxTokens: 256,
+                modelOptions: ["reasoningEffort": .string("high")]
+            ),
+            model: "gpt-5.2",
+            stream: true,
+            tools: [Self.weatherTool],
+            toolChoice: .required
+        )
+        #expect(req.tool_choice == .required)
+    }
+
+    @Test func buildChatRequest_deepSeekModelOnAggregatorHost_downgradesForcedToolChoice() async {
+        // OpenRouter-style hosts serve DeepSeek V4 ids; the upstream rejects
+        // forced choices identically and thinking cannot be disabled there.
+        let service = Self.makeService(host: "openrouter.ai", model: "deepseek/deepseek-v4-pro")
+        let req = await service.buildChatRequest(
+            messages: [ChatMessage(role: "user", content: "read the file")],
+            parameters: GenerationParameters(temperature: 0.7, maxTokens: 256),
+            model: "deepseek/deepseek-v4-pro",
+            stream: true,
+            tools: [Self.weatherTool],
+            toolChoice: .required
+        )
+        #expect(req.tool_choice == .auto)
     }
 
     @Test func geminiRequest_stripsAdditionalPropertiesFromToolSchemas() throws {

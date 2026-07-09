@@ -1126,9 +1126,12 @@ public final class RemoteProviderManager: ObservableObject {
 // MARK: - OpenAI Models Integration
 
 extension RemoteProviderManager {
-    /// Get OpenAI-compatible model objects for all connected providers
+    /// Get OpenAI-compatible model objects for all connected providers.
+    /// Remote models are hidden from API listings by default; only models
+    /// the user exposed in Server > Models are returned.
     func getOpenAIModels() -> [OpenAIModel] {
         var models: [OpenAIModel] = []
+        let exposure = ModelExposureStore.shared
 
         for provider in configuration.providers {
             guard let state = providerStates[provider.id], state.isConnected else {
@@ -1142,6 +1145,7 @@ extension RemoteProviderManager {
 
             for modelId in state.discoveredModels {
                 let prefixedId = "\(prefix)/\(modelId)"
+                guard exposure.isExposed(id: prefixedId, kind: .remote) else { continue }
                 var model = OpenAIModel(modelName: prefixedId)
                 model.owned_by = provider.name
                 models.append(model)

@@ -43,6 +43,13 @@ public enum EvalHostBootstrap {
         ToolRegistry.shared.listDynamicTools().map(\.name)
     }
 
+    /// True when at least one curated AppleScript bundle is installed and
+    /// ready — the gate the `applescript` / `mac_query` tools use before
+    /// appearing in the composed schema.
+    public static var hasReadyAppleScriptModel: Bool {
+        ModelPickerItemCache.shared.hasReadyAppleScriptModel
+    }
+
     /// Boot every subsystem the chat path's capability search depends on
     /// so an out-of-process eval CLI sees the same indices the host app
     /// does. Mirrors the relevant slice of

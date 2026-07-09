@@ -67,6 +67,19 @@ struct GenerationParameters: Sendable {
     /// the plain OpenAI-compatible `/chat/completions` inference path (Mode 1).
     /// Ignored by local services and non-Osaurus remotes.
     let runAsRemoteAgent: Bool
+    /// When true, model-load and prefill progress are not surfaced through
+    /// `InferenceProgressManager` (background warm-up requests).
+    let suppressProgressUI: Bool
+    /// When true, the prompt is truncated to the processor's canonical
+    /// history cache boundary before prefill (see
+    /// `ChatCompletionRequest.warmupPrefill`).
+    let warmupPrefill: Bool
+    /// Where the request originated (chat UI, HTTP API, plugin, P2P).
+    /// `ModelRuntime` records this per model so chat-window close can
+    /// accelerate idle unload of chat-sourced models without touching models
+    /// kept warm by API clients. Defaults to `.httpAPI` — the conservative
+    /// choice (never accelerated) for paths that don't set it explicitly.
+    let requestSource: RequestSource
 
     init(
         temperature: Float?,
@@ -85,7 +98,10 @@ struct GenerationParameters: Sendable {
         sessionId: String? = nil,
         ttftTrace: TTFTTrace? = nil,
         idempotencyKey: String? = nil,
-        runAsRemoteAgent: Bool = false
+        runAsRemoteAgent: Bool = false,
+        suppressProgressUI: Bool = false,
+        warmupPrefill: Bool = false,
+        requestSource: RequestSource = .httpAPI
     ) {
         self.temperature = temperature
         self.maxTokens = maxTokens
@@ -104,6 +120,9 @@ struct GenerationParameters: Sendable {
         self.ttftTrace = ttftTrace
         self.idempotencyKey = idempotencyKey
         self.runAsRemoteAgent = runAsRemoteAgent
+        self.suppressProgressUI = suppressProgressUI
+        self.warmupPrefill = warmupPrefill
+        self.requestSource = requestSource
     }
 }
 
@@ -312,6 +331,25 @@ enum StreamingPrefillProgressHint: Sendable {
         let json = String(delta.dropFirst(prefillPrefix.count))
         guard let data = json.data(using: .utf8) else { return nil }
         return try? JSONDecoder().decode(PrefillProgressState.self, from: data)
+    }
+}
+
+/// In-band signaling for a tool call that is still being generated. Carries the
+/// raw, format-specific envelope delta (not parsed arguments) so the native
+/// chat can show a live "building tool call" preview instead of a frozen
+/// indicator while a long call — e.g. a large `write_file` — is streamed inside
+/// the buffered tool-call envelope. Mirrors `StreamingToolHint`'s `\u{FFFE}`
+/// sentinel so HTTP handlers and ChatView drop it from visible model text; the
+/// committed call still arrives afterwards as a `\u{FFFE}tool:` / `\u{FFFE}args:`
+/// pair, so this hint never replaces the actionable tool event.
+enum StreamingToolCallProgressHint: Sendable {
+    private static let progressPrefix = "\u{FFFE}toolprogress:"
+
+    static func encode(_ envelopeDelta: String) -> String { progressPrefix + envelopeDelta }
+
+    static func decode(_ delta: String) -> String? {
+        guard delta.hasPrefix(progressPrefix) else { return nil }
+        return String(delta.dropFirst(progressPrefix.count))
     }
 }
 

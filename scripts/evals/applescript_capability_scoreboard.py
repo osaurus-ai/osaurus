@@ -47,6 +47,16 @@ def counts_for(cases):
     counts["passRate"] = (
         counts["passed"] / counts["scored"] if counts["scored"] else None
     )
+    # Generation throughput (AGENTS.md: every generation row records token/s).
+    # Mean of the per-case decode tok/s over model-driven rows; None when no
+    # case carried the measurement (scripted lane / all-skip).
+    rates = [
+        case.get("telemetry", {}).get("decodeTokensPerSecond")
+        for case in cases
+        if isinstance(case.get("telemetry"), dict)
+    ]
+    rates = [rate for rate in rates if isinstance(rate, (int, float))]
+    counts["meanTokensPerSecond"] = (sum(rates) / len(rates)) if rates else None
     return counts
 
 
@@ -147,13 +157,16 @@ def render_markdown(board):
 
     lines.append("## Variant summary")
     lines.append("")
-    lines.append("| variant | pass | fail | skip | err | scored | pass rate |")
-    lines.append("|---|---|---|---|---|---|---|")
+    lines.append("| variant | pass | fail | skip | err | scored | pass rate | tok/s |")
+    lines.append("|---|---|---|---|---|---|---|---|")
     for v in board["variants"]:
         marker = " ⭐" if v["name"] == board["best"] else ""
+        rate = v.get("meanTokensPerSecond")
+        toks = "—" if rate is None else f"{rate:.1f}"
         lines.append(
             f"| {v['name']}{marker} | {v['passed']} | {v['failed']} | "
-            f"{v['skipped']} | {v['errored']} | {v['scored']} | {fmt_rate(v['passRate'])} |"
+            f"{v['skipped']} | {v['errored']} | {v['scored']} | {fmt_rate(v['passRate'])} "
+            f"| {toks} |"
         )
     lines.append("")
     if board["best"]:
@@ -197,6 +210,7 @@ def append_history(history_path, scoreboard_path):
                 "passed": v["passed"],
                 "scored": v["scored"],
                 "passRate": v["passRate"],
+                "meanTokensPerSecond": v.get("meanTokensPerSecond"),
             }
             for v in board.get("variants", [])
         },

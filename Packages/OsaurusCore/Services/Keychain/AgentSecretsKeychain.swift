@@ -14,75 +14,119 @@ import Foundation
 public enum AgentSecretsKeychain {
     private static let service = "ai.osaurus.agent-secrets"
 
-    #if DEBUG
-        private static let inMemoryStoreLock = NSLock()
-        nonisolated(unsafe) private static var inMemoryStoreForTesting: [String: String]?
+    // MARK: - In-Memory Store (tests + hermetic harnesses)
 
-        static func _withInMemoryStoreForTesting<T>(
-            _ body: () throws -> T
-        ) rethrows -> T {
-            inMemoryStoreLock.lock()
-            let previous = inMemoryStoreForTesting
-            inMemoryStoreForTesting = [:]
-            inMemoryStoreLock.unlock()
+    /// Lock-guarded mutable dictionary usable as a `@TaskLocal` value.
+    final class InMemorySecretStore: @unchecked Sendable {
+        private let lock = NSLock()
+        private var storage: [String: String] = [:]
 
-            defer {
-                inMemoryStoreLock.lock()
-                inMemoryStoreForTesting = previous
-                inMemoryStoreLock.unlock()
-            }
-
-            return try body()
+        func get(_ account: String) -> String? {
+            lock.lock()
+            defer { lock.unlock() }
+            return storage[account]
         }
 
-        private static func testingSave(_ value: String, account: String) -> (enabled: Bool, saved: Bool) {
-            inMemoryStoreLock.lock()
-            defer { inMemoryStoreLock.unlock() }
-            guard inMemoryStoreForTesting != nil else {
-                return (enabled: false, saved: false)
-            }
-            inMemoryStoreForTesting?[account] = value
-            return (enabled: true, saved: true)
+        func set(_ account: String, _ value: String?) {
+            lock.lock()
+            defer { lock.unlock() }
+            storage[account] = value
         }
 
-        private static func testingGet(account: String) -> (enabled: Bool, value: String?) {
-            inMemoryStoreLock.lock()
-            defer { inMemoryStoreLock.unlock() }
-            guard let store = inMemoryStoreForTesting else {
-                return (enabled: false, value: nil)
-            }
-            return (enabled: true, value: store[account])
+        func accounts() -> [String] {
+            lock.lock()
+            defer { lock.unlock() }
+            return Array(storage.keys)
         }
 
-        private static func testingDelete(account: String) -> (enabled: Bool, deleted: Bool) {
-            inMemoryStoreLock.lock()
-            defer { inMemoryStoreLock.unlock() }
-            guard inMemoryStoreForTesting != nil else {
-                return (enabled: false, deleted: false)
-            }
-            inMemoryStoreForTesting?[account] = nil
-            return (enabled: true, deleted: true)
+        func removeAll(prefix: String) {
+            lock.lock()
+            defer { lock.unlock() }
+            storage = storage.filter { !$0.key.hasPrefix(prefix) }
         }
+    }
 
-        private static func testingAllAccounts() -> [String]? {
-            inMemoryStoreLock.lock()
-            defer { inMemoryStoreLock.unlock() }
-            guard let store = inMemoryStoreForTesting else { return nil }
-            return Array(store.keys)
+    /// In-memory backend, active in two situations:
+    ///
+    ///  1. Scoped (tests): `_withInMemoryStoreForTesting` binds a fresh
+    ///     TASK-LOCAL store for the closure's task tree. Task-local (not
+    ///     process-global) because parallel test suites each bind their own
+    ///     store — a shared global raced and wiped secrets mid-test.
+    ///  2. Whole-process: `OSAURUS_AGENT_SECRETS_IN_MEMORY=1` (set by the
+    ///     eval CLI). The harness runs Keychain-free
+    ///     (`OSAURUS_DISABLE_KEYCHAIN_FOR_TESTS=1` — legacy-item ACL prompts
+    ///     hang headless runs), but the sandbox secrets pipeline
+    ///     (`sandbox_secret_set` → exec env injection → output scrubbing)
+    ///     is a scored surface that needs a WORKING store. The pipeline
+    ///     logic is exercised for real; only the persistence medium
+    ///     changes, and the user's login Keychain stays untouched.
+    ///
+    /// The in-memory store is checked BEFORE the Keychain-free no-op gate,
+    /// so both env vars together mean "no login Keychain, memory instead".
+    @TaskLocal private static var taskLocalStore: InMemorySecretStore?
+
+    private static let processStore: InMemorySecretStore? =
+        ProcessInfo.processInfo.environment["OSAURUS_AGENT_SECRETS_IN_MEMORY"] == "1"
+        ? InMemorySecretStore() : nil
+
+    private static var activeInMemoryStore: InMemorySecretStore? {
+        taskLocalStore ?? processStore
+    }
+
+    static func _withInMemoryStoreForTesting<T>(
+        _ body: () throws -> T
+    ) rethrows -> T {
+        try $taskLocalStore.withValue(InMemorySecretStore()) {
+            try body()
         }
-    #endif
+    }
+
+    /// Async-body variant for tests that drive async tool surfaces (e.g.
+    /// `SandboxSecretSetTool.execute`) against the in-memory store.
+    static func _withInMemoryStoreForTesting<T>(
+        _ body: () async throws -> T
+    ) async rethrows -> T {
+        try await $taskLocalStore.withValue(InMemorySecretStore()) {
+            try await body()
+        }
+    }
+
+    private static func testingSave(_ value: String, account: String) -> (enabled: Bool, saved: Bool) {
+        guard let store = activeInMemoryStore else {
+            return (enabled: false, saved: false)
+        }
+        store.set(account, value)
+        return (enabled: true, saved: true)
+    }
+
+    private static func testingGet(account: String) -> (enabled: Bool, value: String?) {
+        guard let store = activeInMemoryStore else {
+            return (enabled: false, value: nil)
+        }
+        return (enabled: true, value: store.get(account))
+    }
+
+    private static func testingDelete(account: String) -> (enabled: Bool, deleted: Bool) {
+        guard let store = activeInMemoryStore else {
+            return (enabled: false, deleted: false)
+        }
+        store.set(account, nil)
+        return (enabled: true, deleted: true)
+    }
+
+    private static func testingAllAccounts() -> [String]? {
+        activeInMemoryStore?.accounts()
+    }
 
     @discardableResult
     public static func saveSecret(_ value: String, id: String, agentId: UUID) -> Bool {
         let account = "\(agentId.uuidString).\(id)"
         guard let valueData = value.data(using: .utf8) else { return false }
 
-        #if DEBUG
-            let testing = testingSave(value, account: account)
-            if testing.enabled {
-                return testing.saved
-            }
-        #endif
+        let testing = testingSave(value, account: account)
+        if testing.enabled {
+            return testing.saved
+        }
         if KeychainQueryHelpers.disablesKeychainForProcess { return false }
         let didWrite = Keychain.write(service: service, account: account, data: valueData)
         if didWrite { invalidateAccountsCache() }
@@ -92,12 +136,10 @@ public enum AgentSecretsKeychain {
     public static func getSecret(id: String, agentId: UUID) -> String? {
         let account = "\(agentId.uuidString).\(id)"
 
-        #if DEBUG
-            let testing = testingGet(account: account)
-            if testing.enabled {
-                return testing.value
-            }
-        #endif
+        let testing = testingGet(account: account)
+        if testing.enabled {
+            return testing.value
+        }
         if KeychainQueryHelpers.disablesKeychainForProcess { return nil }
         return Keychain.read(service: service, account: account)
             .flatMap { String(data: $0, encoding: .utf8) }
@@ -107,12 +149,10 @@ public enum AgentSecretsKeychain {
     public static func deleteSecret(id: String, agentId: UUID) -> Bool {
         let account = "\(agentId.uuidString).\(id)"
 
-        #if DEBUG
-            let testing = testingDelete(account: account)
-            if testing.enabled {
-                return testing.deleted
-            }
-        #endif
+        let testing = testingDelete(account: account)
+        if testing.enabled {
+            return testing.deleted
+        }
         if KeychainQueryHelpers.disablesKeychainForProcess { return true }
         let didDelete = Keychain.delete(service: service, account: account)
         if didDelete { invalidateAccountsCache() }
@@ -147,8 +187,17 @@ public enum AgentSecretsKeychain {
     }
 
     public static func deleteAllSecrets(agentId: UUID) {
-        if KeychainQueryHelpers.disablesKeychainForProcess { return }
         let prefix = "\(agentId.uuidString)."
+
+        // In-memory store: purge matching entries directly. Without this,
+        // an eval harness running many cases in one process would leak
+        // one case's secrets into the next (per-case cleanup calls here).
+        if let store = activeInMemoryStore {
+            store.removeAll(prefix: prefix)
+            return
+        }
+
+        if KeychainQueryHelpers.disablesKeychainForProcess { return }
         for account in allAccounts() where account.hasPrefix(prefix) {
             Keychain.delete(service: service, account: account)
         }
@@ -204,11 +253,9 @@ public enum AgentSecretsKeychain {
     }
 
     private static func allAccounts() -> [String] {
-        #if DEBUG
-            if let accounts = testingAllAccounts() {
-                return accounts
-            }
-        #endif
+        if let accounts = testingAllAccounts() {
+            return accounts
+        }
         if KeychainQueryHelpers.disablesKeychainForProcess { return [] }
 
         accountsCacheLock.lock()

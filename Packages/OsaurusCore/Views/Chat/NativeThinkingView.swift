@@ -42,6 +42,11 @@ final class NativeThinkingView: NSView {
 
     private var isExpanded = false
     private var currentWidth: CGFloat = 0
+    /// Block this view was last configured for. The chevron only animates on
+    /// an expand-state change within the same block — a fresh or recycled
+    /// cell arriving mid-stream must snap to its state, not replay the
+    /// collapsed→expanded rotation on every reconfigure.
+    private var configuredBlockId: String?
 
     // MARK: Callbacks
 
@@ -59,6 +64,11 @@ final class NativeThinkingView: NSView {
 
     override func layout() {
         super.layout()
+        // AppKit resets view-managed layer geometry during layout, wiping the
+        // chevron's rotation. Streaming deltas re-layout on every height
+        // change, so reapply the current rotation or the arrow visibly snaps
+        // back to the collapsed direction between reconfigures.
+        updateChevron(expanded: isExpanded, animated: false)
     }
 
     override func hitTest(_ point: NSPoint) -> NSView? {
@@ -135,8 +145,13 @@ final class NativeThinkingView: NSView {
         charCountLabel.font = NSFont.systemFont(ofSize: CGFloat(theme.captionSize) - 2, weight: .medium)
         charCountLabel.textColor = NSColor(theme.tertiaryText)
 
-        updateChevron(expanded: isExpanded, animated: isExpanded != self.isExpanded)
+        let isSameBlock = configuredBlockId == blockId
+        updateChevron(
+            expanded: isExpanded,
+            animated: isSameBlock && isExpanded != self.isExpanded
+        )
         self.isExpanded = isExpanded
+        configuredBlockId = blockId
 
         contentContainer.isHidden = !isExpanded
         separatorView.isHidden = !isExpanded
@@ -235,9 +250,13 @@ final class NativeThinkingView: NSView {
 
         chevronView.translatesAutoresizingMaskIntoConstraints = false
         chevronView.wantsLayer = true
-        chevronView.image = SymbolImageCache.image("chevron.right", accessibilityDescription: nil)
+        chevronView.image = SymbolImageCache.image(
+            "chevron.right", accessibilityDescription: nil, pointSize: 10, weight: .semibold)
         chevronView.contentTintColor = .tertiaryLabelColor
-        chevronView.imageScaling = .scaleProportionallyUpOrDown
+        // Down-only scaling + a fixed symbol point size keep the right and
+        // down chevrons visually the same size; proportional up-scaling into
+        // the square frame inflated whichever glyph was wider.
+        chevronView.imageScaling = .scaleProportionallyDown
         addSubview(chevronView)
 
         separatorView.translatesAutoresizingMaskIntoConstraints = false
@@ -319,16 +338,16 @@ final class NativeThinkingView: NSView {
     }
 
     private func updateChevron(expanded: Bool, animated: Bool) {
-        let angle: CGFloat = expanded ? .pi / 2 : 0
-        if animated {
-            NSAnimationContext.runAnimationGroup { ctx in
-                ctx.duration = 0.25
-                ctx.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
-                chevronView.layer?.setAffineTransform(CGAffineTransform(rotationAngle: angle))
-            }
-        } else {
-            chevronView.layer?.setAffineTransform(CGAffineTransform(rotationAngle: angle))
-        }
+        // Swap the symbol instead of rotating the layer: table-cell relayout
+        // resets layer transforms, leaving an expanded row with a right-
+        // pointing chevron (mirrors NativeFileDiffView's collapse chevron).
+        // The down state is the right chevron rotated (not chevron.down, a
+        // differently-proportioned glyph) so both states are the same size.
+        chevronView.image =
+            expanded
+            ? SymbolImageCache.rotatedDownChevron(pointSize: 10, weight: .semibold)
+            : SymbolImageCache.image(
+                "chevron.right", accessibilityDescription: nil, pointSize: 10, weight: .semibold)
     }
 
     @objc private func headerTapped() { onToggle?() }

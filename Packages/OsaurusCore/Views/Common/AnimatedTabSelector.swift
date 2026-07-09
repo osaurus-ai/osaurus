@@ -136,7 +136,7 @@ private struct AnimatedTabButton<Tab: AnimatedTabItem>: View {
         }
         .buttonStyle(PlainButtonStyle())
         .onHover { hovering in
-            withAnimation(.easeOut(duration: 0.12)) {
+            withAnimation(.easeOut(duration: 0.15)) {
                 isHovering = hovering
             }
         }

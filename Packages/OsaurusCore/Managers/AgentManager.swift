@@ -299,6 +299,27 @@ public final class AgentManager: ObservableObject {
         )
     }
 
+    /// Restore a preserved legacy agent backup and publish it like a newly
+    /// available custom agent. `AgentStore` owns conflict-safe decoding /
+    /// re-id behavior; the manager refreshes UI state and gives recovered
+    /// conflict copies a fresh address when the local master key is available.
+    @discardableResult
+    public func restoreRecoverableAgentBackup(at url: URL) throws -> Agent {
+        let agent = try AgentStore.restoreRecoverableBackup(at: url)
+        refresh()
+        if !agent.isBuiltIn {
+            try? assignAddress(to: agent)
+            let restored = self.agent(for: agent.id) ?? agent
+            NotificationCenter.default.post(
+                name: .agentAdded,
+                object: nil,
+                userInfo: ["agentId": agent.id]
+            )
+            return restored
+        }
+        return agent
+    }
+
     /// Set or replace the custom avatar image for `agentId`. Writes the bytes
     /// to disk under `agents/avatars/`, updates the agent record, and posts
     /// `.agentUpdated`. Returns true on success.
@@ -763,6 +784,10 @@ extension AgentManager {
                 renderChartEnabled: false,
                 speakEnabled: false,
                 searchMemoryEnabled: false,
+                // Native web search stays on for the default agent — free
+                // providers work with zero config and this replaces the
+                // osaurus.search plugin's always-available tools.
+                webSearchEnabled: true,
                 selfSchedulingEnabled: false,
                 computerUseEnabled: false,
                 screenContextEnabled: false
@@ -777,6 +802,7 @@ extension AgentManager {
             renderChartEnabled: agent.settings.renderChartEnabled,
             speakEnabled: agent.settings.speakEnabled,
             searchMemoryEnabled: agent.settings.searchMemoryEnabled,
+            webSearchEnabled: agent.settings.webSearchEnabled,
             selfSchedulingEnabled: agent.settings.selfSchedulingEnabled,
             computerUseEnabled: agent.settings.computerUseEnabled,
             // Screen context is a child of Computer Use: both the per-agent

@@ -1,0 +1,19 @@
+{
+  "id": "judge_calibration.all-fail-off-topic",
+  "domain": "judge_calibration",
+  "label": "Judge • confident off-topic reply fails everything",
+  "query": "(calibration) The judge grades a fluent reply that answers a different question than the conditions test.",
+  "notes": "All-fail anchor: the reply is confident and well-written but about the wrong subject entirely. A judge with any pass bias (or one that grades tone instead of content) leaks a pass here. Pairs with clear-pass-two-conditions to pin both ends of the scale.",
+  "fixtures": {},
+  "expect": {
+    "judgeCalibration": {
+      "finalText": "Your Wi-Fi issues are most likely caused by channel congestion. I recommend switching the router to channel 6 or 11, moving it away from the microwave, and updating its firmware. That should stabilize the connection.",
+      "conditions": [
+        "The reply lists the three largest files in the Downloads folder.",
+        "The reply states the total disk space those files use.",
+        "The reply asks whether the user wants the files deleted."
+      ],
+      "expectedVerdicts": [false, false, false]
+    }
+  }
+}

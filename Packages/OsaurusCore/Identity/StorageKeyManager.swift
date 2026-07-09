@@ -70,6 +70,15 @@ public final class StorageKeyManager: @unchecked Sendable {
     static let keyAccount = "data-encryption-key"
     static let saltAccount = "data-encryption-salt"
 
+    /// Posted the first time the DEK becomes resident in this process
+    /// (nil -> non-nil cache transition). Subsystems that were gated off
+    /// at launch because storage wasn't ready (e.g. `NextRunScheduler`)
+    /// observe this to start once the key is unlocked. Posted from
+    /// whatever thread performed the unlock; observers must hop as needed.
+    public static let storageKeyDidBecomeResident = Notification.Name(
+        "OsaurusStorageKeyDidBecomeResident"
+    )
+
     /// Domain-separation tag used in HKDF for v1 of the storage key
     /// derivation. Bumping requires a key rotation.
     static let hkdfInfo = Data("osaurus-storage-v1".utf8)
@@ -150,11 +159,24 @@ public final class StorageKeyManager: @unchecked Sendable {
                 markProvisioned()
             }
 
-            os_unfair_lock_lock(&lock)
-            cachedKey = key
-            cachedReadFailureStatus = nil
-            os_unfair_lock_unlock(&lock)
+            cacheResidentKey(key)
             return key
+        }
+    }
+
+    /// Cache a freshly resolved key, posting `storageKeyDidBecomeResident`
+    /// on the nil -> non-nil transition (outside the lock).
+    private func cacheResidentKey(_ key: SymmetricKey) {
+        os_unfair_lock_lock(&lock)
+        let wasResident = cachedKey != nil
+        cachedKey = key
+        cachedReadFailureStatus = nil
+        os_unfair_lock_unlock(&lock)
+        if !wasResident {
+            NotificationCenter.default.post(
+                name: Self.storageKeyDidBecomeResident,
+                object: nil
+            )
         }
     }
 
@@ -222,10 +244,7 @@ public final class StorageKeyManager: @unchecked Sendable {
     /// `.osec` files. The cached key is updated atomically.
     public func rotate() throws -> SymmetricKey {
         let key = try generateAndPersistKey(forceFresh: true)
-        os_unfair_lock_lock(&lock)
-        cachedKey = key
-        cachedReadFailureStatus = nil
-        os_unfair_lock_unlock(&lock)
+        cacheResidentKey(key)
         return key
     }
 
@@ -239,10 +258,7 @@ public final class StorageKeyManager: @unchecked Sendable {
         if !Self.disablesKeychainForProcess {
             try persistKeychain(data: bytes)
         }
-        os_unfair_lock_lock(&lock)
-        cachedKey = key
-        cachedReadFailureStatus = nil
-        os_unfair_lock_unlock(&lock)
+        cacheResidentKey(key)
     }
 
     /// Replace the current DEK with one deterministically derived from
@@ -254,10 +270,7 @@ public final class StorageKeyManager: @unchecked Sendable {
     public func deriveFromMasterKey(context: LAContext) throws -> SymmetricKey {
         if Self.disablesKeychainForProcess {
             let key = try generateInMemoryKey()
-            os_unfair_lock_lock(&lock)
-            cachedKey = key
-            cachedReadFailureStatus = nil
-            os_unfair_lock_unlock(&lock)
+            cacheResidentKey(key)
             return key
         }
         guard MasterKey.exists() else {
@@ -283,10 +296,7 @@ public final class StorageKeyManager: @unchecked Sendable {
         try persistKeychain(data: derivedBytes)
 
         let key = SymmetricKey(data: derivedBytes)
-        os_unfair_lock_lock(&lock)
-        cachedKey = key
-        cachedReadFailureStatus = nil
-        os_unfair_lock_unlock(&lock)
+        cacheResidentKey(key)
         log.info("Storage key re-derived from master key (HKDF-SHA256)")
         return key
     }

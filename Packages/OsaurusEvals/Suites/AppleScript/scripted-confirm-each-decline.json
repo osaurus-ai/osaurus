@@ -1,0 +1,26 @@
+{
+  "id": "apple_script.scripted-confirm-each-decline",
+  "domain": "apple_script",
+  "label": "AppleScript • scripted confirmEach gate (decline path)",
+  "query": "Set the body of the note 'Standup' to 'Shipped the gate.'",
+  "notes": "Model-free CI anchor for the confirmEach DECLINE path: the eval confirm seam refuses the mutating script, so it must never reach the executor and the mock world must stay untouched. The decline is fed back as a tool result; the scripted sequencer then finishes, so the run ends 'done' with zero scripts executed — asserted so a regression that executes despite the decline, or that deadlocks on the confirm, fails loudly. No tokens.",
+  "fixtures": {},
+  "expect": {
+    "appleScript": {
+      "lane": "scripted",
+      "mode": "automate",
+      "executionMode": "confirmEach",
+      "confirmApproves": false,
+      "harness": { "verifyReadBack": false },
+      "executor": { "kind": "mock", "mockWorld": { "notes": { "Standup": "untouched" } } },
+      "scriptedCalls": [
+        "{\"script\":\"tell application \\\"Notes\\\" to set body of note \\\"Standup\\\" to \\\"Shipped the gate.\\\"\"}"
+      ],
+      "expectOutcome": ["done"],
+      "finalState": [
+        { "key": "note:Standup", "equals": "untouched" }
+      ],
+      "scoredMaxSteps": 0
+    }
+  }
+}

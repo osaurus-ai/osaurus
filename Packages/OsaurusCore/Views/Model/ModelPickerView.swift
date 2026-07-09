@@ -20,7 +20,13 @@ struct ModelPickerView: View {
     @State private var contextFilter: ModelPickerContextFilter = .any
     @State private var visionFilter: ModelPickerVisionFilter = .any
     @State private var showSortPopover = false
+    @ObservedObject private var favoritesStore = FavoriteModelsStore.shared
     @Environment(\.theme) private var theme
+
+    /// Stable key/title for the synthetic Favorites tab. It only exists while
+    /// the user has at least one favourite among the currently visible models.
+    private static let favoritesTabKey = "favorites"
+    private static let favoritesTabTitle = "Favorites"
 
     // MARK: - Test Mode
 
@@ -54,8 +60,41 @@ struct ModelPickerView: View {
         displayOptions.filter { $0.isMLXFormat }
     }
 
+    /// Visible models the user has favourited, in the order they were added.
+    /// Favourites whose model isn't currently available (provider offline,
+    /// deleted on disk) simply don't appear until the model returns.
+    private var favoriteItems: [ModelPickerItem] {
+        guard !favoritesStore.favoriteKeys.isEmpty else { return [] }
+        let byKey = Dictionary(
+            visibleOptions.map { ($0.favoriteKey, $0) },
+            uniquingKeysWith: { first, _ in first }
+        )
+        return favoritesStore.favoriteKeys.compactMap { byKey[$0] }
+    }
+
     private var currentTabs: [ModelPickerTab] {
-        visibleOptions.groupedByTab()
+        let base = visibleOptions.groupedByTab()
+        let favorites = favoriteItems
+        guard !favorites.isEmpty else { return base }
+        // Pin the Favourites tab first so a few preferred models are always the
+        // shortest path, ahead of the provider tabs.
+        let favoritesTab = ModelPickerTab(
+            key: Self.favoritesTabKey,
+            title: Self.favoritesTabTitle,
+            models: favorites
+        )
+        return [favoritesTab] + base
+    }
+
+    /// Provider attribution shown on Favourites-tab rows, since favourites mix
+    /// models from every source into one list.
+    private func providerTitle(for item: ModelPickerItem) -> String {
+        switch item.source {
+        case .foundation, .local, .imageGeneration:
+            return "Local"
+        case .remote(let providerName, _):
+            return providerName
+        }
     }
 
     /// The tab to fall back to when there is no valid explicit selection: the
@@ -115,7 +154,8 @@ struct ModelPickerView: View {
             quantization: model.quantization,
             isVLM: model.isVLM,
             isMLXFormat: model.isMLXFormat,
-            providerLabel: providerLabel
+            providerLabel: providerLabel,
+            isFavorite: favoritesStore.isFavorite(model.favoriteKey)
         )
     }
 
@@ -133,6 +173,11 @@ struct ModelPickerView: View {
             guard let key = effectiveSelectedTabKey(in: tabs),
                 let tab = tabs.first(where: { $0.key == key })
             else { return [] }
+            // The Favourites tab mixes models from every source, so each row
+            // carries its provider label to stay distinguishable.
+            if tab.key == Self.favoritesTabKey {
+                return tab.models.map { row(for: $0, providerLabel: providerTitle(for: $0)) }
+            }
             // Context filtering and price sorting only apply to the Osaurus
             // tab, whose models carry context/pricing metadata; other tabs keep
             // their existing alphabetical order. Both steps are no-ops at their
@@ -211,7 +256,12 @@ struct ModelPickerView: View {
             if rows.isEmpty {
                 emptyState
             } else {
-                modelList(rows: rows)
+                // Favourites-mode (trash control) only while the Favourites tab
+                // is the active, non-search view.
+                modelList(
+                    rows: rows,
+                    isFavoritesTab: !isSearching && activeTab?.key == Self.favoritesTabKey
+                )
             }
         }
         .frame(width: 380, height: min(CGFloat(visibleOptions.count * 48 + 160), 480))
@@ -563,11 +613,26 @@ struct ModelPickerView: View {
 
     private func tabChip(for tab: ModelPickerTab, activeKey: String?) -> some View {
         let isActive = tab.key == activeKey
+        let isFavorites = tab.key == Self.favoritesTabKey
         return Button(action: { selectedTabKey = tab.key }) {
             HStack(spacing: 5) {
-                Text(tab.title)
-                    .font(.system(size: 11, weight: isActive ? .semibold : .medium))
-                    .foregroundColor(isActive ? theme.accentColor : theme.secondaryText)
+                if isFavorites {
+                    Image(systemName: "heart.fill")
+                        .font(.system(size: 9, weight: .semibold))
+                        .foregroundColor(isActive ? theme.accentColor : theme.secondaryText)
+                }
+
+                Group {
+                    // The Favorites tab has a fixed, translatable title; every
+                    // other tab shows a provider name rendered verbatim.
+                    if isFavorites {
+                        Text("Favorites", bundle: .module)
+                    } else {
+                        Text(tab.title)
+                    }
+                }
+                .font(.system(size: 11, weight: isActive ? .semibold : .medium))
+                .foregroundColor(isActive ? theme.accentColor : theme.secondaryText)
 
                 Text("\(tab.models.count)")
                     .font(.system(size: 9, weight: .medium))
@@ -655,11 +720,12 @@ struct ModelPickerView: View {
 
     // MARK: - Model List
 
-    private func modelList(rows: [ModelPickerRow]) -> some View {
+    private func modelList(rows: [ModelPickerRow], isFavoritesTab: Bool) -> some View {
         ModelPickerTableRepresentable(
             rows: rows,
             theme: theme,
             selectedModelId: selectedModel,
+            isFavoritesTab: isFavoritesTab,
             onSelectModel: { modelId in
                 selectedModel = modelId
                 onDismiss()
@@ -667,6 +733,9 @@ struct ModelPickerView: View {
             // nil while searching so left/right arrows stay with the
             // search field's text cursor instead of switching hidden tabs
             onSwitchTab: isSearching ? nil : { offset in switchTab(by: offset) },
+            onToggleFavorite: { row in
+                favoritesStore.toggle(row.favoriteKey)
+            },
             onDismiss: onDismiss
         )
     }

@@ -186,6 +186,17 @@ final class ChatTurn: ObservableObject, Identifiable {
     var reasoningEncrypted: String? = nil
     /// For role==.tool messages, associates this result with the originating call id
     var toolCallId: String? = nil
+    /// Frozen memory / screen-context block this USER turn was originally
+    /// sent with, INCLUDING the trailing separator (see
+    /// `SystemPromptComposer.composeInjectedUserPrefix`). Recorded once at
+    /// send time and replayed verbatim by `turnToMessage` on every later
+    /// request, so the wire bytes for this turn never change after it has
+    /// been part of a token stream — required for paged-KV prefix reuse
+    /// across turns. Never rendered in the UI (the bubble shows `content`);
+    /// persisted so a reloaded session still matches the disk-backed L2
+    /// prefix cache. Nil on assistant/tool turns and on turns sent before
+    /// this field existed.
+    var injectedContextPrefix: String? = nil
     /// Convenience map for UI to show tool results grouped under the assistant turn
     @Published var toolResults: [String: String] = [:]
     /// Wall-clock duration (seconds) each tool call took to finish, keyed by call
@@ -252,6 +263,13 @@ final class ChatTurn: ObservableObject, Identifiable {
     /// providers ship args in a single chunk), so the UI never refreshed
     /// mid-stream. A fragment counter makes the throttle predictable.
     var pendingToolArgFragmentCount: Int = 0
+    /// Full accumulated tool arguments during streaming, kept only for
+    /// file-writing tools (see `FileDiff.diffProducingToolNames`) so the chat
+    /// can render a live, growing code card while the model writes — the
+    /// tail-truncated `pendingToolArgPreview` can't back that. Capped so a
+    /// runaway arg stream can't balloon memory; the preview simply stops
+    /// growing at the cap and the final diff card takes over.
+    var pendingToolArgFull: String? = nil
 
     // MARK: - Generation Benchmarks
 
@@ -285,6 +303,7 @@ final class ChatTurn: ObservableObject, Identifiable {
     var billingEntryIds: Set<String> = []
 
     private static let maxArgPreviewLength = 500
+    private static let maxFullArgAccumulation = 262_144
 
     /// Durations shorter than this aren't shown — they're indistinguishable from
     /// "instant" and usually mean the call + result arrived in the same tick
@@ -399,6 +418,21 @@ final class ChatTurn: ObservableObject, Identifiable {
             updated.count > Self.maxArgPreviewLength
             ? String(updated.suffix(Self.maxArgPreviewLength))
             : updated
+
+        // Accumulate the full args for file-writing tools AND while the tool
+        // name is still unknown (nil or the neutral in-progress placeholder) —
+        // local models stream the raw envelope before any name hint, and the
+        // name is derived from this buffer.
+        let wantsFull =
+            pendingToolName == nil
+            || pendingToolName == ToolDisplayName.pendingToolSentinel
+            || FileDiff.diffProducingToolNames.contains(pendingToolName!)
+        if wantsFull {
+            let full = pendingToolArgFull ?? ""
+            if full.count < Self.maxFullArgAccumulation {
+                pendingToolArgFull = full + fragment
+            }
+        }
     }
 
     /// Resets pending tool-call argument preview state.
@@ -406,6 +440,7 @@ final class ChatTurn: ObservableObject, Identifiable {
         pendingToolArgPreview = nil
         pendingToolArgSize = 0
         pendingToolArgFragmentCount = 0
+        pendingToolArgFull = nil
     }
 
     // MARK: - Initializers
@@ -470,6 +505,7 @@ extension ChatTurn {
         let toolCalls: [ToolCall]?
         let toolResults: [String: String]?
         let toolCallId: String?
+        var injectedContextPrefix: String? = nil
     }
 
     /// Converts this turn to a persistable representation
@@ -481,7 +517,8 @@ extension ChatTurn {
             thinking: thinkingIsEmpty ? nil : thinking,
             toolCalls: toolCalls,
             toolResults: toolResults.isEmpty ? nil : toolResults,
-            toolCallId: toolCallId
+            toolCallId: toolCallId,
+            injectedContextPrefix: injectedContextPrefix
         )
     }
 
@@ -502,6 +539,7 @@ extension ChatTurn {
             turn.toolResults = toolResults
         }
         turn.toolCallId = p.toolCallId
+        turn.injectedContextPrefix = p.injectedContextPrefix
 
         return turn
     }

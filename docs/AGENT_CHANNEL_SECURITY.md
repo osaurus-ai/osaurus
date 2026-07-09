@@ -102,6 +102,18 @@ specific reasons for sender, group, thread, write-disabled, expired, replayed,
 revoked, identity mismatch, disabled kill switch, and replay-store failure
 cases so operators can fix policy without seeing secrets.
 
+Receive adapters should persist redacted audit evidence through the Agent
+Channel message store after policy evaluation. The audit ledger records
+accepted, duplicate, denied, and failed outcomes with bounded summaries and
+typed reasons. Exported workbench views omit full payload JSON and apply
+best-effort redaction for known credential, token, email, and phone shapes.
+They should still be treated as diagnostic exports because unknown secret shapes
+can exist in external text. This gives operators a durable answer for
+group-channel questions such as which sender was allowed, which room was denied,
+and whether an event was dropped as a replay before external text reached the
+agent loop. The audit ledger is bounded by a per-connection retention cap and
+supports explicit time-based pruning for maintenance jobs.
+
 ## Remote Action Safety
 
 `ChannelRemoteSafetyGate.shared` adds a provider-neutral helper layer for live

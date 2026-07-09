@@ -158,7 +158,12 @@ struct RemoteReasoningPolicy {
     var allowsReasoningObject: Bool {
         switch providerType {
         case .openaiLegacy:
-            return !host.lowercased().contains("openai.com")
+            let lowered = host.lowercased()
+            // Mistral's chat-completions schema accepts only the root-level
+            // `reasoning_effort` string; a sibling `reasoning: { effort }`
+            // object is rejected with HTTP 422 (`extra_forbidden`). OpenAI
+            // proper likewise only reads `reasoning_effort` here.
+            return !lowered.contains("openai.com") && !lowered.contains("mistral")
         case .azureOpenAI, .anthropic, .openResponses, .openAICodex, .gemini, .osaurus, .osaurusRouter:
             return false
         }
@@ -199,6 +204,43 @@ struct RemoteReasoningPolicy {
             return effort
         case .anthropic, .openResponses, .openAICodex, .gemini, .osaurus, .osaurusRouter:
             return effort
+        }
+    }
+
+    /// Downgrade `tool_choice` values the provider rejects while thinking
+    /// mode is active.
+    ///
+    /// DeepSeek V4 (`deepseek-v4-pro`/`-flash`) enables thinking by default
+    /// and returns HTTP 400 `"Thinking mode does not support this
+    /// tool_choice"` for `tool_choice: "required"` and named-function
+    /// choices; only `"auto"`/`"none"` are accepted. Forced choices work
+    /// only in non-thinking mode, i.e. when `thinking: {"type":"disabled"}`
+    /// is on the wire. This is a wire-compatibility translation of the same
+    /// kind as the Anthropic `.required -> .any` mapping, not an
+    /// output-shaping guard: the caller's intent ("call a tool now") is
+    /// preserved as closely as the provider's thinking-mode contract allows.
+    func sanitizedToolChoice(
+        _ choice: ToolChoiceOption?,
+        thinking: ThinkingConfig?
+    ) -> ToolChoiceOption? {
+        guard let choice else { return nil }
+        switch providerType {
+        case .openaiLegacy, .azureOpenAI:
+            break
+        case .anthropic, .openResponses, .openAICodex, .gemini, .osaurus, .osaurusRouter:
+            return choice
+        }
+        guard Self.matches(needle: "deepseek", host: host, model: model) else {
+            return choice
+        }
+        // Thinking explicitly disabled (Instruct mode): forced choices are legal.
+        guard thinking?.type != "disabled" else { return choice }
+
+        switch choice {
+        case .required, .function:
+            return .auto
+        case .auto, .none:
+            return choice
         }
     }
 

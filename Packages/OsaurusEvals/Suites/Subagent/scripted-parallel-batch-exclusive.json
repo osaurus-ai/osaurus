@@ -1,0 +1,21 @@
+{
+  "id": "subagent.scripted-parallel-batch-exclusive",
+  "domain": "subagent",
+  "label": "Subagent • parallel batch: two local handoffs serialize, both complete",
+  "query": "One tool batch starts two local-handoff subagents concurrently.",
+  "notes": "Model-free. THE BATCH-RACE GUARD: two scripted kinds that model the local residency handoff (needsHandoff → .localExclusive admission) are started CONCURRENTLY through the real host, like a parallel tool batch. The process-wide SubagentAdmission gate must serialize them — peak overlap of the run bodies is exactly 1 — while the queued run WAITS and then completes (runsCompleted 2, success envelopes for both). A failure here is the historical concurrent-GPU handoff race (BUG G class) resurfacing.",
+  "fixtures": {},
+  "expect": {
+    "subagent": {
+      "lane": "scripted",
+      "decision": "allow",
+      "needsHandoff": true,
+      "parallel": 2,
+      "runDelayMs": 150,
+      "phases": ["running"],
+      "expectSuccess": true,
+      "expectMaxConcurrent": 1,
+      "expectRunsCompleted": 2
+    }
+  }
+}

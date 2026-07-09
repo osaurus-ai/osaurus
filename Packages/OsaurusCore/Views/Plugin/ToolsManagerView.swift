@@ -71,9 +71,7 @@ struct ToolsManagerView: View {
     var body: some View {
         VStack(spacing: 0) {
             headerBar
-                .opacity(hasAppeared ? 1 : 0)
-                .offset(y: hasAppeared ? 0 : -10)
-                .animation(.spring(response: 0.4, dampingFraction: 0.8), value: hasAppeared)
+                .managerHeaderEntrance(hasAppeared: hasAppeared)
 
             Group {
                 switch selectedTab {
@@ -1341,13 +1339,16 @@ private struct SandboxPluginToolCard: View {
 
     @State private var isExpanded = false
     @State private var isMenuHovering = false
+    @State private var showAllTools = false
 
     private var toolCount: Int {
         plugin.tools?.count ?? 0
     }
 
-    private var toolNames: [String] {
-        plugin.tools?.map { "\(plugin.id)_\($0.id)" } ?? []
+    private var visibleToolSpecs: [SandboxToolSpec] {
+        guard let tools = plugin.tools else { return [] }
+        let cap = toolGroupRenderCapValue
+        return (showAllTools || tools.count <= cap) ? tools : Array(tools.prefix(cap))
     }
 
     var body: some View {
@@ -1454,10 +1455,19 @@ private struct SandboxPluginToolCard: View {
 
                 if let tools = plugin.tools, !tools.isEmpty {
                     VStack(spacing: 8) {
-                        ForEach(tools, id: \.id) { spec in
+                        ForEach(visibleToolSpecs, id: \.id) { spec in
                             let toolName = "\(plugin.id)_\(spec.id)"
                             let entry = ToolRegistry.shared.entry(named: toolName)
                             sandboxToolRow(spec: spec, entry: entry)
+                        }
+
+                        if tools.count > toolGroupRenderCapValue {
+                            ShowAllToolsButton(
+                                hiddenCount: tools.count - toolGroupRenderCapValue,
+                                isExpanded: showAllTools
+                            ) {
+                                showAllTools.toggle()
+                            }
                         }
                     }
                 } else {

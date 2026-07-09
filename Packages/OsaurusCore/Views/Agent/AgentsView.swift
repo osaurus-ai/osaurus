@@ -236,9 +236,7 @@ struct AgentsView: View {
     private var gridContent: some View {
         VStack(spacing: 0) {
             headerView
-                .opacity(hasAppeared ? 1 : 0)
-                .offset(y: hasAppeared ? 0 : -10)
-                .animation(.spring(response: 0.4, dampingFraction: 0.8), value: hasAppeared)
+                .managerHeaderEntrance(hasAppeared: hasAppeared)
 
             // First-agent onboarding stays reachable as long as the user has no
             // *local* agents — even if they've already paired a remote agent.
@@ -1018,6 +1016,8 @@ struct AgentDetailView: View {
     @State private var renderChartEnabled: Bool = false
     @State private var speakEnabled: Bool = false
     @State private var searchMemoryEnabled: Bool = false
+    /// Native `web_search` gate — default ON (free providers need no setup).
+    @State private var webSearchEnabled: Bool = true
     @State private var selfSchedulingEnabled: Bool = false
     /// Local mirrors of the knowledge feature (`AgentSettings.knowledgeEnabled`
     /// + collection grants). The Features section binds these; `saveAgent`
@@ -1085,6 +1085,7 @@ struct AgentDetailView: View {
     /// from / into `AgentSettings`.
     @State private var subagentPermissions: SubagentPermissionDefaults = SubagentPermissionDefaults()
     @State private var subagentBudgets: SubagentBudgets = SubagentBudgets()
+    @State private var spawnToolAccess: SpawnToolAccess = .none
     /// Per-agent subagent model overrides keyed by capability id (computer_use /
     /// spawn). Empty/absent = inherit the kind's default model.
     /// Mirrored from / into `AgentSettings.subagentModelOverrides`.
@@ -1907,7 +1908,7 @@ struct AgentDetailView: View {
     /// the top of the Configure tab now that the title bar's avatar/dropdown is
     /// dedicated to switching between agents.
     private var identitySection: some View {
-        AgentDetailSection(title: L("Identity"), icon: "person.crop.circle") {
+        AgentDetailSection(title: L("editor.section.identity"), icon: "person.crop.circle") {
             VStack(alignment: .leading, spacing: 10) {
                 StyledTextField(
                     placeholder: L("e.g., Code Assistant"),
@@ -2557,19 +2558,19 @@ struct AgentDetailView: View {
 
     private static func scheduleModeTitle(_ mode: AgentScheduleMode) -> String {
         switch mode {
-        case .ambient: return "Ambient"
-        case .reactive: return "Reactive"
-        case .project: return "Project"
-        case .manual: return "Manual"
+        case .ambient: return L("Ambient")
+        case .reactive: return L("Reactive")
+        case .project: return L("Project")
+        case .manual: return L("Manual")
         }
     }
 
     private static func scheduleModeTagline(_ mode: AgentScheduleMode) -> String {
         switch mode {
-        case .ambient: return "Background helper"
-        case .reactive: return "Quick reflexes"
-        case .project: return "Deep work"
-        case .manual: return "Self-scheduling off"
+        case .ambient: return L("Background helper")
+        case .reactive: return L("Quick reflexes")
+        case .project: return L("Deep work")
+        case .manual: return L("Self-scheduling off")
         }
     }
 
@@ -2580,13 +2581,13 @@ struct AgentDetailView: View {
     private static func scheduleModePresetSummary(_ mode: AgentScheduleMode) -> String {
         switch mode {
         case .ambient:
-            return "Up to 6 runs/day · at most once an hour · quiet 10pm–7am."
+            return L("Up to 6 runs/day · at most once an hour · quiet 10pm–7am.")
         case .reactive:
-            return "Up to 48 runs/day · as often as every 5 min · no quiet hours."
+            return L("Up to 48 runs/day · as often as every 5 min · no quiet hours.")
         case .project:
-            return "Up to 4 runs/day · at most once an hour · quiet 10pm–7am."
+            return L("Up to 4 runs/day · at most once an hour · quiet 10pm–7am.")
         case .manual:
-            return "The agent only runs when you ask. Scheduled API calls from the agent are rejected."
+            return L("The agent only runs when you ask. Scheduled API calls from the agent are rejected.")
         }
     }
 
@@ -2739,6 +2740,18 @@ struct AgentDetailView: View {
                         description: "Curated reference material the agent can consult on demand."
                     ) {
                         knowledgeFeatureSection
+                    }
+
+                    featureGroup(
+                        "Web",
+                        description: "Live information from the internet."
+                    ) {
+                        featureToggleRow(
+                            title: "Web Search",
+                            subtitle:
+                                "Let the agent search the web through your search providers. Works out of the box with free sources; configure providers in Settings > Search.",
+                            isOn: $webSearchEnabled
+                        )
                     }
 
                     featureGroup(
@@ -3526,6 +3539,8 @@ struct AgentDetailView: View {
                 label: "Permission"
             )
             subagentPanelDivider
+            spawnToolAccessRow
+            subagentPanelDivider
             subagentBudgetRows
             subagentFootnote(
                 "Local handoff and RAM-safety for spawn jobs are system settings in Settings → Subagents."
@@ -3850,6 +3865,35 @@ struct AgentDetailView: View {
             get: { subagentBudgets[keyPath: keyPath] },
             set: {
                 subagentBudgets[keyPath: keyPath] = $0
+                debouncedSave()
+            }
+        )
+    }
+
+    /// Worker tool grant for spawned subagents: text-only (default) or the
+    /// curated read-only file set. What "read-only" reaches is enforced in
+    /// `TextSubagentKind.makeToolset`, not here.
+    private var spawnToolAccessRow: some View {
+        subagentControlRow(
+            "Worker tools",
+            subtitle:
+                "Let spawned workers read files themselves (file_read / file_search) so bulk reading stays out of this agent's context."
+        ) {
+            Picker("", selection: spawnToolAccessSelection) {
+                Text("Text-only", bundle: .module).tag(SpawnToolAccess.none)
+                Text("Read-only files", bundle: .module).tag(SpawnToolAccess.readOnly)
+            }
+            .labelsHidden()
+            .pickerStyle(.menu)
+            .frame(maxWidth: 160)
+        }
+    }
+
+    private var spawnToolAccessSelection: Binding<SpawnToolAccess> {
+        Binding(
+            get: { spawnToolAccess },
+            set: {
+                spawnToolAccess = $0
                 debouncedSave()
             }
         )
@@ -6136,6 +6180,7 @@ struct AgentDetailView: View {
         renderChartEnabled = agent.settings.renderChartEnabled
         speakEnabled = agent.settings.speakEnabled
         searchMemoryEnabled = agent.settings.searchMemoryEnabled
+        webSearchEnabled = agent.settings.webSearchEnabled
         selfSchedulingEnabled = agent.settings.selfSchedulingEnabled
         knowledgeEnabled = agent.settings.knowledgeEnabled
         knowledgeCollectionIds = agent.settings.knowledgeCollectionIds
@@ -6157,6 +6202,7 @@ struct AgentDetailView: View {
         subagentPermissions = agent.settings.subagentPermissions
         subagentBudgets = agent.settings.subagentBudgets
         subagentModelOverrides = agent.settings.subagentModelOverrides
+        spawnToolAccess = agent.settings.spawnToolAccess
         // Snapshot the global subagent config for the spawn-handoff warning.
         globalSubagentConfig = SubagentConfigurationStore.snapshot()
         hostWorkspacePath = agent.hostWorkspacePath
@@ -6346,6 +6392,7 @@ struct AgentDetailView: View {
                 renderChartEnabled: renderChartEnabled,
                 speakEnabled: speakEnabled,
                 searchMemoryEnabled: searchMemoryEnabled,
+                webSearchEnabled: webSearchEnabled,
                 selfSchedulingEnabled: selfSchedulingEnabled,
                 computerUseEnabled: computerUseEnabled,
                 computerUseCeiling: computerUseEnabled ? computerUseCeiling : nil,
@@ -6389,7 +6436,8 @@ struct AgentDetailView: View {
                 // off regardless.
                 knowledgeEnabled: knowledgeEnabled,
                 knowledgeCollectionIds: knowledgeCollectionIds,
-                knowledgeCuratorEnabled: knowledgeCuratorEnabled
+                knowledgeCuratorEnabled: knowledgeCuratorEnabled,
+                spawnToolAccess: spawnToolAccess
             ),
             order: current.order
         )

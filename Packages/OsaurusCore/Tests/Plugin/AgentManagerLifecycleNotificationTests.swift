@@ -32,6 +32,14 @@ struct AgentManagerLifecycleNotificationTests {
         )
     }
 
+    private func seedAgentBackup(at url: URL, agent: Agent) throws {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        encoder.dateEncodingStrategy = .iso8601
+        let data = try encoder.encode(agent)
+        try data.write(to: url, options: .atomic)
+    }
+
     /// Subscribes to `name` and returns the `agentId` from the first
     /// notification received, or nil after `timeoutMs`. We capture only
     /// the `agentId` (a `UUID`, value type) rather than the whole
@@ -99,6 +107,111 @@ struct AgentManagerLifecycleNotificationTests {
 
             let id = try #require(receivedId, "expected .agentAdded to fire after add()")
             #expect(id == agent.id)
+        }
+    }
+
+    @Test
+    func restoreRecoverableBackupPostsAgentAddedAndRefreshesManagerList() async throws {
+        try await ChatHistoryTestStorage.run {
+            let fm = FileManager.default
+            let agents = OsaurusPaths.agents()
+            try fm.createDirectory(at: agents, withIntermediateDirectories: true)
+
+            let agentId = UUID()
+            let backupURL = agents.appendingPathComponent("\(agentId.uuidString).json.bak")
+            let backup = Agent(
+                id: agentId,
+                name: "RecoveredNotify",
+                systemPrompt: "Recovered through manager"
+            )
+            try self.seedAgentBackup(at: backupURL, agent: backup)
+
+            var restoreError: Error?
+            let receivedId = await self.awaitAgentIdNotification(.agentAdded) {
+                do {
+                    _ = try AgentManager.shared.restoreRecoverableAgentBackup(at: backupURL)
+                } catch {
+                    restoreError = error
+                }
+            }
+            if let restoreError {
+                throw restoreError
+            }
+
+            let notificationId = try #require(
+                receivedId,
+                "expected .agentAdded to fire after restore"
+            )
+            #expect(notificationId == agentId)
+
+            let restored = try #require(
+                AgentManager.shared.agent(for: agentId),
+                "expected restore to refresh the manager list"
+            )
+            #expect(restored.name == "RecoveredNotify")
+            #expect(!fm.fileExists(atPath: backupURL.path))
+            #expect(fm.fileExists(atPath: backupURL.appendingPathExtension("restored").path))
+        }
+    }
+
+    @Test
+    func restoreRecoverableConflictPostsRecoveredAgentIdAndRefreshesManagerList() async throws {
+        try await ChatHistoryTestStorage.run {
+            let fm = FileManager.default
+            let agents = OsaurusPaths.agents()
+            try fm.createDirectory(at: agents, withIntermediateDirectories: true)
+
+            let originalId = UUID()
+            AgentStore.save(Agent(
+                id: originalId,
+                name: "CanonicalNotify",
+                systemPrompt: "canonical through manager"
+            ))
+
+            let backupURL = agents.appendingPathComponent("\(originalId.uuidString).json.bak")
+            let backup = Agent(
+                id: originalId,
+                name: "LegacyNotify",
+                systemPrompt: "legacy through manager",
+                agentIndex: 17,
+                agentAddress: "0xlegacy-manager"
+            )
+            try self.seedAgentBackup(at: backupURL, agent: backup)
+
+            var restoredAgent: Agent?
+            var restoreError: Error?
+            let receivedId = await self.awaitAgentIdNotification(.agentAdded) {
+                do {
+                    restoredAgent = try AgentManager.shared.restoreRecoverableAgentBackup(at: backupURL)
+                } catch {
+                    restoreError = error
+                }
+            }
+            if let restoreError {
+                throw restoreError
+            }
+
+            let restored = try #require(restoredAgent)
+            #expect(restored.id != originalId)
+            #expect(restored.name == "LegacyNotify (Recovered)")
+            // The store clears the backup identity before save; the manager then
+            // assigns a fresh identity for the recovered agent.
+            #expect(restored.agentIndex != backup.agentIndex)
+            #expect(restored.agentAddress != backup.agentAddress)
+
+            let notificationId = try #require(
+                receivedId,
+                "expected .agentAdded to fire after conflict restore"
+            )
+            #expect(notificationId == restored.id)
+
+            let managerRestored = try #require(
+                AgentManager.shared.agent(for: restored.id),
+                "expected restore to refresh the manager list with the recovered id"
+            )
+            #expect(managerRestored.name == "LegacyNotify (Recovered)")
+            let canonical = try #require(AgentManager.shared.agent(for: originalId))
+            #expect(canonical.name == "CanonicalNotify")
         }
     }
 

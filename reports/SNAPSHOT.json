@@ -1,12 +1,14 @@
 {
   "domains" : [
     "agent_loop",
+    "apple_script",
     "argument_coercion",
     "capability_claims",
     "capability_search",
     "computer_use",
     "computer_use_loop",
     "default_agent",
+    "micro_perf",
     "prefix_hash",
     "request_validation",
     "sandbox_diagnostics",
@@ -16,33 +18,179 @@
     "subagent",
     "tool_envelope"
   ],
-  "generatedAt" : "2026-06-28T13:44:20.390Z",
+  "generatedAt" : "2026-07-06T02:31:41.562Z",
   "models" : [
     {
+      "chatModelPassed" : 177,
+      "chatModelScored" : 228,
       "environment" : {
-        "caseCount" : 18,
-        "catalogHash" : "41cd9ca379a603a2",
+        "caseCount" : 12,
+        "catalogHash" : "137408f3cdba4838",
         "chip" : "Apple M4 Pro",
         "cpuCores" : 14,
         "judge" : "xai/grok-4.3",
+        "lowPowerMode" : false,
         "osVersion" : "26.2.0",
-        "runModel" : "foundation",
+        "powerSource" : "AC",
+        "runModel" : "OsaurusAI/Ornith-1.0-9B-MXFP4",
+        "thermalState" : "fair",
         "totalRamMb" : 49152
       },
-      "meanCpuPercent" : 128.06038736953047,
-      "modelId" : "foundation",
-      "peakCpuPercent" : 16.883781089392446,
-      "peakPhysFootprintMb" : 140.42285919189453,
+      "meanCpuPercent" : 71.09949791595085,
+      "meanDecodeTokensPerSecond" : 22.848566486530114,
+      "meanPromptTokensPerTask" : 23136.604395604394,
+      "meanTotalTokensPerTask" : 20617.336363636365,
+      "meanTtftMs" : 133.6290696833996,
+      "modelId" : "OsaurusAI/Ornith-1.0-9B-MXFP4",
+      "peakCpuPercent" : 512.5216682496348,
+      "peakPhysFootprintMb" : 20613.585746765137,
       "perDomain" : {
         "agent_loop" : {
           "errored" : 0,
-          "passed" : 0,
-          "scored" : 0,
-          "skipped" : 88
+          "passed" : 66,
+          "scored" : 92,
+          "skipped" : 3
+        },
+        "apple_script" : {
+          "errored" : 0,
+          "passed" : 27,
+          "scored" : 35,
+          "skipped" : 0
         },
         "capability_claims" : {
           "errored" : 0,
-          "passed" : 2,
+          "passed" : 10,
+          "scored" : 11,
+          "skipped" : 0
+        },
+        "computer_use_loop" : {
+          "errored" : 0,
+          "passed" : 13,
+          "scored" : 23,
+          "skipped" : 0
+        },
+        "default_agent" : {
+          "errored" : 0,
+          "passed" : 26,
+          "scored" : 38,
+          "skipped" : 0
+        },
+        "micro_perf" : {
+          "errored" : 0,
+          "passed" : 3,
+          "scored" : 3,
+          "skipped" : 0
+        },
+        "subagent" : {
+          "errored" : 0,
+          "passed" : 43,
+          "scored" : 45,
+          "skipped" : 2
+        }
+      },
+      "startedAt" : "2026-07-05T18:46:28Z",
+      "subsystemPassed" : 11,
+      "subsystemScored" : 19,
+      "totalPassed" : 188,
+      "totalScored" : 247
+    },
+    {
+      "chatModelPassed" : 180,
+      "chatModelScored" : 228,
+      "environment" : {
+        "caseCount" : 12,
+        "catalogHash" : "137408f3cdba4838",
+        "chip" : "Apple M4 Pro",
+        "cpuCores" : 14,
+        "judge" : "xai/grok-4.3",
+        "lowPowerMode" : false,
+        "osVersion" : "26.2.0",
+        "powerSource" : "AC",
+        "runModel" : "OsaurusAI/gemma-4-E4B-it-4bit",
+        "thermalState" : "fair",
+        "totalRamMb" : 49152
+      },
+      "meanCpuPercent" : 78.3688637745217,
+      "meanDecodeTokensPerSecond" : 21.36396340791487,
+      "meanPromptTokensPerTask" : 21355.626373626375,
+      "meanTotalTokensPerTask" : 18902.61111111111,
+      "meanTtftMs" : 38.599489851200836,
+      "modelId" : "OsaurusAI/gemma-4-E4B-it-4bit",
+      "peakCpuPercent" : 512.139014278199,
+      "peakPhysFootprintMb" : 19797.867179870605,
+      "perDomain" : {
+        "agent_loop" : {
+          "errored" : 0,
+          "passed" : 73,
+          "scored" : 92,
+          "skipped" : 3
+        },
+        "apple_script" : {
+          "errored" : 0,
+          "passed" : 24,
+          "scored" : 33,
+          "skipped" : 2
+        },
+        "capability_claims" : {
+          "errored" : 0,
+          "passed" : 9,
+          "scored" : 11,
+          "skipped" : 0
+        },
+        "computer_use_loop" : {
+          "errored" : 0,
+          "passed" : 21,
+          "scored" : 23,
+          "skipped" : 0
+        },
+        "default_agent" : {
+          "errored" : 0,
+          "passed" : 13,
+          "scored" : 38,
+          "skipped" : 0
+        },
+        "micro_perf" : {
+          "errored" : 0,
+          "passed" : 3,
+          "scored" : 3,
+          "skipped" : 0
+        },
+        "subagent" : {
+          "errored" : 0,
+          "passed" : 45,
+          "scored" : 45,
+          "skipped" : 2
+        }
+      },
+      "startedAt" : "2026-07-06T01:20:32Z",
+      "subsystemPassed" : 8,
+      "subsystemScored" : 17,
+      "totalPassed" : 188,
+      "totalScored" : 245
+    },
+    {
+      "chatModelPassed" : 128,
+      "chatModelScored" : 130,
+      "environment" : {
+        "caseCount" : 11,
+        "catalogHash" : "2598627c7daaaba7",
+        "chip" : "Apple M4 Pro",
+        "cpuCores" : 14,
+        "judge" : "xai/grok-4.3",
+        "lowPowerMode" : false,
+        "osVersion" : "26.2.0",
+        "powerSource" : "AC",
+        "runModel" : "foundation",
+        "thermalState" : "nominal",
+        "totalRamMb" : 49152
+      },
+      "meanCpuPercent" : 104.72310861455743,
+      "modelId" : "foundation",
+      "peakPhysFootprintMb" : 140.1417007446289,
+      "perDomain" : {
+        "argument_coercion" : {
+          "errored" : 0,
+          "passed" : 11,
           "scored" : 11,
           "skipped" : 0
         },
@@ -52,83 +200,10 @@
           "scored" : 16,
           "skipped" : 2
         },
-        "computer_use_loop" : {
-          "errored" : 0,
-          "passed" : 7,
-          "scored" : 7,
-          "skipped" : 15
-        },
-        "default_agent" : {
-          "errored" : 1,
-          "passed" : 1,
-          "scored" : 10,
-          "skipped" : 27
-        },
-        "subagent" : {
-          "errored" : 0,
-          "passed" : 20,
-          "scored" : 20,
-          "skipped" : 6
-        }
-      },
-      "startedAt" : "2026-06-28T12:40:11Z",
-      "totalPassed" : 45,
-      "totalScored" : 64
-    },
-    {
-      "environment" : {
-        "caseCount" : 11,
-        "catalogHash" : "2598627c7daaaba7",
-        "chip" : "Apple M4 Pro",
-        "cpuCores" : 14,
-        "judge" : "xai/grok-4.3",
-        "osVersion" : "26.2.0",
-        "runModel" : "mlx-community/Qwen3.5-4B-OptiQ-4bit",
-        "totalRamMb" : 49152
-      },
-      "meanCpuPercent" : 70.39949350081159,
-      "meanDecodeTokensPerSecond" : 45.55950436252179,
-      "meanPromptTokensPerTask" : 28106.159420289856,
-      "meanTotalTokensPerTask" : 28577.08695652174,
-      "meanTtftMs" : 128.43779550082442,
-      "modelId" : "mlx-community/Qwen3.5-4B-OptiQ-4bit",
-      "peakCpuPercent" : 425.6809421316051,
-      "peakPhysFootprintMb" : 7868.833480834961,
-      "perDomain" : {
-        "agent_loop" : {
-          "errored" : 0,
-          "passed" : 58,
-          "scored" : 70,
-          "skipped" : 18
-        },
-        "argument_coercion" : {
-          "errored" : 0,
-          "passed" : 11,
-          "scored" : 11,
-          "skipped" : 0
-        },
-        "capability_claims" : {
-          "errored" : 0,
-          "passed" : 9,
-          "scored" : 11,
-          "skipped" : 0
-        },
         "computer_use" : {
           "errored" : 0,
           "passed" : 21,
           "scored" : 21,
-          "skipped" : 0
-        },
-        "computer_use_loop" : {
-          "errored" : 0,
-          "passed" : 14,
-          "scored" : 22,
-          "skipped" : 0
-        },
-        "default_agent" : {
-          "errored" : 0,
-          "passed" : 31,
-          "scored" : 38,
           "skipped" : 0
         },
         "prefix_hash" : {
@@ -167,12 +242,6 @@
           "scored" : 9,
           "skipped" : 0
         },
-        "subagent" : {
-          "errored" : 0,
-          "passed" : 21,
-          "scored" : 22,
-          "skipped" : 4
-        },
         "tool_envelope" : {
           "errored" : 0,
           "passed" : 10,
@@ -180,34 +249,196 @@
           "skipped" : 0
         }
       },
-      "startedAt" : "2026-06-28T12:40:06Z",
-      "totalPassed" : 246,
-      "totalScored" : 277
+      "startedAt" : "2026-07-05T23:02:04Z",
+      "subsystemPassed" : 0,
+      "subsystemScored" : 0,
+      "totalPassed" : 128,
+      "totalScored" : 130
     },
     {
+      "chatModelPassed" : 185,
+      "chatModelScored" : 228,
+      "environment" : {
+        "caseCount" : 12,
+        "catalogHash" : "137408f3cdba4838",
+        "chip" : "Apple M4 Pro",
+        "cpuCores" : 14,
+        "judge" : "xai/grok-4.3",
+        "lowPowerMode" : false,
+        "osVersion" : "26.2.0",
+        "powerSource" : "AC",
+        "runModel" : "mlx-community/Qwen3-4B-4bit",
+        "thermalState" : "fair",
+        "totalRamMb" : 49152
+      },
+      "meanCpuPercent" : 67.65935984881716,
+      "meanDecodeTokensPerSecond" : 53.120355117710204,
+      "meanPromptTokensPerTask" : 21935.43956043956,
+      "meanTotalTokensPerTask" : 19186.26605504587,
+      "meanTtftMs" : 124.40918861551488,
+      "modelId" : "mlx-community/Qwen3-4B-4bit",
+      "peakCpuPercent" : 529.0317958409179,
+      "peakPhysFootprintMb" : 20583.414192199707,
+      "perDomain" : {
+        "agent_loop" : {
+          "errored" : 0,
+          "passed" : 66,
+          "scored" : 92,
+          "skipped" : 3
+        },
+        "apple_script" : {
+          "errored" : 0,
+          "passed" : 29,
+          "scored" : 34,
+          "skipped" : 1
+        },
+        "capability_claims" : {
+          "errored" : 0,
+          "passed" : 10,
+          "scored" : 11,
+          "skipped" : 0
+        },
+        "computer_use_loop" : {
+          "errored" : 0,
+          "passed" : 21,
+          "scored" : 23,
+          "skipped" : 0
+        },
+        "default_agent" : {
+          "errored" : 0,
+          "passed" : 24,
+          "scored" : 38,
+          "skipped" : 0
+        },
+        "micro_perf" : {
+          "errored" : 0,
+          "passed" : 3,
+          "scored" : 3,
+          "skipped" : 0
+        },
+        "subagent" : {
+          "errored" : 0,
+          "passed" : 45,
+          "scored" : 45,
+          "skipped" : 2
+        }
+      },
+      "startedAt" : "2026-07-05T23:03:10Z",
+      "subsystemPassed" : 13,
+      "subsystemScored" : 18,
+      "totalPassed" : 198,
+      "totalScored" : 246
+    },
+    {
+      "chatModelPassed" : 199,
+      "chatModelScored" : 228,
+      "environment" : {
+        "caseCount" : 12,
+        "catalogHash" : "137408f3cdba4838",
+        "chip" : "Apple M4 Pro",
+        "cpuCores" : 14,
+        "judge" : "xai/grok-4.3",
+        "lowPowerMode" : false,
+        "osVersion" : "26.2.0",
+        "powerSource" : "AC",
+        "runModel" : "mlx-community/Qwen3.5-4B-OptiQ-4bit",
+        "thermalState" : "fair",
+        "totalRamMb" : 49152
+      },
+      "meanCpuPercent" : 71.83380206684214,
+      "meanDecodeTokensPerSecond" : 34.852818213933865,
+      "meanPromptTokensPerTask" : 22317.384615384617,
+      "meanTotalTokensPerTask" : 19334.627272727274,
+      "meanTtftMs" : 133.8297559859905,
+      "modelId" : "mlx-community/Qwen3.5-4B-OptiQ-4bit",
+      "peakCpuPercent" : 519.8783660844423,
+      "peakPhysFootprintMb" : 20487.085746765137,
+      "perDomain" : {
+        "agent_loop" : {
+          "errored" : 0,
+          "passed" : 83,
+          "scored" : 92,
+          "skipped" : 3
+        },
+        "apple_script" : {
+          "errored" : 0,
+          "passed" : 29,
+          "scored" : 35,
+          "skipped" : 0
+        },
+        "capability_claims" : {
+          "errored" : 0,
+          "passed" : 8,
+          "scored" : 11,
+          "skipped" : 0
+        },
+        "computer_use_loop" : {
+          "errored" : 0,
+          "passed" : 15,
+          "scored" : 23,
+          "skipped" : 0
+        },
+        "default_agent" : {
+          "errored" : 0,
+          "passed" : 31,
+          "scored" : 38,
+          "skipped" : 0
+        },
+        "micro_perf" : {
+          "errored" : 0,
+          "passed" : 3,
+          "scored" : 3,
+          "skipped" : 0
+        },
+        "subagent" : {
+          "errored" : 0,
+          "passed" : 43,
+          "scored" : 45,
+          "skipped" : 2
+        }
+      },
+      "startedAt" : "2026-07-06T00:06:04Z",
+      "subsystemPassed" : 13,
+      "subsystemScored" : 19,
+      "totalPassed" : 212,
+      "totalScored" : 247
+    },
+    {
+      "chatModelPassed" : 218,
+      "chatModelScored" : 228,
       "environment" : {
         "caseCount" : 12,
         "catalogHash" : "137408f3cdba4838",
         "chip" : "Apple M4 Pro",
         "cpuCores" : 14,
         "judge" : "self-judge",
+        "lowPowerMode" : false,
         "osVersion" : "26.2.0",
+        "powerSource" : "AC",
         "runModel" : "xai/grok-4.3",
+        "thermalState" : "fair",
         "totalRamMb" : 49152
       },
-      "meanCpuPercent" : 36.63962193413848,
-      "meanPromptTokensPerTask" : 24196.72463768116,
-      "meanTotalTokensPerTask" : 24383.376811594204,
-      "meanTtftMs" : 929.3632314485662,
+      "meanCpuPercent" : 32.995194582527496,
+      "meanDecodeTokensPerSecond" : 10.33938140350877,
+      "meanPromptTokensPerTask" : 32286.923076923078,
+      "meanTotalTokensPerTask" : 27458.045454545456,
+      "meanTtftMs" : 675.729790900616,
       "modelId" : "xai/grok-4.3",
-      "peakCpuPercent" : 404.403450983333,
-      "peakPhysFootprintMb" : 25969.112968444824,
+      "peakCpuPercent" : 517.2388282920834,
+      "peakPhysFootprintMb" : 19637.49208831787,
       "perDomain" : {
         "agent_loop" : {
-          "errored" : 3,
-          "passed" : 64,
-          "scored" : 67,
-          "skipped" : 18
+          "errored" : 0,
+          "passed" : 89,
+          "scored" : 92,
+          "skipped" : 3
+        },
+        "apple_script" : {
+          "errored" : 0,
+          "passed" : 26,
+          "scored" : 35,
+          "skipped" : 0
         },
         "capability_claims" : {
           "errored" : 0,
@@ -218,25 +449,33 @@
         "computer_use_loop" : {
           "errored" : 0,
           "passed" : 22,
-          "scored" : 22,
+          "scored" : 23,
           "skipped" : 0
         },
         "default_agent" : {
           "errored" : 0,
-          "passed" : 25,
+          "passed" : 34,
           "scored" : 38,
+          "skipped" : 0
+        },
+        "micro_perf" : {
+          "errored" : 0,
+          "passed" : 3,
+          "scored" : 3,
           "skipped" : 0
         },
         "subagent" : {
           "errored" : 0,
-          "passed" : 22,
-          "scored" : 22,
-          "skipped" : 4
+          "passed" : 43,
+          "scored" : 45,
+          "skipped" : 2
         }
       },
-      "startedAt" : "2026-06-28T13:25:52Z",
-      "totalPassed" : 144,
-      "totalScored" : 160
+      "startedAt" : "2026-07-05T18:46:28Z",
+      "subsystemPassed" : 10,
+      "subsystemScored" : 19,
+      "totalPassed" : 228,
+      "totalScored" : 247
     }
   ]
 }

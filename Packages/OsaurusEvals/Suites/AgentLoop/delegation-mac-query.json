@@ -1,0 +1,26 @@
+{
+  "id": "agent_loop.delegation-mac-query",
+  "domain": "agent_loop",
+  "label": "agent loop • delegate a read-only Mac query via mac_query",
+  "query": "What is the current output volume level on this Mac (0–100)? Use mac_query to read it from the system — do not guess and do not write AppleScript yourself in your reply.",
+  "notes": "Production delegation path: the chat model must call mac_query once and report the subagent result. Scores 12B delegation discipline, not AppleScript-16B script authorship. Skips when no AppleScript model is installed (tool withheld). Off-CI.",
+  "fixtures": {
+    "agentCapabilities": {
+      "appleScriptEnabled": true
+    }
+  },
+  "expect": {
+    "agentLoop": {
+      "maxIterations": 8,
+      "mustCallTools": [
+        "mac_query"
+      ],
+      "mustNotCallTools": [
+        "applescript"
+      ],
+      "finalTextContains": [
+        "volume"
+      ]
+    }
+  }
+}

@@ -33,6 +33,9 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
     private var activityDot: NSView?
     private var vadDot: NSView?
     private var pendingPopoverAction: (@MainActor () -> Void)?
+    private var shouldLoadPluginsAfterFirstServerStart = false
+    private var hasCompletedFirstServerStartWork = false
+    private var launchEmbeddingInitTask: Task<Void, Never>?
     private var keychainDisabledTestMode: Bool {
         StorageKeyManager.disablesKeychainForProcess
     }
@@ -269,29 +272,27 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
         // leaves a unified-log breadcrumb diagnosable without a debugger.
         MainThreadWatchdog.shared.start()
 
+        // Respond to macOS memory pressure: free reconstructible UI caches on
+        // warning, and additionally unload idle (lease-free) model weights on
+        // critical, so local models never push the system into swap while
+        // sitting unused.
+        MemoryPressureResponder.shared.start()
+
         // Initialize directory access early so security-scoped bookmark is active
         _ = DirectoryPickerService.shared
 
+        let shouldLoadPluginsAtStartup = !keychainDisabledTestMode && !LaunchGuard.shouldSkip(.plugins)
+        shouldLoadPluginsAfterFirstServerStart = shouldLoadPluginsAtStartup
         if keychainDisabledTestMode {
             log.warning(
                 "Keychain disabled by OSAURUS_DISABLE_KEYCHAIN_FOR_TESTS=1; stored secrets will not be readable in this process"
             )
             LaunchGuard.markStartupComplete()
-        } else if LaunchGuard.shouldSkip(.plugins) {
+        } else if !shouldLoadPluginsAtStartup {
             // Tiered safe mode: plugins are the first subsystem we drop. Other
             // tiers (sandbox / distillation / auto model-load) are gated at
             // their own start sites below via `LaunchGuard.shouldSkip(...)`.
             NotificationService.shared.postSafeModeActive()
-            LaunchGuard.markStartupComplete()
-        } else {
-            // Load external tool plugins at launch (after core is initialized)
-            Task { @MainActor in
-                await PluginManager.shared.loadAll()
-                LaunchGuard.markStartupComplete()
-            }
-
-            // Start plugin repository background refresh for update checking
-            PluginRepositoryService.shared.startBackgroundRefresh()
         }
 
         // Pre-warm cheap caches immediately for instant first window.
@@ -310,13 +311,11 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
         // emission would otherwise restart the server mid-launch (hang audit).
         Task { @MainActor in
             await serverStartupTask.value
-            serverController.markLaunchComplete()
-            // The unified prewarm builds the picker with whatever is currently
-            // available; once remote providers finish connecting below they post
-            // .remoteProviderModelsChanged and the cache rebuilds automatically.
-            // Keep this after server bind so very large local bundles cannot
-            // block `/health` and API startup while their config is inspected.
-            ModelPickerItemCache.shared.prewarm()
+            if serverController.isRunning {
+                completeFirstSuccessfulServerStart()
+            } else {
+                LaunchGuard.markStartupComplete()
+            }
         }
 
         // Only warm the storage key when the user opted in to encryption.
@@ -340,6 +339,10 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
             if !keychainDisabledTestMode {
                 await MCPProviderManager.shared.connectEnabledProviders()
                 await RemoteProviderManager.shared.connectEnabledProviders()
+                // Touch the search-provider manager so its one-time migration
+                // of osaurus.search plugin keys runs at launch, not lazily on
+                // the first web_search call / Settings visit.
+                _ = SearchProviderManager.shared
             }
             await ModelPickerItemCache.shared.prewarmModelCache()
         }
@@ -430,6 +433,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
 
             await ToolIndexService.shared.syncFromRegistry(rebuildVectorIndex: false)
         }
+        launchEmbeddingInitTask = embeddingInitTask
         // Start activity tracking, drain any pending sessions left over from
         // the previous launch, and arm the periodic consolidator.
         Task { @MainActor in
@@ -484,6 +488,12 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
         // Initialize WatcherManager to start file system watchers
         _ = WatcherManager.shared
 
+        if !keychainDisabledTestMode {
+            Task.detached(priority: .utility) {
+                await AgentChannelTransportSupervisor.shared.startFromLaunch()
+            }
+        }
+
         // Start the self-scheduling loop once storage is ready. In plaintext
         // mode (the default) that's immediate; in opt-in encrypted mode it
         // waits until the key is resident so startup never triggers a
@@ -491,6 +501,10 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
         Task { @MainActor in
             guard StorageKeyManager.shared.isStorageReadyForWrites else {
                 NSLog("[Osaurus] Scheduler disabled: storage key is not already unlocked")
+                // Arm a one-shot start for when the key becomes resident,
+                // so slots persisted from a previous session still fire
+                // once the user unlocks encrypted storage.
+                NextRunScheduler.shared.startWhenStorageBecomesReady()
                 return
             }
             NextRunScheduler.shared.start()
@@ -595,17 +609,41 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
                 // instead of stalling on a synchronous SwiftUI construct+layout.
                 Task { @MainActor [weak self] in
                     try? await Task.sleep(for: .seconds(1.5))
+                    // These prewarms each realize a heavy SwiftUI view graph
+                    // synchronously on the main thread. That's a worthwhile
+                    // trade on a healthy machine, but on a device that's in low
+                    // power mode or already under thermal pressure the same
+                    // realization runs several times slower and can blow past
+                    // the app-hang watchdog for work the user never asked for.
+                    // Skip speculative warming in that state and let the first
+                    // real open pay its own (unavoidable) cost instead.
+                    guard !Self.isUnderResourcePressure else { return }
                     self?.prewarmManagementWindow()
                     // Warm ChatView's (deep, slow-to-realize) generic metadata too,
                     // spaced out so the two heavy SwiftUI realizations don't stack
                     // into a single main-thread stall during the launch settle.
                     try? await Task.sleep(for: .seconds(1.0))
+                    guard !Self.isUnderResourcePressure else { return }
                     ChatWindowManager.shared.prewarmChatView()
                     // And the menu-bar popover content, so the first click on
                     // the status item doesn't pay the panel's first realization.
                     try? await Task.sleep(for: .seconds(1.0))
+                    guard !Self.isUnderResourcePressure else { return }
                     self?.prewarmStatusPanel()
                 }
+            }
+        }
+
+        // Start Sparkle at launch so update checks run whenever the app is
+        // open, not only when the settings window is first shown. First access
+        // instantiates the lazy updater controller, which also arms Sparkle's
+        // own 24h scheduled check cycle for long-running sessions. Delayed a
+        // few seconds so it stays clear of the busy launch window (server
+        // bind, prewarms, database opens).
+        if !keychainDisabledTestMode {
+            Task { @MainActor [weak self] in
+                try? await Task.sleep(for: .seconds(5))
+                self?.updater.checkForUpdatesInBackground()
             }
         }
     }
@@ -656,8 +694,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
             // last-resort fallback if no app window is up.
             let scope: ThemedAlertScope
             if let chatId = ChatWindowManager.shared.lastFocusedWindowId,
-                ChatWindowManager.shared.windowExists(id: chatId)
-            {
+                ChatWindowManager.shared.windowExists(id: chatId) {
                 scope = .chat(chatId)
             } else if WindowManager.shared.isVisible(.management) {
                 scope = .management
@@ -1098,6 +1135,9 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
             ScheduleManager.shared.stop()
             WatcherManager.shared.stop()
             KnowledgeFolderWatcher.shared.stop()
+            await runWithDeadline(seconds: 2) {
+                await AgentChannelTransportSupervisor.shared.stop()
+            }
             // MemoryConsolidator / StorageMaintenance are actors; their stop()
             // just cancels timers, so the actor hop is quick — bound it anyway
             // so a busy actor can't stall phase 0.
@@ -1353,8 +1393,11 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
             .store(in: &cancellables)
         serverController.$isRunning
             .receive(on: RunLoop.main)
-            .sink { [weak self] _ in
+            .sink { [weak self] isRunning in
                 self?.updateStatusItemAndMenu()
+                if isRunning {
+                    self?.completeFirstSuccessfulServerStart()
+                }
             }
             .store(in: &cancellables)
         serverController.$configuration
@@ -1394,6 +1437,30 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
             )
         }
         .store(in: &cancellables)
+    }
+
+    @MainActor
+    private func completeFirstSuccessfulServerStart() {
+        guard serverController.isRunning else { return }
+        guard !hasCompletedFirstServerStartWork else { return }
+        hasCompletedFirstServerStartWork = true
+
+        serverController.markLaunchComplete()
+        LaunchGuard.markStartupComplete()
+        // The unified prewarm builds the picker with whatever is currently
+        // available; once remote providers finish connecting below they post
+        // .remoteProviderModelsChanged and the cache rebuilds automatically.
+        // Keep this after server bind so very large local bundles cannot
+        // block `/health` and API startup while their config is inspected.
+        ModelPickerItemCache.shared.prewarm()
+        if shouldLoadPluginsAfterFirstServerStart {
+            // Keep plugin and repository work off the initial bind path;
+            // crashes here are handled by the plugin loading marker.
+            Task { @MainActor in
+                await PluginManager.shared.loadAll()
+            }
+            PluginRepositoryService.shared.startBackgroundRefresh()
+        }
     }
 
     private func updateStatusItemAndMenu() {
@@ -1499,6 +1566,19 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
     /// seconds on slower machines — right under the user's click on the status
     /// item. A throwaway controller realizes it once during the launch settle;
     /// it's never attached to a window, so `onAppear`/`task` don't fire.
+    /// True when the machine is in a state where a speculative, synchronous
+    /// SwiftUI realization is likely to stall the main thread long enough to
+    /// trip the app-hang watchdog: low power mode (CPU is clamped) or serious
+    /// thermal throttling. Used to skip the launch prewarms in those cases.
+    static var isUnderResourcePressure: Bool {
+        let info = ProcessInfo.processInfo
+        if info.isLowPowerModeEnabled { return true }
+        switch info.thermalState {
+        case .serious, .critical: return true
+        default: return false
+        }
+    }
+
     @MainActor func prewarmStatusPanel() {
         guard popover == nil else { return }
         let root = StatusPanelView()
@@ -1633,9 +1713,11 @@ extension AppDelegate {
             forName: .safeModeRecoveryRequested,
             object: nil,
             queue: .main
-        ) { [weak self] _ in
+        ) { [weak self] note in
+            let rawFeatures = note.userInfo?["recoveredFeatures"] as? Int ?? 0
             Task { @MainActor in
-                self?.recoverFromSafeMode()
+                let recoveredFeatures = LaunchGuard.Feature(rawValue: rawFeatures)
+                self?.recoverFromSafeMode(recoveredFeatures: recoveredFeatures)
             }
         }
     }
@@ -1643,21 +1725,36 @@ extension AppDelegate {
     /// Bring subsystems skipped by a degraded launch online after the running
     /// app proved healthy via `/health`. Idempotent and only ever runs once.
     @MainActor
-    private func recoverFromSafeMode() {
+    private func recoverFromSafeMode(recoveredFeatures: LaunchGuard.Feature) {
+        guard !recoveredFeatures.isEmpty else { return }
         guard !hasRecoveredFromSafeMode else { return }
         guard !keychainDisabledTestMode else { return }
         hasRecoveredFromSafeMode = true
         log.warning("Safe-mode recovery: starting previously skipped subsystems after clean /health")
 
-        Task { @MainActor in
-            await PluginManager.shared.loadAll()
+        if recoveredFeatures.contains(.plugins) {
+            Task { @MainActor in
+                await PluginManager.shared.loadAll()
+            }
+            PluginRepositoryService.shared.startBackgroundRefresh()
         }
-        PluginRepositoryService.shared.startBackgroundRefresh()
-        SandboxToolRegistrar.shared.start()
 
-        Task { @MainActor in
-            if MemoryDatabase.shared.isOpen {
-                await MemoryConsolidator.shared.start()
+        if recoveredFeatures.contains(.sandbox) {
+            SandboxToolRegistrar.shared.start()
+        }
+
+        if recoveredFeatures.contains(.distillation) {
+            Task { @MainActor [weak self] in
+                await self?.launchEmbeddingInitTask?.value
+                if MemoryDatabase.shared.isOpen {
+                    await MemoryConsolidator.shared.start()
+                }
+            }
+        }
+
+        if recoveredFeatures.contains(.autoModelLoad) {
+            Task { @MainActor in
+                await SpeechService.shared.autoLoadIfNeeded()
             }
         }
     }
@@ -1806,7 +1903,12 @@ extension AppDelegate {
                 )
                 alert.alertStyle = .warning
                 alert.addButton(withTitle: "OK")
-                alert.runModal()
+                // `runModal` intentionally blocks the main run loop until the
+                // user dismisses the alert; pause the hang watchdog so the
+                // wait isn't reported as an app hang (Sentry APPLE-MACOS-VE).
+                CrashReportingService.shared.withAppHangTrackingPaused {
+                    _ = alert.runModal()
+                }
                 return
             }
 

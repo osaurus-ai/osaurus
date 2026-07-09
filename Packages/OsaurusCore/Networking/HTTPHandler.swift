@@ -2854,7 +2854,29 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         if !composed.prompt.isEmpty {
             SystemPromptComposer.injectSystemContent(composed.prompt, into: &enriched.messages)
         }
-        SystemPromptComposer.injectMemoryPrefix(composed.memorySection, into: &enriched.messages)
+        // Session-stable memory injection: when the caller supplies a
+        // session_id, previously injected prefixes are replayed onto the
+        // matching history user messages (the client resends CLEAN history,
+        // so without this the prior turn's injected bytes vanish and the
+        // paged-KV prefix diverges at that message — re-prefilling the whole
+        // last exchange). Without a session_id there is no cross-request
+        // identity, so it falls back to plain latest-message injection.
+        if let sid = request.session_id, !sid.isEmpty {
+            let frozen = await SessionToolStateStore.shared.frozenUserPrefixes(sid)
+            if let recorded = SystemPromptComposer.applyFrozenMemoryPrefixes(
+                memorySection: composed.memorySection,
+                frozen: frozen,
+                into: &enriched.messages
+            ) {
+                await SessionToolStateStore.shared.recordUserPrefix(
+                    sid,
+                    key: recorded.key,
+                    prefix: recorded.prefix
+                )
+            }
+        } else {
+            SystemPromptComposer.injectMemoryPrefix(composed.memorySection, into: &enriched.messages)
+        }
         // Agent-run / HTTP orchestrators must get the active Subagent
         // tools as callable SCHEMAS too. `composeChatContext` only surfaces the
         // built-in image tools as a prompt-hint capability (not the schema), so
@@ -4283,10 +4305,13 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
 
             let formatter = ISO8601DateFormatter()
             let effectiveModels = await MainActor.run {
+                // Duplicate-tolerant: two agent files can share an id (a
+                // manually copied definition), and uniqueKeysWithValues traps.
                 Dictionary(
-                    uniqueKeysWithValues: agents.map {
+                    agents.map {
                         ($0.id, AgentManager.shared.effectiveModel(for: $0.id))
-                    }
+                    },
+                    uniquingKeysWith: { first, _ in first }
                 )
             }
             let items = agents.map { agent in
@@ -5022,6 +5047,8 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                         max_tokens: effectiveMaxTokens,
                         stream: true,
                         top_p: req.top_p,
+                        top_k: req.top_k,
+                        min_p: req.min_p,
                         frequency_penalty: req.frequency_penalty,
                         presence_penalty: req.presence_penalty,
                         stop: req.stop,
@@ -5471,6 +5498,10 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
 
     // MARK: - Dispatch & Task Endpoints
 
+    nonisolated static func shouldBindExternalSurfaceForDispatch(isLoopback: Bool) -> Bool {
+        !isLoopback
+    }
+
     /// POST /agents/{identifier}/dispatch — dispatch work/chat task
     /// The identifier can be an agent UUID or a crypto address (0x...).
     private func handleDispatchEndpoint(
@@ -5667,10 +5698,18 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 title: title,
                 showToast: true,
                 source: .http,
-                externalSessionKey: externalSessionKey
+                externalSessionKey: externalSessionKey,
+                externalSurface: Self.shouldBindExternalSurfaceForDispatch(isLoopback: isLoopback)
             )
 
-            let handle = await TaskDispatcher.shared.dispatch(request)
+            let handle: DispatchHandle?
+            if Self.shouldBindExternalSurfaceForDispatch(isLoopback: isLoopback) {
+                handle = await ChatExecutionContext.$isExternalSurface.withValue(true) {
+                    await TaskDispatcher.shared.dispatch(request)
+                }
+            } else {
+                handle = await TaskDispatcher.shared.dispatch(request)
+            }
             let responseBody: String
             let status: HTTPResponseStatus
 
@@ -8883,9 +8922,14 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         let logSelf = self
 
         runRequestTask(priority: .userInitiated) {
-            // Get local models
-            var models = MLXService.getAvailableModels().map { OpenAIModel(modelName: $0) }
-            if FoundationModelService.isDefaultModelAvailable() {
+            // Get local models (filtered by the per-model exposure settings)
+            let exposure = ModelExposureStore.shared
+            var models = MLXService.getAvailableModels()
+                .filter { exposure.isExposed(id: $0, kind: .local) }
+                .map { OpenAIModel(modelName: $0) }
+            if FoundationModelService.isDefaultModelAvailable(),
+                exposure.isExposed(id: "foundation", kind: .local)
+            {
                 models.insert(OpenAIModel(modelName: "foundation"), at: 0)
             }
 
@@ -8940,19 +8984,24 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         runRequestTask(priority: .userInitiated) {
             let now = Date().ISO8601Format()
 
-            // Get local models
-            var models = MLXService.getAvailableModels().map { name -> OpenAIModel in
-                var m = OpenAIModel(from: name)
-                m.name = name
-                m.model = name
-                m.modified_at = now
-                m.size = 0
-                m.digest = ""
-                m.details = ModelDetails.localMLXModelDetails(for: name)
-                return m
-            }
+            // Get local models (filtered by the per-model exposure settings)
+            let exposure = ModelExposureStore.shared
+            var models = MLXService.getAvailableModels()
+                .filter { exposure.isExposed(id: $0, kind: .local) }
+                .map { name -> OpenAIModel in
+                    var m = OpenAIModel(from: name)
+                    m.name = name
+                    m.model = name
+                    m.modified_at = now
+                    m.size = 0
+                    m.digest = ""
+                    m.details = ModelDetails.localMLXModelDetails(for: name)
+                    return m
+                }
 
-            if FoundationModelService.isDefaultModelAvailable() {
+            if FoundationModelService.isDefaultModelAvailable(),
+                exposure.isExposed(id: "foundation", kind: .local)
+            {
                 var fm = OpenAIModel(modelName: "foundation")
                 fm.name = "foundation"
                 fm.model = "foundation"
@@ -9255,8 +9304,8 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         let logUserAgent = userAgent
         let logSelf = self
         runRequestTask(priority: .userInitiated) {
-            // External callers never see the externally-denied tool classes
-            // (folder write/shell) — `/mcp/call` refuses them too.
+            // External callers never see app-only tool classes; `/mcp/call`
+            // refuses the same deny list too.
             let entries = await MainActor.run {
                 ToolRegistry.shared.listTools().filter {
                     $0.enabled && !ToolRegistry.externallyDeniedToolNames.contains($0.name)
@@ -9436,12 +9485,12 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             return "{}"
         }()
 
-        // External deny list: folder write/shell tool classes are never
-        // invocable through the MCP bridge (they're also hidden from
-        // `/mcp/tools`). Refuse before any schema validation or gating.
+        // External deny list: app-only tool classes are never invocable
+        // through the MCP bridge (they're also hidden from `/mcp/tools`).
+        // Refuse before any schema validation or gating.
         if ToolRegistry.externallyDeniedToolNames.contains(req.name) {
             let message =
-                "'\(req.name)' is not available to external callers. Folder write and shell tools can only run from the Osaurus app."
+                "'\(req.name)' is not available to external callers. App-only tools can only run from the Osaurus app."
             let bodyJSON = #"{"error":"tool_not_exposable","message":"\#(message)"}"#
             sendResponse(
                 context: context,
@@ -9524,8 +9573,46 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 // Belt-and-braces: the registry re-checks the external deny
                 // list under this flag even if a new entry point forgets
                 // the name-based preflight above.
+                let isEnabled = await MainActor.run {
+                    ToolRegistry.shared.isGlobalEnabled(toolName)
+                }
+                if !isEnabled {
+                    let message = "Tool '\(toolName)' is disabled in Osaurus settings."
+                    let payload: [String: Any] = [
+                        "content": [["type": "text", "text": message]],
+                        "isError": true,
+                    ]
+                    let data =
+                        (try? JSONSerialization.data(withJSONObject: payload, options: .osaurusCanonical))
+                        ?? Data("{}".utf8)
+                    let body = String(decoding: data, as: UTF8.self)
+                    hop {
+                        var headers = [("Content-Type", "application/json; charset=utf-8")]
+                        headers.append(contentsOf: cors)
+                        self.sendResponse(
+                            context: ctx.value,
+                            version: head.version,
+                            status: .ok,
+                            headers: headers,
+                            body: body
+                        )
+                    }
+                    logSelf.logRequest(
+                        method: "POST",
+                        path: "/mcp/call",
+                        userAgent: logUserAgent,
+                        requestBody: logRequestBody,
+                        responseStatus: 200,
+                        startTime: logStartTime,
+                        errorMessage: message
+                    )
+                    return
+                }
+
                 let result = try await ChatExecutionContext.$isExternalSurface.withValue(true) {
-                    try await ToolRegistry.shared.execute(name: toolName, argumentsJSON: argsJSON)
+                    try await ChatExecutionContext.$denyUnapprovedToolPrompts.withValue(true) {
+                        try await ToolRegistry.shared.execute(name: toolName, argumentsJSON: argsJSON)
+                    }
                 }
                 let payload: [String: Any] = [
                     "content": [["type": "text", "text": result]],

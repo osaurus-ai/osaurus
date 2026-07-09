@@ -1,0 +1,18 @@
+{
+  "id": "judge_calibration.clear-pass-two-conditions",
+  "domain": "judge_calibration",
+  "label": "Judge • clear two-condition pass",
+  "query": "(calibration) The judge grades a frozen reply that plainly satisfies both conditions.",
+  "notes": "Baseline sanity: an unambiguous double-pass. A judge that fails either condition here is broken at the floor — every rubric grade it produced elsewhere is suspect.",
+  "fixtures": {},
+  "expect": {
+    "judgeCalibration": {
+      "finalText": "Done. I created the file `notes/summary.md` with three sections: Overview, Findings, and Next Steps. The Findings section lists the four failing test cases you asked about.",
+      "conditions": [
+        "The reply states that a file was created.",
+        "The reply gives the exact file path or file name that was created."
+      ],
+      "expectedVerdicts": [true, true]
+    }
+  }
+}

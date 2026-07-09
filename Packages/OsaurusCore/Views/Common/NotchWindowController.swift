@@ -3,8 +3,8 @@
 //  osaurus
 //
 //  Manages the dedicated NSPanel for the notch UI.
-//  Positions the panel at the very top of the screen, flush with the
-//  display edge, and detects hardware notch dimensions.
+//  Positions the panel at the top of the visible display area and detects
+//  hardware notch dimensions for compact sizing.
 //
 
 import AppKit
@@ -47,10 +47,50 @@ public struct NotchScreenMetrics: Equatable {
     }
 }
 
+// MARK: - Notch Panel Placement
+
+struct NotchPanelPlacement: Equatable {
+    let frame: CGRect
+
+    static func panelRect(
+        screenFrame: CGRect,
+        visibleFrame: CGRect,
+        preferredSize: CGSize,
+        hiddenMenuBarInset: CGFloat = 0
+    ) -> NotchPanelPlacement {
+        let safeFrame = visibleFrame.isEmpty ? screenFrame : visibleFrame
+        let width = min(preferredSize.width, max(1, safeFrame.width))
+        let height = min(preferredSize.height, max(1, safeFrame.height))
+        let centeredX = safeFrame.midX - width / 2
+        let minX = safeFrame.minX
+        let maxX = safeFrame.maxX - width
+        let x = min(max(centeredX, minX), maxX)
+        // When the menu bar auto-hides, `visibleFrame` extends to the very top
+        // of the screen, which would place the panel exactly in the strip
+        // where the menu bar reappears — overlapping the clock / status icons
+        // whenever it reveals. Reserve that strip explicitly in that case.
+        let topY =
+            safeFrame.maxY >= screenFrame.maxY
+            ? safeFrame.maxY - hiddenMenuBarInset
+            : safeFrame.maxY
+        let y = topY - height
+
+        return NotchPanelPlacement(frame: CGRect(x: x, y: y, width: width, height: height))
+    }
+
+    static func alertContentTopPadding(
+        screenFrame: CGRect,
+        visibleFrame: CGRect
+    ) -> CGFloat {
+        guard !visibleFrame.isEmpty else { return 0 }
+        return max(0, screenFrame.maxY - visibleFrame.maxY)
+    }
+}
+
 // MARK: - Notch Window Controller
 
 /// Displays the notch background task indicator at the top center of the screen,
-/// flush with the display's top edge so it blends with the hardware notch.
+/// inside the screen's visible frame so task progress never covers the menu bar.
 @MainActor
 public final class NotchWindowController: NSObject, ObservableObject {
     public static let shared = NotchWindowController()
@@ -59,6 +99,7 @@ public final class NotchWindowController: NSObject, ObservableObject {
     private var hostingView: NSHostingView<NotchContentView>?
     private var cancellables = Set<AnyCancellable>()
     private var isExpandedForAlert = false
+    private var screenChangeDebounce: DispatchWorkItem?
 
     /// Current screen's notch metrics (published for SwiftUI observation).
     @Published public private(set) var metrics = NotchScreenMetrics(
@@ -66,6 +107,11 @@ public final class NotchWindowController: NSObject, ObservableObject {
         notchWidth: 200,
         notchHeight: 32
     )
+
+    /// Extra top inset applied only while the alert dimming layer expands the
+    /// panel to the whole display. Keeps the visible notch content below the
+    /// menu bar even though the panel itself covers the full screen.
+    @Published public private(set) var alertContentTopPadding: CGFloat = 0
 
     /// Panel width – generous to allow expansion + shadow.
     private static let panelWidth: CGFloat = 600
@@ -84,7 +130,7 @@ public final class NotchWindowController: NSObject, ObservableObject {
         guard let screen = NSScreen.main else { return }
 
         metrics = NotchScreenMetrics.detect(for: screen)
-        let panelFrame = panelRect(for: screen)
+        let panelFrame = panelRect(for: screen, metrics: metrics)
 
         let panel = NSPanel(
             contentRect: panelFrame,
@@ -96,8 +142,9 @@ public final class NotchWindowController: NSObject, ObservableObject {
         panel.isOpaque = false
         panel.backgroundColor = .clear
         panel.hasShadow = false
-        // Sit above the menu bar so the notch overlaps the bezel area
-        panel.level = NSWindow.Level(rawValue: Int(CGWindowLevelForKey(.mainMenuWindow)) + 3)
+        // Keep task progress above regular app windows without covering macOS
+        // menu-bar/status-item windows.
+        panel.level = .floating
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary, .ignoresCycle]
         panel.isReleasedWhenClosed = false
         panel.hidesOnDeactivate = false
@@ -158,6 +205,8 @@ public final class NotchWindowController: NSObject, ObservableObject {
     public func teardown() {
         NotificationCenter.default.removeObserver(self)
         cancellables.removeAll()
+        screenChangeDebounce?.cancel()
+        screenChangeDebounce = nil
         notchPanel?.close()
         notchPanel = nil
         hostingView = nil
@@ -165,7 +214,23 @@ public final class NotchWindowController: NSObject, ObservableObject {
 
     // MARK: - Private
 
+    /// `didChangeScreenParametersNotification` is delivered synchronously inside
+    /// the window server's display-reconfigure callout, and macOS posts it
+    /// several times per reconfigure. Repositioning immediately performs
+    /// window-server round-trips (`NotchScreenMetrics.detect`, `setFrame`) that
+    /// can block in `mach_msg` for seconds while the server is mid-reconfigure
+    /// (Sentry APPLE-MACOS-YC / -YH / -YK). Debounce so the work runs once,
+    /// after the reconfiguration burst settles.
     @objc private func screenDidChange() {
+        screenChangeDebounce?.cancel()
+        let work = DispatchWorkItem { [weak self] in
+            self?.handleScreenChange()
+        }
+        screenChangeDebounce = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3, execute: work)
+    }
+
+    private func handleScreenChange() {
         updatePanelScreen(forWindowId: ChatWindowManager.shared.lastFocusedWindowId)
         // Re-apply alert expansion now that the screen set changed. If a prior
         // `syncAlertExpansion` bailed because no display was attached, the panel
@@ -199,7 +264,7 @@ public final class NotchWindowController: NSObject, ObservableObject {
         // Don't shrink back to notch size while an alert is covering the screen.
         guard !isExpandedForAlert else { return }
 
-        let newFrame = panelRect(for: targetScreen)
+        let newFrame = panelRect(for: targetScreen, metrics: newMetrics)
         if panel.frame != newFrame {
             panel.setFrame(newFrame, display: true)
         }
@@ -209,8 +274,6 @@ public final class NotchWindowController: NSObject, ObservableObject {
         guard let panel = notchPanel else { return }
         let alertActive = ThemedAlertCenter.shared.active(for: .notchOverlay) != nil
 
-        guard alertActive != isExpandedForAlert else { return }
-
         guard let screen = panel.screen ?? NSScreen.main ?? NSScreen.screens.first else {
             // No attached display; nothing to resize against. Leave
             // `isExpandedForAlert` unchanged so the panel frame and the flag
@@ -219,18 +282,46 @@ public final class NotchWindowController: NSObject, ObservableObject {
             // stuck at the wrong size. We'll retry on the next sync.
             return
         }
-        let targetFrame = alertActive ? screen.frame : panelRect(for: screen)
-        panel.setFrame(targetFrame, display: true)
+        let targetFrame =
+            alertActive
+            ? screen.frame
+            : panelRect(for: screen, metrics: NotchScreenMetrics.detect(for: screen))
+        let targetLevel = alertActive ? Self.alertPanelLevel : NSWindow.Level.floating
+        let targetPadding = alertActive
+            ? NotchPanelPlacement.alertContentTopPadding(
+                screenFrame: screen.frame,
+                visibleFrame: screen.visibleFrame
+            )
+            : 0
+
+        if panel.level != targetLevel {
+            panel.level = targetLevel
+        }
+        if alertContentTopPadding != targetPadding {
+            alertContentTopPadding = targetPadding
+        }
+        if panel.frame != targetFrame {
+            panel.setFrame(targetFrame, display: true)
+        }
         isExpandedForAlert = alertActive
     }
 
-    /// Panel positioned at the very top of the screen (using full frame, not visibleFrame).
-    private func panelRect(for screen: NSScreen) -> NSRect {
-        let screenFrame = screen.frame
-        let x = screenFrame.origin.x + (screenFrame.width / 2) - Self.panelWidth / 2
-        let y = screenFrame.origin.y + screenFrame.height - Self.panelHeight
-        return NSRect(x: x, y: y, width: Self.panelWidth, height: Self.panelHeight)
+    /// Panel positioned at the top of the usable display area, below the menu
+    /// bar — including the reveal strip of an auto-hidden menu bar, which
+    /// `visibleFrame` does not reserve.
+    ///
+    /// Takes already-detected metrics so callers don't pay a second
+    /// `NotchScreenMetrics.detect` window-server round-trip per pass.
+    private func panelRect(for screen: NSScreen, metrics: NotchScreenMetrics) -> NSRect {
+        NotchPanelPlacement.panelRect(
+            screenFrame: screen.frame,
+            visibleFrame: screen.visibleFrame,
+            preferredSize: CGSize(width: Self.panelWidth, height: Self.panelHeight),
+            hiddenMenuBarInset: metrics.notchHeight
+        ).frame
     }
+
+    private static let alertPanelLevel = NSWindow.Level(rawValue: Int(CGWindowLevelForKey(.mainMenuWindow)) + 3)
 }
 
 // MARK: - Pass-Through View

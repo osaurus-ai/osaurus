@@ -454,6 +454,26 @@ struct MemoryDatabaseTests {
         #expect(pending.isEmpty)
     }
 
+    @Test func pendingSignalsSummaryCountsStatuses() throws {
+        let db = try makeTempDB()
+        try db.insertPendingSignal(PendingSignal(agentId: "a", conversationId: "c1", userMessage: "pending"))
+        try db.insertPendingSignal(PendingSignal(agentId: "a", conversationId: "c2", userMessage: "processed"))
+        try db.insertPendingSignal(PendingSignal(agentId: "a", conversationId: "c3", userMessage: "dead"))
+
+        let signals = try db.loadPendingSignals(conversationId: "c2")
+        try db.markSignals(ids: signals.map(\.id), status: "processed")
+
+        let deadSignals = try db.loadPendingSignals(conversationId: "c3")
+        _ = try db.recordDistillFailure(ids: deadSignals.map(\.id), maxAttempts: 1)
+
+        let summary = try db.pendingSignalsSummary()
+        #expect(summary.totalSignals == 1)
+        #expect(summary.distinctConversations == 1)
+        #expect(summary.processedSignals == 1)
+        #expect(summary.deadLetteredSignals == 1)
+        #expect(summary.allTimeSignals == 3)
+    }
+
     @Test func processingLogStats() throws {
         let db = try makeTempDB()
         try db.insertProcessingLog(
@@ -470,10 +490,34 @@ struct MemoryDatabaseTests {
             status: "error",
             durationMs: 200
         )
+        try db.insertProcessingLog(
+            agentId: "a",
+            taskType: "distill",
+            model: "m",
+            status: "skipped",
+            durationMs: 0
+        )
+        try db.insertProcessingLog(
+            agentId: "a",
+            taskType: "distill",
+            model: "m",
+            status: "empty",
+            durationMs: 50
+        )
+        try db.insertProcessingLog(
+            agentId: "a",
+            taskType: "distill",
+            model: "m",
+            status: "dead_letter",
+            durationMs: 75
+        )
         let stats = try db.processingStats()
-        #expect(stats.totalCalls == 2)
+        #expect(stats.totalCalls == 5)
         #expect(stats.successCount == 1)
         #expect(stats.errorCount == 1)
+        #expect(stats.skippedCount == 1)
+        #expect(stats.emptyCount == 1)
+        #expect(stats.deadLetterCount == 1)
     }
 }
 

@@ -165,7 +165,7 @@ private extension SandboxPluginEditorView {
 private extension SandboxPluginEditorView {
 
     var identitySection: some View {
-        editorSection(L("Identity")) {
+        editorSection(L("editor.section.identity")) {
             labeledField("Author") {
                 editorTextField(L("Author name"), text: optionalBinding(\SandboxPlugin.author))
             }

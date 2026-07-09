@@ -4,7 +4,8 @@
 //
 //  Process-wide mutual-exclusion gate across every MLX/Metal *GPU producer*
 //  in the app — LLM generation (vmlx-swift's `BatchEngine`), the Model2Vec
-//  embedder behind capability/memory search, and model loading (weight
+//  embedder behind capability/memory search, the Rampart PII detector behind
+//  the privacy filter, and model loading (weight
 //  dequantization + kernel compilation). All submit work to the same Metal
 //  device on different threads, and two distinct producers driving the Metal
 //  command queue at once race on the command buffer and abort with crashes
@@ -128,6 +129,43 @@ public actor MetalGate {
 
     public func exitEmbedding() {
         release("embedding")
+    }
+
+    // MARK: - Media prep (audio/image/video encode before generation) — exclusive
+
+    /// Preparing a media-bearing request runs GPU evals on the SUBMITTING
+    /// task's thread — the Nemotron-Omni audio pre-encode and any VLM media
+    /// encoder that materializes during `UserInputProcessor.prepare` — i.e.
+    /// outside the `BatchEngine` actor loop that makes same-model generation
+    /// overlap safe. Under the shared `gen:` owner those prep evals could
+    /// encode concurrently with an in-flight decode (or another request's
+    /// prep) on the shared Metal command queue. Media prep therefore takes
+    /// its own exclusive owner; text-only prep does no GPU encode and keeps
+    /// the shared generation owner so batching is preserved.
+    public func enterMediaPrep(model: String) async {
+        await acquire("prep:\(model)", shared: false)
+    }
+
+    public func exitMediaPrep(model: String) {
+        release("prep:\(model)")
+    }
+
+    // MARK: - PII detection (Rampart NER behind the privacy filter) — exclusive
+
+    /// The Rampart PII model (an MLX BERT token classifier) is another MLX
+    /// graph on the shared Metal device: its load materializes the weights
+    /// with an `eval`, and every `detect` runs a forward pass (including a
+    /// cold-start kernel JIT compile). Observed live as the outbound privacy
+    /// scan of a remote-provider request racing an in-flight local
+    /// generation's decode on the shared command queue
+    /// (`tryCoalescingPreviousComputeCommandEncoder` abort). Exclusive, like
+    /// the embedder.
+    public func enterPIIDetection() async {
+        await acquire("pii", shared: false)
+    }
+
+    public func exitPIIDetection() {
+        release("pii")
     }
 
     // MARK: - Model load (weight dequant + kernel compile) — exclusive

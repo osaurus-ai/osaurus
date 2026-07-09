@@ -156,6 +156,13 @@ struct ModelPickerItem: Identifiable, Hashable {
         guard !searchQuery.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return true }
         return [displayName, id, source.displayName].contains { SearchService.matches(query: searchQuery, in: $0) }
     }
+
+    /// Cross-provider key under which this model is stored in the favourites
+    /// list — the source's unique key plus the id, so the same id offered by two
+    /// providers is bookmarked independently.
+    var favoriteKey: String {
+        FavoriteModelsStore.key(sourceKey: source.uniqueKey, modelId: id)
+    }
 }
 
 // MARK: - Factory Methods

@@ -1,0 +1,29 @@
+{
+  "id": "subagent.residency-phase-telemetry",
+  "domain": "subagent",
+  "label": "Subagent • residency handoff records phase timings + post-run cache",
+  "query": "A real local→local handoff must record how long each residency leg took.",
+  "notes": "LIVE RESIDENCY (RAM-real, machine-specific) — the HANDOFF-LATENCY TELEMETRY case, extending residency-dir-local-local-diff-on from decision-proof to timing-proof. The production unload → run → restore must surface per-phase durations (unloading_chat_models, restoring_chat_models) in the payload's residency object, each under a generous MicroPerf-style ceiling (unload ≤ 120 s, restore ≤ 300 s — regression tripwires, not tight machine gates), plus the post-run prefix/L2 cache counters local runs capture (the resume prefix-hit / L2 disk-cache mitigation signal from SUBAGENT_PORTABLE_DESIGN §8.2). Id is `residency-*` so it stays OUT of FILTER=spawn; run with FILTER=residency-. SKIPS when either local model isn't installed.",
+  "fixtures": {},
+  "expect": {
+    "subagent": {
+      "lane": "spawn_model_residency",
+      "orchestrator": "mlx-community/Qwen3.5-4B-OptiQ-4bit",
+      "model": "OsaurusAI/gemma-4-E4B-it-4bit",
+      "handoffEnabled": true,
+      "ensureResident": true,
+      "input": "Reply with a single short sentence confirming you received this task.",
+      "expectSuccess": true,
+      "expectEnvelopeKind": "success",
+      "expectResultKind": "spawn_result",
+      "expectHandoffWrapped": true,
+      "expectResidencyPhases": ["unloading_chat_models", "restoring_chat_models"],
+      "maxPhaseSeconds": {
+        "unloading_chat_models": 120,
+        "restoring_chat_models": 300
+      },
+      "expectPostRunCache": true,
+      "expectUsageRecorded": true
+    }
+  }
+}

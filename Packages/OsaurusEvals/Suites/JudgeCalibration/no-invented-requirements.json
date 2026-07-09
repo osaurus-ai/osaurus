@@ -1,0 +1,18 @@
+{
+  "id": "judge_calibration.no-invented-requirements",
+  "domain": "judge_calibration",
+  "label": "Judge • terse but complete answer passes",
+  "query": "(calibration) The judge grades a minimal reply that satisfies the conditions with zero padding.",
+  "notes": "Over-strictness probe — the inverse of the rubber-stamp case. The judge prompt says 'do not invent requirements'; a judge that dings the reply for missing explanations, caveats, or politeness the conditions never asked for fails here.",
+  "fixtures": {},
+  "expect": {
+    "judgeCalibration": {
+      "finalText": "3 matches: config.yaml line 12, config.yaml line 40, deploy.sh line 7.",
+      "conditions": [
+        "The reply states how many matches were found.",
+        "The reply lists the file and line for every match."
+      ],
+      "expectedVerdicts": [true, true]
+    }
+  }
+}

@@ -946,11 +946,17 @@ struct DiscordConnectionTests {
                 )
             )
             let diagnostics = await service.diagnostics(connectionId: "ops-webhook")
-            #expect(diagnostics["status"] as? String == "configured_not_executable")
+            #expect(diagnostics["status"] as? String == "configured_dry_run")
+            #expect((diagnostics["allowed_methods"] as? [String])?.contains("POST") == true)
             #expect(diagnostics["custom_actions"] as? [String] == ["send_message"])
+            let actions = try #require(diagnostics["actions"] as? [[String: Any]])
+            let sendAction = try #require(actions.first { $0["action"] as? String == "send_message" })
+            #expect(sendAction["method"] as? String == "POST")
+            #expect(sendAction["path_template"] as? String == "/rooms/{room_id}/messages")
+            #expect(sendAction["dry_run"] as? Bool == true)
             let policies = try #require(diagnostics["action_policies"] as? [[String: Any]])
             let sendPolicy = try #require(policy(named: "send_message", in: policies))
-            #expect(sendPolicy["status"] as? String == "configured_only")
+            #expect(sendPolicy["status"] as? String == "available")
             #expect(sendPolicy["effect"] as? String == "confirmed_write")
             #expect(sendPolicy["requires_confirmation"] as? Bool == true)
             let readPolicy = try #require(policy(named: "read_messages", in: policies))
@@ -969,6 +975,46 @@ struct DiscordConnectionTests {
             #expect(
                 inboundAuthorization["dispatch_contract"] as? String
                     == "authorize_before_agent_context_or_tool_input"
+            )
+        }
+    }
+
+    @Test func customHTTPListRoomsPolicyRequiresAllowlistedSpace() async throws {
+        try await withIsolatedDiscordStores { credentials in
+            try AgentChannelConfigurationStore.save(
+                AgentChannelConfiguration(
+                    connections: [
+                        AgentChannelConnection(
+                            id: "ops-webhook",
+                            name: "Ops Webhook",
+                            kind: .customHTTP,
+                            supportedActions: [.diagnostics, .listRooms],
+                            customHTTP: AgentChannelCustomHTTPConfiguration(
+                                baseURL: "https://hooks.example.test",
+                                actions: [
+                                    "list_rooms": AgentChannelCustomHTTPAction(
+                                        path: "/spaces/{{input.space_id}}/rooms"
+                                    )
+                                ]
+                            )
+                        )
+                    ]
+                )
+            )
+            let service = AgentChannelConnectionService(
+                discordService: DiscordConnectionService(
+                    client: FakeDiscordAPIClient(),
+                    credentialStore: credentials
+                )
+            )
+
+            let diagnostics = await service.diagnostics(connectionId: "ops-webhook")
+            let policies = try #require(diagnostics["action_policies"] as? [[String: Any]])
+            let listRoomsPolicy = try #require(policy(named: "list_rooms", in: policies))
+            #expect(listRoomsPolicy["status"] as? String == "unavailable")
+            #expect(
+                (listRoomsPolicy["reason"] as? String)?
+                    .contains("No spaces are allowlisted") == true
             )
         }
     }
@@ -1783,7 +1829,7 @@ struct DiscordConnectionTests {
         }
     }
 
-    @Test func nativeAgentChannelToolsAreDisabledButRemainExternallyDenied() async throws {
+    @Test func nativeAgentChannelToolsAreRegisteredAsDynamicNativeToolsAndRemainExternallyDenied() async throws {
         let names = ToolRegistry.agentChannelToolNames.sorted()
         let phantomDiscordNames: Set<String> = [
             "discord_diagnostics",
@@ -1796,28 +1842,34 @@ struct DiscordConnectionTests {
             "discord_send_message",
             "discord_reply_to_thread",
         ]
-        let (registeredNames, builtInNames, pluginNames, phantomNames) = await MainActor.run {
-            (
-                Set(ToolRegistry.shared.listTools().map(\.name)),
-                ToolRegistry.shared.builtInToolNames,
-                names.filter { ToolRegistry.shared.isPluginTool($0) },
-                phantomDiscordNames.filter { ToolRegistry.shared.entry(named: $0) != nil }
+        let snapshot = await MainActor.run {
+            let registered = Set(ToolRegistry.shared.listTools().map(\.name))
+            return AgentChannelRegistrySnapshot(
+                registeredNames: registered,
+                registeredChannelNames: Set(registered.filter { $0.hasPrefix("agent_channel_") }),
+                builtInNames: ToolRegistry.shared.builtInToolNames,
+                runtimeNames: ToolRegistry.shared.runtimeManagedToolNames,
+                pluginNames: Set(names.filter { ToolRegistry.shared.isPluginTool($0) }),
+                alwaysLoadedNames: Set(ToolRegistry.shared.alwaysLoadedSpecs(mode: .none).map(\.function.name)),
+                phantomNames: Set(phantomDiscordNames.filter { ToolRegistry.shared.entry(named: $0) != nil })
             )
         }
-        // Agent Channel tool registration is intentionally disabled in
-        // `ToolRegistry.registerBuiltInTools`, so none of the native action
-        // tools are live in the registry. They must also never leak in as
-        // plugin-owned tools or collide with the phantom Discord vocabulary.
-        #expect(Set(names).isDisjoint(with: registeredNames))
-        #expect(pluginNames.isEmpty)
-        #expect(phantomNames.isEmpty)
+        // Agent Channel actions are provider-neutral native dynamic tools:
+        // callable by the app runtime, but not injected into the always-loaded
+        // prompt baseline.
+        #expect(Set(names).isSubset(of: snapshot.registeredNames))
+        #expect(snapshot.registeredChannelNames == Set(names))
+        #expect(snapshot.pluginNames.isEmpty)
+        #expect(Set(names).isDisjoint(with: snapshot.builtInNames))
+        #expect(Set(names).isDisjoint(with: snapshot.runtimeNames))
+        #expect(Set(names).isDisjoint(with: snapshot.alwaysLoadedNames))
+        #expect(snapshot.phantomNames.isEmpty)
 
-        // Even while the tools are disabled, their names stay on the
-        // external-surface deny list (defense in depth) and must never be
-        // promoted to built-ins.
+        // The native action vocabulary stays restricted to the app surface.
+        // External HTTP/MCP callers must not be able to send channel messages
+        // through these tools.
         for name in names {
             #expect(ToolRegistry.externallyDeniedToolNames.contains(name))
-            #expect(!builtInNames.contains(name))
             #expect(!ToolRegistry.isDeniedForCurrentSurface(name))
             let denied = ChatExecutionContext.$isExternalSurface.withValue(true) {
                 ToolRegistry.isDeniedForCurrentSurface(name)
@@ -2084,6 +2136,16 @@ private final class DiscordHTTPStubProtocol: URLProtocol {
     }
 
     override func stopLoading() {}
+}
+
+private struct AgentChannelRegistrySnapshot {
+    let registeredNames: Set<String>
+    let registeredChannelNames: Set<String>
+    let builtInNames: Set<String>
+    let runtimeNames: Set<String>
+    let pluginNames: Set<String>
+    let alwaysLoadedNames: Set<String>
+    let phantomNames: Set<String>
 }
 
 private extension DiscordMessage {

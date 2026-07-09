@@ -469,6 +469,9 @@ public struct AgentCapabilities: Sendable, Equatable {
     /// `search_memory` recall tool exposed to the model. Independent of
     /// `memoryEnabled`, which gates injection + recording.
     public var searchMemoryEnabled: Bool
+    /// `web_search` (native search cascade) exposed to the model. Default on;
+    /// its dynamic sibling `search_and_extract` shares this gate.
+    public var webSearchEnabled: Bool
     /// Self-scheduling tools (`schedule_next_run` / `cancel_next_run` /
     /// `notify`) exposed to the model.
     public var selfSchedulingEnabled: Bool
@@ -520,6 +523,7 @@ public struct AgentCapabilities: Sendable, Equatable {
         renderChartEnabled: Bool,
         speakEnabled: Bool,
         searchMemoryEnabled: Bool,
+        webSearchEnabled: Bool = true,
         selfSchedulingEnabled: Bool,
         computerUseEnabled: Bool = false,
         screenContextEnabled: Bool = false,
@@ -539,6 +543,7 @@ public struct AgentCapabilities: Sendable, Equatable {
         self.renderChartEnabled = renderChartEnabled
         self.speakEnabled = speakEnabled
         self.searchMemoryEnabled = searchMemoryEnabled
+        self.webSearchEnabled = webSearchEnabled
         self.selfSchedulingEnabled = selfSchedulingEnabled
         self.computerUseEnabled = computerUseEnabled
         self.screenContextEnabled = screenContextEnabled
@@ -763,6 +768,10 @@ public struct AgentSettings: Codable, Sendable, Equatable {
     /// recording): this flag only controls whether the model can recall
     /// memory mid-session via the tool. Default off.
     public var searchMemoryEnabled: Bool
+    /// Per-agent gate for the native `web_search` tool (and its dynamic
+    /// sibling `search_and_extract`). Default ON: search works out of the box
+    /// via the free providers, so agents get it unless explicitly switched off.
+    public var webSearchEnabled: Bool
     /// Per-agent opt-in for the self-scheduling tools (`schedule_next_run`,
     /// `cancel_next_run`, `notify`). Decoupled from the schedule-mode picker
     /// (`schedule.mode`): the mode only sets the host-enforced bounds, while
@@ -841,6 +850,10 @@ public struct AgentSettings: Codable, Sendable, Equatable {
     /// Per-agent budgets for `spawn` jobs (token / turn / wall-clock caps). The
     /// Default agent uses the global `SubagentConfiguration.budgets` instead.
     public var subagentBudgets: SubagentBudgets
+    /// What tools this agent's spawned workers may reach (`none` = text-only,
+    /// `readOnly` = curated read-only set). Default `.none`; the Default agent
+    /// uses the global `SubagentConfiguration.spawnToolAccess` instead.
+    public var spawnToolAccess: SpawnToolAccess
     /// Per-agent model override for subagent kinds, keyed by capability id
     /// (`"computer_use"`, `"spawn"`). An entry supersedes the
     /// kind's default model source (the parent agent's model for computer_use;
@@ -874,6 +887,7 @@ public struct AgentSettings: Codable, Sendable, Equatable {
         renderChartEnabled: Bool = false,
         speakEnabled: Bool = false,
         searchMemoryEnabled: Bool = false,
+        webSearchEnabled: Bool = true,
         selfSchedulingEnabled: Bool = false,
         computerUseEnabled: Bool = false,
         computerUseCeiling: AutonomyCeiling? = nil,
@@ -893,7 +907,8 @@ public struct AgentSettings: Codable, Sendable, Equatable {
         subagentModelOverrides: [String: String] = [:],
         knowledgeEnabled: Bool = false,
         knowledgeCollectionIds: [UUID] = [],
-        knowledgeCuratorEnabled: Bool = false
+        knowledgeCuratorEnabled: Bool = false,
+        spawnToolAccess: SpawnToolAccess = .none
     ) {
         self.dbEnabled = dbEnabled
         self.schedule = schedule
@@ -903,6 +918,7 @@ public struct AgentSettings: Codable, Sendable, Equatable {
         self.renderChartEnabled = renderChartEnabled
         self.speakEnabled = speakEnabled
         self.searchMemoryEnabled = searchMemoryEnabled
+        self.webSearchEnabled = webSearchEnabled
         self.selfSchedulingEnabled = selfSchedulingEnabled
         self.computerUseEnabled = computerUseEnabled
         self.computerUseCeiling = computerUseCeiling
@@ -923,6 +939,7 @@ public struct AgentSettings: Codable, Sendable, Equatable {
         self.knowledgeEnabled = knowledgeEnabled
         self.knowledgeCollectionIds = knowledgeCollectionIds
         self.knowledgeCuratorEnabled = knowledgeCuratorEnabled
+        self.spawnToolAccess = spawnToolAccess
     }
 
     public init(from decoder: Decoder) throws {
@@ -954,6 +971,9 @@ public struct AgentSettings: Codable, Sendable, Equatable {
         renderChartEnabled = try c.decodeIfPresent(Bool.self, forKey: .renderChartEnabled) ?? false
         speakEnabled = try c.decodeIfPresent(Bool.self, forKey: .speakEnabled) ?? false
         searchMemoryEnabled = try c.decodeIfPresent(Bool.self, forKey: .searchMemoryEnabled) ?? false
+        // Default ON (unlike the other gates): native search replaces the
+        // osaurus.search plugin and free providers work with zero config.
+        webSearchEnabled = try c.decodeIfPresent(Bool.self, forKey: .webSearchEnabled) ?? true
         // Default off (consistent with the other built-in tool gates). Existing
         // agents that relied on self-scheduling must re-enable it explicitly.
         selfSchedulingEnabled = try c.decodeIfPresent(Bool.self, forKey: .selfSchedulingEnabled) ?? false
@@ -1017,6 +1037,10 @@ public struct AgentSettings: Codable, Sendable, Equatable {
             (try? c.decodeIfPresent([UUID].self, forKey: .knowledgeCollectionIds)) ?? []
         knowledgeCuratorEnabled =
             try c.decodeIfPresent(Bool.self, forKey: .knowledgeCuratorEnabled) ?? false
+        // Lenient enum decode: an invalid/renamed raw value falls back to the
+        // safe text-only default instead of failing the whole agent decode.
+        spawnToolAccess =
+            (try? c.decodeIfPresent(SpawnToolAccess.self, forKey: .spawnToolAccess)) ?? .none
     }
 
     /// Trim values and drop blank entries so a cleared override (empty string)
@@ -1041,6 +1065,7 @@ public struct AgentSettings: Codable, Sendable, Equatable {
         case renderChartEnabled
         case speakEnabled
         case searchMemoryEnabled
+        case webSearchEnabled
         case selfSchedulingEnabled
         case computerUseEnabled
         case computerUseCeiling
@@ -1061,6 +1086,7 @@ public struct AgentSettings: Codable, Sendable, Equatable {
         case knowledgeEnabled
         case knowledgeCollectionIds
         case knowledgeCuratorEnabled
+        case spawnToolAccess
         // Read-only legacy key — never encoded after migration.
         case generativeGreetings
     }
@@ -1075,6 +1101,7 @@ public struct AgentSettings: Codable, Sendable, Equatable {
         try c.encode(renderChartEnabled, forKey: .renderChartEnabled)
         try c.encode(speakEnabled, forKey: .speakEnabled)
         try c.encode(searchMemoryEnabled, forKey: .searchMemoryEnabled)
+        try c.encode(webSearchEnabled, forKey: .webSearchEnabled)
         try c.encode(selfSchedulingEnabled, forKey: .selfSchedulingEnabled)
         try c.encode(computerUseEnabled, forKey: .computerUseEnabled)
         try c.encodeIfPresent(computerUseCeiling, forKey: .computerUseCeiling)
@@ -1095,6 +1122,7 @@ public struct AgentSettings: Codable, Sendable, Equatable {
         try c.encode(knowledgeEnabled, forKey: .knowledgeEnabled)
         try c.encode(knowledgeCollectionIds, forKey: .knowledgeCollectionIds)
         try c.encode(knowledgeCuratorEnabled, forKey: .knowledgeCuratorEnabled)
+        try c.encode(spawnToolAccess, forKey: .spawnToolAccess)
     }
 
     /// Default settings for newly created agents (and for back-compat decoding of
@@ -1109,6 +1137,7 @@ public struct AgentSettings: Codable, Sendable, Equatable {
             renderChartEnabled: false,
             speakEnabled: false,
             searchMemoryEnabled: false,
+            webSearchEnabled: true,
             selfSchedulingEnabled: false,
             computerUseEnabled: false,
             screenContextEnabled: true

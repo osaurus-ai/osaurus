@@ -41,6 +41,13 @@ public struct DispatchRequest: Sendable {
     /// feed straight into `SessionToolStateStore.appendLoadedTools` since
     /// the names are pre-validated.
     public let requestedToolNames: [String]
+    /// True when the dispatch originated from an EXTERNAL surface (for
+    /// example a non-loopback HTTP `/agents/{id}/dispatch` call). The
+    /// dispatcher rebinds `ChatExecutionContext.isExternalSurface` from this
+    /// flag at run start, so externally-denied tools stay denied even if the
+    /// task-local binding at the HTTP layer were lost across the dispatch
+    /// pipeline. Never used to relax an inherited external-surface context.
+    public let externalSurface: Bool
 
     public init(
         id: UUID = UUID(),
@@ -54,7 +61,8 @@ public struct DispatchRequest: Sendable {
         sourcePluginId: String? = nil,
         source: SessionSource = .chat,
         externalSessionKey: String? = nil,
-        requestedToolNames: [String] = []
+        requestedToolNames: [String] = [],
+        externalSurface: Bool = false
     ) {
         self.id = id
         self.prompt = prompt
@@ -68,6 +76,7 @@ public struct DispatchRequest: Sendable {
         self.source = source
         self.externalSessionKey = externalSessionKey
         self.requestedToolNames = requestedToolNames
+        self.externalSurface = externalSurface
     }
 }
 

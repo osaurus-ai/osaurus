@@ -114,6 +114,36 @@ public struct CapabilityClaimsJudgement: Sendable, Codable {
     }
 }
 
+/// Full audit of one judge call: the verdicts plus what actually happened
+/// on the wire — which model graded, the raw reply text, and how many
+/// attempts the retry ladder burned. `judge` returns only `verdicts`;
+/// callers that persist judge evidence (the eval harness) use
+/// `judgeDetailed` so a disputed rubric grade can be audited from the
+/// report alone instead of re-running the case.
+public struct CapabilityClaimsJudgeAudit: Sendable, Codable {
+    public let verdicts: [CapabilityClaimsJudgement]
+    /// The model id the judge call actually used (after nil-model fallback
+    /// to the configured chat model / foundation).
+    public let judgeModelId: String
+    /// Raw judge reply text from the attempt that produced `verdicts`.
+    /// nil when every attempt threw before returning a body.
+    public let raw: String?
+    /// Attempts consumed (1 = first try worked; >1 = retried a thrown call).
+    public let attempts: Int
+
+    public init(
+        verdicts: [CapabilityClaimsJudgement],
+        judgeModelId: String,
+        raw: String?,
+        attempts: Int
+    ) {
+        self.verdicts = verdicts
+        self.judgeModelId = judgeModelId
+        self.raw = raw
+        self.attempts = attempts
+    }
+}
+
 // MARK: - Evaluator
 
 /// Public entry point for the capability-claims behaviour evals. Lives
@@ -159,6 +189,15 @@ public enum CapabilityClaimsEvaluator {
         var firstTurnPrompt = ""
         var iterations = 0
         var hitCap = false
+        // Empty-turn recovery, mirroring the production driver
+        // (`AgentToolLoop.emptyResponse`): a 0-token / EOS-first turn is a
+        // recoverable local-model failure mode, not a final answer. The
+        // production chat surface nudges-and-retries a bounded number of
+        // times before giving up; without the same policy here the eval
+        // lane is HARSHER than production and scores a one-off blank turn
+        // as an instant empty-final failure.
+        var emptyTurnRetries = 0
+        var pendingEmptyTurnNotice: String?
         // Decode speed, token-weighted across model steps so a long final
         // answer dominates a 2-token tool-call turn (same weighting as the
         // agent-loop evaluator). Only the no-tool answer step carries an
@@ -199,6 +238,16 @@ public enum CapabilityClaimsEvaluator {
                         ChatMessage(role: "system", content: firstTurnPrompt)
                     ]
                     requestMessages.append(contentsOf: history)
+                    if let notice = pendingEmptyTurnNotice {
+                        // Same transient-notice contract as the production
+                        // loop: the nudge rides once and is not persisted
+                        // into `history`, so the transcript stays clean.
+                        requestMessages = AgentLoopBudget.appendingTransientNotices(
+                            [notice],
+                            to: requestMessages
+                        )
+                        pendingEmptyTurnNotice = nil
+                    }
 
                     let request = ChatCompletionRequest(
                         model: resolvedModel,
@@ -235,9 +284,21 @@ public enum CapabilityClaimsEvaluator {
                     }
 
                     guard let calls = message.tool_calls, !calls.isEmpty else {
+                        let visible = (message.content ?? "")
+                            .trimmingCharacters(in: .whitespacesAndNewlines)
+                        if visible.isEmpty, emptyTurnRetries < AgentToolLoop.maxEmptyTurnRetries {
+                            // Empty turn (no text, no tool call): nudge and
+                            // retry without charging the iteration budget —
+                            // production-parity recovery, not coercion (the
+                            // model still writes its own answer).
+                            emptyTurnRetries += 1
+                            pendingEmptyTurnNotice = AgentToolLoop.emptyTurnNotice
+                            continue
+                        }
                         // Tool-call-free answer → the loop is done.
                         break
                     }
+                    emptyTurnRetries = 0
 
                     iterations += 1
 
@@ -301,6 +362,46 @@ public enum CapabilityClaimsEvaluator {
                     }
                 }
                 if iterations >= maxIterations { hitCap = true }
+                if hitCap {
+                    // Production parity (ChatView): a cap-hit run gets ONE
+                    // final tool-free request so the user still sees a
+                    // wrap-up answer. Score what production shows, not the
+                    // empty string the loop was cut off with.
+                    let wrapUpRequest = ChatCompletionRequest(
+                        model: resolvedModel,
+                        messages: [ChatMessage(role: "system", content: firstTurnPrompt)] + history,
+                        temperature: 0.0,
+                        max_tokens: 2048,
+                        stream: false,
+                        top_p: nil,
+                        frequency_penalty: nil,
+                        presence_penalty: nil,
+                        stop: nil,
+                        n: nil,
+                        tools: nil,
+                        tool_choice: nil,
+                        session_id: runSessionId
+                    )
+                    // Same non-streaming call shape as this evaluator's own
+                    // loop steps. A wrap-up failure must not sink the whole
+                    // case (the loop itself succeeded) — but it must be
+                    // visible, so it lands in the transcript's finalText
+                    // rather than being silently swallowed.
+                    do {
+                        let response = try await engine.completeChat(request: wrapUpRequest)
+                        let usage = response.usage
+                        if let tps = usage.tokens_per_second, tps > 0, usage.completion_tokens > 0 {
+                            decodeTpsWeightedSum += tps * Double(usage.completion_tokens)
+                            decodeTpsTokenWeight += usage.completion_tokens
+                        }
+                        completionTokensTotal += max(0, usage.completion_tokens)
+                        let text = (response.choices.first?.message.content ?? "")
+                            .trimmingCharacters(in: .whitespacesAndNewlines)
+                        if !text.isEmpty { finalText = text }
+                    } catch {
+                        finalText = "[post-cap wrap-up failed: \(error)]"
+                    }
+                }
                 return (finalText, toolCalls, loadedToolNames, iterations, hitCap, firstTurnPrompt, nil)
             }
         } catch {
@@ -420,7 +521,24 @@ public enum CapabilityClaimsEvaluator {
         conditions: [String],
         model: String? = nil
     ) async -> [CapabilityClaimsJudgement] {
-        guard !conditions.isEmpty else { return [] }
+        await judgeDetailed(finalText: finalText, conditions: conditions, model: model).verdicts
+    }
+
+    /// `judge` plus the audit trail (raw judge reply, resolved judge model,
+    /// attempt count). Same grading semantics — `judge` delegates here.
+    public static func judgeDetailed(
+        finalText: String,
+        conditions: [String],
+        model: String? = nil
+    ) async -> CapabilityClaimsJudgeAudit {
+        guard !conditions.isEmpty else {
+            return CapabilityClaimsJudgeAudit(
+                verdicts: [],
+                judgeModelId: model ?? "",
+                raw: nil,
+                attempts: 0
+            )
+        }
         let resolvedModel =
             model
             ?? ChatConfigurationStore.load().coreModelIdentifier
@@ -483,19 +601,31 @@ public enum CapabilityClaimsEvaluator {
         // looping on its own teardown.
         let maxJudgeAttempts = 3
         var lastError: Error?
+        var attemptsUsed = 0
         for attempt in 1 ... maxJudgeAttempts {
+            attemptsUsed = attempt
             do {
                 let response = try await engine.completeChat(request: request)
                 let raw = response.choices.first?.message.content ?? ""
                 if let parsed = parseVerdicts(raw, expected: conditions.count) {
-                    return parsed
-                }
-                return conditions.map {
-                    CapabilityClaimsJudgement(
-                        pass: false,
-                        reason: "judge output not parseable for condition: \($0)"
+                    return CapabilityClaimsJudgeAudit(
+                        verdicts: parsed,
+                        judgeModelId: resolvedModel,
+                        raw: raw,
+                        attempts: attempt
                     )
                 }
+                return CapabilityClaimsJudgeAudit(
+                    verdicts: conditions.map {
+                        CapabilityClaimsJudgement(
+                            pass: false,
+                            reason: "judge output not parseable for condition: \($0)"
+                        )
+                    },
+                    judgeModelId: resolvedModel,
+                    raw: raw,
+                    attempts: attempt
+                )
             } catch {
                 lastError = error
                 if Task.isCancelled { break }
@@ -505,12 +635,17 @@ public enum CapabilityClaimsEvaluator {
                 }
             }
         }
-        return conditions.map { _ in
-            CapabilityClaimsJudgement(
-                pass: false,
-                reason: "judge call failed: \(lastError?.localizedDescription ?? "unknown error")"
-            )
-        }
+        return CapabilityClaimsJudgeAudit(
+            verdicts: conditions.map { _ in
+                CapabilityClaimsJudgement(
+                    pass: false,
+                    reason: "judge call failed: \(lastError?.localizedDescription ?? "unknown error")"
+                )
+            },
+            judgeModelId: resolvedModel,
+            raw: nil,
+            attempts: attemptsUsed
+        )
     }
 
     // MARK: - Judge-output parsing (hardened, self-judge friendly)

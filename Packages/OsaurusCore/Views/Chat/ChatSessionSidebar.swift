@@ -49,6 +49,16 @@ struct ChatSessionSidebar: View {
     @State private var searchQuery: String = ""
     @State private var sourceFilter: SourceFilter = .all
     @State private var hoveredFilter: SourceFilter?
+    /// Sessions whose message bodies match the current search query,
+    /// resolved asynchronously against the chat-history database (debounced
+    /// per keystroke). Merged with the synchronous title/metadata matching in
+    /// `filteredSessions` so search covers conversation content, not just
+    /// titles.
+    @State private var contentMatchedSessionIds: Set<UUID> = []
+    @State private var contentSearchTask: Task<Void, Never>?
+    /// True from query change until its (debounced) database lookup returns.
+    /// Drives the search field's trailing spinner.
+    @State private var isContentSearchInFlight: Bool = false
     @FocusState private var isSearchFocused: Bool
 
     // MARK: - Source Filter
@@ -104,10 +114,37 @@ struct ChatSessionSidebar: View {
             {
                 return true
             }
+            // Full-text match over message bodies, resolved asynchronously
+            // into `contentMatchedSessionIds`.
+            if contentMatchedSessionIds.contains(session.id) { return true }
             // Match capability labels so "vision" / "code" finds tagged chats.
             return session.capabilities.contains { cap in
                 SearchService.matches(query: searchQuery, in: cap.label)
             }
+        }
+    }
+
+    /// Debounced full-text lookup for the search query. The in-memory
+    /// sessions carry metadata only (turns are never loaded for the list), so
+    /// content matching goes to the chat-history database.
+    private func scheduleContentSearch(_ query: String) {
+        contentSearchTask?.cancel()
+        let trimmed = query.trimmingCharacters(in: .whitespaces)
+        guard !trimmed.isEmpty else {
+            contentMatchedSessionIds = []
+            isContentSearchInFlight = false
+            return
+        }
+        isContentSearchInFlight = true
+        contentSearchTask = Task { @MainActor in
+            // Debounce so fast typing doesn't scan the database per keystroke.
+            try? await Task.sleep(nanoseconds: 250_000_000)
+            guard !Task.isCancelled else { return }
+            let ids = await ChatSessionStore.sessionIds(withContentContaining: trimmed)
+            // A cancelled task must not clear the flag owned by its successor.
+            guard !Task.isCancelled else { return }
+            contentMatchedSessionIds = ids
+            isContentSearchInFlight = false
         }
     }
 
@@ -136,7 +173,8 @@ struct ChatSessionSidebar: View {
             SidebarSearchField(
                 text: $searchQuery,
                 placeholder: "Search conversations...",
-                isFocused: $isSearchFocused
+                isFocused: $isSearchFocused,
+                isSearching: isContentSearchInFlight
             )
             .padding(.horizontal, 12)
             .padding(.bottom, 6)
@@ -158,6 +196,10 @@ struct ChatSessionSidebar: View {
             // Session list
             if sessions.isEmpty {
                 emptyState
+            } else if filteredSessions.isEmpty, isContentSearchInFlight {
+                // The async content lookup hasn't finished — don't claim
+                // "no results" until the whole search process is complete.
+                searchingPlaceholder
             } else if filteredSessions.isEmpty {
                 SidebarNoResultsView(searchQuery: searchQuery) {
                     withAnimation(theme.animationQuick()) {
@@ -173,6 +215,9 @@ struct ChatSessionSidebar: View {
         // sidebar's loadSession) is a context change — wipe per-window
         // filter state so the new agent starts on "All" with an empty
         // search instead of inheriting the previous agent's lens.
+        .onChange(of: searchQuery) { _, query in
+            scheduleContentSearch(query)
+        }
         .onChange(of: agentId) { _, _ in
             sourceFilter = .all
             searchQuery = ""
@@ -338,6 +383,22 @@ struct ChatSessionSidebar: View {
     }
 
     // MARK: - Empty State
+
+    /// Interim state while the async content lookup is still running and no
+    /// title/metadata match is visible yet. Prevents a premature "No matches
+    /// found" flash before the search process has actually finished.
+    private var searchingPlaceholder: some View {
+        VStack(spacing: 12) {
+            Spacer()
+            ProgressView()
+                .controlSize(.small)
+            Text("Searching conversations…", bundle: .module)
+                .font(.system(size: 12, weight: .medium))
+                .foregroundColor(theme.secondaryText.opacity(0.8))
+            Spacer()
+        }
+        .frame(maxWidth: .infinity)
+    }
 
     private var emptyState: some View {
         VStack(spacing: 8) {

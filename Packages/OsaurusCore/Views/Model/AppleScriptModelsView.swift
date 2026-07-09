@@ -202,6 +202,51 @@ struct AppleScriptModelsView: View {
                         .fixedSize(horizontal: false, vertical: true)
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
+
+                SettingsDivider()
+
+                VStack(alignment: .leading, spacing: 6) {
+                    controlRow(
+                        "Model residency",
+                        hint: "How the AppleScript model is kept loaded between runs."
+                    ) {
+                        Picker("", selection: loadPolicySelection) {
+                            ForEach(AppleScriptLoadPolicy.allCases, id: \.self) { policy in
+                                Text(verbatim: policy.displayName).tag(policy)
+                            }
+                        }
+                        .pickerStyle(.segmented)
+                        .labelsHidden()
+                        .fixedSize()
+                    }
+                    Text(verbatim: configuration.appleScriptLoadPolicy.caption)
+                        .font(.system(size: 11))
+                        .foregroundColor(theme.tertiaryText)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+
+                SettingsDivider()
+
+                VStack(alignment: .leading, spacing: 6) {
+                    controlRow(
+                        "Fast reads on the chat model",
+                        hint: "Answer Mac queries with the loaded chat model when possible."
+                    ) {
+                        Toggle("", isOn: queryPrefersResidentSelection)
+                            .toggleStyle(.switch)
+                            .controlSize(.small)
+                            .labelsHidden()
+                    }
+                    Text(
+                        "Read-only Mac queries run on the already-loaded chat model when it supports tools, skipping the model swap. Automation tasks always use the AppleScript model, and queries still can't change anything.",
+                        bundle: .module
+                    )
+                    .font(.system(size: 11))
+                    .foregroundColor(theme.tertiaryText)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                }
             }
         }
     }
@@ -238,6 +283,20 @@ struct AppleScriptModelsView: View {
         Binding(
             get: { configuration.defaultAppleScriptExecutionMode },
             set: { configuration.defaultAppleScriptExecutionMode = $0 }
+        )
+    }
+
+    private var loadPolicySelection: Binding<AppleScriptLoadPolicy> {
+        Binding(
+            get: { configuration.appleScriptLoadPolicy },
+            set: { configuration.appleScriptLoadPolicy = $0 }
+        )
+    }
+
+    private var queryPrefersResidentSelection: Binding<Bool> {
+        Binding(
+            get: { configuration.appleScriptQueryPrefersResidentModel },
+            set: { configuration.appleScriptQueryPrefersResidentModel = $0 }
         )
     }
 

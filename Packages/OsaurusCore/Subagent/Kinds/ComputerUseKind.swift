@@ -164,6 +164,10 @@ final class ComputerUseKind: SubagentKind, @unchecked Sendable {
         SubagentResidency.handoff(for: residencyPlan)
     }
 
+    func admissionClass(_ resolved: ResolvedModel) -> SubagentAdmissionClass {
+        SubagentResidency.admissionClass(isLocal: resolved.isLocal, plan: residencyPlan)
+    }
+
     /// `.allow` at the host level: the consent surface is the per-action gate
     /// (`ComputerUseGate` + confirm overlay) wired inside `run`, not a per-call
     /// approval card. Accessibility preflight stays on the tool's

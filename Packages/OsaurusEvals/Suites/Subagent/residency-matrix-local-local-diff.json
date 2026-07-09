@@ -1,0 +1,29 @@
+{
+  "id": "subagent.residency-matrix-local-local-diff",
+  "domain": "subagent",
+  "label": "Subagent • matrix: local→local (different) × rapid swap cycles, crash-free + restore verified",
+  "query": "Rapid repeated unload→run→reload swaps between two different local models.",
+  "notes": "LIVE RESIDENCY MATRIX (crash lane, RAM-real, machine-specific) — THE delicate direction: 2 rapid production cycles of the full residency swap (unload resident Qwen orchestrator → run the different local Gemma target → reload Qwen), the exact MLX unload/load churn behind the historical BUG G crash class (async GPU tails racing the next Metal producer). Asserts per cycle: handoffWrapped=true (the swap really happened), sentinel recall across the handoff, a coherent digest with no raw parser/template markers, and the orchestrator VERIFIED resident again after restore; plus zero NEW osaurus crash reports (.ips before/after) across the case. Run with FILTER=residency-matrix; SKIPS when either local model isn't installed.",
+  "fixtures": {},
+  "expect": {
+    "subagent": {
+      "lane": "spawn_model_residency",
+      "orchestrator": "mlx-community/Qwen3.5-4B-OptiQ-4bit",
+      "model": "OsaurusAI/gemma-4-E4B-it-4bit",
+      "handoffEnabled": true,
+      "ensureResident": true,
+      "cycles": 2,
+      "sentinel": "papaya-window-88",
+      "input": "Reply with one short sentence confirming you received this task.",
+      "expectSuccess": true,
+      "expectEnvelopeKind": "success",
+      "expectResultKind": "spawn_result",
+      "expectHandoffWrapped": true,
+      "expectResidencyPhases": ["unloading_chat_models", "restoring_chat_models"],
+      "expectNoNewCrashReports": true,
+      "expectRestoredResident": true,
+      "expectNoMarkerLeaks": true,
+      "expectUsageRecorded": true
+    }
+  }
+}

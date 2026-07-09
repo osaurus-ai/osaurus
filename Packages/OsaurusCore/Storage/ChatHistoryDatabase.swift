@@ -366,6 +366,42 @@ public final class ChatHistoryDatabase: @unchecked Sendable {
         }
     }
 
+    /// Fire-and-forget variant of `saveSession`. Performs the same incremental
+    /// write, but hops onto the database's serial queue with `async` and
+    /// returns immediately instead of blocking the caller on `queue.sync`.
+    ///
+    /// Callers on the main actor (run cleanup, session persistence) were paying
+    /// the full encode + transaction cost synchronously; on a large
+    /// conversation that can exceed the 3s app-hang watchdog. Ordering is
+    /// preserved because the queue is FIFO, so a later read/save still observes
+    /// this write. Errors are logged rather than thrown since there is no
+    /// caller left to handle them.
+    public func saveSessionAsync(_ session: ChatSessionData) {
+        queue.async { [weak self] in
+            guard let self, self.db != nil else { return }
+            let prepared = self.sessionWithSpilledAttachments(session)
+            do {
+                try self.executeRaw("BEGIN TRANSACTION")
+                try self.upsertSessionRow(prepared)
+                try self.upsertTurnsIncrementally(
+                    sessionId: prepared.id,
+                    turns: prepared.turns
+                )
+                try self.transactionalStep(
+                    "UPDATE sessions SET turn_count = ?1, updated_at = ?2 WHERE id = ?3"
+                ) { stmt in
+                    sqlite3_bind_int(stmt, 1, Int32(prepared.turns.count))
+                    sqlite3_bind_double(stmt, 2, prepared.updatedAt.timeIntervalSince1970)
+                    Self.bindText(stmt, index: 3, value: prepared.id.uuidString)
+                }
+                try self.executeRaw("COMMIT")
+            } catch {
+                try? self.executeRaw("ROLLBACK")
+                print("[ChatHistoryDatabase] async saveSession failed for \(prepared.id): \(error)")
+            }
+        }
+    }
+
     /// Returns a copy of `session` with every turn's attachment array
     /// passed through `AttachmentBlobStore.spillIfNeeded`.
     private func sessionWithSpilledAttachments(_ session: ChatSessionData) -> ChatSessionData {
@@ -492,6 +528,45 @@ public final class ChatHistoryDatabase: @unchecked Sendable {
             print("[ChatHistoryDatabase] turnCounts failed: \(error)")
         }
         return counts
+    }
+
+    /// Session ids whose message bodies contain `text` as a substring
+    /// (case-insensitive for ASCII, SQLite `LIKE` semantics). Backs the
+    /// sidebar's full-text conversation search; title/metadata matching
+    /// happens separately in memory. A plain scan over `turns.content` —
+    /// there is no FTS index, but local history is small and the scan works
+    /// unchanged under SQLCipher.
+    public func sessionIds(withContentContaining text: String) -> Set<UUID> {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return [] }
+        // Escape LIKE wildcards so a literal % or _ in the query matches
+        // literally instead of exploding the scan.
+        let escaped =
+            trimmed
+            .replacingOccurrences(of: "\\", with: "\\\\")
+            .replacingOccurrences(of: "%", with: "\\%")
+            .replacingOccurrences(of: "_", with: "\\_")
+        var ids: Set<UUID> = []
+        let sql = "SELECT DISTINCT session_id FROM turns WHERE content LIKE ?1 ESCAPE '\\'"
+        do {
+            try prepareAndExecute(
+                sql,
+                bind: { stmt in
+                    Self.bindText(stmt, index: 1, value: "%\(escaped)%")
+                },
+                process: { stmt in
+                    while sqlite3_step(stmt) == SQLITE_ROW {
+                        guard let cString = sqlite3_column_text(stmt, 0) else { continue }
+                        if let uuid = UUID(uuidString: String(cString: cString)) {
+                            ids.insert(uuid)
+                        }
+                    }
+                }
+            )
+        } catch {
+            print("[ChatHistoryDatabase] sessionIds(withContentContaining:) failed: \(error)")
+        }
+        return ids
     }
 
     /// Find an existing session by `(source, external_session_key)`,

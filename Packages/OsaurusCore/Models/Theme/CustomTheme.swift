@@ -1268,6 +1268,9 @@ extension Color {
         )
 
         Color.themeHexCacheLock.lock()
+        // Safety-net cap (reset-on-overflow): the theme palette is small and
+        // fixed, but custom themes contribute arbitrary hex strings over time.
+        if Color.themeHexCache.count >= 512 { Color.themeHexCache.removeAll() }
         Color.themeHexCache[key] = self
         Color.themeHexCacheLock.unlock()
     }

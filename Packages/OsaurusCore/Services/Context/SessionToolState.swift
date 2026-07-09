@@ -47,19 +47,31 @@ struct SessionToolState: Sendable {
     /// and keeps the cached prefix byte-stable. `nil` means "no snapshot yet"
     /// (or no SOUL content) — the next compose reads it fresh.
     var frozenSoul: String?
+    /// Frozen per-user-message memory prefixes for surfaces whose history is
+    /// client-owned (HTTP `/agents/{id}/run`, plugin host). Keyed by
+    /// content-hash + occurrence of the ORIGINAL user message (see
+    /// `SystemPromptComposer.applyFrozenMemoryPrefixes`); the value is the
+    /// exact prefix bytes injected when that message was the latest. Later
+    /// requests replay the prefix onto the matching history message so the
+    /// wire bytes stay monotonic and the paged KV cache reuses the prior
+    /// exchange. The chat surface doesn't use this — it freezes prefixes
+    /// directly on its own `ChatTurn`s.
+    var frozenUserPrefixes: [String: String] = [:]
 
     init(
         loadedToolNames: LoadedTools = [],
         initialAlwaysLoadedNames: LoadedTools? = nil,
         sessionFingerprint: String? = nil,
         frozenManifest: String? = nil,
-        frozenSoul: String? = nil
+        frozenSoul: String? = nil,
+        frozenUserPrefixes: [String: String] = [:]
     ) {
         self.loadedToolNames = loadedToolNames
         self.initialAlwaysLoadedNames = initialAlwaysLoadedNames
         self.sessionFingerprint = sessionFingerprint
         self.frozenManifest = frozenManifest
         self.frozenSoul = frozenSoul
+        self.frozenUserPrefixes = frozenUserPrefixes
     }
 
     /// Canonical fingerprint string for a (mode, toolSelectionMode) pair.

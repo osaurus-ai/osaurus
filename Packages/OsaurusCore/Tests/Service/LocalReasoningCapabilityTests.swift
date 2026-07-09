@@ -104,6 +104,73 @@ struct LocalReasoningCapabilityTests {
         #expect(cap.isToggleableThinking)
     }
 
+    // MARK: - defaultThinkingOn (drives the UI chip for untouched models)
+
+    /// Ornith / Qwen3 gate the NON-thinking branch on an explicit false
+    /// (`enable_thinking is false`), so an absent kwarg means thinking-ON.
+    /// The chip must show ON for a fresh ornith, not the old hardcoded OFF.
+    @Test("Ornith/Qwen3 negative-gate template defaults thinking ON")
+    func ornithDefaultsThinkingOn() {
+        let template = """
+            {%- if enable_thinking is defined and enable_thinking is false %}
+                {{- '<think>\\n\\n</think>\\n\\n' }}
+            {%- else %}
+                {{- '<think>\\n' }}
+            {%- endif %}
+            """
+        let cap = LocalReasoningCapability.analyze(template: template)
+        #expect(cap.isToggleableThinking)
+        #expect(cap.defaultThinkingOn)
+    }
+
+    /// Gemma-4 gates the THINKING branch on an explicit truthy value
+    /// (`... and enable_thinking`) with no `is false` form, so an absent
+    /// kwarg means thinking-OFF. The chip must show OFF for a fresh gemma.
+    @Test("Gemma-4 positive-gate template defaults thinking OFF")
+    func gemma4DefaultsThinkingOff() {
+        let template = """
+            {%- if (enable_thinking is defined and enable_thinking) or tools -%}
+                {%- if enable_thinking is defined and enable_thinking -%}
+                    {{- '<|think|>\\n' -}}
+                {%- endif -%}
+            {%- endif -%}
+            """
+        let cap = LocalReasoningCapability.analyze(template: template)
+        #expect(cap.isToggleableThinking)
+        #expect(!cap.defaultThinkingOn)
+    }
+
+    /// An explicit Jinja `default(true)` filter is authoritative over the
+    /// gate-shape heuristic.
+    @Test("enable_thinking | default(true) ⇒ defaults ON")
+    func explicitDefaultTrue() {
+        let template = "{%- set et = enable_thinking | default(true) -%}<think>{%- endif -%}"
+        #expect(LocalReasoningCapability.detectDefaultThinkingOn(template.lowercased()))
+    }
+
+    /// `default(false)` filter ⇒ defaults OFF even if other markers exist.
+    @Test("enable_thinking | default(false) ⇒ defaults OFF")
+    func explicitDefaultFalse() {
+        let template = "{%- set et = enable_thinking | default(false) -%}<think>{%- endif -%}"
+        #expect(!LocalReasoningCapability.detectDefaultThinkingOn(template.lowercased()))
+    }
+
+    /// Nemotron-H uses a ternary default: the `else True` clause is the
+    /// value when the kwarg is absent ⇒ defaults thinking-ON.
+    @Test("Nemotron ternary `... is defined else True` ⇒ defaults ON")
+    func nemotronTernaryDefaultOn() {
+        let template =
+            "{%- set enable_thinking = enable_thinking if enable_thinking is defined else True %}<think>"
+        #expect(LocalReasoningCapability.detectDefaultThinkingOn(template.lowercased()))
+    }
+
+    @Test("Ternary `... is defined else False` ⇒ defaults OFF")
+    func ternaryDefaultOff() {
+        let template =
+            "{%- set enable_thinking = enable_thinking if enable_thinking is defined else False %}<think>"
+        #expect(!LocalReasoningCapability.detectDefaultThinkingOn(template.lowercased()))
+    }
+
     // MARK: - jang_config.json chat.reasoning fallback (DSV4-class bundles)
 
     /// DSV4-Flash ships NO chat_template in tokenizer_config.json — the

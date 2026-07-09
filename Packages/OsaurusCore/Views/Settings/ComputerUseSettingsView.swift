@@ -9,6 +9,7 @@
 //  cloud vision) live under a collapsed "Advanced" section so the default
 //  view stays calm. The autonomy picker shows, in plain language, exactly
 //  what auto-runs, asks first, or is blocked for the selected stance.
+//  Sections use the shared `SettingsSection`/`SettingsToggle` primitives.
 //
 
 import SwiftUI
@@ -60,9 +61,7 @@ struct ComputerUseSettingsView: View {
     var body: some View {
         VStack(spacing: 0) {
             headerView
-                .opacity(hasAppeared ? 1 : 0)
-                .offset(y: hasAppeared ? 0 : -10)
-                .animation(.spring(response: 0.4, dampingFraction: 0.8), value: hasAppeared)
+                .managerHeaderEntrance(hasAppeared: hasAppeared)
 
             Group {
                 switch selectedTab {
@@ -141,7 +140,7 @@ struct ComputerUseSettingsView: View {
     // MARK: - About card
 
     private var aboutCard: some View {
-        infoCard(icon: "cursorarrow.rays", title: L("What it is")) {
+        SettingsSection(title: "What it is", icon: "cursorarrow.rays") {
             VStack(alignment: .leading, spacing: 12) {
                 bodyText(
                     "When you turn it on for an agent, Computer Use lets that agent operate macOS apps for you — working through a goal step by step and showing every action in a live feed."
@@ -180,7 +179,7 @@ struct ComputerUseSettingsView: View {
     }
 
     private var setupCard: some View {
-        infoCard(icon: "checklist", title: L("Setup")) {
+        SettingsSection(title: "Setup", icon: "checklist") {
             VStack(alignment: .leading, spacing: 14) {
                 HStack(spacing: 10) {
                     Image(
@@ -229,7 +228,7 @@ struct ComputerUseSettingsView: View {
     // MARK: - Enable card (per-agent steps)
 
     private var enableCard: some View {
-        infoCard(icon: "person.2.fill", title: L("Turn it on")) {
+        SettingsSection(title: "Turn it on", icon: "person.2.fill") {
             VStack(alignment: .leading, spacing: 12) {
                 bodyText(
                     "Computer Use is off by default. You enable it per agent — and only custom agents can use it (the Default agent can't)."
@@ -264,7 +263,7 @@ struct ComputerUseSettingsView: View {
     // MARK: - Consent card (safety)
 
     private var consentCard: some View {
-        infoCard(icon: "hand.raised.fill", title: L("Staying in control")) {
+        SettingsSection(title: "Staying in control", icon: "hand.raised.fill") {
             VStack(alignment: .leading, spacing: 10) {
                 consentRow(
                     icon: "checkmark.circle.fill",
@@ -303,7 +302,7 @@ struct ComputerUseSettingsView: View {
     // MARK: - Screen context card
 
     private var screenContextCard: some View {
-        infoCard(icon: "rectangle.on.rectangle.angled", title: L("Screen context")) {
+        SettingsSection(title: "Screen context", icon: "rectangle.on.rectangle.angled") {
             VStack(alignment: .leading, spacing: 14) {
                 bodyText(
                     "Give the assistant ambient awareness of what you're working on. When on, Osaurus freezes a quick snapshot of your open windows and the field you're focused on at the start of each chat, and shares it as background context. It's built from on-screen text only — no screenshots — and is scrubbed by the Privacy Filter before it reaches a cloud model."
@@ -331,7 +330,7 @@ struct ComputerUseSettingsView: View {
     // MARK: - Autonomy card
 
     private var policyCard: some View {
-        infoCard(icon: "slider.horizontal.3", title: L("Autonomy")) {
+        SettingsSection(title: "Autonomy", icon: "slider.horizontal.3") {
             VStack(alignment: .leading, spacing: 16) {
                 bodyText(
                     "Choose how much an agent can do on its own. Per-app rules and each agent's own ceiling can only make this stricter — never less safe."
@@ -463,31 +462,23 @@ struct ComputerUseSettingsView: View {
     // MARK: - Advanced (collapsed)
 
     private var advancedCard: some View {
-        card {
+        SettingsSection(title: "Advanced", icon: "gearshape.2") {
             DisclosureGroup(isExpanded: $showAdvanced) {
                 VStack(alignment: .leading, spacing: 18) {
                     perAppSection
-                    Divider().background(theme.cardBorder)
+                    SettingsDivider()
                     allowlistSection
-                    Divider().background(theme.cardBorder)
+                    SettingsDivider()
                     cloudVisionSection
-                    Divider().background(theme.cardBorder)
+                    SettingsDivider()
                     ComputerUseDiagnosticsPanel(policy: policy)
                 }
                 .padding(.top, 16)
             } label: {
                 HStack(spacing: 8) {
-                    Image(systemName: "gearshape.2")
-                        .font(.system(size: 14, weight: .medium))
-                        .foregroundColor(theme.accentColor)
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("Advanced", bundle: .module)
-                            .font(.system(size: 13, weight: .semibold))
-                            .foregroundColor(theme.primaryText)
-                        Text("Per-app rules, app allowlist, and cloud vision.", bundle: .module)
-                            .font(.system(size: 11))
-                            .foregroundColor(theme.tertiaryText)
-                    }
+                    Text("Per-app rules, app allowlist, and cloud vision.", bundle: .module)
+                        .font(.system(size: 11))
+                        .foregroundColor(theme.tertiaryText)
                     Spacer()
                 }
                 .contentShape(Rectangle())
@@ -575,51 +566,26 @@ struct ComputerUseSettingsView: View {
                 "Perception stays on this Mac by default. If an agent uses a cloud model, you can let it send screenshots for the rare cases on-screen text isn't enough — but only after sensitive text is masked on-device first."
             )
 
-            HStack(spacing: 12) {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(L("Allow masked screenshots to reach a cloud model"))
-                        .font(.system(size: 12, weight: .medium))
-                        .foregroundColor(theme.primaryText)
-                    hintText("Off by default. Nothing is sent without this and on-device masking.")
-                }
-                Spacer(minLength: 12)
-                Toggle(
-                    "",
-                    isOn: Binding(
-                        get: { cloudVisionConsent.isPersistentlyGranted },
-                        set: { cloudVisionConsent.setPersistent($0) }
-                    )
+            SettingsToggle(
+                title: L("Allow masked screenshots to reach a cloud model"),
+                description: "Off by default. Nothing is sent without this and on-device masking.",
+                isOn: Binding(
+                    get: { cloudVisionConsent.isPersistentlyGranted },
+                    set: { cloudVisionConsent.setPersistent($0) }
                 )
-                .toggleStyle(SwitchToggleStyle(tint: theme.accentColor))
-                .labelsHidden()
-            }
-            .padding(12)
-            .surface(cornerRadius: 10, fill: theme.inputBackground, stroke: theme.inputBorder)
+            )
 
             // Redaction mode: mask everything (default, safest) vs. mask only
             // detected PII (less strict — leaves non-sensitive text readable).
-            HStack(spacing: 12) {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(L("Mask only detected sensitive text"))
-                        .font(.system(size: 12, weight: .medium))
-                        .foregroundColor(theme.primaryText)
-                    hintText(
-                        "Off (recommended): mask ALL on-screen text before sending. On: send a screenshot where only detected sensitive text (names, emails, numbers, secrets) is masked — other text stays readable to the model."
-                    )
-                }
-                Spacer(minLength: 12)
-                Toggle(
-                    "",
-                    isOn: Binding(
-                        get: { cloudVisionConsent.masksOnlyDetectedPII },
-                        set: { cloudVisionConsent.setMasksOnlyDetectedPII($0) }
-                    )
+            SettingsToggle(
+                title: L("Mask only detected sensitive text"),
+                description:
+                    "Off (recommended): mask ALL on-screen text before sending. On: send a screenshot where only detected sensitive text (names, emails, numbers, secrets) is masked — other text stays readable to the model.",
+                isOn: Binding(
+                    get: { cloudVisionConsent.masksOnlyDetectedPII },
+                    set: { cloudVisionConsent.setMasksOnlyDetectedPII($0) }
                 )
-                .toggleStyle(SwitchToggleStyle(tint: theme.accentColor))
-                .labelsHidden()
-            }
-            .padding(12)
-            .surface(cornerRadius: 10, fill: theme.inputBackground, stroke: theme.inputBorder)
+            )
 
             hintText(
                 "Masking runs on-device using OCR + the Privacy Filter (your configured rules plus an on-device model for names/addresses/dates/secrets). Detection isn't perfect — it can miss text OCR can't read or the model doesn't recognize — so \"mask only sensitive text\" trades some privacy for the model seeing more context. Screenshots also require Screen Recording permission; without it the agent stays on accessibility text only."
@@ -814,37 +780,6 @@ struct ComputerUseSettingsView: View {
             .font(.system(size: 11))
             .foregroundColor(theme.tertiaryText)
             .fixedSize(horizontal: false, vertical: true)
-    }
-
-    /// The shared card container: 16pt padding inside a 12pt rounded surface.
-    @ViewBuilder
-    private func card<Content: View>(@ViewBuilder _ content: () -> Content) -> some View {
-        content()
-            .padding(16)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .surface(cornerRadius: 12, fill: theme.cardBackground, stroke: theme.cardBorder)
-    }
-
-    /// A titled card with an accent icon header, used by every info section.
-    @ViewBuilder
-    private func infoCard<Content: View>(
-        icon: String,
-        title: String,
-        @ViewBuilder content: () -> Content
-    ) -> some View {
-        card {
-            VStack(alignment: .leading, spacing: 12) {
-                HStack(spacing: 8) {
-                    Image(systemName: icon)
-                        .font(.system(size: 14, weight: .medium))
-                        .foregroundColor(theme.accentColor)
-                    Text(title)
-                        .font(.system(size: 13, weight: .semibold))
-                        .foregroundColor(theme.primaryText)
-                }
-                content()
-            }
-        }
     }
 }
 

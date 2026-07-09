@@ -165,6 +165,87 @@ public struct EvalCaseTelemetry: Sendable, Codable {
     }
 }
 
+/// Persisted audit of the LLM-judge call that graded a case's rubric.
+/// Rubric grades used to be write-only prose in `notes` (and only for
+/// failures) — the structured record makes a disputed grade auditable
+/// from the report alone: which judge graded, what it decided per
+/// condition, and what it actually replied (`raw`). The JudgeCalibration
+/// lane also reads these to score the judge itself.
+public struct EvalJudgeAudit: Sendable, Codable {
+    /// One graded rubric condition, index-aligned to the case's rubric.
+    public struct Verdict: Sendable, Codable {
+        public let condition: String
+        public let pass: Bool
+        public let reason: String
+
+        public init(condition: String, pass: Bool, reason: String) {
+            self.condition = condition
+            self.pass = pass
+            self.reason = reason
+        }
+    }
+
+    /// The model that actually graded (post-resolution — the run model
+    /// itself when self-judging).
+    public let modelId: String
+    /// True when the judge was the run model itself (weaker grade; the
+    /// matrix comparability check flags columns built this way).
+    public let selfJudge: Bool
+    public let verdicts: [Verdict]
+    /// Raw judge reply from the graded attempt (capped at `rawCap` chars
+    /// so a chatty judge can't bloat reports). nil when every attempt
+    /// threw before returning a body.
+    public let raw: String?
+    /// Retry-ladder attempts the judge call consumed (>1 ⇒ a thrown call
+    /// was retried — the judge-stability signal).
+    public let attempts: Int?
+
+    public init(
+        modelId: String,
+        selfJudge: Bool,
+        verdicts: [Verdict],
+        raw: String?,
+        attempts: Int? = nil
+    ) {
+        self.modelId = modelId
+        self.selfJudge = selfJudge
+        self.verdicts = verdicts
+        self.raw = raw
+        self.attempts = attempts
+    }
+
+    /// Cap on persisted raw judge output. Temperature-0 judge replies are
+    /// short JSON (max_tokens 1024), so this only trims pathological prose.
+    public static let rawCap = 4000
+
+    /// Build the persisted audit from a core judge audit + the rubric it
+    /// graded. `selfJudge` is the RESOLUTION fact (the runner knows whether
+    /// it passed an explicit judge or fell back to the run model).
+    public static func from(
+        _ audit: CapabilityClaimsJudgeAudit,
+        rubric: [String],
+        selfJudge: Bool
+    ) -> EvalJudgeAudit {
+        let verdicts = audit.verdicts.enumerated().map { index, verdict in
+            Verdict(
+                condition: index < rubric.count ? rubric[index] : "(condition \(index))",
+                pass: verdict.pass,
+                reason: verdict.reason
+            )
+        }
+        let cappedRaw = audit.raw.map { raw -> String in
+            raw.count <= rawCap ? raw : String(raw.prefix(rawCap)) + "…[truncated]"
+        }
+        return EvalJudgeAudit(
+            modelId: audit.judgeModelId,
+            selfJudge: selfJudge,
+            verdicts: verdicts,
+            raw: cappedRaw,
+            attempts: audit.attempts
+        )
+    }
+}
+
 /// Per-tool usage counters for one `agent_loop` case — the
 /// tool-discipline scorecard. `calls` counts every processed call
 /// (executed + dedupe replays), `errors` counts error envelopes,
@@ -204,7 +285,15 @@ public struct EvalCaseReport: Sendable, Codable {
     /// rerunning. Empty for clean passes.
     public let notes: [String]
     public let modelId: String
+    /// Wall-clock of the CASE WORK ONLY — the agent loop / distillation /
+    /// script run — normalized across domains to EXCLUDE judge calls.
+    /// (Historically capability_claims/default_agent folded judge time in
+    /// while agent_loop didn't, so cross-domain latency wasn't comparable.)
     public let latencyMs: Double?
+    /// Wall-clock of the LLM-judge call(s) that graded this row, reported
+    /// separately so rubric-graded rows stay latency-comparable with
+    /// deterministic ones. nil when nothing was judged.
+    public let judgeLatencyMs: Double?
     /// Per-tool usage counters for `agent_loop` rows. nil for other
     /// domains. Aggregated suite-wide into the console summary so each
     /// model gets a tool-discipline scorecard, not just pass/fail.
@@ -214,6 +303,30 @@ public struct EvalCaseReport: Sendable, Codable {
     /// (no-model) rows; populated for model-driven domains. The
     /// optimization loop's speed/RAM scoreboard reads this.
     public let telemetry: EvalCaseTelemetry?
+    /// Number of trials this row aggregates (`--repeat N`). nil for
+    /// single-execution rows, so pre-repeat reports decode unchanged
+    /// and a nil reads as "one execution, no repeat evidence".
+    public let trials: Int?
+    /// How many of `trials` passed. `0 < trialsPassed < trials` is the
+    /// observed-flaky signal the diff/history tooling reads.
+    public let trialsPassed: Int?
+    /// Structured audit of the LLM-judge call that graded this case's
+    /// rubric (judge model, per-condition verdicts, raw reply). nil for
+    /// rows with no rubric or domains that don't judge.
+    public let judge: EvalJudgeAudit?
+
+    /// Pass fraction across trials — nil for single-execution rows.
+    public var passRate: Double? {
+        guard let trials, trials > 0, let trialsPassed else { return nil }
+        return Double(trialsPassed) / Double(trials)
+    }
+
+    /// True when repeated trials disagreed (some passed, some didn't) —
+    /// the per-case flakiness marker.
+    public var isFlaky: Bool {
+        guard let trials, let trialsPassed else { return false }
+        return trialsPassed > 0 && trialsPassed < trials
+    }
 
     public init(
         id: String,
@@ -225,8 +338,12 @@ public struct EvalCaseReport: Sendable, Codable {
         notes: [String],
         modelId: String,
         latencyMs: Double?,
+        judgeLatencyMs: Double? = nil,
         toolUsage: [ToolUsageStat]? = nil,
-        telemetry: EvalCaseTelemetry? = nil
+        telemetry: EvalCaseTelemetry? = nil,
+        trials: Int? = nil,
+        trialsPassed: Int? = nil,
+        judge: EvalJudgeAudit? = nil
     ) {
         self.id = id
         self.label = label
@@ -237,8 +354,12 @@ public struct EvalCaseReport: Sendable, Codable {
         self.notes = notes
         self.modelId = modelId
         self.latencyMs = latencyMs
+        self.judgeLatencyMs = judgeLatencyMs
         self.toolUsage = toolUsage
         self.telemetry = (telemetry?.isEmpty ?? true) ? nil : telemetry
+        self.trials = trials
+        self.trialsPassed = trialsPassed
+        self.judge = judge
     }
 
     /// Build an early-exit row (decode failure, unknown domain, missing
@@ -262,6 +383,80 @@ public struct EvalCaseReport: Sendable, Codable {
             notes: notes,
             modelId: modelId,
             latencyMs: nil
+        )
+    }
+
+    /// Fold N per-trial rows of the SAME case (`--repeat N`) into one
+    /// aggregate row. Aggregation rules:
+    ///
+    ///   - 1 trial → returned unchanged (no `trials` fields), so a default
+    ///     run's report is byte-identical to the pre-repeat schema.
+    ///   - All trials skipped → the first row unchanged (skip gates are
+    ///     host-deterministic; repeating adds no signal).
+    ///   - Outcome: `passed` on a STRICT majority of non-skipped trials
+    ///     (ties are conservative fails); `errored` only when every
+    ///     non-passed trial errored (harness trouble, not model flake).
+    ///   - `latencyMs`: mean across trials that measured one — the fair
+    ///     per-case cost estimate.
+    ///   - `notes` / `telemetry` / snapshots: taken from a representative
+    ///     trial (first trial matching the merged outcome), prefixed with a
+    ///     `trials:` summary line plus a per-trial outcome map when trials
+    ///     disagreed, so flaky rows keep full forensics.
+    public static func mergedTrials(_ rows: [EvalCaseReport]) -> EvalCaseReport {
+        guard let first = rows.first else {
+            preconditionFailure("mergedTrials requires at least one trial row")
+        }
+        guard rows.count > 1 else { return first }
+
+        let scored = rows.filter { $0.outcome != .skipped }
+        guard !scored.isEmpty else { return first }
+
+        let passedCount = scored.filter { $0.outcome == .passed }.count
+        let outcome: EvalCaseOutcome
+        if passedCount * 2 > scored.count {
+            outcome = .passed
+        } else if scored.allSatisfy({ $0.outcome == .errored }) {
+            outcome = .errored
+        } else {
+            outcome = .failed
+        }
+
+        let representative =
+            rows.first { $0.outcome == outcome } ?? first
+        let latencies = rows.compactMap(\.latencyMs)
+        let meanLatency = latencies.isEmpty ? nil : latencies.reduce(0, +) / Double(latencies.count)
+        let judgeLatencies = rows.compactMap(\.judgeLatencyMs)
+        let meanJudgeLatency =
+            judgeLatencies.isEmpty ? nil : judgeLatencies.reduce(0, +) / Double(judgeLatencies.count)
+
+        var notes: [String] = []
+        var summary = "trials: \(passedCount)/\(rows.count) passed"
+        if passedCount > 0 && passedCount < rows.count { summary += " — FLAKY" }
+        notes.append(summary)
+        if passedCount != 0 && passedCount != rows.count {
+            let perTrial = rows.enumerated()
+                .map { "trial \($0.offset + 1): \($0.element.outcome.rawValue)" }
+                .joined(separator: ", ")
+            notes.append(perTrial)
+        }
+        notes.append(contentsOf: representative.notes)
+
+        return EvalCaseReport(
+            id: first.id,
+            label: first.label,
+            domain: first.domain,
+            query: first.query,
+            outcome: outcome,
+            capabilitySearch: representative.capabilitySearch,
+            notes: notes,
+            modelId: first.modelId,
+            latencyMs: meanLatency,
+            judgeLatencyMs: meanJudgeLatency,
+            toolUsage: representative.toolUsage,
+            telemetry: representative.telemetry,
+            trials: rows.count,
+            trialsPassed: passedCount,
+            judge: representative.judge
         )
     }
 }
@@ -346,7 +541,17 @@ public struct EvalReport: Sendable, Codable {
         lines.append("")
         for row in cases {
             let latencyStr = row.latencyMs.map { String(format: "%5.0fms", $0) } ?? "      —"
-            lines.append("[\(row.outcome.badge)] \(row.id)  \(latencyStr)")
+            // Judge time is deliberately OUTSIDE latencyMs (which measures
+            // only the case's own work); surface it alongside so rubric
+            // rows still show their full wall-clock story.
+            let judgeStr = row.judgeLatencyMs.map { String(format: " +judge %.0fms", $0) } ?? ""
+            let trialsStr: String
+            if let trials = row.trials, let passed = row.trialsPassed {
+                trialsStr = "  (\(passed)/\(trials)\(row.isFlaky ? " FLAKY" : ""))"
+            } else {
+                trialsStr = ""
+            }
+            lines.append("[\(row.outcome.badge)] \(row.id)  \(latencyStr)\(judgeStr)\(trialsStr)")
             for note in row.notes { lines.append("       · \(note)") }
             if let telemetryLine = Self.formatTelemetryLine(row.telemetry) {
                 lines.append("       · \(telemetryLine)")

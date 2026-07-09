@@ -219,6 +219,11 @@ Add arbitrary HTTP headers. Mark a header as a **secret** to store its value in 
 | **Discovery Timeout** | Timeout for tool discovery (seconds)      | 20      |
 | **Tool Call Timeout** | Timeout for tool execution (seconds)      | 45      |
 
+Both timeouts are enforced at the MCP layer. The underlying HTTP session uses
+a looser idle timeout (at least the larger of the two, minimum 60s) so it
+never undercuts a long-running tool call, and it does not cap the total
+lifetime of the streaming SSE connection.
+
 ---
 
 ## How OAuth Auto Sign-In Works
@@ -255,6 +260,18 @@ The implementation lives in [`Packages/OsaurusCore/Services/MCP/OAuth/`](../Pack
 - Access tokens are refreshed proactively before they expire.
 - If a request returns `401 Unauthorized`, Osaurus probes the response's `WWW-Authenticate: Bearer` challenge, refreshes once, and retries. If that also fails, the provider's row surfaces a "Sign in again" prompt.
 - All tokens (access + refresh) live in Keychain; `mcp.json` only stores client IDs and metadata.
+
+### Session Expiry Recovery (tool calls)
+
+Remote streamable-HTTP servers expire their `Mcp-Session-Id` after idle
+periods or server restarts, and OAuth access tokens can expire while a
+provider stays connected. When a tool call fails with a session-expired,
+authentication, or closed-connection error, Osaurus automatically reconnects
+once — rebuilding the transport with fresh credentials and negotiating a new
+session — and retries the call. Timeouts are never retried, because the
+server may already have executed the tool. If the reconnect fails, the
+provider row shows the reconnect error (for example the "Sign in again"
+prompt) instead of silently staying green.
 
 ---
 

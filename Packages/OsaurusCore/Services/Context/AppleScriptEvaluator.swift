@@ -61,6 +61,10 @@ public struct AppleScriptEvalTranscript: Sendable {
     public let succeeded: Int
     public let failed: Int
     public let modelTokens: Int
+    /// Model-generation throughput (tokens per second over model-step time
+    /// only), `nil` when the run generated nothing. AGENTS.md: every generation
+    /// row records token/s.
+    public let tokensPerSecond: Double?
     /// The headline coerced value the run captured (the `values` a parent reads).
     public let lastOutput: String?
     /// Full per-step transcript (executed / declined / blocked / invalid).
@@ -92,6 +96,7 @@ public struct AppleScriptEvalTranscript: Sendable {
             succeeded: 0,
             failed: 0,
             modelTokens: 0,
+            tokensPerSecond: nil,
             lastOutput: nil,
             steps: [],
             proposals: [],
@@ -131,8 +136,14 @@ public enum AppleScriptEvaluator {
         public var harness: AppleScriptHarnessOptions
         public var maxSteps: Int
         public var wallClockSeconds: TimeInterval
+        /// Per-model-step inference budget (seconds). Slow models on
+        /// multi-step cases need more than the 90s loop default.
+        public var modelStepTimeoutSeconds: TimeInterval
         /// Preferred AppleScript model id (resolved against the installed catalog).
         public var model: String?
+        /// EXPLICIT sampling-temperature override for A/B isolation runs
+        /// (recorded in the case). `nil` = the model bundle's own defaults.
+        public var samplingTemperature: Double?
         public var environmentContext: String?
         /// The confirm-each answer for `automate` runs (default: approve).
         public var confirmApproves: Bool
@@ -141,6 +152,24 @@ public enum AppleScriptEvaluator {
         public var executor: Executor
         /// Result returned for a script the mock world doesn't recognize.
         public var mockDefault: AppleScriptExecutionResult
+        /// Real-executor readiness probe (liveProof): a tiny READ-ONLY script
+        /// against the same app the task automates, run with a short bound
+        /// BEFORE the model loop. On an unattended machine the first Apple
+        /// event to an ungrantable app parks the OSA queue thread inside the
+        /// TCC consent send — observed live as a 600s per-case watchdog trip
+        /// that terminated the suite and skipped every scripted case queued
+        /// behind it, identically for local and remote models. The probe
+        /// converts that environment into an honest ≤`probeTimeout` SKIP
+        /// ("permission not grantable here") while a granted machine pays
+        /// <1s and runs the real case unchanged.
+        public var automationProbeScript: String?
+        /// Wall-clock bound for the probe. A pending consent dialog never
+        /// returns, so this is the entire cost of skipping on an unattended
+        /// host. 15s absorbs a cold target-app launch on a granted machine.
+        public var automationProbeTimeout: TimeInterval
+        /// Test seam for the probe execution (nil → the real bounded
+        /// `AppleScriptExecutor.run`). Never used for the scored run itself.
+        public var automationProbeRunner: AppleScriptRunner?
 
         public init(
             lane: AppleScriptEvalLane,
@@ -151,7 +180,9 @@ public enum AppleScriptEvaluator {
             harness: AppleScriptHarnessOptions = .default,
             maxSteps: Int = 12,
             wallClockSeconds: TimeInterval = 240,
+            modelStepTimeoutSeconds: TimeInterval = 90,
             model: String? = nil,
+            samplingTemperature: Double? = nil,
             environmentContext: String? = nil,
             confirmApproves: Bool = true,
             scriptedCalls: [String] = [],
@@ -161,7 +192,10 @@ public enum AppleScriptEvaluator {
                 output: nil,
                 errorNumber: nil,
                 errorMessage: nil
-            )
+            ),
+            automationProbeScript: String? = nil,
+            automationProbeTimeout: TimeInterval = 15,
+            automationProbeRunner: AppleScriptRunner? = nil
         ) {
             self.lane = lane
             self.task = task
@@ -171,12 +205,17 @@ public enum AppleScriptEvaluator {
             self.harness = harness
             self.maxSteps = maxSteps
             self.wallClockSeconds = wallClockSeconds
+            self.modelStepTimeoutSeconds = modelStepTimeoutSeconds
             self.model = model
+            self.samplingTemperature = samplingTemperature
             self.environmentContext = environmentContext
             self.confirmApproves = confirmApproves
             self.scriptedCalls = scriptedCalls
             self.executor = executor
             self.mockDefault = mockDefault
+            self.automationProbeScript = automationProbeScript
+            self.automationProbeTimeout = automationProbeTimeout
+            self.automationProbeRunner = automationProbeRunner
         }
     }
 
@@ -185,6 +224,50 @@ public enum AppleScriptEvaluator {
     /// none is installed. `liveProof` always uses the real executor regardless
     /// of the configured one.
     public static func run(_ config: Config) async -> AppleScriptEvalTranscript {
+        // liveProof forces the real executor; other lanes honor the config.
+        let effectiveExecutor: Executor = config.lane == .liveProof ? .real : config.executor
+
+        // Real-executor readiness probe, FIRST — before model resolution, so
+        // an unattended machine yields a fast honest SKIP without touching
+        // the model catalog or burning tokens, instead of parking the suite
+        // on an Automation consent dialog nobody can click.
+        if case .real = effectiveExecutor, let probeScript = config.automationProbeScript {
+            let probe: AppleScriptExecutionResult
+            if let probeRunner = config.automationProbeRunner {
+                probe = await probeRunner(probeScript, .appleScript)
+            } else {
+                probe = await AppleScriptExecutor.run(
+                    source: probeScript,
+                    timeout: config.automationProbeTimeout
+                )
+            }
+            if !probe.isSuccess {
+                let detail: String
+                switch probe.status {
+                case .timedOut:
+                    detail =
+                        "the probe did not answer within \(Int(config.automationProbeTimeout))s "
+                        + "— usually a pending macOS Automation consent dialog no one can "
+                        + "approve in an unattended run"
+                case .permissionRequired:
+                    detail =
+                        "Automation permission is denied for this process "
+                        + "(error \(probe.errorNumber.map(String.init) ?? "-1743"))"
+                default:
+                    detail =
+                        "probe \(probe.status.rawValue)"
+                        + (probe.errorMessage.map { ": \($0)" } ?? "")
+                }
+                return .skippedRun(
+                    lane: config.lane,
+                    reason:
+                        "liveProof environment not ready — \(detail). Grant Osaurus access to "
+                        + "the target app under System Settings → Privacy & Security → "
+                        + "Automation, then re-run locally."
+                )
+            }
+        }
+
         // Resolve the model + model-step seam per lane.
         var ranModel = false
         var resolvedModelId: String?
@@ -207,9 +290,6 @@ public enum AppleScriptEvaluator {
             ranModel = true
         }
 
-        // liveProof forces the real executor; other lanes honor the config.
-        let effectiveExecutor: Executor = config.lane == .liveProof ? .real : config.executor
-
         // Executor seam + a script log that records every executed script for
         // regex / effect assertions across all lanes.
         let scriptLog = MutableScriptLog()
@@ -217,17 +297,25 @@ public enum AppleScriptEvaluator {
         let baseRunner: AppleScriptRunner
         switch effectiveExecutor {
         case .real:
-            baseRunner = { await AppleScriptExecutor.run(source: $0) }
+            baseRunner = { await AppleScriptExecutor.run(source: $0, language: $1) }
         case .mockResults(let results):
             let cannedBox = MutableCannedResults(results, fallback: config.mockDefault)
-            baseRunner = { _ in cannedBox.next() }
+            baseRunner = { _, _ in cannedBox.next() }
         case .mockWorld:
             let fallback = config.mockDefault
-            baseRunner = { script in mockWorld.handle(script, fallback: fallback) }
+            baseRunner = { script, _ in mockWorld.handle(script, fallback: fallback) }
         }
-        let runner: AppleScriptRunner = { script in
+        let runner: AppleScriptRunner = { script, language in
             scriptLog.append(script)
-            return await baseRunner(script)
+            return await baseRunner(script, language)
+        }
+        // The script-log wrapper makes `execute` non-nil, which would disable
+        // the loop's default compile-before-confirm; restore it explicitly for
+        // the REAL executor so liveProof exercises the production gate. Mock
+        // lanes stay checker-free (deterministic, no OSA dependency).
+        var compileCheck: AppleScriptCompileCheck?
+        if case .real = effectiveExecutor {
+            compileCheck = { await AppleScriptExecutor.compileCheck(source: $0, language: $1) }
         }
 
         let proposals = MutableProposalLog()
@@ -238,8 +326,31 @@ public enum AppleScriptEvaluator {
         )
         let limits = RunLimits(
             maxSteps: config.maxSteps,
-            wallClockSeconds: config.wallClockSeconds
+            wallClockSeconds: config.wallClockSeconds,
+            modelStepTimeoutSeconds: config.modelStepTimeoutSeconds
         )
+        // App knowledge (dictionary + recipes) for live lanes, composed exactly
+        // as production does — from the task plus the case's environment
+        // context (the `desktopContext()` format). The scripted lane runs no
+        // model, so composing prompt knowledge there would be dead weight.
+        var dictionaryContext: String?
+        var recipeContext: String?
+        if ranModel, config.harness.includeDictionaryContext || config.harness.includeAppRecipes {
+            let parsed = AppleScriptAppKnowledge.parseEnvironmentContext(config.environmentContext)
+            let apps = AppleScriptAppKnowledge.detectTargetApps(
+                task: config.task,
+                frontmost: parsed.frontmost,
+                runningAppNames: parsed.runningNames
+            )
+            let sections = AppleScriptAppKnowledge.compose(
+                apps: apps,
+                runningApps: parsed.runningNames.map {
+                    AppleScriptAppKnowledge.RunningApp(name: $0, bundleURL: nil)
+                }
+            )
+            dictionaryContext = sections.dictionary
+            recipeContext = sections.recipes
+        }
         let started = Date()
         let result = await AppleScriptLoop.run(
             task: config.task,
@@ -252,11 +363,15 @@ public enum AppleScriptEvaluator {
             sessionId: "eval-as-\(UUID().uuidString)",
             mode: config.mode,
             environmentContext: config.environmentContext,
+            dictionaryContext: dictionaryContext,
+            recipeContext: recipeContext,
             literals: AppleScriptLiterals(config.literals),
             harness: config.harness,
             execute: runner,
             nextScript: nextScript,
-            observeProposal: { proposals.append($0) }
+            observeProposal: { proposals.append($0) },
+            compileCheck: compileCheck,
+            samplingTemperature: config.samplingTemperature
         )
         let latencyMs = Date().timeIntervalSince(started) * 1000
 
@@ -273,6 +388,7 @@ public enum AppleScriptEvaluator {
             succeeded: result.succeeded,
             failed: result.failed,
             modelTokens: result.modelTokens,
+            tokensPerSecond: result.tokensPerSecond,
             lastOutput: result.lastOutput,
             steps: result.steps,
             proposals: proposals.all(),

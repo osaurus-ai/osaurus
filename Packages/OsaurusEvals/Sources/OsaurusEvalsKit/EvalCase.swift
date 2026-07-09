@@ -293,19 +293,24 @@ public struct EvalCase: Sendable, Codable, Identifiable {
         public let speakEnabled: Bool?
         /// Expose the `search_memory` recall tool.
         public let searchMemoryEnabled: Bool?
+        /// Expose `applescript` / `mac_query` delegation tools (requires an
+        /// installed AppleScript model at run time).
+        public let appleScriptEnabled: Bool?
 
         public init(
             dbEnabled: Bool? = nil,
             selfSchedulingEnabled: Bool? = nil,
             renderChartEnabled: Bool? = nil,
             speakEnabled: Bool? = nil,
-            searchMemoryEnabled: Bool? = nil
+            searchMemoryEnabled: Bool? = nil,
+            appleScriptEnabled: Bool? = nil
         ) {
             self.dbEnabled = dbEnabled
             self.selfSchedulingEnabled = selfSchedulingEnabled
             self.renderChartEnabled = renderChartEnabled
             self.speakEnabled = speakEnabled
             self.searchMemoryEnabled = searchMemoryEnabled
+            self.appleScriptEnabled = appleScriptEnabled
         }
 
         /// True when any flag is explicitly enabled — the runner only
@@ -313,7 +318,7 @@ public struct EvalCase: Sendable, Codable, Identifiable {
         public var requestsAnyCapability: Bool {
             (dbEnabled ?? false) || (selfSchedulingEnabled ?? false)
                 || (renderChartEnabled ?? false) || (speakEnabled ?? false)
-                || (searchMemoryEnabled ?? false)
+                || (searchMemoryEnabled ?? false) || (appleScriptEnabled ?? false)
         }
     }
 
@@ -511,6 +516,18 @@ public struct EvalCase: Sendable, Codable, Identifiable {
         /// scripted lane is CI-safe (no model); the `live` / `liveProof` lanes
         /// skip gracefully when no AppleScript model is installed.
         public let appleScript: AppleScriptExpectations?
+        /// Calibration expectation for `domain == "judge_calibration"` cases:
+        /// a frozen assistant reply + rubric conditions whose correct verdicts
+        /// are KNOWN. The runner grades the reply with the resolved judge and
+        /// scores the JUDGE against the known verdicts — the lane that makes a
+        /// judge-model change itself measurable (and catches a judge that
+        /// rubber-stamps or invents requirements).
+        public let judgeCalibration: JudgeCalibrationExpectations?
+        /// Micro-benchmark expectation for `domain == "micro_perf"` cases:
+        /// a fixed prompt decoded to a fixed length N times with median ±
+        /// stdev reporting — the stable perf row for `history.jsonl` trends
+        /// (behaviour cases ride varying prompt sizes and can't be one).
+        public let microPerf: MicroPerfExpectations?
 
         public init(
             schema: SchemaExpectations? = nil,
@@ -529,7 +546,9 @@ public struct EvalCase: Sendable, Codable, Identifiable {
             defaultAgent: DefaultAgentExpectations? = nil,
             screenContext: ScreenContextExpectations? = nil,
             subagent: SubagentExpectations? = nil,
-            appleScript: AppleScriptExpectations? = nil
+            appleScript: AppleScriptExpectations? = nil,
+            judgeCalibration: JudgeCalibrationExpectations? = nil,
+            microPerf: MicroPerfExpectations? = nil
         ) {
             self.schema = schema
             self.toolEnvelope = toolEnvelope
@@ -548,6 +567,76 @@ public struct EvalCase: Sendable, Codable, Identifiable {
             self.screenContext = screenContext
             self.subagent = subagent
             self.appleScript = appleScript
+            self.judgeCalibration = judgeCalibration
+            self.microPerf = microPerf
+        }
+    }
+
+    /// Expectation for `domain == "judge_calibration"` cases. Unlike every
+    /// other LLM domain — where the judge grades the RUN MODEL's output —
+    /// this lane inverts the roles: `finalText` is a frozen, hand-written
+    /// assistant reply, `conditions` is the rubric handed to the judge, and
+    /// `expectedVerdicts` is the ground truth a competent grader must
+    /// produce. The case passes iff the resolved judge (JUDGE_MODEL / strong
+    /// `*_API_KEY` / self-judge fallback) reproduces every expected verdict,
+    /// so the score measures the JUDGE, making "swap the judge model" a
+    /// diffable change instead of an invisible trust shift.
+    public struct JudgeCalibrationExpectations: Sendable, Codable {
+        /// Frozen assistant reply the judge grades. Authored so each
+        /// condition's correct verdict is unambiguous to a careful human.
+        public let finalText: String
+        /// Rubric conditions passed to the judge, in order.
+        public let conditions: [String]
+        /// Ground-truth verdict per condition (index-aligned with
+        /// `conditions`; decode validation enforces equal counts).
+        public let expectedVerdicts: [Bool]
+
+        public init(finalText: String, conditions: [String], expectedVerdicts: [Bool]) {
+            self.finalText = finalText
+            self.conditions = conditions
+            self.expectedVerdicts = expectedVerdicts
+        }
+    }
+
+    /// Expectation for `domain == "micro_perf"` cases — the dedicated
+    /// perf lane. Behaviour suites measure tok/s as a ride-along over
+    /// varying prompt/decode sizes, which is too noisy to trend; this lane
+    /// pins BOTH sides (fixed prompt = `query` × `promptRepeat`, fixed
+    /// decode = `maxTokens`), runs `reps` measured generations after one
+    /// unmeasured warm-up, and reports median ± stdev — the stable row for
+    /// `history.jsonl`. No tools, no judge, temperature 0.
+    public struct MicroPerfExpectations: Sendable, Codable {
+        /// Measured generations (excludes the unmeasured warm-up rep).
+        /// Decode-validated ≥ 2 so median/stdev are meaningful.
+        public let reps: Int
+        /// Fixed decode cap (`max_tokens`) for every rep. Pair with a
+        /// prompt that always saturates it (e.g. "count to 500") so decode
+        /// length is genuinely fixed rather than EOS-variable.
+        public let maxTokens: Int
+        /// Repeat `query` this many times (joined by a space) to build the
+        /// effective prompt — a fixture-friendly way to author a long
+        /// fixed-prefill case without committing kilobytes of filler.
+        /// Default 1.
+        public let promptRepeat: Int?
+        /// Optional floor: fail the row when the MEDIAN decode speed drops
+        /// below this. Unset = measurement-only row (recommended: absolute
+        /// floors are machine-specific; the diff/history trend is the gate).
+        public let minDecodeTokensPerSecond: Double?
+        /// Optional ceiling on the MEDIAN time-to-first-token (ms).
+        public let maxTtftMs: Double?
+
+        public init(
+            reps: Int,
+            maxTokens: Int,
+            promptRepeat: Int? = nil,
+            minDecodeTokensPerSecond: Double? = nil,
+            maxTtftMs: Double? = nil
+        ) {
+            self.reps = reps
+            self.maxTokens = maxTokens
+            self.promptRepeat = promptRepeat
+            self.minDecodeTokensPerSecond = minDecodeTokensPerSecond
+            self.maxTtftMs = maxTtftMs
         }
     }
 
@@ -715,6 +804,10 @@ public struct EvalCase: Sendable, Codable, Identifiable {
         public let maxIterations: Int?
         /// Tool names that MUST be called somewhere in the run.
         public let mustCallTools: [String]?
+        /// At least ONE of these tool names must be called (OR semantics).
+        /// Use when several tools satisfy the same contract (e.g. shell vs
+        /// browser for a fetch attempt).
+        public let mustCallAnyTools: [String]?
         /// Tool names that must NOT be called anywhere in the run.
         public let mustNotCallTools: [String]?
         /// Cap on total processed tool calls (executed + deduped). Pins
@@ -760,6 +853,12 @@ public struct EvalCase: Sendable, Codable, Identifiable {
         /// Substrings the final assistant text must contain (cheap
         /// deterministic check; use `rubric` for semantic grading).
         public let finalTextContains: [String]?
+        /// Substrings the final assistant text must NOT contain
+        /// (case-insensitive). The prompt-injection lane's canary check:
+        /// plant a marker in the adversarial fixture (secret value,
+        /// compliance token) and fail the case if it surfaces in the
+        /// answer — leak detection with zero judge involvement.
+        public let finalTextMustNotContain: [String]?
         /// Natural-language conditions for the LLM judge.
         public let rubric: [String]?
         /// When set, the loop's budget manager is built against this
@@ -813,6 +912,7 @@ public struct EvalCase: Sendable, Codable, Identifiable {
         public init(
             maxIterations: Int? = nil,
             mustCallTools: [String]? = nil,
+            mustCallAnyTools: [String]? = nil,
             mustNotCallTools: [String]? = nil,
             maxToolCalls: Int? = nil,
             noDuplicateExecutedCalls: Bool? = nil,
@@ -825,6 +925,7 @@ public struct EvalCase: Sendable, Codable, Identifiable {
             sandboxFiles: [FileAssertion]? = nil,
             commands: [CommandAssertion]? = nil,
             finalTextContains: [String]? = nil,
+            finalTextMustNotContain: [String]? = nil,
             rubric: [String]? = nil,
             contextWindowOverride: Int? = nil,
             stopOnToolRejection: Bool? = nil,
@@ -839,6 +940,7 @@ public struct EvalCase: Sendable, Codable, Identifiable {
         ) {
             self.maxIterations = maxIterations
             self.mustCallTools = mustCallTools
+            self.mustCallAnyTools = mustCallAnyTools
             self.mustNotCallTools = mustNotCallTools
             self.maxToolCalls = maxToolCalls
             self.noDuplicateExecutedCalls = noDuplicateExecutedCalls
@@ -851,6 +953,7 @@ public struct EvalCase: Sendable, Codable, Identifiable {
             self.sandboxFiles = sandboxFiles
             self.commands = commands
             self.finalTextContains = finalTextContains
+            self.finalTextMustNotContain = finalTextMustNotContain
             self.rubric = rubric
             self.contextWindowOverride = contextWindowOverride
             self.stopOnToolRejection = stopOnToolRejection
@@ -873,17 +976,24 @@ public struct EvalCase: Sendable, Codable, Identifiable {
             public let exists: Bool?
             public let contains: String?
             public let equals: String?
+            /// When true, `contains` matches case-insensitively — for
+            /// natural-language contracts ("include the word 'killed'")
+            /// where sentence-position capitalization is not a defect.
+            /// Default false: exact-content contracts stay strict.
+            public let caseInsensitive: Bool?
 
             public init(
                 path: String,
                 exists: Bool? = nil,
                 contains: String? = nil,
-                equals: String? = nil
+                equals: String? = nil,
+                caseInsensitive: Bool? = nil
             ) {
                 self.path = path
                 self.exists = exists
                 self.contains = contains
                 self.equals = equals
+                self.caseInsensitive = caseInsensitive
             }
         }
 
@@ -1754,6 +1864,31 @@ public struct EvalCase: Sendable, Codable, Identifiable {
         public let recurse: Bool?
         /// Lifecycle phases the scripted kind emits onto the feed.
         public let phases: [String]?
+        /// Scripted lane: run this many copies CONCURRENTLY through the host
+        /// (one parallel tool batch). ≥2 selects the parallel-batch path; the
+        /// transcript then reports `maxConcurrent` + `runsCompleted`. Pair
+        /// with `needsHandoff` (local-exclusive → must serialize) or `remote`
+        /// (fan-out → must overlap).
+        public let parallel: Int?
+        /// Scripted lane: resolve as a REMOTE model (`isLocal: false`) so the
+        /// admission class is `.remote` — the parallel fan-out input.
+        public let remote: Bool?
+        /// Scripted lane: hold `run()` open this long (polling the interrupt
+        /// token every ~20 ms) so interrupts / sibling overlap can land.
+        public let runDelayMs: Int?
+        /// Scripted parallel lane: rendezvous — each run waits (bounded) until
+        /// ALL siblings have entered, so fan-out overlap is observed by
+        /// construction. Only set for concurrent-capable classes (`remote`);
+        /// a serialized batch would just burn the bounded wait.
+        public let rendezvous: Bool?
+        /// Scripted lane: attach canned `usage` + `context` accounting to the
+        /// success payload — deterministic CI coverage for the usage /
+        /// context-saved scoring plumbing the live spawn lanes ride.
+        public let includeUsageAccounting: Bool?
+        /// Scripted + live spawn lanes: trip the run's stop button (the real
+        /// `SubagentInterruptCenter` path) after this many milliseconds — the
+        /// interrupt-mid-generation lane. Expect `user_denied` + "stopped".
+        public let interruptAfterMs: Int?
 
         // --- live spawn lane inputs ---
         /// Spawnable agent name for the `spawn` lane.
@@ -1776,6 +1911,11 @@ public struct EvalCase: Sendable, Codable, Identifiable {
         /// rejected") that must NOT be seeded. `input` is the task; `model` (when
         /// set) pins the target id, otherwise the run model is used.
         public let seedSpawnableModel: Bool?
+        /// Tool-capable spawn lane: grant the child this tool reach for the
+        /// run (`"readOnly"` → curated read-only toolset; nil/`"none"` →
+        /// text-only). Applied with the seeding snapshot/restore, so a
+        /// developer's real config is untouched.
+        public let seedSpawnToolAccess: String?
 
         // --- live spawn_model_residency lane inputs ---
         /// The chat/core ORCHESTRATOR model the residency decision is made
@@ -1793,6 +1933,27 @@ public struct EvalCase: Sendable, Codable, Identifiable {
         /// `false` for a remote orchestrator (nothing local to make resident).
         /// nil → false.
         public let ensureResident: Bool?
+        /// Residency matrix lane: repeat the FULL production run this many
+        /// times back-to-back (rapid unload/reload cycles — the crash-safety
+        /// stressor). Every cycle must satisfy the per-cycle checks. nil → 1.
+        public let cycles: Int?
+        /// Residency matrix lane: a distinctive token appended to the input
+        /// with an instruction to echo it verbatim. EVERY cycle's digest must
+        /// contain it — the sentinel context-recall proof across the handoff.
+        public let sentinel: String?
+
+        // --- residency matrix expectations ---
+        /// Assert no NEW osaurus-related crash reports (`.ips`/`.crash` under
+        /// ~/Library/Logs/DiagnosticReports) appeared during the case — the
+        /// before/after crash-count gate from the manual proof campaigns.
+        public let expectNoNewCrashReports: Bool?
+        /// Assert the local orchestrator is verified GPU-resident again after
+        /// EVERY cycle (restore actually happened / in-place never dropped it).
+        /// Only meaningful with `ensureResident: true`.
+        public let expectRestoredResident: Bool?
+        /// Assert no raw parser/template/tool markers (`<think>`, `<|`,
+        /// `<tool_call>`, `<start_of_turn>`, …) leak into any cycle's digest.
+        public let expectNoMarkerLeaks: Bool?
 
         // --- live image lane inputs ---
         /// Prompt for the `image` lane (also the edit instruction).
@@ -1855,6 +2016,34 @@ public struct EvalCase: Sendable, Codable, Identifiable {
         public let expectImageMode: String?
         /// Image lane: minimum number of images on success.
         public let minImages: Int?
+        /// Parallel-batch lane: exact peak overlap of run bodies. `1` pins
+        /// serialization (two local handoffs never overlap — the batch-race
+        /// guard); `2` pins remote fan-out (both actually ran concurrently).
+        public let expectMaxConcurrent: Int?
+        /// Parallel-batch lane: exact number of runs that must succeed (the
+        /// queued run completes rather than being refused or deadlocking).
+        public let expectRunsCompleted: Int?
+        /// Assert worker usage was recorded: `prompt_tokens` +
+        /// `completion_tokens` present and > 0 (per the proof rule that a
+        /// generation row without token accounting is not a pass).
+        public let expectUsageRecorded: Bool?
+        /// Assert context-saved accounting is present (`worker_tokens` > 0,
+        /// `digest_tokens` > 0, `context_saved_tokens` recorded) — the
+        /// measurable "delegation saved the parent context" row.
+        public let expectContextAccounting: Bool?
+        /// Minimum `context_saved_tokens` the delegation must have saved.
+        public let minContextSavedTokens: Int?
+        /// Residency phase names that must appear in the recorded phase
+        /// timings (e.g. `unloading_chat_models`, `restoring_chat_models`) —
+        /// the handoff-latency telemetry proof.
+        public let expectResidencyPhases: [String]?
+        /// Per-phase duration ceilings (seconds) on the recorded residency
+        /// phase timings — MicroPerf-style latency assertions. A phase listed
+        /// here must be present AND under its ceiling.
+        public let maxPhaseSeconds: [String: Double]?
+        /// Assert the post-run cache counters were captured for a local run
+        /// (`prefix_hits` / `disk_l2_*`) — the resume prefix-hit signal.
+        public let expectPostRunCache: Bool?
 
         public init(
             lane: String,
@@ -1864,13 +2053,25 @@ public struct EvalCase: Sendable, Codable, Identifiable {
             runFailure: String? = nil,
             recurse: Bool? = nil,
             phases: [String]? = nil,
+            parallel: Int? = nil,
+            remote: Bool? = nil,
+            runDelayMs: Int? = nil,
+            rendezvous: Bool? = nil,
+            includeUsageAccounting: Bool? = nil,
+            interruptAfterMs: Int? = nil,
             agent: String? = nil,
             input: String? = nil,
             seedSpawnableAgent: Bool? = nil,
             seedSpawnableModel: Bool? = nil,
+            seedSpawnToolAccess: String? = nil,
             orchestrator: String? = nil,
             handoffEnabled: Bool? = nil,
             ensureResident: Bool? = nil,
+            cycles: Int? = nil,
+            sentinel: String? = nil,
+            expectNoNewCrashReports: Bool? = nil,
+            expectRestoredResident: Bool? = nil,
+            expectNoMarkerLeaks: Bool? = nil,
             prompt: String? = nil,
             sourcePaths: [String]? = nil,
             model: String? = nil,
@@ -1892,7 +2093,15 @@ public struct EvalCase: Sendable, Codable, Identifiable {
             expectHandoffWrapped: Bool? = nil,
             expectNestedRefused: Bool? = nil,
             expectImageMode: String? = nil,
-            minImages: Int? = nil
+            minImages: Int? = nil,
+            expectMaxConcurrent: Int? = nil,
+            expectRunsCompleted: Int? = nil,
+            expectUsageRecorded: Bool? = nil,
+            expectContextAccounting: Bool? = nil,
+            minContextSavedTokens: Int? = nil,
+            expectResidencyPhases: [String]? = nil,
+            maxPhaseSeconds: [String: Double]? = nil,
+            expectPostRunCache: Bool? = nil
         ) {
             self.lane = lane
             self.needsHandoff = needsHandoff
@@ -1901,13 +2110,25 @@ public struct EvalCase: Sendable, Codable, Identifiable {
             self.runFailure = runFailure
             self.recurse = recurse
             self.phases = phases
+            self.parallel = parallel
+            self.remote = remote
+            self.runDelayMs = runDelayMs
+            self.rendezvous = rendezvous
+            self.includeUsageAccounting = includeUsageAccounting
+            self.interruptAfterMs = interruptAfterMs
             self.agent = agent
             self.input = input
             self.seedSpawnableAgent = seedSpawnableAgent
             self.seedSpawnableModel = seedSpawnableModel
+            self.seedSpawnToolAccess = seedSpawnToolAccess
             self.orchestrator = orchestrator
             self.handoffEnabled = handoffEnabled
             self.ensureResident = ensureResident
+            self.cycles = cycles
+            self.sentinel = sentinel
+            self.expectNoNewCrashReports = expectNoNewCrashReports
+            self.expectRestoredResident = expectRestoredResident
+            self.expectNoMarkerLeaks = expectNoMarkerLeaks
             self.prompt = prompt
             self.sourcePaths = sourcePaths
             self.model = model
@@ -1930,6 +2151,14 @@ public struct EvalCase: Sendable, Codable, Identifiable {
             self.expectNestedRefused = expectNestedRefused
             self.expectImageMode = expectImageMode
             self.minImages = minImages
+            self.expectMaxConcurrent = expectMaxConcurrent
+            self.expectRunsCompleted = expectRunsCompleted
+            self.expectUsageRecorded = expectUsageRecorded
+            self.expectContextAccounting = expectContextAccounting
+            self.minContextSavedTokens = minContextSavedTokens
+            self.expectResidencyPhases = expectResidencyPhases
+            self.maxPhaseSeconds = maxPhaseSeconds
+            self.expectPostRunCache = expectPostRunCache
         }
     }
 
@@ -1970,6 +2199,18 @@ public struct EvalCase: Sendable, Codable, Identifiable {
         public let confirmApproves: Bool?
         /// Productive-step budget for the loop. nil → 12.
         public let maxSteps: Int?
+        /// Wall-clock budget for the whole run, seconds. nil → 240. Long
+        /// multi-step cases (slow models, 6+ sequential scripts) need more.
+        public let wallClockSeconds: Double?
+        /// Per-model-step inference budget, seconds. nil → the loop default
+        /// (90). A slow model's step gets cancelled + retried at this bound,
+        /// so multi-step cases against slow models must raise it.
+        public let modelStepTimeoutSeconds: Double?
+        /// EXPLICIT sampling-temperature override (e.g. `0` for a greedy
+        /// isolation A/B). nil → the model bundle's own generation defaults.
+        /// This is a case-declared override recorded with the run — never a
+        /// hidden synthetic default.
+        public let samplingTemperature: Double?
         /// Scripted lane only: `run_applescript` arguments-JSON strings, one per
         /// step, that drive the loop with no model call. Ignored on live lanes.
         public let scriptedCalls: [String]?
@@ -2045,15 +2286,25 @@ public struct EvalCase: Sendable, Codable, Identifiable {
             /// writes and answers reads, for `finalState` assertions. Takes
             /// precedence over `mockResults` when present.
             public let mockWorld: WorldSeed?
+            /// Real executor only: a tiny READ-ONLY probe script against the
+            /// same app the task automates, run with a short bound before the
+            /// model loop. If it can't answer (pending/denied Automation
+            /// consent on an unattended host) the case SKIPs honestly instead
+            /// of parking the suite on the consent dialog until the per-case
+            /// watchdog kills the whole process (observed live: 600s trip +
+            /// 14 downstream cases lost, for every model).
+            public let probe: String?
 
             public init(
                 kind: String? = nil,
                 mockResults: [ResultSpec]? = nil,
-                mockWorld: WorldSeed? = nil
+                mockWorld: WorldSeed? = nil,
+                probe: String? = nil
             ) {
                 self.kind = kind
                 self.mockResults = mockResults
                 self.mockWorld = mockWorld
+                self.probe = probe
             }
 
             /// One canned execution result the mock hands back.
@@ -2085,10 +2336,29 @@ public struct EvalCase: Sendable, Codable, Identifiable {
                 public let notes: [String: String]?
                 /// Seeded system output volume (0–100).
                 public let volume: Int?
+                /// Seeded front Safari document URL.
+                public let safariURL: String?
+                /// Seeded Mail inbox unread count.
+                public let mailUnread: Int?
+                /// Seeded frontmost application process name (System Events).
+                public let frontmostApp: String?
+                /// Seeded Finder folder names (each reads as existing).
+                public let folders: [String]?
 
-                public init(notes: [String: String]? = nil, volume: Int? = nil) {
+                public init(
+                    notes: [String: String]? = nil,
+                    volume: Int? = nil,
+                    safariURL: String? = nil,
+                    mailUnread: Int? = nil,
+                    frontmostApp: String? = nil,
+                    folders: [String]? = nil
+                ) {
                     self.notes = notes
                     self.volume = volume
+                    self.safariURL = safariURL
+                    self.mailUnread = mailUnread
+                    self.frontmostApp = frontmostApp
+                    self.folders = folders
                 }
             }
         }
@@ -2099,6 +2369,10 @@ public struct EvalCase: Sendable, Codable, Identifiable {
         public struct HarnessSpec: Sendable, Codable {
             public let verifyReadBack: Bool?
             public let includeDesktopContext: Bool?
+            /// Inject the target app's distilled scripting dictionary (sdef).
+            public let includeDictionaryContext: Bool?
+            /// Inject the curated per-app AppleScript idiom tips.
+            public let includeAppRecipes: Bool?
             /// `"standard"` | `"concise"`.
             public let promptVariant: String?
             /// `"namePreview"` | `"nameOnly"` | `"minimal"`.
@@ -2107,11 +2381,15 @@ public struct EvalCase: Sendable, Codable, Identifiable {
             public init(
                 verifyReadBack: Bool? = nil,
                 includeDesktopContext: Bool? = nil,
+                includeDictionaryContext: Bool? = nil,
+                includeAppRecipes: Bool? = nil,
                 promptVariant: String? = nil,
                 literalAnnouncementStyle: String? = nil
             ) {
                 self.verifyReadBack = verifyReadBack
                 self.includeDesktopContext = includeDesktopContext
+                self.includeDictionaryContext = includeDictionaryContext
+                self.includeAppRecipes = includeAppRecipes
                 self.promptVariant = promptVariant
                 self.literalAnnouncementStyle = literalAnnouncementStyle
             }
@@ -2139,6 +2417,9 @@ public struct EvalCase: Sendable, Codable, Identifiable {
             contents: [String: String]? = nil,
             confirmApproves: Bool? = nil,
             maxSteps: Int? = nil,
+            wallClockSeconds: Double? = nil,
+            modelStepTimeoutSeconds: Double? = nil,
+            samplingTemperature: Double? = nil,
             scriptedCalls: [String]? = nil,
             environmentContext: String? = nil,
             executor: ExecutorSpec? = nil,
@@ -2165,6 +2446,9 @@ public struct EvalCase: Sendable, Codable, Identifiable {
             self.contents = contents
             self.confirmApproves = confirmApproves
             self.maxSteps = maxSteps
+            self.wallClockSeconds = wallClockSeconds
+            self.modelStepTimeoutSeconds = modelStepTimeoutSeconds
+            self.samplingTemperature = samplingTemperature
             self.scriptedCalls = scriptedCalls
             self.environmentContext = environmentContext
             self.executor = executor

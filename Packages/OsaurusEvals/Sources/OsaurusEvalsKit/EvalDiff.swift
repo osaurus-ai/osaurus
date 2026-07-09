@@ -107,6 +107,12 @@ public struct EvalDiffSummary: Sendable, Codable, Equatable {
     public let currentModelId: String?
     public let domainCounts: [EvalDiffDomainCount]
     public let regressions: [EvalCaseDelta]
+    /// Pass→not-pass flips with repeat-trial flake evidence (either side ran
+    /// `--repeat` and its trials DISAGREED, or the current side still passed
+    /// some trials). Surfaced for review but NOT blocking — a flip inside a
+    /// case's observed flake band is noise, not a regression. Flips with no
+    /// trial evidence (single-execution runs) stay in `regressions`.
+    public let suspectedFlaky: [EvalCaseDelta]
     public let newFailures: [EvalCaseDelta]
     public let fixed: [EvalCaseDelta]
     public let persistentFailures: [EvalCaseDelta]
@@ -153,6 +159,11 @@ public struct EvalDiffSummary: Sendable, Codable, Equatable {
             )
         }
         appendConsoleDeltaSection("regressions (pass -> not-pass)", regressions, into: &lines)
+        appendConsoleDeltaSection(
+            "suspected flaky (flip within observed flake band — review, not blocking)",
+            suspectedFlaky,
+            into: &lines
+        )
         appendConsoleDeltaSection("new failing cases", newFailures, into: &lines)
         appendConsoleDeltaSection("fixed (fail/err -> pass)", fixed, into: &lines)
         if !perfWins.isEmpty {
@@ -207,6 +218,7 @@ public struct EvalDiffSummary: Sendable, Codable, Equatable {
             )
         }
         appendMarkdownDeltaSection("Blocking Regressions", regressions, into: &lines)
+        appendMarkdownDeltaSection("Suspected Flaky (non-blocking)", suspectedFlaky, into: &lines)
         appendMarkdownDeltaSection("New Failing Cases", newFailures, into: &lines)
         appendMarkdownDeltaSection("Fixed Cases", fixed, into: &lines)
         appendMarkdownDeltaSection("Persistent Failures", persistentFailures, into: &lines)
@@ -269,6 +281,15 @@ public enum EvalDiff {
         let latencyMs: Double?
         let notes: [String]
         let telemetry: EvalCaseTelemetry?
+        /// Repeat-trial evidence (`--repeat N`), nil for single executions.
+        let trials: Int?
+        let trialsPassed: Int?
+
+        /// Trials disagreed — observed flake.
+        var isFlaky: Bool {
+            guard let trials, let trialsPassed else { return false }
+            return trialsPassed > 0 && trialsPassed < trials
+        }
     }
 
     public static func compare(
@@ -287,6 +308,7 @@ public enum EvalDiff {
         let baselineOnly = baselineIds.subtracting(currentIds).sorted()
 
         var regressions: [EvalCaseDelta] = []
+        var suspectedFlaky: [EvalCaseDelta] = []
         var fixed: [EvalCaseDelta] = []
         var persistentFailures: [EvalCaseDelta] = []
         var newFailures: [EvalCaseDelta] = []
@@ -300,7 +322,11 @@ public enum EvalDiff {
             let c = currentIndex.byId[id]
             let delta = EvalCaseDelta(baseline: b, current: c)
             if isBlockingRegression(baseline: b?.outcome, current: c?.outcome) {
-                regressions.append(delta)
+                if hasFlakeEvidence(baseline: b, current: c) {
+                    suspectedFlaky.append(delta)
+                } else {
+                    regressions.append(delta)
+                }
             } else if isFixed(baseline: b?.outcome, current: c?.outcome) {
                 fixed.append(delta)
             } else if isFailing(b?.outcome) && isFailing(c?.outcome) {
@@ -328,6 +354,7 @@ public enum EvalDiff {
             currentModelId: commonModelId(current),
             domainCounts: domainCounts(baselineIndex.cases, currentIndex.cases),
             regressions: regressions,
+            suspectedFlaky: suspectedFlaky,
             newFailures: newFailures,
             fixed: fixed,
             persistentFailures: persistentFailures,
@@ -356,7 +383,9 @@ public enum EvalDiff {
                     outcome: row.outcome,
                     latencyMs: row.latencyMs,
                     notes: row.notes,
-                    telemetry: row.telemetry
+                    telemetry: row.telemetry,
+                    trials: row.trials,
+                    trialsPassed: row.trialsPassed
                 )
                 cases.append(snap)
                 if byId[row.id] != nil {
@@ -439,6 +468,22 @@ public enum EvalDiff {
     private static func isFixed(baseline: EvalCaseOutcome?, current: EvalCaseOutcome?) -> Bool {
         guard let baseline, let current else { return false }
         return (baseline == .failed || baseline == .errored) && current == .passed
+    }
+
+    /// A pass→not-pass flip is downgraded from "blocking regression" to
+    /// "suspected flaky" only when repeat trials produced DIRECT flake
+    /// evidence: either side's trials disagreed with each other, or the
+    /// current side still passed at least one trial. A current side that
+    /// failed EVERY one of ≥2 trials is strong evidence of a real
+    /// regression and stays blocking, as does any flip with no trial data
+    /// (single executions carry no flake information).
+    private static func hasFlakeEvidence(
+        baseline: CaseSnapshot?,
+        current: CaseSnapshot?
+    ) -> Bool {
+        if baseline?.isFlaky == true { return true }
+        if let current, current.isFlaky { return true }
+        return false
     }
 
     private static func isFailing(_ outcome: EvalCaseOutcome?) -> Bool {

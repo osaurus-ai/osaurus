@@ -1,0 +1,20 @@
+{
+  "id": "subagent.scripted-usage-accounting",
+  "domain": "subagent",
+  "label": "Subagent • usage + context-saved accounting flows into the transcript",
+  "query": "A scripted run reports worker usage and context-saved accounting.",
+  "notes": "Model-free. Pins the TELEMETRY PLUMBING the live spawn lanes ride: a success payload carrying `usage` (prompt/completion/tok/s) and `context` (worker_tokens / digest_tokens / context_saved_tokens) must surface in the transcript and satisfy the usage + context-saved matchers. A regression here means live context-offload accounting silently vanishes from payloads, reports, and telemetry.",
+  "fixtures": {},
+  "expect": {
+    "subagent": {
+      "lane": "scripted",
+      "decision": "allow",
+      "phases": ["running"],
+      "includeUsageAccounting": true,
+      "expectSuccess": true,
+      "expectUsageRecorded": true,
+      "expectContextAccounting": true,
+      "minContextSavedTokens": 100
+    }
+  }
+}

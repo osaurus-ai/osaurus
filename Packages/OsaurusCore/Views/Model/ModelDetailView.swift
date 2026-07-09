@@ -31,8 +31,18 @@ struct ModelDetailView: View, Identifiable {
     /// Unique identifier for Identifiable conformance (used for sheet presentation)
     let id = UUID()
 
-    /// The model to display details for
-    let model: MLXModel
+    /// The build currently displayed. Starts as the model the sheet was
+    /// opened with; the Versions picker swaps it in place (see
+    /// `selectVariant`) so the sheet doesn't tear down and re-animate.
+    @State private var selectedModel: MLXModel
+
+    /// Alias so the body reads naturally and existing call sites compile
+    /// unchanged.
+    private var model: MLXModel { selectedModel }
+
+    /// Every precision/quant build of this model's family (including
+    /// `model` itself). More than one entry surfaces the Versions picker.
+    var variants: [MLXModel] = []
 
     // MARK: - State
 
@@ -90,8 +100,9 @@ struct ModelDetailView: View, Identifiable {
     /// shared cache in `init` so a warm cache shows the checkmark immediately.
     @State private var resolvedIsDownloaded: Bool
 
-    init(model: MLXModel) {
-        self.model = model
+    init(model: MLXModel, variants: [MLXModel] = []) {
+        self._selectedModel = State(initialValue: model)
+        self.variants = variants
         self._resolvedIsDownloaded = State(
             initialValue: MLXModelDownloadCache.value(for: model.id) ?? false
         )
@@ -118,6 +129,8 @@ struct ModelDetailView: View, Identifiable {
             ScrollView {
                 VStack(spacing: 14) {
                     compatibilityLine
+
+                    variantPickerSection
 
                     runtimeDiagnosticsCard
 
@@ -167,12 +180,58 @@ struct ModelDetailView: View, Identifiable {
         }
     }
 
+    /// Swap the displayed build in place: clear everything keyed to the old
+    /// repo and reload for the new one. The view (and its sheet) stay alive,
+    /// so there's no teardown/entrance animation — sections just show their
+    /// loading placeholders until the new repo's data lands.
+    private func selectVariant(_ variant: MLXModel) {
+        guard variant.id != selectedModel.id else { return }
+        selectedModel = variant
+
+        estimatedSize = nil
+        isEstimating = false
+        estimateError = nil
+        hfDetails = nil
+        isLoadingHFDetails = false
+        readme = nil
+        isLoadingReadme = false
+        allFiles = nil
+        isLoadingFiles = false
+        isRepairing = false
+        repairResult = nil
+        didCopyPath = false
+        diagnostics = nil
+        resolvedIsDownloaded = MLXModelDownloadCache.value(for: variant.id) ?? false
+
+        Task { await loadDiagnostics() }
+        Task { await loadDownloadState() }
+        Task {
+            await estimateIfNeeded()
+            await loadHFDetails()
+            await loadReadmeIfNeeded()
+        }
+        // The file listing normally loads when the section is expanded; if
+        // it's already open, refetch for the new repo right away.
+        if isFilesExpanded {
+            Task { await loadAllFiles() }
+        }
+    }
+
+    /// True while a loader's result still belongs to the displayed repo.
+    /// In-flight loads for a previous variant bail instead of clobbering
+    /// the freshly reset state.
+    private func isCurrent(_ repoId: String) -> Bool {
+        selectedModel.id == repoId
+    }
+
     /// Resolve `model.isDownloaded` off the main thread and publish it. Reading
     /// it goes through the shared cache and, on a miss, enumerates the bundle
     /// directory — too slow to run inside the view body on a cold or slow disk.
     private func loadDownloadState() async {
-        let value = await Self.computeDownloadState(for: model)
+        let target = model
+        let value = await Self.computeDownloadState(for: target)
         await MainActor.run {
+            guard isCurrent(target.id) else { return }
             self.resolvedIsDownloaded = value
         }
     }
@@ -187,8 +246,10 @@ struct ModelDetailView: View, Identifiable {
     /// thread on a cold or slow disk.
     private func loadDiagnostics() async {
         guard diagnostics == nil else { return }
-        let report = await Self.computeDiagnostics(for: model)
+        let target = model
+        let report = await Self.computeDiagnostics(for: target)
         await MainActor.run {
+            guard isCurrent(target.id) else { return }
             self.diagnostics = report
         }
     }
@@ -204,8 +265,10 @@ struct ModelDetailView: View, Identifiable {
     private func loadReadmeIfNeeded() async {
         guard readme == nil, !isLoadingReadme else { return }
         isLoadingReadme = true
-        let text = await HuggingFaceService.shared.fetchReadme(repoId: model.id)
+        let repoId = model.id
+        let text = await HuggingFaceService.shared.fetchReadme(repoId: repoId)
         await MainActor.run {
+            guard isCurrent(repoId) else { return }
             self.readme = text
             self.isLoadingReadme = false
         }
@@ -215,12 +278,14 @@ struct ModelDetailView: View, Identifiable {
     private func loadAllFiles() async {
         guard allFiles == nil, !isLoadingFiles else { return }
         isLoadingFiles = true
+        let repoId = model.id
         let files = await HuggingFaceService.shared.fetchAllFiles(
-            repoId: model.id,
+            repoId: repoId,
             downloadPatterns: ModelDownloadService.downloadFilePatterns,
             excludedFiles: ModelDownloadService.downloadExcludedFiles
         )
         await MainActor.run {
+            guard isCurrent(repoId) else { return }
             self.allFiles = files
             self.isLoadingFiles = false
         }
@@ -230,8 +295,10 @@ struct ModelDetailView: View, Identifiable {
     private func loadHFDetails() async {
         guard !isLoadingHFDetails else { return }
         isLoadingHFDetails = true
-        let details = await HuggingFaceService.shared.fetchModelDetails(repoId: model.id)
+        let repoId = model.id
+        let details = await HuggingFaceService.shared.fetchModelDetails(repoId: repoId)
         await MainActor.run {
+            guard isCurrent(repoId) else { return }
             self.hfDetails = details
             self.isLoadingHFDetails = false
         }
@@ -691,6 +758,181 @@ struct ModelDetailView: View, Identifiable {
         )
     }
 
+    // MARK: - Versions (precision variants)
+
+    /// Picker over every precision/quant build of this model family, shown
+    /// only when there is more than one. Rows lead with plain language
+    /// ("Highest precision" / "Smallest download") plus size and RAM fit;
+    /// selecting a row swaps the whole sheet to that build so the footer's
+    /// Download/Delete act on it. The build the catalog card represents is
+    /// marked Recommended.
+    @ViewBuilder
+    private var variantPickerSection: some View {
+        if variants.count > 1 {
+            let totalMem = systemMonitor.totalMemoryGB
+            let recommendedId = ModelDownloadView.defaultFamilyVariant(
+                among: variants,
+                totalMemoryGB: totalMem,
+                downloadStates: modelManager.downloadStates
+            ).id
+            let ordered = variants.sorted { lhs, rhs in
+                let l = lhs.totalSizeEstimateBytes ?? 0
+                let r = rhs.totalSizeEstimateBytes ?? 0
+                if l != r { return l > r }
+                return lhs.id.localizedCaseInsensitiveCompare(rhs.id) == .orderedAscending
+            }
+
+            VStack(alignment: .leading, spacing: 10) {
+                HStack(spacing: 8) {
+                    Text("Versions", bundle: .module)
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundColor(theme.primaryText)
+                    Text("\(variants.count)")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundColor(theme.tertiaryText)
+                    Spacer(minLength: 0)
+                }
+
+                VStack(spacing: 6) {
+                    ForEach(ordered, id: \.id) { variant in
+                        variantRow(
+                            variant,
+                            isRecommended: variant.id == recommendedId,
+                            framing: variantFraming(variant, in: ordered),
+                            totalMemoryGB: totalMem
+                        )
+                    }
+                }
+            }
+            .padding(16)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .detailCardSurface()
+        }
+    }
+
+    /// Plain-language one-liner for a variant's position in the family:
+    /// the largest build is the quality pick, the smallest the download
+    /// pick. `ordered` is size-descending.
+    private func variantFraming(_ variant: MLXModel, in ordered: [MLXModel]) -> String? {
+        guard ordered.count > 1 else { return nil }
+        if variant.id == ordered.first?.id { return L("Highest precision") }
+        if variant.id == ordered.last?.id { return L("Smallest download") }
+        return nil
+    }
+
+    private func variantRow(
+        _ variant: MLXModel,
+        isRecommended: Bool,
+        framing: String?,
+        totalMemoryGB: Double
+    ) -> some View {
+        let isSelected = variant.id == model.id
+        let isOnDisk = MLXModelDownloadCache.value(for: variant.id) ?? false
+        let quantLabel =
+            ModelMetadataParser.quantization(from: variant.id) ?? L("Original")
+        let repoTail = variant.id.split(separator: "/").last.map(String.init) ?? variant.id
+
+        let (fitText, fitTint): (String?, Color) = {
+            let memory = variant.formattedEstimatedMemory
+            switch variant.compatibility(totalMemoryGB: totalMemoryGB) {
+            case .compatible:
+                return (memory.map { L("Runs Well · needs \($0)") } ?? L("Runs Well"), theme.successColor)
+            case .tight:
+                return (memory.map { L("Tight Fit · needs \($0)") } ?? L("Tight Fit"), theme.warningColor)
+            case .tooLarge:
+                return (memory.map { L("Too Large · needs \($0)") } ?? L("Too Large"), theme.errorColor)
+            case .unknown:
+                return (nil, theme.tertiaryText)
+            }
+        }()
+
+        return Button {
+            guard !isSelected else { return }
+            selectVariant(variant)
+        } label: {
+            HStack(spacing: 10) {
+                Image(systemName: isSelected ? "largecircle.fill.circle" : "circle")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundColor(isSelected ? theme.accentColor : theme.tertiaryText)
+
+                VStack(alignment: .leading, spacing: 2) {
+                    HStack(spacing: 6) {
+                        Text(quantLabel)
+                            .font(.system(size: 12, weight: .semibold))
+                            .foregroundColor(theme.primaryText)
+
+                        if let framing {
+                            Text(framing)
+                                .font(.system(size: 11))
+                                .foregroundColor(theme.secondaryText)
+                        }
+
+                        if isRecommended {
+                            Text("Recommended", bundle: .module)
+                                .font(.system(size: 9, weight: .bold))
+                                .foregroundColor(theme.accentColor)
+                                .padding(.horizontal, 6)
+                                .padding(.vertical, 2)
+                                .background(Capsule().fill(theme.accentColor.opacity(0.12)))
+                        }
+
+                        if isOnDisk {
+                            HStack(spacing: 3) {
+                                Image(systemName: "checkmark.circle.fill")
+                                    .font(.system(size: 9, weight: .bold))
+                                Text("Downloaded", bundle: .module)
+                                    .font(.system(size: 9, weight: .bold))
+                            }
+                            .foregroundColor(theme.successColor)
+                        }
+                    }
+
+                    Text(repoTail)
+                        .font(.system(size: 10, design: .monospaced))
+                        .foregroundColor(theme.tertiaryText)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                }
+
+                Spacer(minLength: 8)
+
+                VStack(alignment: .trailing, spacing: 2) {
+                    if let size = variant.formattedDownloadSize {
+                        Text(size)
+                            .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                            .foregroundColor(theme.secondaryText)
+                    }
+                    if let fitText {
+                        Text(fitText)
+                            .font(.system(size: 10, weight: .medium))
+                            .foregroundColor(fitTint)
+                    }
+                }
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 8)
+            .background(
+                RoundedRectangle(cornerRadius: 8)
+                    .fill(
+                        isSelected
+                            ? theme.accentColor.opacity(0.08)
+                            : theme.tertiaryBackground.opacity(0.4)
+                    )
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 8)
+                            .stroke(
+                                isSelected
+                                    ? theme.accentColor.opacity(0.35)
+                                    : theme.cardBorder.opacity(0.5),
+                                lineWidth: 1
+                            )
+                    )
+            )
+            .contentShape(RoundedRectangle(cornerRadius: 8))
+        }
+        .buttonStyle(PlainButtonStyle())
+    }
+
     // MARK: - Model Card (README)
 
     /// The model's README, rendered with the full-fidelity chat markdown
@@ -1142,8 +1384,10 @@ struct ModelDetailView: View, Identifiable {
         if !force, let est = estimatedSize, est > 0 { return }
         isEstimating = true
         estimateError = nil
-        let size = await modelManager.estimateDownloadSize(for: model)
+        let target = model
+        let size = await modelManager.estimateDownloadSize(for: target)
         await MainActor.run {
+            guard isCurrent(target.id) else { return }
             self.estimatedSize = size
             if size == nil { self.estimateError = "Could not estimate size right now." }
             self.isEstimating = false

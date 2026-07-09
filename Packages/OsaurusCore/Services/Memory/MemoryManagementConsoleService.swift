@@ -336,9 +336,22 @@ public struct MemoryManagementConsoleService: Sendable {
         let transcriptCount = (try? countRows(table: "transcript", db: db)) ?? 0
         let pendingSignals = (try? db.pendingSignalsSummary()) ?? PendingSignalsSummary()
         let processingStats = (try? db.processingStats()) ?? ProcessingStats()
+        let latestProcessingStatus =
+            (try? db.recentProcessingLog(limit: 1).first?.status.lowercased()) ?? nil
         let ftsReady = (try? ftsTablesReady(db: db)) ?? false
         let vectorAvailable = includeVectorState ? await MemorySearchService.shared.isVecturaAvailable : false
         let vectorFailures = includeVectorState ? await MemorySearchService.shared.indexFailures() : 0
+        let hasPendingSignals = pendingSignals.totalSignals > 0
+        let hasNoSuccessfulEpisodes = activeEpisodes == 0 && processingStats.successCount == 0
+        let currentErrorNeedsAttention =
+            processingStats.errorCount > 0
+            && (latestProcessingStatus == "error" || hasNoSuccessfulEpisodes)
+        let emptyOnlyNoEpisode =
+            processingStats.emptyCount > 0
+            && hasNoSuccessfulEpisodes
+        let deadLetterNeedsAttention =
+            (processingStats.deadLetterCount > 0 || pendingSignals.deadLetteredSignals > 0)
+            && (latestProcessingStatus == "dead_letter" || hasNoSuccessfulEpisodes)
 
         var diagnostics: [String] = []
         if !databaseOpen {
@@ -357,8 +370,23 @@ public struct MemoryManagementConsoleService: Sendable {
         if let lastOpenError = db.lastOpenErrorDescription, !lastOpenError.isEmpty {
             diagnostics.append("Last open error: \(lastOpenError)")
         }
-        if pendingSignals.totalSignals > 0 && processingStats.totalCalls == 0 {
+        if hasPendingSignals && processingStats.totalCalls == 0 {
             diagnostics.append("Pending signals exist but no processing log rows were written.")
+        }
+        if hasPendingSignals && processingStats.skippedCount > 0 && processingStats.successCount == 0 {
+            diagnostics.append("Turns are buffered, but distillation has only skipped so far.")
+        }
+        if currentErrorNeedsAttention {
+            diagnostics.append("Distillation recorded \(processingStats.errorCount) error row(s).")
+        }
+        if emptyOnlyNoEpisode {
+            diagnostics.append("Distillation recorded \(processingStats.emptyCount) empty result row(s).")
+        }
+        if deadLetterNeedsAttention {
+            diagnostics.append("Some memory signals were dead-lettered after repeated distillation failures.")
+        }
+        if pendingSignals.allTimeSignals > 0 && hasNoSuccessfulEpisodes {
+            diagnostics.append("Chat turns reached memory, but no active episode has been written yet.")
         }
 
         let level: MemoryStorageHealth.Level

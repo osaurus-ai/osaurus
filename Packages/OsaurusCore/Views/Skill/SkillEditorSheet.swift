@@ -201,7 +201,7 @@ struct SkillEditorSheet: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
                 // Identity Section
-                SkillEditorSection(title: L("Identity"), icon: "sparkles") {
+                SkillEditorSection(title: L("editor.section.identity"), icon: "sparkles") {
                     VStack(alignment: .leading, spacing: 16) {
                         // Name
                         VStack(alignment: .leading, spacing: 6) {

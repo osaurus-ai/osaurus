@@ -229,6 +229,7 @@
 				es,
 				ko,
 				ja,
+				ru,
 				"zh-Hant",
 				Base,
 			);

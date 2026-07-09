@@ -73,16 +73,24 @@ public enum SystemPromptTemplates {
     /// Compact agent-loop cheat-sheet for small-context / small local models
     /// (`prefersCompactPrompt`). Same four tools and the load-bearing rules
     /// (always answer in plain text, OPTIONAL 3+ step todo, OPTIONAL complete
-    /// that only closes a todo alongside the answer, one-question clarify,
-    /// file-exists artifact), one line each.
+    /// that only closes a todo alongside the answer, last-resort one-question
+    /// clarify with the anti-punt rule, file-exists artifact), one line each.
+    ///
+    /// The clarify line keeps the false-clarify discipline from the W4 eval
+    /// fixes compressed, not dropped: "fully specified is not ambiguous" +
+    /// the user-asks escape hatch must survive because the compact bootstrap
+    /// skeleton truncates the ClarifyTool description to its first sentence,
+    /// so this bullet is the only place a small model sees the anti-punt
+    /// rule. Argument constraints (option limits, ≥30-char summary) live in
+    /// the constraint-preserving tool schemas and are not restated here.
     public static let agentLoopGuidanceCompact = """
         ## Agent loop
 
-        - Always answer the user in plain text; that plain-text reply ends the turn.
-        - `todo(markdown)` — OPTIONAL checklist for multi-step (3+) work; re-send it with each box checked as you finish. Skip single-step or direct questions.
-        - `complete(summary)` — OPTIONAL: only to close a `todo`, in the SAME message as your answer; a short WHAT+HOW status, not the answer. No vague placeholders.
-        - `clarify(question)` — last resort, NOT for big or multi-step tasks. If the request is fully specified, just do the work. Ask one concrete question only when a required input is missing or contradictory and no sensible default exists (or the user explicitly asks you to); otherwise assume a reasonable default, proceed, and note it.
-        - `share_artifact(path | content+filename)` — the only way the user sees a file/image/report; the file MUST exist first. Sandbox: save under home, not `/tmp`.
+        - Answer the user in plain text; that reply ends the turn.
+        - `todo(markdown)` — OPTIONAL, 3+ step work only: create first, re-send with each box checked. Skip single-step work.
+        - `complete(summary)` — OPTIONAL, only closes a `todo`: short WHAT+HOW status in the SAME message as your answer, not the answer.
+        - `clarify(question)` — last resort; a fully specified task is not ambiguous, just do it. Ask ONE question only when the user asks or a required input is missing/contradictory with no sensible default.
+        - `share_artifact(path | content+filename)` — the only way the user sees a file/image; it MUST exist first. Sandbox: save under home, not `/tmp`.
         """
 
     // MARK: - Grounding
@@ -475,8 +483,8 @@ public enum SystemPromptTemplates {
             : verboseBlocks(groups)
 
         // The "never deny a listed capability" rule is owned by
-        // `toolGroundingLine` / `groundingDirective` (which co-fire whenever
-        // this section renders), so the intro doesn't restate it. Compact
+        // `groundingDirective` (which co-fires whenever this section
+        // renders), so the intro doesn't restate it. Compact
         // mode (small-context models) also drops the worked example — the
         // ids themselves are what stop a small model from denying a
         // capability, and the example's tokens crowd an 8K window.
@@ -762,13 +770,21 @@ public enum SystemPromptTemplates {
     /// one-time cached-prefix bust), matching the other config-driven sections.
     public static func spawnGuidance(
         agents: [SpawnAgentDescriptor],
-        models: [SpawnModelDescriptor]
+        models: [SpawnModelDescriptor],
+        toolAccess: SpawnToolAccess = .none
     ) -> String {
         var lines: [String] = ["## Delegating subtasks (spawn)", ""]
         lines.append(
-            "- You can hand a bounded, self-contained subtask to another worker and get back ONLY a "
-                + "compact result digest (not its transcript). Use it to offload focused "
-                + "text/coding/analysis work; keep the orchestration and the final answer to the user here."
+            "- You can hand a bounded, self-contained subtask to a worker and get back ONLY a "
+                + "compact result digest — the worker's transcript never enters this conversation, "
+                + "so delegating context-heavy work costs you a digest instead of everything the "
+                + "worker read and produced."
+        )
+        lines.append(
+            "- Offload work that would bloat this context: bulk reading + summarization, research "
+                + "and extraction over long material, log/error triage, first drafts. Prefer a "
+                + "small/local worker for that kind of work when one is listed; keep orchestration "
+                + "and the final answer to the user here."
         )
         if !agents.isEmpty {
             lines.append(
@@ -784,10 +800,28 @@ public enum SystemPromptTemplates {
             )
             for model in models { lines.append("  - " + modelLine(model)) }
         }
+        switch toolAccess {
+        case .readOnly:
+            lines.append(
+                "- Workers CAN read files themselves (read-only: file_read / file_search, plus "
+                    + "sandbox reads when available) within a per-run call budget — so you can "
+                    + "delegate \"read these files and report X\" with exact paths in `input` "
+                    + "instead of pasting file contents."
+            )
+        case .none:
+            lines.append(
+                "- Workers are text-only (no tools) — paste ALL material the task needs directly "
+                    + "into `input`; the worker cannot read files or fetch anything itself."
+            )
+        }
         lines.append(
             "- `input` must be the COMPLETE task as a self-contained prompt — the worker sees only that, "
                 + "not this conversation. Pick the target whose description or note best fits the task; "
                 + "if none clearly fits, just do it yourself rather than guessing."
+        )
+        lines.append(
+            "- Spawns of remote/cloud targets may run in parallel (several spawn calls in one turn); "
+                + "spawns of local targets run one at a time — a second local spawn waits for the GPU."
         )
         return lines.joined(separator: "\n")
     }
@@ -995,7 +1029,7 @@ public enum SystemPromptTemplates {
         let shellBullet = sandboxShellBullet(backgroundEnabled: backgroundEnabled)
         return """
             Tool dispatch:
-            - Files: `sandbox_read_file` (read/list); `sandbox_write_file` (`content` whole-file, or `old_string`+`new_string` to edit).
+            - Files: `sandbox_read_file` (read/list); `sandbox_write_file` (`path` FIRST, then `content` whole-file, or `old_string`+`new_string` to edit).
             - Search: `sandbox_search_files` with `target="content"` or `target="files"`.
             \(shellBullet)
             - Multi-line code/scripts: `sandbox_write_file` the script, then `sandbox_exec` to run it (e.g. `python3 script.py`). NEVER embed multi-line code in `python3 -c` / `node -e`: the JSON→shell→code escaping breaks.
@@ -1012,7 +1046,7 @@ public enum SystemPromptTemplates {
         return """
             Tool dispatch:
             - Read files / list dirs / search: `file_read` (reads a file or lists a directory — the path decides), `file_search` (they reach both your workspace and `/workspace/...` sandbox paths — see `## Files`).
-            - Sandbox writes: `sandbox_write_file` (pass `content` to write the whole file, or `old_string`+`new_string` to edit one match — your workspace is read-only).
+            - Sandbox writes: `sandbox_write_file` (pass `path` first, then `content` to write the whole file, or `old_string`+`new_string` to edit one match — your workspace is read-only).
             \(shellBullet)
             - Multi-line code/scripts: `sandbox_write_file` the script, then `sandbox_exec` to run it (e.g. `python3 script.py`). NEVER embed multi-line code in `python3 -c` / `node -e`: the JSON→shell→code escaping breaks.
             - Run independent calls in parallel; chain dependent shell steps with `&&`.
@@ -1041,7 +1075,7 @@ public enum SystemPromptTemplates {
             : "`sandbox_exec` (single-line)"
         return """
             Tool dispatch:
-            - Files: `sandbox_read_file` (read/list); `sandbox_write_file` (`content` whole-file, or `old_string`+`new_string` to edit). Search: `sandbox_search_files` (`target="content"|"files"`).
+            - Files: `sandbox_read_file` (read/list); `sandbox_write_file` (`path` FIRST, then `content` whole-file, or `old_string`+`new_string` to edit). Search: `sandbox_search_files` (`target="content"|"files"`).
             - Shell: \(shell). Multi-line code: `sandbox_write_file` a script then `sandbox_exec` it (e.g. `python3 script.py`) — never `python3 -c` / `node -e`.
             - Install deps with `sandbox_install` (`pip`/`npm`/`apk`); inspect large logs with \(sandboxReadFileHint). Run independent calls in parallel; chain dependent steps with `&&`. Sandbox is disposable.
             """
@@ -1056,7 +1090,7 @@ public enum SystemPromptTemplates {
             : "`sandbox_exec` (single-line)"
         return """
             Tool dispatch:
-            - Read/list/search: `file_read`, `file_search` (reach your workspace and `/workspace/...` sandbox paths — see `## Files`). Sandbox writes: `sandbox_write_file` (`content` whole-file or `old_string`+`new_string` edit; workspace is read-only).
+            - Read/list/search: `file_read`, `file_search` (reach your workspace and `/workspace/...` sandbox paths — see `## Files`). Sandbox writes: `sandbox_write_file` (`path` FIRST, then `content` whole-file or `old_string`+`new_string` edit; workspace is read-only).
             - Shell: \(shell). Multi-line code: `sandbox_write_file` a script then `sandbox_exec` it (e.g. `python3 script.py`) — never `python3 -c` / `node -e`.
             - Install deps with `sandbox_install` (`pip`/`npm`/`apk`); inspect large logs with \(sandboxReadFileHintCombined). Run independent calls in parallel; chain dependent steps with `&&`. Sandbox is disposable.
             """

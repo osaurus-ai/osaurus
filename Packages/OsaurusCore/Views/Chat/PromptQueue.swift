@@ -35,10 +35,23 @@ public enum PromptItem: Identifiable {
     case secret(SecretPromptState)
     case clarify(ClarifyPromptState)
 
-    public nonisolated var id: ObjectIdentifier {
+    nonisolated public var id: ObjectIdentifier {
         switch self {
         case .secret(let s): return ObjectIdentifier(s)
         case .clarify(let c): return ObjectIdentifier(c)
+        }
+    }
+
+    /// Whether the prompt contains sensitive input that should visually
+    /// obscure the conversation behind it. Clarify prompts need the prior
+    /// assistant reasoning readable while the user picks an option; secret
+    /// prompts still get the stronger privacy treatment.
+    nonisolated public var obscuresConversation: Bool {
+        switch self {
+        case .secret:
+            return true
+        case .clarify:
+            return false
         }
     }
 

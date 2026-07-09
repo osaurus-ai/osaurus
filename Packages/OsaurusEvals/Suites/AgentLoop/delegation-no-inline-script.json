@@ -1,0 +1,24 @@
+{
+  "id": "agent_loop.delegation-no-inline-script",
+  "domain": "agent_loop",
+  "label": "agent loop • negative: must not author AppleScript inline",
+  "query": "Tell me the name of the frontmost application on this Mac. You must use mac_query — do NOT write or show AppleScript source code in your answer.",
+  "notes": "Negative delegation discipline: mac_query must fire; visible text must not contain tell/application blocks that look like hand-authored AppleScript. Skips when no AppleScript model is installed.",
+  "fixtures": {
+    "agentCapabilities": {
+      "appleScriptEnabled": true
+    }
+  },
+  "expect": {
+    "agentLoop": {
+      "maxIterations": 6,
+      "mustCallTools": [
+        "mac_query"
+      ],
+      "finalTextMustNotContain": [
+        "tell application",
+        "end tell"
+      ]
+    }
+  }
+}

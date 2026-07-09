@@ -284,25 +284,9 @@ actor MLXService: ToolCapableService {
         {
             issues.append("Model capability detection reports tool calling as unsupported.")
         }
-        if isBlockedProductionModel(modelName: modelName, modelId: modelId) {
-            issues.append(
-                "ZAYA1-VL JANGTQ_K is a diagnostic artifact with a proven first-token fidelity failure; use zaya1-vl-8b-mxfp4 or zaya1-vl-8b-jangtq4 for production serving."
-            )
-        }
-
         if !issues.isEmpty {
             throw RuntimePolicyError(modelName: modelName, issues: issues)
         }
-    }
-
-    private nonisolated static func isBlockedProductionModel(
-        modelName: String,
-        modelId: String
-    ) -> Bool {
-        let combined = "\(modelName) \(modelId)"
-            .lowercased()
-            .replacingOccurrences(of: "-", with: "_")
-        return combined.contains("zaya1_vl_8b_jangtq_k")
     }
 
     nonisolated static func supportsLocalToolCalling(

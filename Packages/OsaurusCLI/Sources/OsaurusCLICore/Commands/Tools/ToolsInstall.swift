@@ -30,11 +30,21 @@ public struct ToolsInstall {
         let grantConsent = !args.contains("--no-consent")
 
         // Check if argument is a local path or URL
-        if src.hasPrefix("/") || src.hasPrefix("./") || src.hasPrefix("http://") || src.hasPrefix("https://") {
+        if isManualInstallSource(src) {
             await installManual(src: src, grantConsent: grantConsent)
         } else {
             await installFromRegistry(pluginId: src, args: args)
         }
+    }
+
+    static func isManualInstallSource(_ src: String) -> Bool {
+        src == "."
+            || src == ".."
+            || src.hasPrefix("/")
+            || src.hasPrefix("./")
+            || src.hasPrefix("../")
+            || src.hasPrefix("http://")
+            || src.hasPrefix("https://")
     }
 
     private static func installFromRegistry(pluginId: String, args: [String]) async {
@@ -81,6 +91,7 @@ public struct ToolsInstall {
 
         // Track the source name for parsing plugin_id and version
         var sourceName: String = ""
+        var preferManifestIdentity = false
 
         // 1. Unpack/Copy to staging
         if src.hasPrefix("http://") || src.hasPrefix("https://") {
@@ -109,6 +120,7 @@ public struct ToolsInstall {
             var isDir: ObjCBool = false
             if fm.fileExists(atPath: pathURL.path, isDirectory: &isDir) {
                 if isDir.boolValue {
+                    preferManifestIdentity = true
                     // Copy contents to tmpDir
                     do {
                         let contents = try fm.contentsOfDirectory(at: pathURL, includingPropertiesForKeys: nil)
@@ -136,13 +148,6 @@ public struct ToolsInstall {
             }
         }
 
-        // 2. Parse plugin_id and version from source name
-        // Expected format: <plugin_id>-<version> (e.g., my-plugin-1.0.0)
-        guard let (pluginId, semver) = parsePluginIdAndVersion(from: sourceName) else {
-            fputs("Invalid naming format. Expected: <plugin_id>-<version>.zip (e.g., my-plugin-1.0.0.zip)\n", stderr)
-            exit(EXIT_FAILURE)
-        }
-
         // Find the plugin root (unzip might create a wrapper directory)
         var pluginRoot: URL = tmpDir
         do {
@@ -159,29 +164,27 @@ public struct ToolsInstall {
             // ignore - use tmpDir as root
         }
 
-        // 2b. Validate the bundled manifest before staging so a bad
-        // `osaurus-plugin.json` is caught BEFORE we touch the install
-        // directory. Without this, the install would succeed and the
-        // plugin would silently fail at host load time with no
-        // actionable error in the CLI. Recognized manifest filenames
-        // mirror what the CLI scaffold emits and what the host accepts.
-        for candidate in ["osaurus-plugin.json", "plugin.json", "manifest.json"] {
-            let manifestURL = pluginRoot.appendingPathComponent(candidate)
-            guard fm.fileExists(atPath: manifestURL.path) else { continue }
-            do {
-                let data = try Data(contentsOf: manifestURL)
-                let report = ManifestValidate.validate(data: data)
-                if !report.errors.isEmpty {
-                    fputs("Manifest validation failed (\(candidate)):\n", stderr)
-                    for e in report.errors { fputs("  - \(e)\n", stderr) }
-                    exit(EXIT_FAILURE)
-                }
-                for w in report.warnings { fputs("  ! \(w)\n", stderr) }
-            } catch {
-                fputs("Failed to read \(candidate): \(error.localizedDescription)\n", stderr)
-                exit(EXIT_FAILURE)
+        // 2. Resolve plugin_id and version. Packaged zips keep using
+        // `<plugin_id>-<version>.zip`; direct project installs such as
+        // `osaurus tools install .` fall back to the scaffold's lightweight
+        // `osaurus-plugin.json` (`plugin_id` + `version`).
+        let pluginId: String
+        let semver: SemanticVersion
+        do {
+            let identity = try resolveManualInstallIdentity(
+                sourceName: sourceName,
+                pluginRoot: pluginRoot,
+                preferManifestIdentity: preferManifestIdentity
+            )
+            pluginId = identity.pluginId
+            semver = identity.version
+            let warnings = try validateBundledManifestIfPresent(in: pluginRoot, identity: identity)
+            for warning in warnings {
+                fputs("  ! \(warning)\n", stderr)
             }
-            break  // first manifest wins, stop probing alternates
+        } catch {
+            fputs("\(error)\n", stderr)
+            exit(EXIT_FAILURE)
         }
 
         // 3. Install to Tools/<id>/<version>
@@ -254,6 +257,204 @@ public struct ToolsInstall {
         }
 
         return nil
+    }
+
+    struct ManualInstallIdentity: Equatable {
+        enum Source: Equatable {
+            case filename
+            case manifest(String)
+        }
+
+        let pluginId: String
+        let version: SemanticVersion
+        let source: Source
+    }
+
+    static func resolveManualInstallIdentity(
+        sourceName: String,
+        pluginRoot: URL,
+        preferManifestIdentity: Bool = false
+    ) throws -> ManualInstallIdentity {
+        if preferManifestIdentity, let manifest = try readResolvedManualInstallManifest(in: pluginRoot) {
+            return manifest
+        }
+
+        if let parsed = parsePluginIdAndVersion(from: sourceName) {
+            return ManualInstallIdentity(pluginId: parsed.pluginId, version: parsed.version, source: .filename)
+        }
+
+        guard let manifest = try readResolvedManualInstallManifest(in: pluginRoot) else {
+            throw ManualInstallError.identityUnavailable(sourceName: sourceName)
+        }
+        return manifest
+    }
+
+    private static func readResolvedManualInstallManifest(in pluginRoot: URL) throws -> ManualInstallIdentity? {
+        guard let manifest = try readManualInstallManifest(in: pluginRoot) else {
+            return nil
+        }
+        guard !manifest.pluginId.isEmpty else {
+            throw ManualInstallError.invalidManifestField(manifest.filename, "plugin_id")
+        }
+        guard let versionString = manifest.version, !versionString.isEmpty else {
+            throw ManualInstallError.invalidManifestField(manifest.filename, "version")
+        }
+        guard let version = SemanticVersion.parse(versionString) else {
+            throw ManualInstallError.invalidManifestVersion(manifest.filename, versionString)
+        }
+        return ManualInstallIdentity(pluginId: manifest.pluginId, version: version, source: .manifest(manifest.filename))
+    }
+
+    static func validateBundledManifestIfPresent(
+        in pluginRoot: URL,
+        identity: ManualInstallIdentity
+    ) throws -> [String] {
+        let fm = FileManager.default
+        for candidate in manifestCandidates {
+            let manifestURL = pluginRoot.appendingPathComponent(candidate)
+            guard fm.fileExists(atPath: manifestURL.path) else { continue }
+            let data: Data
+            do {
+                data = try Data(contentsOf: manifestURL)
+            } catch {
+                throw ManualInstallError.manifestReadFailed(candidate, error.localizedDescription)
+            }
+
+            if candidate == "osaurus-plugin.json", manifestObject(from: data)?["capabilities"] == nil {
+                if identity.source == .manifest(candidate) {
+                    continue
+                }
+                throw ManualInstallError.manifestValidationFailed(candidate, ["`capabilities` is required."])
+            }
+
+            if let manifest = try readManifestIdentity(data: data, filename: candidate) {
+                try validateManifestIdentity(manifest, matches: identity)
+            }
+
+            let report = ManifestValidate.validate(data: data)
+            if !report.errors.isEmpty {
+                throw ManualInstallError.manifestValidationFailed(candidate, report.errors)
+            }
+            if let summary = report.summary {
+                try validateManifestSummary(summary, filename: candidate, matches: identity)
+            }
+            return report.warnings
+        }
+        return []
+    }
+
+    private static func validateManifestSummary(
+        _ summary: ManifestValidate.Report.Summary,
+        filename: String,
+        matches identity: ManualInstallIdentity
+    ) throws {
+        guard summary.pluginId == identity.pluginId else {
+            throw ManualInstallError.manifestIdentityMismatch(filename, summary.pluginId, identity.pluginId)
+        }
+        guard let versionString = summary.version, !versionString.isEmpty else { return }
+        guard let version = SemanticVersion.parse(versionString) else {
+            throw ManualInstallError.invalidManifestVersion(filename, versionString)
+        }
+        guard version == identity.version else {
+            throw ManualInstallError.manifestVersionMismatch(filename, versionString, identity.version.description)
+        }
+    }
+
+    private static func validateManifestIdentity(
+        _ manifest: ManualInstallManifest,
+        matches identity: ManualInstallIdentity
+    ) throws {
+        guard manifest.pluginId == identity.pluginId else {
+            throw ManualInstallError.manifestIdentityMismatch(manifest.filename, manifest.pluginId, identity.pluginId)
+        }
+        guard let versionString = manifest.version, !versionString.isEmpty else { return }
+        guard let version = SemanticVersion.parse(versionString) else {
+            throw ManualInstallError.invalidManifestVersion(manifest.filename, versionString)
+        }
+        guard version == identity.version else {
+            throw ManualInstallError.manifestVersionMismatch(
+                manifest.filename,
+                versionString,
+                identity.version.description
+            )
+        }
+    }
+
+    private static func readManifestIdentity(data: Data, filename: String) throws -> ManualInstallManifest? {
+        guard let obj = manifestObject(from: data) else {
+            throw ManualInstallError.manifestValidationFailed(filename, ["Top-level JSON must be an object."])
+        }
+        guard obj["plugin_id"] != nil || obj["version"] != nil else { return nil }
+        return ManualInstallManifest(
+            filename: filename,
+            pluginId: (obj["plugin_id"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "",
+            version: (obj["version"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
+        )
+    }
+
+    private static let manifestCandidates = ["osaurus-plugin.json", "plugin.json", "manifest.json"]
+
+    private struct ManualInstallManifest {
+        let filename: String
+        let pluginId: String
+        let version: String?
+    }
+
+    private static func readManualInstallManifest(in pluginRoot: URL) throws -> ManualInstallManifest? {
+        let fm = FileManager.default
+        for candidate in manifestCandidates {
+            let manifestURL = pluginRoot.appendingPathComponent(candidate)
+            guard fm.fileExists(atPath: manifestURL.path) else { continue }
+            let data: Data
+            do {
+                data = try Data(contentsOf: manifestURL)
+            } catch {
+                throw ManualInstallError.manifestReadFailed(candidate, error.localizedDescription)
+            }
+            guard let obj = manifestObject(from: data) else {
+                throw ManualInstallError.manifestValidationFailed(candidate, ["Top-level JSON must be an object."])
+            }
+            return ManualInstallManifest(
+                filename: candidate,
+                pluginId: (obj["plugin_id"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "",
+                version: (obj["version"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
+            )
+        }
+        return nil
+    }
+
+    private static func manifestObject(from data: Data) -> [String: Any]? {
+        (try? JSONSerialization.jsonObject(with: data, options: [])) as? [String: Any]
+    }
+
+    enum ManualInstallError: Error, CustomStringConvertible {
+        case identityUnavailable(sourceName: String)
+        case invalidManifestField(String, String)
+        case invalidManifestVersion(String, String)
+        case manifestReadFailed(String, String)
+        case manifestValidationFailed(String, [String])
+        case manifestIdentityMismatch(String, String, String)
+        case manifestVersionMismatch(String, String, String)
+
+        var description: String {
+            switch self {
+            case .identityUnavailable:
+                return
+                    "Invalid naming format. Expected <plugin_id>-<version>.zip, or install a project directory containing osaurus-plugin.json with plugin_id and version."
+            case .invalidManifestField(let filename, let field):
+                return "`\(filename)` must include a non-empty `\(field)` for directory installs."
+            case .invalidManifestVersion(let filename, let value):
+                return "`\(filename)` has invalid semantic version `\(value)`."
+            case .manifestReadFailed(let filename, let message):
+                return "Failed to read \(filename): \(message)"
+            case .manifestValidationFailed(let filename, let errors):
+                return "Manifest validation failed (\(filename)):\n" + errors.map { "  - \($0)" }.joined(separator: "\n")
+            case .manifestIdentityMismatch(let filename, let actual, let expected):
+                return "`\(filename)` declares plugin_id `\(actual)`, but install target is `\(expected)`."
+            case .manifestVersionMismatch(let filename, let actual, let expected):
+                return "`\(filename)` declares version `\(actual)`, but install target is `\(expected)`."
+            }
+        }
     }
 
     /// Creates a receipt.json for manual installations

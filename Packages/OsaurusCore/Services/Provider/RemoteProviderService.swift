@@ -1436,6 +1436,20 @@ public actor RemoteProviderService: ToolCapableService {
         }
     }
 
+    /// Whether the target accepts OpenAI's `prompt_cache_key` body field —
+    /// a session-scoped routing hint that improves upstream prompt-cache hit
+    /// rates for multi-turn conversations (OpenAI already auto-caches
+    /// >=1024-token prefixes; the key routes same-session requests to the
+    /// same cache shard). Gated to genuine OpenAI hosts only: third-party
+    /// OpenAI-compat schemas can be strict about unknown fields (the same
+    /// reason `idempotency_key` is router-only), and Gemini/Anthropic have
+    /// their own caching (implicit / `cache_control`).
+    static func supportsPromptCacheKey(providerType: RemoteProviderType, host: String) -> Bool {
+        guard providerType == .openaiLegacy else { return false }
+        let normalizedHost = host.lowercased()
+        return normalizedHost == "api.openai.com" || normalizedHost.hasSuffix(".openai.com")
+    }
+
     static func remoteChatMaxTokens(
         providerType: RemoteProviderType,
         parameters: GenerationParameters
@@ -1541,6 +1555,20 @@ public actor RemoteProviderService: ToolCapableService {
         }
 
         switch event.type {
+        case "message_start":
+            // Prompt-caching telemetry: `message_start` carries the request's
+            // usage split. Log the cache read/write counts so the win from the
+            // top-level `cache_control` in `toAnthropicRequest()` is observable
+            // per turn (cache reads bill 0.1x input; writes 1.25x).
+            if let startEvent = try? JSONDecoder().decode(MessageStartEvent.self, from: jsonData) {
+                let usage = startEvent.message.usage
+                debugLog(
+                    "[Cache][Anthropic] input=\(usage.input_tokens)"
+                        + " cacheRead=\(usage.cache_read_input_tokens ?? 0)"
+                        + " cacheWrite=\(usage.cache_creation_input_tokens ?? 0)"
+                )
+            }
+
         case "content_block_delta":
             guard let deltaEvent = try? JSONDecoder().decode(ContentBlockDeltaEvent.self, from: jsonData)
             else { return .continue }
@@ -2303,12 +2331,26 @@ public actor RemoteProviderService: ToolCapableService {
         tools: [Tool]?,
         toolChoice: ToolChoiceOption?
     ) -> RemoteChatRequest {
-        let (effortValue, thinking) = Self.remoteChatReasoningControls(
+        let reasoningPolicy = RemoteReasoningPolicy.resolve(
             providerType: provider.providerType,
             host: provider.host,
-            model: model,
+            model: model
+        )
+        let (effortValue, thinking) = reasoningPolicy.controls(
             effort: parameters.modelOptions["reasoningEffort"]?.stringValue
         )
+        // DeepSeek thinking mode rejects forced tool choices (HTTP 400
+        // "Thinking mode does not support this tool_choice"); downgrade
+        // `.required`/`.function` to `.auto` there. See
+        // `RemoteReasoningPolicy.sanitizedToolChoice`.
+        let wireToolChoice = reasoningPolicy.sanitizedToolChoice(toolChoice, thinking: thinking)
+        if let toolChoice, wireToolChoice != toolChoice {
+            debugLog(
+                "[RemoteProviderService] tool_choice \(toolChoice) downgraded to "
+                    + "\(String(describing: wireToolChoice)) for thinking-mode provider "
+                    + "host=\(provider.host) model=\(model)"
+            )
+        }
         let allowsReasoningObject =
             Self.allowsChatCompletionsReasoningObject(
                 providerType: provider.providerType,
@@ -2360,7 +2402,7 @@ public actor RemoteProviderService: ToolCapableService {
             presence_penalty: isAgentRun ? nil : (isReasoningModel ? nil : parameters.presencePenalty),
             stop: nil,
             tools: wireTools,
-            tool_choice: toolChoice,
+            tool_choice: wireToolChoice,
             reasoning_effort: isAgentRun ? nil : effortValue,
             reasoning: isAgentRun
                 ? nil
@@ -2383,6 +2425,16 @@ public actor RemoteProviderService: ToolCapableService {
         // provider shapes (router/Anthropic/Gemini/Responses) are excluded.
         if stream, Self.requestsStreamUsageOptions(providerType: provider.providerType) {
             request.streamOptions = StreamOptions(include_usage: true)
+        }
+        // Session-scoped prompt-cache routing hint for genuine OpenAI hosts.
+        // The chat surface already threads a stable per-conversation
+        // `session_id`; scoping the key to it keeps one conversation's turns
+        // on one cache shard without coupling unrelated sessions.
+        if !isAgentRun,
+            let sessionId = parameters.sessionId, !sessionId.isEmpty,
+            Self.supportsPromptCacheKey(providerType: provider.providerType, host: provider.host)
+        {
+            request.promptCacheKey = "osaurus-session-\(sessionId)"
         }
         request.runAsRemoteAgent = parameters.runAsRemoteAgent
         return request
@@ -2874,6 +2926,33 @@ public actor RemoteProviderService: ToolCapableService {
         return !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
+    /// Translate an OpenAI-style `image_url` value (a `data:` URI or a plain
+    /// http(s) URL) into an Anthropic image content block. Returns nil for
+    /// malformed URIs so a bad part degrades to "image omitted" rather than a
+    /// provider 400.
+    static func anthropicImageBlock(fromImageUrl url: String) -> AnthropicImageBlock? {
+        if url.hasPrefix("data:") {
+            let afterScheme = url.dropFirst("data:".count)
+            guard let commaIndex = afterScheme.firstIndex(of: ",") else { return nil }
+            // Header is e.g. "image/png;base64".
+            let header = afterScheme[..<commaIndex]
+            let mediaType = header.split(separator: ";").first.map(String.init) ?? "image/png"
+            let base64 = String(afterScheme[afterScheme.index(after: commaIndex)...])
+            guard !base64.isEmpty else { return nil }
+            return AnthropicImageBlock(
+                type: "image",
+                source: .init(type: "base64", media_type: mediaType, data: base64, url: nil)
+            )
+        }
+        if url.hasPrefix("http://") || url.hasPrefix("https://") {
+            return AnthropicImageBlock(
+                type: "image",
+                source: .init(type: "url", media_type: nil, data: nil, url: url)
+            )
+        }
+        return nil
+    }
+
     /// The non-whitespace placeholder a truthful empty/nil tool result rides
     /// as. Anthropic and OpenAI Responses both reject empty/whitespace-only
     /// tool output, yet the result must still be emitted to keep its
@@ -3082,6 +3161,13 @@ public actor RemoteProviderService: ToolCapableService {
         switch providerType {
         case .anthropic:
             let response = try JSONDecoder().decode(AnthropicMessagesResponse.self, from: data)
+            // Same prompt-caching telemetry as the streaming `message_start`
+            // handler, for the non-streaming path.
+            debugLog(
+                "[Cache][Anthropic] input=\(response.usage.input_tokens)"
+                    + " cacheRead=\(response.usage.cache_read_input_tokens ?? 0)"
+                    + " cacheWrite=\(response.usage.cache_creation_input_tokens ?? 0)"
+            )
             var textContent = ""
             var toolCalls: [ToolCall] = []
 
@@ -3395,6 +3481,13 @@ struct RemoteChatRequest: Encodable {
     /// wire bytes (the non-streaming path and Anthropic/Gemini/Responses, which
     /// build their own bodies, never set it).
     var streamOptions: StreamOptions? = nil
+    /// OpenAI `prompt_cache_key`: session-scoped routing hint that improves
+    /// upstream prompt-cache hit rates (OpenAI auto-caches >=1024-token
+    /// prefixes; the key routes same-session requests to the same cache
+    /// shard). Set (in `buildChatRequest`) only for genuine OpenAI hosts (see
+    /// `supportsPromptCacheKey`) so strict third-party OpenAI-compat schemas
+    /// never see an unknown field. Encoded only when non-nil.
+    var promptCacheKey: String? = nil
     /// Local-only routing marker (Mode 2). When true, `buildURLRequest` targets
     /// the peer's `/agents/{address}/run` endpoint instead of
     /// `/chat/completions`. Intentionally absent from `CodingKeys` so it never
@@ -3411,6 +3504,7 @@ struct RemoteChatRequest: Encodable {
         case idempotencyKey = "idempotency_key"
         case veniceParameters = "venice_parameters"
         case streamOptions = "stream_options"
+        case promptCacheKey = "prompt_cache_key"
     }
 
     func encode(to encoder: Encoder) throws {
@@ -3461,6 +3555,7 @@ struct RemoteChatRequest: Encodable {
         try container.encodeIfPresent(idempotencyKey, forKey: .idempotencyKey)
         try container.encodeIfPresent(veniceParameters, forKey: .veniceParameters)
         try container.encodeIfPresent(streamOptions, forKey: .streamOptions)
+        try container.encodeIfPresent(promptCacheKey, forKey: .promptCacheKey)
         // `modelOptions` is intentionally not in `CodingKeys` — it stays
         // in-process for model-specific feature flags.
     }
@@ -3510,13 +3605,24 @@ struct RemoteChatRequest: Encodable {
             case "user":
                 // Flush any pending tool results before user message
                 flushToolResults()
-                // Convert user messages
-                if let content = msg.content {
+                // Convert user messages, translating any OpenAI-style
+                // image_url content parts into Anthropic image blocks.
+                // Reading only the flat `content` string silently dropped
+                // attached images — and dropped the whole message when the
+                // user sent an image with no accompanying text.
+                var userBlocks: [AnthropicContentBlock] = msg.imageUrls.compactMap { url in
+                    RemoteProviderService.anthropicImageBlock(fromImageUrl: url).map { .image($0) }
+                }
+                if let content = msg.content, RemoteProviderService.hasMeaningfulText(content) {
+                    userBlocks.append(.text(AnthropicTextBlock(text: content)))
+                }
+                if userBlocks.count == 1, case .text(let textBlock) = userBlocks[0] {
                     anthropicMessages.append(
-                        AnthropicMessage(
-                            role: "user",
-                            content: .text(content)
-                        )
+                        AnthropicMessage(role: "user", content: .text(textBlock.text))
+                    )
+                } else if !userBlocks.isEmpty {
+                    anthropicMessages.append(
+                        AnthropicMessage(role: "user", content: .blocks(userBlocks))
                     )
                 }
 
@@ -3650,7 +3756,16 @@ struct RemoteChatRequest: Encodable {
             stop_sequences: stop,
             tools: anthropicTools,
             tool_choice: anthropicToolChoice,
-            metadata: nil
+            metadata: nil,
+            // Top-level automatic prompt caching: Anthropic puts the cache
+            // breakpoint on the last cacheable block and advances it as the
+            // conversation grows, so multi-turn sessions re-read the whole
+            // prefix at 0.1x input price instead of re-paying full rate every
+            // turn. Safe to send unconditionally — the canonical JSON encoder
+            // already guarantees byte-stable prefixes across turns, and
+            // requests below the model's minimum cacheable length are simply
+            // processed uncached.
+            cache_control: AnthropicCacheControl()
         )
     }
 
@@ -4004,10 +4119,28 @@ struct RemoteChatRequest: Encodable {
                 }
 
             case "user":
-                // User messages become message input items
-                if let content = msg.content {
-                    let msgContent = OpenResponsesMessageContent.text(content)
-                    inputItems.append(.message(OpenResponsesMessageItem(role: "user", content: msgContent)))
+                // User messages become message input items. Image content
+                // parts translate to `input_image` parts (the Responses API
+                // accepts data URIs in `image_url`); reading only the flat
+                // `content` string dropped attached images, and dropped the
+                // whole message when the user sent an image with no text.
+                let imageParts: [OpenResponsesContentPart] = msg.imageUrls.map {
+                    .inputImage(OpenResponsesInputImagePart(imageUrl: $0))
+                }
+                if imageParts.isEmpty {
+                    if let content = msg.content {
+                        let msgContent = OpenResponsesMessageContent.text(content)
+                        inputItems.append(.message(OpenResponsesMessageItem(role: "user", content: msgContent)))
+                    }
+                } else {
+                    var parts: [OpenResponsesContentPart] = []
+                    if let content = msg.content, RemoteProviderService.hasMeaningfulText(content) {
+                        parts.append(.inputText(OpenResponsesInputTextPart(text: content)))
+                    }
+                    parts.append(contentsOf: imageParts)
+                    inputItems.append(
+                        .message(OpenResponsesMessageItem(role: "user", content: .parts(parts)))
+                    )
                 }
 
             case "assistant":
@@ -4119,11 +4252,15 @@ struct RemoteChatRequest: Encodable {
             }
         }
 
-        // Determine input format
+        // Determine input format. The shorthand only applies to plain-text
+        // content: flattening a parts message through `plainText` would strip
+        // its input_image parts.
         let input: OpenResponsesInput
-        if !alwaysUseInputItems, inputItems.count == 1, case .message(let msg) = inputItems[0], msg.role == "user" {
-            // Single user message - use text shorthand
-            input = .text(msg.content.plainText)
+        if !alwaysUseInputItems, inputItems.count == 1, case .message(let msg) = inputItems[0],
+            msg.role == "user", case .text(let text) = msg.content
+        {
+            // Single text-only user message - use text shorthand
+            input = .text(text)
         } else {
             input = .items(inputItems)
         }

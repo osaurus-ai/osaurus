@@ -115,18 +115,32 @@ enum FolderToolHelpers {
         // Symlink-safe containment: the lexical check above only resolves
         // `..` / `.`, so a symlink *inside* the root (e.g. `notes.txt ->
         // ~/.ssh/id_rsa`) would pass it and then be followed out of scope
-        // on read. Resolve symlinks on both the target and the root and
-        // re-check. `resolvingSymlinksInPath()` resolves existing
-        // components (and macOS firmlinks like `/tmp` -> `/private/tmp`),
-        // leaving not-yet-created trailing components intact — so a new
-        // file under a real directory still passes, while a symlink whose
-        // real target escapes the root is rejected. Both sides are
-        // resolved so the firmlink rewrite can't cause a false mismatch.
+        // on read. Resolve symlinks and re-check.
+        //
+        // `resolvingSymlinksInPath()` only rewrites components that exist on
+        // disk. Applying it to the *whole* target is asymmetric with the root
+        // when the target's trailing component doesn't exist yet: for a
+        // firmlinked root like `/tmp` (`/private/tmp`) or `/var`
+        // (`/private/var`), the fully-existing root resolves to the `/tmp`
+        // side while the new file — its trailing name unresolved — keeps the
+        // `/private/tmp` side, so the prefix check falsely fails and every
+        // write under such a root is rejected as "outside the working
+        // directory". Resolve the *deepest existing ancestor* of the target
+        // instead: it flips firmlinks exactly as the root does (symmetry), and
+        // an in-root symlink escaping the root still resolves out and is
+        // rejected. Components below the existing ancestor don't exist yet, so
+        // they can't be symlinks and are safe to treat lexically.
         let realRoot = rootPath.resolvingSymlinksInPath().standardized.path
-        let realResolved = resolvedURL.resolvingSymlinksInPath().standardized.path
+        var existingAncestor = resolvedURL
+        while !FileManager.default.fileExists(atPath: existingAncestor.path) {
+            let parent = existingAncestor.deletingLastPathComponent()
+            if parent.path == existingAncestor.path { break }
+            existingAncestor = parent
+        }
+        let realExisting = existingAncestor.resolvingSymlinksInPath().standardized.path
         let isWithinRealRoot =
-            realResolved == realRoot
-            || realResolved.hasPrefix(realRoot + "/")
+            realExisting == realRoot
+            || realExisting.hasPrefix(realRoot + "/")
         guard isWithinRealRoot else {
             throw FolderToolError.pathOutsideRoot(relativePath)
         }
@@ -164,6 +178,32 @@ enum FolderToolHelpers {
             .replacingOccurrences(of: "\\*", with: ".*")
             .replacingOccurrences(of: "\\?", with: ".")
         return "^\(body)$"
+    }
+
+    /// Root-relative display path for `url`, symlink-safe. FileManager
+    /// enumerators return REAL paths (`/private/var/...`) even when the
+    /// root handle was created through a symlink/firmlink (`/var/...`,
+    /// `/tmp/...`), so a naive `hasPrefix(root.path)` misses and callers
+    /// used to fall back to `lastPathComponent` — silently flattening
+    /// `src/client.py` to `client.py`. The model then feeds that wrong
+    /// path into its next tool call and gets "File not found" for a file
+    /// the search itself just reported. Resolve symlinks on BOTH sides
+    /// before prefix-matching; fall back to the basename only when the
+    /// url genuinely isn't under the root.
+    static func displayPath(for url: URL, under rootPath: URL) -> String {
+        let root = rootPath.standardized.path
+        let path = url.standardized.path
+        if path == root { return "." }
+        if path.hasPrefix(root + "/") {
+            return String(path.dropFirst(root.count + 1))
+        }
+        let realRoot = rootPath.resolvingSymlinksInPath().standardized.path
+        let realPath = url.resolvingSymlinksInPath().standardized.path
+        if realPath == realRoot { return "." }
+        if realPath.hasPrefix(realRoot + "/") {
+            return String(realPath.dropFirst(realRoot.count + 1))
+        }
+        return url.lastPathComponent
     }
 
     /// Check if pattern matches filename
@@ -482,15 +522,9 @@ struct FileTreeTool: OsaurusTool {
         let maxFiles = Self.maxFiles
         let maxFilesPerDir = Self.maxFilesPerDir
         let ignorePatterns = FolderToolHelpers.detectProjectType(rootPath).ignorePatterns
-        let rootStandardized = rootPath.standardized.path
 
         func relativePath(_ url: URL) -> String {
-            let p = url.standardized.path
-            if p == rootStandardized { return "." }
-            if p.hasPrefix(rootStandardized + "/") {
-                return String(p.dropFirst(rootStandardized.count + 1))
-            }
-            return url.lastPathComponent
+            FolderToolHelpers.displayPath(for: url, under: rootPath)
         }
 
         func traverse(_ currentURL: URL, depth: Int) {
@@ -863,7 +897,14 @@ struct FileReadTool: OsaurusTool {
         // model actually saw by one line.
         var partialLine: Int? = nil
         for i in (validStart - 1) ..< validEnd {
-            let line = String(format: "%6d| %@\n", i + 1, lines[i])
+            // Gutter format is `N|content` with NO space after the pipe:
+            // everything after the first `|` is byte-exact file content.
+            // The earlier `N| content` form made a leading gutter space
+            // indistinguishable from real leading whitespace — models
+            // (gemma-4-12B live, grok-4.3 historically) copied it into
+            // `file_write` content / `file_edit` old_string and corrupted
+            // whitespace or whiffed the match.
+            let line = String(format: "%6d|%@\n", i + 1, lines[i])
             if output.count + line.count > charCap {
                 let remaining = charCap - output.count
                 if remaining > 0 {
@@ -914,6 +955,12 @@ struct FileReadTool: OsaurusTool {
         var result: [String: Any] = [
             "kind": "file",
             "text": text,
+            // Self-describing gutter contract, carried WITH the payload:
+            // models (gemma-4-12B live) have read `     1|41` as "first
+            // number is 1" when the only explanation lived back in the
+            // tool schema. One short field per read is cheaper than one
+            // wrong-answer retry loop.
+            "line_format": "each line is `<line number>|<content>`; content starts after the first `|`",
             "path": relativePath,
             "start_line": validStart,
             "end_line": lastLineIncluded,
@@ -922,6 +969,15 @@ struct FileReadTool: OsaurusTool {
             "truncated": outputTruncated || lastLineIncluded < validEnd
                 || content.rawRead?.truncatedByByteLimit == true,
         ]
+        // The numbered gutter cannot express whether the file's last line is
+        // terminated — a byte-exact reconstruction (backup copies, `equals`
+        // contracts) needs to know if a final `\n` belongs at the end
+        // (observed live: a model rebuilt a config from the gutter text and
+        // dropped the trailing newline, failing a byte-for-byte check by one
+        // byte). Only stated when the read actually reached the end of file.
+        if content.rawRead?.truncatedByByteLimit != true {
+            result["ends_with_newline"] = content.text.hasSuffix("\n")
+        }
         if let partialLine {
             result["partial_line"] = partialLine
         }
@@ -1357,7 +1413,7 @@ struct FileReadTool: OsaurusTool {
 struct FileWriteTool: OsaurusTool, PermissionedTool {
     let name = "file_write"
     let description =
-        "Create a new UTF-8 text file or overwrite an existing text file with the provided content. "
+        "Create or overwrite a UTF-8 text file — always pass `path` (that exact key) as the FIRST argument, before `content`. "
         + "Parent directories are created automatically. You MUST provide the file contents in the "
         + "`content` parameter. Pass `dry_run: true` to preview the diff and risk warnings without "
         + "writing. Not for structured `.xlsx` / `.pdf` / `.pptx` outputs — write text formats such "
@@ -1504,7 +1560,8 @@ struct FileWriteTool: OsaurusTool, PermissionedTool {
 struct FileEditTool: OsaurusTool, PermissionedTool {
     let name = "file_edit"
     let description =
-        "Edit a file by replacing specific text. `old_string` must uniquely match exactly one "
+        "Edit a file by replacing specific text — always pass `path` (that exact key) as the FIRST argument. "
+        + "`old_string` must uniquely match exactly one "
         + "location in the file — include surrounding context lines if needed to ensure uniqueness. "
         + "Copy the RAW file text only: never include the `N|` line-number prefixes shown in "
         + "`file_read` output. Fails if `old_string` is not found or matches multiple locations. "
@@ -1696,7 +1753,7 @@ struct FileEditTool: OsaurusTool, PermissionedTool {
         let fallback = "Make sure it exactly matches the file content."
         let oldLines = oldString.components(separatedBy: "\n")
 
-        // 1. Line-number prefix contamination (`   42| item 042 ...`).
+        // 1. Line-number prefix contamination (`   42|item 042 ...`).
         let prefixPattern = #"^\s*\d+\|"#
         if oldLines.contains(where: { $0.range(of: prefixPattern, options: .regularExpression) != nil }) {
             return "Your `old_string` contains `N|` line-number prefixes from file_read output — "
@@ -1724,6 +1781,48 @@ struct FileEditTool: OsaurusTool, PermissionedTool {
                 return "Found text differing only in whitespace at line \(start + 1). "
                     + "The exact file content there is:\n\(Self.boundedQuote(exact))\n"
                     + "Use that exact text (including its whitespace) as `old_string`."
+            }
+        }
+
+        // 2b. Blank-line-count drift: same as check 2 but comparing only the
+        // NON-empty trimmed lines. Models routinely collapse a `\n\n\n` run
+        // to `\n\n` (observed live: a model normalized two blank lines
+        // between functions to one and re-issued the identical failing edit
+        // until its budget ran out, because check 2 requires equal line
+        // counts and check 3's single-line anchor was useless). On a unique
+        // match, quote the true file region — including its real blank
+        // lines — verbatim.
+        let oldNonEmpty = trimmedOldLines.filter { !$0.isEmpty }
+        if oldNonEmpty.count >= 2 {
+            // Indices of non-empty file lines, in file order.
+            var fileNonEmpty: [(index: Int, text: String)] = []
+            for (index, line) in contentLines.enumerated() {
+                let trimmed = line.trimmingCharacters(in: .whitespaces)
+                if !trimmed.isEmpty { fileNonEmpty.append((index, trimmed)) }
+            }
+            if oldNonEmpty.count <= fileNonEmpty.count {
+                var matchStarts: [Int] = []
+                for start in 0 ... (fileNonEmpty.count - oldNonEmpty.count) {
+                    var all = true
+                    for offset in 0 ..< oldNonEmpty.count
+                    where fileNonEmpty[start + offset].text != oldNonEmpty[offset] {
+                        all = false
+                        break
+                    }
+                    if all {
+                        matchStarts.append(start)
+                        if matchStarts.count > 1 { break }
+                    }
+                }
+                if matchStarts.count == 1, let start = matchStarts.first {
+                    let firstLine = fileNonEmpty[start].index
+                    let lastLine = fileNonEmpty[start + oldNonEmpty.count - 1].index
+                    let exact = contentLines[firstLine ... lastLine].joined(separator: "\n")
+                    return "Found the same non-blank lines at line \(firstLine + 1), but the "
+                        + "blank lines between them differ from your `old_string`. The exact "
+                        + "file content there is:\n\(Self.boundedQuote(exact))\n"
+                        + "Use that exact text (including its blank lines) as `old_string`."
+                }
             }
         }
 
@@ -1845,13 +1944,7 @@ struct FileOperationHistoryTool: OsaurusTool {
     }
 
     fileprivate static func relativePath(for url: URL, rootPath: URL) -> String {
-        let root = rootPath.standardized.path
-        let path = url.standardized.path
-        if path == root { return "." }
-        if path.hasPrefix(root + "/") {
-            return String(path.dropFirst(root.count + 1))
-        }
-        return url.lastPathComponent
+        FolderToolHelpers.displayPath(for: url, under: rootPath)
     }
 }
 
@@ -1863,8 +1956,9 @@ struct FileUndoTool: OsaurusTool, PermissionedTool {
         "Revert file operations made by this chat session. With no arguments it undoes the most "
         + "recent operation; pass `operation_id` (from `file_operation_history` or a write "
         + "result) to undo one specific operation, or `path` to revert every logged operation "
-        + "on one file. Only operations whose history entry shows `can_undo: true` can be "
-        + "reverted. Check `file_operation_history` first when unsure what would be undone."
+        + "on one file. If both are given, `operation_id` wins (path is checked against that "
+        + "operation's file). Only operations whose history entry shows `can_undo: true` can "
+        + "be reverted. Check `file_operation_history` first when unsure what would be undone."
     let parameters: JSONValue? = .object([
         "type": .string("object"),
         "additionalProperties": .bool(false),
@@ -1911,14 +2005,6 @@ struct FileUndoTool: OsaurusTool, PermissionedTool {
             .trimmingCharacters(in: .whitespacesAndNewlines)
         let rawPath = (args["path"] as? String)?
             .trimmingCharacters(in: .whitespacesAndNewlines)
-        if let operationIdRaw, !operationIdRaw.isEmpty, let rawPath, !rawPath.isEmpty {
-            return ToolEnvelope.failure(
-                kind: .invalidArgs,
-                message: "Pass `operation_id` OR `path`, not both.",
-                expected: "one of `operation_id` / `path`, or neither (undo last)",
-                tool: name
-            )
-        }
 
         do {
             let undone: [FileOperation]
@@ -1931,6 +2017,34 @@ struct FileUndoTool: OsaurusTool, PermissionedTool {
                         expected: "UUID from `file_operation_history`",
                         tool: name
                     )
+                }
+                // Both args together are fine when they AGREE — models
+                // routinely echo the path alongside the id (observed live:
+                // gemma-4-12B sent `{"operation_id": …, "path":
+                // "CHANGELOG.md"}`, got the old "not both" rejection, and
+                // spiralled into a blind rewrite instead of the undo).
+                // Only an actual DISAGREEMENT is ambiguous and refused.
+                if let rawPath, !rawPath.isEmpty {
+                    let target = try? FolderToolHelpers.resolvePath(rawPath, rootPath: rootPath)
+                    let relative = target.map {
+                        FileOperationHistoryTool.relativePath(for: $0, rootPath: rootPath)
+                    }
+                    let op = await FileOperationLog.shared
+                        .operations(for: sessionId)
+                        .first(where: { $0.id == operationId })
+                    if let op, let relative, op.path != relative, op.destinationPath != relative {
+                        return ToolEnvelope.failure(
+                            kind: .invalidArgs,
+                            message:
+                                "`operation_id` \(operationIdRaw) is an operation on "
+                                + "`\(op.path)`, not `\(relative)`. Pass just the "
+                                + "`operation_id`, or just `path` to undo all "
+                                + "operations on that file.",
+                            field: "path",
+                            expected: "arguments that refer to the same file",
+                            tool: name
+                        )
+                    }
                 }
                 let op = try await FileOperationLog.shared.undo(
                     sessionId: sessionId,
@@ -2336,12 +2450,15 @@ struct FileSearchTool: OsaurusTool {
             guard resourceValues?.isRegularFile == true else { continue }
             if FolderToolHelpers.shouldRefuseSecret(fileURL: fileURL) { continue }
             let entryName = fileURL.lastPathComponent
-            guard entryName.range(of: regex, options: [.regularExpression, .caseInsensitive]) != nil
+            let relativePath = FolderToolHelpers.displayPath(for: fileURL, under: rootPath)
+            // A query carrying a path separator ("orders/", "src/main.py")
+            // can never match a basename — match it against the relative
+            // path instead (observed live: a model searched the perfectly
+            // reasonable "orders/", got zero hits for three existing files,
+            // and asked the user instead of finishing the task).
+            let haystack = glob.contains("/") ? relativePath : entryName
+            guard haystack.range(of: regex, options: [.regularExpression, .caseInsensitive]) != nil
             else { continue }
-            let relativePath =
-                fileURL.path.hasPrefix(rootPath.path)
-                ? String(fileURL.path.dropFirst(rootPath.path.count + 1))
-                : entryName
             entries.append(["name": entryName, "path": relativePath, "type": "file"])
         }
         return (entries, budgetTruncated)
@@ -2473,10 +2590,7 @@ struct FileSearchTool: OsaurusTool {
         }
         guard let content = try? String(contentsOf: url, encoding: .utf8) else { return .skipped }
 
-        let relativePath =
-            url.path.hasPrefix(rootPath.path)
-            ? String(url.path.dropFirst(rootPath.path.count + 1))
-            : url.lastPathComponent
+        let relativePath = FolderToolHelpers.displayPath(for: url, under: rootPath)
 
         let lines = content.components(separatedBy: .newlines)
         var matches: [String] = []

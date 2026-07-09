@@ -345,6 +345,15 @@ public final class BackgroundTaskManager: ObservableObject {
 
     // MARK: - Dispatch
 
+    /// External-surface flag bound around the dispatched run. Widen-only:
+    /// a request marked external (non-loopback HTTP dispatch) or a dispatch
+    /// issued from an already-external execution context runs external; a
+    /// trusted loopback/plugin/schedule request never clears an inherited
+    /// external context.
+    nonisolated static func resolvedExternalSurface(for request: DispatchRequest) -> Bool {
+        request.externalSurface || ChatExecutionContext.isExternalSurface
+    }
+
     /// Dispatch a chat task for background execution.
     public func dispatchChat(_ request: DispatchRequest) async -> DispatchHandle? {
         // Background dispatch is an external surface (HTTP / plugins /
@@ -482,10 +491,20 @@ public final class BackgroundTaskManager: ObservableObject {
         // the same `BackgroundTaskState.id` we just registered, so
         // streaming layers can call `recordUsage(backgroundId:)` for
         // mid-stream budget enforcement (spec §11.3).
-        await ChatExecutionContext.$currentRunId.withValue(boundRunId) {
-            await ChatExecutionContext.$currentRunActor.withValue(boundActor) {
-                await ChatExecutionContext.$currentBackgroundId.withValue(context.id) {
-                    await context.start(prompt: request.prompt)
+        //
+        // `isExternalSurface` is rebound here from request metadata so the
+        // externally-denied tool policy holds at the dispatcher layer even if
+        // an upstream task-local binding (e.g. the HTTP handler's wrapper)
+        // were lost across the dispatch pipeline. External-ness can only be
+        // widened, never narrowed: an inherited external context stays
+        // external for loopback/plugin/schedule requests too.
+        let externalSurface = Self.resolvedExternalSurface(for: request)
+        await ChatExecutionContext.$isExternalSurface.withValue(externalSurface) {
+            await ChatExecutionContext.$currentRunId.withValue(boundRunId) {
+                await ChatExecutionContext.$currentRunActor.withValue(boundActor) {
+                    await ChatExecutionContext.$currentBackgroundId.withValue(context.id) {
+                        await context.start(prompt: request.prompt)
+                    }
                 }
             }
         }
@@ -973,9 +992,15 @@ public final class BackgroundTaskManager: ObservableObject {
         let previousCount = chatTurnCounts[taskId] ?? 0
         guard newCount > previousCount else { return }
 
+        // `$turns` emits on willSet, so `session.turns` still holds the OLD
+        // array here while `newCount` describes the incoming one. A session
+        // load that replaces a long history with a shorter array can leave
+        // `previousCount` past the readable bounds — clamp both ends or the
+        // range constructor traps.
         let turns = session.turns
-        let scanStart = max(0, previousCount - 1)
-        for turn in turns[scanStart ..< min(newCount, turns.count)] {
+        let scanEnd = min(newCount, turns.count)
+        let scanStart = min(max(0, previousCount - 1), scanEnd)
+        for turn in turns[scanStart ..< scanEnd] {
             if let toolCalls = turn.toolCalls {
                 for call in toolCalls {
                     state.appendActivity(kind: .tool, title: "Tool", detail: call.function.name)

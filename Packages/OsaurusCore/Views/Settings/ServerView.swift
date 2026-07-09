@@ -13,12 +13,14 @@ import UniformTypeIdentifiers
 
 enum ServerTab: String, CaseIterable, AnimatedTabItem {
     case overview = "Overview"
+    case models = "Models"
     case settings = "Settings"
     case apiReference = "API Reference"
 
     var title: String {
         switch self {
         case .overview: return L("Overview")
+        case .models: return L("Models")
         case .settings: return L("Settings")
         case .apiReference: return L("API Reference")
         }
@@ -63,14 +65,14 @@ struct ServerView: View {
     var body: some View {
         VStack(spacing: 0) {
             headerView
-                .opacity(hasAppeared ? 1 : 0)
-                .offset(y: hasAppeared ? 0 : -10)
-                .animation(.spring(response: 0.4, dampingFraction: 0.8), value: hasAppeared)
+                .managerHeaderEntrance(hasAppeared: hasAppeared)
 
             Group {
                 switch selectedTab {
                 case .overview:
                     OverviewTabContent()
+                case .models:
+                    ServerModelsTabContent(searchText: searchText)
                 case .settings:
                     ServerSettingsTabContent()
                 case .apiReference:
@@ -103,8 +105,8 @@ struct ServerView: View {
             HeaderTabsRow(
                 selection: $selectedTab,
                 searchText: $searchText,
-                searchPlaceholder: "Search endpoints",
-                showSearch: selectedTab == .apiReference
+                searchPlaceholder: selectedTab == .models ? "Search models" : "Search endpoints",
+                showSearch: selectedTab == .apiReference || selectedTab == .models
             )
         }
     }

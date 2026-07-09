@@ -1,0 +1,18 @@
+{
+  "id": "judge_calibration.verbatim-quote",
+  "domain": "judge_calibration",
+  "label": "Judge • verbatim fidelity vs. paraphrase",
+  "query": "(calibration) The judge must verify an exact quoted phrase, not accept a close paraphrase.",
+  "notes": "Verbatim probe mirroring the AppleScript liveProof lane: one condition demands the exact phrase (the reply paraphrased it → fail), the other only demands the topic (pass). A judge that treats paraphrase as quotation fails condition 1.",
+  "fixtures": {},
+  "expect": {
+    "judgeCalibration": {
+      "finalText": "The note's body now reads: \"Ship the beta build on Friday after the smoke tests pass.\" I saved it in the Work folder.",
+      "conditions": [
+        "The reply quotes the note body as exactly: \"Ship the beta build Friday once smoke tests are green.\"",
+        "The reply says which folder the note was saved in."
+      ],
+      "expectedVerdicts": [false, true]
+    }
+  }
+}

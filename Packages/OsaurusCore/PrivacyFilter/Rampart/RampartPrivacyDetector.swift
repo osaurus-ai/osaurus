@@ -11,6 +11,12 @@
 //  An `actor` so model load and every forward pass run off the main
 //  thread (MLX inference must not block the UI — see app-hang guidance).
 //
+//  Both the load (`RampartPII(directory:)` evals the weights) and every
+//  `detect` forward pass are MLX *GPU producers* on the shared Metal
+//  device, so they must hold `MetalGate` — unserialized they race a
+//  concurrent generation's decode on the Metal command queue and abort
+//  in the driver.
+//
 
 import Foundation
 import RampartPII
@@ -22,9 +28,16 @@ actor RampartPrivacyDetector {
     /// Load the model from a bundle directory containing
     /// `model.safetensors`, `config.json`, and `vocab.txt`. No-op when
     /// already loaded from the same directory.
-    func loadIfNeeded(bundle directory: URL) throws {
+    func loadIfNeeded(bundle directory: URL) async throws {
         if let loadedDirectory, loadedDirectory == directory, model != nil { return }
-        model = try RampartPII(directory: directory)
+        await MetalGate.shared.enterPIIDetection()
+        do {
+            model = try RampartPII(directory: directory)
+            await MetalGate.shared.exitPIIDetection()
+        } catch {
+            await MetalGate.shared.exitPIIDetection()
+            throw error
+        }
         loadedDirectory = directory
     }
 
@@ -34,10 +47,15 @@ actor RampartPrivacyDetector {
     /// Returns `[]` when the model isn't loaded. Rampart character offsets
     /// are converted to `String.Index` ranges (Rampart indexes by
     /// `Character`, matching `String.index(_:offsetBy:)`).
-    func modelSpans(in text: String) -> [(category: EntityCategory, range: Range<String.Index>)] {
+    func modelSpans(in text: String) async -> [(category: EntityCategory, range: Range<String.Index>)] {
         guard !text.isEmpty, let model else { return [] }
+        // Hold the gate only across the forward pass; the span/index mapping
+        // below is CPU-only string work.
+        await MetalGate.shared.enterPIIDetection()
+        let detected = model.detect(text)
+        await MetalGate.shared.exitPIIDetection()
         var raw: [(category: EntityCategory, range: Range<String.Index>)] = []
-        for span in model.detect(text) {
+        for span in detected {
             guard let category = Self.category(for: span.type) else { continue }
             guard
                 let lo = text.index(

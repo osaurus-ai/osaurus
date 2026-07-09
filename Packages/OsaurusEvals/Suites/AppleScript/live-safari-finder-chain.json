@@ -1,0 +1,26 @@
+{
+  "id": "apple_script.live-safari-finder-chain",
+  "domain": "apple_script",
+  "label": "AppleScript • live Safari+Finder multi-app chain",
+  "query": "Open https://example.com/osaurus in Safari, and create a folder named 'Osaurus Drops' in Finder if it doesn't already exist.",
+  "notes": "Capability lane for a TWO-APP mutation chain beyond Notes+volume: the model must drive Safari (set the front document's URL / open location) AND Finder (create-if-missing folder) in one task. The extended mock 'app world' records both writes so the final state proves both apps were actually driven — not just one. Order and script count are free (one combined script or two steps both pass); the rubric checks intent. Skips when no AppleScript model is installed.",
+  "fixtures": {},
+  "expect": {
+    "appleScript": {
+      "lane": "live",
+      "mode": "automate",
+      "executor": { "kind": "mock", "mockWorld": { "folders": [] } },
+      "expectOutcome": ["done"],
+      "expectEffects": ["edit"],
+      "finalState": [
+        { "key": "safari:url", "contains": "example.com/osaurus" },
+        { "key": "folder:Osaurus Drops", "equals": "true" }
+      ],
+      "scoredMaxSteps": 5,
+      "rubric": [
+        "The AppleScript opens or navigates Safari to https://example.com/osaurus (e.g. `open location` or setting the URL of the front document).",
+        "The AppleScript creates the Finder folder 'Osaurus Drops' handling the case where it may already exist (create-if-missing), rather than unconditionally failing on a duplicate."
+      ]
+    }
+  }
+}

@@ -393,6 +393,41 @@ struct ModelProfileRegistryTests {
         #expect(explicit["reasoningEffort"]?.stringValue == "high")
     }
 
+    @Test("Mistral models expose only none/high reasoning effort and drop stale values")
+    func mistral_matchesReasoningEffortProfile() {
+        for id in [
+            "mistral-medium-3.5",
+            "mistral-small-latest",
+            "mistralai/mistral-medium-3.5",
+        ] {
+            let profile = ModelProfileRegistry.profile(for: id)
+            #expect(profile?.displayName == MistralReasoningProfile.displayName)
+
+            guard case .segmented(let segments)? = ModelProfileRegistry.options(for: id).first?.kind
+            else {
+                Issue.record("expected segmented reasoningEffort option for \(id)")
+                continue
+            }
+            #expect(segments.map(\.id) == ["none", "high"])
+
+            // Values narrowed out of the option set (low/medium) must not reach
+            // the wire — Mistral rejects them with HTTP 400.
+            for stale in ["low", "medium"] {
+                let normalized = ModelProfileRegistry.normalizedOptions(
+                    for: id,
+                    persisted: ["reasoningEffort": .string(stale)]
+                )
+                #expect(normalized["reasoningEffort"] == nil)
+            }
+
+            let explicit = ModelProfileRegistry.normalizedOptions(
+                for: id,
+                persisted: ["reasoningEffort": .string("high")]
+            )
+            #expect(explicit["reasoningEffort"]?.stringValue == "high")
+        }
+    }
+
     @Test("DSV4 bundles expose instruct, reasoning, and max modes")
     func dsv4_matchesReasoningModeProfile() {
         for id in [

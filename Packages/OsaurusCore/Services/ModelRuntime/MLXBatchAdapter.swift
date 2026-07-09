@@ -550,6 +550,76 @@ struct MLXBatchAdapter {
             return true
         }
 
+        func isNativeMTPWarm(modelName: String) -> Bool {
+            nativeMTPWarmModels.contains(modelName)
+        }
+
+        /// Un-warms a model whose load-time warmup generation failed after
+        /// it had already consumed the cold-warmup flag, so the next real
+        /// request runs the AR warmup exactly as it would have without the
+        /// load-time attempt.
+        func resetNativeMTPWarmup(modelName: String) {
+            nativeMTPWarmModels.remove(modelName)
+        }
+
+    }
+
+    // MARK: - Native MTP load-time warmup
+
+    /// Escape hatch in case a family surfaces a first-generation issue that
+    /// the two-token warmup does not absorb:
+    ///   defaults write ai.osaurus ai.osaurus.mtp.disableLoadWarmup -bool true
+    static let mtpLoadWarmupDisabledKey = "ai.osaurus.mtp.disableLoadWarmup"
+
+    /// Runs the native-MTP cold warmup at model-load time instead of on the
+    /// user's first request. The registry's cold-warmup rule forces the
+    /// first generation per model into plain AR mode; without this, that
+    /// "first generation" is the user's entire first response, which
+    /// silently loses the MTP decode speedup. A hidden two-token greedy
+    /// generation through the regular `generate` path (so gating, engine
+    /// creation, and solo-lease behavior are identical to a real request)
+    /// consumes the warmup for a fraction of a second instead.
+    ///
+    /// Failure is non-fatal and self-healing: the warm flag is reset so the
+    /// next real request performs the AR warmup exactly as before.
+    static func warmupNativeMTPAtLoad(
+        modelName: String,
+        container: ModelContainer,
+        draftStrategy: MLXLMCommon.DraftStrategy?,
+        runtime: RuntimeConfig,
+        maxBatchSize: Int
+    ) async {
+        guard draftStrategy?.usesNativeMTP == true else { return }
+        guard !UserDefaults.standard.bool(forKey: mtpLoadWarmupDisabledKey) else { return }
+        guard await !Registry.shared.isNativeMTPWarm(modelName: modelName) else { return }
+
+        let startedAt = CFAbsoluteTimeGetCurrent()
+        do {
+            let prepared = try await generate(
+                modelName: modelName,
+                container: container,
+                buildChat: { [MLXLMCommon.Chat.Message(role: .user, content: "Hi")] },
+                buildToolsSpec: { nil },
+                generation: GenerationParameters(temperature: 0, maxTokens: 2),
+                toolChoice: nil,
+                stopSequences: [],
+                draftStrategy: draftStrategy,
+                runtime: runtime,
+                maxBatchSize: maxBatchSize
+            )
+            for await _ in prepared.stream {}
+            let elapsedMs = Int((CFAbsoluteTimeGetCurrent() - startedAt) * 1000)
+            batchAdapterLog.info(
+                "native MTP load warmup: completed for \(modelName, privacy: .public) in \(elapsedMs, privacy: .public)ms; first user request decodes with MTP"
+            )
+        } catch {
+            // The failed generation may already have consumed the warm flag;
+            // reset it so the request path's AR warmup applies unchanged.
+            await Registry.shared.resetNativeMTPWarmup(modelName: modelName)
+            batchAdapterLog.notice(
+                "native MTP load warmup failed for \(modelName, privacy: .public): \(String(describing: error), privacy: .public) — falling back to first-request AR warmup"
+            )
+        }
     }
 
     // MARK: - Image preprocessing
@@ -952,6 +1022,24 @@ struct MLXBatchAdapter {
 
     // MARK: - Submission
 
+    /// Sendable box for a chat snapshot built once before the prep gate.
+    ///
+    /// `MLXLMCommon.Chat.Message` is not `Sendable`, but the snapshot is
+    /// immutable and only read from the downstream `buildChat` closure —
+    /// same rationale as `ModelRuntime.ChatMessageBox`.
+    private final class PrepChatBox: @unchecked Sendable {
+        let messages: [MLXLMCommon.Chat.Message]
+        init(_ messages: [MLXLMCommon.Chat.Message]) { self.messages = messages }
+
+        /// Media attachments mean `prepareInput` will run GPU evals (audio
+        /// pre-encode, VLM media encode) on the submitting thread.
+        var hasMedia: Bool {
+            messages.contains {
+                !($0.images.isEmpty && $0.videos.isEmpty && $0.audios.isEmpty)
+            }
+        }
+    }
+
     /// Tokenize the chat + tools, fetch (or create) the per-model
     /// `BatchEngine`, and submit one request via `engine.generate`. Returns
     /// the resulting `Generation` stream wrapped with cancellation plumbing.
@@ -996,28 +1084,51 @@ struct MLXBatchAdapter {
         // `prepareInput` can run a GPU eval on THIS submit thread before the
         // generation gate is taken below — notably the Nemotron-Omni audio
         // pre-encode (`MLX.eval` in `preencodedAudio`) and any media encoder
-        // that materializes during `UserInputProcessor.prepare`. Hold the Metal
-        // gate's shared lock across `prepareInput` too, so that eval can't race
-        // a concurrent Model2Vec embedder on the Metal command buffer (the same
-        // `addCompletedHandler:` crash class the gate exists to prevent). This
-        // is a separate, fully-balanced acquire/release from the generation
-        // gate below; the brief window between them is eval-free.
+        // that materializes during `UserInputProcessor.prepare`. Those evals
+        // happen OUTSIDE the `BatchEngine` actor loop, so under the shared
+        // `gen:` owner they could encode concurrently with an in-flight
+        // decode or another request's prep on the shared Metal command queue
+        // (the driver-assert crash class the gate exists to prevent). So:
+        // media-bearing prep takes the gate EXCLUSIVELY; text-only prep does
+        // no GPU encode (CPU tokenization + data-backed arrays) and keeps the
+        // shared generation owner, preserving same-model batching. Either
+        // acquire is fully balanced before the generation gate below; the
+        // brief window between them is eval-free.
+        // Snapshot the chat once up front (empty on the raw-prompt path,
+        // where `prepareInput` never invokes its chat builder). The box keeps
+        // the snapshot Sendable, and passing a box-backed closure below —
+        // rather than rebinding the non-escaping `buildChat` parameter —
+        // avoids both a second `buildChat()` call and an escaping-parameter
+        // diagnostic.
+        let prepChat = PrepChatBox(buildRawPrompt == nil ? buildChat() : [])
+        let prepIsExclusive = prepChat.hasMedia
         let prepared: PreparedInput
-        await MetalGate.shared.enterGeneration(model: modelName)
+        if prepIsExclusive {
+            await MetalGate.shared.enterMediaPrep(model: modelName)
+        } else {
+            await MetalGate.shared.enterGeneration(model: modelName)
+        }
+        func exitPrepGate() async {
+            if prepIsExclusive {
+                await MetalGate.shared.exitMediaPrep(model: modelName)
+            } else {
+                await MetalGate.shared.exitGeneration(model: modelName)
+            }
+        }
         do {
             prepared = try await prepareInput(
                 modelName: modelName,
                 container: container,
-                buildChat: buildChat,
+                buildChat: { prepChat.messages },
                 buildToolsSpec: buildToolsSpec,
                 buildRawPrompt: buildRawPrompt,
                 generation: generation,
                 toolChoice: toolChoice,
                 trace: trace
             )
-            await MetalGate.shared.exitGeneration(model: modelName)
+            await exitPrepGate()
         } catch {
-            await MetalGate.shared.exitGeneration(model: modelName)
+            await exitPrepGate()
             if let soloLease { await soloLease.release() }
             throw error
         }
@@ -1080,6 +1191,9 @@ struct MLXBatchAdapter {
             topK: effective.topK,
             minP: effective.minP,
             repetitionPenalty: effective.repetitionPenalty,
+            presencePenalty: generation.presencePenalty,
+            frequencyPenalty: generation.frequencyPenalty,
+            randomSeed: generation.seed,
             stopSequences: stopSequences,
             draftStrategy: effectiveDraftStrategy,
             enableCompiledBatchDecode: effective.compiledBatchDecode,
@@ -1102,20 +1216,24 @@ struct MLXBatchAdapter {
             mlxParams.kvMode = effectiveKVMode
         }
 
-        // Best-effort per-request determinism: seed the MLX global random
-        // state immediately before submission. Note: vmlx's `Sampler`
-        // constructs its own `RandomState()` from time-of-day inside the
-        // engine, so concurrent seeded requests against the same model
-        // are NOT guaranteed reproducible. Single-request seeding still
-        // benefits any MLX code path that consults `MLXRandom.globalState`.
-        if let seed = generation.seed {
-            MLXRandom.seed(seed)
-        }
+        // Per-request determinism now rides `GenerateParameters.randomSeed`
+        // (set above): vmlx builds each request's sampler around its own
+        // seeded `RandomState`, which is the only state sampling consults.
+        // The previous global `MLXRandom.seed()` call was a sampling no-op
+        // AND leaked deterministic state into unrelated global-RNG
+        // consumers (diffusion decode, image latents), so it is gone.
 
         await MainActor.run {
-            InferenceProgressManager.shared.prefillWillStart(
-                tokenCount: prepared.promptTokens.count
-            )
+            if !generation.suppressProgressUI {
+                InferenceProgressManager.shared.prefillWillStart(
+                    tokenCount: prepared.promptTokens.count
+                )
+            } else {
+                WarmupProgressHub.shared.prefillWillStart(
+                    model: modelName,
+                    tokenCount: prepared.promptTokens.count
+                )
+            }
         }
 
         // Prefill diagnostics: snapshot the cumulative cache counters BEFORE the
@@ -1255,6 +1373,136 @@ struct MLXBatchAdapter {
         let promptTokens: [Int]
     }
 
+    /// Truncate a warm-up prompt to the processor's canonical history cache
+    /// boundary (the render WITHOUT the generation prompt).
+    ///
+    /// The engine stores a finished request's KV under its exact prompt token
+    /// sequence, and a later request can only restore a stored sequence that
+    /// is a true token-prefix of its own prompt. A warm-up rendered with the
+    /// generation prompt ends in tokens (e.g. Gemma 4's `<|turn>model\n`)
+    /// that the real send does NOT contain at that position, so nothing it
+    /// stored could ever be restored. Full-attention models recover via the
+    /// engine's trimmed history-boundary entry, but sliding-window models
+    /// (RotatingKVCache) are not trimmable once the prompt exceeds the
+    /// window and the boundary rederive is skipped for disk-backed cache
+    /// topologies — for them the warm-up prompt itself must end at the
+    /// boundary.
+    ///
+    /// The boundary comes from the processor's own `cachePrefixTokenCounts`
+    /// when populated (LLM factory prompts). VLM processors (e.g. Gemma 4)
+    /// don't compute it, so the fallback derives the generation-prompt token
+    /// suffix from the model's own template — a tiny probe render with and
+    /// without the generation prompt — and strips it from the prompt tail.
+    /// Both paths are verified against the actual tokens; no per-family
+    /// template strings are hardcoded. Truncating is always cache-safe: the
+    /// engine keys stored KV by the exact token sequence it prefilled, so a
+    /// shorter prompt simply stores a shorter (still content-verified)
+    /// prefix. Prompts with media content or without a derivable boundary
+    /// pass through unchanged.
+    static func truncatingToCanonicalCacheBoundary(
+        _ input: LMInput,
+        tokenizer: (any MLXLMCommon.Tokenizer)? = nil,
+        additionalContext: [String: any Sendable]? = nil
+    ) -> LMInput {
+        guard !input.hasMediaContent else { return input }
+        let tokens =
+            input.text.tokenIds
+            ?? MLXCacheIOLock.withSerializedMLXCacheIO {
+                input.text.tokens.asArray(Int.self)
+            }
+        let boundary = warmupCacheBoundary(
+            tokens: tokens,
+            cachePrefixTokenCounts: input.cachePrefixTokenCounts,
+            tokenizer: tokenizer,
+            additionalContext: additionalContext
+        )
+        guard let boundary else {
+            batchAdapterLog.info(
+                "warmupPrefill: no cache boundary derivable; prefilling full prompt (\(tokens.count, privacy: .public) tokens)"
+            )
+            return input
+        }
+        let prefix = Array(tokens.prefix(boundary))
+        batchAdapterLog.info(
+            "warmupPrefill: truncated prompt to cache boundary \(boundary, privacy: .public)/\(tokens.count, privacy: .public) tokens"
+        )
+        // Prompt tokens are batch-shaped [1, N] by processor contract; model
+        // prepare paths subscript with a leading batch index and trap on a
+        // flat [N] array.
+        return LMInput(
+            tokens: MLXArray(prefix).expandedDimensions(axis: 0),
+            tokenIds: prefix,
+            cacheScopeSalt: input.cacheScopeSalt,
+            cachePrefixTokenCounts: [],
+            toolSchemas: input.toolSchemas
+        )
+    }
+
+    /// Compute where a warm-up prompt should stop so the stored KV prefix is
+    /// extendable by the real send. Prefers the processor's canonical
+    /// boundary; falls back to stripping a tokenizer-derived
+    /// generation-prompt suffix. Returns nil when no boundary can be proven
+    /// against the actual tokens.
+    static func warmupCacheBoundary(
+        tokens: [Int],
+        cachePrefixTokenCounts: [Int],
+        tokenizer: (any MLXLMCommon.Tokenizer)?,
+        additionalContext: [String: any Sendable]?
+    ) -> Int? {
+        if let canonical = cachePrefixTokenCounts.max(),
+            canonical > 0, canonical < tokens.count
+        {
+            return canonical
+        }
+        if let suffix = generationPromptTokenSuffix(
+            tokenizer: tokenizer,
+            additionalContext: additionalContext
+        ),
+            tokens.count > suffix.count,
+            Array(tokens.suffix(suffix.count)) == suffix
+        {
+            return tokens.count - suffix.count
+        }
+        return nil
+    }
+
+    /// Derive the template's generation-prompt token suffix (e.g. Gemma 4's
+    /// `<|turn>model\n`) by rendering a minimal probe conversation with and
+    /// without the generation prompt and diffing the tails. Returns nil when
+    /// the tokenizer doesn't support generation-prompt control or the two
+    /// renders don't share the expected prefix relationship (in which case
+    /// the caller skips truncation — never guesses).
+    ///
+    /// `additionalContext` is forwarded so flags that alter the generation
+    /// prompt itself (e.g. thinking openers appended after the assistant
+    /// header) produce the same suffix the real prompt was rendered with.
+    private static func generationPromptTokenSuffix(
+        tokenizer: (any MLXLMCommon.Tokenizer)?,
+        additionalContext: [String: any Sendable]?
+    ) -> [Int]? {
+        guard
+            let controllable = tokenizer as? any MLXLMCommon.GenerationPromptControllableTokenizer
+        else { return nil }
+        let probe: [[String: any Sendable]] = [["role": "user", "content": "x"]]
+        guard
+            let with = try? controllable.applyChatTemplate(
+                messages: probe,
+                tools: nil,
+                additionalContext: additionalContext,
+                addGenerationPrompt: true
+            ),
+            let without = try? controllable.applyChatTemplate(
+                messages: probe,
+                tools: nil,
+                additionalContext: additionalContext,
+                addGenerationPrompt: false
+            ),
+            with.count > without.count,
+            Array(with.prefix(without.count)) == without
+        else { return nil }
+        return Array(with.dropFirst(without.count))
+    }
+
     private static func prepareInput(
         modelName: String,
         container: ModelContainer,
@@ -1290,7 +1538,7 @@ struct MLXBatchAdapter {
         try await container.perform { (context: MLXLMCommon.ModelContext) in
             box.performEnteredAt = CFAbsoluteTimeGetCurrent()
             trace?.mark("batch_container_perform_entered")
-            let lmInput: LMInput
+            var lmInput: LMInput
             if let buildRawPrompt {
                 // Raw completion path (OpenAI-legacy `/v1/completions`, e.g.
                 // FIM autocomplete): tokenize the prompt verbatim and bypass
@@ -1351,6 +1599,13 @@ struct MLXBatchAdapter {
                 do {
                     let prepared = try await context.processor.prepare(input: userInput)
                     lmInput = prepared.withToolSchemas(toolsSpec)
+                    if generation.warmupPrefill {
+                        lmInput = Self.truncatingToCanonicalCacheBoundary(
+                            lmInput,
+                            tokenizer: context.tokenizer,
+                            additionalContext: additionalContext
+                        )
+                    }
                 } catch {
                     let detail =
                         (error as? LocalizedError)?.errorDescription

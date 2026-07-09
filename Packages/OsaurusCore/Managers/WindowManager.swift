@@ -132,8 +132,13 @@ public final class WindowManager: NSObject, ObservableObject {
             return
         }
 
-        // Unhide app if hidden
-        NSApp.unhide(nil)
+        // Unhide app if hidden. Guarded because `unhide:` always makes a
+        // synchronous mach round-trip to the WindowServer (SLSSetFrontProcess),
+        // which can stall for seconds when the system is under memory pressure
+        // (Sentry APPLE-MACOS-P9) — skip it in the common not-hidden case.
+        if NSApp.isHidden {
+            NSApp.unhide(nil)
+        }
 
         // Deminiaturize if needed
         if window.isMiniaturized {

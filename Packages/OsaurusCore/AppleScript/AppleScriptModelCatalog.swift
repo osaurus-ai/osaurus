@@ -17,16 +17,17 @@ import Foundation
 
 /// How a generated AppleScript is gated before it runs. Per-agent (and a
 /// global default for the Default / main chat agent). `confirmEach` is the
-/// safe default: the generated script is shown in the live chat feed for
-/// explicit approval before it executes. `autoRunWithWarning` runs each script
-/// automatically but emits a prominent warning event (showing the script) so
-/// the user can still see exactly what ran.
+/// safe default: every state-CHANGING script is shown in the live chat feed
+/// for explicit approval before it executes (classified read-only scripts
+/// auto-run — they change nothing). `autoRunWithWarning` runs each mutating
+/// script automatically but emits a prominent warning event (showing the
+/// script) so the user can still see exactly what ran.
 public enum AppleScriptExecutionMode: String, Codable, Sendable, Equatable, CaseIterable {
-    /// Pause and show the generated AppleScript for explicit approval before
-    /// each run (default, safest).
+    /// Pause and show each state-changing AppleScript for explicit approval
+    /// before it runs (default, safest). Read-only scripts auto-run.
     case confirmEach
     /// Run automatically, emitting a prominent warning (showing the script)
-    /// before each run.
+    /// before each mutating run.
     case autoRunWithWarning
 
     /// The conservative default applied when nothing is configured.
@@ -50,7 +51,9 @@ public enum AppleScriptExecutionMode: String, Codable, Sendable, Equatable, Case
     public var caption: String {
         switch self {
         case .confirmEach:
-            return L("Each generated AppleScript is shown for your approval before it runs.")
+            return L(
+                "Each script that changes anything is shown for your approval before it runs. Read-only scripts run automatically."
+            )
         case .autoRunWithWarning:
             return L(
                 "Scripts run automatically. A warning showing the script appears in the chat each time."
@@ -113,15 +116,30 @@ enum AppleScriptModelCatalog {
     }
 
     /// Resolve the model id the AppleScript subagent should load: the
-    /// `preferred` id when it is a curated, installed model; otherwise the
-    /// first installed catalog model; otherwise `nil` (none installed → the
-    /// kind denies before any load). Trimmed so a blank preference is ignored.
+    /// `preferred` id when it is an installed AppleScript bundle (curated, or
+    /// any `OsaurusAI/Osaurus-AppleScript-*` repo the user has on disk — an
+    /// explicit preference for a non-catalog build like the 8B is honored);
+    /// otherwise the first installed catalog model; otherwise `nil` (none
+    /// installed → the kind denies before any load). Trimmed so a blank
+    /// preference is ignored.
     static func resolveInstalledModelId(preferred: String?) -> String? {
         let trimmed = preferred?.trimmingCharacters(in: .whitespacesAndNewlines)
-        if let trimmed, !trimmed.isEmpty,
-            let match = models.first(where: { $0.id == trimmed }), match.isDownloaded
-        {
-            return match.id
+        if let trimmed, !trimmed.isEmpty {
+            if let match = models.first(where: { $0.id == trimmed }), match.isDownloaded {
+                return match.id
+            }
+            // A non-catalog AppleScript bundle (matching the curated repo-id
+            // prefix) that is installed on disk also resolves — but only via
+            // an explicit preference, never as the implicit default.
+            if isAppleScriptModel(id: trimmed) {
+                let adHoc = MLXModel(
+                    id: trimmed,
+                    name: trimmed,
+                    description: "",
+                    downloadURL: "https://huggingface.co/\(trimmed)"
+                )
+                if adHoc.isDownloaded { return trimmed }
+            }
         }
         return installedModels().first?.id
     }

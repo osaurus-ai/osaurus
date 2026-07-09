@@ -215,6 +215,17 @@ struct AgentToolLoopTests {
         #expect(surface.executedCalls.count == max)
     }
 
+    @Test func nearLimitNoticeAddsDelegationNudgeOnlyWhenSpawnVisible() {
+        let plain = AgentToolLoop.contextNearLimitNotice(spawnAvailable: false)
+        #expect(plain.contains("Context is nearly full"))
+        #expect(!plain.contains("spawn"))
+
+        let nudged = AgentToolLoop.contextNearLimitNotice(spawnAvailable: true)
+        #expect(nudged.contains("Context is nearly full"))
+        #expect(nudged.contains("spawn tool"))
+        #expect(nudged.contains("self-contained input"))
+    }
+
     @Test func budgetWarningStagedAtThreshold() async throws {
         // maxIterations 5, threshold 3: after iteration 2 remaining == 3,
         // so iterations 3, 4, 5 must each see the warning notice.

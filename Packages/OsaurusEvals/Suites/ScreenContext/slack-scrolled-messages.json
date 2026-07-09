@@ -20,7 +20,7 @@
       "rubric": [
         "Indicates the user is reading a Slack engineering channel discussion",
         "Surfaces the recent message lines as on-screen content",
-        "Does not surface single-token sidebar labels as content"
+        "Does not list the sidebar navigation labels 'Threads', 'Drafts', or 'New message' among the on-screen content (the 'Active: channel engineering' line is the active-channel indicator, not a sidebar label, and is expected)"
       ]
     }
   }

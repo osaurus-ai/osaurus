@@ -1,0 +1,18 @@
+{
+  "id": "judge_calibration.clear-fail-missing-fact",
+  "domain": "judge_calibration",
+  "label": "Judge • detects a missing required fact",
+  "query": "(calibration) The judge grades a reply that never states the number the condition demands.",
+  "notes": "Rubber-stamp probe: the reply is fluent, confident, and on-topic, but the condition demands a specific fact (an exact word count) the reply never gives. A lenient judge that passes vibes over facts fails here.",
+  "fixtures": {},
+  "expect": {
+    "judgeCalibration": {
+      "finalText": "I read through the document carefully. It is a well-structured report about quarterly sales performance, written in a formal tone with several tables. Let me know if you want a summary of any section.",
+      "conditions": [
+        "The reply states the exact number of words in the document.",
+        "The reply describes the document's topic."
+      ],
+      "expectedVerdicts": [false, true]
+    }
+  }
+}

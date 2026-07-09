@@ -3,9 +3,10 @@
 //  osaurus
 //
 //  Settings controls for discovering and running models that already live
-//  on this Mac via other tools — the Hugging Face Hub cache and LM Studio.
-//  Toggling a source on/off triggers a background rescan; discovered models
-//  appear in the catalog and run in place (never copied or modified).
+//  on this Mac via other tools: the Hugging Face Hub cache, LM Studio, and
+//  user-selected model folders. Toggling a source on/off triggers a
+//  background rescan; discovered models appear in the catalog and run in
+//  place (never copied or modified).
 //
 
 import SwiftUI
@@ -24,8 +25,11 @@ struct ExternalModelsSettingsView: View {
 
     @State private var hfCount: Int = 0
     @State private var lmStudioCount: Int = 0
+    @State private var customFolderCount: Int = 0
     @State private var scanReport: ExternalModelLocator.ScanReport?
     @State private var isScanning: Bool = false
+    @State private var needsRescanAfterCurrent: Bool = false
+    @State private var pathRescanTask: Task<Void, Never>?
     @State private var showHFCachePicker: Bool = false
 
     var body: some View {
@@ -39,10 +43,12 @@ struct ExternalModelsSettingsView: View {
             .fixedSize(horizontal: false, vertical: true)
 
             SettingsToggle(
-                title: L("Hugging Face cache"),
+                title: L("Hugging Face cache and model folder"),
                 description:
-                    "Use MLX models from ~/.cache/huggingface (and HF_HOME / HF_HUB_CACHE).",
-                badge: importHFCache && hfCount > 0 ? "\(hfCount)" : nil,
+                    "Use MLX models from ~/.cache/huggingface, HF_HOME / HF_HUB_CACHE, or a custom folder.",
+                badge:
+                    importHFCache && hfCount + customFolderCount > 0
+                    ? "\(hfCount + customFolderCount)" : nil,
                 isOn: $importHFCache
             )
 
@@ -67,7 +73,10 @@ struct ExternalModelsSettingsView: View {
                         .font(.system(size: 11))
                         .foregroundColor(theme.tertiaryText)
                 } else {
-                    Text("\(hfCount + lmStudioCount) external models found", bundle: .module)
+                    Text(
+                        "\(hfCount + lmStudioCount + customFolderCount) external models found",
+                        bundle: .module
+                    )
                         .font(.system(size: 11))
                         .foregroundColor(theme.tertiaryText)
                 }
@@ -114,7 +123,7 @@ struct ExternalModelsSettingsView: View {
         .onAppear { refreshCounts() }
         .onChange(of: importHFCache) { _, _ in rescan() }
         .onChange(of: importLMStudio) { _, _ in rescan() }
-        .onChange(of: customHFCachePath) { _, _ in refreshCounts() }
+        .onChange(of: customHFCachePath) { _, _ in schedulePathRescan() }
         .onReceive(NotificationCenter.default.publisher(for: .localModelsChanged)) { _ in
             refreshCounts()
         }
@@ -125,14 +134,13 @@ struct ExternalModelsSettingsView: View {
         ) { result in
             if case .success(let urls) = result, let url = urls.first {
                 customHFCachePath = url.path
-                rescan()
             }
         }
     }
 
     private var hfCachePathControl: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text("HF cache path", bundle: .module)
+            Text("Cache or model folder path", bundle: .module)
                 .font(.system(size: 11, weight: .medium))
                 .foregroundColor(theme.secondaryText)
 
@@ -152,13 +160,12 @@ struct ExternalModelsSettingsView: View {
                     }
                 )
                 .buttonStyle(.plain)
-                .localizedHelp("Choose Hugging Face cache folder")
+                .localizedHelp("Choose Hugging Face cache or model folder")
 
                 if !customHFCachePath.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                     Button(
                         action: {
                             customHFCachePath = ""
-                            rescan()
                         },
                         label: {
                             Image(systemName: "arrow.counterclockwise")
@@ -203,17 +210,40 @@ struct ExternalModelsSettingsView: View {
             models.filter {
                 $0.externalSource == ExternalModelLocator.Source.lmStudio.rawValue
             }.count
+        customFolderCount =
+            models.filter {
+                $0.externalSource == ExternalModelLocator.Source.customModelFolder.rawValue
+            }.count
     }
 
     private func rescan() {
-        guard !isScanning else { return }
+        pathRescanTask?.cancel()
+        guard !isScanning else {
+            needsRescanAfterCurrent = true
+            return
+        }
+
         isScanning = true
         Task.detached(priority: .utility) {
             ExternalModelLocator.rescan()
             await MainActor.run {
                 self.isScanning = false
                 self.refreshCounts()
+                if self.needsRescanAfterCurrent {
+                    self.needsRescanAfterCurrent = false
+                    self.rescan()
+                }
             }
+        }
+    }
+
+    private func schedulePathRescan() {
+        refreshCounts()
+        pathRescanTask?.cancel()
+        pathRescanTask = Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 400_000_000)
+            guard !Task.isCancelled else { return }
+            rescan()
         }
     }
 

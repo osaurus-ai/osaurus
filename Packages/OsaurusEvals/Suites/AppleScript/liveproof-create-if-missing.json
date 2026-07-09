@@ -1,0 +1,22 @@
+{
+  "id": "apple_script.liveproof-create-if-missing",
+  "domain": "apple_script",
+  "label": "AppleScript • liveProof Finder create-if-missing",
+  "query": "In Finder, create a folder named 'Osaurus Eval Scratch Folder' inside the temporary items folder if it doesn't already exist, then report whether the folder now exists (true or false).",
+  "notes": "Ground-truth lane for the A3 find-or-create rule against the REAL executor and a REAL app (Finder). The target lives in `path to temporary items` so the side effect is confined to a system-managed scratch location the OS purges. The task must be idempotent: on a rerun the folder already exists and a blind `make new folder` errors, so only a genuine create-if-missing script passes both the first and every subsequent run. The read-back must capture `true`. Needs Finder Automation permission; run locally, permission-gated. Known capability gap at authoring time: the 16B addresses Finder folders by POSIX-path string (`exists folder \"/tmp/…\"`), which Finder rejects, then reports completion anyway — an honest FAIL row on the scoreboard until the model/knowledge layer closes it. Skips when no AppleScript model is installed.",
+  "fixtures": {},
+  "expect": {
+    "appleScript": {
+      "lane": "liveProof",
+      "mode": "automate",
+      "executor": { "kind": "real", "probe": "tell application \"Finder\" to count windows" },
+      "expectOutcome": ["done"],
+      "valuesContain": ["true"],
+      "scoredMaxSteps": 5,
+      "rubric": [
+        "The AppleScript creates the folder 'Osaurus Eval Scratch Folder' in the temporary items folder while handling the case where it already exists (checks `exists` or catches the duplicate error), rather than unconditionally creating it.",
+        "The script reports whether the folder exists after the operation, and the reported value is true."
+      ]
+    }
+  }
+}
