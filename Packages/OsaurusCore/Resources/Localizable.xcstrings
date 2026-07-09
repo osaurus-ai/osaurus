@@ -75875,6 +75875,9 @@
         }
       }
     },
+    "Live catalog: %lld entries, %lld Codex-compatible." : {
+
+    },
     "Live chat" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -75947,9 +75950,6 @@
           }
         }
       }
-    },
-    "Live catalog: %lld entries, %lld Codex-compatible." : {
-
     },
     "Live Test" : {
       "extractionState" : "stale",
@@ -134494,9 +134494,6 @@
         }
       }
     },
-    "shell tool disabled" : {
-
-    },
     "Shell command run after dependencies are installed" : {
       "localizations" : {
         "de" : {
@@ -134564,6 +134561,9 @@
           }
         }
       }
+    },
+    "shell tool disabled" : {
+
     },
     "Short description" : {
       "localizations" : {
@@ -135158,6 +135158,76 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "顯示模型元數據"
+          }
+        }
+      }
+    },
+    "Show Notch Overlay on Menu Bar" : {
+      "comment" : "Toggle that places the task-progress notch overlay on the menu bar instead of below it.",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Notch-Overlay in der Menüleiste anzeigen"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "메뉴 막대에 노치 오버레이 표시"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Показывать оверлей выреза в строке меню"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "在菜单栏显示刘海浮层"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "在選單列顯示瀏海浮層"
+          }
+        }
+      }
+    },
+    "Place the task-progress notch overlay on the menu bar. When off, it sits just below the menu bar so it never covers the clock, battery, or other system status controls." : {
+      "comment" : "Description for the toggle that controls whether the task-progress notch overlay sits on or below the menu bar.",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Platziert das Notch-Overlay für den Aufgabenfortschritt in der Menüleiste. Wenn deaktiviert, sitzt es direkt unter der Menüleiste und verdeckt so nie Uhr, Batterie oder andere Systemstatus-Elemente."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "작업 진행 상황 노치 오버레이를 메뉴 막대에 배치합니다. 끄면 메뉴 막대 바로 아래에 표시되어 시계, 배터리 또는 기타 시스템 상태 항목을 가리지 않습니다."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Размещает оверлей выреза с ходом выполнения задачи в строке меню. Когда выключено, он располагается прямо под строкой меню и не закрывает часы, батарею и другие элементы состояния системы."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "将任务进度刘海浮层放置在菜单栏上。关闭时，它位于菜单栏正下方，因此绝不会遮挡时钟、电池或其他系统状态控件。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "將任務進度瀏海浮層放置在選單列上。關閉時，它位於選單列正下方，因此絕不會遮擋時鐘、電池或其他系統狀態控制項。"
           }
         }
       }
