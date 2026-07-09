@@ -69,7 +69,7 @@ Put the curator on a Schedule (see Schedules) and the loop runs in the backgroun
 ## Git Sync
 
 - **Add from URL** clones into `~/.osaurus/knowledge/<id>/content/` and remembers the remote
-- Pointing a collection at a folder that is already a git repo also enables sync (a `git` chip shows on the card)
+- Pointing a collection at a folder that is already a git repo also enables sync (a `git` chip shows on the card, and the detected `origin` remote is shown beneath the path)
 - **Sync** = pull (`--ff-only`) then push. Diverged history or a rejected push stops safely and tells you to resolve with your own git tooling — Osaurus never merges for you
 - Credentials are your own: the system `git` runs with your credential helper / SSH agent (`GIT_TERMINAL_PROMPT=0`, SSH `BatchMode` — missing credentials fail fast instead of hanging)
 - Approved proposals in a git collection are committed (`update <path> via knowledge curation`) and pushed best-effort

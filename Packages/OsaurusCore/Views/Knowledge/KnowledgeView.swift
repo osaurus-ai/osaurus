@@ -164,12 +164,14 @@ struct KnowledgeView: View {
                             }
                         }
                     } else {
-                        let created = knowledgeManager.create(
-                            name: name,
-                            summary: summary,
-                            folderPath: folderPath
-                        )
-                        showSuccess("Added \"\(created.name)\", indexing in the background")
+                        Task {
+                            let created = await knowledgeManager.create(
+                                name: name,
+                                summary: summary,
+                                folderPath: folderPath
+                            )
+                            showSuccess("Added \"\(created.name)\", indexing in the background")
+                        }
                     }
                 },
                 onCancel: { isCreating = false }
@@ -402,7 +404,15 @@ private struct KnowledgeCollectionCard: View {
                         .padding(.vertical, 1)
                         .background(Capsule().fill(theme.accentColor.opacity(0.18)))
                         .foregroundColor(theme.accentColor)
+                        .help(collection.gitRemoteURL ?? "Local git repository (no remote)")
                 }
+            }
+            if collection.isGitRepository, let remote = collection.gitRemoteURL {
+                Text(remote)
+                    .font(.system(size: 10, design: .monospaced))
+                    .foregroundColor(theme.tertiaryText)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
             }
             if !collection.folderExists {
                 Text("Folder not found. Search serves the last indexed state.", bundle: .module)

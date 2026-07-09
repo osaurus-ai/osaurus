@@ -58,8 +58,14 @@ public final class KnowledgeManager: ObservableObject {
     }
 
     @discardableResult
-    public func create(name: String, summary: String = "", folderPath: String) -> KnowledgeCollection {
-        let collection = KnowledgeCollection(name: name, summary: summary, folderPath: folderPath)
+    public func create(name: String, summary: String = "", folderPath: String) async -> KnowledgeCollection {
+        var collection = KnowledgeCollection(name: name, summary: summary, folderPath: folderPath)
+        // Adopting a folder that is already a git repo: remember its
+        // `origin` so the card shows the link and Sync can pull/push.
+        // A repo without a remote stays local-only (gitRemoteURL nil).
+        if collection.isGitRepository {
+            collection.gitRemoteURL = await KnowledgeGitSyncService.shared.remoteURL(of: collection.folderURL)
+        }
         KnowledgeCollectionStore.save(collection)
         collections = KnowledgeCollectionStore.loadAll()
         NotificationCenter.default.post(name: .knowledgeCollectionsChanged, object: collection.id)
