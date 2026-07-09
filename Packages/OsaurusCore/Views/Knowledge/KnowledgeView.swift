@@ -67,6 +67,7 @@ struct KnowledgeView: View {
                         ),
                         hasAppeared: hasAppeared
                     )
+                    .padding(.horizontal, 32)
                 } else {
                     ScrollView {
                         curationSection
