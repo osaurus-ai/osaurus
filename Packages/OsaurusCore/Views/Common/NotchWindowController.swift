@@ -47,6 +47,29 @@ public struct NotchScreenMetrics: Equatable {
     }
 }
 
+// MARK: - Notch Overlay Placement Preference
+
+/// User-controlled vertical placement of the task-progress notch overlay.
+///
+/// `below` (default) keeps the overlay inside the visible frame so it never
+/// covers the menu bar / system status controls (issue that motivated #1874).
+/// `onMenuBar` anchors it to the physical top of the display so it sits on the
+/// menu bar for users who prefer that (issue #1951).
+public enum NotchOverlayPlacement: String {
+    case belowMenuBar
+    case onMenuBar
+
+    /// `UserDefaults` key backing the Chat settings toggle. Read by the
+    /// controller each time it repositions the panel.
+    public static let defaultsKey = "notchOverlayPlacement"
+
+    /// Current preference, defaulting to `.belowMenuBar` when unset.
+    public static var current: NotchOverlayPlacement {
+        UserDefaults.standard.string(forKey: defaultsKey)
+            .flatMap(NotchOverlayPlacement.init) ?? .belowMenuBar
+    }
+}
+
 // MARK: - Notch Panel Placement
 
 struct NotchPanelPlacement: Equatable {
@@ -56,7 +79,8 @@ struct NotchPanelPlacement: Equatable {
         screenFrame: CGRect,
         visibleFrame: CGRect,
         preferredSize: CGSize,
-        hiddenMenuBarInset: CGFloat = 0
+        hiddenMenuBarInset: CGFloat = 0,
+        overMenuBar: Bool = false
     ) -> NotchPanelPlacement {
         let safeFrame = visibleFrame.isEmpty ? screenFrame : visibleFrame
         let width = min(preferredSize.width, max(1, safeFrame.width))
@@ -65,14 +89,21 @@ struct NotchPanelPlacement: Equatable {
         let minX = safeFrame.minX
         let maxX = safeFrame.maxX - width
         let x = min(max(centeredX, minX), maxX)
-        // When the menu bar auto-hides, `visibleFrame` extends to the very top
-        // of the screen, which would place the panel exactly in the strip
-        // where the menu bar reappears — overlapping the clock / status icons
-        // whenever it reveals. Reserve that strip explicitly in that case.
-        let topY =
-            safeFrame.maxY >= screenFrame.maxY
-            ? safeFrame.maxY - hiddenMenuBarInset
-            : safeFrame.maxY
+        // Anchor the top edge. `overMenuBar` intentionally uses the physical
+        // top of the display so the overlay sits on the menu bar. Otherwise we
+        // stay inside the visible frame — and when the menu bar auto-hides,
+        // `visibleFrame` extends to the very top of the screen, which would
+        // place the panel exactly in the strip where the menu bar reappears
+        // (overlapping the clock / status icons on every reveal), so we reserve
+        // that strip explicitly in that case.
+        let topY: CGFloat
+        if overMenuBar {
+            topY = screenFrame.maxY
+        } else if safeFrame.maxY >= screenFrame.maxY {
+            topY = safeFrame.maxY - hiddenMenuBarInset
+        } else {
+            topY = safeFrame.maxY
+        }
         let y = topY - height
 
         return NotchPanelPlacement(frame: CGRect(x: x, y: y, width: width, height: height))
@@ -142,9 +173,10 @@ public final class NotchWindowController: NSObject, ObservableObject {
         panel.isOpaque = false
         panel.backgroundColor = .clear
         panel.hasShadow = false
-        // Keep task progress above regular app windows without covering macOS
-        // menu-bar/status-item windows.
-        panel.level = .floating
+        // Keep task progress above regular app windows. Below the menu bar by
+        // default; the user can opt into an on-menu-bar placement (issue #1951)
+        // which raises the level above the menu-bar window.
+        panel.level = basePanelLevel
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary, .ignoresCycle]
         panel.isReleasedWhenClosed = false
         panel.hidesOnDeactivate = false
@@ -286,7 +318,7 @@ public final class NotchWindowController: NSObject, ObservableObject {
             alertActive
             ? screen.frame
             : panelRect(for: screen, metrics: NotchScreenMetrics.detect(for: screen))
-        let targetLevel = alertActive ? Self.alertPanelLevel : NSWindow.Level.floating
+        let targetLevel = alertActive ? Self.alertPanelLevel : basePanelLevel
         let targetPadding = alertActive
             ? NotchPanelPlacement.alertContentTopPadding(
                 screenFrame: screen.frame,
@@ -317,10 +349,30 @@ public final class NotchWindowController: NSObject, ObservableObject {
             screenFrame: screen.frame,
             visibleFrame: screen.visibleFrame,
             preferredSize: CGSize(width: Self.panelWidth, height: Self.panelHeight),
-            hiddenMenuBarInset: metrics.notchHeight
+            hiddenMenuBarInset: metrics.notchHeight,
+            overMenuBar: NotchOverlayPlacement.current == .onMenuBar
         ).frame
     }
 
+    /// Non-alert window level for the panel. `.onMenuBar` placement must sit
+    /// above the menu-bar window so the overlay actually renders on top of it;
+    /// `.belowMenuBar` uses `.floating` so it stays above app windows but below
+    /// the menu bar / status items.
+    private var basePanelLevel: NSWindow.Level {
+        NotchOverlayPlacement.current == .onMenuBar ? Self.onMenuBarPanelLevel : .floating
+    }
+
+    /// Re-read the placement preference and reposition the panel. Called when
+    /// the user flips the Chat settings toggle. No-ops while an alert has the
+    /// panel expanded to full screen; the next `syncAlertExpansion` restores
+    /// the correct level/frame once the alert clears.
+    public func refreshPlacement() {
+        guard notchPanel != nil, !isExpandedForAlert else { return }
+        notchPanel?.level = basePanelLevel
+        updatePanelScreen(forWindowId: ChatWindowManager.shared.lastFocusedWindowId)
+    }
+
+    private static let onMenuBarPanelLevel = NSWindow.Level(rawValue: Int(CGWindowLevelForKey(.mainMenuWindow)) + 1)
     private static let alertPanelLevel = NSWindow.Level(rawValue: Int(CGWindowLevelForKey(.mainMenuWindow)) + 3)
 }
 
