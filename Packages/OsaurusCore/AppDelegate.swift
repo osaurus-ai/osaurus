@@ -598,15 +598,26 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
                 // instead of stalling on a synchronous SwiftUI construct+layout.
                 Task { @MainActor [weak self] in
                     try? await Task.sleep(for: .seconds(1.5))
+                    // These prewarms each realize a heavy SwiftUI view graph
+                    // synchronously on the main thread. That's a worthwhile
+                    // trade on a healthy machine, but on a device that's in low
+                    // power mode or already under thermal pressure the same
+                    // realization runs several times slower and can blow past
+                    // the app-hang watchdog for work the user never asked for.
+                    // Skip speculative warming in that state and let the first
+                    // real open pay its own (unavoidable) cost instead.
+                    guard !Self.isUnderResourcePressure else { return }
                     self?.prewarmManagementWindow()
                     // Warm ChatView's (deep, slow-to-realize) generic metadata too,
                     // spaced out so the two heavy SwiftUI realizations don't stack
                     // into a single main-thread stall during the launch settle.
                     try? await Task.sleep(for: .seconds(1.0))
+                    guard !Self.isUnderResourcePressure else { return }
                     ChatWindowManager.shared.prewarmChatView()
                     // And the menu-bar popover content, so the first click on
                     // the status item doesn't pay the panel's first realization.
                     try? await Task.sleep(for: .seconds(1.0))
+                    guard !Self.isUnderResourcePressure else { return }
                     self?.prewarmStatusPanel()
                 }
             }
@@ -1543,6 +1554,19 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
     /// seconds on slower machines — right under the user's click on the status
     /// item. A throwaway controller realizes it once during the launch settle;
     /// it's never attached to a window, so `onAppear`/`task` don't fire.
+    /// True when the machine is in a state where a speculative, synchronous
+    /// SwiftUI realization is likely to stall the main thread long enough to
+    /// trip the app-hang watchdog: low power mode (CPU is clamped) or serious
+    /// thermal throttling. Used to skip the launch prewarms in those cases.
+    static var isUnderResourcePressure: Bool {
+        let info = ProcessInfo.processInfo
+        if info.isLowPowerModeEnabled { return true }
+        switch info.thermalState {
+        case .serious, .critical: return true
+        default: return false
+        }
+    }
+
     @MainActor func prewarmStatusPanel() {
         guard popover == nil else { return }
         let root = StatusPanelView()
