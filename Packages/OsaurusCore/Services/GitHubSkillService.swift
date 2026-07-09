@@ -922,8 +922,15 @@ public final class GitHubSkillService: ObservableObject {
     /// stuck on the 60/hr anonymous limit just because they launched from
     /// Finder without an env var.
     nonisolated static func gitHubToken() -> String? {
-        if let stored = GitHubAuth.token { return stored }
-        return gitHubToken(from: ProcessInfo.processInfo.environment)
+        resolveToken(stored: GitHubAuth.token, environment: ProcessInfo.processInfo.environment)
+    }
+
+    /// Pure precedence resolution so the "in-app token wins over env vars" rule
+    /// is unit-testable without the keychain or process env. A non-blank stored
+    /// token wins; otherwise fall back to GITHUB_TOKEN / GH_TOKEN.
+    nonisolated static func resolveToken(stored: String?, environment: [String: String]) -> String? {
+        if let stored = GitHubAuth.normalize(stored) { return stored }
+        return gitHubToken(from: environment)
     }
 
     /// Pure token resolution over an explicit environment, so the precedence

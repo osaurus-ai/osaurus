@@ -28,20 +28,26 @@ enum GitHubAuth {
         cachedToken.withLock { (state: inout String??) -> String? in
             if case .some(let loaded) = state { return loaded }
             let raw = Keychain.read(service: keychainService, account: keychainAccount)
-                .flatMap { String(data: $0, encoding: .utf8) }?
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-            let value = (raw?.isEmpty == false) ? raw : nil
+                .flatMap { String(data: $0, encoding: .utf8) }
+            let value = normalize(raw)
             state = .some(value)
             return value
         }
+    }
+
+    /// Normalize a raw token: trim surrounding whitespace and treat a blank or
+    /// nil value as "no token". Pure so the trimming/blank rules are
+    /// unit-testable without touching the keychain.
+    static func normalize(_ raw: String?) -> String? {
+        let trimmed = raw?.trimmingCharacters(in: .whitespacesAndNewlines)
+        return (trimmed?.isEmpty == false) ? trimmed : nil
     }
 
     /// Store (or clear, when empty/nil) the token. The in-memory cache is
     /// authoritative immediately; the keychain write runs off the caller's
     /// thread.
     static func setToken(_ newValue: String?) {
-        let trimmed = newValue?.trimmingCharacters(in: .whitespacesAndNewlines)
-        let value = (trimmed?.isEmpty == false) ? trimmed : nil
+        let value = normalize(newValue)
         cachedToken.withLock { $0 = .some(value) }
         if let value, let data = value.data(using: .utf8) {
             Keychain.writeInBackground(service: keychainService, account: keychainAccount, data: data)
