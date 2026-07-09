@@ -1087,8 +1087,15 @@ public final class KnowledgeDatabase: @unchecked Sendable {
 
     /// Sanitize a free-text query for FTS5 MATCH: strip everything that
     /// isn't alphanumeric, then quote each term so embedded SQL operators
-    /// are treated as literal tokens. Same contract as
-    /// `MemoryDatabase.ftsMatchQuery`.
+    /// are treated as literal tokens.
+    ///
+    /// Terms are combined with `OR` and prefix-matched (`"term"*`), not
+    /// joined by whitespace. Whitespace in FTS5 is an implicit AND, which
+    /// forces every word of a natural-language query into a single chunk —
+    /// so a multi-word question almost never matches heading-split docs.
+    /// OR keeps recall (BM25 still ranks chunks matching more terms first),
+    /// and the prefix aligns singular/plural forms under the non-stemming
+    /// `unicode61` tokenizer (`customer` matches `customers`).
     static func ftsMatchQuery(_ raw: String) -> String? {
         let allowed = CharacterSet.alphanumerics.union(.whitespaces).union(CharacterSet(charactersIn: "-_"))
         let scrubbed = String(raw.unicodeScalars.map { allowed.contains($0) ? Character($0) : " " })
@@ -1098,7 +1105,7 @@ public final class KnowledgeDatabase: @unchecked Sendable {
             .map { String($0) }
             .filter { !$0.isEmpty }
         guard !words.isEmpty else { return nil }
-        return words.map { "\"\($0)\"" }.joined(separator: " ")
+        return words.map { "\"\($0)\"*" }.joined(separator: " OR ")
     }
 }
 

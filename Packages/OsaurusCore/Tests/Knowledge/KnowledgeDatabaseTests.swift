@@ -110,6 +110,43 @@ struct KnowledgeDatabaseTests {
     }
 
     @Test
+    func ftsSearchMatchesMultiWordQuerySplitAcrossChunks() throws {
+        let db = makeDBOrSkip()
+        guard let db else { return }
+        // A heading-split policy doc: no single chunk holds every query
+        // word. Implicit-AND (whitespace-joined) MATCH found nothing here;
+        // OR-joined terms must still surface the document.
+        try seedDocument(
+            db, collectionId: "granted", relPath: "refund-policy.md",
+            chunks: [
+                ("Refund Policy", "This is the single source of truth for billing."),
+                ("Eligibility window", "Customers may request a full refund within 30 days."),
+            ]
+        )
+
+        let hits = try db.searchChunksText(
+            query: "refund policy window customer request",
+            collectionIds: ["granted"], limit: 10
+        )
+        #expect(!hits.isEmpty)
+        #expect(hits.contains { $0.relPath == "refund-policy.md" })
+    }
+
+    @Test
+    func ftsSearchPrefixMatchesPluralForms() throws {
+        let db = makeDBOrSkip()
+        guard let db else { return }
+        try seedDocument(
+            db, collectionId: "granted", relPath: "p.md",
+            chunks: [("", "Customers may request refunds anytime.")]
+        )
+        // Singular query terms must reach plural document tokens under the
+        // non-stemming unicode61 tokenizer, via prefix matching.
+        let hits = try db.searchChunksText(query: "customer refund", collectionIds: ["granted"], limit: 10)
+        #expect(hits.contains { $0.relPath == "p.md" })
+    }
+
+    @Test
     func listDocumentsFiltersByTypeAndTag() throws {
         let db = makeDBOrSkip()
         guard let db else { return }
