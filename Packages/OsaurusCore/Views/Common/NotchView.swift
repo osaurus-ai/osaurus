@@ -158,6 +158,20 @@ struct NotchView: View {
         }
     }
 
+    /// Extra top inset for the expanded card when the overlay is anchored on
+    /// the menu bar and the display has a physical notch. The panel's top edge
+    /// then sits at the very top of the screen, so the hardware notch cutout
+    /// overlaps the card's header; push the content down past it (issue #1951).
+    /// Zero for below-the-menu-bar placement, non-notch displays, and the
+    /// compact pill (whose icons are meant to straddle the cutout).
+    private var hardwareNotchTopInset: CGFloat {
+        guard expansion == .expanded,
+            metrics.hasHardwareNotch,
+            NotchOverlayPlacement.current == .onMenuBar
+        else { return 0 }
+        return metrics.notchHeight
+    }
+
     /// Compact: flush with bezel. Expanded: content-driven via fixedSize.
     private var notchHeight: CGFloat {
         switch expansion {
@@ -435,7 +449,7 @@ struct NotchView: View {
                 if sortedTasks.count > 1 { taskDotIndicators }
             }
             .padding(.horizontal, 16)
-            .padding(.top, 6)
+            .padding(.top, 6 + hardwareNotchTopInset)
             .padding(.bottom, 14)
             .opacity(contentRevealed ? 1 : 0)
             .offset(y: contentRevealed ? 0 : 8)
