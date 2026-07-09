@@ -8847,6 +8847,11 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                         "required_available_bytes": f.requiredAvailableBytes,
                         "soft_limit_bytes": f.softLimitBytes,
                         "hard_limit_bytes": f.hardLimitBytes,
+                        // What Metal actually keeps resident. A load past this
+                        // is paged by macOS rather than refused, so support
+                        // needs to see it to explain a "fits but crawls" model.
+                        "gpu_budget_bytes": f.gpuBudgetBytes,
+                        "exceeds_gpu_budget": f.exceedsGPUBudget,
                     ] as [String: Any]
             } else {
                 ramFeasibility = NSNull()

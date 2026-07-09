@@ -957,14 +957,25 @@ public actor ModelRuntime {
         public let requiredAvailableBytes: Int64
         public let softLimitBytes: Int64
         public let hardLimitBytes: Int64
+        /// What Metal will actually keep resident on this machine. Zero when
+        /// it can't be determined.
+        public let gpuBudgetBytes: Int64
         public let timestamp: Date
+
+        /// The load doesn't fit the GPU working set, so macOS pages the
+        /// weights on every decode step. Distinct from ordinary RAM pressure:
+        /// the budget is a fixed fraction of installed memory, so closing
+        /// other apps cannot make room — only a smaller model can.
+        public var exceedsGPUBudget: Bool {
+            gpuBudgetBytes > 0 && requiredAvailableBytes > gpuBudgetBytes
+        }
 
         /// UI severity for the chat input's tight-fit disclaimer.
         public enum LoadPressureSeverity: String, Sendable, Equatable {
             /// Comfortably within budget — no banner.
             case none
-            /// Above the soft threshold (or free pages look short): show the
-            /// disclaimer but allow sending.
+            /// The model is large relative to this Mac: show the disclaimer
+            /// but allow sending.
             case warn
             /// Above the hard ceiling, or the load can never fit in physical
             /// memory: block sending until memory frees.
@@ -979,9 +990,17 @@ public actor ModelRuntime {
             if projectedBytes > hardLimitBytes || requiredAvailableBytes > physicalMemoryBytes {
                 return .block
             }
-            if verdict != .ok || projectedBytes > softLimitBytes {
-                return .warn
-            }
+            // A working set past the GPU budget gets paged even on an
+            // otherwise idle Mac, so it warns no matter how much RAM happens
+            // to be free.
+            if exceedsGPUBudget { return .warn }
+            // Only the model's own size relative to the machine warrants a
+            // banner. Deliberately *not* `verdict != .ok`: the verdict also
+            // goes `.tight` on `lowAvailable`, and on macOS free pages are
+            // nearly always scarce — the compressor and file cache give the
+            // memory back on demand. Warning on that popped a disclaimer at
+            // every launch for models that fit with room to spare.
+            if projectedBytes > softLimitBytes { return .warn }
             return .none
         }
     }
@@ -1223,8 +1242,21 @@ public actor ModelRuntime {
             requiredAvailableBytes: requiredAvailable,
             softLimitBytes: softLimit,
             hardLimitBytes: hardLimit,
+            gpuBudgetBytes: Self.gpuBudgetBytes(physicalMemoryBytes: physical),
             timestamp: Date()
         )
+    }
+
+    /// The Metal working set available to a machine with `physicalMemoryBytes`
+    /// of unified memory. Weights that don't fit here get paged rather than
+    /// rejected, which reads as a catastrophically slow model rather than a
+    /// failed load — see `GPUMemoryBudget`.
+    static func gpuBudgetBytes(physicalMemoryBytes physical: Int64) -> Int64 {
+        let bytesPerGB: Double = 1024 * 1024 * 1024
+        let budgetGB = GPUMemoryBudget.budgetGB(
+            physicalMemoryGB: Double(physical) / bytesPerGB
+        )
+        return Int64(budgetGB * bytesPerGB)
     }
 
     /// Pre-load RAM feasibility assessment. Records `lastRAMFeasibility` for

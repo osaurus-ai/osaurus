@@ -113,12 +113,13 @@ struct ConfigureAIStateResourceTests {
     // MARK: - "Picked for your Mac's specs" render rule
 
     @Test func recommendedSelectionRuleMatchesRecommendedPickOnly() {
-        let small = makeModel(tag: "small", sizeBytes: 4 * gb, isTopSuggestion: true)
-        let large = makeModel(tag: "large", sizeBytes: 8 * gb, isTopSuggestion: true)
+        let small = makeModel(tag: "small", sizeBytes: 2 * gb, isTopSuggestion: true)
+        let large = makeModel(tag: "large", sizeBytes: 6 * gb, isTopSuggestion: true)
         let candidates = [large, small]
 
-        // Both fit comfortably on 16 GB, so the policy lands on the LARGEST
-        // comfortable pick — the strongest proven model this Mac can run.
+        // Both fit comfortably inside a 16 GB Mac's 10.67 GB GPU budget (2.5 GB
+        // and 7.5 GB resident), so the policy lands on the LARGEST comfortable
+        // pick — the strongest proven model this Mac can run.
         let recommended = ConfigureAIState.recommendedLocalPick(
             from: candidates,
             totalMemoryGB: 16

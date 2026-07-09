@@ -116,15 +116,16 @@ final class ModelManager: NSObject, ObservableObject {
         /// hardware info and we let everything through until we know.
         enum PerformanceFilter: String, CaseIterable, Identifiable {
             /// Only include models whose `compatibility` is `.compatible`
-            /// (memory usage below the 75 % ratio threshold).
+            /// (working set at or below 85 % of the GPU memory budget).
             case runsWell = "Runs Well"
             /// Only include models whose `compatibility` is `.tight`
-            /// (memory usage between 75 % and 95 % of total RAM)
+            /// (working set between 85 % and 110 % of the GPU memory budget).
             case tightFit = "Tight Fit"
             /// Exclude models whose advisory `compatibility` is `.tooLarge`
-            /// (memory usage above the 95 % ratio threshold). This filter is
-            /// user-selected catalog triage only; runtime load/download does
-            /// not block RAM pressure from this estimate.
+            /// (working set above 110 % of the GPU memory budget — macOS would
+            /// page the weights). This filter is user-selected catalog triage
+            /// only; runtime load/download does not block RAM pressure from
+            /// this estimate.
             case hideTooLarge = "Hide Too Large"
 
             var id: String { rawValue }
