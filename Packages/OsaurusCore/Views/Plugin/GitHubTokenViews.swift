@@ -32,13 +32,13 @@ struct GitHubTokenPromptSheet: View {
                 Image(systemName: "chevron.left.forwardslash.chevron.right")
                     .font(.system(size: 20))
                     .foregroundColor(theme.accentColor)
-                Text("Fewer rate limits with a GitHub token", bundle: .module)
+                Text("Connect GitHub to update plugins", bundle: .module)
                     .font(.system(size: 15, weight: .semibold))
                     .foregroundColor(theme.primaryText)
             }
 
             Text(
-                "Without a token, GitHub caps this app at 60 requests/hour, so browsing, importing, or updating plugins can fail. A free token raises the limit to 5,000/hour.",
+                "GitHub limits how often this app can browse and update plugins before it starts showing errors. Connecting a free GitHub account raises that limit so updates keep working.",
                 bundle: .module
             )
             .font(.system(size: 12))
@@ -176,11 +176,11 @@ struct GitHubTokenCard: View {
                     .foregroundColor(theme.accentColor)
 
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("Fewer GitHub rate limits", bundle: .module)
+                    Text("Stop plugin update errors", bundle: .module)
                         .font(.system(size: 13, weight: .semibold))
                         .foregroundColor(theme.primaryText)
                     Text(
-                        "A free GitHub token raises rate limits so browsing and updating plugins doesn't fail.",
+                        "GitHub limits how often this app can check for updates. Connect a free GitHub account to update plugins without hitting that limit.",
                         bundle: .module
                     )
                     .font(.system(size: 11))
@@ -218,11 +218,11 @@ struct GitHubTokenCard: View {
                         .foregroundColor(.green)
 
                     VStack(alignment: .leading, spacing: 2) {
-                        Text("GitHub token connected", bundle: .module)
+                        Text("GitHub connected", bundle: .module)
                             .font(.system(size: 13, weight: .semibold))
                             .foregroundColor(theme.primaryText)
                         Text(
-                            "Plugin browsing and updates use your account's higher 5,000/hr rate limit.",
+                            "Plugins can now browse and update reliably without hitting GitHub's limit.",
                             bundle: .module
                         )
                         .font(.system(size: 11))
