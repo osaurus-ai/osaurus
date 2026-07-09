@@ -246,6 +246,13 @@ struct KnowledgeView: View {
                 Text("Curation", bundle: .module)
                     .font(.system(size: 13, weight: .semibold))
                     .foregroundColor(theme.primaryText)
+                Text(
+                    "Agents flag documents that look out of date. A Curator agent proposes a fix here for you to approve — nothing changes until you do.",
+                    bundle: .module
+                )
+                .font(.system(size: 11))
+                .foregroundColor(theme.tertiaryText)
+                .fixedSize(horizontal: false, vertical: true)
 
                 ForEach(pendingProposals) { proposal in
                     HStack(spacing: 10) {
@@ -286,8 +293,17 @@ struct KnowledgeView: View {
                                 .font(.system(size: 11))
                                 .foregroundColor(theme.tertiaryText)
                                 .lineLimit(2)
+                            Text("Waiting for a curator to propose a fix", bundle: .module)
+                                .font(.system(size: 10))
+                                .foregroundColor(.orange)
                         }
                         Spacer(minLength: 8)
+                        Button {
+                            startCurator(for: ticket)
+                        } label: {
+                            Text("Update with a curator", bundle: .module)
+                                .font(.system(size: 11, weight: .medium))
+                        }
                         Button {
                             Task.detached(priority: .userInitiated) {
                                 try? await KnowledgeCurationService.shared.dismissTicket(ticketId: ticket.id)
@@ -295,6 +311,7 @@ struct KnowledgeView: View {
                         } label: {
                             Text("Dismiss", bundle: .module)
                                 .font(.system(size: 11, weight: .medium))
+                                .foregroundColor(theme.secondaryText)
                         }
                     }
                     .padding(10)
@@ -304,6 +321,34 @@ struct KnowledgeView: View {
             .padding(.horizontal, 24)
             .padding(.top, 20)
         }
+    }
+
+    /// A curator agent that can act on `collectionId`: knowledge on, curator
+    /// on, and this collection granted. `nil` when the user hasn't set one up.
+    private func curatorAgent(forCollectionId collectionId: String) -> Agent? {
+        guard let uuid = UUID(uuidString: collectionId) else { return nil }
+        return AgentManager.shared.agents.first { agent in
+            agent.settings.knowledgeEnabled
+                && agent.settings.knowledgeCuratorEnabled
+                && agent.settings.knowledgeCollectionIds.contains(uuid)
+        }
+    }
+
+    /// Give the user a forward action beyond Dismiss: open a chat with a
+    /// curator agent, pre-briefed (via the toast) to work this ticket. The
+    /// curator does the proposing through the normal chat + tool path; the
+    /// proposal then returns here for approval.
+    private func startCurator(for ticket: KnowledgeTicket) {
+        guard let agent = curatorAgent(forCollectionId: ticket.collectionId) else {
+            showSuccess(
+                "No curator yet — turn on Features → Knowledge → Curator for an agent that can use this collection."
+            )
+            return
+        }
+        ChatWindowManager.shared.createWindow(agentId: agent.id)
+        showSuccess(
+            "Opened a chat with \(agent.name). Ask it to work knowledge ticket #\(ticket.id) for \(ticket.relPath)."
+        )
     }
 
     /// Load open tickets + pending proposals off the main thread (the
