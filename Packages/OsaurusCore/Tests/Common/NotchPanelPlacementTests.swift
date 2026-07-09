@@ -108,6 +108,25 @@ struct NotchPanelPlacementTests {
         #expect(placement.frame.maxY == visibleFrame.maxY)
     }
 
+    @Test func panelAnchorsToScreenTopWhenPlacedOnMenuBar() {
+        // Opt-in on-menu-bar placement (issue #1951): the panel anchors to the
+        // physical top of the display, ignoring the visible-frame / auto-hide
+        // insets so it sits on the menu bar.
+        let screenFrame = CGRect(x: 0, y: 0, width: 1440, height: 900)
+        let visibleFrame = CGRect(x: 0, y: 0, width: 1440, height: 868)
+
+        let placement = NotchPanelPlacement.panelRect(
+            screenFrame: screenFrame,
+            visibleFrame: visibleFrame,
+            preferredSize: CGSize(width: 600, height: 500),
+            hiddenMenuBarInset: 32,
+            overMenuBar: true
+        )
+
+        #expect(placement.frame.maxY == screenFrame.maxY)
+        #expect(placement.frame.midX == screenFrame.midX)
+    }
+
     @Test func alertContentTopPaddingMatchesMenuBarGap() {
         let screenFrame = CGRect(x: 0, y: 0, width: 1440, height: 900)
         let visibleFrame = CGRect(x: 0, y: 0, width: 1440, height: 868)
