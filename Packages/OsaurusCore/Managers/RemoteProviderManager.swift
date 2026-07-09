@@ -793,7 +793,11 @@ public final class RemoteProviderManager: ObservableObject {
 
     // MARK: - Test Connection
 
-    /// Test connection to a provider configuration without persisting
+    /// Test connection to a provider configuration without persisting.
+    ///
+    /// Pass `providerId` when testing an existing provider so OAuth-backed
+    /// providers (ChatGPT/Codex) can query the live model catalog with the
+    /// stored tokens instead of the static fallback.
     public func testConnection(
         host: String,
         providerProtocol: RemoteProviderProtocol,
@@ -803,14 +807,31 @@ public final class RemoteProviderManager: ObservableObject {
         providerType: RemoteProviderType = .openaiLegacy,
         apiKey: String?,
         headers: [String: String],
-        manualModelIds: [String] = []
+        manualModelIds: [String] = [],
+        providerId: UUID? = nil
     ) async throws -> [String] {
         if authType == .openAICodexOAuth && providerType == .openAICodex {
-            // testConnection runs before sign-in (no OAuth tokens exist yet), so
-            // we can't query the live /models endpoint here. The static fallback
-            // is enough to render the "test succeeded" UI; the real catalog is
-            // fetched on connect via RemoteProviderService.fetchModels.
-            return OpenAICodexOAuthService.supportedModels
+            // Prefer the live catalog when OAuth tokens are already stored
+            // (re-testing an existing connection), so the Test badge matches
+            // the models the connected provider actually exposes. Before
+            // sign-in there are no tokens, so fall back to the static list to
+            // keep the "test succeeded" UI usable; the real catalog is fetched
+            // on connect via RemoteProviderService.fetchModels.
+            guard let providerId else {
+                return OpenAICodexOAuthService.supportedModels
+            }
+            let storedTokens = await RemoteProviderKeychain.runOffCooperativeExecutor {
+                RemoteProviderKeychain.getOAuthTokens(for: providerId)
+            }
+            guard var tokens = storedTokens else {
+                return OpenAICodexOAuthService.supportedModels
+            }
+            if tokens.isExpired {
+                let refreshed = try await OpenAICodexOAuthService.refresh(tokens)
+                _ = await RemoteProviderKeychain.saveOAuthTokensOffMainActor(refreshed, for: providerId)
+                tokens = refreshed
+            }
+            return await OpenAICodexOAuthService.availableModels(for: tokens)
         }
 
         if authType == .xaiOAuth {
