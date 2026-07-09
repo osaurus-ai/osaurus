@@ -149,7 +149,7 @@ final class SearchKnowledgeTool: OsaurusTool, @unchecked Sendable {
             ]),
             "top_k": .object([
                 "type": .string("integer"),
-                "description": .string("Maximum results to return (default 8, max 25)."),
+                "description": .string("Maximum results to return (default 5, max 25)."),
             ]),
         ]),
         "required": .array([.string("query")]),
@@ -190,7 +190,9 @@ final class SearchKnowledgeTool: OsaurusTool, @unchecked Sendable {
         let tagFilter = ((args["tags"] as? [Any]) ?? []).compactMap { $0 as? String }
             .map { $0.trimmingCharacters(in: .whitespaces) }
             .filter { !$0.isEmpty }
-        let topK = max(1, min(25, ArgumentCoercion.int(args["top_k"]) ?? 8))
+        // Default 5: enough recall from OR-ranked hits without flooding a
+        // small local model's context. Callers can raise it up to 25.
+        let topK = max(1, min(25, ArgumentCoercion.int(args["top_k"]) ?? 5))
 
         // Over-fetch when a tag filter will drop hits post-search.
         let fetchCount = tagFilter.isEmpty ? topK : topK * 3
