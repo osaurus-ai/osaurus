@@ -414,6 +414,20 @@ private struct KnowledgeCollectionCard: View {
                     .lineLimit(1)
                     .truncationMode(.middle)
             }
+            Button(action: onValidateOKF) {
+                HStack(spacing: 4) {
+                    Image(systemName: "checkmark.seal")
+                        .font(.system(size: 9))
+                    Text("OKF", bundle: .module)
+                        .font(.system(size: 9, weight: .bold))
+                }
+                .padding(.horizontal, 6)
+                .padding(.vertical, 2)
+                .background(Capsule().fill(theme.tertiaryBackground))
+                .foregroundColor(theme.secondaryText)
+            }
+            .buttonStyle(.plain)
+            .help("Check that every document carries a frontmatter type (OKF)")
             if !collection.folderExists {
                 Text("Folder not found. Search serves the last indexed state.", bundle: .module)
                     .font(.system(size: 10))
@@ -425,7 +439,6 @@ private struct KnowledgeCollectionCard: View {
                     cardButton("Sync", icon: "arrow.triangle.2.circlepath.circle", action: onSync)
                 }
                 cardButton("Re-index", icon: "arrow.triangle.2.circlepath", action: onReindex)
-                cardButton("OKF", icon: "checkmark.seal", action: onValidateOKF)
                 cardButton("Edit", icon: "pencil", action: onEdit)
                 Spacer()
                 cardButton("Delete", icon: "trash", destructive: true, action: onDelete)
