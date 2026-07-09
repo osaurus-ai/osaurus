@@ -154,6 +154,18 @@ enum ModelProfileRegistry {
         }
         return option.inverted ? !value : value
     }
+
+    /// The reasoning state the chip should show when the user has made no
+    /// explicit choice. Requests intentionally send nothing in that case (see
+    /// `normalizedOptions`), so the engine runs the model's chat-template
+    /// default — ornith / qwen3.5 default thinking-ON, gemma-4 defaults OFF.
+    /// Reporting that here keeps the chip honest instead of the old hardcoded
+    /// "off" that lied for default-on models. Reads the local bundle's template
+    /// via `LocalReasoningCapability`, so it is a view-layer helper (potential
+    /// disk touch) rather than part of the pure registry lookups above.
+    static func thinkingDefaultOn(for modelId: String) -> Bool {
+        LocalReasoningCapability.capability(forModelId: modelId).defaultThinkingOn
+    }
 }
 
 // MARK: - DSV4 Reasoning Profile

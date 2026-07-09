@@ -2508,7 +2508,7 @@ extension FloatingInputCard {
         {
             let isEnabled =
                 ModelProfileRegistry.thinkingEnabled(for: model, values: activeModelOptions)
-                ?? false
+                ?? ModelProfileRegistry.thinkingDefaultOn(for: model)
 
             SelectorChip(isActive: isEnabled) {
                 toggleThinking(id: thinkingOpt.id)
@@ -2553,9 +2553,13 @@ extension FloatingInputCard {
 
     private func toggleThinking(id: String) {
         let thinkingOpt = selectedModel.flatMap { ModelProfileRegistry.profile(for: $0)?.thinkingOption }
+        // Mirror the chip's displayed state (explicit choice, else the model's
+        // template default) so the first tap flips away from what the user sees
+        // rather than from a hardcoded "off".
         let currentEnabled =
             selectedModel.flatMap {
                 ModelProfileRegistry.thinkingEnabled(for: $0, values: activeModelOptions)
+                    ?? ModelProfileRegistry.thinkingDefaultOn(for: $0)
             } ?? false
         let newEnabled = !currentEnabled
         let newVal = thinkingOpt?.inverted == true ? !newEnabled : newEnabled
