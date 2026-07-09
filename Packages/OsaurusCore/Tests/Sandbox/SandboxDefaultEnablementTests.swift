@@ -188,4 +188,64 @@ struct SandboxDefaultEnablementTests {
             _ = await manager.delete(id: agent.id)
         }
     }
+
+    // MARK: - Idempotent fast path
+
+    /// `registerTools` is called on every warm-up and every send
+    /// (`prepareChatExecutionMode`). The slow path unregisters the builtin
+    /// sandbox tools FIRST and only re-registers them after async container
+    /// work, so any compose landing in that window resolves a schema without
+    /// the sandbox tools — flapping the composed shape and thrashing the
+    /// warm-up KV fingerprint. Pin the fast path: a repeat call with the
+    /// same agent/config and a running container must neither re-provision
+    /// nor transition the registry through the empty state.
+    @Test
+    func registerTools_repeatCallSameAgentAndConfig_skipsReprovision() async {
+        await SandboxTestLock.runWithStoragePaths {
+            let manager = AgentManager.shared
+            let registrar = SandboxToolRegistrar.shared
+            let registry = ToolRegistry.shared
+            let originalStatus = SandboxManager.State.shared.status
+            let originalProvisionOverride = registrar.provisionAgentOverride
+
+            let agent = Agent(
+                name: "FastPath Sandbox \(UUID().uuidString)",
+                agentAddress: "test-fastpath-sandbox-\(UUID().uuidString)",
+                autonomousExec: AutonomousExecConfig(enabled: true)
+            )
+            manager.add(agent)
+            SandboxManager.State.shared.status = .running
+
+            final class Counter: @unchecked Sendable {
+                var provisionCalls = 0
+            }
+            let counter = Counter()
+            registrar.provisionAgentOverride = { @MainActor _ in
+                counter.provisionCalls += 1
+            }
+
+            registry.unregisterAllBuiltinSandboxTools()
+            await registrar.registerTools(for: agent.id)
+            #expect(registry.builtInSandboxToolNamesSnapshot.contains("sandbox_exec"))
+            #expect(counter.provisionCalls == 1)
+
+            // Repeat call: same agent, same config, container running —
+            // must be a no-op (no re-provision, tools stay registered).
+            await registrar.registerTools(for: agent.id)
+            #expect(counter.provisionCalls == 1)
+            #expect(registry.builtInSandboxToolNamesSnapshot.contains("sandbox_exec"))
+
+            // Out-of-band teardown (eval runner) invalidates the fast path:
+            // the next call must take the slow path and re-register.
+            registry.unregisterAllBuiltinSandboxTools()
+            await registrar.registerTools(for: agent.id)
+            #expect(counter.provisionCalls == 2)
+            #expect(registry.builtInSandboxToolNamesSnapshot.contains("sandbox_exec"))
+
+            registry.unregisterAllSandboxTools()
+            SandboxManager.State.shared.status = originalStatus
+            registrar.provisionAgentOverride = originalProvisionOverride
+            _ = await manager.delete(id: agent.id)
+        }
+    }
 }

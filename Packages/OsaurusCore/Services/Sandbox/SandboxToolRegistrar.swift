@@ -78,6 +78,21 @@ public final class SandboxToolRegistrar {
     /// the second attempt or succeed.
     private static let provisioningRetryDelay: TimeInterval = 5
 
+    /// Memo of the last SUCCESSFUL builtin registration (agent + effective
+    /// exec config). Backs the idempotent fast path in `registerTools`:
+    /// warmups and sends call `registerTools` on every turn, and the slow
+    /// path tears the sandbox tools out of the registry, then suspends for
+    /// container work (provision + SOUL seed + package reconcile) before
+    /// re-registering them. Any prompt composition that lands in that
+    /// window — the budget preview, another window's warm-up payload —
+    /// resolves a schema WITHOUT the sandbox tools, which flaps the
+    /// composed shape, invalidates the warm KV fingerprint, and schedules
+    /// yet another warm-up whose `registerTools` punches the next hole
+    /// (observed as an endless 17–22 s re-prefill loop). When nothing
+    /// changed since the last successful registration, skip the cycle
+    /// entirely so the registry never transitions through the empty state.
+    private var registeredBuiltins: (agentId: UUID, config: AutonomousExecConfig?)?
+
     /// Returns the current unavailability reason for an agent, if any.
     public func unavailabilityReason(for agentId: UUID) -> UnavailabilityReason? {
         unavailability[agentId]
@@ -214,13 +229,38 @@ public final class SandboxToolRegistrar {
     /// system prompt can surface a clear message to the model instead of the
     /// model silently losing access to its sandbox tools.
     public func registerTools(for agentId: UUID, forceStart: Bool = false) async {
-        ToolRegistry.shared.unregisterAllBuiltinSandboxTools()
-
         let agent = AgentManager.shared.agent(for: agentId) ?? Agent.default
         let agentIdStr = agent.id.uuidString
         let agentName = SandboxAgentProvisioner.linuxName(for: agentIdStr)
         let execConfig = AgentManager.shared.effectiveAutonomousExec(for: agent.id)
         let autonomousEnabled = execConfig?.enabled == true
+
+        // Idempotent fast path (see `registeredBuiltins`): the desired end
+        // state is already installed — same agent, same effective config,
+        // container still running, no recorded failure, and the real
+        // builtin tools actually present in the registry (the registry
+        // check guards against out-of-band teardowns like the eval
+        // runner's `unregisterAllBuiltinSandboxTools`). Return without
+        // unregistering so concurrent composes never observe a schema
+        // with the sandbox tools missing. Restricted to the autonomous
+        // case: a matching memo then proves `ensureProvisioned` already
+        // succeeded for this agent, whereas with autonomous off a plugin
+        // that became ready since the memo was taken still needs its
+        // provisioning pass on the slow path.
+        if !forceStart,
+            autonomousEnabled,
+            let memo = registeredBuiltins,
+            memo.agentId == agent.id,
+            memo.config == execConfig,
+            SandboxManager.State.shared.status == .running,
+            unavailability[agent.id] == nil,
+            ToolRegistry.shared.builtInSandboxToolNamesSnapshot.contains("sandbox_read_file")
+        {
+            return
+        }
+
+        ToolRegistry.shared.unregisterAllBuiltinSandboxTools()
+        registeredBuiltins = nil
         let needsProvisioning =
             autonomousEnabled
             || SandboxPluginManager.shared.plugins(for: agentIdStr).contains { $0.status == .ready }
@@ -343,6 +383,7 @@ public final class SandboxToolRegistrar {
             agentName: agentName,
             config: execConfig
         )
+        registeredBuiltins = (agent.id, execConfig)
         realToolsRegistered = true
     }
 
