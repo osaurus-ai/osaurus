@@ -83,12 +83,23 @@ func ensureHighlightrTheme(for theme: any ThemeProtocol) {
 /// under memory pressure; entries are cheap relative to re-running the JS.
 nonisolated(unsafe) private let highlightCache = NSCache<NSString, NSAttributedString>()
 
+/// Above this many UTF-16 units, skip syntax highlighting and render plain
+/// monospaced text. Highlightr runs a JavaScriptCore tokenizer whose cost grows
+/// super-linearly with input size, and it runs synchronously on the main thread
+/// during cell layout — a single huge code block (a pasted file, a long tool
+/// output) can blow past the 3s app-hang watchdog. Losing color on an
+/// enormous block the user has to scroll anyway is a good trade for not
+/// freezing the UI. Normal code blocks are far under this.
+private let maxHighlightableLength = 50_000
+
 func highlightCode(
     _ code: String,
     language: String?,
     theme: any ThemeProtocol,
     cache: Bool = true
 ) -> NSAttributedString? {
+    // Cheap length gate before taking the lock or touching JSCore.
+    guard code.utf16.count <= maxHighlightableLength else { return nil }
     highlightrLock.lock()
     defer { highlightrLock.unlock() }
     switchHighlightrThemeLocked(for: theme)
