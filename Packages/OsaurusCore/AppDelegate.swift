@@ -186,6 +186,11 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
         // register call in `ConfigurationDomainBootstrap`.
         ConfigurationDomainBootstrap.registerBuiltIns()
 
+        // Warm the GitHub API token cache off the main thread so the first
+        // plugin browse/import/update doesn't pay a synchronous keychain read
+        // (and so an in-app token authenticates the very first request).
+        GitHubAuth.preloadInBackground()
+
         // Bring up analytics early so the launch + onboarding funnel is
         // captured. No-ops silently when no Aptabase key is configured.
         TelemetryService.shared.configure()

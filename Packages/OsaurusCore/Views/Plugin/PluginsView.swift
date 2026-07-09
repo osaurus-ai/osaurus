@@ -564,6 +564,7 @@ struct PluginsView: View {
             } else {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 16) {
+                        GitHubTokenCard()
                         if totalUpdatesAvailable > 0 {
                             UpdateAllPluginsBanner(
                                 count: totalUpdatesAvailable,
@@ -708,8 +709,10 @@ struct PluginsView: View {
 
     private var nativeBrowseGrid: some View {
         ScrollView {
-            LazyVGrid(columns: twoColumnGrid, spacing: 20) {
-                ForEach(Array(filteredPlugins.enumerated()), id: \.element.id) { index, plugin in
+            VStack(alignment: .leading, spacing: 20) {
+                GitHubTokenCard()
+                LazyVGrid(columns: twoColumnGrid, spacing: 20) {
+                    ForEach(Array(filteredPlugins.enumerated()), id: \.element.id) { index, plugin in
                     PluginCard(
                         plugin: plugin,
                         missingPermissions: [],
@@ -728,6 +731,7 @@ struct PluginsView: View {
                         onInstall: { try await repoService.install(pluginId: plugin.pluginId) },
                         onChange: { reload() }
                     )
+                    }
                 }
             }
             .padding(24)
