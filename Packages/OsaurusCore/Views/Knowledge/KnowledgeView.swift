@@ -366,6 +366,55 @@ private struct KnowledgeCollectionCard: View {
     let onEdit: () -> Void
     let onDelete: () -> Void
 
+    /// OKF conformance, computed on appear so the badge shows status at a
+    /// glance rather than hiding it behind a click.
+    private enum OKFStatus: Equatable {
+        case unknown
+        case conformant
+        case nonconforming(Int)
+    }
+    @State private var okfStatus: OKFStatus = .unknown
+
+    private var okfIcon: String {
+        switch okfStatus {
+        case .conformant: return "checkmark.seal.fill"
+        case .nonconforming: return "exclamationmark.triangle.fill"
+        case .unknown: return "checkmark.seal"
+        }
+    }
+
+    private var okfLabel: String {
+        switch okfStatus {
+        case .nonconforming(let count): return "OKF · \(count)"
+        default: return "OKF"
+        }
+    }
+
+    private var okfColor: Color {
+        switch okfStatus {
+        case .conformant: return .green
+        case .nonconforming: return .orange
+        case .unknown: return theme.secondaryText
+        }
+    }
+
+    private var okfHelp: String {
+        switch okfStatus {
+        case .conformant:
+            return "OKF: every document carries a frontmatter type. Click to re-check."
+        case .nonconforming(let count):
+            return "OKF: \(count) document(s) missing a frontmatter type. Click for details."
+        case .unknown:
+            return "Check that every document carries a frontmatter type (OKF)."
+        }
+    }
+
+    private func refreshOKFStatus() async {
+        let failing = await KnowledgeIndexService.shared
+            .okfNonconformingDocuments(collectionId: collection.id.uuidString)
+        okfStatus = failing.isEmpty ? .conformant : .nonconforming(failing.count)
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(alignment: .top, spacing: 10) {
@@ -415,20 +464,24 @@ private struct KnowledgeCollectionCard: View {
                     .lineLimit(1)
                     .truncationMode(.middle)
             }
-            Button(action: onValidateOKF) {
+            Button(action: {
+                onValidateOKF()
+                Task { await refreshOKFStatus() }
+            }) {
                 HStack(spacing: 4) {
-                    Image(systemName: "checkmark.seal")
+                    Image(systemName: okfIcon)
                         .font(.system(size: 9))
-                    Text("OKF", bundle: .module)
+                    Text(verbatim: okfLabel)
                         .font(.system(size: 9, weight: .bold))
                 }
                 .padding(.horizontal, 6)
                 .padding(.vertical, 2)
-                .background(Capsule().fill(theme.tertiaryBackground))
-                .foregroundColor(theme.secondaryText)
+                .background(Capsule().fill(okfColor.opacity(0.15)))
+                .foregroundColor(okfColor)
             }
             .buttonStyle(.plain)
-            .help("Check that every document carries a frontmatter type (OKF)")
+            .help(okfHelp)
+            .task(id: collection.updatedAt) { await refreshOKFStatus() }
             if !collection.folderExists {
                 Text("Folder not found. Search serves the last indexed state.", bundle: .module)
                     .font(.system(size: 10))
