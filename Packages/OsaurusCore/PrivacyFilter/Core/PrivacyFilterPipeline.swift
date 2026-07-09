@@ -576,11 +576,24 @@ enum PrivacyFilterPipeline {
                 .filter { !$0.approved }
                 .map(\.original)
         )
+        // Scope the regex re-scan to the message range detection
+        // actually classified (the latest user turn onward). Carry-
+        // over substitution can dirty EARLIER history messages (a
+        // prior-turn placeholder re-applied to an old assistant
+        // reply); those messages were never in detection scope, so
+        // regex hits there (e.g. URLs the model itself emitted last
+        // turn) were never reviewable and must not block the send.
+        // Substitution failures in those messages are still caught
+        // by the per-original assertion below, which checks every
+        // approved original against the FULL scrubbed history.
+        let detectionStart = messages.lastIndex(where: { $0.role == "user" }) ?? 0
+        let scopedDirtyIndices = diff.dirtyIndices.filter { $0 >= detectionStart }
         let leaks = Self.scanForLeaks(
             in: scrubbed,
             ruleset: ruleset,
             ignoreOriginals: skippedOriginals,
-            dirtyIndices: diff.dirtyIndices
+            dirtyIndices: scopedDirtyIndices,
+            skipCodeBlocks: config.skipCodeBlocks
         )
 
         // Per-original assertion: every APPROVED entity should be
@@ -682,11 +695,20 @@ enum PrivacyFilterPipeline {
     /// were untouched by `applyingScrub` (no new text), so re-scanning
     /// them is pure cost. Pass `nil` to scan the whole history (used
     /// by tests and the lower-priority callers).
+    ///
+    /// `skipCodeBlocks` mirrors the detection pass's code masking.
+    /// Detection runs against a `CodeBlockMasker`-masked view (when
+    /// the setting is on), so PII inside fenced / inline / indented
+    /// code is never detected or reviewable. Re-scanning the RAW text
+    /// here would count those spans as "leaks" and block the send on
+    /// text the user was never shown — the invariant must see the
+    /// same masked view detection saw.
     static func scanForLeaks(
         in messages: [ChatMessage],
         ruleset: RegexEntityDetector.EffectiveRuleSet,
         ignoreOriginals: Set<String> = [],
-        dirtyIndices: Set<Int>? = nil
+        dirtyIndices: Set<Int>? = nil,
+        skipCodeBlocks: Bool = false
     ) -> [EntityCategory: Int] {
         var counts: [EntityCategory: Int] = [:]
         let scoped: [ChatMessage]
@@ -702,7 +724,8 @@ enum PrivacyFilterPipeline {
         }
         for text in scoped.scrubbableTexts() {
             if text.isEmpty { continue }
-            let matches = RegexEntityDetector.detect(in: text, ruleset: ruleset)
+            let scanText = skipCodeBlocks ? CodeBlockMasker.mask(text).masked : text
+            let matches = RegexEntityDetector.detect(in: scanText, ruleset: ruleset)
             for match in matches {
                 if ignoreOriginals.contains(match.original) { continue }
                 counts[match.category, default: 0] += 1
