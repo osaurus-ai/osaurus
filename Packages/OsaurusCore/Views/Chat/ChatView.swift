@@ -5163,7 +5163,17 @@ struct ChatView: View {
     // In-conversation find (Cmd+F). Visibility lives on `windowState` so the
     // window-level key monitor can toggle it; query/matches are view state.
     @State private var findQuery: String = ""
-    /// Every `findQuery` occurrence in the conversation, in order.
+    /// `findQuery` as of the last settled debounce. Everything downstream —
+    /// match recompute, cell highlighting, the first-match jump — keys off
+    /// this so nothing churns (or scrolls) on every keystroke.
+    @State private var debouncedFindQuery: String = ""
+    @State private var findDebounceTask: Task<Void, Never>?
+    /// Arms the spinner: fires if a recompute is still pending (user typing
+    /// continuously) beyond a grace period, so the field shows progress
+    /// instead of jumping on stale results.
+    @State private var findSpinnerTask: Task<Void, Never>?
+    @State private var isFindSearchPending: Bool = false
+    /// Every `debouncedFindQuery` occurrence in the conversation, in order.
     @State private var findMatches: [ChatFindMatch] = []
     @State private var findMatchIndex: Int = 0
     /// Occurrence (within the turn) the last find jump targeted; nil when the
@@ -6355,7 +6365,7 @@ struct ChatView: View {
                 scrollToTurnTrigger: scrollToTurnTrigger,
                 sessionRedactions: session.sessionRedactions,
                 searchHighlightQuery: windowState.isFindBarVisible
-                    ? findQuery.trimmingCharacters(in: .whitespacesAndNewlines) : "",
+                    ? debouncedFindQuery.trimmingCharacters(in: .whitespacesAndNewlines) : "",
                 searchCurrentTurnId: currentFindMatch?.turnId,
                 searchCurrentOccurrence: currentFindMatch?.occurrence ?? 0,
                 scrollToFindOccurrence: scrollToFindOccurrence
@@ -6385,6 +6395,7 @@ struct ChatView: View {
                         ChatFindBar(
                             query: $findQuery,
                             focusTrigger: windowState.findBarFocusRequestID,
+                            isSearching: isFindSearchPending,
                             matchIndex: findMatchIndex,
                             matchCount: findMatches.count,
                             onPrevious: { advanceFindMatch(by: -1) },
@@ -6398,13 +6409,21 @@ struct ChatView: View {
                 }
                 .transition(.move(edge: .top).combined(with: .opacity))
                 .onChange(of: findQuery) { _, query in
-                    recomputeFindMatches(query: query, jumpToFirst: true)
+                    scheduleFindRecompute(query: query)
                 }
                 .onChange(of: session.turns.count) { _, _ in
-                    recomputeFindMatches(query: findQuery, jumpToFirst: false)
+                    recomputeFindMatches(query: debouncedFindQuery, jumpToFirst: false)
                 }
                 .onAppear {
+                    debouncedFindQuery = findQuery
                     recomputeFindMatches(query: findQuery, jumpToFirst: false)
+                }
+                .onDisappear {
+                    findDebounceTask?.cancel()
+                    findDebounceTask = nil
+                    findSpinnerTask?.cancel()
+                    findSpinnerTask = nil
+                    isFindSearchPending = false
                 }
             }
 
@@ -6795,6 +6814,34 @@ extension ChatView {
     /// typing); otherwise the current match is preserved when it survives the
     /// recompute (used when streaming appends turns). Logic lives in
     /// `ChatFindMatcher` so the invariants are unit-tested.
+    /// Debounce find-query changes: recompute (and the first-match jump,
+    /// cell repaints, and scrolling that follow) runs only after a typing
+    /// pause, never per keystroke. If the user types continuously past a
+    /// grace period, a small spinner appears in the find field instead of
+    /// the view jumping around on stale results.
+    private func scheduleFindRecompute(query: String) {
+        findDebounceTask?.cancel()
+        findDebounceTask = Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(300))
+            guard !Task.isCancelled else { return }
+            findSpinnerTask?.cancel()
+            findSpinnerTask = nil
+            isFindSearchPending = false
+            debouncedFindQuery = query
+            recomputeFindMatches(query: query, jumpToFirst: true)
+            findDebounceTask = nil
+        }
+        // Arm the spinner once per typing burst; it fires only when the
+        // debounce hasn't settled within the grace period.
+        if findSpinnerTask == nil {
+            findSpinnerTask = Task { @MainActor in
+                try? await Task.sleep(for: .seconds(1))
+                guard !Task.isCancelled else { return }
+                isFindSearchPending = true
+            }
+        }
+    }
+
     private func recomputeFindMatches(query: String, jumpToFirst: Bool) {
         let (state, jumpTo) = ChatFindMatcher.recompute(
             query: query,
@@ -6809,8 +6856,21 @@ extension ChatView {
         }
     }
 
-    /// Step to the next/previous occurrence, wrapping at both ends.
+    /// Step to the next/previous occurrence, wrapping at both ends. A
+    /// pending debounce is flushed first — Enter or an arrow key mid-typing
+    /// should search for what's in the field now, not navigate stale
+    /// matches from the previous query.
     private func advanceFindMatch(by delta: Int) {
+        if findDebounceTask != nil {
+            findDebounceTask?.cancel()
+            findDebounceTask = nil
+            findSpinnerTask?.cancel()
+            findSpinnerTask = nil
+            isFindSearchPending = false
+            debouncedFindQuery = findQuery
+            recomputeFindMatches(query: findQuery, jumpToFirst: true)
+            return
+        }
         let (state, jumpTo) = ChatFindMatcher.advance(
             ChatFindState(matches: findMatches, matchIndex: findMatchIndex),
             by: delta

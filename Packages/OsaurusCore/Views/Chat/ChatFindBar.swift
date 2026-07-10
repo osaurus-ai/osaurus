@@ -16,6 +16,10 @@ struct ChatFindBar: View {
     /// Bumped by the window's Cmd+F handler; every change re-focuses the
     /// text field even when the bar is already visible.
     var focusTrigger: Int = 0
+    /// True while a debounced recompute has been pending long enough to
+    /// warrant feedback; shows a small spinner trailing the text field in
+    /// place of the (stale) match count.
+    var isSearching: Bool = false
     /// Zero-based index of the current match; meaningless when `matchCount == 0`.
     let matchIndex: Int
     let matchCount: Int
@@ -55,10 +59,17 @@ struct ChatFindBar: View {
                     return .handled
                 }
 
-            Text(matchCountLabel)
-                .font(.system(size: 11, weight: .medium).monospacedDigit())
-                .foregroundColor(theme.tertiaryText)
-                .frame(minWidth: 34)
+            if isSearching {
+                ProgressView()
+                    .controlSize(.small)
+                    .scaleEffect(0.6)
+                    .frame(minWidth: 34, alignment: .center)
+            } else {
+                Text(matchCountLabel)
+                    .font(.system(size: 11, weight: .medium).monospacedDigit())
+                    .foregroundColor(theme.tertiaryText)
+                    .frame(minWidth: 34)
+            }
 
             Divider().frame(height: 14)
 
