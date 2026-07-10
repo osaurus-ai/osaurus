@@ -6384,6 +6384,7 @@ struct ChatView: View {
                         Spacer()
                         ChatFindBar(
                             query: $findQuery,
+                            focusTrigger: windowState.findBarFocusRequestID,
                             matchIndex: findMatchIndex,
                             matchCount: findMatches.count,
                             onPrevious: { advanceFindMatch(by: -1) },
@@ -6859,6 +6860,9 @@ extension ChatView {
                     let windowState
                 else { return event }
                 windowState.isFindBarVisible = true
+                // Also fires when the bar is already open so Cmd+F always
+                // returns keyboard focus to the search field.
+                windowState.findBarFocusRequestID &+= 1
                 return nil
             }
 

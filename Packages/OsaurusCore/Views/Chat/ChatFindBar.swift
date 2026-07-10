@@ -13,6 +13,9 @@ struct ChatFindBar: View {
     @Environment(\.theme) private var theme
 
     @Binding var query: String
+    /// Bumped by the window's Cmd+F handler; every change re-focuses the
+    /// text field even when the bar is already visible.
+    var focusTrigger: Int = 0
     /// Zero-based index of the current match; meaningless when `matchCount == 0`.
     let matchIndex: Int
     let matchCount: Int
@@ -73,7 +76,16 @@ struct ChatFindBar: View {
             RoundedRectangle(cornerRadius: 10)
                 .stroke(theme.primaryBorder, lineWidth: 1)
         )
-        .onAppear { isFieldFocused = true }
+        .onAppear {
+            // Setting @FocusState synchronously in onAppear races the
+            // overlay's insertion into the window's responder chain and
+            // silently loses (issue #1964) — the field appeared unfocused.
+            // Deferring one runloop turn lets the hosting view attach first.
+            DispatchQueue.main.async { isFieldFocused = true }
+        }
+        .onChange(of: focusTrigger) { _, _ in
+            isFieldFocused = true
+        }
     }
 
     private var matchCountLabel: String {
