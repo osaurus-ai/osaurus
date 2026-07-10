@@ -20,14 +20,23 @@ struct ChatFindMatch: Equatable, Hashable {
 }
 
 /// Snapshot of the find bar's match state.
-struct ChatFindState: Equatable {
+struct ChatFindState: Equatable, Sendable {
     /// Every query occurrence, in conversation order.
     var matches: [ChatFindMatch] = []
     /// Zero-based index of the current match; 0 when there are no matches.
     var matchIndex: Int = 0
 }
 
-@MainActor
+/// Minimal Sendable projection of a turn, so the match scan can run off the
+/// main thread (`ChatTurn` itself is a mutable ObservableObject). Strings
+/// are copy-on-write, so snapshotting a conversation is O(turn count), not
+/// O(text size).
+struct ChatFindTurnSnapshot: Sendable {
+    let id: UUID
+    let role: MessageRole
+    let content: String
+}
+
 enum ChatFindMatcher {
 
     /// Number of case-insensitive, non-overlapping occurrences of `query`
@@ -59,9 +68,45 @@ enum ChatFindMatcher {
     /// index follows it instead of resetting; otherwise the index resets to
     /// the first match. `jumpTo` is non-nil only when the caller asked to
     /// jump (`preserveCurrentMatch == false`) and a match exists.
+    @MainActor
     static func recompute(
         query: String,
         turns: [ChatTurn],
+        previous: ChatFindState,
+        preserveCurrentMatch: Bool
+    ) -> (state: ChatFindState, jumpTo: ChatFindMatch?) {
+        recompute(
+            query: query,
+            turns: turns.map { ChatFindTurnSnapshot(id: $0.id, role: $0.role, content: $0.content) },
+            previous: previous,
+            preserveCurrentMatch: preserveCurrentMatch
+        )
+    }
+
+    /// Off-main-thread recompute: the scan is O(total conversation text)
+    /// and must never hang the UI (Sentry app-hang). A detached task (not
+    /// a bare `nonisolated async`) guarantees the scan leaves the caller's
+    /// actor on every Swift concurrency semantics version.
+    nonisolated static func recomputeDetached(
+        query: String,
+        turns: [ChatFindTurnSnapshot],
+        previous: ChatFindState,
+        preserveCurrentMatch: Bool
+    ) async -> (state: ChatFindState, jumpTo: ChatFindMatch?) {
+        await Task.detached(priority: .userInitiated) {
+            recompute(
+                query: query,
+                turns: turns,
+                previous: previous,
+                preserveCurrentMatch: preserveCurrentMatch
+            )
+        }.value
+    }
+
+    /// Snapshot-based synchronous core; pure and thread-agnostic.
+    nonisolated static func recompute(
+        query: String,
+        turns: [ChatFindTurnSnapshot],
         previous: ChatFindState,
         preserveCurrentMatch: Bool
     ) -> (state: ChatFindState, jumpTo: ChatFindMatch?) {

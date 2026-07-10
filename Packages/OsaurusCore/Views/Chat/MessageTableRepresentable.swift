@@ -1424,19 +1424,25 @@ extension MessageTableRepresentable {
         /// blocks in display order accumulating a per-turn occurrence count,
         /// mirroring how `ChatFindMatcher` indexes occurrences over the
         /// turn's full content.
+        ///
+        /// Scoped to the *current match's* turn: offsets are only ever read
+        /// by `CellRenderingContext.searchCurrentIndex`, which returns early
+        /// for every other turn. This runs from `applyBlocks` — i.e. on
+        /// every streaming delta while the find bar is open — so scanning
+        /// one turn instead of the whole conversation is what keeps it off
+        /// Sentry's app-hang radar.
         func recomputeFindOccurrenceOffsets(blocks: [ContentBlock]) {
             let query = ctx.searchHighlightQuery
-            guard !query.isEmpty else {
+            guard !query.isEmpty, let currentTurnId = ctx.searchCurrentTurnId else {
                 if !findOccurrenceOffsets.isEmpty { findOccurrenceOffsets = [:] }
                 return
             }
             var offsets: [String: Int] = [:]
-            var perTurn: [UUID: Int] = [:]
-            for block in blocks {
+            var running = 0
+            for block in blocks where block.turnId == currentTurnId {
                 guard let text = block.searchableText else { continue }
-                let start = perTurn[block.turnId] ?? 0
-                offsets[block.id] = start
-                perTurn[block.turnId] = start + ChatFindMatcher.occurrenceCount(of: query, in: text)
+                offsets[block.id] = running
+                running += ChatFindMatcher.occurrenceCount(of: query, in: text)
             }
             findOccurrenceOffsets = offsets
         }

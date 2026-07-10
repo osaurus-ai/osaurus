@@ -5173,6 +5173,8 @@ struct ChatView: View {
     /// instead of jumping on stale results.
     @State private var findSpinnerTask: Task<Void, Never>?
     @State private var isFindSearchPending: Bool = false
+    /// Off-main match scan in flight; superseded scans are cancelled.
+    @State private var findComputeTask: Task<Void, Never>?
     /// Every `debouncedFindQuery` occurrence in the conversation, in order.
     @State private var findMatches: [ChatFindMatch] = []
     @State private var findMatchIndex: Int = 0
@@ -6423,6 +6425,8 @@ struct ChatView: View {
                     findDebounceTask = nil
                     findSpinnerTask?.cancel()
                     findSpinnerTask = nil
+                    findComputeTask?.cancel()
+                    findComputeTask = nil
                     isFindSearchPending = false
                 }
             }
@@ -6824,10 +6828,9 @@ extension ChatView {
         findDebounceTask = Task { @MainActor in
             try? await Task.sleep(for: .milliseconds(300))
             guard !Task.isCancelled else { return }
-            findSpinnerTask?.cancel()
-            findSpinnerTask = nil
-            isFindSearchPending = false
             debouncedFindQuery = query
+            // Spinner state clears when the (off-main) scan delivers, not
+            // here — a slow scan should keep showing progress.
             recomputeFindMatches(query: query, jumpToFirst: true)
             findDebounceTask = nil
         }
@@ -6843,16 +6846,31 @@ extension ChatView {
     }
 
     private func recomputeFindMatches(query: String, jumpToFirst: Bool) {
-        let (state, jumpTo) = ChatFindMatcher.recompute(
-            query: query,
-            turns: session.turns,
-            previous: ChatFindState(matches: findMatches, matchIndex: findMatchIndex),
-            preserveCurrentMatch: !jumpToFirst
-        )
-        findMatches = state.matches
-        findMatchIndex = state.matchIndex
-        if let jumpTo {
-            scrollToFindMatch(jumpTo)
+        findComputeTask?.cancel()
+        // Snapshot on the main thread (O(turn count) — strings are CoW),
+        // scan off it: the scan is O(total conversation text) and must
+        // never block the main thread (Sentry app-hang).
+        let snapshot = session.turns.map {
+            ChatFindTurnSnapshot(id: $0.id, role: $0.role, content: $0.content)
+        }
+        let previous = ChatFindState(matches: findMatches, matchIndex: findMatchIndex)
+        findComputeTask = Task { @MainActor in
+            let (state, jumpTo) = await ChatFindMatcher.recomputeDetached(
+                query: query,
+                turns: snapshot,
+                previous: previous,
+                preserveCurrentMatch: !jumpToFirst
+            )
+            guard !Task.isCancelled else { return }
+            findMatches = state.matches
+            findMatchIndex = state.matchIndex
+            findSpinnerTask?.cancel()
+            findSpinnerTask = nil
+            isFindSearchPending = false
+            findComputeTask = nil
+            if let jumpTo {
+                scrollToFindMatch(jumpTo)
+            }
         }
     }
 
