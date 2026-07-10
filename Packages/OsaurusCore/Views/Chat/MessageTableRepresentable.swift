@@ -1450,6 +1450,9 @@ extension MessageTableRepresentable {
         func scrollToFindMatch(turnId: UUID, occurrence: Int) {
             let query = ctx.searchHighlightQuery
             guard !query.isEmpty else {
+                FindDebugLog.log(
+                    "[Coordinator] scrollToFindMatch turn=\(turnId) occ=\(occurrence): "
+                        + "EMPTY QUERY in ctx — falling back to scrollToTurn")
                 scrollToTurn(turnId)
                 return
             }
@@ -1459,8 +1462,14 @@ extension MessageTableRepresentable {
                     let text = block.searchableText
                 else { continue }
                 let count = ChatFindMatcher.occurrenceCount(of: query, in: text)
+                FindDebugLog.log(
+                    "[Coordinator] scanning block=\(blockId) occurrences=\(count) "
+                        + "running=\(running) target=\(occurrence) textLen=\(text.count)")
                 if occurrence < running + count {
                     if let row = blockIds.firstIndex(of: blockId) {
+                        FindDebugLog.log(
+                            "[Coordinator] matched block=\(blockId) row=\(row) "
+                                + "localOccurrence=\(occurrence - running)")
                         scrollToRow(row)
                         return
                     }
@@ -1468,11 +1477,21 @@ extension MessageTableRepresentable {
                 }
                 running += count
             }
+            FindDebugLog.log(
+                "[Coordinator] occurrence \(occurrence) NOT mapped to a block "
+                    + "(turn total from blocks=\(running), query=\"\(query)\") — "
+                    + "falling back to scrollToTurn")
             scrollToTurn(turnId)
         }
 
-        private func scrollToRow(_ targetRow: Int) {
-            guard let tableView, let scrollView, targetRow < tableView.numberOfRows else { return }
+        private func scrollToRow(_ targetRow: Int, attempt: Int = 0) {
+            guard let tableView, let scrollView, targetRow < tableView.numberOfRows else {
+                FindDebugLog.log(
+                    "[Coordinator] scrollToRow(\(targetRow)) BAILED: tableView/scrollView nil "
+                        + "or row out of bounds (numberOfRows="
+                        + "\(tableView.map { String($0.numberOfRows) } ?? "nil"))")
+                return
+            }
 
             // drop pinned to bottom so subsequent applyBlocks restore our
             // anchor instead of snapping back to bottom
@@ -1485,6 +1504,12 @@ extension MessageTableRepresentable {
             let rowRect = tableView.rect(ofRow: targetRow)
             // Leave a little breathing room above the target.
             let targetY = max(0, rowRect.origin.y - 12)
+            let beforeY = scrollView.contentView.bounds.origin.y
+            FindDebugLog.log(
+                "[Coordinator] scrollToRow(\(targetRow)) attempt=\(attempt) rowRect=\(rowRect) "
+                    + "targetY=\(targetY) beforeY=\(beforeY) "
+                    + "visibleH=\(scrollView.contentView.bounds.height) "
+                    + "docH=\(tableView.bounds.height) rows=\(tableView.numberOfRows)")
 
             NSAnimationContext.runAnimationGroup { ctx in
                 ctx.duration = 0.22
@@ -1497,8 +1522,30 @@ extension MessageTableRepresentable {
 
             // Schedule an active-marker refresh after the animation settles so
             // the minimap highlights the newly visible turn.
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { [weak self] in
-                self?.scheduleVisibleUserTurnUpdate()
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { [weak self, weak tableView] in
+                guard let self else { return }
+                self.scheduleVisibleUserTurnUpdate()
+
+                // Row heights are measured lazily: scrolling to a row that
+                // was never materialized lands on its *estimated* rect, then
+                // the newly visible cells report real heights and shift the
+                // content out from under the target (this is why jumping to
+                // matches far outside the visible area missed). Re-measure
+                // after settling and correct, converging in a few passes.
+                guard let scrollView = self.scrollView, let tableView,
+                    targetRow < tableView.numberOfRows
+                else { return }
+                let settledRect = tableView.rect(ofRow: targetRow)
+                let settledY = scrollView.contentView.bounds.origin.y
+                let correctedTargetY = max(0, settledRect.origin.y - 12)
+                let drift = abs(settledY - correctedTargetY)
+                FindDebugLog.log(
+                    "[Coordinator] scrollToRow(\(targetRow)) settled attempt=\(attempt): "
+                        + "y=\(settledY) rowRectNow=\(settledRect) drift=\(drift) "
+                        + "(was targetY=\(targetY))")
+                if drift > 8, attempt < 3 {
+                    self.scrollToRow(targetRow, attempt: attempt + 1)
+                }
             }
         }
 
