@@ -308,7 +308,8 @@ struct SSELineParserTests {
             Issue.record("expected .continue, got \(outcome)")
             return
         }
-        #expect(state.lastFinishReason == "end_turn")
+        // Normalized to OpenAI vocabulary (see AnthropicStreamFinishReasonTests).
+        #expect(state.lastFinishReason == "stop")
     }
 
     @Test func errorEnvelope_decodesGeminiError() {

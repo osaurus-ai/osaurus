@@ -207,8 +207,12 @@ forwarded rather than silently dropped, with per-format support:
   the upstream's own error.
 - **Gemini**: `seed` maps to `generationConfig.seed` and JSON mode maps to
   `generationConfig.responseMimeType: "application/json"`.
-- **Anthropic**: the Messages API has no `seed` or `response_format`
-  equivalent, so both are omitted on that wire.
+- **Anthropic**: the Messages API has no `seed` equivalent. Its structured
+  outputs feature (`output_config.format`) only accepts a strict
+  `json_schema` (every object level must set `additionalProperties: false`),
+  which has no faithful mapping from schema-free `json_object` mode — so
+  JSON mode is omitted on that wire and the model may still fence or
+  preface its JSON.
 - **Remote agent runs (Mode 2)**: all caller sampling fields, including seed
   and JSON mode, are stripped — the remote agent owns its generation config.
 

@@ -60,6 +60,10 @@ public enum MemoryRelevanceGate {
             return .pinned
         }
 
+        if isPossessiveReference(lower) {
+            return .pinned
+        }
+
         // Heuristic-only: when no signal fired, skip memory.
         if mode == .heuristic {
             return .none
@@ -138,6 +142,24 @@ public enum MemoryRelevanceGate {
 
     private static func hasExplicitRecallVerb(_ s: String) -> Bool {
         guard let re = recallVerbPattern else { return false }
+        let range = NSRange(s.startIndex..., in: s)
+        return re.firstMatch(in: s, range: range) != nil
+    }
+
+    /// "What is the name of my boat?", "which wifi network should I connect
+    /// it to — my smart plug needs one", "invite my book club to my favorite
+    /// restaurant". A possessive reference to the user's OWN things is a
+    /// direct memory signal: the store is the only place the assistant can
+    /// learn what "my X" refers to, so consult pinned facts. The planner
+    /// still returns nothing when no fact matches, so the false-positive
+    /// cost is one bounded store lookup.
+    private static let possessivePattern = try? NSRegularExpression(
+        pattern: #"\b(my|our) [a-z]"#,
+        options: [.caseInsensitive]
+    )
+
+    private static func isPossessiveReference(_ s: String) -> Bool {
+        guard let re = possessivePattern else { return false }
         let range = NSRange(s.startIndex..., in: s)
         return re.firstMatch(in: s, range: range) != nil
     }

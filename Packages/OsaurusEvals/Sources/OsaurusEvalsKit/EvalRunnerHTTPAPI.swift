@@ -129,7 +129,11 @@ extension EvalRunner {
             currentName = nil
             currentData = []
         }
-        for try await line in bytes.lines {
+        // Manual byte-level line split: `bytes.lines` DROPS empty lines,
+        // which are the SSE event delimiter — with it, `flush()` never ran
+        // mid-stream and every `data:` payload collapsed into one giant
+        // unparseable event.
+        func handle(_ line: String) {
             if line.isEmpty {
                 flush()
             } else if line.hasPrefix("event:") {
@@ -137,6 +141,20 @@ extension EvalRunner {
             } else if line.hasPrefix("data:") {
                 currentData.append(String(line.dropFirst(5)).trimmingCharacters(in: .whitespaces))
             }
+        }
+        var lineBuffer = Data()
+        for try await byte in bytes {
+            if byte == UInt8(ascii: "\n") {
+                var line = String(decoding: lineBuffer, as: UTF8.self)
+                if line.hasSuffix("\r") { line.removeLast() }
+                lineBuffer.removeAll(keepingCapacity: true)
+                handle(line)
+            } else {
+                lineBuffer.append(byte)
+            }
+        }
+        if !lineBuffer.isEmpty {
+            handle(String(decoding: lineBuffer, as: UTF8.self))
         }
         flush()
         return (status, events)
@@ -533,10 +551,15 @@ extension EvalRunner {
         // run endpoint takes a chat-completion body (model resolves
         // server-side to the agent's effective model when omitted) and
         // ALWAYS streams SSE text deltas.
+        // Pin the agent to the eval's model: without this the agent falls
+        // back to the USER'S configured chat default (a local model the
+        // SwiftPM harness can't load), so the parity comparison would run
+        // two different models and the agents side streamed nothing.
         let agent = Agent(
             id: UUID(),
             name: "Osaurus Eval HTTP Agent",
-            description: "Temporary agent registered by OsaurusEvals; safe to delete."
+            description: "Temporary agent registered by OsaurusEvals; safe to delete.",
+            defaultModel: evalRequestModel()
         )
         AgentStore.save(agent)
         AgentManager.shared.refresh()

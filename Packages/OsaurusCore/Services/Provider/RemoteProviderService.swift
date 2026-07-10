@@ -1770,7 +1770,16 @@ public actor RemoteProviderService: ToolCapableService {
         }
 
         if let finishReason = chunk.candidates?.first?.finishReason {
-            state.lastFinishReason = finishReason
+            // Same normalization as the Anthropic path: downstream consumers
+            // speak OpenAI `finish_reason` vocabulary.
+            switch finishReason {
+            case "STOP":
+                state.lastFinishReason = "stop"
+            case "MAX_TOKENS":
+                state.lastFinishReason = "length"
+            default:
+                state.lastFinishReason = finishReason
+            }
             if finishReason == "SAFETY" {
                 return .finishWithError(
                     RemoteProviderServiceError.requestFailed("Content blocked by safety settings.")
@@ -1813,6 +1822,18 @@ public actor RemoteProviderService: ToolCapableService {
                         + " cacheRead=\(usage.cache_read_input_tokens ?? 0)"
                         + " cacheWrite=\(usage.cache_creation_input_tokens ?? 0)"
                 )
+                // Seed provider usage with the prompt side; `message_delta`
+                // fills in the completion side. Without this capture the
+                // Anthropic path never emitted a `StreamingStatsHint`, so
+                // completion tokens fell back to estimates and the provider's
+                // stop reason never reached the HTTP `finish_reason`.
+                state.captureProviderUsage(
+                    Usage(
+                        prompt_tokens: usage.input_tokens,
+                        completion_tokens: 0,
+                        total_tokens: usage.input_tokens
+                    )
+                )
             }
 
         case "content_block_delta":
@@ -1852,10 +1873,38 @@ public actor RemoteProviderService: ToolCapableService {
             }
 
         case "message_delta":
+            if let deltaEvent = try? state.decoder.decode(MessageDeltaEvent.self, from: jsonData) {
+                // Complete the usage pair started at `message_start` so
+                // `dispatchFinal` emits a stats hint with the REAL output
+                // token count (Anthropic reports it on this event).
+                let promptTokens = state.providerUsage?.prompt_tokens ?? 0
+                state.captureProviderUsage(
+                    Usage(
+                        prompt_tokens: promptTokens,
+                        completion_tokens: deltaEvent.usage.output_tokens,
+                        total_tokens: promptTokens + deltaEvent.usage.output_tokens
+                    )
+                )
+            }
             if let deltaEvent = try? state.decoder.decode(MessageDeltaEvent.self, from: jsonData),
                 let stopReason = deltaEvent.delta.stop_reason
             {
-                state.lastFinishReason = stopReason
+                // Normalize the Anthropic stop vocabulary to the OpenAI
+                // `finish_reason` contract every downstream consumer expects
+                // (`InferenceLog.FinishReason`, the HTTP chat writer, the
+                // Anthropic-compat writer which maps back `length` →
+                // `max_tokens`). Storing the raw value made a truncated
+                // Anthropic turn report `finish_reason: "stop"`.
+                switch stopReason {
+                case "end_turn", "stop_sequence", "pause_turn":
+                    state.lastFinishReason = "stop"
+                case "max_tokens":
+                    state.lastFinishReason = "length"
+                case "tool_use":
+                    state.lastFinishReason = "tool_calls"
+                default:
+                    state.lastFinishReason = stopReason
+                }
                 // Anthropic safety refusal (`stop_reason: "refusal"`): the
                 // API blocks the whole turn with ZERO content blocks, so
                 // without this the caller sees a silent empty completion.
@@ -2737,7 +2786,9 @@ public actor RemoteProviderService: ToolCapableService {
         // Parameter fidelity: forward the caller's deterministic seed and JSON
         // mode instead of silently dropping them. Standard OpenAI fields on
         // the chat-completions wire; Gemini remaps them in `toGeminiRequest`;
-        // Anthropic has no equivalent (documented in docs/REMOTE_PROVIDERS.md).
+        // Anthropic has no faithful equivalent — its `output_config.format`
+        // requires a strict json_schema, which schema-free json_object mode
+        // can't provide (documented in docs/REMOTE_PROVIDERS.md).
         if !isAgentRun {
             request.seed = parameters.seed.flatMap { Int(exactly: $0) }
             if parameters.jsonMode {

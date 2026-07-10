@@ -1482,7 +1482,13 @@ public final class MemoryDatabase: @unchecked Sendable {
                     }
                 }
             )
-            return facts
+            // Natural-language queries ("What is the name of my boat?")
+            // AND-match nothing against short facts; fall through to the
+            // loose-term pass instead of returning empty (mirrors
+            // `searchTranscriptText`).
+            if !facts.isEmpty {
+                return facts
+            }
         }
 
         // Legacy LIKE fallback (no FTS5 available).
@@ -1507,7 +1513,31 @@ public final class MemoryDatabase: @unchecked Sendable {
                 }
             }
         )
-        return facts
+        if !facts.isEmpty {
+            return facts
+        }
+
+        // Loose-term recall: score active facts by how many meaningful query
+        // words they contain (same shape as `searchTranscriptLooseText`).
+        let terms = Self.looseSearchTerms(trimmed)
+        guard !terms.isEmpty else { return [] }
+        let candidates = try loadPinnedFacts(agentId: agentId, limit: max(limit * 50, 250))
+        let scored = candidates.compactMap { fact -> (fact: PinnedFact, score: Int)? in
+            let content = fact.content.lowercased()
+            let score = terms.reduce(0) { partial, term in
+                partial + (content.contains(term) ? 1 : 0)
+            }
+            guard score > 0 else { return nil }
+            return (fact, score)
+        }
+        return
+            scored
+            .sorted {
+                if $0.score != $1.score { return $0.score > $1.score }
+                return $0.fact.salience > $1.fact.salience
+            }
+            .prefix(limit)
+            .map(\.fact)
     }
 
     public func decayPinnedSalience(halfLifeDays: Double) throws {
@@ -1808,7 +1838,12 @@ public final class MemoryDatabase: @unchecked Sendable {
                     }
                 }
             )
-            return episodes
+            // Same rationale as `searchPinnedFactsText`: an AND-match of a
+            // full natural-language question rarely hits an episode summary;
+            // fall through to the loose-term pass instead of returning empty.
+            if !episodes.isEmpty {
+                return episodes
+            }
         }
 
         var sql = """
@@ -1834,7 +1869,31 @@ public final class MemoryDatabase: @unchecked Sendable {
                 }
             }
         )
-        return episodes
+        if !episodes.isEmpty {
+            return episodes
+        }
+
+        // Loose-term recall over summary/topics/entities (same shape as
+        // `searchTranscriptLooseText`).
+        let terms = Self.looseSearchTerms(trimmed)
+        guard !terms.isEmpty else { return [] }
+        let candidates = try loadEpisodes(agentId: agentId, days: 0, limit: max(limit * 50, 250))
+        let scored = candidates.compactMap { episode -> (episode: Episode, score: Int)? in
+            let haystack = "\(episode.summary) \(episode.topicsCSV) \(episode.entitiesCSV)".lowercased()
+            let score = terms.reduce(0) { partial, term in
+                partial + (haystack.contains(term) ? 1 : 0)
+            }
+            guard score > 0 else { return nil }
+            return (episode, score)
+        }
+        return
+            scored
+            .sorted {
+                if $0.score != $1.score { return $0.score > $1.score }
+                return $0.episode.conversationAt > $1.episode.conversationAt
+            }
+            .prefix(limit)
+            .map(\.episode)
     }
 
     public func episodeStats(agentId: String? = nil) throws -> Int {
