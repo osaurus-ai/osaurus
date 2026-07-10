@@ -35,12 +35,12 @@ public enum SearchProviderCatalog {
     static let tavily = SearchProviderDefinition(
         id: "tavily",
         name: "Tavily",
-        summary: "Search built for AI agents — best answer quality for grounding.",
-        pricingNote: "Free: 1,000 searches/month",
+        summary: L("Search built for AI agents — best answer quality for grounding."),
+        pricingNote: L("Free: 1,000 searches/month"),
         instructions: [
-            "Sign up at tavily.com (free, no credit card).",
-            "Copy the API key that starts with tvly- from your dashboard.",
-            "Paste it below.",
+            L("Sign up at tavily.com (free, no credit card)."),
+            L("Copy the API key that starts with tvly- from your dashboard."),
+            L("Paste it below."),
         ],
         signupURL: "https://app.tavily.com",
         homepage: "https://tavily.com",
@@ -48,8 +48,8 @@ public enum SearchProviderCatalog {
         secrets: [
             SearchSecretField(
                 id: "api_key",
-                label: "Tavily API key",
-                help: "Starts with tvly-",
+                label: L("Tavily API key"),
+                help: L("Starts with tvly-"),
                 url: "https://app.tavily.com"
             )
         ],
@@ -92,12 +92,12 @@ public enum SearchProviderCatalog {
     static let exa = SearchProviderDefinition(
         id: "exa",
         name: "Exa",
-        summary: "Neural search built for AI agents, with key excerpts per result.",
-        pricingNote: "Free: 1,000 searches/month",
+        summary: L("Neural search built for AI agents, with key excerpts per result."),
+        pricingNote: L("Free: 1,000 searches/month"),
         instructions: [
-            "Sign up at dashboard.exa.ai (free).",
-            "Copy an API key from the API Keys page.",
-            "Paste it below.",
+            L("Sign up at dashboard.exa.ai (free)."),
+            L("Copy an API key from the API Keys page."),
+            L("Paste it below."),
         ],
         signupURL: "https://dashboard.exa.ai/api-keys",
         homepage: "https://exa.ai",
@@ -105,7 +105,7 @@ public enum SearchProviderCatalog {
         secrets: [
             SearchSecretField(
                 id: "api_key",
-                label: "Exa API key",
+                label: L("Exa API key"),
                 url: "https://dashboard.exa.ai/api-keys"
             )
         ],
@@ -151,19 +151,19 @@ public enum SearchProviderCatalog {
     static let parallel = SearchProviderDefinition(
         id: "parallel",
         name: "Parallel",
-        summary: "Ranked results with dense LLM-ready excerpts from Parallel Web Systems.",
-        pricingNote: "Paid: $5 per 1,000 searches",
+        summary: L("Ranked results with dense LLM-ready excerpts from Parallel Web Systems."),
+        pricingNote: L("Paid: $5 per 1,000 searches"),
         instructions: [
-            "Sign up at platform.parallel.ai.",
-            "Create an API key from the settings page.",
-            "Paste it below.",
+            L("Sign up at platform.parallel.ai."),
+            L("Create an API key from the settings page."),
+            L("Paste it below."),
         ],
         signupURL: "https://platform.parallel.ai",
         homepage: "https://parallel.ai",
         secrets: [
             SearchSecretField(
                 id: "api_key",
-                label: "Parallel API key",
+                label: L("Parallel API key"),
                 url: "https://platform.parallel.ai"
             )
         ],
@@ -196,20 +196,20 @@ public enum SearchProviderCatalog {
 
     static let braveAPI = SearchProviderDefinition(
         id: "brave_api",
-        name: "Brave Search",
-        summary: "Independent search index via the official Brave API.",
-        pricingNote: "Paid: $5 per 1,000 queries (card required)",
+        name: L("Brave Search"),
+        summary: L("Independent search index via the official Brave API."),
+        pricingNote: L("Paid: $5 per 1,000 queries (card required)"),
         instructions: [
-            "Sign up at api.search.brave.com (a credit card is required; new accounts get a small starting credit).",
-            "Create an API key under API Keys.",
-            "Paste it below.",
+            L("Sign up at api.search.brave.com (a credit card is required; new accounts get a small starting credit)."),
+            L("Create an API key under API Keys."),
+            L("Paste it below."),
         ],
         signupURL: "https://api.search.brave.com",
         homepage: "https://brave.com/search/api/",
         secrets: [
             SearchSecretField(
                 id: "api_key",
-                label: "Brave Search API key",
+                label: L("Brave Search API key"),
                 url: "https://api.search.brave.com"
             )
         ],
@@ -258,12 +258,12 @@ public enum SearchProviderCatalog {
     static let serper = SearchProviderDefinition(
         id: "serper",
         name: "Serper",
-        summary: "Google results via API — fast and cheap.",
-        pricingNote: "Free: 2,500 queries to start",
+        summary: L("Google results via API — fast and cheap."),
+        pricingNote: L("Free: 2,500 queries to start"),
         instructions: [
-            "Sign up at serper.dev.",
-            "Copy your API key from the dashboard.",
-            "Paste it below.",
+            L("Sign up at serper.dev."),
+            L("Copy your API key from the dashboard."),
+            L("Paste it below."),
         ],
         signupURL: "https://serper.dev",
         homepage: "https://serper.dev",
@@ -336,27 +336,27 @@ public enum SearchProviderCatalog {
 
     static let googleCSE = SearchProviderDefinition(
         id: "google_cse",
-        name: "Google (Custom Search)",
-        summary: "Official Google API. Needs two values — about 5 minutes to set up.",
-        pricingNote: "Free: 100 queries/day",
+        name: L("Google (Custom Search)"),
+        summary: L("Official Google API. Needs two values — about 5 minutes to set up."),
+        pricingNote: L("Free: 100 queries/day"),
         instructions: [
-            "Create a Programmable Search Engine at programmablesearchengine.google.com (enable \"Search the entire web\").",
-            "Copy the Search engine ID (cx) from its settings.",
-            "Get an API key from the Custom Search JSON API page in Google Cloud.",
-            "Paste both values below.",
+            L("Create a Programmable Search Engine at programmablesearchengine.google.com (enable \"Search the entire web\")."),
+            L("Copy the Search engine ID (cx) from its settings."),
+            L("Get an API key from the Custom Search JSON API page in Google Cloud."),
+            L("Paste both values below."),
         ],
         signupURL: "https://programmablesearchengine.google.com/",
         homepage: "https://developers.google.com/custom-search/v1/introduction",
         secrets: [
             SearchSecretField(
                 id: "api_key",
-                label: "Google API key",
+                label: L("Google API key"),
                 url: "https://developers.google.com/custom-search/v1/introduction"
             ),
             SearchSecretField(
                 id: "cx",
-                label: "Search engine ID (cx)",
-                help: "From your Programmable Search Engine settings",
+                label: L("Search engine ID (cx)"),
+                help: L("From your Programmable Search Engine settings"),
                 url: "https://programmablesearchengine.google.com/"
             ),
         ],
@@ -398,19 +398,19 @@ public enum SearchProviderCatalog {
     static let kagi = SearchProviderDefinition(
         id: "kagi",
         name: "Kagi",
-        summary: "Premium ad-free search (paid API).",
-        pricingNote: "Paid: $25 credit minimum",
+        summary: L("Premium ad-free search (paid API)."),
+        pricingNote: L("Paid: $25 credit minimum"),
         instructions: [
-            "Sign in at kagi.com and open Settings → Advanced → API portal.",
-            "Generate an API token.",
-            "Paste it below.",
+            L("Sign in at kagi.com and open Settings → Advanced → API portal."),
+            L("Generate an API token."),
+            L("Paste it below."),
         ],
         signupURL: "https://kagi.com/settings?p=api",
         homepage: "https://help.kagi.com/kagi/api/search.html",
         secrets: [
             SearchSecretField(
                 id: "api_key",
-                label: "Kagi API token",
+                label: L("Kagi API token"),
                 url: "https://kagi.com/settings?p=api"
             )
         ],
@@ -446,17 +446,17 @@ public enum SearchProviderCatalog {
     static let you = SearchProviderDefinition(
         id: "you",
         name: "You.com",
-        summary: "Web search API with snippets tuned for LLMs.",
-        pricingNote: "Free trial, then paid",
+        summary: L("Web search API with snippets tuned for LLMs."),
+        pricingNote: L("Free trial, then paid"),
         instructions: [
-            "Sign up at api.you.com.",
-            "Create an API key.",
-            "Paste it below.",
+            L("Sign up at api.you.com."),
+            L("Create an API key."),
+            L("Paste it below."),
         ],
         signupURL: "https://api.you.com",
         homepage: "https://api.you.com",
         secrets: [
-            SearchSecretField(id: "api_key", label: "You.com API key", url: "https://api.you.com")
+            SearchSecretField(id: "api_key", label: L("You.com API key"), url: "https://api.you.com")
         ],
         endpoints: [
             SearchCategory.web: SearchEndpoint(
@@ -507,18 +507,18 @@ public enum SearchProviderCatalog {
     public static let nativeProviders: [SearchProviderDefinition] = [
         SearchProviderDefinition(
             id: "brave_html",
-            name: "Brave (free)",
+            name: L("Brave (free)"),
             runtime: .native,
-            summary: "Free Brave search results. No key needed.",
+            summary: L("Free Brave search results. No key needed."),
             pricingNote: "Free",
             homepage: "https://search.brave.com",
             categories: [SearchCategory.web, SearchCategory.news]
         ),
         SearchProviderDefinition(
             id: "bing_html",
-            name: "Bing (free)",
+            name: L("Bing (free)"),
             runtime: .native,
-            summary: "Free Bing search results. No key needed.",
+            summary: L("Free Bing search results. No key needed."),
             pricingNote: "Free",
             homepage: "https://www.bing.com",
             categories: [SearchCategory.web, SearchCategory.news]
@@ -527,7 +527,7 @@ public enum SearchProviderCatalog {
             id: "ddg",
             name: "DuckDuckGo",
             runtime: .native,
-            summary: "Free web, news, and image search. Used only when other sources fail.",
+            summary: L("Free web, news, and image search. Used only when other sources fail."),
             pricingNote: "Free",
             homepage: "https://duckduckgo.com",
             // DDG's anti-bot layer serves plausible-looking decoy results to
