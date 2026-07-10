@@ -174,20 +174,6 @@ struct MessageTableRepresentable: NSViewRepresentable {
             coordinator.scrollAnchor.scrollToBottom(animated: true)
         }
 
-        // Detect minimap / find-bar scroll-to-turn request. The find bar's
-        // requests carry an occurrence so long turns scroll to the block
-        // containing the current match, not just the turn header.
-        if scrollToTurnTrigger != coordinator.lastScrollToTurnTrigger {
-            coordinator.lastScrollToTurnTrigger = scrollToTurnTrigger
-            if let turnId = scrollToTurnId {
-                if let occurrence = scrollToFindOccurrence {
-                    coordinator.scrollToFindMatch(turnId: turnId, occurrence: occurrence)
-                } else {
-                    coordinator.scrollToTurn(turnId)
-                }
-            }
-        }
-
         // Sync any external expand-state changes (e.g. session load resets the store)
         if expandedBlocksStore.expandedIds != coordinator.expandedIds {
             coordinator.expandedIds = expandedBlocksStore.expandedIds
@@ -204,6 +190,23 @@ struct MessageTableRepresentable: NSViewRepresentable {
             autoScrollEnabled: autoScrollEnabled
         )
         coordinator.scheduleVisibleUserTurnUpdate()
+
+        // Detect minimap / find-bar scroll-to-turn request. Runs after
+        // applyBlocks so the coordinator maps the request against the
+        // current query and block list — a find jump often arrives in the
+        // same update as the query change that produced it. The find bar's
+        // requests carry an occurrence so long turns scroll to the block
+        // containing the current match, not just the turn header.
+        if scrollToTurnTrigger != coordinator.lastScrollToTurnTrigger {
+            coordinator.lastScrollToTurnTrigger = scrollToTurnTrigger
+            if let turnId = scrollToTurnId {
+                if let occurrence = scrollToFindOccurrence {
+                    coordinator.scrollToFindMatch(turnId: turnId, occurrence: occurrence)
+                } else {
+                    coordinator.scrollToTurn(turnId)
+                }
+            }
+        }
 
         // ensure the table column fills the (now-inset) clip view width
         coordinator.tableView?.sizeLastColumnToFit()
