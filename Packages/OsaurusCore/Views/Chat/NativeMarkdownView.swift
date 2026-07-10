@@ -140,6 +140,11 @@ final class NativeMarkdownView: NSView {
     /// because they already carry a background (inline-code chips). Used to
     /// distribute the current-match index across mixed-segment children.
     private var searchOwnOccurrenceCount: Int = 0
+    /// Character range of every occurrence found on the last highlight pass
+    /// (painted or skipped), in textStorage coordinates. Backs
+    /// `rectOfSearchOccurrence` so the find bar can scroll *within* a tall
+    /// message instead of just to its row.
+    private var searchAllOccurrenceRanges: [NSRange] = []
     /// cancels stale loads when segment id is reused with a new URL or view is removed
     private var imageLoadTasks: [String: (UUID, Task<Void, Never>)] = [:]
     /// Per-image height constraint, updated to match the loaded image's
@@ -263,6 +268,49 @@ final class NativeMarkdownView: NSView {
         return consumed
     }
 
+    /// Bounding rect (in this view's coordinate space) of the occurrence at
+    /// `index`, distributing across mixed-segment children the same way
+    /// `setSearchHighlight` does. Nil when the index is out of range or the
+    /// view isn't in a window yet (rects come from first-rect geometry,
+    /// which needs live layout). Lets the find bar scroll to the exact line
+    /// of the current match inside a message taller than the viewport.
+    func rectOfSearchOccurrence(_ index: Int) -> NSRect? {
+        if index < searchAllOccurrenceRanges.count {
+            guard let tv = textView, tv.window != nil else { return nil }
+            let range = searchAllOccurrenceRanges[index]
+            // firstRect works across TextKit 1/2 without forcing a layout-
+            // manager downgrade; it returns screen coordinates.
+            let screenRect = tv.firstRect(forCharacterRange: range, actualRange: nil)
+            guard screenRect.height > 0, let window = tv.window else { return nil }
+            let windowRect = window.convertFromScreen(screenRect)
+            let tvRect = tv.convert(windowRect, from: nil)
+            return tv.convert(tvRect, to: self)
+        }
+        var consumed = searchAllOccurrenceRanges.count
+        for entry in segmentViews {
+            guard let child = entry.view as? NativeMarkdownView else { continue }
+            let childCount = child.searchOccurrenceTotal
+            if index - consumed < childCount,
+                let rect = child.rectOfSearchOccurrence(index - consumed)
+            {
+                return child.convert(rect, to: self)
+            }
+            consumed += childCount
+        }
+        return nil
+    }
+
+    /// Total occurrences in this view's subtree on the last highlight pass.
+    var searchOccurrenceTotal: Int {
+        var total = searchAllOccurrenceRanges.count
+        for entry in segmentViews {
+            if let child = entry.view as? NativeMarkdownView {
+                total += child.searchOccurrenceTotal
+            }
+        }
+        return total
+    }
+
     /// Repaint search-match backgrounds on the current textStorage. Always
     /// removes the previously painted ranges first so a query change or
     /// storage rebuild can't leave stale backgrounds behind. Occurrences
@@ -273,6 +321,7 @@ final class NativeMarkdownView: NSView {
     /// orange vs. yellow).
     private func applySearchHighlightsIfNeeded(theme: any ThemeProtocol) {
         searchOwnOccurrenceCount = 0
+        searchAllOccurrenceRanges = []
         guard let tv = textView, let storage = tv.textStorage else {
             appliedSearchRanges = []
             return
@@ -315,6 +364,7 @@ final class NativeMarkdownView: NSView {
                     .backgroundColor, value: isCurrent ? currentColor : color, range: found)
                 appliedSearchRanges.append(found)
             }
+            searchAllOccurrenceRanges.append(found)
             occurrenceIndex += 1
             let next = found.location + max(found.length, 1)
             if next >= string.length { break }

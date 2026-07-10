@@ -1470,7 +1470,7 @@ extension MessageTableRepresentable {
                         FindDebugLog.log(
                             "[Coordinator] matched block=\(blockId) row=\(row) "
                                 + "localOccurrence=\(occurrence - running)")
-                        scrollToRow(row)
+                        scrollToOccurrence(row: row, localOccurrence: occurrence - running)
                         return
                     }
                     break
@@ -1482,6 +1482,69 @@ extension MessageTableRepresentable {
                     + "(turn total from blocks=\(running), query=\"\(query)\") — "
                     + "falling back to scrollToTurn")
             scrollToTurn(turnId)
+        }
+
+        /// Scroll so the given occurrence *within* the row's text is
+        /// comfortably visible. Rows can be far taller than the viewport
+        /// (a single message with dozens of matches), so scrolling to the
+        /// row's top — what `scrollToRow` does — never reaches occurrences
+        /// in the lower part of the cell. Reads the occurrence's line rect
+        /// from the materialized cell; when the cell isn't materialized yet
+        /// (match far offscreen), scrolls to the row first and retries once
+        /// the cell exists.
+        private func scrollToOccurrence(row: Int, localOccurrence: Int, attempt: Int = 0) {
+            guard let tableView, let scrollView else { return }
+            if let cell = tableView.view(atColumn: 0, row: row, makeIfNecessary: false)
+                as? NativeMessageCellView,
+                let rect = cell.searchOccurrenceRect(localOccurrence)
+            {
+                let rectInTable = cell.convert(rect, to: tableView)
+                let clipBounds = scrollView.contentView.bounds
+                // Already comfortably visible (a viewport inset by a margin
+                // top and bottom)? Don't move — matches the browser behavior
+                // of only scrolling when the hit would otherwise be missed.
+                let comfortZone = clipBounds.insetBy(dx: 0, dy: 48)
+                if comfortZone.contains(rectInTable) {
+                    FindDebugLog.log(
+                        "[Coordinator] scrollToOccurrence(row:\(row) local:\(localOccurrence)) "
+                            + "rect=\(rectInTable) already visible in \(clipBounds) — no scroll")
+                    return
+                }
+                scrollAnchor.unpinFromBottom()
+                lastScrolledToTurnId = ctx.lastAssistantTurnId
+                let maxY = max(0, tableView.bounds.height - clipBounds.height)
+                // Land the match around the upper third of the viewport.
+                let targetY = min(maxY, max(0, rectInTable.midY - clipBounds.height * 0.35))
+                FindDebugLog.log(
+                    "[Coordinator] scrollToOccurrence(row:\(row) local:\(localOccurrence)) "
+                        + "attempt=\(attempt) rect=\(rectInTable) targetY=\(targetY) "
+                        + "beforeY=\(clipBounds.origin.y) maxY=\(maxY)")
+                NSAnimationContext.runAnimationGroup { ctx in
+                    ctx.duration = 0.22
+                    ctx.allowsImplicitAnimation = true
+                    scrollView.contentView.setBoundsOrigin(
+                        NSPoint(x: clipBounds.origin.x, y: targetY)
+                    )
+                    scrollView.reflectScrolledClipView(scrollView.contentView)
+                }
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { [weak self] in
+                    self?.scheduleVisibleUserTurnUpdate()
+                }
+                return
+            }
+
+            FindDebugLog.log(
+                "[Coordinator] scrollToOccurrence(row:\(row) local:\(localOccurrence)) "
+                    + "attempt=\(attempt): cell not materialized or rect nil — "
+                    + (attempt < 2 ? "scrolling to row and retrying" : "giving up at row top"))
+            scrollToRow(row)
+            guard attempt < 2 else { return }
+            // Row-top scroll materializes the cell (and its highlight pass);
+            // retry the precise scroll once layout has settled.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
+                self?.scrollToOccurrence(
+                    row: row, localOccurrence: localOccurrence, attempt: attempt + 1)
+            }
         }
 
         private func scrollToRow(_ targetRow: Int, attempt: Int = 0) {

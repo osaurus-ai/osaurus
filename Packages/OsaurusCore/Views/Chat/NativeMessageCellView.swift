@@ -1641,6 +1641,18 @@ final class NativeMessageCellView: NSTableCellView {
     private var currentKindTag: ContentBlockKindTag?
     private var currentBlockId: String?
 
+    /// Bounding rect (in this cell's coordinate space) of the find-match
+    /// occurrence at `index` within this cell's rendered text, or nil when
+    /// the cell renders no searchable text or the index is out of range.
+    /// Used by the table coordinator to scroll to the exact line of the
+    /// current match inside messages taller than the viewport.
+    func searchOccurrenceRect(_ index: Int) -> NSRect? {
+        guard let mv = nativeMarkdownView ?? userTextView,
+            let rect = mv.rectOfSearchOccurrence(index)
+        else { return nil }
+        return mv.convert(rect, to: self)
+    }
+
     /// tracks inline edit vs read-only markdown so we rebuild when edit mode toggles (same block kind)
     private var userMessageInlineEditActive: Bool = false
 
