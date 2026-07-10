@@ -5112,10 +5112,16 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     iterationReq.isAgentRequest = true
                     // Per-step Router billing dedupe: the message count is
                     // stable per logical step (tool loops append messages
-                    // between steps) and reproducible on a client retry of
-                    // the same run, so the derived key dedupes a re-POST of
-                    // any step without ever colliding across steps.
-                    iterationReq.idempotencyKey = "\(idempotencyBase)-s\(msgs.count)"
+                    // between steps), so a re-POST of the same step reuses its
+                    // key. The count alone is not collision-safe — compaction
+                    // can shrink the array back to a count an earlier step
+                    // used, and a client retry re-derives the same counts over
+                    // nondeterministic model/tool output — so the body
+                    // fingerprint suffix keys any changed body as a distinct
+                    // request instead of a router IDEMPOTENCY_CONFLICT (409).
+                    iterationReq.idempotencyKey =
+                        "\(idempotencyBase)-s\(msgs.count)-"
+                        + AgentToolLoop.stepIdempotencyFingerprint(messages: msgs)
 
                     responseContent = ""
                     var contentCoalescer = Self.StreamDeltaCoalescer(

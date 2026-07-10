@@ -4676,8 +4676,16 @@ final class ChatSession: ObservableObject {
                             // and the router dedupes the charge; a genuinely new
                             // step gets a fresh key and bills normally. A user
                             // Retry starts a new run (new runId) and re-bills by
-                            // design.
-                            req.idempotencyKey = "\(runId.uuidString):\(attempt)"
+                            // design. `attempt` alone is not collision-safe:
+                            // budget-refunded iterations (data-movement relief,
+                            // empty-turn nudges) also reuse the counter but with
+                            // a CHANGED body, which the router 409s as
+                            // IDEMPOTENCY_CONFLICT — the body fingerprint suffix
+                            // keys those as distinct requests while identical
+                            // retryWithoutCharge re-POSTs still dedupe.
+                            req.idempotencyKey =
+                                "\(runId.uuidString):\(attempt):"
+                                + AgentToolLoop.stepIdempotencyFingerprint(messages: msgs)
                             debugLog(
                                 "send: attempt=\(attempt) model=\(req.model) tools=\(req.tools?.count ?? 0) sessionId=\(req.session_id ?? "nil")"
                             )

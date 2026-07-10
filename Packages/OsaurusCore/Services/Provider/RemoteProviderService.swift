@@ -2760,8 +2760,14 @@ public actor RemoteProviderService: ToolCapableService {
             // Router-only: the body is signed, so this rides the existing
             // signature. Gated here so no other OpenAI-compat upstream receives
             // an unexpected `idempotency_key` field (some 422 on unknown keys).
+            // Surfaces that don't derive their own key (subagent runner,
+            // plugin completions, other headless dispatch) get a synthesized
+            // per-request key: the body is built once and connect-phase
+            // retries re-POST the same bytes, so the router can still dedupe
+            // a request it already received (e.g. a timeout after receipt)
+            // instead of billing it twice.
             idempotencyKey: provider.providerType == .osaurusRouter
-                ? parameters.idempotencyKey : nil
+                ? (parameters.idempotencyKey ?? "auto-\(UUID().uuidString)") : nil
         )
 
         // Ask OpenAI Chat-Completions upstreams to emit a final `usage` chunk so

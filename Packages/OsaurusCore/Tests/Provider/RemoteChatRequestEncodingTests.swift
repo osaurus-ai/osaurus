@@ -2019,6 +2019,71 @@ struct RemoteChatRequestEncodingTests {
         #expect(noSessionReq.promptCacheKey == nil)
     }
 
+    /// Surfaces that don't derive a key (subagent runner, plugin
+    /// completions) still get a synthesized per-request `auto-` key on the
+    /// Router path, so `connectWithRetry` re-POSTs can be deduped
+    /// server-side instead of double-billing. Non-router upstreams must
+    /// keep omitting the field (some 422 on unknown keys).
+    @Test func buildChatRequest_synthesizesRouterIdempotencyKeyWhenNil() async throws {
+        func service(host: String, providerType: RemoteProviderType) -> RemoteProviderService {
+            RemoteProviderService(
+                provider: RemoteProvider(
+                    name: "p",
+                    host: host,
+                    providerProtocol: .https,
+                    port: nil,
+                    basePath: "/v1",
+                    authType: .none,
+                    providerType: providerType
+                ),
+                models: ["osaurus/minimax-m3"],
+                resolvedHeaders: [:]
+            )
+        }
+        let params = GenerationParameters(temperature: 0.7, maxTokens: 256)
+
+        let routerReq = await service(host: "router.osaurus.ai", providerType: .osaurusRouter)
+            .buildChatRequest(
+                messages: [ChatMessage(role: "user", content: "hi")],
+                parameters: params,
+                model: "osaurus/minimax-m3",
+                stream: true,
+                tools: nil,
+                toolChoice: nil
+            )
+        let synthesized = try #require(routerReq.idempotencyKey)
+        #expect(synthesized.hasPrefix("auto-"))
+        #expect(synthesized.count > "auto-".count)
+
+        // A surface-supplied key is passed through untouched.
+        let suppliedReq = await service(host: "router.osaurus.ai", providerType: .osaurusRouter)
+            .buildChatRequest(
+                messages: [ChatMessage(role: "user", content: "hi")],
+                parameters: GenerationParameters(
+                    temperature: 0.7,
+                    maxTokens: 256,
+                    idempotencyKey: "run-abc:2:deadbeef"
+                ),
+                model: "osaurus/minimax-m3",
+                stream: true,
+                tools: nil,
+                toolChoice: nil
+            )
+        #expect(suppliedReq.idempotencyKey == "run-abc:2:deadbeef")
+
+        // Non-router: still no key, even with none supplied.
+        let compatReq = await service(host: "api.x.ai", providerType: .openaiLegacy)
+            .buildChatRequest(
+                messages: [ChatMessage(role: "user", content: "hi")],
+                parameters: params,
+                model: "grok-4",
+                stream: true,
+                tools: nil,
+                toolChoice: nil
+            )
+        #expect(compatReq.idempotencyKey == nil)
+    }
+
     @Test func wireBody_routerMatchesVeniceToolRequest_exceptRouterOnlyFields() throws {
         let priorCall = ToolCall(
             id: "call_write_1",

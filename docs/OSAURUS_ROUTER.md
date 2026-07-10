@@ -53,6 +53,16 @@ Router-specific fields and transforms:
   Ollama, Anthropic, Open Responses, `/agents/{id}/run` steps) honor a
   client-supplied `Idempotency-Key` header, or synthesize a per-request key
   when the header is absent, so CLI/script retries do not double-bill.
+  Agent-loop step keys (chat UI and `/agents/{id}/run`) additionally carry a
+  short SHA-256 fingerprint of the outbound message array
+  (`AgentToolLoop.stepIdempotencyFingerprint`): the loop's iteration counter is
+  reused by budget-refunded iterations (data-movement relief, empty-turn
+  retries) whose body CHANGED, and Router rejects a reused key with a
+  different body as `IDEMPOTENCY_CONFLICT` (HTTP 409). The fingerprint keeps
+  identical re-POSTs (transient stream retries) deduping on the same key while
+  any body change mints a fresh one. Surfaces that derive no key of their own
+  (subagent runner, plugin completions) get a synthesized per-request `auto-`
+  key in `buildChatRequest` so connect-phase retries still dedupe.
 - `clamp_to_balance` is explicitly set to `false` for Router.
 - User multimodal content parts are preserved.
 - Assistant history is normalized to string `content` because several upstreams
