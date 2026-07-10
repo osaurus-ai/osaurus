@@ -510,6 +510,8 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
         temperature: Float?,
         maxTokens: Int,
         tokensPerSecond: Double? = nil,
+        engine: String? = nil,
+        nativeMTPFallback: String? = nil,
         turnId: UUID? = nil,
         requestId: String? = nil,
         requestBodyJSON: String? = nil,
@@ -555,7 +557,9 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
             prompt_tokens: inputTokens,
             completion_tokens: 0,
             total_tokens: inputTokens,
-            tokens_per_second: tokensPerSecond
+            tokens_per_second: tokensPerSecond,
+            engine: engine,
+            native_mtp_fallback: nativeMTPFallback
         )
 
         let response = ChatCompletionResponse(
@@ -1201,6 +1205,10 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
                 // stream throws to surface the tool call, which is why tool-call
                 // turns historically reported no tok/s.
                 var toolStepTokensPerSecond: Double?
+                // Engine-path attribution for the tool step, threaded into
+                // `usage` exactly like `toolStepTokensPerSecond` above.
+                var toolStepEngine: String?
+                var toolStepMTPFallback: String?
                 do {
                     let stream = try await toolSvc.streamWithTools(
                         messages: messages,
@@ -1217,6 +1225,8 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
                         try Task.checkCancellation()
                         if let stats = StreamingStatsHint.decode(delta) {
                             toolStepTokensPerSecond = stats.tokensPerSecond
+                            toolStepEngine = stats.engine
+                            toolStepMTPFallback = stats.mtpFallbackReason
                             if let stopReason = stats.stopReason, !stopReason.isEmpty {
                                 terminalStopReason = stopReason
                             }
@@ -1264,7 +1274,9 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
                         prompt_tokens: inputTokens,
                         completion_tokens: outputTokens,
                         total_tokens: inputTokens + outputTokens,
-                        tokens_per_second: toolStepTokensPerSecond
+                        tokens_per_second: toolStepTokensPerSecond,
+                        engine: toolStepEngine,
+                        native_mtp_fallback: toolStepMTPFallback
                     )
 
                     let response = ChatCompletionResponse(
@@ -1310,6 +1322,8 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
                         temperature: temperature,
                         maxTokens: maxTokens,
                         tokensPerSecond: toolStepTokensPerSecond,
+                        engine: toolStepEngine,
+                        nativeMTPFallback: toolStepMTPFallback,
                         turnId: request.turnId,
                         requestId: requestId,
                         requestBodyJSON: requestBodyJSON,
@@ -1329,6 +1343,8 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
                         temperature: temperature,
                         maxTokens: maxTokens,
                         tokensPerSecond: toolStepTokensPerSecond,
+                        engine: toolStepEngine,
+                        nativeMTPFallback: toolStepMTPFallback,
                         turnId: request.turnId,
                         requestId: requestId,
                         requestBodyJSON: requestBodyJSON,
@@ -1355,11 +1371,17 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
             var terminalStopReason = "stop"
             var authoritativeOutputTokens: Int?
             var authoritativeTokensPerSecond: Double?
+            // Engine-path attribution from the stats hint's `engine=` /
+            // `mtp_off=` flags; local MLX only, nil for remote providers.
+            var authoritativeEngine: String?
+            var authoritativeMTPFallback: String?
             for try await delta in stream {
                 try Task.checkCancellation()
                 if let stats = StreamingStatsHint.decode(delta) {
                     authoritativeOutputTokens = stats.tokenCount
                     authoritativeTokensPerSecond = stats.tokensPerSecond
+                    authoritativeEngine = stats.engine
+                    authoritativeMTPFallback = stats.mtpFallbackReason
                     if let stopReason = stats.stopReason, !stopReason.isEmpty {
                         terminalStopReason = stopReason
                     }
@@ -1393,7 +1415,9 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
                 prompt_tokens: inputTokens,
                 completion_tokens: outputTokens,
                 total_tokens: inputTokens + outputTokens,
-                tokens_per_second: authoritativeTokensPerSecond
+                tokens_per_second: authoritativeTokensPerSecond,
+                engine: authoritativeEngine,
+                native_mtp_fallback: authoritativeMTPFallback
             )
 
             let response = ChatCompletionResponse(

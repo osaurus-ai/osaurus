@@ -176,6 +176,70 @@ struct RemoteCompletionUsageTests {
         #expect(deltas.allSatisfy { StreamingStatsHint.decode($0) == nil })
     }
 
+    // MARK: - Usage serialization guard (non-finite tokens_per_second)
+
+    @Test func usageEncode_nonFiniteTokensPerSecond_omitsKeyAndStaysValidJSON() throws {
+        // Zero-token streams (the engine's cancelled iterator-gate path)
+        // carry tokensPerSecond = 0/0 = NaN. JSON has no NaN/Infinity
+        // literal: JSONEncoder throws EncodingError.invalidValue and the
+        // SSE path's IkigaJSONEncoder emitted the bare token `nan`
+        // (live-observed as `"tokens_per_second":nan`, which strict
+        // parsers reject). `Usage.encode(to:)` must OMIT the key instead.
+        for nonFinite in [Double.nan, .infinity, -.infinity] {
+            let usage = Usage(
+                prompt_tokens: 12,
+                completion_tokens: 0,
+                total_tokens: 12,
+                tokens_per_second: nonFinite,
+                engine: "solo_mtp",
+                native_mtp_fallback: "engine_iterator_gate"
+            )
+            let data = try JSONEncoder().encode(usage)
+            let object = try JSONSerialization.jsonObject(with: data) as? [String: Any]
+            #expect(object?["tokens_per_second"] == nil)
+            // The rest of the chunk survives intact.
+            #expect(object?["prompt_tokens"] as? Int == 12)
+            #expect(object?["completion_tokens"] as? Int == 0)
+            #expect(object?["total_tokens"] as? Int == 12)
+            #expect(object?["engine"] as? String == "solo_mtp")
+            #expect(object?["native_mtp_fallback"] as? String == "engine_iterator_gate")
+        }
+    }
+
+    @Test func usageEncode_finiteTokensPerSecond_isUnchanged() throws {
+        // Finite values — including a genuine 0 (0 tokens over nonzero
+        // time) — encode exactly as the synthesized conformance did, and
+        // nil still omits the key.
+        let zero = try JSONSerialization.jsonObject(
+            with: JSONEncoder().encode(
+                Usage(prompt_tokens: 1, completion_tokens: 0, total_tokens: 1, tokens_per_second: 0)
+            )
+        ) as? [String: Any]
+        #expect(zero?["tokens_per_second"] as? Double == 0)
+
+        let finite = try JSONSerialization.jsonObject(
+            with: JSONEncoder().encode(
+                Usage(prompt_tokens: 1, completion_tokens: 42, total_tokens: 43, tokens_per_second: 73.5)
+            )
+        ) as? [String: Any]
+        #expect(finite?["tokens_per_second"] as? Double == 73.5)
+
+        let absent = try JSONSerialization.jsonObject(
+            with: JSONEncoder().encode(
+                Usage(prompt_tokens: 1, completion_tokens: 2, total_tokens: 3)
+            )
+        ) as? [String: Any]
+        #expect(absent?["tokens_per_second"] == nil)
+
+        // Round-trip: decode stays synthesized and re-encode of a decoded
+        // finite value is lossless.
+        let decoded = try JSONDecoder().decode(
+            Usage.self,
+            from: Data(#"{"prompt_tokens":1,"completion_tokens":42,"total_tokens":43,"tokens_per_second":73.5}"#.utf8)
+        )
+        #expect(decoded.tokens_per_second == 73.5)
+    }
+
     // MARK: - End-to-end wiring (.openaiLegacy → defer → usage → dispatch)
 
     @Test func endToEnd_openaiLegacy_deferredToolTurn_surfacesUsageThenDispatches() async {

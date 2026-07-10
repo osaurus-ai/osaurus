@@ -191,6 +191,56 @@ struct StreamingHintTests {
         #expect(!zero.contains("prefill="))
     }
 
+    @Test func statsHint_encode_normalizesNonFiniteTokensPerSecondToZero() {
+        // A zero-token cancelled stream (e.g. the engine's
+        // engine_iterator_gate path) carries
+        // GenerateCompletionInfo.tokensPerSecond = 0/0 = NaN. "%.4f" would
+        // render the bare token "nan" on the wire, which decodes back to a
+        // non-finite Double and previously reached the OpenAI `usage`
+        // chunk as invalid JSON. Encode must normalize to 0 — the same
+        // value a genuine zero-rate step (0 tokens over nonzero time)
+        // reports — and never emit "nan"/"inf".
+        for nonFinite in [Double.nan, .infinity, -.infinity] {
+            let encoded = StreamingStatsHint.encode(
+                tokenCount: 0,
+                tokensPerSecond: nonFinite,
+                stopReason: "cancelled",
+                engine: "solo_mtp",
+                mtpFallbackReason: "engine_iterator_gate"
+            )
+            #expect(!encoded.contains("nan"))
+            #expect(!encoded.contains("inf"))
+            let decoded = StreamingStatsHint.decode(encoded)
+            #expect(decoded?.tokenCount == 0)
+            #expect(decoded?.tokensPerSecond == 0)
+            #expect(decoded?.stopReason == "cancelled")
+            #expect(decoded?.engine == "solo_mtp")
+            #expect(decoded?.mtpFallbackReason == "engine_iterator_gate")
+        }
+        // Non-finite prefill tps rides the existing isFinite && > 0 guard:
+        // the optional flag is omitted entirely.
+        let badPrefill = StreamingStatsHint.encode(
+            tokenCount: 0,
+            tokensPerSecond: .nan,
+            prefillTokensPerSecond: .infinity
+        )
+        #expect(!badPrefill.contains("prefill="))
+        #expect(StreamingStatsHint.decode(badPrefill)?.prefillTokensPerSecond == nil)
+    }
+
+    @Test func statsHint_decode_legacyNonFiniteWire_parsesToNonFinite() {
+        // A pre-fix producer (or the live-observed chunk) can still put the
+        // bare token "nan" on the in-band wire; Double("nan") parses, so
+        // decode surfaces a NaN — the usage serializers (Usage.encode /
+        // chatCompletionResponseJSONObject) are the boundary that must
+        // then omit the key. Pin the parse so that boundary keeps being
+        // exercised.
+        let decoded = StreamingStatsHint.decode("\u{FFFE}stats:0;nan;stop=cancelled")
+        #expect(decoded?.tokenCount == 0)
+        #expect(decoded?.tokensPerSecond.isNaN == true)
+        #expect(decoded?.stopReason == "cancelled")
+    }
+
     @Test func statsHint_decode_recoversPrefillAlongsideOtherFlags() {
         let payload = "\u{FFFE}stats:10;5.0;unclosed,stop=length,prefill=300.25"
         let decoded = StreamingStatsHint.decode(payload)
@@ -205,6 +255,123 @@ struct StreamingHintTests {
         let decoded = StreamingStatsHint.decode("\u{FFFE}stats:128;99.4321")
         #expect(decoded?.tokenCount == 128)
         #expect(decoded?.prefillTokensPerSecond == nil)
+    }
+
+    // MARK: - StreamingStatsHint — engine attribution flags
+
+    @Test func statsHint_roundTrips_engineAndMTPOffFlags() {
+        let encoded = StreamingStatsHint.encode(
+            tokenCount: 64,
+            tokensPerSecond: 42.0,
+            engine: "solo_ar",
+            mtpFallbackReason: "explicit_sampling"
+        )
+        #expect(encoded.contains("engine=solo_ar"))
+        #expect(encoded.contains("mtp_off=explicit_sampling"))
+        let decoded = StreamingStatsHint.decode(encoded)
+        #expect(decoded?.tokenCount == 64)
+        #expect(decoded?.engine == "solo_ar")
+        #expect(decoded?.mtpFallbackReason == "explicit_sampling")
+    }
+
+    @Test func statsHint_roundTrips_engineSamplingGateFallbackReason() {
+        // The engine-side veto value ("engine_sampling_gate": strategy
+        // submitted but vmlx's own eligibility gate rejected MTP) must
+        // ride the wire verbatim like the three pre-submit reasons.
+        let encoded = StreamingStatsHint.encode(
+            tokenCount: 8,
+            tokensPerSecond: 21.0,
+            engine: "solo_ar",
+            mtpFallbackReason: "engine_sampling_gate"
+        )
+        #expect(encoded.contains("mtp_off=engine_sampling_gate"))
+        let decoded = StreamingStatsHint.decode(encoded)
+        #expect(decoded?.engine == "solo_ar")
+        #expect(decoded?.mtpFallbackReason == "engine_sampling_gate")
+    }
+
+    @Test func statsHint_roundTrips_iteratorGateAndDiffusionFlagValues() {
+        // engine_iterator_gate pairs with engine=solo_mtp (the submitted
+        // native-MTP branch the engine takes and then CANCELS — see the
+        // `EngineAttribution.engineFlag` taxonomy), and block-diffusion
+        // steps carry the solo_diffusion path value.
+        let iteratorGated = StreamingStatsHint.encode(
+            tokenCount: 0,
+            tokensPerSecond: 0.0,
+            stopReason: "cancelled",
+            engine: "solo_mtp",
+            mtpFallbackReason: "engine_iterator_gate"
+        )
+        #expect(iteratorGated.contains("engine=solo_mtp"))
+        #expect(iteratorGated.contains("mtp_off=engine_iterator_gate"))
+        let decodedIteratorGated = StreamingStatsHint.decode(iteratorGated)
+        #expect(decodedIteratorGated?.engine == "solo_mtp")
+        #expect(decodedIteratorGated?.mtpFallbackReason == "engine_iterator_gate")
+        #expect(decodedIteratorGated?.stopReason == "cancelled")
+
+        let diffusion = StreamingStatsHint.encode(
+            tokenCount: 96,
+            tokensPerSecond: 74.0,
+            engine: "solo_diffusion"
+        )
+        #expect(diffusion.contains("engine=solo_diffusion"))
+        let decodedDiffusion = StreamingStatsHint.decode(diffusion)
+        #expect(decodedDiffusion?.engine == "solo_diffusion")
+        #expect(decodedDiffusion?.mtpFallbackReason == nil)
+    }
+
+    @Test func statsHint_omitsEngineFlagsWhenAbsent() {
+        // nil/blank attribution keeps the compact wire byte-identical to
+        // the pre-attribution encoder, so remote-provider hints and old
+        // decoders see no new flag.
+        let none = StreamingStatsHint.encode(tokenCount: 5, tokensPerSecond: 10.0)
+        #expect(!none.contains("engine="))
+        #expect(!none.contains("mtp_off="))
+        #expect(StreamingStatsHint.decode(none)?.engine == nil)
+        #expect(StreamingStatsHint.decode(none)?.mtpFallbackReason == nil)
+
+        let blank = StreamingStatsHint.encode(
+            tokenCount: 5,
+            tokensPerSecond: 10.0,
+            engine: "  ",
+            mtpFallbackReason: ""
+        )
+        #expect(!blank.contains("engine="))
+        #expect(!blank.contains("mtp_off="))
+    }
+
+    @Test func statsHint_legacyWire_hasNilEngineAttribution() {
+        // Wire written by a pre-attribution encoder must decode with nil
+        // engine fields (upgrade-straddle compat, same contract as the
+        // prefill flag).
+        let decoded = StreamingStatsHint.decode("\u{FFFE}stats:128;99.4321")
+        #expect(decoded?.tokenCount == 128)
+        #expect(decoded?.engine == nil)
+        #expect(decoded?.mtpFallbackReason == nil)
+    }
+
+    @Test func statsHint_decode_recoversEngineAlongsideAllOtherFlags() {
+        let payload =
+            "\u{FFFE}stats:10;5.0;unclosed,stop=length,prefill=300.25,engine=solo_mtp"
+        let decoded = StreamingStatsHint.decode(payload)
+        #expect(decoded?.unclosedReasoning == true)
+        #expect(decoded?.stopReason == "length")
+        #expect(abs((decoded?.prefillTokensPerSecond ?? 0) - 300.25) < 0.01)
+        #expect(decoded?.engine == "solo_mtp")
+        #expect(decoded?.mtpFallbackReason == nil)
+    }
+
+    @Test func statsHint_decode_engineFlagsIgnoreUnknownNeighbors() {
+        // Unknown-flag preservation: future flags in the comma list must
+        // not confuse the engine decoders, and the engine flags must not
+        // shadow unknown flags for older decoders (maxSplits keeps the
+        // whole flag field intact).
+        let payload = "\u{FFFE}stats:10;5.0;futureflag,engine=batched,mtp_off=cold_warmup,another"
+        let decoded = StreamingStatsHint.decode(payload)
+        #expect(decoded?.tokenCount == 10)
+        #expect(decoded?.engine == "batched")
+        #expect(decoded?.mtpFallbackReason == "cold_warmup")
+        #expect(decoded?.unclosedReasoning == false)
     }
 
     // Issue #856 regression: the sentinel must NEVER appear in the

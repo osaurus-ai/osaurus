@@ -80,6 +80,14 @@ struct GenerationParameters: Sendable {
     /// kept warm by API clients. Defaults to `.httpAPI` — the conservative
     /// choice (never accelerated) for paths that don't set it explicitly.
     let requestSource: RequestSource
+    /// Internal override for the `stage` label on the
+    /// `EffectiveGenerationSettings` record this request writes (surfaced
+    /// as `last_effective_generation.stage` in `/admin`). Nil — the
+    /// default for every user-facing path — records
+    /// "submitted_to_batch_engine"; `MLXBatchAdapter.warmupNativeMTPAtLoad`
+    /// passes "load_warmup" so its hidden 2-token generation is
+    /// distinguishable from user traffic. Never client-settable.
+    let effectiveSettingsStage: String?
 
     init(
         temperature: Float?,
@@ -101,7 +109,8 @@ struct GenerationParameters: Sendable {
         runAsRemoteAgent: Bool = false,
         suppressProgressUI: Bool = false,
         warmupPrefill: Bool = false,
-        requestSource: RequestSource = .httpAPI
+        requestSource: RequestSource = .httpAPI,
+        effectiveSettingsStage: String? = nil
     ) {
         self.temperature = temperature
         self.maxTokens = maxTokens
@@ -123,6 +132,7 @@ struct GenerationParameters: Sendable {
         self.suppressProgressUI = suppressProgressUI
         self.warmupPrefill = warmupPrefill
         self.requestSource = requestSource
+        self.effectiveSettingsStage = effectiveSettingsStage
     }
 }
 
@@ -363,7 +373,11 @@ enum StreamingToolCallProgressHint: Sendable {
 /// `GenerateCompletionInfo.unclosedReasoning == true` (the model ended
 /// the stream still inside a `<think>` block, i.e. trapped-thinking),
 /// and `stop=<reason>`, which preserves vmlx's terminal stop reason so
-/// HTTP writers can distinguish `length` from a natural `stop`.
+/// HTTP writers can distinguish `length` from a natural `stop`;
+/// `prefill=<tps>` (prompt-processing speed); `engine=<solo_mtp|solo_ar|
+/// solo_diffusion|batched>` (which engine code path the step was
+/// submitted on); and `mtp_off=<reason>` (why native MTP fell back, when
+/// it did).
 enum StreamingStatsHint: Sendable {
     private static let statsPrefix = "\u{FFFE}stats:"
     private static let posixLocale = Locale(identifier: "en_US_POSIX")
@@ -376,15 +390,44 @@ enum StreamingStatsHint: Sendable {
     /// (incl. KV-reused prefix) was processed before the first generated
     /// token, the headline TTFT driver for long-context Mac runs.
     private static let prefillFlagPrefix = "prefill="
+    /// Engine-path attribution for the step: `engine=<solo_mtp|solo_ar|
+    /// solo_diffusion|batched>`. Values come from
+    /// `MLXBatchAdapter.EngineAttribution` (built at submit time from the
+    /// engine's actual routing rules + its public MTP eligibility gate on
+    /// the submitted parameters — SUBMITTED-path attribution; see
+    /// `MLXBatchAdapter.engineAttribution` for the named residuals),
+    /// never recomputed here. Optional flag — absent for remote
+    /// providers and pre-upgrade wires, so old decoders are untouched.
+    private static let engineFlagPrefix = "engine="
+    /// Set only when a native-MTP-capable model did not engage MTP for
+    /// this request: `mtp_off=<cold_warmup|explicit_sampling|tiny_prompt|
+    /// engine_sampling_gate|engine_iterator_gate>`. Mirrors the per-submit
+    /// `nativeMTPFallback` log value verbatim; see
+    /// `EffectiveGenerationSettings.nativeMTPFallbackReason` for what
+    /// each value means (`engine_iterator_gate` marks a submitted MTP
+    /// request the engine CANCELS rather than demotes to AR).
+    private static let mtpOffFlagPrefix = "mtp_off="
 
     static func encode(
         tokenCount: Int,
         tokensPerSecond: Double,
         unclosedReasoning: Bool = false,
         stopReason: String? = nil,
-        prefillTokensPerSecond: Double? = nil
+        prefillTokensPerSecond: Double? = nil,
+        engine: String? = nil,
+        mtpFallbackReason: String? = nil
     ) -> String {
-        let tps = String(format: "%.4f", locale: posixLocale, tokensPerSecond)
+        // A zero-token stream (e.g. the engine's cancelled iterator-gate
+        // path yields `GenerateCompletionInfo` with generationTokenCount=0
+        // over generationTime=0) makes `tokensPerSecond` NaN — and "%.4f"
+        // renders NaN/inf as the bare tokens "nan"/"inf", which decode
+        // parses back to a non-finite that downstream `usage` serializers
+        // would emit as invalid JSON. Normalize to 0 — the same value a
+        // genuine zero-rate step (0 tokens over nonzero time) already
+        // reports, so finite-path behavior is unchanged; the tps field is
+        // mandatory in the 2-field wire, so omission is not representable.
+        let finiteTokensPerSecond = tokensPerSecond.isFinite ? tokensPerSecond : 0
+        let tps = String(format: "%.4f", locale: posixLocale, finiteTokensPerSecond)
         var flags: [String] = []
         if unclosedReasoning {
             flags.append(unclosedFlag)
@@ -399,6 +442,18 @@ enum StreamingStatsHint: Sendable {
             let pf = String(format: "%.4f", locale: posixLocale, prefillTokensPerSecond)
             flags.append("\(prefillFlagPrefix)\(pf)")
         }
+        if let engine {
+            let normalized = engine.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !normalized.isEmpty {
+                flags.append("\(engineFlagPrefix)\(normalized)")
+            }
+        }
+        if let mtpFallbackReason {
+            let normalized = mtpFallbackReason.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !normalized.isEmpty {
+                flags.append("\(mtpOffFlagPrefix)\(normalized)")
+            }
+        }
         let suffix = flags.isEmpty ? "" : ";\(flags.joined(separator: ","))"
         return "\(statsPrefix)\(tokenCount);\(tps)\(suffix)"
     }
@@ -410,7 +465,9 @@ enum StreamingStatsHint: Sendable {
         tokensPerSecond: Double,
         unclosedReasoning: Bool,
         stopReason: String?,
-        prefillTokensPerSecond: Double?
+        prefillTokensPerSecond: Double?,
+        engine: String?,
+        mtpFallbackReason: String?
     )? {
         guard delta.hasPrefix(statsPrefix) else { return nil }
         let payload = delta.dropFirst(statsPrefix.count)
@@ -434,7 +491,19 @@ enum StreamingStatsHint: Sendable {
             guard flag.hasPrefix(prefillFlagPrefix) else { return nil }
             return Double(flag.dropFirst(prefillFlagPrefix.count))
         }.first
-        return (count, tps, unclosed, stopReason, prefillTokensPerSecond)
+        let engine = flags.compactMap { flag -> String? in
+            guard flag.hasPrefix(engineFlagPrefix) else { return nil }
+            let value = flag.dropFirst(engineFlagPrefix.count)
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            return value.isEmpty ? nil : value
+        }.first
+        let mtpFallbackReason = flags.compactMap { flag -> String? in
+            guard flag.hasPrefix(mtpOffFlagPrefix) else { return nil }
+            let value = flag.dropFirst(mtpOffFlagPrefix.count)
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            return value.isEmpty ? nil : value
+        }.first
+        return (count, tps, unclosed, stopReason, prefillTokensPerSecond, engine, mtpFallbackReason)
     }
 }
 

@@ -57,6 +57,11 @@ struct MLXBatchAdapter {
         let stream: AsyncStream<Generation>
         let promptTokens: [Int]
         let genTask: Task<Void, Never>
+        /// Which engine path this request was submitted on, resolved at
+        /// submit time. Carried alongside the stream so the runtime's
+        /// stats sentinel (and from there the HTTP `usage` block) can
+        /// attribute the finished step without recomputing eligibility.
+        let attribution: EngineAttribution
     }
 
     struct AudioPreencodeResult {
@@ -67,6 +72,14 @@ struct MLXBatchAdapter {
     }
 
     struct EffectiveGenerationSettings: Equatable, Sendable {
+        /// Which record this is: "pending_preload" (written before container
+        /// load; attribution fields are placeholders),
+        /// "submitted_to_batch_engine" (a real request, written at submit
+        /// time), or "load_warmup" (the hidden 2-token generation
+        /// `warmupNativeMTPAtLoad` runs at model load to consume the
+        /// native-MTP cold-warmup — NOT user traffic; its engaged=false /
+        /// cold_warmup row would otherwise be indistinguishable from a real
+        /// request that failed to engage MTP).
         let stage: String
         let temperature: Float
         let maxTokens: Int
@@ -75,6 +88,254 @@ struct MLXBatchAdapter {
         let minP: Float
         let repetitionPenalty: Float?
         let compiledBatchDecode: Bool
+        /// "solo" when the request routes vmlx's exclusive solo fast path;
+        /// "batched" when it enters the shared continuous-batching
+        /// scheduler loop. Mirrors `BatchEngine.generate`'s own routing:
+        /// a submitted native-MTP strategy (BatchEngine.swift:566) or a
+        /// block-diffusion target model (BatchEngine.swift:582, `context.model
+        /// is any BlockDiffusionModel`) forces the exclusive solo path
+        /// regardless of `maxBatchSize`; otherwise the solo fast path
+        /// engages when `maxBatchSize == 1` (`canStartSoloFastPath`) —
+        /// which coincides with the `SoloGenerationGate` lease. For
+        /// `stage == "pending_preload"` records this is derived from
+        /// `maxBatchSize` alone (neither the lease decision nor the draft
+        /// strategy exists yet); `generate()` overwrites the record with
+        /// the routing-derived value at submit time. See
+        /// `engineAttribution(...)` for the submitted-path contract and
+        /// the named residual cases.
+        var enginePath: String
+        /// True when the loaded model shipped a native-MTP draft strategy,
+        /// independent of whether this request was eligible to use it.
+        /// Always false for `pending_preload` records — the draft strategy
+        /// is resolved during container load, after the pending record is
+        /// written.
+        var nativeMTPRequested: Bool
+        /// True when the native-MTP strategy survived osaurus's eligibility
+        /// gates (`effectiveDraftStrategy`), was submitted to the engine,
+        /// AND passes vmlx's own public solo-fast-path gate
+        /// (`GenerateParameters.canUseNativeMTP(for:)`, i.e.
+        /// `isNativeMTPLosslessGreedyEligible` on the exact submitted
+        /// parameters plus no media content). The engine gate matters:
+        /// e.g. a model-shipped default `topP = 0.95` passes osaurus's
+        /// explicit-greedy request check but vetoes MTP engine-side.
+        var nativeMTPEngaged: Bool
+        /// Mirror of the per-submit `nativeMTPFallback` log value:
+        /// "cold_warmup" | "explicit_sampling" | "tiny_prompt" (strategy
+        /// dropped before submit by osaurus's gates),
+        /// "engine_sampling_gate" (strategy submitted, but the effective
+        /// sampling parameters or media content fail vmlx's
+        /// `canUseNativeMTP` check, so the engine runs plain AR on its
+        /// solo path), or "engine_iterator_gate" (strategy submitted and
+        /// the sampling gate passes, but a `NativeMTPTokenIterator.init`
+        /// precondition fails — maxTokens ≤ 1, empty prompt, or depth < 1
+        /// — so the engine's solo-MTP branch throws and yields a CANCELLED
+        /// stream; nothing runs). Nil when MTP engaged or was never
+        /// requested.
+        var nativeMTPFallbackReason: String?
+    }
+
+    /// Boundary attribution for one submitted request: which engine code
+    /// path serves it and why native MTP did or did not engage. Built once
+    /// in `generate(...)` — single-sourced at submit time from the exact
+    /// `GenerateParameters` handed to the engine and aligned with the
+    /// engine's public eligibility gate
+    /// (`GenerateParameters.canUseNativeMTP(for:)`); the same value feeds
+    /// the wire flags, `/admin` JSON, and the per-submit os_log line, so
+    /// those three surfaces agree by construction. Observed per-generation
+    /// engagement (accepted draft tokens etc.) arrives separately via
+    /// engine counters.
+    struct EngineAttribution: Equatable, Sendable {
+        /// See `EffectiveGenerationSettings.enginePath`.
+        let enginePath: String
+        /// True when the target model is a block-diffusion model
+        /// (`BatchEngine` routes `context.model is any BlockDiffusionModel`
+        /// to its exclusive solo canvas path; DiffusionGemma is the only
+        /// shipped conformance). Detected by evaluating that SAME
+        /// conformance predicate on the loaded model instance inside
+        /// `prepareInput`'s existing `container.perform` hop — coextensive
+        /// with the engine's routing by construction, not a name or
+        /// model_type proxy.
+        let blockDiffusion: Bool
+        /// See `EffectiveGenerationSettings.nativeMTPRequested`. Gated on
+        /// `usesNativeMTP` (not merely non-nil) so a block-diffusion or
+        /// autoregressive draft strategy never reports as native MTP.
+        let nativeMTPRequested: Bool
+        /// See `EffectiveGenerationSettings.nativeMTPEngaged`.
+        let nativeMTPEngaged: Bool
+        /// See `EffectiveGenerationSettings.nativeMTPFallbackReason`.
+        let nativeMTPFallbackReason: String?
+
+        init(
+            enginePath: String,
+            blockDiffusion: Bool = false,
+            nativeMTPRequested: Bool,
+            nativeMTPEngaged: Bool,
+            nativeMTPFallbackReason: String?
+        ) {
+            self.enginePath = enginePath
+            self.blockDiffusion = blockDiffusion
+            self.nativeMTPRequested = nativeMTPRequested
+            self.nativeMTPEngaged = nativeMTPEngaged
+            self.nativeMTPFallbackReason = nativeMTPFallbackReason
+        }
+
+        /// Wire value for the stats-hint `engine=` flag: "solo_mtp" is the
+        /// engine's native-MTP solo branch, "solo_ar" the plain
+        /// autoregressive solo path, "solo_diffusion" the exclusive
+        /// block-diffusion canvas path, "batched" the shared engine loop
+        /// (which never runs the native-MTP iterator).
+        ///
+        /// The flag names the SUBMITTED branch, so it switches on the
+        /// fallback reason, not on `nativeMTPEngaged` alone:
+        /// flag=solo_mtp with engaged=false marks a submitted native-MTP
+        /// request the engine will CANCEL (`engine_iterator_gate`: the
+        /// engine takes its solo-MTP branch, the iterator constructor
+        /// throws, the stream terminates with stop=cancelled — plain AR
+        /// never runs, so reporting solo_ar would be false). The
+        /// `engine_sampling_gate` veto is the asymmetric case: there the
+        /// engine's own `canUseNativeMTP` check fails BEFORE the MTP
+        /// branch and the plain AR iterator actually runs, so solo_ar is
+        /// the truthful flag.
+        var engineFlag: String {
+            guard enginePath == "solo" else { return "batched" }
+            if blockDiffusion { return "solo_diffusion" }
+            if nativeMTPEngaged || nativeMTPFallbackReason == "engine_iterator_gate" {
+                return "solo_mtp"
+            }
+            return "solo_ar"
+        }
+    }
+
+    /// Derive the boundary attribution from the SAME branch structure
+    /// `BatchEngine.generate` takes (osaurus submits every request through
+    /// `engine.generate`; it never calls `engine.submit` directly):
+    ///
+    /// 1. `parameters.draftStrategy?.usesNativeMTP == true` → the EXCLUSIVE
+    ///    solo fast path, regardless of `maxBatchSize`
+    ///    (BatchEngine.swift:566). Inside that path the engine re-checks
+    ///    its own public gate (`soloParameters.canUseNativeMTP(for:)`,
+    ///    BatchEngine.swift:1051-1053) and runs the plain AR iterator when
+    ///    it fails — still solo, so `enginePath == "solo"` either way and
+    ///    the flag distinguishes `solo_mtp` from `solo_ar`. When the gate
+    ///    PASSES, `NativeMTPTokenIterator.init` can still throw
+    ///    (maxTokens ≤ 1, empty prompt, depth < 1, model without a usable
+    ///    MTP head) and the engine yields a CANCELLED stream
+    ///    (BatchEngine.swift:1114-1127); the host-checkable preconditions
+    ///    are mirrored here as `engine_iterator_gate`.
+    /// 2. `context.model is any BlockDiffusionModel` → the EXCLUSIVE solo
+    ///    canvas path, regardless of `maxBatchSize`
+    ///    (BatchEngine.swift:582-592). Reported as `enginePath == "solo"`
+    ///    with flag `solo_diffusion`.
+    /// 3. Otherwise the solo fast path engages when `maxBatchSize == 1`
+    ///    and the engine is idle (`canStartSoloFastPath`); the osaurus
+    ///    `SoloGenerationGate` lease is acquired exactly when
+    ///    `maxBatchSize == 1` and serializes osaurus submits.
+    /// 4. Everything else enters the shared batched scheduler loop.
+    ///
+    /// CONTRACT — SUBMITTED-path attribution. These fields state what
+    /// osaurus submitted and what the engine's PUBLIC gates say about it,
+    /// not an observation of the engine's internal choice. Named residuals:
+    /// - Busy-engine hard reject (native-MTP or block-diffusion submit
+    ///   while the engine is not idle): vmlx cancels the stream and nothing
+    ///   runs; attribution still says "solo". Observable host-side via the
+    ///   step's terminal stop reason (`cancelled`).
+    /// - Post-disconnect drain window (any config, including single-slot):
+    ///   on client disconnect osaurus's producer exits and releases the
+    ///   solo lease while the engine's `soloFastPathTask` keeps draining to
+    ///   the next chunk boundary (see `ModelRuntime.cancelGeneration(name:)`,
+    ///   vmlx #111). An immediate retry then finds the engine busy: non-MTP
+    ///   → the engine's `canStartSoloFastPath` is false and the request runs
+    ///   BATCHED while we report solo_ar — not observable host-side today,
+    ///   closable only by an engine-side path indicator; MTP → hard reject,
+    ///   observable via stop=cancelled as above.
+    ///
+    /// - Parameters:
+    ///   - isBlockDiffusionModel: whether the target model is a
+    ///     block-diffusion model. Callers pass
+    ///     `PreparedInput.isBlockDiffusionModel`, which evaluates
+    ///     `context.model is any BlockDiffusionModel` on the loaded model
+    ///     instance inside `prepareInput`'s existing `container.perform`
+    ///     hop — the EXACT predicate `BatchEngine.generate` dispatches on
+    ///     (BatchEngine.swift:581), so it cannot diverge from the engine's
+    ///     routing (a renamed fine-tune that conforms still detects; a
+    ///     look-alike model id that doesn't conform never false-positives).
+    ///   - engineNativeMTPEligible: vmlx's own public gate evaluated on
+    ///     the exact parameters submitted —
+    ///     `mlxParams.canUseNativeMTP(for: input)` — NOT an osaurus
+    ///     reimplementation. Only meaningful when a native-MTP strategy
+    ///     was submitted.
+    ///   - submittedMaxTokens: `mlxParams.maxTokens`, the exact value the
+    ///     engine sees (`NativeMTPTokenIterator.init` throws on ≤ 1).
+    ///   - promptTokenCount: `prepared.promptTokens.count` (the iterator
+    ///     throws on an empty prompt).
+    ///   - osaurusFallbackReason: the pre-submit fallback reason
+    ///     ("cold_warmup" | "explicit_sampling" | "tiny_prompt") from
+    ///     `nativeMTPFallbackReason(...)`, nil when osaurus's gates passed.
+    ///
+    /// DISCLOSED residual for `nativeMTPEngaged`: the iterator's
+    /// `model.nativeMTPAvailable` guard (and the `any NativeMTPModel`
+    /// downcast before it) checks the loaded model INSTANCE, which this
+    /// path does not probe — no NEW `container.perform` hop is added for
+    /// it. A model whose MTP weights were filtered at load would report
+    /// engaged=true and then cancel engine-side (observable via
+    /// stop=cancelled). Closable the same way the block-diffusion
+    /// predicate was closed (piggyback on `prepareInput`'s existing
+    /// perform hop), by a load-time capability probe, or by an
+    /// engine-side path indicator.
+    static func engineAttribution(
+        soloLeaseHeld: Bool,
+        isBlockDiffusionModel: Bool = false,
+        requestedDraftStrategy: MLXLMCommon.DraftStrategy?,
+        submittedDraftStrategy: MLXLMCommon.DraftStrategy?,
+        engineNativeMTPEligible: Bool,
+        submittedMaxTokens: Int? = nil,
+        promptTokenCount: Int = 1,
+        osaurusFallbackReason: String?
+    ) -> EngineAttribution {
+        let requested = requestedDraftStrategy?.usesNativeMTP == true
+        let submitted = submittedDraftStrategy?.usesNativeMTP == true
+        // Host-checkable `NativeMTPTokenIterator.init` preconditions,
+        // mirrored on the exact submitted values. Osaurus constructs the
+        // strategy, so depth is known here; `submittedMaxTokens` is
+        // `mlxParams.maxTokens` verbatim. `model.nativeMTPAvailable` is NOT
+        // host-checkable — see the disclosed residual in the doc above.
+        let submittedDepth: Int? = {
+            if case .some(.nativeMTP(depth: let depth, verifierMode: _)) = submittedDraftStrategy {
+                return depth
+            }
+            return nil
+        }()
+        let iteratorPreconditionsPass =
+            (submittedMaxTokens.map { $0 > 1 } ?? true)
+            && promptTokenCount > 0
+            && (submittedDepth ?? 1) >= 1
+        let engaged = submitted && engineNativeMTPEligible && iteratorPreconditionsPass
+        let fallbackReason: String?
+        if !requested || engaged {
+            fallbackReason = nil
+        } else if submitted && engineNativeMTPEligible {
+            // The engine's sampling gate passes, so it takes the solo-MTP
+            // branch — and the iterator constructor then throws on one of
+            // the mirrored preconditions, cancelling the stream. Distinct
+            // from "engine_sampling_gate" (where plain AR actually runs).
+            fallbackReason = "engine_iterator_gate"
+        } else if submitted {
+            // Survived osaurus's request-level gates but the engine's own
+            // eligibility check on the EFFECTIVE parameters (or media
+            // content) vetoes MTP — e.g. a model-shipped topP=0.95 default
+            // the request never overrode. The engine runs plain AR on its
+            // solo path.
+            fallbackReason = "engine_sampling_gate"
+        } else {
+            fallbackReason = osaurusFallbackReason
+        }
+        return EngineAttribution(
+            enginePath: (submitted || isBlockDiffusionModel || soloLeaseHeld) ? "solo" : "batched",
+            blockDiffusion: isBlockDiffusionModel,
+            nativeMTPRequested: requested,
+            nativeMTPEngaged: engaged,
+            nativeMTPFallbackReason: fallbackReason
+        )
     }
 
     static func effectiveGenerationSettings(
@@ -129,8 +390,27 @@ struct MLXBatchAdapter {
                 : shouldEnableCompiledBatchDecode(
                     modelName: modelName,
                     maxBatchSize: maxBatchSize
-                )
+                ),
+            // Pre-submit derivation only: `generate()` overwrites these
+            // four fields with the routing-derived `EngineAttribution`
+            // after the vmlx `GenerateParameters` are fully constructed
+            // (the routing can be "solo" even when `maxBatchSize > 1`,
+            // because a submitted native-MTP strategy forces the engine's
+            // exclusive solo path).
+            enginePath: maxBatchSize == 1 ? "solo" : "batched",
+            nativeMTPRequested: false,
+            nativeMTPEngaged: false,
+            nativeMTPFallbackReason: nil
         )
+    }
+
+    /// Stage label for the `EffectiveGenerationSettings` record a submit
+    /// writes: "submitted_to_batch_engine" for every user-facing path,
+    /// or the internal override (`warmupNativeMTPAtLoad` passes
+    /// "load_warmup" for its hidden 2-token generation). See the `stage`
+    /// field doc on `EffectiveGenerationSettings`.
+    static func submitStage(for generation: GenerationParameters) -> String {
+        generation.effectiveSettingsStage ?? "submitted_to_batch_engine"
     }
 
     static func recordPendingEffectiveGenerationSettings(
@@ -600,7 +880,16 @@ struct MLXBatchAdapter {
                 container: container,
                 buildChat: { [MLXLMCommon.Chat.Message(role: .user, content: "Hi")] },
                 buildToolsSpec: { nil },
-                generation: GenerationParameters(temperature: 0, maxTokens: 2),
+                // `effectiveSettingsStage: "load_warmup"` labels the /admin
+                // `last_effective_generation` row this hidden generation
+                // writes, so a maintainer reading the endpoint post-load
+                // pre-traffic doesn't mistake its engaged=false/cold_warmup
+                // record for a real user request.
+                generation: GenerationParameters(
+                    temperature: 0,
+                    maxTokens: 2,
+                    effectiveSettingsStage: "load_warmup"
+                ),
                 toolChoice: nil,
                 stopSequences: [],
                 draftStrategy: draftStrategy,
@@ -1170,7 +1459,11 @@ struct MLXBatchAdapter {
         )
         let nativeMTPExplicitSamplingFallback =
             draftStrategy?.usesNativeMTP == true && effectiveDraftStrategy == nil
-        let effective = Self.effectiveGenerationSettings(
+        // Attribution fields are filled in below, AFTER the vmlx
+        // `GenerateParameters` are fully constructed — the engine
+        // re-checks its own eligibility gate on the effective (merged)
+        // sampling values, which are only knowable from `mlxParams`.
+        var effective = Self.effectiveGenerationSettings(
             modelName: modelName,
             generation: generation,
             runtimeDefaults: runtime.generation,
@@ -1178,11 +1471,7 @@ struct MLXBatchAdapter {
             modelDefaults: modelDefaults,
             draftStrategy: effectiveDraftStrategy,
             nativeMTPExplicitSamplingFallback: nativeMTPExplicitSamplingFallback,
-            stage: "submitted_to_batch_engine"
-        )
-        await Registry.shared.recordEffectiveGenerationSettings(
-            modelName: modelName,
-            settings: effective
+            stage: Self.submitStage(for: generation)
         )
         var mlxParams = ModelRuntime.makeGenerateParameters(
             temperature: effective.temperature,
@@ -1215,6 +1504,37 @@ struct MLXBatchAdapter {
         if case .none = mlxParams.kvMode {
             mlxParams.kvMode = effectiveKVMode
         }
+
+        // Boundary attribution, built once from the SAME values submitted
+        // to the engine — never recomputed downstream, so the stats-hint
+        // flags, `/admin` JSON, and the per-submit os_log line below stay
+        // in agreement. `mlxParams` is fully constructed at this point, so
+        // `canUseNativeMTP(for:)` is vmlx's exact solo-fast-path gate
+        // (effective sampling values + media content), not a
+        // reimplementation.
+        let attribution = Self.engineAttribution(
+            soloLeaseHeld: soloLease != nil,
+            // The engine's own dispatch predicate (`context.model is any
+            // BlockDiffusionModel`, BatchEngine.swift:581), evaluated on
+            // the loaded model instance inside `prepareInput`'s existing
+            // `container.perform` hop — coextensive with the engine's
+            // routing by construction, and zero added hops.
+            isBlockDiffusionModel: prepared.isBlockDiffusionModel,
+            requestedDraftStrategy: draftStrategy,
+            submittedDraftStrategy: effectiveDraftStrategy,
+            engineNativeMTPEligible: mlxParams.canUseNativeMTP(for: prepared.input),
+            submittedMaxTokens: mlxParams.maxTokens,
+            promptTokenCount: prepared.promptTokens.count,
+            osaurusFallbackReason: nativeMTPFallbackReason
+        )
+        effective.enginePath = attribution.enginePath
+        effective.nativeMTPRequested = attribution.nativeMTPRequested
+        effective.nativeMTPEngaged = attribution.nativeMTPEngaged
+        effective.nativeMTPFallbackReason = attribution.nativeMTPFallbackReason
+        await Registry.shared.recordEffectiveGenerationSettings(
+            modelName: modelName,
+            settings: effective
+        )
 
         // Per-request determinism now rides `GenerateParameters.randomSeed`
         // (set above): vmlx builds each request's sampler around its own
@@ -1356,13 +1676,14 @@ struct MLXBatchAdapter {
         }
 
         batchAdapterLog.info(
-            "submit: model=\(modelName, privacy: .public) promptTokens=\(prepared.promptTokens.count, privacy: .public) temperature=\(effective.temperature, privacy: .public) topP=\(effective.topP, privacy: .public) topK=\(effective.topK, privacy: .public) minP=\(effective.minP, privacy: .public) maxTokens=\(effective.maxTokens, privacy: .public) draftStrategy=\(effectiveDraftStrategy?.kindName ?? "none", privacy: .public) nativeMTPFallback=\(nativeMTPFallbackReason ?? "none", privacy: .public) compiledBatchDecode=\(effective.compiledBatchDecode, privacy: .public)"
+            "submit: model=\(modelName, privacy: .public) promptTokens=\(prepared.promptTokens.count, privacy: .public) temperature=\(effective.temperature, privacy: .public) topP=\(effective.topP, privacy: .public) topK=\(effective.topK, privacy: .public) minP=\(effective.minP, privacy: .public) maxTokens=\(effective.maxTokens, privacy: .public) engine=\(attribution.engineFlag, privacy: .public) draftStrategy=\(effectiveDraftStrategy?.kindName ?? "none", privacy: .public) nativeMTPFallback=\(attribution.nativeMTPFallbackReason ?? "none", privacy: .public) compiledBatchDecode=\(effective.compiledBatchDecode, privacy: .public)"
         )
 
         return PreparedStream(
             stream: outStream,
             promptTokens: prepared.promptTokens,
-            genTask: producerTask
+            genTask: producerTask,
+            attribution: attribution
         )
     }
 
@@ -1371,6 +1692,25 @@ struct MLXBatchAdapter {
     private struct PreparedInput: @unchecked Sendable {
         let input: LMInput
         let promptTokens: [Int]
+        /// `context.model is any BlockDiffusionModel`, evaluated on the
+        /// loaded model instance inside `prepareInput`'s existing
+        /// `container.perform` closure (see
+        /// `isBlockDiffusionModelInstance`). Carried back so the hot path
+        /// gets the engine's exact dispatch predicate with zero added
+        /// container hops.
+        let isBlockDiffusionModel: Bool
+    }
+
+    /// The block-diffusion dispatch predicate `BatchEngine.generate` keys
+    /// its routing on, verbatim: `context.model is any BlockDiffusionModel`
+    /// (BatchEngine.swift:581) sends the request to the exclusive solo
+    /// canvas path regardless of `maxBatchSize`. Evaluated on the loaded
+    /// model INSTANCE, so it is coextensive with the engine's routing by
+    /// construction — unlike any model-name or `model_type` proxy, a
+    /// renamed fine-tune that conforms still detects and a look-alike
+    /// model id that doesn't conform never false-positives.
+    static func isBlockDiffusionModelInstance(_ model: any LanguageModel) -> Bool {
+        model is any BlockDiffusionModel
     }
 
     /// Prepare a warm-up prompt as the send-invariant prefix of the NEXT
@@ -1642,6 +1982,7 @@ struct MLXBatchAdapter {
             var contextKeys: [String] = []
             var contextSummary = ""
             var promptTokenCount = 0
+            var isBlockDiffusionModel = false
         }
         let box = OutBox()
         let prepareStartedAt = CFAbsoluteTimeGetCurrent()
@@ -1649,6 +1990,11 @@ struct MLXBatchAdapter {
         try await container.perform { (context: MLXLMCommon.ModelContext) in
             box.performEnteredAt = CFAbsoluteTimeGetCurrent()
             trace?.mark("batch_container_perform_entered")
+            // Engine-attribution signal: the exact `BatchEngine.generate`
+            // block-diffusion dispatch predicate, evaluated here because
+            // this closure already holds the loaded model instance — no
+            // extra container hop on the hot path.
+            box.isBlockDiffusionModel = Self.isBlockDiffusionModelInstance(context.model)
             var lmInput: LMInput
             if let buildRawPrompt {
                 // Raw completion path (OpenAI-legacy `/v1/completions`, e.g.
@@ -1767,7 +2113,11 @@ struct MLXBatchAdapter {
                 )
             }
 
-            box.result = PreparedInput(input: lmInput, promptTokens: tokens)
+            box.result = PreparedInput(
+                input: lmInput,
+                promptTokens: tokens,
+                isBlockDiffusionModel: box.isBlockDiffusionModel
+            )
         }
 
         let doneAt = CFAbsoluteTimeGetCurrent()

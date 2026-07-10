@@ -326,12 +326,27 @@ public actor ModelRuntime {
     }
 
     func cachedModelSummaries(refreshTopology: Bool = false) async -> [ModelCacheSummary] {
+        var holders = Array(modelCache.values)
+        let current = currentModelName
         if refreshTopology {
-            for holder in modelCache.values {
+            for holder in holders {
                 holder.cacheTopology = await holder.container.cacheTopologySnapshot()
             }
         }
-        return modelCache.values.map { holder in
+        let summaries = Self.modelSummaries(of: holders, currentModelName: current)
+        // CONSTRAINT: see `releaseSnapshotHolders` — the topology refresh
+        // suspends while `holders` retains every container, so a model
+        // unloaded during that await must not have its last ref dropped
+        // here ungated.
+        await releaseSnapshotHolders(&holders)
+        return summaries
+    }
+
+    private static func modelSummaries(
+        of holders: [SessionHolder],
+        currentModelName: String?
+    ) -> [ModelCacheSummary] {
+        holders.map { holder in
             ModelCacheSummary(
                 name: holder.name,
                 bytes: holder.weightsSizeBytes,
@@ -348,6 +363,188 @@ public actor ModelRuntime {
             if lhs.isCurrent != rhs.isCurrent { return lhs.isCurrent }
             return lhs.name < rhs.name
         }
+    }
+
+    /// One-snapshot view backing `/admin/cache-stats`: the `models` block
+    /// (summaries, topology refreshed) AND the `predicted_cache_topology`
+    /// block, both derived from a SINGLE synchronous read of the actor's
+    /// model tables. The endpoint previously issued two separate actor
+    /// calls, so a load/unload landing between them could make the two
+    /// JSON blocks describe different model sets within one response.
+    ///
+    /// Predicted topology: constructs empty caches via
+    /// `context.model.newCache(parameters:)` and inspects each entry's
+    /// dynamic class — the PREDICTED topology of what the engine will
+    /// build for a request, because the live in-flight cache array is
+    /// engine-internal and not host-reachable. `newCache` allocates shells
+    /// only (no tensor evals), so this is cheap; it still must stay off
+    /// the generation path and run lazily, only when the endpoint is hit.
+    /// Two rows per model when the installed coordinator carries a
+    /// `defaultMaxKVSize` cap: `parameters: nil` (prompts up to
+    /// cap × longPromptMultiplier) and `parameters.maxKVSize = cap` (the
+    /// value the engine's `resolveKVPolicy` injects past that threshold —
+    /// full-attention layers flip to RotatingKVCache). See
+    /// `PredictedCacheTopology` for the fidelity contract, and
+    /// `CacheTopologySummarizer.cacheClassName` for the one-level
+    /// `CacheList` expansion.
+    ///
+    /// Mid-load models are intentionally NOT awaited: they live in
+    /// `loadingTasks` until residency, and blocking the admin endpoint on
+    /// a multi-GB container materialization would defeat its purpose.
+    /// They are reported by name so callers see "loading" instead of a
+    /// silently missing row.
+    ///
+    /// CONSTRAINT (teardown invariant): the captured `holders` array keeps
+    /// every resident container (and its weight arrays) alive across each
+    /// `await` below, and the actor is re-entrant at those suspensions —
+    /// `unload(name:)` can run to completion mid-snapshot without actually
+    /// freeing the weights. This method must therefore never let its holder
+    /// refs drop on a plain `return`; it hands them to
+    /// `releaseSnapshotHolders`, which drops the last ref to any
+    /// unloaded-while-suspended container only inside the same teardown
+    /// gate + synchronize sequence `unload` uses.
+    func adminCacheStatsModelSnapshot() async -> (
+        summaries: [ModelCacheSummary],
+        predictedResident: [PredictedCacheTopology],
+        predictedLoading: [String]
+    ) {
+        // Single synchronous snapshot of the actor's tables; every await
+        // below works off these captured holders, never re-reading
+        // `modelCache`/`loadingTasks`.
+        var holders = Array(modelCache.values)
+        let loading = loadingTasks.keys.filter { modelCache[$0] == nil }.sorted()
+        let current = currentModelName
+        for holder in holders {
+            holder.cacheTopology = await holder.container.cacheTopologySnapshot()
+        }
+        let summaries = Self.modelSummaries(of: holders, currentModelName: current)
+
+        var resident: [PredictedCacheTopology] = []
+        for holder in holders.sorted(by: { $0.name < $1.name }) {
+            // The INSTALLED coordinator's knobs, not a re-resolve of the
+            // current settings snapshot — the live engine injects exactly
+            // this cap (`resolveKVPolicy`) on long prompts, even if the
+            // user has changed the slider since this model loaded.
+            let kvCap = holder.container.cacheCoordinator?.config.defaultMaxKVSize
+            let multiplier =
+                holder.container.cacheCoordinator?.config.longPromptMultiplier ?? 2.0
+            // One container hop for both constructions; shells only.
+            let longPromptParameters: MLXLMCommon.GenerateParameters? = kvCap.map {
+                var p = MLXLMCommon.GenerateParameters()
+                p.maxKVSize = $0
+                return p
+            }
+            let (defaultClassNames, longPromptClassNames): ([String], [String]?) =
+                await holder.container.perform { context in
+                    let defaults = context.model.newCache(parameters: nil).map {
+                        CacheTopologySummarizer.cacheClassName($0)
+                    }
+                    let longPrompt = longPromptParameters.map { parameters in
+                        context.model.newCache(parameters: parameters).map {
+                            CacheTopologySummarizer.cacheClassName($0)
+                        }
+                    }
+                    return (defaults, longPrompt)
+                }
+            let defaultSummary = CacheTopologySummarizer.summarize(classNames: defaultClassNames)
+            let defaultLabels = PredictedCacheTopology.defaultRowLabels(
+                cap: kvCap,
+                multiplier: multiplier
+            )
+            resident.append(
+                PredictedCacheTopology(
+                    model: holder.name,
+                    cacheEntries: defaultClassNames.count,
+                    classes: defaultSummary.classes,
+                    layout: defaultSummary.layout,
+                    parametersLabel: defaultLabels.parameters,
+                    appliesWhen: defaultLabels.appliesWhen
+                )
+            )
+            if let kvCap, let longPromptClassNames {
+                let longPromptSummary = CacheTopologySummarizer.summarize(
+                    classNames: longPromptClassNames
+                )
+                let longPromptLabels = PredictedCacheTopology.longPromptRowLabels(
+                    cap: kvCap,
+                    multiplier: multiplier
+                )
+                resident.append(
+                    PredictedCacheTopology(
+                        model: holder.name,
+                        cacheEntries: longPromptClassNames.count,
+                        classes: longPromptSummary.classes,
+                        layout: longPromptSummary.layout,
+                        parametersLabel: longPromptLabels.parameters,
+                        appliesWhen: longPromptLabels.appliesWhen
+                    )
+                )
+            }
+        }
+        await releaseSnapshotHolders(&holders)
+        return (summaries: summaries, predictedResident: resident, predictedLoading: loading)
+    }
+
+    /// Release a snapshot's strong holder references without violating the
+    /// teardown invariant:
+    ///
+    /// INVARIANT: the last strong reference to an UNLOADED model's container
+    /// must never be dropped outside a teardown-gated + synchronized section.
+    ///
+    /// Snapshot methods capture `Array(modelCache.values)` and then suspend
+    /// (topology snapshots, `container.perform` — each FIFO-queued on the
+    /// container's mutex, potentially behind a seconds-long media prepare).
+    /// The actor is re-entrant at those suspensions, so `unload(name:)` can
+    /// run to completion mid-snapshot: it drains leases, takes the teardown
+    /// gate, removes the model from `modelCache`, and runs its final
+    /// synchronize + `Memory.clearCache` — but the weights are NOT freed,
+    /// because the snapshot still holds the ref, so that tail flushes
+    /// nothing. If the snapshot then simply returned, the multi-GB weight
+    /// arrays would dealloc at scope end, enqueueing `MetalAllocator::free`s
+    /// with NO teardown gate and NO synchronize, racing the next admitted
+    /// GPU producer — the exact crash class documented in `unload(name:)`
+    /// (SIGSEGV in `Fence::wait` vs `MetalAllocator::free`).
+    ///
+    /// So: detect holders detached while we were suspended — compare holder
+    /// IDENTITY, not name, because the same name may have been unloaded and
+    /// reloaded as a different holder — and, if any exist, drop ALL of the
+    /// snapshot's refs inside the same gate + synchronize sequence as
+    /// `unload`'s tail. Holders still resident in `modelCache` survive the
+    /// drop via the cache's own strong ref, so only detached containers
+    /// actually dealloc here, and any holder detached by a further unload
+    /// interleaving at the gate acquisition is covered too. When nothing was
+    /// detached, the identity check and `removeAll` run with no suspension
+    /// in between (a same-actor call does not hop executors), so no unload
+    /// can interleave before the refs drop.
+    ///
+    /// Deadlock safety: this path holds no leases, no container mutex, and
+    /// no other gate when it acquires the teardown gate; `MetalGate` never
+    /// calls back into this actor, and a waiting foreign owner blocks new
+    /// same-owner admissions, so the wait is starvation-protected — the same
+    /// footing `unload` acquires the gate on.
+    ///
+    /// The parameter is `inout` deliberately: the caller's variable IS the
+    /// last reference, and it must be cleared inside the gated section. A
+    /// by-value parameter would leave the caller's copy alive until after
+    /// the gate is released, defeating the fix.
+    private func releaseSnapshotHolders(_ holders: inout [SessionHolder]) async {
+        let anyDetached = holders.contains { modelCache[$0.name] !== $0 }
+        guard anyDetached else {
+            holders.removeAll()
+            return
+        }
+        await MetalGate.shared.enterModelTeardown(model: "admin-snapshot-release")
+        // Drain queued GPU work while the detached weights are still valid,
+        // then free them, then drain + clearCache + drain to flush the async
+        // frees — same ordering rationale as `unload(name:)`'s tail.
+        Stream.gpu.synchronize()
+        autoreleasepool {
+            holders.removeAll()
+        }
+        Stream.gpu.synchronize()
+        Memory.clearCache()
+        Stream.gpu.synchronize()
+        await MetalGate.shared.exitModelTeardown(model: "admin-snapshot-release")
     }
 
     func preencodeLiveVoiceAudioIfResident(
@@ -2405,7 +2602,10 @@ public actor ModelRuntime {
         toolChoice: ToolChoiceOption?,
         modelId: String,
         modelName: String
-    ) async throws -> AsyncThrowingStream<ModelRuntimeEvent, Error> {
+    ) async throws -> (
+        events: AsyncThrowingStream<ModelRuntimeEvent, Error>,
+        attribution: MLXBatchAdapter.EngineAttribution
+    ) {
         let trace = parameters.ttftTrace
         trace?.mark("runtime_start")
 
@@ -2538,12 +2738,17 @@ public actor ModelRuntime {
         }
         activeGenerationTasks[genID] = ActiveGenerationRecord(modelName: modelName, task: activeTask)
 
-        return GenerationEventMapper.map(
+        let mapped = GenerationEventMapper.map(
             events: prepared.stream,
             modelName: modelName,
             trace: trace,
             suppressProgressUI: parameters.suppressProgressUI
         )
+        // Attribution rides alongside the stream (not inside an event) so
+        // callers that only want text can ignore it, and the stats-hint
+        // encoder in `streamWithTools` reuses the submit-time value instead
+        // of recomputing eligibility.
+        return (events: mapped, attribution: prepared.attribution)
     }
 
     // MARK: - New message-based (OpenAI ChatMessage) APIs
@@ -2578,7 +2783,7 @@ public actor ModelRuntime {
             modelName: modelName
         )
         let augmented = ModelRuntime.applyJSONMode(forcedToolMessages, jsonMode: parameters.jsonMode)
-        let events = try await generateEventStream(
+        let (events, _) = try await generateEventStream(
             chatBuilder: {
                 ModelRuntime.mapOpenAIChatToMLX(
                     augmented,
@@ -2636,7 +2841,7 @@ public actor ModelRuntime {
         modelId: String,
         modelName: String
     ) async throws -> AsyncThrowingStream<String, Error> {
-        let events = try await generateEventStream(
+        let (events, _) = try await generateEventStream(
             chatBuilder: { [] },
             rawPromptBuilder: { prompt },
             parameters: parameters,
@@ -2691,7 +2896,7 @@ public actor ModelRuntime {
             modelName: modelName
         )
         let augmented = ModelRuntime.applyJSONMode(forcedToolMessages, jsonMode: parameters.jsonMode)
-        let events = try await generateEventStream(
+        let (events, attribution) = try await generateEventStream(
             chatBuilder: {
                 ModelRuntime.mapOpenAIChatToMLX(
                     augmented,
@@ -2734,7 +2939,9 @@ public actor ModelRuntime {
                                 tokensPerSecond: tokensPerSecond,
                                 unclosedReasoning: unclosedReasoning,
                                 stopReason: stopReason,
-                                prefillTokensPerSecond: promptTokensPerSecond
+                                prefillTokensPerSecond: promptTokensPerSecond,
+                                engine: attribution.engineFlag,
+                                mtpFallbackReason: attribution.nativeMTPFallbackReason
                             )
                         )
                         // End-of-generation stats are the terminal event. If a

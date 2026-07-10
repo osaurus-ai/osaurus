@@ -819,7 +819,14 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         let logPath = path
 
         runRequestTask(priority: .userInitiated) {
-            let cached = await ModelRuntime.shared.cachedModelSummaries(refreshTopology: true)
+            // One actor entry point for BOTH the `models` and
+            // `predicted_cache_topology` blocks, so a load/unload between
+            // two separate calls cannot yield inconsistent blocks in one
+            // response. Lazy, endpoint-only: `newCache` builds empty cache
+            // shells (no tensor evals), and mid-load models are reported
+            // by name instead of awaited. See `adminCacheStatsModelSnapshot`.
+            let modelSnapshot = await ModelRuntime.shared.adminCacheStatsModelSnapshot()
+            let cached = modelSnapshot.summaries
             let batchDiagnostics = await MLXBatchAdapter.snapshotDiagnostics()
             let lastEffectiveGenerationSettings =
                 await MLXBatchAdapter.lastEffectiveGenerationSettingsSnapshot()
@@ -1009,6 +1016,42 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 ),
                 "storage_locations": Self.storageLocationsJSONObject(),
             ]
+            // PREDICTED topology from cache construction (`newCache`), not
+            // the live in-flight cache array — that array is engine-internal
+            // and not host-reachable. Each row carries `"source": "newCache"`
+            // so consumers cannot mistake it for an observed measurement,
+            // `"cache_entries"` (NOT the model's layer count: KV-sharing
+            // families like Gemma-3n/Gemma-4 return entries only for
+            // non-KV-shared layers), and `"parameters"` naming the
+            // construction input. Rows come in pairs when the model's
+            // coordinator carries a `defaultMaxKVSize` cap: "default_nil"
+            // predicts prompts up to cap × longPromptMultiplier, and
+            // "long_prompt(maxKVSize=N)" predicts what the engine's
+            // `resolveKVPolicy` builds past that threshold; `"applies_when"`
+            // states each row's prompt-token range. See
+            // `PredictedCacheTopology` for the fidelity contract.
+            obj["predicted_cache_topology"] =
+                modelSnapshot.predictedResident.map { topology -> [String: Any] in
+                    var row: [String: Any] = [
+                        "model": topology.model,
+                        "cache_entries": topology.cacheEntries,
+                        "classes": topology.classes,
+                        "layout": topology.layout,
+                        "source": "newCache",
+                        "parameters": topology.parametersLabel,
+                    ]
+                    if let appliesWhen = topology.appliesWhen {
+                        row["applies_when"] = appliesWhen
+                    }
+                    return row
+                }
+                + modelSnapshot.predictedLoading.map { name -> [String: Any] in
+                    [
+                        "model": name,
+                        "skipped": "loading",
+                        "source": "newCache",
+                    ]
+                }
             if let batchDiagnostics {
                 obj["batch_diagnostics"] =
                     [
@@ -1514,6 +1557,23 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             "min_p": settings.minP,
             "repetition_penalty": settings.repetitionPenalty as Any? ?? NSNull(),
             "compiled_batch_decode": settings.compiledBatchDecode,
+            // Engine-path attribution: which vmlx code path the last request
+            // was SUBMITTED on (engine_path: "solo" | "batched"; the
+            // stats-hint/usage flag additionally distinguishes solo_mtp /
+            // solo_ar / solo_diffusion) and why native MTP did or did not
+            // engage (native_mtp_fallback_reason: "cold_warmup" |
+            // "explicit_sampling" | "tiny_prompt" | "engine_sampling_gate" |
+            // "engine_iterator_gate"). Recorded at submit time in
+            // `MLXBatchAdapter.generate` (see `engineAttribution` for the
+            // submitted-path contract and residuals). `stage` labels the
+            // row: "pending_preload" rows carry placeholder MTP fields (the
+            // draft strategy resolves during load) and "load_warmup" rows
+            // come from the hidden 2-token load-time MTP warmup, not user
+            // traffic.
+            "engine_path": settings.enginePath,
+            "native_mtp_requested": settings.nativeMTPRequested,
+            "native_mtp_engaged": settings.nativeMTPEngaged,
+            "native_mtp_fallback_reason": settings.nativeMTPFallbackReason as Any? ?? NSNull(),
         ]
     }
 
@@ -7356,6 +7416,19 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                         }
                     }
                 }
+                // Engine-path attribution + decode speed for the step,
+                // decoded from the stats hint's `engine=` / `mtp_off=`
+                // flags and tok/s field. Local MLX only; remote providers
+                // never set them and the usage keys stay absent. Declared
+                // OUTSIDE the `do` so the tool-call catch paths (the
+                // engine surfaces tool calls by throwing
+                // ServiceToolInvocation(s) AFTER the stats hint has been
+                // decoded) can thread them into their usage chunks —
+                // stream and non-stream must agree for the same step
+                // (ChatEngine.makeToolCallResponse already threads them).
+                var authoritativeTokensPerSecond: Double?
+                var authoritativeEngine: String?
+                var authoritativeMTPFallback: String?
                 do {
                     httpTrace.mark("http_task_start")
                     let chatEngine = self.chatEngine
@@ -7397,7 +7470,6 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                         interval: ServerRuntimeSettingsStore.snapshot().generation.streamInterval
                     )
                     var authoritativeCompletionTokens: Int?
-                    var authoritativeTokensPerSecond: Double?
                     var streamFinishReason = "stop"
                     for try await delta in stream {
                         try Task.checkCancellation()
@@ -7443,6 +7515,8 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                         if let stats = StreamingStatsHint.decode(delta) {
                             authoritativeCompletionTokens = stats.tokenCount
                             authoritativeTokensPerSecond = stats.tokensPerSecond
+                            authoritativeEngine = stats.engine
+                            authoritativeMTPFallback = stats.mtpFallbackReason
                             if let stopReason = stats.stopReason {
                                 streamFinishReason = stopReason
                             }
@@ -7518,6 +7592,8 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     httpTrace.set("http_completion_tokens", completionTokens)
                     let finalStreamFinishReason = streamFinishReason
                     let finalTokensPerSecond = authoritativeTokensPerSecond
+                    let finalEngine = authoritativeEngine
+                    let finalMTPFallback = authoritativeMTPFallback
                     hop {
                         writerBound.value.writeFinishWithReason(
                             finalStreamFinishReason,
@@ -7531,6 +7607,8 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                                 promptTokens: promptTokens,
                                 completionTokens: completionTokens,
                                 tokensPerSecond: finalTokensPerSecond,
+                                engine: finalEngine,
+                                nativeMTPFallback: finalMTPFallback,
                                 model: model,
                                 responseId: responseId,
                                 created: created,
@@ -7583,6 +7661,12 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     // count by the agent system-prompt fragment.
                     let promptTokens = Self.estimatePromptTokens(req.messages)
                     let requestTools = req.tools
+                    // Same-step attribution decoded from the stats hint
+                    // before the stream threw the tool invocation; matches
+                    // what the non-streaming tool path reports.
+                    let finalTokensPerSecond = authoritativeTokensPerSecond
+                    let finalEngine = authoritativeEngine
+                    let finalMTPFallback = authoritativeMTPFallback
                     hop {
                         for (idx, inv) in invs.invocations.enumerated() {
                             self.writeOpenAIToolCallSSE(
@@ -7607,6 +7691,9 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                             writerBound.value.writeUsageChunk(
                                 promptTokens: promptTokens,
                                 completionTokens: 0,
+                                tokensPerSecond: finalTokensPerSecond,
+                                engine: finalEngine,
+                                nativeMTPFallback: finalMTPFallback,
                                 model: model,
                                 responseId: responseId,
                                 created: created,
@@ -7641,6 +7728,12 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     let includeUsage = req.stream_options?.include_usage == true
                     let promptTokens = Self.estimatePromptTokens(req.messages)
                     let requestTools = req.tools
+                    // Same-step attribution decoded from the stats hint
+                    // before the stream threw the tool invocation; matches
+                    // what the non-streaming tool path reports.
+                    let finalTokensPerSecond = authoritativeTokensPerSecond
+                    let finalEngine = authoritativeEngine
+                    let finalMTPFallback = authoritativeMTPFallback
                     hop {
                         self.writeOpenAIToolCallSSE(
                             inv,
@@ -7663,6 +7756,9 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                             writerBound.value.writeUsageChunk(
                                 promptTokens: promptTokens,
                                 completionTokens: 0,
+                                tokensPerSecond: finalTokensPerSecond,
+                                engine: finalEngine,
+                                nativeMTPFallback: finalMTPFallback,
                                 model: model,
                                 responseId: responseId,
                                 created: created,
@@ -11343,8 +11439,18 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             "completion_tokens": response.usage.completion_tokens,
             "total_tokens": response.usage.total_tokens,
         ]
-        if let tokensPerSecond = response.usage.tokens_per_second {
+        // Mirror `Usage.encode(to:)`: JSON has no NaN/Infinity literal and
+        // `JSONSerialization` throws on a non-finite Double, so omit the
+        // key rather than fail the whole envelope (non-finite tps comes
+        // from the engine's cancelled zero-token paths, 0/0 = NaN).
+        if let tokensPerSecond = response.usage.tokens_per_second, tokensPerSecond.isFinite {
             usage["tokens_per_second"] = tokensPerSecond
+        }
+        if let engine = response.usage.engine {
+            usage["engine"] = engine
+        }
+        if let mtpFallback = response.usage.native_mtp_fallback {
+            usage["native_mtp_fallback"] = mtpFallback
         }
 
         var object: [String: Any] = [
