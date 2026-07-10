@@ -6355,7 +6355,10 @@ struct ChatView: View {
                 scrollToTurnTrigger: scrollToTurnTrigger,
                 sessionRedactions: session.sessionRedactions,
                 searchHighlightQuery: windowState.isFindBarVisible
-                    ? findQuery.trimmingCharacters(in: .whitespacesAndNewlines) : ""
+                    ? findQuery.trimmingCharacters(in: .whitespacesAndNewlines) : "",
+                searchCurrentTurnId: currentFindMatch?.turnId,
+                searchCurrentOccurrence: currentFindMatch?.occurrence ?? 0,
+                scrollToFindOccurrence: scrollToFindOccurrence
             )
             .safeAreaInset(edge: .top, spacing: 0) {
                 Color.clear
@@ -6562,6 +6565,13 @@ private struct IsolatedThreadView: View {
     var sessionRedactions: [String: String] = [:]
     /// Active in-conversation find query (Cmd+F); empty when the bar is closed.
     var searchHighlightQuery: String = ""
+    /// Turn owning the find bar's current match, nil when none is current.
+    var searchCurrentTurnId: UUID? = nil
+    /// Occurrence index of the current match within its turn's content.
+    var searchCurrentOccurrence: Int = 0
+    /// Occurrence the pending `scrollToTurnId` request targets; nil for
+    /// turn-level scrolls (minimap).
+    var scrollToFindOccurrence: Int? = nil
 
     var body: some View {
         let _ = ChatPerfTrace.shared.count("body.IsolatedThreadView")
@@ -6593,7 +6603,10 @@ private struct IsolatedThreadView: View {
             scrollToTurnId: scrollToTurnId,
             scrollToTurnTrigger: scrollToTurnTrigger,
             sessionRedactions: sessionRedactions,
-            searchHighlightQuery: searchHighlightQuery
+            searchHighlightQuery: searchHighlightQuery,
+            searchCurrentTurnId: searchCurrentTurnId,
+            searchCurrentOccurrence: searchCurrentOccurrence,
+            scrollToFindOccurrence: scrollToFindOccurrence
         )
     }
 }

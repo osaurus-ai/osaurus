@@ -54,6 +54,17 @@ struct CellRenderingContext {
     /// closed. Message cells paint every case-insensitive occurrence in
     /// their body text via `NativeMarkdownView.setSearchHighlight`.
     var searchHighlightQuery: String = ""
+    /// Turn owning the find bar's *current* match, or nil when no match is
+    /// current (bar closed / no matches).
+    var searchCurrentTurnId: UUID? = nil
+    /// Zero-based occurrence index of the current match within its turn's
+    /// content. Meaningless when `searchCurrentTurnId` is nil.
+    var searchCurrentOccurrence: Int = 0
+    /// Coordinator-scoped lookup: number of query occurrences in the
+    /// searchable blocks that precede the given block id within its turn.
+    /// Cells subtract it from `searchCurrentOccurrence` to translate the
+    /// turn-relative index into a block-local one.
+    var searchOccurrenceOffset: ((String) -> Int)? = nil
     /// Coordinator-scoped predicate: has the chart with this block id ever
     /// been drawn (and thus already played its entry animation) in the
     /// current chat? Used by `configureAsChart` to suppress the animation
@@ -81,6 +92,16 @@ struct CellRenderingContext {
     /// replaying.
     var cachedToolGroupView: ((String) -> NativeToolCallGroupView?)? = nil
     var cacheToolGroupView: ((String, NativeToolCallGroupView) -> Void)? = nil
+
+    /// Block-local occurrence index of the find bar's current match, or nil
+    /// when the current match isn't in this block's turn (or precedes this
+    /// block). Indices past this block's own occurrences are handled by the
+    /// renderer, which simply paints no current match for them.
+    func searchCurrentIndex(forBlock block: ContentBlock) -> Int? {
+        guard let searchCurrentTurnId, searchCurrentTurnId == block.turnId else { return nil }
+        let local = searchCurrentOccurrence - (searchOccurrenceOffset?(block.id) ?? 0)
+        return local >= 0 ? local : nil
+    }
 }
 
 // MARK: - Cell-Isolated ExpandedBlocksStore Proxy
@@ -1942,7 +1963,11 @@ final class NativeMessageCellView: NSTableCellView {
             Self.buildHighlights(from: context.sessionRedactions, direction: .inbound),
             theme: context.theme
         )
-        mv.setSearchHighlight(query: context.searchHighlightQuery, theme: context.theme)
+        mv.setSearchHighlight(
+            query: context.searchHighlightQuery,
+            currentIndex: context.searchCurrentIndex(forBlock: block),
+            theme: context.theme
+        )
 
         // Apply assistant bubble background only when the target value actually changes —
         // configure() runs on every streaming token, so unconditional CGColor assignment
@@ -2349,7 +2374,11 @@ final class NativeMessageCellView: NSTableCellView {
                 Self.buildHighlights(from: context.sessionRedactions, direction: .outbound),
                 theme: theme
             )
-            mv.setSearchHighlight(query: context.searchHighlightQuery, theme: theme)
+            mv.setSearchHighlight(
+                query: context.searchHighlightQuery,
+                currentIndex: context.searchCurrentIndex(forBlock: block),
+                theme: theme
+            )
         }
 
         if let stack = userImageStack {
