@@ -1,0 +1,89 @@
+{
+  "domains" : [
+    "agent_loop",
+    "apple_script",
+    "capability_claims",
+    "computer_use_loop",
+    "default_agent",
+    "micro_perf",
+    "subagent"
+  ],
+  "generatedAt" : "2026-07-10T18:24:39.009Z",
+  "models" : [
+    {
+      "chatModelPassed" : 144,
+      "chatModelScored" : 215,
+      "environment" : {
+        "caseCount" : 15,
+        "catalogHash" : "8632f992dc0872b5",
+        "chip" : "Apple M4 Max",
+        "commit" : "563f91746",
+        "cpuCores" : 16,
+        "judge" : "self-judge",
+        "lowPowerMode" : false,
+        "osVersion" : "26.5.1",
+        "powerSource" : "AC",
+        "runModel" : "OsaurusAI/gemma-4-E4B-it-8bit",
+        "thermalState" : "nominal",
+        "totalRamMb" : 131072
+      },
+      "meanCpuPercent" : 96.65224517380645,
+      "meanDecodeTokensPerSecond" : 30.22133125532817,
+      "meanPromptTokensPerTask" : 22221.37254901961,
+      "meanTotalTokensPerTask" : 22454.36274509804,
+      "meanTtftMs" : 67.65470977099437,
+      "modelId" : "OsaurusAI/gemma-4-E4B-it-8bit",
+      "peakCpuPercent" : 516.7065175757422,
+      "peakPhysFootprintMb" : 16739.101806640625,
+      "perDomain" : {
+        "agent_loop" : {
+          "errored" : 0,
+          "passed" : 63,
+          "scored" : 103,
+          "skipped" : 21
+        },
+        "apple_script" : {
+          "errored" : 0,
+          "passed" : 16,
+          "scored" : 16,
+          "skipped" : 19
+        },
+        "capability_claims" : {
+          "errored" : 0,
+          "passed" : 0,
+          "scored" : 8,
+          "skipped" : 3
+        },
+        "computer_use_loop" : {
+          "errored" : 0,
+          "passed" : 22,
+          "scored" : 23,
+          "skipped" : 0
+        },
+        "default_agent" : {
+          "errored" : 0,
+          "passed" : 6,
+          "scored" : 28,
+          "skipped" : 0
+        },
+        "micro_perf" : {
+          "errored" : 0,
+          "passed" : 4,
+          "scored" : 4,
+          "skipped" : 0
+        },
+        "subagent" : {
+          "errored" : 0,
+          "passed" : 33,
+          "scored" : 33,
+          "skipped" : 14
+        }
+      },
+      "startedAt" : "2026-07-10T17:53:55Z",
+      "subsystemPassed" : 0,
+      "subsystemScored" : 0,
+      "totalPassed" : 144,
+      "totalScored" : 215
+    }
+  ]
+}
