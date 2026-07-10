@@ -346,27 +346,46 @@ final class ModelDownloadService: ObservableObject {
                 // securityd's mutex) and `setup()` does key generation plus
                 // iCloud keychain writes — keep the whole probe off the main
                 // actor, which this orchestration Task otherwise inherits.
-                let identityReady = await Task.detached(priority: .userInitiated) { () -> Bool in
-                    if OsaurusIdentity.exists() { return true }
-                    OnboardingProxyDebugLog.log(
-                        "identity missing, running silent setup model=\(model.id)")
-                    _ = try? await OsaurusIdentity.setup()
-                    return OsaurusIdentity.exists()
-                }.value
+                // The probe races a 10s timeout: a wedged securityd or slow
+                // attestation must degrade to the anonymous route, never
+                // stall the download itself.
+                OnboardingProxyDebugLog.log("identity probe start model=\(model.id)")
+                let identityReady = await withTaskGroup(of: Bool?.self) { group -> Bool in
+                    group.addTask { () -> Bool? in
+                        if OsaurusIdentity.exists() { return true }
+                        OnboardingProxyDebugLog.log(
+                            "identity missing, running silent setup model=\(model.id)")
+                        _ = try? await OsaurusIdentity.setup()
+                        return OsaurusIdentity.exists()
+                    }
+                    group.addTask { () -> Bool? in
+                        try? await Task.sleep(nanoseconds: 10_000_000_000)
+                        return nil
+                    }
+                    let first = await group.next() ?? nil
+                    group.cancelAll()
+                    return first ?? false
+                }
+                OnboardingProxyDebugLog.log(
+                    "identity probe done ready=\(identityReady) model=\(model.id)")
                 if !identityReady {
                     OnboardingProxyDebugLog.log(
-                        "identity setup failed, proxy disabled model=\(model.id)")
+                        "proxy disabled (identity unavailable or probe timed out) model=\(model.id)")
                     await MainActor.run { _ = self.proxyDisabledModels.insert(model.id) }
                 }
             }
 
             do {
-                guard
-                    let files = await HuggingFaceService.shared.fetchMatchingFiles(
-                        repoId: model.id,
-                        patterns: Self.downloadFilePatterns,
-                        excludedFiles: Self.downloadExcludedFiles
-                    ), !files.isEmpty
+                OnboardingProxyDebugLog.log("fetching file manifest model=\(model.id)")
+                let manifest = await HuggingFaceService.shared.fetchMatchingFiles(
+                    repoId: model.id,
+                    patterns: Self.downloadFilePatterns,
+                    excludedFiles: Self.downloadExcludedFiles
+                )
+                OnboardingProxyDebugLog.log(
+                    "file manifest result count=\(manifest?.count.description ?? "nil") model=\(model.id)"
+                )
+                guard let files = manifest, !files.isEmpty
                 else {
                     await MainActor.run {
                         self.finalizeOrchestration(
