@@ -1429,10 +1429,18 @@ struct ConfigureAIBody: View {
         .padding(.horizontal, 4)
     }
 
-    /// TEMPORARY (visual review): force the pre-transfer "Preparing" shimmer
-    /// in place of the live progress text + bar. Flip to `false` (or gate on
-    /// "no bytes received yet") once the look is approved.
-    private let showPreparingPreview = true
+    /// Whether the download is still in its pre-transfer window (manifest
+    /// fetch, identity probe, proxy resolves — ~10s on the proxy route):
+    /// actively downloading but not a single byte received yet. The card
+    /// shows a shimmering "Preparing to download…" label instead of a
+    /// zero-progress bar so the wait reads as activity, not a stall.
+    private var isPreparingDownload: Bool {
+        guard case .downloading = state.localDownloadState else { return false }
+        guard let model = state.selectedModel,
+            let received = modelManager.downloadMetrics[model.id]?.bytesReceived
+        else { return true }
+        return received == 0
+    }
 
     private var localDownloadProgressCard: some View {
         OnboardingGlassCard {
@@ -1456,7 +1464,7 @@ struct ConfigureAIBody: View {
                                 pausedPill
                             }
                         }
-                        if showPreparingPreview {
+                        if isPreparingDownload {
                             OnboardingShimmerLabel(
                                 text: L("Preparing to download…"),
                                 font: theme.font(size: 11),
@@ -1474,7 +1482,7 @@ struct ConfigureAIBody: View {
                     inlineDownloadControls
                 }
 
-                if !showPreparingPreview {
+                if !isPreparingDownload {
                     OnboardingShimmerBar(
                         progress: state.localBarProgress,
                         color: state.isLocalPaused ? theme.tertiaryText : theme.accentColor,
