@@ -189,9 +189,34 @@ Useful rows:
   ChatGPT/Codex catalog.
 - **Request format** shows the outbound API format and endpoint family. Local
   OpenAI-compatible API validation returns typed 400 errors for unsupported
-  sampler settings such as `n > 1` or `response_format=json_schema`.
+  sampler settings such as `n > 1`, `response_format=json_schema`, `logprobs`,
+  or `top_logprobs` (log-probabilities are not surfaced by local MLX decode or
+  the remote proxy).
 - **Global proxy** shows whether provider requests use a validated proxy, use
   direct networking, or ignore an invalid saved proxy URL.
+
+### Parameter Fidelity on Remote Routes
+
+Caller-supplied `seed` and `response_format: {type: "json_object"}` are
+forwarded rather than silently dropped, with per-format support:
+
+- **OpenAI-compatible chat completions** (OpenAI, Azure, xAI, OpenRouter,
+  Mistral, DeepSeek, custom OpenAI-compatible, Osaurus Router, Osaurus peers):
+  `seed` and `response_format` are sent as standard OpenAI fields. Whether the
+  upstream honors them is provider-specific; unsupported values surface as
+  the upstream's own error.
+- **Gemini**: `seed` maps to `generationConfig.seed` and JSON mode maps to
+  `generationConfig.responseMimeType: "application/json"`.
+- **Anthropic**: the Messages API has no `seed` or `response_format`
+  equivalent, so both are omitted on that wire.
+- **Remote agent runs (Mode 2)**: all caller sampling fields, including seed
+  and JSON mode, are stripped — the remote agent owns its generation config.
+
+Media inputs follow the same reject-loudly rule: audio (`input_audio`) and
+video (`video_url`) content parts have no mapping on the Anthropic and Gemini
+wires and return a typed error instead of being dropped from the conversation.
+OpenAI-compatible routes forward multimodal content parts as-is and defer to
+the upstream's own validation.
 
 ---
 

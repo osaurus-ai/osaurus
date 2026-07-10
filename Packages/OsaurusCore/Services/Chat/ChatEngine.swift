@@ -54,6 +54,12 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
             /// to model-string routing, which could silently retarget a
             /// different local provider. Maps to 503.
             case remoteAgentUnavailable
+            /// An HTTP-origin request routed to the Osaurus Router without
+            /// spend authorization. Router requests are signed with the
+            /// user's master key and spend real credits, so key-less
+            /// loopback-trusted callers are refused unless the user opted in.
+            /// Maps to 403.
+            case routerSpendNotAuthorized
         }
 
         let kind: Kind
@@ -66,6 +72,9 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
                 return "No service is currently available to handle model '\(requested)'."
             case .remoteAgentUnavailable:
                 return "The selected remote agent isn't connected. Reconnect to the agent and try again."
+            case .routerSpendNotAuthorized:
+                return
+                    "This model routes through the Osaurus Router and spends account credits. Include a valid Osaurus access key (Authorization: Bearer <key>), or enable 'Allow local API access without a key' for the Router in Osaurus Credits settings."
             }
         }
 
@@ -75,6 +84,7 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
             case .modelNotFound: return 404
             case .noServiceAvailable: return 503
             case .remoteAgentUnavailable: return 503
+            case .routerSpendNotAuthorized: return 403
             }
         }
     }
@@ -225,6 +235,47 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
             remoteServices: remoteServices
         )
         return Dispatch(route: route, params: params, remoteServices: remoteServices)
+    }
+
+    // MARK: - Osaurus Router spend gate
+
+    /// Pure decision core for the Router credit-spend gate, split out so the
+    /// policy is unit-testable without a live provider or HTTP channel.
+    ///
+    /// Osaurus Router requests are signed with the user's master key and
+    /// spend real credits, while the loopback HTTP API is deliberately
+    /// unauthenticated. Without this gate any local process could silently
+    /// drain the user's Router balance. Policy: HTTP-origin requests may
+    /// route to the Router only when the caller proved possession of a valid
+    /// access key, or the user explicitly opted in to key-less loopback
+    /// spend. App-internal sources (chat UI, plugins with their own
+    /// permission model, P2P) are not affected.
+    static func routerSpendAuthorizationError(
+        serviceIsOsaurusRouter: Bool,
+        source: InferenceSource,
+        callerHasVerifiedAccessKey: Bool,
+        allowsUnkeyedLoopbackSpend: Bool
+    ) -> EngineError? {
+        guard serviceIsOsaurusRouter, source == .httpAPI else { return nil }
+        if callerHasVerifiedAccessKey || allowsUnkeyedLoopbackSpend { return nil }
+        return EngineError(kind: .routerSpendNotAuthorized)
+    }
+
+    /// Enforce the Router spend gate for a resolved route. Must run in the
+    /// caller's task (before any detached producer) so the
+    /// `HTTPCallerContext` task-local bound by `HTTPHandler.runRequestTask`
+    /// is still visible.
+    private func checkRouterSpendAuthorization(service: ModelService) throws {
+        let isRouter =
+            (service as? RemoteProviderService)?.provider.providerType == .osaurusRouter
+        if let error = Self.routerSpendAuthorizationError(
+            serviceIsOsaurusRouter: isRouter,
+            source: inferenceSource,
+            callerHasVerifiedAccessKey: HTTPCallerContext.current?.hasVerifiedAccessKey == true,
+            allowsUnkeyedLoopbackSpend: OsaurusRouter.allowsUnkeyedLoopbackSpend
+        ) {
+            throw error
+        }
     }
 
     /// Emit the opt-in `message_sent` KPI event for a top-level chat turn.
@@ -622,6 +673,7 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
 
         switch route {
         case .service(let service, let effectiveModel):
+            try checkRouterSpendAuthorization(service: service)
             emitMessageSentIfPrimaryTurn(
                 request: request,
                 service: service,
@@ -1151,6 +1203,7 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
 
         switch route {
         case .service(let service, let effectiveModel):
+            try checkRouterSpendAuthorization(service: service)
             emitMessageSentIfPrimaryTurn(
                 request: request,
                 service: service,

@@ -226,20 +226,7 @@ public enum MCPOAuthService {
         // 6. Wait for callback (bounded so a closed browser tab can't hang forever).
         let callback: OAuthCallbackResult
         do {
-            callback = try await withThrowingTaskGroup(of: OAuthCallbackResult.self) { group in
-                group.addTask { try await server.waitForCallback() }
-                group.addTask {
-                    try await Task.sleep(
-                        nanoseconds: UInt64(Self.signInCallbackTimeout * 1_000_000_000)
-                    )
-                    throw OAuthLoopbackError.callbackTimeout
-                }
-                guard let result = try await group.next() else {
-                    throw OAuthLoopbackError.callbackTimeout
-                }
-                group.cancelAll()
-                return result
-            }
+            callback = try await server.waitForCallback(timeout: Self.signInCallbackTimeout)
         } catch let error as OAuthLoopbackError {
             throw MCPOAuthError.loopback(error)
         }

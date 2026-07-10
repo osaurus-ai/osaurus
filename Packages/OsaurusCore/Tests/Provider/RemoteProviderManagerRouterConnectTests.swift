@@ -77,6 +77,34 @@ struct RemoteProviderManagerRouterConnectTests {
         #expect(!RemoteProviderManager.isTransientConnectError(URLError(.userAuthenticationRequired)))
     }
 
+    // MARK: - Retry-After hint extraction
+
+    @Test func retryAfterHint_extractsTypedRateLimitHints() {
+        #expect(
+            RemoteProviderManager.retryAfterHint(
+                from: RemoteProviderServiceError.rateLimited(retryAfter: 7, statusCode: 429)
+            ) == 7
+        )
+        #expect(
+            RemoteProviderManager.retryAfterHint(
+                from: OsaurusRouterAPIError.rateLimited(retryAfter: "12")
+            ) == 12
+        )
+        // No hint: absent value, unparseable value, other error shapes.
+        #expect(
+            RemoteProviderManager.retryAfterHint(
+                from: OsaurusRouterAPIError.rateLimited(retryAfter: nil)
+            ) == nil
+        )
+        #expect(
+            RemoteProviderManager.retryAfterHint(
+                from: OsaurusRouterAPIError.rateLimited(retryAfter: "soon")
+            ) == nil
+        )
+        #expect(RemoteProviderManager.retryAfterHint(from: URLError(.timedOut)) == nil)
+        #expect(RemoteProviderManager.retryAfterHint(from: nil) == nil)
+    }
+
     // MARK: - connectOsaurusRouterWithRetry
 
     @Test func routerConnect_retriesTransientFailureThenSucceeds() async throws {

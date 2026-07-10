@@ -29,7 +29,7 @@ public enum OpenRouterOAuthError: LocalizedError, Sendable {
         case .invalidKeyResponse:
             return "OpenRouter returned an invalid key response"
         case .keyRequestFailed(let message):
-            return "OpenRouter key exchange failed: \(message)"
+            return "OpenRouter key exchange failed: \(ProviderDiagnosticRedactor.safe(message, maxLength: 400))"
         }
     }
 }
@@ -114,7 +114,11 @@ public enum OpenRouterOAuthService {
         }
 
         do {
-            return try await server.waitForCallback()
+            // Bounded wait: an abandoned browser tab must not pin this task
+            // (and the fixed loopback port) forever.
+            return try await server.waitForCallback(
+                timeout: OAuthLoopbackServer.defaultSignInTimeout
+            )
         } catch {
             throw OpenRouterOAuthError.invalidAuthorizationCallback
         }

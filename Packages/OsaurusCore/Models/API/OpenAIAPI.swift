@@ -723,6 +723,12 @@ struct ChatCompletionRequest: Codable, Sendable {
     /// `{"include_usage": true}` instructs the SSE producer to emit a
     /// final chunk carrying `usage` (prompt/completion/total tokens).
     var stream_options: StreamOptions? = nil
+    /// OpenAI `logprobs`/`top_logprobs`. Neither local MLX decode nor the
+    /// remote proxy surfaces token log-probabilities, so these are decoded
+    /// purely for request validation: a truthy value is rejected with a
+    /// typed 400 instead of being silently dropped.
+    var logprobs: Bool? = nil
+    var top_logprobs: Int? = nil
     /// Model-specific options from the active ModelProfile (not serialized to JSON).
     var modelOptions: [String: ModelOptionValue]? = nil
     /// Optional TTFT trace for diagnostic timing (not serialized to JSON).
@@ -795,6 +801,7 @@ struct ChatCompletionRequest: Codable, Sendable {
         case frequency_penalty, presence_penalty, stop, n
         case tools, tool_choice, session_id
         case seed, response_format, stream_options
+        case logprobs, top_logprobs
         case enable_thinking, reasoning_effort
     }
 
@@ -833,6 +840,8 @@ struct ChatCompletionRequest: Codable, Sendable {
         copy.remoteAgentProviderId = remoteAgentProviderId
         copy.suppressProgressUI = suppressProgressUI
         copy.warmupPrefill = warmupPrefill
+        copy.logprobs = logprobs
+        copy.top_logprobs = top_logprobs
         return copy
     }
 
@@ -875,6 +884,8 @@ struct ChatCompletionRequest: Codable, Sendable {
         copy.remoteAgentProviderId = remoteAgentProviderId
         copy.suppressProgressUI = suppressProgressUI
         copy.warmupPrefill = warmupPrefill
+        copy.logprobs = logprobs
+        copy.top_logprobs = top_logprobs
         return copy
     }
 }
@@ -913,6 +924,8 @@ extension ChatCompletionRequest {
         seed = try container.decodeIfPresent(Int.self, forKey: .seed)
         response_format = try container.decodeIfPresent(ResponseFormat.self, forKey: .response_format)
         stream_options = try container.decodeIfPresent(StreamOptions.self, forKey: .stream_options)
+        logprobs = try container.decodeIfPresent(Bool.self, forKey: .logprobs)
+        top_logprobs = try container.decodeIfPresent(Int.self, forKey: .top_logprobs)
         enable_thinking = try container.decodeIfPresent(Bool.self, forKey: .enable_thinking)
         reasoning_effort = try container.decodeIfPresent(String.self, forKey: .reasoning_effort)
     }

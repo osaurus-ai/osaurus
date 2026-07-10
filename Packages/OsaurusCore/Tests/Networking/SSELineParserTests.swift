@@ -101,6 +101,33 @@ struct SSELineParserTests {
         #expect(lines == ["a", "", ""])
     }
 
+    @Test func splitter_chunkingInvariance() {
+        // The bulk memchr-based scanner must produce identical output no
+        // matter how the byte stream is sliced into chunks — including
+        // 1-byte chunks that split every CRLF pair.
+        let payload = "data: a\r\ndata: b\rdata: c\n\r\n\ndata: {\"x\":\"y\"}\r\n"
+        let bytes = Array(payload.utf8)
+
+        var whole = RemoteProviderService.SSELineParser()
+        whole.append(Data(bytes))
+        whole.flushPending()
+        let expected = drain(&whole)
+
+        for chunkSize in [1, 2, 3, 5, 7] {
+            var chunked = RemoteProviderService.SSELineParser()
+            var index = 0
+            while index < bytes.count {
+                let end = min(index + chunkSize, bytes.count)
+                chunked.append(Data(bytes[index ..< end]))
+                index = end
+            }
+            chunked.flushPending()
+            let lines = drain(&chunked)
+            #expect(lines == expected, "chunkSize=\(chunkSize) diverged")
+        }
+        #expect(expected == ["data: a", "data: b", "data: c", "", "", "data: {\"x\":\"y\"}"])
+    }
+
     // MARK: - processSSELine (field parser)
 
     @Test func fieldParser_handlesDataWithSpace() {

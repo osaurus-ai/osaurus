@@ -233,6 +233,11 @@ struct GeminiGenerationConfig: Codable, Sendable {
     let stopSequences: [String]?
     let responseModalities: [String]?
     let imageConfig: GeminiImageConfig?
+    /// Deterministic-sampling seed (maps OpenAI `seed`).
+    var seed: Int? = nil
+    /// `"application/json"` for JSON mode (maps OpenAI
+    /// `response_format: {type: json_object}`).
+    var responseMimeType: String? = nil
 }
 
 // MARK: - Response Models

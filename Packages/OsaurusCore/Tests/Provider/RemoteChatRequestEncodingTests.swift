@@ -104,6 +104,106 @@ struct RemoteChatRequestEncodingTests {
         #expect(payload["stream_options"] == nil)
     }
 
+    // MARK: - Parameter fidelity: seed / response_format
+
+    /// Caller-supplied `seed` and JSON mode must reach the OpenAI-compat wire
+    /// instead of being silently dropped (parameter-fidelity contract).
+    @Test func encode_includesSeedAndResponseFormat_whenSet() throws {
+        var request = Self.makeRequest(model: "gpt-4o-mini", maxTokens: 256)
+        request.seed = 42
+        request.response_format = ResponseFormat(type: "json_object")
+        let payload = try Self.encodeAsDictionary(request)
+
+        #expect(payload["seed"] as? Int == 42)
+        let responseFormat = payload["response_format"] as? [String: Any]
+        #expect(responseFormat?["type"] as? String == "json_object")
+    }
+
+    /// Default (nil) omits both keys so existing wire bytes are unchanged for
+    /// requests that never set them (strict upstreams 422 on unknown nulls).
+    @Test func encode_omitsSeedAndResponseFormat_whenNil() throws {
+        let request = Self.makeRequest(model: "gpt-4o-mini", maxTokens: 256)
+        let payload = try Self.encodeAsDictionary(request)
+
+        #expect(payload["seed"] == nil)
+        #expect(payload["response_format"] == nil)
+    }
+
+    /// Gemini has no top-level OpenAI fields; seed and JSON mode map into
+    /// `generationConfig.seed` / `generationConfig.responseMimeType`.
+    @Test func geminiRequest_mapsSeedAndJSONModeIntoGenerationConfig() throws {
+        var request = Self.makeRequest(model: "gemini-2.0-flash", maxTokens: 256)
+        request.seed = 7
+        request.response_format = ResponseFormat(type: "json_object")
+        let payload = try Self.encodeAsDictionary(request.toGeminiRequest())
+
+        let config = payload["generationConfig"] as? [String: Any]
+        #expect(config?["seed"] as? Int == 7)
+        #expect(config?["responseMimeType"] as? String == "application/json")
+    }
+
+    /// Without seed/JSON mode, Gemini's generationConfig keeps its exact
+    /// current shape (no new keys appear).
+    @Test func geminiRequest_omitsSeedAndMimeType_whenUnset() throws {
+        let request = Self.makeRequest(model: "gemini-2.0-flash", maxTokens: 256)
+        let payload = try Self.encodeAsDictionary(request.toGeminiRequest())
+
+        let config = payload["generationConfig"] as? [String: Any]
+        #expect(config?["seed"] == nil)
+        #expect(config?["responseMimeType"] == nil)
+    }
+
+    // MARK: - Dropped-media rejection (Anthropic/Gemini wire)
+
+    /// Audio and video parts have no Anthropic/Gemini wire mapping and were
+    /// previously dropped without a trace; the guard must reject them with a
+    /// typed error instead.
+    @Test func rejectDroppedMediaInputs_throwsForAudioAndVideo() {
+        let audioMessage = ChatMessage(
+            role: "user",
+            content: "transcribe this",
+            contentParts: [
+                .text("transcribe this"),
+                .audioInput(data: "AAAA", format: "wav"),
+            ]
+        )
+        #expect(throws: RemoteProviderServiceError.self) {
+            try RemoteProviderService.rejectDroppedMediaInputs(
+                in: [audioMessage],
+                wireName: "Anthropic"
+            )
+        }
+
+        let videoMessage = ChatMessage(
+            role: "user",
+            content: nil,
+            contentParts: [.videoUrl(url: "data:video/mp4;base64,AAAA")]
+        )
+        #expect(throws: RemoteProviderServiceError.self) {
+            try RemoteProviderService.rejectDroppedMediaInputs(
+                in: [videoMessage],
+                wireName: "Gemini"
+            )
+        }
+    }
+
+    /// Text and image parts are fully supported on both wires and must pass.
+    @Test func rejectDroppedMediaInputs_allowsTextAndImages() throws {
+        let messages = [
+            ChatMessage(role: "user", content: "hello"),
+            ChatMessage(
+                role: "user",
+                content: "look at this",
+                contentParts: [
+                    .text("look at this"),
+                    .imageUrl(url: "data:image/png;base64,AAAA", detail: nil),
+                ]
+            ),
+        ]
+        try RemoteProviderService.rejectDroppedMediaInputs(in: messages, wireName: "Anthropic")
+        try RemoteProviderService.rejectDroppedMediaInputs(in: messages, wireName: "Gemini")
+    }
+
     /// Only the genuinely OpenAI Chat-Completions `/chat/completions` upstreams
     /// (xAI/Grok + OpenAI-compatible third parties via `.openaiLegacy`, and
     /// Azure OpenAI) request usage. The router carries billed tokens in its own
@@ -720,6 +820,114 @@ struct RemoteChatRequestEncodingTests {
 
         #expect(assistantJSON["content"] as? String == "I looked at the image.")
         #expect(userJSON["content"] is [[String: Any]])
+    }
+
+    /// Regression for the Router + Opus HTTP 400 "user message content must
+    /// be a string": once a media user turn exists anywhere in the history,
+    /// EVERY subsequent turn replays it, and non-vision Router upstream
+    /// adapters reject the array-form content on each one. For a model
+    /// without image input, user media must flatten to string content (with
+    /// a visible removal notice) across the whole replayed history.
+    @Test func routerWireCompatibleMessages_flattensUserImageForNonVisionModel() throws {
+        let imageTurn = ChatMessage(
+            role: "user",
+            content: "describe this",
+            contentParts: [
+                .text("describe this"),
+                .imageUrl(url: "data:image/png;base64,BBBB", detail: nil),
+            ]
+        )
+        let history: [ChatMessage] = [
+            ChatMessage(role: "system", content: "You are helpful."),
+            imageTurn,
+            ChatMessage(role: "assistant", content: "It's a chart.", tool_calls: nil, tool_call_id: nil),
+            ChatMessage(role: "user", content: "Now summarize it."),
+            ChatMessage(role: "assistant", content: "Summary done.", tool_calls: nil, tool_call_id: nil),
+            ChatMessage(role: "user", content: "Third message in the sequence."),
+        ]
+
+        let normalized = RemoteProviderService.routerWireCompatibleMessages(
+            history,
+            modelSupportsImageInput: false
+        )
+        let array = try Self.encodeAsArray(normalized)
+
+        // No message anywhere in the replayed history may carry array content.
+        for json in array {
+            #expect(!(json["content"] is [[String: Any]]), "array content leaked: \(json)")
+        }
+        let flattened = try #require(array.dropFirst().first)
+        let content = try #require(flattened["content"] as? String)
+        #expect(content.contains("describe this"))
+        #expect(content.contains("removed"), "removal notice must be visible, not silent")
+    }
+
+    /// Vision-capable Router models keep the documented "user media stays
+    /// multimodal" contract.
+    @Test func routerWireCompatibleMessages_keepsUserImageForVisionModel() throws {
+        let user = ChatMessage(
+            role: "user",
+            content: "describe this",
+            contentParts: [
+                .text("describe this"),
+                .imageUrl(url: "data:image/png;base64,BBBB", detail: nil),
+            ]
+        )
+        let normalized = RemoteProviderService.routerWireCompatibleMessages(
+            [user],
+            modelSupportsImageInput: true
+        )
+        let array = try Self.encodeAsArray(normalized)
+        #expect(try #require(array.first)["content"] is [[String: Any]])
+    }
+
+    /// Audio/video have no mapping on any Router upstream: they are removed
+    /// (with the notice) even for vision-capable models, while supported
+    /// image parts stay multimodal.
+    @Test func routerWireCompatibleMessages_stripsAudioEvenForVisionModel() throws {
+        let user = ChatMessage(
+            role: "user",
+            content: "listen and look",
+            contentParts: [
+                .text("listen and look"),
+                .imageUrl(url: "data:image/png;base64,BBBB", detail: nil),
+                .audioInput(data: "AAAA", format: "wav"),
+            ]
+        )
+        let normalized = RemoteProviderService.routerWireCompatibleMessages(
+            [user],
+            modelSupportsImageInput: true
+        )
+        let message = try #require(normalized.first)
+        let parts = try #require(message.contentParts)
+        #expect(message.audioInputs.isEmpty, "audio part must be removed")
+        #expect(message.imageUrls == ["data:image/png;base64,BBBB"], "image part must survive")
+        // The removal notice rides as a trailing text part.
+        let texts = parts.compactMap { part -> String? in
+            if case .text(let text) = part { return text }
+            return nil
+        }
+        #expect(texts.contains { $0.contains("removed") })
+    }
+
+    /// The terse Router upstream rejection maps to actionable user copy.
+    @Test func friendlyUpstreamRejection_mapsRouterStringContentError() {
+        let friendly = RemoteProviderService.friendlyUpstreamRejection(
+            "user message content must be a string"
+        )
+        #expect(friendly?.contains("attachment") == true)
+        #expect(
+            RemoteProviderService.friendlyUpstreamRejection("some other upstream error") == nil
+        )
+
+        // End-to-end through the error-envelope extractor, as the streaming
+        // path surfaces it.
+        let body = Data(
+            #"{"error":{"code":"*","message":"user message content must be a string"}}"#.utf8
+        )
+        let extracted = RemoteProviderService.extractErrorMessage(from: body, statusCode: 400)
+        #expect(extracted.contains("attachment"))
+        #expect(!extracted.contains("must be a string"))
     }
 
     @Test func routerWireCompatibleMessages_includesEmptyStringForAssistantToolHistory() throws {

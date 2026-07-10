@@ -48,7 +48,11 @@ normalization in `RemoteProviderService.buildChatRequest`.
 Router-specific fields and transforms:
 
 - `idempotency_key` is sent only to Router. Other OpenAI-compatible providers do
-  not receive it because some reject unknown fields.
+  not receive it because some reject unknown fields. Chat-UI turns set a stable
+  per-logical-step key; HTTP-origin requests (`/v1/chat/completions`, `/chat`,
+  Ollama, Anthropic, Open Responses, `/agents/{id}/run` steps) honor a
+  client-supplied `Idempotency-Key` header, or synthesize a per-request key
+  when the header is absent, so CLI/script retries do not double-bill.
 - `clamp_to_balance` is explicitly set to `false` for Router.
 - User multimodal content parts are preserved.
 - Assistant history is normalized to string `content` because several upstreams
@@ -111,6 +115,22 @@ assistant text.
 
 The billing path is metadata-only. Prompt text, response text, tool arguments,
 and tool results must not be written to Router billing records.
+
+### Loopback spend gate
+
+Router requests are signed with the user's master key and spend real credits,
+while the local HTTP API trusts loopback connections without a token. To keep
+any local process from silently draining the balance, `ChatEngine` refuses to
+dispatch an HTTP-origin request to the `.osaurusRouter` provider (HTTP 403)
+unless one of these holds:
+
+- the caller presented a valid access key (`Authorization: Bearer <key>` —
+  validated opportunistically for loopback callers, mandatory for everyone
+  else), or
+- the user enabled "Allow local API access without a key" on the Credits
+  screen (`OsaurusRouter.allowsUnkeyedLoopbackSpend`, off by default).
+
+App-internal sources (chat UI, plugins, P2P) are not affected by this gate.
 
 ## On-Device Billing Ledger
 

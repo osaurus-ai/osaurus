@@ -20,7 +20,9 @@ struct RequestValidationTests {
 
     private func makeRequest(
         n: Int? = nil,
-        responseFormatType: String? = nil
+        responseFormatType: String? = nil,
+        logprobs: Bool? = nil,
+        topLogprobs: Int? = nil
     ) -> ChatCompletionRequest {
         var req = ChatCompletionRequest(
             model: "default",
@@ -40,6 +42,8 @@ struct RequestValidationTests {
         if let type = responseFormatType {
             req.response_format = ResponseFormat(type: type)
         }
+        req.logprobs = logprobs
+        req.top_logprobs = topLogprobs
         return req
     }
 
@@ -75,6 +79,34 @@ struct RequestValidationTests {
         let reason = HTTPHandler.unsupportedSamplerReason(req)
         #expect(reason != nil)
         #expect((reason ?? "").contains("json_schema"))
+    }
+
+    /// Log-probabilities are surfaced by neither local MLX decode nor the
+    /// remote provider proxy — a truthy `logprobs`/`top_logprobs` must be
+    /// rejected with a typed 400 instead of returning a response that
+    /// silently lacks the field.
+    @Test func logprobsTrueIsRejected() {
+        let req = makeRequest(logprobs: true)
+        let reason = HTTPHandler.unsupportedSamplerReason(req)
+        #expect(reason != nil)
+        #expect((reason ?? "").contains("logprobs"))
+    }
+
+    @Test func logprobsFalseIsAccepted() {
+        let req = makeRequest(logprobs: false)
+        #expect(HTTPHandler.unsupportedSamplerReason(req) == nil)
+    }
+
+    @Test func topLogprobsPositiveIsRejected() {
+        let req = makeRequest(topLogprobs: 5)
+        let reason = HTTPHandler.unsupportedSamplerReason(req)
+        #expect(reason != nil)
+        #expect((reason ?? "").contains("top_logprobs"))
+    }
+
+    @Test func topLogprobsZeroIsAccepted() {
+        let req = makeRequest(topLogprobs: 0)
+        #expect(HTTPHandler.unsupportedSamplerReason(req) == nil)
     }
 
     @Test func chatRequestIgnoresFIMFieldsWithoutDroppingTools() throws {

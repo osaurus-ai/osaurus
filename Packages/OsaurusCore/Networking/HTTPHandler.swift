@@ -238,6 +238,13 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         /// all-agent key. Agent-scoped keys (`false`) are confined to their
         /// own agent's routes.
         var authedScopeIsMaster: Bool = false
+        /// `true` when the caller presented a Bearer token that validated
+        /// against the configured access keys. Set by the global auth gate
+        /// (non-loopback) or by the opportunistic loopback validation, and
+        /// carried into request tasks via `HTTPCallerContext` so credit-spend
+        /// gates (Osaurus Router) can tell keyed callers from key-less
+        /// loopback-trusted ones.
+        var callerHasVerifiedAccessKey: Bool = false
         /// Set when the request arrived as an encrypted `/secure/call`
         /// envelope and was rewritten to its inner request. Routes that
         /// hard-require end-to-end encryption (`/agents/{id}/run`,
@@ -308,9 +315,19 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         let id = UUID()
         let requestTasks = requestTasks
         let operationBox = RequestTaskOperation(operation)
+        // Snapshot the caller's auth proof (event-loop-only state) into a
+        // task-local so downstream gates — ChatEngine's Osaurus Router
+        // credit-spend gate in particular — can tell keyed HTTP callers from
+        // key-less loopback-trusted ones without threading a flag through
+        // every request struct.
+        let callerContext = HTTPCallerContext(
+            hasVerifiedAccessKey: stateRef.value.callerHasVerifiedAccessKey
+        )
         let task = Task(priority: priority) {
             defer { requestTasks.remove(id: id) }
-            await operationBox.run()
+            await HTTPCallerContext.$current.withValue(callerContext) {
+                await operationBox.run()
+            }
         }
         channelCloseFuture.snapshot()?.whenComplete { _ in
             task.cancel()
@@ -330,6 +347,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             stateRef.value.isSecureChannel = false
             stateRef.value.authedAudience = nil
             stateRef.value.authedScopeIsMaster = false
+            stateRef.value.callerHasVerifiedAccessKey = false
             // Clear last request's attribution so a keep-alive connection's
             // next (possibly loopback / public) request can't inherit it.
             _inboundConnection.value = nil
@@ -500,6 +518,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     switch result {
                     case .valid(_, let audience, let keyNonce):
                         message = ""
+                        stateRef.value.callerHasVerifiedAccessKey = true
                         // Record the key's scope so agent-addressing routes can
                         // confine an agent-scoped key to its own agent.
                         stateRef.value.authedAudience = audience.lowercased()
@@ -546,6 +565,22 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     stateRef.value.requestHead = nil
                     stateRef.value.requestBodyBuffer = nil
                     return
+                }
+            }
+
+            // Loopback callers skip the auth gate entirely, but some
+            // downstream gates (Osaurus Router credit spend) require proof of
+            // a valid access key. Validate a volunteered Bearer token
+            // opportunistically — never rejecting the request, and never
+            // setting `authedAudience` (loopback trust must not suddenly gain
+            // agent-scope confinement just because a key was offered).
+            if isLoopback, !stateRef.value.callerHasVerifiedAccessKey {
+                let authHeader = head.headers.first(name: "Authorization") ?? ""
+                if authHeader.hasPrefix("Bearer ") {
+                    let token = String(authHeader.dropFirst(7))
+                    if case .valid = apiKeyValidator.validate(rawKey: token) {
+                        stateRef.value.callerHasVerifiedAccessKey = true
+                    }
                 }
             }
 
@@ -4760,6 +4795,9 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 Task { await ModelRuntime.shared.cancelGeneration(name: m) }
             }
         }
+        // Billing dedupe base for Router-bound loop steps: header-supplied or
+        // synthesized. Each loop iteration derives a per-step key from it.
+        let idempotencyBase = Self.httpIdempotencyKey(head: head)
 
         runRequestTask(priority: .userInitiated) {
             defer { admissionToken.release() }
@@ -5072,6 +5110,12 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     // emits; later tool-result iterations are skipped by the
                     // engine's de-dup rule.
                     iterationReq.isAgentRequest = true
+                    // Per-step Router billing dedupe: the message count is
+                    // stable per logical step (tool loops append messages
+                    // between steps) and reproducible on a client retry of
+                    // the same run, so the derived key dedupes a re-POST of
+                    // any step without ever colliding across steps.
+                    iterationReq.idempotencyKey = "\(idempotencyBase)-s\(msgs.count)"
 
                     responseContent = ""
                     var contentCoalescer = Self.StreamDeltaCoalescer(
@@ -7149,6 +7193,23 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         return nil
     }
 
+    /// Resolve the billing idempotency key for an HTTP-origin inference
+    /// request. Honors a client-supplied `Idempotency-Key` header so
+    /// CLI/script retries of the same logical request dedupe Osaurus Router
+    /// billing on a re-POST; otherwise synthesizes a per-request key so the
+    /// provider service's idempotent connect-phase retries still dedupe.
+    /// The key rides only the Router wire (in the signed body — see
+    /// `RemoteProviderService.buildChatRequest`); no other upstream sees it.
+    nonisolated static func httpIdempotencyKey(head: HTTPRequestHead) -> String {
+        if let header = head.headers.first(name: "Idempotency-Key")?
+            .trimmingCharacters(in: .whitespacesAndNewlines),
+            !header.isEmpty, header.count <= 128
+        {
+            return header
+        }
+        return "http-\(UUID().uuidString)"
+    }
+
     private func handleChatCompletions(
         head: HTTPRequestHead,
         context: ChannelHandlerContext,
@@ -7228,6 +7289,11 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         #endif
         let httpTrace = HTTPTraceRecorder(ttftTrace)
         req.ttftTrace = ttftTrace
+        // Billing dedupe for Router-bound requests: header-supplied or
+        // synthesized (see `httpIdempotencyKey`). Chat-UI requests set their
+        // own per-step key; HTTP-origin requests previously had none, so a
+        // client retry could double-bill.
+        req.idempotencyKey = Self.httpIdempotencyKey(head: head)
         httpTrace.mark("http_request_decoded")
         httpTrace.set("endpoint", "/chat/completions")
         httpTrace.set("model", model)
@@ -7919,7 +7985,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             requestBodyString = nil
         }
 
-        guard let req = try? JSONDecoder().decode(ChatCompletionRequest.self, from: data) else {
+        guard var decodedReq = try? JSONDecoder().decode(ChatCompletionRequest.self, from: data) else {
             sendResponse(
                 context: context,
                 version: head.version,
@@ -7938,6 +8004,8 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             )
             return
         }
+        decodedReq.idempotencyKey = Self.httpIdempotencyKey(head: head)
+        let req = decodedReq
 
         guard
             let admissionToken = acquireInferenceAdmissionOrReject(
@@ -8341,7 +8409,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             messages.append(ChatMessage(role: "system", content: system))
         }
         messages.append(ChatMessage(role: "user", content: ollama.prompt))
-        let chatRequest = ChatCompletionRequest(
+        var chatRequestDraft = ChatCompletionRequest(
             model: ollama.model,
             messages: messages,
             temperature: ollama.options?.temperature,
@@ -8356,6 +8424,8 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             tool_choice: nil,
             session_id: nil
         )
+        chatRequestDraft.idempotencyKey = Self.httpIdempotencyKey(head: head)
+        let chatRequest = chatRequestDraft
 
         guard
             let admissionToken = acquireInferenceAdmissionOrReject(
@@ -8728,7 +8798,9 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
     nonisolated static func unsupportedSamplerReason(_ req: ChatCompletionRequest) -> String? {
         RequestValidator.unsupportedSamplerReason(
             n: req.n,
-            responseFormatType: req.response_format?.type
+            responseFormatType: req.response_format?.type,
+            logprobs: req.logprobs,
+            topLogprobs: req.top_logprobs
         )
     }
 
@@ -9738,7 +9810,8 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         }
 
         // Convert to internal format
-        let internalReq = anthropicReq.toChatCompletionRequest()
+        var internalReq = anthropicReq.toChatCompletionRequest()
+        internalReq.idempotencyKey = Self.httpIdempotencyKey(head: head)
 
         // Generate response ID
         let messageId = Self.shortId(prefix: "msg_")
@@ -10505,10 +10578,11 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
 
         // Convert to internal format, preserving local Responses API
         // context when clients chain turns with `previous_response_id`.
-        let internalReq = Self.applyOpenResponsesContext(
+        var internalReq = Self.applyOpenResponsesContext(
             to: openResponsesReq.toChatCompletionRequest(),
             previousResponseId: openResponsesReq.previous_response_id
         )
+        internalReq.idempotencyKey = Self.httpIdempotencyKey(head: head)
 
         // Determine if streaming
         let wantsStream = openResponsesReq.stream ?? false

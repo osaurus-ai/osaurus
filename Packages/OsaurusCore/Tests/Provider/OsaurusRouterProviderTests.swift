@@ -295,10 +295,12 @@ struct OsaurusRouterProviderTests {
             yield: { yielded.append($0) }
         )
 
-        guard case .finishWithToolCall(let invocation) = outcome else {
+        guard case .finishWithToolCall(let invocations) = outcome, let invocation = invocations.first
+        else {
             Issue.record("Expected full router body tool call, got \(outcome)")
             return
         }
+        #expect(invocations.count == 1)
         #expect(invocation.toolName == "sandbox_write_file")
         #expect(invocation.toolCallId == "call_1")
         #expect(invocation.jsonArguments == #"{"path":"tetris.html","content":"<html></html>"}"#)
@@ -358,10 +360,13 @@ struct OsaurusRouterProviderTests {
             yield: { yielded.append($0) }
         )
 
-        guard case .finishWithToolCall(let invocation) = finishOutcome else {
+        guard case .finishWithToolCall(let invocations) = finishOutcome,
+            let invocation = invocations.first
+        else {
             Issue.record("Expected tool-call finish, got \(finishOutcome)")
             return
         }
+        #expect(invocations.count == 1)
         #expect(invocation.toolName == "get_weather")
         #expect(invocation.toolCallId == "call_1")
         #expect(invocation.jsonArguments == #"{"city":"Irvine"}"#)
@@ -551,8 +556,45 @@ struct OsaurusRouterProviderTests {
         #expect(diagnostics.emptyClassification == "unrecognized-events")
         #expect(diagnostics.unrecognizedEventCount == 1)
         #expect(diagnostics.lastEventSummary == "done-marker")
-        #expect(diagnostics.recentEventSummaries.contains { $0.hasPrefix("object keys=") })
+        // Debug flag off in tests: production events store the compact kind
+        // label, not the JSON-decoded debug summary.
+        #expect(diagnostics.recentEventSummaries.contains("unrecognized"))
         #expect(diagnostics.shouldLogEmptyTerminal)
+    }
+
+    @Test func routerEventKind_cheapSniffClassification() {
+        typealias Kind = RemoteProviderService.RouterEventKind
+        #expect(RemoteProviderService.routerEventKind("[DONE]") == Kind.doneMarker)
+        #expect(RemoteProviderService.routerEventKind(" [DONE] ") == Kind.doneMarker)
+        #expect(
+            RemoteProviderService.routerEventKind(
+                #"{"osaurus":{"cost_micro":"12","status":"completed","token_source":"provider","input_tokens":1,"output_tokens":1}}"#
+            ) == Kind.summary
+        )
+        #expect(
+            RemoteProviderService.routerEventKind(
+                #"{"usage":{"prompt_tokens":5,"completion_tokens":2,"total_tokens":7}}"#
+            ) == Kind.usage
+        )
+        #expect(
+            RemoteProviderService.routerEventKind(
+                #"{"choices":[{"delta":{"content":"hi"}}]}"#
+            ) == Kind.choice
+        )
+        // A content delta that merely *mentions* osaurus/usage still counts
+        // as a choice event — "choices" wins the sniff order.
+        #expect(
+            RemoteProviderService.routerEventKind(
+                #"{"choices":[{"delta":{"content":"the \"osaurus\" and \"usage\" words"}}]}"#
+            ) == Kind.choice
+        )
+        #expect(
+            RemoteProviderService.routerEventKind(
+                #"{"error":{"code":"X","message":"boom"}}"#
+            ) == Kind.error
+        )
+        #expect(RemoteProviderService.routerEventKind(#"{"unexpected":true}"#) == Kind.unrecognized)
+        #expect(RemoteProviderService.routerEventKind("not json") == Kind.unrecognized)
     }
 
     private func routerDiagnosticsState() -> RemoteProviderService.StreamingState {
