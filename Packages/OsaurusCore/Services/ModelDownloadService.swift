@@ -1508,6 +1508,12 @@ final class DirectDownloader: NSObject, URLSessionDownloadDelegate, @unchecked S
     /// `cancelByProducingResumeData` callback owns the continuation
     /// resumption with `PauseInfo`.
     private var pauseRequested = false
+    /// Set under `lock` before `invalidateAndCancel()`. Creating a task on an
+    /// invalidated `URLSession` raises an uncatchable NSGenericException, and
+    /// orchestration teardown (`invalidate()` in a `defer` / pause + cancel)
+    /// races with the next `download(...)` call; the flag turns that race
+    /// into a thrown `URLError(.cancelled)` instead of a crash.
+    private var isInvalidated = false
     private static let progressInterval: CFAbsoluteTime = 0.25
 
     private lazy var session: URLSession = {
@@ -1528,6 +1534,11 @@ final class DirectDownloader: NSObject, URLSessionDownloadDelegate, @unchecked S
         )
         try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
             lock.lock()
+            if self.isInvalidated {
+                lock.unlock()
+                continuation.resume(throwing: URLError(.cancelled))
+                return
+            }
             self.currentContinuation = continuation
             self.currentDestination = destination
             self.currentExpectedSize = expectedSize
@@ -1592,7 +1603,30 @@ final class DirectDownloader: NSObject, URLSessionDownloadDelegate, @unchecked S
         continuation.resume(throwing: PauseInfo(resumeData: resumeData, bytesDownloaded: bytes))
     }
 
-    func invalidate() { session.invalidateAndCancel() }
+    func invalidate() {
+        lock.lock()
+        isInvalidated = true
+        lock.unlock()
+        session.invalidateAndCancel()
+    }
+
+    /// Terminal session teardown. Flush any continuation the per-task
+    /// callbacks didn't get to (e.g. a task cancelled by
+    /// `invalidateAndCancel()` racing the flag set above) so the awaiting
+    /// downloader never deadlocks.
+    func urlSession(_: URLSession, didBecomeInvalidWithError error: Error?) {
+        lock.lock()
+        isInvalidated = true
+        let continuation = currentContinuation
+        currentContinuation = nil
+        currentDownloadTask = nil
+        currentDestination = nil
+        currentExpectedSize = nil
+        onProgress = nil
+        pauseRequested = false
+        lock.unlock()
+        continuation?.resume(throwing: error ?? URLError(.cancelled))
+    }
 
     /// `resolve/main` URLs 302-redirect to Hugging Face's CDN. Don't leak the
     /// user's access token to that (or any other) third-party host: the
