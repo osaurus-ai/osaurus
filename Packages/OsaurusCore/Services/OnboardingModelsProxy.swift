@@ -165,10 +165,13 @@ struct OnboardingModelsProxy: Sendable {
     /// Key read and signing run off the calling thread — the keychain read
     /// is synchronous and must never land on the main thread.
     private func signedRequest(for url: URL) async -> URLRequest? {
-        guard MasterKey.exists() else { return nil }
         let pathAndQuery = Self.pathAndQuery(for: url)
         let headers = await Task.detached(priority: .userInitiated) {
             () -> OsaurusRouterAuthSigner.SignedHeaders? in
+            // Existence check and key read both hit the keychain synchronously
+            // (blocking on securityd's mutex), so they must stay inside this
+            // detached task — callers are on the main actor mid-download.
+            guard MasterKey.exists() else { return nil }
             // Never prompt for biometrics mid-onboarding; a key that needs
             // interaction just means "use the anonymous fallback".
             let context = LAContext()

@@ -341,12 +341,19 @@ final class ModelDownloadService: ObservableObject {
             // later `configureImplicitDefaults` gates on `exists()` and no-ops.
             // If the identity still isn't available, disable the proxy up
             // front so every file takes the anonymous fallback.
-            if await MainActor.run(body: { self.downloadRoutes[model.id] }) == .onboardingProxy,
-                !OsaurusIdentity.exists()
-            {
-                OnboardingProxyDebugLog.log("identity missing, running silent setup model=\(model.id)")
-                _ = try? await OsaurusIdentity.setup()
-                if !OsaurusIdentity.exists() {
+            if await MainActor.run(body: { self.downloadRoutes[model.id] }) == .onboardingProxy {
+                // `exists()` is a synchronous keychain query (blocks on
+                // securityd's mutex) and `setup()` does key generation plus
+                // iCloud keychain writes — keep the whole probe off the main
+                // actor, which this orchestration Task otherwise inherits.
+                let identityReady = await Task.detached(priority: .userInitiated) { () -> Bool in
+                    if OsaurusIdentity.exists() { return true }
+                    OnboardingProxyDebugLog.log(
+                        "identity missing, running silent setup model=\(model.id)")
+                    _ = try? await OsaurusIdentity.setup()
+                    return OsaurusIdentity.exists()
+                }.value
+                if !identityReady {
                     OnboardingProxyDebugLog.log(
                         "identity setup failed, proxy disabled model=\(model.id)")
                     await MainActor.run { _ = self.proxyDisabledModels.insert(model.id) }
