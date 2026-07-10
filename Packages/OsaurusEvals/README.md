@@ -261,10 +261,17 @@ underlying primitive.
 Anyone can contribute a model-compatibility result from their own Mac — the
 long tail of models/quants/hardware no single maintainer can cover. Each
 contribution is one conflict-free file under `reports/community/`; a maintainer
-folds them into `reports/COMPATIBILITY.md`. See `reports/community/README.md`.
+folds them into `reports/COMPATIBILITY.md`, which also tracks **device
+coverage** (every chip × RAM shape that has reported). The end-to-end
+contributor guide — written for humans and coding agents — is
+[`COMMUNITY_EVALS.md`](../../COMMUNITY_EVALS.md) at the repo root; format
+details live in `reports/community/README.md`.
 
 ```bash
-# Contributor: run ONE model on your hardware, then PR the single file it writes.
+# Contributor: run ONE model on your hardware and auto-open the PR (gh).
+PR=1 MODEL=mlx-community/Qwen3-4B-4bit make evals-contribute
+
+# Same, but stop after writing the file (PR/issue it yourself).
 MODEL=mlx-community/Qwen3-4B-4bit make evals-contribute
 
 # Maintainer: rebuild the leaderboard (or gate a PR's contributions).

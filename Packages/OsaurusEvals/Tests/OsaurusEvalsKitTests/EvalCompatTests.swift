@@ -143,6 +143,44 @@ struct EvalCompatTests {
         #expect(m.hasSelfJudged)
     }
 
+    // MARK: - device coverage
+
+    @Test func deviceCoverageGroupsByChipAndRam() {
+        let contributions = [
+            matrix([
+                column(model: "a", passed: 1, scored: 1, env: env(chip: "Apple M1", ramMb: 8192, catalog: "x"))
+            ]),
+            matrix([
+                column(model: "b", passed: 1, scored: 1, env: env(chip: "Apple M1", ramMb: 8192, catalog: "x"))
+            ]),
+            // Same chip, different RAM ⇒ a distinct device shape.
+            matrix([
+                column(model: "a", passed: 1, scored: 1, env: env(chip: "Apple M1", ramMb: 16384, catalog: "x"))
+            ]),
+            // No environment ⇒ skipped.
+            matrix([column(model: "c", passed: 1, scored: 1)]),
+        ]
+        let devices = EvalCompatBuilder.deviceCoverage(from: contributions)
+        #expect(devices.count == 2)
+        #expect(devices[0].chip == "Apple M1")
+        #expect(devices[0].totalRamMb == 8192)
+        #expect(devices[0].contributions == 2)
+        #expect(devices[1].totalRamMb == 16384)
+        #expect(devices[1].contributions == 1)
+    }
+
+    @Test func reportCarriesDeviceCoverageAndRendersTable() {
+        let report = EvalCompatBuilder.build(from: [
+            matrix([
+                column(model: "a", passed: 1, scored: 1, env: env(chip: "Apple M4 Pro", ramMb: 49152, catalog: "x"))
+            ])
+        ])
+        #expect(report.devices?.count == 1)
+        let md = report.formatMarkdown()
+        #expect(md.contains("## Device coverage"))
+        #expect(md.contains("| Apple M4 Pro | 48GB | 1 |"))
+    }
+
     // MARK: - validation
 
     @Test func validateFlagsMissingProvenance() throws {

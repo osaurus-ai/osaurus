@@ -1,6 +1,16 @@
 {
   "contributions" : 6,
-  "generatedAt" : "2026-07-06T04:20:09.751Z",
+  "devices" : [
+    {
+      "chip" : "Apple M4 Pro",
+      "contributions" : 6,
+      "osVersions" : [
+        "26.2.0"
+      ],
+      "totalRamMb" : 49152
+    }
+  ],
+  "generatedAt" : "2026-07-10T13:53:03.530Z",
   "models" : [
     {
       "builds" : [
