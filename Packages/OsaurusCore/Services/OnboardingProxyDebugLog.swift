@@ -12,7 +12,8 @@ import Foundation
 
 enum OnboardingProxyDebugLog {
     private static let logFileURL = URL(
-        fileURLWithPath: "/workspace/osaurus/tmp/onboarding-proxy.log"
+        fileURLWithPath:
+            "/tmp/osaurus-debug/tmp/onboarding-proxy.log"
     )
     /// Serial queue keeps writes ordered and off the caller's thread — log
     /// calls happen on the main actor during downloads and must never block.
@@ -20,14 +21,10 @@ enum OnboardingProxyDebugLog {
         label: "com.dinoki.osaurus.onboarding-proxy-debug-log",
         qos: .utility
     )
-    private static let timestampFormatter: ISO8601DateFormatter = {
-        let f = ISO8601DateFormatter()
-        f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        return f
-    }()
 
     static func log(_ message: String) {
-        let line = "\(timestampFormatter.string(from: Date())) \(message)\n"
+        let timestamp = Date().ISO8601Format(.init(includingFractionalSeconds: true))
+        let line = "\(timestamp) \(message)\n"
         queue.async {
             let fm = FileManager.default
             let dir = logFileURL.deletingLastPathComponent()
