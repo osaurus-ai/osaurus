@@ -42,6 +42,18 @@ struct ChatFindBar: View {
                     // buttons since TextField can't distinguish it here.
                     onNext()
                 }
+                // Arrow keys cycle matches while the field keeps focus, so
+                // the user can step through occurrences without leaving the
+                // keyboard. Consumed even with zero matches — a caret jump
+                // to start/end of the query is never what Up/Down means here.
+                .onKeyPress(.upArrow) {
+                    onPrevious()
+                    return .handled
+                }
+                .onKeyPress(.downArrow) {
+                    onNext()
+                    return .handled
+                }
 
             Text(matchCountLabel)
                 .font(.system(size: 11, weight: .medium).monospacedDigit())
