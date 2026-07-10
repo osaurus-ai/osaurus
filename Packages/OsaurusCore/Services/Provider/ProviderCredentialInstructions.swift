@@ -235,6 +235,16 @@ public enum ProviderCredentialInstructionsCatalog {
                 storageAuthType: .apiKey,
                 presetId: preset.rawValue
             )
+        case .evolink:
+            return ProviderCredentialInstructions(
+                providerType: providerType,
+                displayName: L("EvoLink"),
+                authMethod: .apiKey,
+                getKeyURL: getKeyURL,
+                keyFormatHint: L("Get a key from evolink.ai/dashboard/keys."),
+                storageAuthType: .apiKey,
+                presetId: preset.rawValue
+            )
         case .ollama:
             return ProviderCredentialInstructions(
                 providerType: providerType,
