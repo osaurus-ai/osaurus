@@ -11,6 +11,14 @@ Crowdsourced from 6 contribution(s). Verdicts: **works** (runs cleanly), **parti
 | `Qwen3.5-4B-OptiQ-4bit` | works | 86% (212/247) | 1 | Apple M4 Pro | 48GB | 20487MB | 35 | — |
 | `grok-4.3` | works | 92% (228/247) | 1 | Apple M4 Pro | 48GB | 19637MB | 10 | — |
 
+## Device coverage
+
+Distinct contributing machines (chip × RAM). Missing shapes are the most valuable contributions — see `reports/community/README.md`.
+
+| Chip | RAM | Contributions | macOS |
+| --- | --- | --- | --- |
+| Apple M4 Pro | 48GB | 6 | 26.2.0 |
+
 ## Caveats
 
 - `grok-4.3`: at least one contribution self-judged an LLM-judged suite — those rubric grades are weaker.

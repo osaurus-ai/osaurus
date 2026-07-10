@@ -109,6 +109,15 @@ struct MessageTableRepresentable: NSViewRepresentable {
     /// Active in-conversation find query (Cmd+F); empty when the find bar is
     /// closed. Threaded into every cell so match occurrences are highlighted.
     var searchHighlightQuery: String = ""
+    /// Turn owning the find bar's current match, nil when none is current.
+    var searchCurrentTurnId: UUID? = nil
+    /// Occurrence index of the current match within its turn's content.
+    var searchCurrentOccurrence: Int = 0
+    /// Occurrence (within `scrollToTurnId`'s content) the pending scroll
+    /// request targets. Nil for turn-level scrolls (minimap). When set, the
+    /// coordinator scrolls to the block that renders that occurrence instead
+    /// of the top of the turn.
+    var scrollToFindOccurrence: Int? = nil
 
     // MARK: - NSViewRepresentable Lifecycle
 
@@ -165,14 +174,6 @@ struct MessageTableRepresentable: NSViewRepresentable {
             coordinator.scrollAnchor.scrollToBottom(animated: true)
         }
 
-        // Detect minimap scroll-to-turn request.
-        if scrollToTurnTrigger != coordinator.lastScrollToTurnTrigger {
-            coordinator.lastScrollToTurnTrigger = scrollToTurnTrigger
-            if let turnId = scrollToTurnId {
-                coordinator.scrollToTurn(turnId)
-            }
-        }
-
         // Sync any external expand-state changes (e.g. session load resets the store)
         if expandedBlocksStore.expandedIds != coordinator.expandedIds {
             coordinator.expandedIds = expandedBlocksStore.expandedIds
@@ -189,6 +190,23 @@ struct MessageTableRepresentable: NSViewRepresentable {
             autoScrollEnabled: autoScrollEnabled
         )
         coordinator.scheduleVisibleUserTurnUpdate()
+
+        // Detect minimap / find-bar scroll-to-turn request. Runs after
+        // applyBlocks so the coordinator maps the request against the
+        // current query and block list — a find jump often arrives in the
+        // same update as the query change that produced it. The find bar's
+        // requests carry an occurrence so long turns scroll to the block
+        // containing the current match, not just the turn header.
+        if scrollToTurnTrigger != coordinator.lastScrollToTurnTrigger {
+            coordinator.lastScrollToTurnTrigger = scrollToTurnTrigger
+            if let turnId = scrollToTurnId {
+                if let occurrence = scrollToFindOccurrence {
+                    coordinator.scrollToFindMatch(turnId: turnId, occurrence: occurrence)
+                } else {
+                    coordinator.scrollToTurn(turnId)
+                }
+            }
+        }
 
         // ensure the table column fills the (now-inset) clip view width
         coordinator.tableView?.sizeLastColumnToFit()
@@ -238,6 +256,11 @@ struct MessageTableRepresentable: NSViewRepresentable {
             onDocumentPreview: onDocumentPreview,
             sessionRedactions: sessionRedactions,
             searchHighlightQuery: searchHighlightQuery,
+            searchCurrentTurnId: searchCurrentTurnId,
+            searchCurrentOccurrence: searchCurrentOccurrence,
+            searchOccurrenceOffset: { [weak coordinator] blockId in
+                coordinator?.findOccurrenceOffsets[blockId] ?? 0
+            },
             hasChartBeenDrawn: { [weak coordinator] id in
                 coordinator?.drawnChartBlockIds.contains(id) ?? false
             },
@@ -361,6 +384,11 @@ extension MessageTableRepresentable {
         private(set) var blockLookup: [String: ContentBlock] = [:]
         /// The block ID currently streaming (for fast-path updates).
         private var streamingBlockId: String?
+        /// Per-block find-occurrence offsets for the active search query:
+        /// how many query occurrences live in the searchable blocks that
+        /// precede this block within its turn. Rebuilt on every applyBlocks
+        /// while a query is active; empty when the find bar is closed.
+        private(set) var findOccurrenceOffsets: [String: Int] = [:]
         /// The assistant turn ID we already scrolled to (fire-once guard).
         private var lastScrolledToTurnId: UUID?
 
@@ -682,6 +710,8 @@ extension MessageTableRepresentable {
             let expandedIdsChanged = context.expandedIds != ctx.expandedIds
             let previousEditingTurnId = ctx.editingTurnId
             let previousSearchHighlightQuery = ctx.searchHighlightQuery
+            let previousSearchCurrentTurnId = ctx.searchCurrentTurnId
+            let previousSearchCurrentOccurrence = ctx.searchCurrentOccurrence
             let previousStreaming = ctx.isStreaming
             let previousLastAssistantTurnId = ctx.lastAssistantTurnId
             // NSView backed cells snapshot the theme
@@ -710,10 +740,23 @@ extension MessageTableRepresentable {
             }
 
             // Find-highlight query also lives in the context, not the blocks.
-            // Repaint every materialized cell when it changes so matches
-            // highlight (and un-highlight on close) immediately.
+            // Keep per-block occurrence offsets fresh before any repaint so
+            // the current-match translation in the cells never reads stale
+            // offsets (block texts grow on every streaming delta).
+            recomputeFindOccurrenceOffsets(blocks: blocks)
+            // Repaint every materialized cell when the query changes so
+            // matches highlight (and un-highlight on close) immediately.
             if context.searchHighlightQuery != previousSearchHighlightQuery {
                 reconfigureAllCellsFromLookup(blockLookup)
+            } else if context.searchCurrentTurnId != previousSearchCurrentTurnId
+                || context.searchCurrentOccurrence != previousSearchCurrentOccurrence
+            {
+                // Same query, different current match — only the two affected
+                // turns need repainting.
+                reconfigureCellsForTurn(previousSearchCurrentTurnId)
+                if context.searchCurrentTurnId != previousSearchCurrentTurnId {
+                    reconfigureCellsForTurn(context.searchCurrentTurnId)
+                }
             }
 
             let newIds = blocks.map(\.id)
@@ -1367,15 +1410,127 @@ extension MessageTableRepresentable {
         ///      to the new assistant header while the model is still streaming.
         /// we neutralize both before kicking off our animation.
         func scrollToTurn(_ turnId: UUID) {
-            guard let tableView, let scrollView else { return }
-
             // Prefer the user-message block; fall back to the turn's header.
             let userBlockId = "usermsg-\(turnId.uuidString)"
             let headerBlockId = "header-\(turnId.uuidString)"
             let row =
                 blockIds.firstIndex(of: userBlockId)
                 ?? blockIds.firstIndex(of: headerBlockId)
-            guard let targetRow = row, targetRow < tableView.numberOfRows else { return }
+            guard let targetRow = row else { return }
+            scrollToRow(targetRow)
+        }
+
+        /// Rebuild `findOccurrenceOffsets` for the active query. Walks the
+        /// blocks in display order accumulating a per-turn occurrence count,
+        /// mirroring how `ChatFindMatcher` indexes occurrences over the
+        /// turn's full content.
+        ///
+        /// Scoped to the *current match's* turn: offsets are only ever read
+        /// by `CellRenderingContext.searchCurrentIndex`, which returns early
+        /// for every other turn. This runs from `applyBlocks` — i.e. on
+        /// every streaming delta while the find bar is open — so scanning
+        /// one turn instead of the whole conversation is what keeps it off
+        /// Sentry's app-hang radar.
+        func recomputeFindOccurrenceOffsets(blocks: [ContentBlock]) {
+            let query = ctx.searchHighlightQuery
+            guard !query.isEmpty, let currentTurnId = ctx.searchCurrentTurnId else {
+                if !findOccurrenceOffsets.isEmpty { findOccurrenceOffsets = [:] }
+                return
+            }
+            var offsets: [String: Int] = [:]
+            var running = 0
+            for block in blocks where block.turnId == currentTurnId {
+                guard let text = block.searchableText else { continue }
+                offsets[block.id] = running
+                running += ChatFindMatcher.occurrenceCount(of: query, in: text)
+            }
+            findOccurrenceOffsets = offsets
+        }
+
+        // MARK: - Find bar: scroll to match occurrence
+
+        /// Scroll so the block rendering the given occurrence (within the
+        /// turn's content) is near the top of the visible area. Falls back
+        /// to the turn header when the occurrence can't be located (e.g.
+        /// the query straddles a block boundary).
+        func scrollToFindMatch(turnId: UUID, occurrence: Int) {
+            let query = ctx.searchHighlightQuery
+            guard !query.isEmpty else {
+                scrollToTurn(turnId)
+                return
+            }
+            var running = 0
+            for blockId in blockIds {
+                guard let block = blockLookup[blockId], block.turnId == turnId,
+                    let text = block.searchableText
+                else { continue }
+                let count = ChatFindMatcher.occurrenceCount(of: query, in: text)
+                if occurrence < running + count {
+                    if let row = blockIds.firstIndex(of: blockId) {
+                        scrollToOccurrence(row: row, localOccurrence: occurrence - running)
+                        return
+                    }
+                    break
+                }
+                running += count
+            }
+            scrollToTurn(turnId)
+        }
+
+        /// Scroll so the given occurrence *within* the row's text is
+        /// comfortably visible. Rows can be far taller than the viewport
+        /// (a single message with dozens of matches), so scrolling to the
+        /// row's top — what `scrollToRow` does — never reaches occurrences
+        /// in the lower part of the cell. Reads the occurrence's line rect
+        /// from the materialized cell; when the cell isn't materialized yet
+        /// (match far offscreen), scrolls to the row first and retries once
+        /// the cell exists.
+        private func scrollToOccurrence(row: Int, localOccurrence: Int, attempt: Int = 0) {
+            guard let tableView, let scrollView else { return }
+            if let cell = tableView.view(atColumn: 0, row: row, makeIfNecessary: false)
+                as? NativeMessageCellView,
+                let rect = cell.searchOccurrenceRect(localOccurrence)
+            {
+                let rectInTable = cell.convert(rect, to: tableView)
+                let clipBounds = scrollView.contentView.bounds
+                // Already comfortably visible (a viewport inset by a margin
+                // top and bottom)? Don't move — matches the browser behavior
+                // of only scrolling when the hit would otherwise be missed.
+                let comfortZone = clipBounds.insetBy(dx: 0, dy: 48)
+                if comfortZone.contains(rectInTable) {
+                    return
+                }
+                scrollAnchor.unpinFromBottom()
+                lastScrolledToTurnId = ctx.lastAssistantTurnId
+                let maxY = max(0, tableView.bounds.height - clipBounds.height)
+                // Land the match around the upper third of the viewport.
+                let targetY = min(maxY, max(0, rectInTable.midY - clipBounds.height * 0.35))
+                NSAnimationContext.runAnimationGroup { ctx in
+                    ctx.duration = 0.22
+                    ctx.allowsImplicitAnimation = true
+                    scrollView.contentView.setBoundsOrigin(
+                        NSPoint(x: clipBounds.origin.x, y: targetY)
+                    )
+                    scrollView.reflectScrolledClipView(scrollView.contentView)
+                }
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { [weak self] in
+                    self?.scheduleVisibleUserTurnUpdate()
+                }
+                return
+            }
+
+            scrollToRow(row)
+            guard attempt < 2 else { return }
+            // Row-top scroll materializes the cell (and its highlight pass);
+            // retry the precise scroll once layout has settled.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
+                self?.scrollToOccurrence(
+                    row: row, localOccurrence: localOccurrence, attempt: attempt + 1)
+            }
+        }
+
+        private func scrollToRow(_ targetRow: Int, attempt: Int = 0) {
+            guard let tableView, let scrollView, targetRow < tableView.numberOfRows else { return }
 
             // drop pinned to bottom so subsequent applyBlocks restore our
             // anchor instead of snapping back to bottom
@@ -1400,8 +1555,25 @@ extension MessageTableRepresentable {
 
             // Schedule an active-marker refresh after the animation settles so
             // the minimap highlights the newly visible turn.
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { [weak self] in
-                self?.scheduleVisibleUserTurnUpdate()
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { [weak self, weak tableView] in
+                guard let self else { return }
+                self.scheduleVisibleUserTurnUpdate()
+
+                // Row heights are measured lazily: scrolling to a row that
+                // was never materialized lands on its *estimated* rect, then
+                // the newly visible cells report real heights and shift the
+                // content out from under the target (this is why jumping to
+                // matches far outside the visible area missed). Re-measure
+                // after settling and correct, converging in a few passes.
+                guard let scrollView = self.scrollView, let tableView,
+                    targetRow < tableView.numberOfRows
+                else { return }
+                let settledRect = tableView.rect(ofRow: targetRow)
+                let settledY = scrollView.contentView.bounds.origin.y
+                let correctedTargetY = max(0, settledRect.origin.y - 12)
+                if abs(settledY - correctedTargetY) > 8, attempt < 3 {
+                    self.scrollToRow(targetRow, attempt: attempt + 1)
+                }
             }
         }
 

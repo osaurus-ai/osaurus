@@ -628,7 +628,11 @@ final class ConfigureAIState: ObservableObject {
         // downloading screen's inline failed card doesn't resurrect it while
         // the fresh attempt is spinning up. A repeat refusal sets a new alert.
         clearDownloadAlertForSelectedModel()
-        ModelManager.shared.downloadModel(model)
+        // Route through the onboarding-only Osaurus model download proxy: the user
+        // has no HF token yet, and anonymous throttling here is a measured
+        // onboarding drop-off driver. Any proxy failure silently falls back
+        // to the plain anonymous HF path.
+        ModelManager.shared.downloadModel(model, route: .onboardingProxy)
     }
 
     func pauseLocalDownload() {
@@ -1425,6 +1429,19 @@ struct ConfigureAIBody: View {
         .padding(.horizontal, 4)
     }
 
+    /// Whether the download is still in its pre-transfer window (manifest
+    /// fetch, identity probe, proxy resolves — ~10s on the proxy route):
+    /// actively downloading but not a single byte received yet. The card
+    /// shows a shimmering "Preparing to download…" label instead of a
+    /// zero-progress bar so the wait reads as activity, not a stall.
+    private var isPreparingDownload: Bool {
+        guard case .downloading = state.localDownloadState else { return false }
+        guard let model = state.selectedModel,
+            let received = modelManager.downloadMetrics[model.id]?.bytesReceived
+        else { return true }
+        return received == 0
+    }
+
     private var localDownloadProgressCard: some View {
         OnboardingGlassCard {
             VStack(alignment: .leading, spacing: 14) {
@@ -1447,20 +1464,31 @@ struct ConfigureAIBody: View {
                                 pausedPill
                             }
                         }
-                        Text(localProgressText)
-                            .font(theme.font(size: 11))
-                            .foregroundColor(theme.tertiaryText)
-                            .lineLimit(1)
+                        if isPreparingDownload {
+                            OnboardingShimmerLabel(
+                                text: L("Preparing to download…"),
+                                font: theme.font(size: 11),
+                                baseColor: theme.tertiaryText,
+                                highlightColor: theme.primaryText
+                            )
+                        } else {
+                            Text(localProgressText)
+                                .font(theme.font(size: 11))
+                                .foregroundColor(theme.tertiaryText)
+                                .lineLimit(1)
+                        }
                     }
                     Spacer(minLength: 0)
                     inlineDownloadControls
                 }
 
-                OnboardingShimmerBar(
-                    progress: state.localBarProgress,
-                    color: state.isLocalPaused ? theme.tertiaryText : theme.accentColor,
-                    height: 6
-                )
+                if !isPreparingDownload {
+                    OnboardingShimmerBar(
+                        progress: state.localBarProgress,
+                        color: state.isLocalPaused ? theme.tertiaryText : theme.accentColor,
+                        height: 6
+                    )
+                }
             }
             .padding(.horizontal, OnboardingMetrics.cardPaddingH)
             .padding(.vertical, OnboardingMetrics.cardPaddingV)

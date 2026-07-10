@@ -57,6 +57,14 @@ public actor OsaurusServer: Sendable {
 
     public init() {}
 
+    /// The port the server is actually bound to, or nil when stopped.
+    /// Meaningful for callers that bind port 0 (ephemeral) — the eval
+    /// harness does this so an in-process contract suite can never
+    /// collide with a user's running Osaurus on 1337.
+    public func boundPort() -> Int? {
+        channel?.localAddress?.port
+    }
+
     public func start(
         _ config: Config = .init(),
         serverConfiguration: ServerConfiguration = .default

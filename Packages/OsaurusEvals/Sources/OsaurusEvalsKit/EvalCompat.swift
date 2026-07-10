@@ -65,11 +65,27 @@ public struct ModelCompatibility: Codable, Sendable, Equatable {
     public var comparable: Bool { catalogHashes.count <= 1 }
 }
 
+/// One distinct machine that has contributed at least one run — the
+/// "comprehensive list of devices and sizes" axis of the crowdsourced
+/// leaderboard. Keyed by (chip, RAM): two M4 Pros with different RAM are
+/// different fit-envelopes and count as separate devices.
+public struct DeviceCoverage: Codable, Sendable, Equatable {
+    public let chip: String
+    public let totalRamMb: Int?
+    /// How many contribution columns came from this device shape.
+    public let contributions: Int
+    /// Distinct macOS versions seen on this device shape.
+    public let osVersions: [String]
+}
+
 /// The full crowdsourced leaderboard.
 public struct CompatibilityReport: Codable, Sendable, Equatable {
     public let generatedAt: String
     public let contributions: Int
     public let models: [ModelCompatibility]
+    /// Distinct contributing device shapes (chip × RAM). Optional so
+    /// pre-existing COMPATIBILITY.json files still decode.
+    public let devices: [DeviceCoverage]?
 
     public func toJSON(prettyPrinted: Bool = true) throws -> Data {
         let encoder = JSONEncoder()
@@ -109,6 +125,23 @@ public struct CompatibilityReport: Codable, Sendable, Equatable {
                 "| `\(Self.shortModel(m.model))` | \(verdict) | \(pass) | \(m.contributions) "
                     + "| \(chips) | \(ramBand) | \(peak) | \(decode) | \(builds) |"
             )
+        }
+        if let devices, !devices.isEmpty {
+            lines.append("")
+            lines.append("## Device coverage")
+            lines.append("")
+            lines.append(
+                "Distinct contributing machines (chip × RAM). Missing shapes are the "
+                    + "most valuable contributions — see `reports/community/README.md`."
+            )
+            lines.append("")
+            lines.append("| Chip | RAM | Contributions | macOS |")
+            lines.append("| --- | --- | --- | --- |")
+            for d in devices {
+                let ram = d.totalRamMb.map { "\(Int((Double($0) / 1024).rounded()))GB" } ?? "—"
+                let os = d.osVersions.isEmpty ? "—" : d.osVersions.joined(separator: ", ")
+                lines.append("| \(d.chip) | \(ram) | \(d.contributions) | \(os) |")
+            }
         }
         let caveats = models.filter { !$0.comparable || $0.hasSelfJudged }
         if !caveats.isEmpty {
@@ -178,8 +211,45 @@ public enum EvalCompatBuilder {
         return CompatibilityReport(
             generatedAt: generatedAt ?? isoNow(),
             contributions: matrices.count,
-            models: models
+            models: models,
+            devices: deviceCoverage(from: matrices)
         )
+    }
+
+    /// Group every contribution column by (chip, RAM) into the distinct-device
+    /// list. Columns without a chip are skipped (they already fail
+    /// `--validate`, so a merged contribution always lands here).
+    static func deviceCoverage(from matrices: [EvalMatrix]) -> [DeviceCoverage] {
+        struct Key: Hashable {
+            let chip: String
+            let ramMb: Int?
+        }
+        var byDevice: [Key: (count: Int, osVersions: [String])] = [:]
+        for matrix in matrices {
+            for col in matrix.models {
+                guard let env = col.environment, let chip = env.chip else { continue }
+                let key = Key(chip: chip, ramMb: env.totalRamMb)
+                var entry = byDevice[key] ?? (0, [])
+                entry.count += 1
+                if let os = env.osVersion, !entry.osVersions.contains(os) {
+                    entry.osVersions.append(os)
+                }
+                byDevice[key] = entry
+            }
+        }
+        return byDevice
+            .map { key, entry in
+                DeviceCoverage(
+                    chip: key.chip,
+                    totalRamMb: key.ramMb,
+                    contributions: entry.count,
+                    osVersions: entry.osVersions.sorted()
+                )
+            }
+            .sorted {
+                if $0.chip != $1.chip { return $0.chip < $1.chip }
+                return ($0.totalRamMb ?? 0) < ($1.totalRamMb ?? 0)
+            }
     }
 
     private static func aggregate(model: String, columns: [EvalMatrixModelColumn]) -> ModelCompatibility {

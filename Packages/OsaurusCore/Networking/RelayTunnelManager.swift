@@ -717,6 +717,13 @@ public final class RelayTunnelManager: ObservableObject {
     ) -> URLRequest? {
         guard let url = URL(string: "http://127.0.0.1:\(localPort)\(frame.path)") else { return nil }
         var request = URLRequest(url: url)
+        // Explicit ceiling for the loopback hop. `URLSession.shared` would
+        // otherwise apply its 60s idle default — too tight for long local
+        // generation/tool turns — while an unbounded value would let a wedged
+        // local handler pin the proxy task (and its in-flight slot) forever.
+        // One hour of *idleness* (the timer resets on every received byte) is
+        // far beyond any legitimate silent stretch of a local run.
+        request.timeoutInterval = 60 * 60
         request.httpMethod = frame.method
         for (key, value) in frame.headers {
             request.setValue(value, forHTTPHeaderField: key)

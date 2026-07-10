@@ -327,29 +327,37 @@ struct OsaurusEvalsCLI {
             let counts = report.counts
             if counts.failed + counts.errored > 0 { exitCode = max(exitCode, 1) }
 
-            // Optional opt-in stricter gate. Walks every case listed in
-            // `recall_floors.json`, recomputes the matched-name count
-            // against the case's fixture expectations, and trips a breach
-            // when matched < `minMatches`. Skipped cases (missing local
-            // plugin) are excluded — they're already a "didn't apply"
-            // signal, not a regression.
+            // Optional opt-in stricter gate over `floors.json`: (1) per-case
+            // recall floors — recomputes the matched-name count against the
+            // case's fixture expectations and trips a breach when matched <
+            // `minMatches` (skipped cases excluded: missing local plugin is a
+            // "didn't apply" signal, not a regression); (2) per-suite pass-rate
+            // floors for the deterministic token-free suites, where any
+            // failure is a code regression.
             if opts.failOnFloor {
                 let floorsURL =
                     opts.floorsPath.map { URL(fileURLWithPath: $0) }
                     ?? Self.defaultFloorsURL()
                 do {
                     let floors = try Self.loadFloors(from: floorsURL)
-                    let breaches = Self.computeFloorBreaches(
+                    var breaches = Self.computeFloorBreaches(
                         report: report,
                         suite: suite,
-                        floors: floors
+                        floors: floors.caseFloors
                     )
+                    if let suiteBreach = Self.computeSuitePassRateBreach(
+                        report: report,
+                        suiteName: suiteName,
+                        floors: floors
+                    ) {
+                        breaches.append(suiteBreach)
+                    }
                     if !breaches.isEmpty {
                         print("\n[floor breaches]")
                         for line in breaches { print("  - \(line)") }
                         exitCode = max(exitCode, 1)
                     } else {
-                        print("\n[floors] all listed cases met minMatches")
+                        print("\n[floors] all listed floors met")
                     }
                 } catch {
                     FileHandle.standardError.write(
@@ -417,33 +425,92 @@ struct OsaurusEvalsCLI {
     /// the user passes an absolute or repo-relative path explicitly;
     /// otherwise we assume the conventional checkout layout.
     static func defaultFloorsURL() -> URL {
-        URL(fileURLWithPath: "Packages/OsaurusEvals/Config/recall_floors.json")
+        URL(fileURLWithPath: "Packages/OsaurusEvals/Config/floors.json")
     }
 
-    /// Decode `recall_floors.json` into a domain → caseId → minMatches
-    /// map. Hand-rolled JSON walk so the `_comment` top-level key (and
-    /// any future doc/metadata keys) is silently skipped without a
-    /// custom `Decodable`.
-    static func loadFloors(from url: URL) throws -> [String: [String: Int]] {
+    /// Parsed shape of `floors.json`: per-case recall floors (domain →
+    /// caseId → minMatches) plus per-suite minimum pass rates (suite
+    /// directory name → rate in 0…1).
+    struct Floors {
+        let caseFloors: [String: [String: Int]]
+        let suitePassRates: [String: Double]
+    }
+
+    /// Decode `floors.json`. Hand-rolled JSON walk so the `_comment`
+    /// top-level key (and any future doc/metadata keys) is silently
+    /// skipped without a custom `Decodable`. Two accepted shapes:
+    ///   - general (current): `{ "suitePassRates": {…}, "caseFloors": {domain: {caseId: {minMatches}}} }`
+    ///   - legacy (recall_floors.json): `{domain: {caseId: {minMatches}}}` at the root
+    static func loadFloors(from url: URL) throws -> Floors {
         let data = try Data(contentsOf: url)
         let any = try JSONSerialization.jsonObject(with: data)
         guard let root = any as? [String: Any] else {
             throw CLIError.invalidValue("--floors", "root is not an object")
         }
-        var result: [String: [String: Int]] = [:]
-        for (domain, value) in root {
-            if domain.hasPrefix("_") { continue }
-            guard let cases = value as? [String: Any] else { continue }
-            var inner: [String: Int] = [:]
-            for (caseId, raw) in cases {
-                guard let entry = raw as? [String: Any] else { continue }
-                if let mm = entry["minMatches"] as? Int {
-                    inner[caseId] = mm
+
+        func decodeCaseFloors(_ object: [String: Any]) -> [String: [String: Int]] {
+            var result: [String: [String: Int]] = [:]
+            for (domain, value) in object {
+                if domain.hasPrefix("_") { continue }
+                guard let cases = value as? [String: Any] else { continue }
+                var inner: [String: Int] = [:]
+                for (caseId, raw) in cases {
+                    guard let entry = raw as? [String: Any] else { continue }
+                    if let mm = entry["minMatches"] as? Int {
+                        inner[caseId] = mm
+                    }
+                }
+                result[domain] = inner
+            }
+            return result
+        }
+
+        var suitePassRates: [String: Double] = [:]
+        if let rates = root["suitePassRates"] as? [String: Any] {
+            for (suiteName, raw) in rates {
+                if suiteName.hasPrefix("_") { continue }
+                if let rate = raw as? Double {
+                    suitePassRates[suiteName] = rate
+                } else if let rate = raw as? Int {
+                    suitePassRates[suiteName] = Double(rate)
                 }
             }
-            result[domain] = inner
         }
-        return result
+
+        let caseFloors: [String: [String: Int]]
+        if let nested = root["caseFloors"] as? [String: Any] {
+            caseFloors = decodeCaseFloors(nested)
+        } else {
+            // Legacy flat shape (pre-generalization recall_floors.json).
+            caseFloors = decodeCaseFloors(root)
+        }
+        return Floors(caseFloors: caseFloors, suitePassRates: suitePassRates)
+    }
+
+    /// Per-suite pass-rate gate: when the suite's directory name is
+    /// listed in `suitePassRates`, its pass rate over scoreable rows
+    /// (passed / (passed + failed + errored); skipped rows excluded)
+    /// must meet the floor. Suites not listed never breach — that's
+    /// what makes `--fail-on-floor` safe to pass on every run.
+    static func computeSuitePassRateBreach(
+        report: EvalReport,
+        suiteName: String,
+        floors: Floors
+    ) -> String? {
+        guard let floor = floors.suitePassRates[suiteName] else { return nil }
+        let counts = report.counts
+        let scoreable = counts.passed + counts.failed + counts.errored
+        guard scoreable > 0 else {
+            return "\(suiteName): floor \(floor) declared but no scoreable rows ran"
+        }
+        let rate = Double(counts.passed) / Double(scoreable)
+        if rate < floor {
+            return String(
+                format: "%@: pass rate %.3f (%d/%d) below suite floor %.3f",
+                suiteName, rate, counts.passed, scoreable, floor
+            )
+        }
+        return nil
     }
 
     /// Walk every (domain, caseId, minMatches) tuple in `floors` and
@@ -451,7 +518,11 @@ struct OsaurusEvalsCLI {
     /// count is below the floor. `skipped` outcomes never breach
     /// (different host, different installed plugins). Unknown case
     /// IDs are surfaced as breaches so a typo in the floor file
-    /// can't silently disable the gate.
+    /// can't silently disable the gate — but a whole domain is
+    /// skipped when the running suite contains NO cases of that
+    /// domain, so the case gate composes with the suite pass-rate
+    /// gate under an always-on `--fail-on-floor` (a Schema run must
+    /// not breach on absent capability_search ids).
     static func computeFloorBreaches(
         report: EvalReport,
         suite: EvalSuite,
@@ -464,7 +535,9 @@ struct OsaurusEvalsCLI {
         let rowsById = Dictionary(
             uniqueKeysWithValues: report.cases.map { ($0.id, $0) }
         )
+        let domainsInSuite = Set(suite.cases.map(\.domain))
         for (domain, floorByCaseId) in floors {
+            guard domainsInSuite.contains(domain) else { continue }
             for (caseId, minMatches) in floorByCaseId {
                 guard let caseDef = casesById[caseId] else {
                     breaches.append("\(caseId): not found in suite")
@@ -969,15 +1042,17 @@ struct OsaurusEvalsCLI {
                                       Capability-search rows only. Designed
                                       for copy-paste into the PR description
                                       during a sweep.
-                --floors <path>       Path to recall_floors.json. Defaults to
-                                      `Packages/OsaurusEvals/Config/recall_floors.json`
+                --floors <path>       Path to floors.json. Defaults to
+                                      `Packages/OsaurusEvals/Config/floors.json`
                                       when --fail-on-floor is set without
                                       --floors. No effect on its own.
-                --fail-on-floor       Opt-in stricter gate: also exit 1 on
-                                      any case in the floors file whose matched
-                                      count is below `minMatches`. Off by
-                                      default; CI wiring is deferred to the
-                                      post-fix PR.
+                --fail-on-floor       Stricter gate: also exit 1 on any case in
+                                      the floors file whose matched count is
+                                      below `minMatches`, and on any listed
+                                      suite whose pass rate is below its
+                                      `suitePassRates` floor. Unlisted suites/
+                                      domains are unaffected, so the make
+                                      targets pass this by default.
                 --startup-timeout <s> Wall-clock guard for startup bootstrap
                                       (installed plugins + search indices)
                                       before the first case runs. On timeout,

@@ -4,7 +4,12 @@ The core team can't run every model and quant on every Mac. This directory is
 how the **community** fills in the long tail: you run Osaurus's agentic eval
 suites against a model on **your** hardware and contribute the result. A
 maintainer folds every contribution into the [`../COMPATIBILITY.md`](../COMPATIBILITY.md)
-leaderboard.
+leaderboard, including a **Device coverage** table of every chip × RAM shape
+that has reported.
+
+> **Start here:** [`COMMUNITY_EVALS.md`](../../COMMUNITY_EVALS.md) at the repo
+> root is the end-to-end contributor guide (works for humans and coding
+> agents), including the `PR=1` one-command auto-submission flow.
 
 **One file per contribution.** Each contribution is a single self-contained
 JSON file (a cross-model `EvalMatrix` carrying a `RunEnvironment` provenance
@@ -23,7 +28,14 @@ MODEL=mlx-community/Qwen3-4B-4bit make evals-contribute
 
 This writes `reports/community/<chip>-<model>-<date>.json`, **validates** that
 it carries the provenance a trustworthy row needs, and prints the exact `git` +
-`gh pr create` commands. Open a PR with just that one file.
+`gh pr create` commands. Open a PR with just that one file — or let the script
+do it for you:
+
+```bash
+# Fully automatic: branch -> commit (only the one file) -> push (forks if
+# needed) -> gh pr create. Requires `gh auth login`.
+PR=1 MODEL=mlx-community/Qwen3-4B-4bit make evals-contribute
+```
 
 - **Remote models** (e.g. `xai/grok-4.3`) need the matching `<PREFIX>_API_KEY`.
 - **KV regime:** set `KV_REGIME=memory-only|disk-l2|paged` to record it.

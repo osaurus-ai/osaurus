@@ -1,0 +1,17 @@
+{
+  "id": "reasoning_channel.multi-turn-no-reasoning-echo",
+  "domain": "reasoning_channel",
+  "label": "reasoning channel • turn 2 summary must not verbatim-echo turn-1 private reasoning",
+  "query": "You have coins of 1, 5, and 12 cents. What is the minimum number of coins to make exactly 15 cents? Work it out carefully — greedy choice is a trap here.",
+  "notes": "The cross-turn privacy pin: turn 1 forces substantial hidden deliberation (the classic non-greedy coin problem, answer: three 5s), then turn 2 asks for a short recap. The built-in echo check fails the case if turn 2's visible text reproduces a ≥48-char span of turn 1's private reasoning verbatim — reasoning stays private even when the user asks about it. Off-CI (needs a model).",
+  "fixtures": {},
+  "expect": {
+    "reasoning": {
+      "followUpTurns": [
+        "In one sentence, what was the answer?"
+      ],
+      "maxTokens": 2048,
+      "visibleContains": ["3"]
+    }
+  }
+}

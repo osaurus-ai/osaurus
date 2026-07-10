@@ -10,9 +10,27 @@ import Foundation
 @MainActor
 enum ServerConfigurationStore {
     /// When set, configuration reads/writes use this directory instead of the default path.
-    static var overrideDirectory: URL?
+    /// Tests write config files directly after pointing this at a fixture
+    /// directory, so changing it drops the in-memory cache.
+    static var overrideDirectory: URL? {
+        didSet { cachedLoadResult = nil }
+    }
+
+    /// Memoized result of the last disk load. `load()` is called from hot
+    /// main-actor paths (theme resolution, `ModelRuntime` feasibility checks,
+    /// view bodies), and the uncached version re-read and re-decoded the JSON
+    /// file every call — under disk pressure that is a user-visible hang.
+    /// Double-optional: `.some(nil)` caches "no file on disk".
+    private static var cachedLoadResult: ServerConfiguration??
 
     static func load() -> ServerConfiguration? {
+        if let cached = cachedLoadResult { return cached }
+        let loaded = loadFromDisk()
+        cachedLoadResult = .some(loaded)
+        return loaded
+    }
+
+    private static func loadFromDisk() -> ServerConfiguration? {
         let url = configurationFileURL()
         guard FileManager.default.fileExists(atPath: url.path) else { return nil }
         do {
@@ -28,6 +46,7 @@ enum ServerConfigurationStore {
     }
 
     static func save(_ configuration: ServerConfiguration) {
+        cachedLoadResult = .some(configuration)
         let url = configurationFileURL()
         OsaurusPaths.ensureExistsSilent(url.deletingLastPathComponent())
         do {

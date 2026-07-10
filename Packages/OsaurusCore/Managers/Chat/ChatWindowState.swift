@@ -78,6 +78,11 @@ final class ChatWindowState: ObservableObject {
     /// the bar's close button or the Esc dismissal chain.
     @Published var isFindBarVisible: Bool = false
 
+    /// Bumped on every Cmd+F so the find bar re-focuses its text field even
+    /// when the bar is already visible (e.g. focus wandered back to the
+    /// composer). Monotonic counter; the value itself is meaningless.
+    @Published var findBarFocusRequestID: Int = 0
+
     // MARK: - Agent State
 
     @Published var agentId: UUID

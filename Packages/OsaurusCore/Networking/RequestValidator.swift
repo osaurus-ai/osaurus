@@ -24,7 +24,9 @@ public enum RequestValidator {
     /// human-readable explanation suitable for the 400 body.
     public static func unsupportedSamplerReason(
         n: Int?,
-        responseFormatType: String?
+        responseFormatType: String?,
+        logprobs: Bool? = nil,
+        topLogprobs: Int? = nil
     ) -> String? {
         if let n, n > 1 {
             return "Parameter 'n' > 1 is not supported. Submit one request per completion."
@@ -37,6 +39,15 @@ public enum RequestValidator {
                 return
                     "response_format type '\(type)' is not supported. Use 'json_object' for JSON mode."
             }
+        }
+        // Neither local MLX decode nor the remote provider proxy surfaces
+        // token log-probabilities; reject explicitly instead of returning a
+        // response that silently lacks the requested field.
+        if logprobs == true {
+            return "Parameter 'logprobs' is not supported."
+        }
+        if let topLogprobs, topLogprobs > 0 {
+            return "Parameter 'top_logprobs' is not supported."
         }
         return nil
     }

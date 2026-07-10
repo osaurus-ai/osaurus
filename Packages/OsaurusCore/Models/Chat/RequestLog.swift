@@ -26,10 +26,51 @@ struct ToolCallLog: Identifiable, Sendable {
     ) {
         self.id = id
         self.name = name
-        self.arguments = arguments
-        self.result = result
+        self.arguments = Self.redactedArguments(toolName: name, arguments: arguments)
+        self.result = Self.redactedResult(toolName: name, result: result)
         self.durationMs = durationMs
         self.isError = isError
+    }
+
+    private static func redactedArguments(toolName: String, arguments: String) -> String {
+        guard ToolRegistry.agentChannelToolNames.contains(toolName) else {
+            return arguments
+        }
+        guard let data = arguments.data(using: .utf8),
+            var object = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+        else {
+            return #"{ "redaction": "agent_channel_arguments_redacted" }"#
+        }
+
+        // Keep this in sync with any future Agent Channel free-text tool fields.
+        let sensitiveKeys: Set<String> = [
+            "body",
+            "content",
+            "message",
+            "query",
+            "reply",
+            "text",
+        ]
+        for key in Array(object.keys) where sensitiveKeys.contains(key.lowercased()) {
+            object[key] = "[REDACTED:AGENT_CHANNEL_MESSAGE_CONTENT]"
+        }
+        guard let redactedData = try? JSONSerialization.data(
+            withJSONObject: object,
+            options: [.sortedKeys]
+        ),
+            let redacted = String(data: redactedData, encoding: .utf8)
+        else {
+            return #"{ "redaction": "agent_channel_arguments_redacted" }"#
+        }
+        return redacted
+    }
+
+    private static func redactedResult(toolName: String, result: String?) -> String? {
+        guard ToolRegistry.agentChannelToolNames.contains(toolName) else {
+            return result
+        }
+        guard result != nil else { return nil }
+        return "[REDACTED:AGENT_CHANNEL_TOOL_RESULT]"
     }
 }
 
@@ -340,8 +381,7 @@ struct RequestLog: Identifiable, Sendable {
         guard let body = requestBody, let data = body.data(using: .utf8) else { return requestBody }
         if let json = try? JSONSerialization.jsonObject(with: data, options: []),
             let prettyData = try? JSONSerialization.data(withJSONObject: json, options: [.prettyPrinted, .sortedKeys]),
-            let prettyString = String(data: prettyData, encoding: .utf8)
-        {
+            let prettyString = String(data: prettyData, encoding: .utf8) {
             return prettyString
         }
         return body
@@ -352,8 +392,7 @@ struct RequestLog: Identifiable, Sendable {
         guard let body = responseBody, let data = body.data(using: .utf8) else { return responseBody }
         if let json = try? JSONSerialization.jsonObject(with: data, options: []),
             let prettyData = try? JSONSerialization.data(withJSONObject: json, options: [.prettyPrinted, .sortedKeys]),
-            let prettyString = String(data: prettyData, encoding: .utf8)
-        {
+            let prettyString = String(data: prettyData, encoding: .utf8) {
             return prettyString
         }
         return body
@@ -374,8 +413,7 @@ struct RequestLog: Identifiable, Sendable {
                 withJSONObject: json,
                 options: [.prettyPrinted, .sortedKeys]
             ),
-            let prettyString = String(data: prettyData, encoding: .utf8)
-        {
+            let prettyString = String(data: prettyData, encoding: .utf8) {
             return prettyString
         }
         return body
@@ -396,8 +434,7 @@ struct RequestLog: Identifiable, Sendable {
                 withJSONObject: json,
                 options: [.prettyPrinted, .sortedKeys]
             ),
-            let prettyString = String(data: prettyData, encoding: .utf8)
-        {
+            let prettyString = String(data: prettyData, encoding: .utf8) {
             return prettyString
         }
         return body

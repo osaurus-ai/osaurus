@@ -81,6 +81,25 @@ public struct AgentChannelStoredMessage: Codable, Sendable, Equatable, Identifia
     }
 }
 
+public struct AgentChannelStoredRoomSummary: Codable, Sendable, Equatable {
+    public let connectionId: String
+    public let roomId: String
+    public let messageCount: Int
+    public let latestReceivedAt: Date?
+
+    public init(
+        connectionId: String,
+        roomId: String,
+        messageCount: Int,
+        latestReceivedAt: Date?
+    ) {
+        self.connectionId = connectionId
+        self.roomId = roomId
+        self.messageCount = messageCount
+        self.latestReceivedAt = latestReceivedAt
+    }
+}
+
 public enum AgentChannelReceiveDisposition: String, Codable, Sendable, Equatable {
     case accepted
     case duplicate
@@ -651,7 +670,7 @@ public final class AgentChannelMessageStore: @unchecked Sendable {
             SELECT \(Self.messageColumns)
             FROM channel_messages
             WHERE connection_id = ?1 AND room_id = ?2
-            ORDER BY received_at DESC
+            ORDER BY received_at DESC, rowid DESC
             LIMIT ?3
             """,
             bind: { stmt in
@@ -687,7 +706,7 @@ public final class AgentChannelMessageStore: @unchecked Sendable {
             SELECT \(Self.messageColumns)
             FROM channel_messages
             \(whereClause)
-            ORDER BY received_at DESC
+            ORDER BY received_at DESC, rowid DESC
             LIMIT ?
             """,
             bind: { stmt in
@@ -754,6 +773,39 @@ public final class AgentChannelMessageStore: @unchecked Sendable {
             }
         )
         return count
+    }
+
+    public func roomSummaries(connectionId: String) throws -> [AgentChannelStoredRoomSummary] {
+        let connection = Self.normalizedId(connectionId)
+        var rows: [AgentChannelStoredRoomSummary] = []
+        try prepareAndExecute(
+            """
+            SELECT connection_id, room_id, COUNT(*), MAX(received_at)
+            FROM channel_messages
+            WHERE connection_id = ?1
+            GROUP BY connection_id, room_id
+            ORDER BY MAX(received_at) DESC
+            """,
+            bind: { stmt in
+                Self.bindText(stmt, index: 1, value: connection)
+            },
+            process: { stmt in
+                while sqlite3_step(stmt) == SQLITE_ROW {
+                    let latest = sqlite3_column_type(stmt, 3) == SQLITE_NULL
+                        ? nil
+                        : Date(timeIntervalSince1970: sqlite3_column_double(stmt, 3))
+                    rows.append(
+                        AgentChannelStoredRoomSummary(
+                            connectionId: Self.columnText(stmt, 0) ?? "",
+                            roomId: Self.columnText(stmt, 1) ?? "",
+                            messageCount: Int(sqlite3_column_int(stmt, 2)),
+                            latestReceivedAt: latest
+                        )
+                    )
+                }
+            }
+        )
+        return rows
     }
 
     @discardableResult
@@ -1104,7 +1156,7 @@ public final class AgentChannelMessageStore: @unchecked Sendable {
                   SELECT rowid
                   FROM channel_messages
                   WHERE connection_id = ?1 AND room_id = ?2
-                  ORDER BY received_at DESC
+                  ORDER BY received_at DESC, rowid DESC
                   LIMIT ?3
               )
             """

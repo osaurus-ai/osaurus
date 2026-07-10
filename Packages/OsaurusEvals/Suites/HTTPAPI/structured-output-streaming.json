@@ -1,0 +1,22 @@
+{
+  "id": "http_api.structured-output-streaming",
+  "domain": "http_api",
+  "label": "http api • json_object mode over SSE: joined deltas parse and validate",
+  "query": "Return a JSON object with exactly two keys: \"city\" (a string) and \"population\" (an integer) for any real city. Output only the JSON object.",
+  "notes": "The streaming half of the structured-output contract: JSON mode must survive chunked SSE delivery — the concatenated content deltas (not any single chunk) must parse as one JSON object and validate against the schema, and the stream must still terminate with [DONE]. Off-CI (needs a model).",
+  "fixtures": {},
+  "expect": {
+    "httpAPI": {
+      "scenario": "structured_output_stream",
+      "maxTokens": 256,
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "city": { "type": "string" },
+          "population": { "type": "integer" }
+        },
+        "required": ["city", "population"]
+      }
+    }
+  }
+}

@@ -225,6 +225,13 @@ private extension OsaurusTool {
                 return ToolEnvelope.failure(kind: .invalidArgs, message: error.localizedDescription, tool: tool)
             case .chatNotReadable, .chatNotWritable, .writeDisabled:
                 return ToolEnvelope.failure(kind: .rejected, message: error.localizedDescription, tool: tool)
+            case .sendBackpressure:
+                return ToolEnvelope.failure(
+                    kind: .unavailable,
+                    message: error.localizedDescription,
+                    tool: tool,
+                    retryable: true
+                )
             case .notConfigured, .messageStoreUnavailable:
                 return ToolEnvelope.failure(
                     kind: .unavailable,

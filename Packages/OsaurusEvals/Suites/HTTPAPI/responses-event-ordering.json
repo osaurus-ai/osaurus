@@ -1,0 +1,14 @@
+{
+  "id": "http_api.responses-event-ordering",
+  "domain": "http_api",
+  "label": "http api • /v1/responses stream: created before deltas before completed",
+  "query": "Name two planets in our solar system.",
+  "notes": "The /v1/responses ordering contract: the event stream must open with response.created, deliver at least one output/delta event, and close with response.completed — strictly in that order, with no post-completed events. Off-CI (needs a model).",
+  "fixtures": {},
+  "expect": {
+    "httpAPI": {
+      "scenario": "responses_ordering",
+      "maxTokens": 128
+    }
+  }
+}

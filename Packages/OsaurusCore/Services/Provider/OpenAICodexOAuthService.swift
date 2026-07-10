@@ -513,7 +513,11 @@ public enum OpenAICodexOAuthService {
         }
 
         do {
-            return try await server.waitForCallback()
+            // Bounded wait: an abandoned browser tab must not pin this task
+            // (and the fixed loopback port) forever.
+            return try await server.waitForCallback(
+                timeout: OAuthLoopbackServer.defaultSignInTimeout
+            )
         } catch let error as OAuthLoopbackError {
             throw mapLoopbackError(error)
         } catch {

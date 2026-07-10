@@ -2441,7 +2441,11 @@ extension FloatingInputCard {
 
     private var isSelectedModelLocal: Bool {
         guard let id = selectedModel else { return false }
-        return ModelManager.findInstalledModel(named: id) != nil
+        // Cache-only lookup: this getter runs in view-body context (and on
+        // every 2s memory tick via `refreshLoadFeasibility`), where the
+        // blocking `findInstalledModel(named:)` can park on a cold-cache
+        // disk scan for seconds and hang the app.
+        return ModelManager.findInstalledMLXModelFromCache(named: id) != nil
     }
 
     private var modelWarmupDotColor: Color {
@@ -3575,16 +3579,27 @@ extension FloatingInputCard {
         let usage = "\(ramBannerUsagePercent)"
         let total = "\(ramBannerTotalGB)"
 
-        let message: Text =
-            blocked
-            ? Text(
+        // Over the GPU budget, no amount of freed RAM helps: the working set is
+        // a fixed fraction of installed memory. Say so instead of offering
+        // advice that cannot work.
+        let message: Text
+        if feasibility.exceedsGPUBudget {
+            let budgetGB = Self.formatGigabytes(feasibility.gpuBudgetBytes)
+            message = Text(
+                "This model needs ~\(neededGB) GB, but this Mac can only keep ~\(budgetGB) GB on the GPU. macOS will page the weights and generation will be extremely slow — pick a smaller model or a lower-precision build.",
+                bundle: .module
+            )
+        } else if blocked {
+            message = Text(
                 "This model needs ~\(neededGB) GB to load, but memory is at \(usage)% of \(total) GB. Sending is paused until memory frees — close other apps or pick a smaller model.",
                 bundle: .module
             )
-            : Text(
+        } else {
+            message = Text(
                 "This model needs ~\(neededGB) GB to load and memory is at \(usage)% of \(total) GB. Close other apps for best performance.",
                 bundle: .module
             )
+        }
 
         // One continuous popover silhouette: the rounded rect and the pointer
         // triangle are a single shape, so the fill and the border flow around

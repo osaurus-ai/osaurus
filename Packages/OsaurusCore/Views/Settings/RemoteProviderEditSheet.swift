@@ -2639,21 +2639,35 @@ struct HeaderEntry: Identifiable {
     var value: String
     var isSecret: Bool
 
-    /// Build a flat dictionary of non-empty headers.
+    /// Build a flat dictionary of non-empty headers. Entries whose name or
+    /// value contains CR/LF or other control characters are dropped so a
+    /// malformed header can't be persisted (and later crash or split the
+    /// upstream request); the wire layer enforces the same rule.
     static func buildHeaders(from entries: [HeaderEntry]) -> [String: String] {
         var headers: [String: String] = [:]
-        for entry in entries where !entry.key.isEmpty && !entry.value.isEmpty {
+        for entry in entries
+        where !entry.key.isEmpty && !entry.value.isEmpty
+            && RemoteProviderService.isSafeHeader(name: entry.key, value: entry.value)
+        {
             headers[entry.key] = entry.value
         }
         return headers
     }
 
     /// Partition entries into regular headers dict and secret key names.
+    /// Secret values live in Keychain, so only the name is validated for
+    /// secret entries; regular entries validate both name and value.
     static func partition(_ entries: [HeaderEntry]) -> (regular: [String: String], secretKeys: [String]) {
         var regular: [String: String] = [:]
         var secretKeys: [String] = []
         for entry in entries where !entry.key.isEmpty {
-            if entry.isSecret { secretKeys.append(entry.key) } else { regular[entry.key] = entry.value }
+            if entry.isSecret {
+                if RemoteProviderService.isSafeHeader(name: entry.key, value: "") {
+                    secretKeys.append(entry.key)
+                }
+            } else if RemoteProviderService.isSafeHeader(name: entry.key, value: entry.value) {
+                regular[entry.key] = entry.value
+            }
         }
         return (regular, secretKeys)
     }

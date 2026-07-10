@@ -5,13 +5,21 @@ enum OsaurusRouter {
     static let stagingBaseURL = URL(string: "https://osaurus-router.fly.dev")!
 
     static var defaultBaseURL: URL {
-        if let override = UserDefaults.standard.string(forKey: "ai.osaurus.router.baseURL"),
-            let url = URL(string: override.trimmingCharacters(in: .whitespacesAndNewlines)),
-            url.scheme != nil,
-            url.host != nil
-        {
-            return url
-        }
+        // The UserDefaults override exists for staging/local Router testing
+        // only. Router requests are master-key-signed and credit-billed, so
+        // in release builds a writable base URL would let anything that can
+        // write this process's defaults (e.g. `defaults write`) redirect
+        // signed spend to an arbitrary host. DEBUG-only, hard-locked to
+        // production otherwise.
+        #if DEBUG
+            if let override = UserDefaults.standard.string(forKey: "ai.osaurus.router.baseURL"),
+                let url = URL(string: override.trimmingCharacters(in: .whitespacesAndNewlines)),
+                url.scheme != nil,
+                url.host != nil
+            {
+                return url
+            }
+        #endif
         return productionBaseURL
     }
 
@@ -31,6 +39,27 @@ enum OsaurusRouter {
     /// Persist the user's master on/off choice for the Osaurus Router.
     static func setEnabled(_ enabled: Bool) {
         UserDefaults.standard.set(enabled, forKey: enabledDefaultsKey)
+    }
+
+    /// UserDefaults key backing the opt-in that lets *key-less* loopback API
+    /// callers route requests through the Osaurus Router.
+    static let allowUnkeyedLoopbackSpendDefaultsKey =
+        "ai.osaurus.router.allowUnkeyedLoopbackSpend"
+
+    /// Whether local (loopback) HTTP callers that did not present a valid
+    /// access key may route requests to the Osaurus Router. Router requests
+    /// are signed with the user's master key and spend real credits, so this
+    /// defaults to `false`: without the opt-in, any local process could spend
+    /// the user's balance through the unauthenticated loopback API. Keyed
+    /// callers (valid `Authorization: Bearer <access key>`) are always
+    /// allowed.
+    static var allowsUnkeyedLoopbackSpend: Bool {
+        UserDefaults.standard.bool(forKey: allowUnkeyedLoopbackSpendDefaultsKey)
+    }
+
+    /// Persist the user's explicit opt-in for key-less loopback Router spend.
+    static func setAllowsUnkeyedLoopbackSpend(_ allowed: Bool) {
+        UserDefaults.standard.set(allowed, forKey: allowUnkeyedLoopbackSpendDefaultsKey)
     }
 
     static let minimumTopUpMicro = 5_000_000

@@ -1,0 +1,16 @@
+{
+  "id": "http_api.typed-error-unknown-model",
+  "domain": "http_api",
+  "label": "http api • unknown model id returns a typed JSON error, not garbage",
+  "query": "Say hello.",
+  "notes": "The unavailable-resource contract: requesting a model that does not exist on the host must produce a typed JSON error envelope (4xx/5xx with an error object naming the model problem) — never a hang, never an empty 200, never an unstructured body. Deterministic; no generation happens.",
+  "fixtures": {},
+  "expect": {
+    "httpAPI": {
+      "scenario": "typed_error",
+      "body": { "model": "definitely-not-a-real-model-xyz-9000" },
+      "expectStatus": 404,
+      "errorContains": ["model"]
+    }
+  }
+}

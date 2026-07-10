@@ -1,0 +1,27 @@
+{
+  "id": "frontier.constraint-retention-no-redo",
+  "domain": "agent_loop",
+  "label": "frontier • 'never re-read' discipline holds even after history is compacted",
+  "query": "Discipline for this task: never read the same file twice — rely on what you already noted. Read these four large data files in order (data1.csv, data2.csv, data3.csv, data4.csv), stating after each whether it looks like commit data, then create verdict.txt saying whether all four were the same kind of data.",
+  "notes": "Retention of a no-redundant-work constraint under compaction: once early reads age out of the window, a model that lost the 'never re-read' rule tends to re-read files to reground — exactly the waste the constraint forbids. maxToolCalls caps total processed calls just above the four legitimate reads plus the final write, so a compaction-induced re-read trips the ceiling. verdict.txt must still be produced. Off-CI (needs a model).",
+  "fixtures": {
+    "workspaceFiles": [
+      { "path": "data1.csv", "contentsFromFixture": "commits-500.csv" },
+      { "path": "data2.csv", "contentsFromFixture": "commits-500.csv" },
+      { "path": "data3.csv", "contentsFromFixture": "commits-500.csv" },
+      { "path": "data4.csv", "contentsFromFixture": "commits-500.csv" }
+    ]
+  },
+  "expect": {
+    "agentLoop": {
+      "maxIterations": 12,
+      "contextWindowOverride": 24000,
+      "expectCompaction": true,
+      "maxToolCalls": 6,
+      "noDuplicateExecutedCalls": true,
+      "files": [
+        { "path": "verdict.txt", "exists": true }
+      ]
+    }
+  }
+}

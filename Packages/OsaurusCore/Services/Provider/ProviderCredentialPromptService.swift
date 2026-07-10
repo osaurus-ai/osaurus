@@ -54,19 +54,28 @@ public struct ProviderCredentialRequest: Sendable {
     public let providerName: String
     public let mode: ProviderCredentialPromptMode
     public let instructions: ProviderCredentialInstructions
+    /// Non-secret extra fields (e.g. `host`) the sheet should pre-populate
+    /// so the user *sees and tests* the endpoint the credentials will be
+    /// sent to. This is how a tool-supplied host override reaches the user
+    /// for approval instead of being applied silently after the sheet
+    /// closes (the bait-and-switch this closes). Keyed by the catalog field
+    /// id, matching `instructions.extraFields`.
+    public let prefilledExtraFields: [String: String]
 
     /// Preset-keyed primary path. Derives `providerType` and `instructions`
     /// from the preset. Pass this from new callers.
     public init(
         preset: ProviderPreset,
         providerName: String,
-        mode: ProviderCredentialPromptMode
+        mode: ProviderCredentialPromptMode,
+        prefilledExtraFields: [String: String] = [:]
     ) {
         self.preset = preset
         self.providerType = preset.configuration.providerType
         self.providerName = providerName
         self.mode = mode
         self.instructions = ProviderCredentialInstructionsCatalog.entry(for: preset)
+        self.prefilledExtraFields = prefilledExtraFields
     }
 
     /// Legacy entry for callers that only have a `RemoteProviderType` (the
@@ -79,8 +88,10 @@ public struct ProviderCredentialRequest: Sendable {
     public init(
         providerType: RemoteProviderType,
         providerName: String,
-        mode: ProviderCredentialPromptMode
+        mode: ProviderCredentialPromptMode,
+        prefilledExtraFields: [String: String] = [:]
     ) {
+        self.prefilledExtraFields = prefilledExtraFields
         if providerType == .osaurus {
             self.preset = nil
             self.providerType = .osaurus
@@ -113,8 +124,10 @@ public struct ProviderCredentialRequest: Sendable {
     public init(
         provider: RemoteProvider,
         providerName: String,
-        mode: ProviderCredentialPromptMode
+        mode: ProviderCredentialPromptMode,
+        prefilledExtraFields: [String: String] = [:]
     ) {
+        self.prefilledExtraFields = prefilledExtraFields
         if provider.providerType == .osaurus {
             self.preset = nil
             self.providerType = .osaurus

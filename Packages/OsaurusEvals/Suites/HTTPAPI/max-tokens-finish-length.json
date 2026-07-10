@@ -1,0 +1,14 @@
+{
+  "id": "http_api.max-tokens-finish-length",
+  "domain": "http_api",
+  "label": "http api • tiny max_tokens truncates with finish_reason length",
+  "query": "Tell me the full story of the three little pigs in as much detail as you can.",
+  "notes": "The truncation contract: a story prompt that cannot possibly complete in 16 tokens must come back truncated with finish_reason 'length' (never 'stop', never an error). Also pins that usage.completion_tokens respects the cap. Off-CI (needs a model).",
+  "fixtures": {},
+  "expect": {
+    "httpAPI": {
+      "scenario": "max_tokens_length",
+      "maxTokens": 16
+    }
+  }
+}

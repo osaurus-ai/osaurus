@@ -23,6 +23,7 @@ struct CreditsView: View {
     @State private var showTopUpSheet = false
     @State private var showDisableRouterConfirm = false
     @State private var showRouterUsageCenter = false
+    @State private var allowUnkeyedLoopbackSpend = OsaurusRouter.allowsUnkeyedLoopbackSpend
 
     /// User master switch state. When off, the Credits screen hides the
     /// balance/activity cards (the router is no longer polled) and shows the
@@ -49,6 +50,9 @@ struct CreditsView: View {
                         routerOffCard
                     }
                     routerToggleFooter
+                    if routerEnabled {
+                        localAPISpendFooter
+                    }
                 }
                 .padding(.horizontal, 24)
                 .padding(.vertical, 24)
@@ -202,6 +206,44 @@ struct CreditsView: View {
                 .tint(theme.accentColor)
         }
         .padding(.top, 8)
+    }
+
+    /// Opt-in for key-less loopback Router spend. Off by default so a local
+    /// process can't spend credits through the unauthenticated loopback API;
+    /// callers with a valid access key are always allowed regardless.
+    private var localAPISpendFooter: some View {
+        HStack(alignment: .center, spacing: 12) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Allow local API access without a key", bundle: .module)
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundColor(theme.secondaryText)
+                Text(
+                    "Lets local processes route requests through the Osaurus Router (spending credits) via the HTTP API without an access key. Keep this off unless you trust every process on this Mac.",
+                    bundle: .module
+                )
+                .font(.system(size: 11))
+                .foregroundColor(theme.tertiaryText)
+                .fixedSize(horizontal: false, vertical: true)
+            }
+
+            Spacer(minLength: 12)
+
+            Toggle(
+                "",
+                isOn: Binding(
+                    get: { allowUnkeyedLoopbackSpend },
+                    set: { newValue in
+                        allowUnkeyedLoopbackSpend = newValue
+                        OsaurusRouter.setAllowsUnkeyedLoopbackSpend(newValue)
+                    }
+                )
+            )
+            .labelsHidden()
+            .toggleStyle(.switch)
+            .controlSize(.small)
+            .tint(theme.accentColor)
+        }
+        .padding(.top, 4)
     }
 
     /// Drives the footer switch. Enabling is immediate; disabling defers to the

@@ -343,7 +343,9 @@ struct SearchView: View {
                 ForEach(Array(outcome.hits.prefix(5).enumerated()), id: \.offset) { _, hit in
                     VStack(alignment: .leading, spacing: 2) {
                         Button {
-                            if let url = URL(string: hit.url) { NSWorkspace.shared.open(url) }
+                            if let url = URL(string: hit.url) {
+                                NSWorkspace.shared.open(url, configuration: NSWorkspace.OpenConfiguration())
+                            }
                         } label: {
                             Text(hit.title.isEmpty ? hit.url : hit.title)
                                 .font(.system(size: 12, weight: .medium))
@@ -1436,7 +1438,11 @@ private struct SearchProviderConnectSheet: View {
 
             if let signup = definition.signupURL, let url = URL(string: signup) {
                 Button {
-                    NSWorkspace.shared.open(url)
+                    // The no-configuration overload round-trips to
+                    // LaunchServices over blocking XPC and has hung the main
+                    // thread for seconds; the completion-handler variant
+                    // returns immediately.
+                    NSWorkspace.shared.open(url, configuration: NSWorkspace.OpenConfiguration())
                 } label: {
                     HStack(spacing: 6) {
                         Image(systemName: "safari")

@@ -3,8 +3,8 @@
 //  osaurusTests
 //
 //  Pins the in-conversation find bar's match logic: role filtering,
-//  case-insensitive matching, current-match preservation across streaming
-//  recomputes, and wraparound navigation.
+//  case-insensitive matching, per-occurrence navigation, current-match
+//  preservation across streaming recomputes, and wraparound navigation.
 //
 
 import Foundation
@@ -32,9 +32,41 @@ struct ChatFindMatcherTests {
             previous: ChatFindState(),
             preserveCurrentMatch: false
         )
-        #expect(state.matchTurnIds == [turns[0].id, turns[1].id, turns[3].id])
+        #expect(
+            state.matches == [
+                ChatFindMatch(turnId: turns[0].id, occurrence: 0),
+                ChatFindMatch(turnId: turns[1].id, occurrence: 0),
+                ChatFindMatch(turnId: turns[3].id, occurrence: 0),
+            ])
         #expect(state.matchIndex == 0)
-        #expect(jumpTo == turns[0].id)
+        #expect(jumpTo == ChatFindMatch(turnId: turns[0].id, occurrence: 0))
+    }
+
+    @Test func everyOccurrenceInATurnIsItsOwnMatch() {
+        let turns = [
+            ChatTurn(role: .user, content: "notch"),
+            ChatTurn(role: .assistant, content: "Notch notch NOTCH."),
+        ]
+        let (state, _) = ChatFindMatcher.recompute(
+            query: "notch",
+            turns: turns,
+            previous: ChatFindState(),
+            preserveCurrentMatch: false
+        )
+        #expect(
+            state.matches == [
+                ChatFindMatch(turnId: turns[0].id, occurrence: 0),
+                ChatFindMatch(turnId: turns[1].id, occurrence: 0),
+                ChatFindMatch(turnId: turns[1].id, occurrence: 1),
+                ChatFindMatch(turnId: turns[1].id, occurrence: 2),
+            ])
+    }
+
+    @Test func occurrenceCountIsNonOverlapping() {
+        #expect(ChatFindMatcher.occurrenceCount(of: "aa", in: "aaaa") == 2)
+        #expect(ChatFindMatcher.occurrenceCount(of: "notch", in: "no notch here") == 1)
+        #expect(ChatFindMatcher.occurrenceCount(of: "x", in: "") == 0)
+        #expect(ChatFindMatcher.occurrenceCount(of: "", in: "abc") == 0)
     }
 
     @Test func ignoresNonConversationRoles() {
@@ -49,12 +81,13 @@ struct ChatFindMatcherTests {
             previous: ChatFindState(),
             preserveCurrentMatch: false
         )
-        #expect(state.matchTurnIds == [turns[2].id])
+        #expect(state.matches == [ChatFindMatch(turnId: turns[2].id, occurrence: 0)])
     }
 
     @Test func blankQueryClearsState() {
         let turns = makeTurns()
-        let previous = ChatFindState(matchTurnIds: [turns[0].id], matchIndex: 0)
+        let previous = ChatFindState(
+            matches: [ChatFindMatch(turnId: turns[0].id, occurrence: 0)], matchIndex: 0)
         for query in ["", "   ", "\n"] {
             let (state, jumpTo) = ChatFindMatcher.recompute(
                 query: query,
@@ -74,7 +107,7 @@ struct ChatFindMatcherTests {
             previous: ChatFindState(),
             preserveCurrentMatch: false
         )
-        #expect(state.matchTurnIds.isEmpty)
+        #expect(state.matches.isEmpty)
         #expect(state.matchIndex == 0)
         #expect(jumpTo == nil)
     }
@@ -98,15 +131,43 @@ struct ChatFindMatcherTests {
             previous: state,
             preserveCurrentMatch: true
         )
-        // Current match (turns[1]) survives at the same position; no jump.
-        #expect(recomputed.matchTurnIds.count == 4)
-        #expect(recomputed.matchTurnIds[recomputed.matchIndex] == turns[1].id)
+        // Current match (turns[1], first occurrence) survives at the same
+        // position; no jump.
+        #expect(recomputed.matches.count == 4)
+        #expect(
+            recomputed.matches[recomputed.matchIndex]
+                == ChatFindMatch(turnId: turns[1].id, occurrence: 0))
+        #expect(jumpTo == nil)
+    }
+
+    @Test func preservesCurrentOccurrenceWithinATurn() {
+        var turns = [ChatTurn(role: .assistant, content: "notch and notch")]
+        var (state, _) = ChatFindMatcher.recompute(
+            query: "notch",
+            turns: turns,
+            previous: ChatFindState(),
+            preserveCurrentMatch: false
+        )
+        (state, _) = ChatFindMatcher.advance(state, by: 1)
+        #expect(state.matches[state.matchIndex].occurrence == 1)
+
+        // Streaming grows the same turn — the second occurrence stays current.
+        turns[0].content += " plus a third notch"
+        let (recomputed, jumpTo) = ChatFindMatcher.recompute(
+            query: "notch",
+            turns: turns,
+            previous: state,
+            preserveCurrentMatch: true
+        )
+        #expect(recomputed.matches.count == 3)
+        #expect(recomputed.matches[recomputed.matchIndex].occurrence == 1)
         #expect(jumpTo == nil)
     }
 
     @Test func resetsToFirstWhenCurrentMatchDisappears() {
         let turns = makeTurns()
-        let gone = ChatFindState(matchTurnIds: [UUID()], matchIndex: 0)
+        let gone = ChatFindState(
+            matches: [ChatFindMatch(turnId: UUID(), occurrence: 0)], matchIndex: 0)
         let (state, jumpTo) = ChatFindMatcher.recompute(
             query: "notch",
             turns: turns,
@@ -114,30 +175,31 @@ struct ChatFindMatcherTests {
             preserveCurrentMatch: true
         )
         #expect(state.matchIndex == 0)
-        #expect(state.matchTurnIds.first == turns[0].id)
+        #expect(state.matches.first == ChatFindMatch(turnId: turns[0].id, occurrence: 0))
         // Preserving recomputes never jump, even after a reset.
         #expect(jumpTo == nil)
     }
 
     @Test func advanceWrapsBothDirections() {
-        let ids = [UUID(), UUID(), UUID()]
-        var state = ChatFindState(matchTurnIds: ids, matchIndex: 0)
+        let turnId = UUID()
+        let matches = (0..<3).map { ChatFindMatch(turnId: turnId, occurrence: $0) }
+        var state = ChatFindState(matches: matches, matchIndex: 0)
 
-        var jumpTo: UUID?
+        var jumpTo: ChatFindMatch?
         (state, jumpTo) = ChatFindMatcher.advance(state, by: 1)
         #expect(state.matchIndex == 1)
-        #expect(jumpTo == ids[1])
+        #expect(jumpTo == matches[1])
 
         (state, jumpTo) = ChatFindMatcher.advance(state, by: 1)
         (state, jumpTo) = ChatFindMatcher.advance(state, by: 1)
         // Wrapped past the end back to the first match.
         #expect(state.matchIndex == 0)
-        #expect(jumpTo == ids[0])
+        #expect(jumpTo == matches[0])
 
         (state, jumpTo) = ChatFindMatcher.advance(state, by: -1)
         // Wrapped backwards from the first match to the last.
         #expect(state.matchIndex == 2)
-        #expect(jumpTo == ids[2])
+        #expect(jumpTo == matches[2])
     }
 
     @Test func advanceOnEmptyStateIsANoOp() {

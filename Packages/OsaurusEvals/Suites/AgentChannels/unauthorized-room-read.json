@@ -1,0 +1,16 @@
+{
+  "id": "agent_channels.unauthorized-room-read",
+  "domain": "agent_channels",
+  "label": "agent channels • read against a non-allowlisted room is rejected and stores nothing",
+  "query": "deterministic policy pin — no model involved",
+  "notes": "First of the four cases this suite's README specified: seed a Slack connection with one readable channel, then drive agent_channel_read_messages at a DIFFERENT channel id. The real connection service must reject (not-allowlisted) before the fake provider client is ever asked, and the message store must gain zero rows for the denied room. CI-safe: fake clients, isolated stores, no network, no model.",
+  "fixtures": {},
+  "expect": {
+    "agentChannels": {
+      "scenario": "unauthorized_room_read",
+      "provider": "slack",
+      "allowedRoomIds": ["C-ALLOWED-001"],
+      "deniedRoomId": "C-DENIED-999"
+    }
+  }
+}
