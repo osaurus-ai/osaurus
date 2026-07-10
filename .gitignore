@@ -176,3 +176,5 @@ App/osaurus/Secrets.xcconfig
 # `local/` dir stays local. Committed synthetic fixtures live alongside it in
 # Packages/OsaurusEvals/Fixtures/ScreenContext/*.json.
 Packages/OsaurusEvals/Fixtures/ScreenContext/local/
+# Local debug output — /tmp contents are never committed.
+tmp/

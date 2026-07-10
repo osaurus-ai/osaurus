@@ -6832,10 +6832,6 @@ extension ChatView {
     }
 
     private func scrollToFindMatch(_ match: ChatFindMatch) {
-        FindDebugLog.log(
-            "[ChatView] jump request: matchIndex=\(findMatchIndex)/\(findMatches.count) "
-                + "turn=\(match.turnId) occurrence=\(match.occurrence) trigger=\(scrollToTurnTrigger &+ 1)"
-        )
         scrollToTurnId = match.turnId
         scrollToFindOccurrence = match.occurrence
         scrollToTurnTrigger &+= 1

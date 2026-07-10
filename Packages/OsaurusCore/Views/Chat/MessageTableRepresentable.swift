@@ -1450,9 +1450,6 @@ extension MessageTableRepresentable {
         func scrollToFindMatch(turnId: UUID, occurrence: Int) {
             let query = ctx.searchHighlightQuery
             guard !query.isEmpty else {
-                FindDebugLog.log(
-                    "[Coordinator] scrollToFindMatch turn=\(turnId) occ=\(occurrence): "
-                        + "EMPTY QUERY in ctx — falling back to scrollToTurn")
                 scrollToTurn(turnId)
                 return
             }
@@ -1462,14 +1459,8 @@ extension MessageTableRepresentable {
                     let text = block.searchableText
                 else { continue }
                 let count = ChatFindMatcher.occurrenceCount(of: query, in: text)
-                FindDebugLog.log(
-                    "[Coordinator] scanning block=\(blockId) occurrences=\(count) "
-                        + "running=\(running) target=\(occurrence) textLen=\(text.count)")
                 if occurrence < running + count {
                     if let row = blockIds.firstIndex(of: blockId) {
-                        FindDebugLog.log(
-                            "[Coordinator] matched block=\(blockId) row=\(row) "
-                                + "localOccurrence=\(occurrence - running)")
                         scrollToOccurrence(row: row, localOccurrence: occurrence - running)
                         return
                     }
@@ -1477,10 +1468,6 @@ extension MessageTableRepresentable {
                 }
                 running += count
             }
-            FindDebugLog.log(
-                "[Coordinator] occurrence \(occurrence) NOT mapped to a block "
-                    + "(turn total from blocks=\(running), query=\"\(query)\") — "
-                    + "falling back to scrollToTurn")
             scrollToTurn(turnId)
         }
 
@@ -1505,9 +1492,6 @@ extension MessageTableRepresentable {
                 // of only scrolling when the hit would otherwise be missed.
                 let comfortZone = clipBounds.insetBy(dx: 0, dy: 48)
                 if comfortZone.contains(rectInTable) {
-                    FindDebugLog.log(
-                        "[Coordinator] scrollToOccurrence(row:\(row) local:\(localOccurrence)) "
-                            + "rect=\(rectInTable) already visible in \(clipBounds) — no scroll")
                     return
                 }
                 scrollAnchor.unpinFromBottom()
@@ -1515,10 +1499,6 @@ extension MessageTableRepresentable {
                 let maxY = max(0, tableView.bounds.height - clipBounds.height)
                 // Land the match around the upper third of the viewport.
                 let targetY = min(maxY, max(0, rectInTable.midY - clipBounds.height * 0.35))
-                FindDebugLog.log(
-                    "[Coordinator] scrollToOccurrence(row:\(row) local:\(localOccurrence)) "
-                        + "attempt=\(attempt) rect=\(rectInTable) targetY=\(targetY) "
-                        + "beforeY=\(clipBounds.origin.y) maxY=\(maxY)")
                 NSAnimationContext.runAnimationGroup { ctx in
                     ctx.duration = 0.22
                     ctx.allowsImplicitAnimation = true
@@ -1533,10 +1513,6 @@ extension MessageTableRepresentable {
                 return
             }
 
-            FindDebugLog.log(
-                "[Coordinator] scrollToOccurrence(row:\(row) local:\(localOccurrence)) "
-                    + "attempt=\(attempt): cell not materialized or rect nil — "
-                    + (attempt < 2 ? "scrolling to row and retrying" : "giving up at row top"))
             scrollToRow(row)
             guard attempt < 2 else { return }
             // Row-top scroll materializes the cell (and its highlight pass);
@@ -1548,13 +1524,7 @@ extension MessageTableRepresentable {
         }
 
         private func scrollToRow(_ targetRow: Int, attempt: Int = 0) {
-            guard let tableView, let scrollView, targetRow < tableView.numberOfRows else {
-                FindDebugLog.log(
-                    "[Coordinator] scrollToRow(\(targetRow)) BAILED: tableView/scrollView nil "
-                        + "or row out of bounds (numberOfRows="
-                        + "\(tableView.map { String($0.numberOfRows) } ?? "nil"))")
-                return
-            }
+            guard let tableView, let scrollView, targetRow < tableView.numberOfRows else { return }
 
             // drop pinned to bottom so subsequent applyBlocks restore our
             // anchor instead of snapping back to bottom
@@ -1567,12 +1537,6 @@ extension MessageTableRepresentable {
             let rowRect = tableView.rect(ofRow: targetRow)
             // Leave a little breathing room above the target.
             let targetY = max(0, rowRect.origin.y - 12)
-            let beforeY = scrollView.contentView.bounds.origin.y
-            FindDebugLog.log(
-                "[Coordinator] scrollToRow(\(targetRow)) attempt=\(attempt) rowRect=\(rowRect) "
-                    + "targetY=\(targetY) beforeY=\(beforeY) "
-                    + "visibleH=\(scrollView.contentView.bounds.height) "
-                    + "docH=\(tableView.bounds.height) rows=\(tableView.numberOfRows)")
 
             NSAnimationContext.runAnimationGroup { ctx in
                 ctx.duration = 0.22
@@ -1601,12 +1565,7 @@ extension MessageTableRepresentable {
                 let settledRect = tableView.rect(ofRow: targetRow)
                 let settledY = scrollView.contentView.bounds.origin.y
                 let correctedTargetY = max(0, settledRect.origin.y - 12)
-                let drift = abs(settledY - correctedTargetY)
-                FindDebugLog.log(
-                    "[Coordinator] scrollToRow(\(targetRow)) settled attempt=\(attempt): "
-                        + "y=\(settledY) rowRectNow=\(settledRect) drift=\(drift) "
-                        + "(was targetY=\(targetY))")
-                if drift > 8, attempt < 3 {
+                if abs(settledY - correctedTargetY) > 8, attempt < 3 {
                     self.scrollToRow(targetRow, attempt: attempt + 1)
                 }
             }
