@@ -5140,8 +5140,38 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     } catch let invs as ServiceToolInvocations {
                         // Local models can emit multiple tool calls in a single
                         // completion; ServiceToolInvocations carries the batch.
+                        // Text can still be pending in the coalescer when the tool call
+                        // arrives (tool calls surface by throw, so the loop's own flush
+                        // never runs). Deliver it before the tool frames or the visible
+                        // answer ends mid-word.
+                        if let pending = contentCoalescer.flush() {
+                            hop {
+                                writerBound.value.writeContent(
+                                    pending,
+                                    model: model,
+                                    responseId: responseId,
+                                    created: created,
+                                    context: ctx.value
+                                )
+                            }
+                        }
                         return .toolCalls(invs.invocations)
                     } catch let inv as ServiceToolInvocation {
+                        // Text can still be pending in the coalescer when the tool call
+                        // arrives (tool calls surface by throw, so the loop's own flush
+                        // never runs). Deliver it before the tool frames or the visible
+                        // answer ends mid-word.
+                        if let pending = contentCoalescer.flush() {
+                            hop {
+                                writerBound.value.writeContent(
+                                    pending,
+                                    model: model,
+                                    responseId: responseId,
+                                    created: created,
+                                    context: ctx.value
+                                )
+                            }
+                        }
                         return .toolCalls([inv])
                     }
 
@@ -7356,6 +7386,9 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                         }
                     }
                 }
+                var contentCoalescer = Self.StreamDeltaCoalescer(
+                    interval: ServerRuntimeSettingsStore.snapshot().generation.streamInterval
+                )
                 do {
                     httpTrace.mark("http_task_start")
                     let chatEngine = self.chatEngine
@@ -7393,9 +7426,6 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     if disconnected.value { throw CancellationError() }
                     var accumulatedContent = ""
                     var accumulatedReasoning = ""
-                    var contentCoalescer = Self.StreamDeltaCoalescer(
-                        interval: ServerRuntimeSettingsStore.snapshot().generation.streamInterval
-                    )
                     var authoritativeCompletionTokens: Int?
                     var authoritativeTokensPerSecond: Double?
                     var streamFinishReason = "stop"
@@ -7570,6 +7600,21 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                         finishReason: RequestLog.FinishReason(rawValue: finalStreamFinishReason) ?? .stop
                     )
                 } catch let invs as ServiceToolInvocations {
+                    // Text can still be pending in the coalescer when the tool call
+                    // arrives (tool calls surface by throw, so the loop's own flush
+                    // never runs). Deliver it before the tool frames or the visible
+                    // answer ends mid-word.
+                    if let pending = contentCoalescer.flush() {
+                        hop {
+                            writerBound.value.writeContent(
+                                pending,
+                                model: model,
+                                responseId: responseId,
+                                created: created,
+                                context: ctx.value
+                            )
+                        }
+                    }
                     // Multi-tool MLX completion: emit one tool_call delta
                     // per invocation, sharing one finish_reason="tool_calls".
                     // OpenAI clients deduplicate by `index`.
@@ -7634,6 +7679,21 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                         finishReason: .toolCalls
                     )
                 } catch let inv as ServiceToolInvocation {
+                    // Text can still be pending in the coalescer when the tool call
+                    // arrives (tool calls surface by throw, so the loop's own flush
+                    // never runs). Deliver it before the tool frames or the visible
+                    // answer ends mid-word.
+                    if let pending = contentCoalescer.flush() {
+                        hop {
+                            writerBound.value.writeContent(
+                                pending,
+                                model: model,
+                                responseId: responseId,
+                                created: created,
+                                context: ctx.value
+                            )
+                        }
+                    }
                     // Single tool invocation — same emission as above.
                     httpTrace.markFirstSemanticDelta("tool_calls")
                     markSemanticDeltaIfConnected()
@@ -8002,14 +8062,14 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     }
                 }
             }
+            var contentCoalescer = Self.StreamDeltaCoalescer(
+                interval: ServerRuntimeSettingsStore.snapshot().generation.streamInterval
+            )
             do {
                 let chatEngine = self.chatEngine
                 try Task.checkCancellation()
                 let stream = try await chatEngine.streamChat(request: req)
                 if disconnected.value { throw CancellationError() }
-                var contentCoalescer = Self.StreamDeltaCoalescer(
-                    interval: ServerRuntimeSettingsStore.snapshot().generation.streamInterval
-                )
                 for try await delta in stream {
                     try Task.checkCancellation()
                     if disconnected.value { throw CancellationError() }
@@ -8069,6 +8129,21 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     finishReason: .stop
                 )
             } catch let invs as ServiceToolInvocations {
+                // Text can still be pending in the coalescer when the tool call
+                // arrives (tool calls surface by throw, so the loop's own flush
+                // never runs). Deliver it before the tool frames or the visible
+                // answer ends mid-word.
+                if let pending = contentCoalescer.flush() {
+                    hop {
+                        writerBound.value.writeContent(
+                            pending,
+                            model: req.model,
+                            responseId: "",
+                            created: Int(Date().timeIntervalSince1970),
+                            context: ctx.value
+                        )
+                    }
+                }
                 hop {
                     writerBound.value.writeToolCalls(invs.invocations, model: req.model, context: ctx.value)
                     writerBound.value.writeEnd(ctx.value)
@@ -8090,6 +8165,21 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     finishReason: .toolCalls
                 )
             } catch let inv as ServiceToolInvocation {
+                // Text can still be pending in the coalescer when the tool call
+                // arrives (tool calls surface by throw, so the loop's own flush
+                // never runs). Deliver it before the tool frames or the visible
+                // answer ends mid-word.
+                if let pending = contentCoalescer.flush() {
+                    hop {
+                        writerBound.value.writeContent(
+                            pending,
+                            model: req.model,
+                            responseId: "",
+                            created: Int(Date().timeIntervalSince1970),
+                            context: ctx.value
+                        )
+                    }
+                }
                 hop {
                     writerBound.value.writeToolCalls([inv], model: req.model, context: ctx.value)
                     writerBound.value.writeEnd(ctx.value)
@@ -9851,14 +9941,14 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     }
                 }
             }
+            var contentCoalescer = Self.StreamDeltaCoalescer(
+                interval: ServerRuntimeSettingsStore.snapshot().generation.streamInterval
+            )
             do {
                 let chatEngine = self.chatEngine
                 try Task.checkCancellation()
                 let stream = try await chatEngine.streamChat(request: internalReq)
                 if disconnected.value { throw CancellationError() }
-                var contentCoalescer = Self.StreamDeltaCoalescer(
-                    interval: ServerRuntimeSettingsStore.snapshot().generation.streamInterval
-                )
                 for try await delta in stream {
                     try Task.checkCancellation()
                     if disconnected.value { throw CancellationError() }
@@ -9912,6 +10002,15 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     finishReason: .stop
                 )
             } catch let invs as ServiceToolInvocations {
+                // Text can still be pending in the coalescer when the tool call
+                // arrives (tool calls surface by throw, so the loop's own flush
+                // never runs). Deliver it before the tool frames or the visible
+                // answer ends mid-word.
+                if let pending = contentCoalescer.flush() {
+                    hop {
+                        writerBound.value.writeTextDelta(pending, context: ctx.value)
+                    }
+                }
                 // Multi-tool MLX completion: one `tool_use` content block
                 // per invocation, then a single `tool_use` finish.
                 markSemanticDeltaIfChannelActive()
@@ -9937,6 +10036,15 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     finishReason: .toolCalls
                 )
             } catch let inv as ServiceToolInvocation {
+                // Text can still be pending in the coalescer when the tool call
+                // arrives (tool calls surface by throw, so the loop's own flush
+                // never runs). Deliver it before the tool frames or the visible
+                // answer ends mid-word.
+                if let pending = contentCoalescer.flush() {
+                    hop {
+                        writerBound.value.writeTextDelta(pending, context: ctx.value)
+                    }
+                }
                 // Single tool invocation — same emission path.
                 markSemanticDeltaIfChannelActive()
                 hop {
@@ -10643,14 +10751,14 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     }
                 }
             }
+            var contentCoalescer = Self.StreamDeltaCoalescer(
+                interval: ServerRuntimeSettingsStore.snapshot().generation.streamInterval
+            )
             do {
                 let chatEngine = self.chatEngine
                 try Task.checkCancellation()
                 let stream = try await chatEngine.streamChat(request: internalReq)
                 if disconnected.value { throw CancellationError() }
-                var contentCoalescer = Self.StreamDeltaCoalescer(
-                    interval: ServerRuntimeSettingsStore.snapshot().generation.streamInterval
-                )
                 for try await delta in stream {
                     try Task.checkCancellation()
                     if disconnected.value { throw CancellationError() }
@@ -10755,6 +10863,21 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     finishReason: .stop
                 )
             } catch let invs as ServiceToolInvocations {
+                // Text can still be pending in the coalescer when the tool call
+                // arrives (tool calls surface by throw, so the loop's own flush
+                // never runs). Deliver it before the tool frames or the visible
+                // answer ends mid-word.
+                if let pending = contentCoalescer.flush() {
+                    hop {
+                        writerBound.value.writeReasoningItemDone(context: ctx.value)
+                        if !messageItemOpen.value {
+                            messageItemOpen.value = true
+                            writerBound.value.writeMessageItemAdded(itemId: itemId, context: ctx.value)
+                            writerBound.value.writeContentPartAdded(context: ctx.value)
+                        }
+                        writerBound.value.writeTextDelta(pending, context: ctx.value)
+                    }
+                }
                 markSemanticDeltaIfChannelActive()
                 // Multi-tool MLX completion: emit one function_call item
                 // per invocation. Use the lazy `messageItemOpen` flag so
@@ -10794,6 +10917,21 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     finishReason: .toolCalls
                 )
             } catch let inv as ServiceToolInvocation {
+                // Text can still be pending in the coalescer when the tool call
+                // arrives (tool calls surface by throw, so the loop's own flush
+                // never runs). Deliver it before the tool frames or the visible
+                // answer ends mid-word.
+                if let pending = contentCoalescer.flush() {
+                    hop {
+                        writerBound.value.writeReasoningItemDone(context: ctx.value)
+                        if !messageItemOpen.value {
+                            messageItemOpen.value = true
+                            writerBound.value.writeMessageItemAdded(itemId: itemId, context: ctx.value)
+                            writerBound.value.writeContentPartAdded(context: ctx.value)
+                        }
+                        writerBound.value.writeTextDelta(pending, context: ctx.value)
+                    }
+                }
                 markSemanticDeltaIfChannelActive()
                 // Single tool invocation — same flow with one item.
                 hop {
