@@ -288,7 +288,7 @@ public final class AgentManager: ObservableObject {
         if !agent.isBuiltIn {
             FeatureTelemetry.agentCreated()
         }
-        try? assignAddress(to: agent)
+        assignAddressInBackground(to: agent)
         // Notify subscribers (e.g. PluginManager) so plugins get an
         // initial config / tunnel-URL push for the new agent without
         // needing to wait for the next plugin force-reload.
@@ -426,6 +426,43 @@ public final class AgentManager: ObservableObject {
     /// address) rather than throwing. The same-signed app reads its own
     /// `kSecAttrAccessibleWhenUnlocked` key without UI, so assignment is unchanged
     /// there.
+    /// Off-main variant of `assignAddress(to:)` for the agent-creation path.
+    /// `MasterKey.exists()` and the key read are synchronous keychain queries
+    /// that block on securityd's mutex — calling them on the main thread has
+    /// tripped the watchdog when securityd is contended (e.g. a concurrent
+    /// identity setup or iCloud keychain sync). The index is reserved on the
+    /// main actor before detaching so two rapid creations can't collide, and
+    /// the write-back re-loads the agent and only fills a still-empty address,
+    /// so a concurrent `update`/`rotateAddress` can't be clobbered.
+    private func assignAddressInBackground(to agent: Agent) {
+        guard !agent.isBuiltIn, agent.agentAddress == nil else { return }
+        let index = nextUnusedAgentIndex()
+        // Park the reservation immediately (address comes later) so another
+        // creation in the same window gets the next index.
+        if var reserving = self.agent(for: agent.id), reserving.agentIndex == nil {
+            reserving.agentIndex = index
+            update(reserving)
+        }
+        Task.detached(priority: .userInitiated) {
+            guard MasterKey.exists() else { return }
+            let context = LAContext()
+            context.touchIDAuthenticationAllowableReuseDuration = 300
+            context.interactionNotAllowed = true
+            guard var masterKeyData = try? MasterKey.getPrivateKey(context: context) else { return }
+            defer { masterKeyData.zeroOut() }
+            guard let address = try? AgentKey.deriveAddress(masterKey: masterKeyData, index: index)
+            else { return }
+            await MainActor.run {
+                guard var current = AgentManager.shared.agent(for: agent.id),
+                    current.agentAddress == nil
+                else { return }
+                current.agentIndex = index
+                current.agentAddress = address
+                AgentManager.shared.update(current)
+            }
+        }
+    }
+
     public func assignAddress(to agent: Agent) throws {
         guard !agent.isBuiltIn, agent.agentAddress == nil else { return }
         guard MasterKey.exists() else { return }
