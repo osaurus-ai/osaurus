@@ -27,16 +27,15 @@ enum FindDebugLog {
     /// Serial background queue: appends must never block the main thread.
     private static let queue = DispatchQueue(label: "com.osaurus.find-debug-log", qos: .utility)
 
-    private static let timestamp: ISO8601DateFormatter = {
-        let f = ISO8601DateFormatter()
-        f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        return f
-    }()
+    /// `Date.ISO8601FormatStyle` is a Sendable value type, unlike
+    /// `ISO8601DateFormatter`, so it can live in a static without tripping
+    /// strict-concurrency checking.
+    private static let timestamp = Date.ISO8601FormatStyle(includingFractionalSeconds: true)
 
     static func log(_ message: String) {
         // Build the line on the caller's thread (message may interpolate
         // main-thread-only view state); only the file I/O hops queues.
-        let line = "\(timestamp.string(from: Date())) \(message)\n"
+        let line = "\(Date().formatted(timestamp)) \(message)\n"
         queue.async {
             guard let data = line.data(using: .utf8) else { return }
             if let handle = try? FileHandle(forWritingTo: url) {
