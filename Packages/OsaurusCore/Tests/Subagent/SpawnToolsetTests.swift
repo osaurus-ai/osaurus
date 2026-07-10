@@ -125,6 +125,68 @@ struct SpawnToolsetTests {
         #expect(allowed == "ok")
     }
 
+    // MARK: - Agent-mode child tools (spawn_agent carries the persona's tool policy)
+
+    @Test("agent specs alone yield a toolset even without a read-only grant")
+    func agentSpecsWithoutGrant() async throws {
+        let toolset = await TextSubagentKind.makeToolset(
+            access: SpawnToolAccess.none,
+            maxToolCalls: 4,
+            feed: nil,
+            agentSpecs: [spec("create_event"), spec("search_events")],
+            dispatch: { inv in "ran:\(inv.toolName)" }
+        )
+        let set = try #require(toolset)
+        #expect(set.specs.map(\.function.name).sorted() == ["create_event", "search_events"])
+
+        let ok = await set.execute(invocation("create_event"))
+        #expect(ok == "ran:create_event")
+        let refused = await set.execute(invocation("file_read"))
+        #expect(ToolEnvelope.isError(refused))
+    }
+
+    @Test("agent specs union with the read-only grant; agent spec wins a name collision")
+    func agentSpecsUnionReadOnly() async throws {
+        let toolset = await TextSubagentKind.makeToolset(
+            access: .readOnly,
+            maxToolCalls: 8,
+            feed: nil,
+            agentSpecs: [spec("create_event"), spec("file_read")],
+            specs: [spec("file_read"), spec("file_search")],
+            dispatch: { inv in "ran:\(inv.toolName)" }
+        )
+        let set = try #require(toolset)
+        #expect(
+            set.specs.map(\.function.name).sorted() == ["create_event", "file_read", "file_search"])
+        let ok = await set.execute(invocation("create_event"))
+        #expect(ok == "ran:create_event")
+    }
+
+    @Test("agent-tool calls share the same per-run cap")
+    func agentToolsShareCap() async throws {
+        let toolset = await TextSubagentKind.makeToolset(
+            access: SpawnToolAccess.none,
+            maxToolCalls: 1,
+            feed: nil,
+            agentSpecs: [spec("create_event")],
+            dispatch: { _ in "ok" }
+        )
+        let set = try #require(toolset)
+        let first = await set.execute(invocation("create_event"))
+        let second = await set.execute(invocation("create_event"))
+        #expect(first == "ok")
+        #expect(ToolEnvelope.isError(second))
+    }
+
+    @Test("subagent-capability tools and clarify are excluded from a child schema")
+    func childExclusions() {
+        #expect(TextSubagentKind.isExcludedChildTool("spawn_agent"))
+        #expect(TextSubagentKind.isExcludedChildTool("spawn_model"))
+        #expect(TextSubagentKind.isExcludedChildTool("clarify"))
+        #expect(!TextSubagentKind.isExcludedChildTool("create_event"))
+        #expect(!TextSubagentKind.isExcludedChildTool("web_search"))
+    }
+
     @Test("cancel-reason mapping: user stop / parent cancel / deadline get distinct honest copy")
     func cancelReasonMapping() {
         // User stop → user_denied with "stopped by the user" (NOT a timeout).

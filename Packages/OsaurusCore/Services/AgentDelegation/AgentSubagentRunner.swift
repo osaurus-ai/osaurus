@@ -272,8 +272,9 @@ enum AgentSubagentRunner {
                     let envelope = ToolEnvelope.failure(
                         kind: .rejected,
                         message:
-                            "Tool '\(invocation.toolName)' is not available inside a spawned subagent. "
-                            + "Subagent jobs are text-only.",
+                            "Tool '\(invocation.toolName)' is not available inside this spawned run — "
+                            + "it has no tools. Answer from the information you already have, and say "
+                            + "plainly when the task needs a tool you don't have.",
                         tool: invocation.toolName,
                         retryable: false
                     )
