@@ -1387,6 +1387,9 @@ final class DirectDownloader: NSObject, URLSessionDownloadDelegate, @unchecked S
     private var pauseRequested = false
     private static let progressInterval: CFAbsoluteTime = 0.25
 
+    /// Non-nil while a large file is being fetched as parallel Range requests.
+    private var chunked: ChunkedFileDownloader?
+
     private lazy var session: URLSession = {
         GlobalProxySettings.makeSession(base: .default, delegate: self, delegateQueue: nil)
     }()
@@ -1403,6 +1406,33 @@ final class DirectDownloader: NSObject, URLSessionDownloadDelegate, @unchecked S
             at: destination.deletingLastPathComponent(),
             withIntermediateDirectories: true
         )
+
+        // Large weight shards go out as parallel Range requests; a single
+        // connection to the Hugging Face CDN caps well below most links.
+        // `resumeData` means the caller is continuing a legacy single-task
+        // transfer, so honor that rather than restarting it as chunks.
+        if resumeData == nil, expectedSize >= ChunkedFileDownloader.minimumChunkableSize,
+            let metadata = try? await ChunkedFileDownloader.probe(url: url),
+            metadata.isChunkable
+        {
+            let downloader = ChunkedFileDownloader()
+            let alreadyPaused = lock.withLock { () -> Bool in
+                let paused = pauseRequested
+                if !paused { chunked = downloader }
+                return paused
+            }
+            if alreadyPaused {
+                throw PauseInfo(resumeData: nil, bytesDownloaded: 0)
+            }
+            defer { lock.withLock { chunked = nil } }
+            try await downloader.download(
+                from: url,
+                to: destination,
+                metadata: metadata,
+                onProgress: onProgress
+            )
+            return
+        }
         try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
             lock.lock()
             self.currentContinuation = continuation
@@ -1429,13 +1459,24 @@ final class DirectDownloader: NSObject, URLSessionDownloadDelegate, @unchecked S
     /// Suspends the in-flight download, capturing `URLSession`-level resume
     /// data so a future `download(...resumeData:)` call can continue from
     /// the same byte offset. If no download is in flight, this is a no-op.
+    ///
+    /// The chunked path needs no resume blob — its `.part.json` manifest
+    /// already records which chunks are durable — so it reports `nil` resume
+    /// data and picks up from the manifest on the next `download` call. The
+    /// flag is set unconditionally so a pause landing during the metadata
+    /// probe, before any task exists, still stops the transfer.
     func pause() {
         lock.lock()
+        self.pauseRequested = true
+        if let chunked = self.chunked {
+            lock.unlock()
+            chunked.pause()
+            return
+        }
         guard let task = self.currentDownloadTask else {
             lock.unlock()
             return
         }
-        self.pauseRequested = true
         lock.unlock()
         task.cancel(byProducingResumeData: { [weak self] data in
             self?.handlePauseCompletion(resumeData: data)
@@ -1463,7 +1504,13 @@ final class DirectDownloader: NSObject, URLSessionDownloadDelegate, @unchecked S
         continuation.resume(throwing: PauseInfo(resumeData: resumeData, bytesDownloaded: bytes))
     }
 
-    func invalidate() { session.invalidateAndCancel() }
+    func invalidate() {
+        lock.lock()
+        let chunked = self.chunked
+        lock.unlock()
+        chunked?.invalidate()
+        session.invalidateAndCancel()
+    }
 
     /// `resolve/main` URLs 302-redirect to Hugging Face's CDN. Don't leak the
     /// user's access token to that (or any other) third-party host: the
