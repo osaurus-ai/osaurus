@@ -124,10 +124,7 @@ struct OnboardingModelsProxy: Sendable {
             path: path
         ) else { return nil }
 
-        guard let request = await signedRequest(for: url) else {
-            OnboardingProxyDebugLog.log("proxy signing unavailable path=\(path)")
-            return nil
-        }
+        guard let request = await signedRequest(for: url) else { return nil }
 
         // One bounded retry on 429 — the proxy's token bucket refills
         // continuously, so a short pause is usually enough.
@@ -136,24 +133,12 @@ struct OnboardingModelsProxy: Sendable {
                 let (data, response) = try await session.data(for: request)
                 guard let http = response as? HTTPURLResponse else { return nil }
                 if http.statusCode == 429, attempt == 0 {
-                    OnboardingProxyDebugLog.log("proxy rate limited (429), retrying path=\(path)")
                     try await Task.sleep(nanoseconds: 2_000_000_000)
                     continue
                 }
-                guard http.statusCode == 200 else {
-                    OnboardingProxyDebugLog.log(
-                        "proxy resolve HTTP \(http.statusCode) path=\(path)")
-                    return nil
-                }
-                let parsed = Self.parseResolvePayload(data)
-                if parsed == nil {
-                    OnboardingProxyDebugLog.log(
-                        "proxy resolve payload has no url (inline file body?) path=\(path)")
-                }
-                return parsed
+                guard http.statusCode == 200 else { return nil }
+                return Self.parseResolvePayload(data)
             } catch {
-                OnboardingProxyDebugLog.log(
-                    "proxy resolve request error path=\(path) error=\(error.localizedDescription)")
                 return nil
             }
         }

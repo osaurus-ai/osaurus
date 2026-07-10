@@ -109797,6 +109797,9 @@
     "Preparing inspection..." : {
       "shouldTranslate" : false
     },
+    "Preparing to download…" : {
+
+    },
     "Preparing tool call" : {
       "localizations" : {
         "de" : {
