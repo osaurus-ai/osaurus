@@ -251,6 +251,7 @@ final class ModelDownloadService: ObservableObject {
         downloadRoutes[model.id] = route
         proxyPinnedCommits[model.id] = nil
         proxyDisabledModels.remove(model.id)
+        OnboardingProxyDebugLog.log("download start model=\(model.id) route=\(route)")
         startOrchestration(model: model, resuming: nil)
     }
 
@@ -343,8 +344,11 @@ final class ModelDownloadService: ObservableObject {
             if await MainActor.run(body: { self.downloadRoutes[model.id] }) == .onboardingProxy,
                 !OsaurusIdentity.exists()
             {
+                OnboardingProxyDebugLog.log("identity missing, running silent setup model=\(model.id)")
                 _ = try? await OsaurusIdentity.setup()
                 if !OsaurusIdentity.exists() {
+                    OnboardingProxyDebugLog.log(
+                        "identity setup failed, proxy disabled model=\(model.id)")
                     await MainActor.run { _ = self.proxyDisabledModels.insert(model.id) }
                 }
             }
@@ -695,10 +699,18 @@ final class ModelDownloadService: ObservableObject {
                     if proxyPinnedCommits[model.id] == nil, let commit = resolved.commit {
                         proxyPinnedCommits[model.id] = commit
                     }
+                    OnboardingProxyDebugLog.log(
+                        "proxy resolve ok file=\(file.path) cdnHost=\(resolved.url.host ?? "?") commit=\(resolved.commit ?? "-") size=\(resolved.size.map(String.init) ?? "-")"
+                    )
                 } else {
+                    OnboardingProxyDebugLog.log(
+                        "proxy resolve failed, falling back to anonymous HF file=\(file.path)")
                     proxyDisabledModels.insert(model.id)
                 }
             }
+            OnboardingProxyDebugLog.log(
+                "transfer attempt=\(attempt) file=\(file.path) host=\(downloadURL.host ?? "?") viaProxy=\(downloadURL != directURL)"
+            )
             do {
                 try await downloader.download(
                     from: downloadURL,
@@ -707,6 +719,8 @@ final class ModelDownloadService: ObservableObject {
                     resumeData: resumeDataForAttempt,
                     onProgress: onProgress
                 )
+                OnboardingProxyDebugLog.log(
+                    "transfer complete file=\(file.path) host=\(downloadURL.host ?? "?")")
                 finishFileTransfer(modelId: model.id, token: token, path: file.path, size: file.size)
                 return .completed
             } catch let pauseInfo as DirectDownloader.PauseInfo {
@@ -727,6 +741,10 @@ final class ModelDownloadService: ObservableObject {
                 let isExpiredProxyURL =
                     proxyRoute
                     && (error as? DirectDownloader.HTTPStatusError)?.statusCode == 403
+                if isExpiredProxyURL {
+                    OnboardingProxyDebugLog.log(
+                        "presigned URL expired (403), re-resolving file=\(file.path)")
+                }
                 guard
                     attempt < Self.maxTransferAttempts,
                     isExpiredProxyURL || Self.isRetryableTransferError(error)
@@ -736,10 +754,15 @@ final class ModelDownloadService: ObservableObject {
                     // this model and restart the file on the plain anonymous
                     // HF URL with a fresh retry budget.
                     if proxyRoute {
+                        OnboardingProxyDebugLog.log(
+                            "proxy transfer failed (\(error.localizedDescription)), proxy disabled, retrying direct file=\(file.path)"
+                        )
                         proxyDisabledModels.insert(model.id)
                         attempt = 1
                         continue
                     }
+                    OnboardingProxyDebugLog.log(
+                        "transfer failed file=\(file.path) error=\(error.localizedDescription)")
                     return .failed(path: file.path, error: error)
                 }
                 let delay = Self.transferRetryDelay(attempt: attempt, error: error)
