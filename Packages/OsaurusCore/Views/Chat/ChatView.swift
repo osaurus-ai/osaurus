@@ -5163,9 +5163,12 @@ struct ChatView: View {
     // In-conversation find (Cmd+F). Visibility lives on `windowState` so the
     // window-level key monitor can toggle it; query/matches are view state.
     @State private var findQuery: String = ""
-    /// Ordered turn ids whose content matches `findQuery`.
-    @State private var findMatchTurnIds: [UUID] = []
+    /// Every `findQuery` occurrence in the conversation, in order.
+    @State private var findMatches: [ChatFindMatch] = []
     @State private var findMatchIndex: Int = 0
+    /// Occurrence (within the turn) the last find jump targeted; nil when the
+    /// pending scroll request came from the minimap instead of the find bar.
+    @State private var scrollToFindOccurrence: Int?
     // What's New modal
     @State private var pendingWhatsNew: WhatsNewRelease? = nil
     @State private var showAutoSpeakPrompt: Bool = false
@@ -6379,7 +6382,7 @@ struct ChatView: View {
                         ChatFindBar(
                             query: $findQuery,
                             matchIndex: findMatchIndex,
-                            matchCount: findMatchTurnIds.count,
+                            matchCount: findMatches.count,
                             onPrevious: { advanceFindMatch(by: -1) },
                             onNext: { advanceFindMatch(by: 1) },
                             onClose: { windowState.isFindBarVisible = false }
@@ -6410,6 +6413,7 @@ struct ChatView: View {
                         activeMarkerId: activeMinimapTurnId,
                         onSelect: { turnId in
                             scrollToTurnId = turnId
+                            scrollToFindOccurrence = nil
                             scrollToTurnTrigger &+= 1
                         }
                     )
@@ -6781,29 +6785,42 @@ extension ChatView {
         let (state, jumpTo) = ChatFindMatcher.recompute(
             query: query,
             turns: session.turns,
-            previous: ChatFindState(matchTurnIds: findMatchTurnIds, matchIndex: findMatchIndex),
+            previous: ChatFindState(matches: findMatches, matchIndex: findMatchIndex),
             preserveCurrentMatch: !jumpToFirst
         )
-        findMatchTurnIds = state.matchTurnIds
+        findMatches = state.matches
         findMatchIndex = state.matchIndex
         if let jumpTo {
-            scrollToTurnId = jumpTo
-            scrollToTurnTrigger &+= 1
+            scrollToFindMatch(jumpTo)
         }
     }
 
-    /// Step to the next/previous match, wrapping at both ends.
+    /// Step to the next/previous occurrence, wrapping at both ends.
     private func advanceFindMatch(by delta: Int) {
         let (state, jumpTo) = ChatFindMatcher.advance(
-            ChatFindState(matchTurnIds: findMatchTurnIds, matchIndex: findMatchIndex),
+            ChatFindState(matches: findMatches, matchIndex: findMatchIndex),
             by: delta
         )
-        findMatchTurnIds = state.matchTurnIds
+        findMatches = state.matches
         findMatchIndex = state.matchIndex
         if let jumpTo {
-            scrollToTurnId = jumpTo
-            scrollToTurnTrigger &+= 1
+            scrollToFindMatch(jumpTo)
         }
+    }
+
+    /// The occurrence the find bar currently points at; nil when the bar is
+    /// closed or there are no matches. Threaded into the thread view so the
+    /// current occurrence gets distinct highlighting.
+    private var currentFindMatch: ChatFindMatch? {
+        guard windowState.isFindBarVisible, findMatches.indices.contains(findMatchIndex)
+        else { return nil }
+        return findMatches[findMatchIndex]
+    }
+
+    private func scrollToFindMatch(_ match: ChatFindMatch) {
+        scrollToTurnId = match.turnId
+        scrollToFindOccurrence = match.occurrence
+        scrollToTurnTrigger &+= 1
     }
 
     // Key monitor for Esc. Dismisses transient UI in priority order
