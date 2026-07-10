@@ -2441,7 +2441,11 @@ extension FloatingInputCard {
 
     private var isSelectedModelLocal: Bool {
         guard let id = selectedModel else { return false }
-        return ModelManager.findInstalledModel(named: id) != nil
+        // Cache-only lookup: this getter runs in view-body context (and on
+        // every 2s memory tick via `refreshLoadFeasibility`), where the
+        // blocking `findInstalledModel(named:)` can park on a cold-cache
+        // disk scan for seconds and hang the app.
+        return ModelManager.findInstalledMLXModelFromCache(named: id) != nil
     }
 
     private var modelWarmupDotColor: Color {
