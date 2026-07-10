@@ -708,11 +708,20 @@ final class ModelDownloadService: ObservableObject {
             // Resume data continues the previous attempt's URL, so a fresh
             // resolve is only needed when starting the file from scratch.
             if proxyRoute, resumeDataForAttempt == nil {
-                if let resolved = await OnboardingModelsProxy.shared.resolve(
-                    repoId: model.id,
-                    revision: proxyPinnedCommits[model.id] ?? "main",
-                    path: file.path
-                ) {
+                // Same orphaning timeout as the identity probe: the signing
+                // step reads the master key, and a keychain wedged behind a
+                // pending ACL dialog must degrade to the anonymous URL, not
+                // freeze the transfer.
+                let revision = proxyPinnedCommits[model.id] ?? "main"
+                let repoId = model.id
+                let filePath = file.path
+                if let resolved = await Self.firstResult(timeoutSeconds: 15, fallback: nil, operation: {
+                    await OnboardingModelsProxy.shared.resolve(
+                        repoId: repoId,
+                        revision: revision,
+                        path: filePath
+                    )
+                }) {
                     downloadURL = resolved.url
                     if proxyPinnedCommits[model.id] == nil, let commit = resolved.commit {
                         proxyPinnedCommits[model.id] = commit
