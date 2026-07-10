@@ -122956,6 +122956,9 @@
         }
       }
     },
+    "Retry in about %llds." : {
+
+    },
     "Retry Load" : {
       "localizations" : {
         "de" : {
@@ -123093,6 +123096,9 @@
           }
         }
       }
+    },
+    "Retry shortly." : {
+
     },
     "Retry starting the server" : {
       "localizations" : {
@@ -133923,6 +133929,9 @@
           }
         }
       }
+    },
+    "Session expired — please sign in again." : {
+
     },
     "session-end (default)" : {
       "localizations" : {
@@ -148586,6 +148595,12 @@
           }
         }
       }
+    },
+    "The provider is temporarily unavailable (HTTP 503)." : {
+
+    },
+    "The provider rate-limited this request (HTTP %lld)." : {
+
     },
     "The receiver who accepted this invite will lose access immediately. Their access key will be revoked." : {
       "localizations" : {
