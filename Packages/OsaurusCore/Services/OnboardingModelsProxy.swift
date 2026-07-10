@@ -2,8 +2,8 @@
 //  OnboardingModelsProxy.swift
 //  osaurus
 //
-//  Client for the Osaurus model download proxy — the authenticated Hugging Face download
-//  proxy used exclusively during onboarding. Anonymous HF downloads are
+//  Client for the Osaurus model download proxy — an authenticated Hugging
+//  Face resolver used exclusively during onboarding. Anonymous HF downloads are
 //  heavily throttled, and during onboarding the user hasn't had a chance to
 //  add their own HF token yet; the proxy resolves files with Osaurus' own
 //  server-side token (never shipped in the app) and returns a presigned CDN
@@ -30,8 +30,37 @@ struct OnboardingModelsProxy: Sendable {
 
     static let shared = OnboardingModelsProxy()
 
-    var baseURL = URL(string: "https://models.example.com")!
+    /// Resolved once at startup; `nil` means "no proxy configured" and every
+    /// download takes the anonymous HF route. Kept out of source on purpose —
+    /// see `resolveBaseURL()`.
+    var baseURL: URL? = resolveBaseURL()
     var session: URLSession = .shared
+
+    /// The proxy endpoint is deliberately not hardcoded. Same scheme as the
+    /// Sentry DSN (`CrashReportingService.resolveDSNFromConfig`):
+    ///   1. (DEBUG only) `MODELS_PROXY_BASE_URL` environment variable — local
+    ///      one-off override; compiled out of Release.
+    ///   2. `ModelsProxyBaseURL` in Info.plist, populated by the
+    ///      `$(MODELS_PROXY_BASE_URL)` build setting — from the gitignored
+    ///      `App/osaurus/Secrets.xcconfig` in DEBUG, injected by CI in Release.
+    ///      Remember the xcconfig `//`-comment footgun: escape the scheme as
+    ///      `https:$(SLASH)$(SLASH)…` with `SLASH = /`.
+    /// Unconfigured builds (open-source, forks) get `nil` and fall back to
+    /// anonymous Hugging Face downloads.
+    static func resolveBaseURL() -> URL? {
+        #if DEBUG
+            if let env = ProcessInfo.processInfo.environment["MODELS_PROXY_BASE_URL"],
+                !env.isEmpty
+            {
+                return URL(string: env)
+            }
+        #endif
+        guard
+            let raw = Bundle.main.object(forInfoDictionaryKey: "ModelsProxyBaseURL") as? String,
+            raw.contains("://")
+        else { return nil }
+        return URL(string: raw)
+    }
 
     // MARK: - Auth message
 
@@ -117,12 +146,14 @@ struct OnboardingModelsProxy: Sendable {
     /// failure — missing identity, signing failure, rate limit, server or
     /// network error — so the caller can fall back to anonymous HF.
     func resolve(repoId: String, revision: String, path: String) async -> ResolvedFile? {
-        guard let url = Self.resolveRequestURL(
-            baseURL: baseURL,
-            repoId: repoId,
-            revision: revision,
-            path: path
-        ) else { return nil }
+        guard let baseURL,
+            let url = Self.resolveRequestURL(
+                baseURL: baseURL,
+                repoId: repoId,
+                revision: revision,
+                path: path
+            )
+        else { return nil }
 
         guard let request = await signedRequest(for: url) else { return nil }
 

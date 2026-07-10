@@ -123,6 +123,7 @@ jobs:
           DEVELOPER_ID_NAME: ${{ secrets.DEVELOPER_ID_NAME }}
           APTABASE_APP_KEY: ${{ secrets.APTABASE_APP_KEY }}
           SENTRY_DSN: ${{ secrets.SENTRY_DSN }}
+          MODELS_PROXY_BASE_URL: ${{ secrets.MODELS_PROXY_BASE_URL }}
         run: bash scripts/build/build_arm64.sh
 
       - name: Verify App Signing

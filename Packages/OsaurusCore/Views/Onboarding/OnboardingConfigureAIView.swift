@@ -628,7 +628,7 @@ final class ConfigureAIState: ObservableObject {
         // downloading screen's inline failed card doesn't resurrect it while
         // the fresh attempt is spinning up. A repeat refusal sets a new alert.
         clearDownloadAlertForSelectedModel()
-        // Route through the onboarding-only the Osaurus model download proxy proxy: the user
+        // Route through the onboarding-only Osaurus model download proxy: the user
         // has no HF token yet, and anonymous throttling here is a measured
         // onboarding drop-off driver. Any proxy failure silently falls back
         // to the plain anonymous HF path.

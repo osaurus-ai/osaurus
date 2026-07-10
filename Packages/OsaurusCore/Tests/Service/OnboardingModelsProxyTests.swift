@@ -3,7 +3,7 @@
 //  OsaurusCoreTests
 //
 //  Signing message, request building, and response parsing for the
-//  onboarding-only the Osaurus model download proxy download proxy.
+//  onboarding-only Osaurus model download proxy.
 //
 
 import Foundation
