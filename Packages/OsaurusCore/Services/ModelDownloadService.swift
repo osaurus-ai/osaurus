@@ -7,6 +7,7 @@
 //
 
 import Foundation
+import os
 
 /// Manages MLX model file downloads, cancellation, deletion, and progress tracking.
 @MainActor
@@ -350,21 +351,12 @@ final class ModelDownloadService: ObservableObject {
                 // attestation must degrade to the anonymous route, never
                 // stall the download itself.
                 OnboardingProxyDebugLog.log("identity probe start model=\(model.id)")
-                let identityReady = await withTaskGroup(of: Bool?.self) { group -> Bool in
-                    group.addTask { () -> Bool? in
-                        if OsaurusIdentity.exists() { return true }
-                        OnboardingProxyDebugLog.log(
-                            "identity missing, running silent setup model=\(model.id)")
-                        _ = try? await OsaurusIdentity.setup()
-                        return OsaurusIdentity.exists()
-                    }
-                    group.addTask { () -> Bool? in
-                        try? await Task.sleep(nanoseconds: 10_000_000_000)
-                        return nil
-                    }
-                    let first = await group.next() ?? nil
-                    group.cancelAll()
-                    return first ?? false
+                let identityReady = await Self.firstResult(timeoutSeconds: 10, fallback: false) {
+                    if OsaurusIdentity.exists() { return true }
+                    OnboardingProxyDebugLog.log(
+                        "identity missing, running silent setup model=\(model.id)")
+                    _ = try? await OsaurusIdentity.setup()
+                    return OsaurusIdentity.exists()
                 }
                 OnboardingProxyDebugLog.log(
                     "identity probe done ready=\(identityReady) model=\(model.id)")
@@ -1192,6 +1184,36 @@ final class ModelDownloadService: ObservableObject {
             return min(after, 120)
         }
         return min(pow(2.0, Double(attempt - 1)), 15)
+    }
+
+    /// Run `operation` detached and return its result, or `fallback` if it
+    /// hasn't finished within `timeoutSeconds`. Unlike a task group, this
+    /// never waits on the operation after the deadline: a child stuck in an
+    /// uncancellable syscall (e.g. a keychain read blocked behind a pending
+    /// ACL permission dialog) is simply orphaned, and the caller moves on.
+    nonisolated static func firstResult<T: Sendable>(
+        timeoutSeconds: UInt64,
+        fallback: T,
+        operation: @escaping @Sendable () async -> T
+    ) async -> T {
+        await withCheckedContinuation { continuation in
+            let resumed = OSAllocatedUnfairLock(initialState: false)
+            @Sendable func resumeOnce(_ value: T) {
+                let shouldResume = resumed.withLock { alreadyResumed -> Bool in
+                    if alreadyResumed { return false }
+                    alreadyResumed = true
+                    return true
+                }
+                if shouldResume { continuation.resume(returning: value) }
+            }
+            Task.detached(priority: .userInitiated) {
+                resumeOnce(await operation())
+            }
+            Task.detached(priority: .userInitiated) {
+                try? await Task.sleep(nanoseconds: timeoutSeconds * 1_000_000_000)
+                resumeOnce(fallback)
+            }
+        }
     }
 
     nonisolated static func resolveURL(repoId: String, path: String) -> URL? {
