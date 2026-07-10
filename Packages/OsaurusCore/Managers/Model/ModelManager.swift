@@ -531,7 +531,12 @@ final class ModelManager: NSObject, ObservableObject {
         downloadService.download(model)
     }
 
-    func downloadModel(_ model: MLXModel) { downloadService.download(model) }
+    func downloadModel(
+        _ model: MLXModel,
+        route: ModelDownloadService.DownloadRoute = .direct
+    ) {
+        downloadService.download(model, route: route)
+    }
     func cancelDownload(_ modelId: String) { downloadService.cancel(modelId) }
     func pauseDownload(_ modelId: String) { downloadService.pause(modelId) }
     func resumeDownload(_ modelId: String) {

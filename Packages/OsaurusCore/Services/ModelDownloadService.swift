@@ -172,7 +172,26 @@ final class ModelDownloadService: ObservableObject {
         ".gitattributes",
     ]
 
+    /// How a download's file URLs are obtained. `.direct` is the plain
+    /// anonymous `huggingface.co/resolve` URL. `.onboardingProxy` resolves
+    /// presigned CDN URLs through the Osaurus model download proxy — used only for the
+    /// onboarding flow, where the user hasn't had a chance to add their own
+    /// HF token yet and anonymous throttling drives drop-off.
+    enum DownloadRoute {
+        case direct
+        case onboardingProxy
+    }
+
     private var activeDownloadTasks: [String: Task<Void, Never>] = [:]
+    /// Route chosen when the download started; survives pause/resume so a
+    /// paused onboarding download keeps its fast path.
+    private var downloadRoutes: [String: DownloadRoute] = [:]
+    /// Commit each proxy-routed model was pinned to by its first resolve, so
+    /// a mid-download repo update can't mix shards from different revisions.
+    private var proxyPinnedCommits: [String: String] = [:]
+    /// Models whose proxy route failed; their remaining files silently fall
+    /// back to the direct anonymous URL — slow beats failed in onboarding.
+    private var proxyDisabledModels: Set<String> = []
     /// Live downloaders keyed by model id, then by remote file path — one
     /// per in-flight file, since several files transfer concurrently.
     private var activeDownloaders: [String: [String: DirectDownloader]] = [:]
@@ -228,7 +247,10 @@ final class ModelDownloadService: ObservableObject {
 
     // MARK: - Download Methods
 
-    func download(_ model: MLXModel) {
+    func download(_ model: MLXModel, route: DownloadRoute = .direct) {
+        downloadRoutes[model.id] = route
+        proxyPinnedCommits[model.id] = nil
+        proxyDisabledModels.remove(model.id)
         startOrchestration(model: model, resuming: nil)
     }
 
@@ -309,6 +331,21 @@ final class ModelDownloadService: ObservableObject {
             defer {
                 Task { @MainActor [weak self] in
                     self?.activeDownloadTasks[model.id] = nil
+                }
+            }
+
+            // Proxy route: signing needs the wallet identity, which onboarding
+            // normally creates only at completion. On a fresh install
+            // `OsaurusIdentity.setup()` is silent (no biometric prompt); the
+            // later `configureImplicitDefaults` gates on `exists()` and no-ops.
+            // If the identity still isn't available, disable the proxy up
+            // front so every file takes the anonymous fallback.
+            if await MainActor.run(body: { self.downloadRoutes[model.id] }) == .onboardingProxy,
+                !OsaurusIdentity.exists()
+            {
+                _ = try? await OsaurusIdentity.setup()
+                if !OsaurusIdentity.exists() {
+                    await MainActor.run { _ = self.proxyDisabledModels.insert(model.id) }
                 }
             }
 
@@ -609,7 +646,7 @@ final class ModelDownloadService: ObservableObject {
                 forRemotePath: file.path,
                 under: model.localDirectory
             ),
-            let downloadURL = Self.resolveURL(repoId: model.id, path: file.path)
+            let directURL = Self.resolveURL(repoId: model.id, path: file.path)
         else {
             // Unresolvable path: skip; the manifest completion check reports it.
             return .completed
@@ -642,6 +679,26 @@ final class ModelDownloadService: ObservableObject {
             guard downloadTokens[model.id] == token else {
                 return .failed(path: file.path, error: CancellationError())
             }
+            let proxyRoute =
+                downloadRoutes[model.id] == .onboardingProxy
+                && !proxyDisabledModels.contains(model.id)
+            var downloadURL = directURL
+            // Resume data continues the previous attempt's URL, so a fresh
+            // resolve is only needed when starting the file from scratch.
+            if proxyRoute, resumeDataForAttempt == nil {
+                if let resolved = await OnboardingModelsProxy.shared.resolve(
+                    repoId: model.id,
+                    revision: proxyPinnedCommits[model.id] ?? "main",
+                    path: file.path
+                ) {
+                    downloadURL = resolved.url
+                    if proxyPinnedCommits[model.id] == nil, let commit = resolved.commit {
+                        proxyPinnedCommits[model.id] = commit
+                    }
+                } else {
+                    proxyDisabledModels.insert(model.id)
+                }
+            }
             do {
                 try await downloader.download(
                     from: downloadURL,
@@ -664,8 +721,25 @@ final class ModelDownloadService: ObservableObject {
                 // A failed attempt's URLSession temp file is gone; any retry
                 // restarts this file from byte zero.
                 resumeDataForAttempt = nil
-                guard attempt < Self.maxTransferAttempts, Self.isRetryableTransferError(error)
+                // Presigned proxy URLs expire after hours; a CDN 403 on the
+                // proxy route just means "re-resolve on the next attempt",
+                // not a real failure.
+                let isExpiredProxyURL =
+                    proxyRoute
+                    && (error as? DirectDownloader.HTTPStatusError)?.statusCode == 403
+                guard
+                    attempt < Self.maxTransferAttempts,
+                    isExpiredProxyURL || Self.isRetryableTransferError(error)
                 else {
+                    // The proxy is an accelerator, not a gatekeeper: never
+                    // surface a proxy-routed failure. Disable the proxy for
+                    // this model and restart the file on the plain anonymous
+                    // HF URL with a fresh retry budget.
+                    if proxyRoute {
+                        proxyDisabledModels.insert(model.id)
+                        attempt = 1
+                        continue
+                    }
                     return .failed(path: file.path, error: error)
                 }
                 let delay = Self.transferRetryDelay(attempt: attempt, error: error)
@@ -1417,7 +1491,13 @@ final class DirectDownloader: NSObject, URLSessionDownloadDelegate, @unchecked S
                 task = session.downloadTask(withResumeData: resumeData)
             } else {
                 var request = URLRequest(url: url)
-                HuggingFaceAuth.authorize(&request)
+                // Presigned CDN URLs (the onboarding proxy route) carry their
+                // auth in the query string; same token-hygiene rule as the
+                // redirect handler below — the user's HF token only ever
+                // travels to huggingface.co itself.
+                if url.host == "huggingface.co" {
+                    HuggingFaceAuth.authorize(&request)
+                }
                 task = session.downloadTask(with: request)
             }
             self.currentDownloadTask = task
