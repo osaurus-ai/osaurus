@@ -1429,6 +1429,11 @@ struct ConfigureAIBody: View {
         .padding(.horizontal, 4)
     }
 
+    /// TEMPORARY (visual review): force the pre-transfer "Preparing" shimmer
+    /// in place of the live progress text + bar. Flip to `false` (or gate on
+    /// "no bytes received yet") once the look is approved.
+    private let showPreparingPreview = true
+
     private var localDownloadProgressCard: some View {
         OnboardingGlassCard {
             VStack(alignment: .leading, spacing: 14) {
@@ -1451,20 +1456,31 @@ struct ConfigureAIBody: View {
                                 pausedPill
                             }
                         }
-                        Text(localProgressText)
-                            .font(theme.font(size: 11))
-                            .foregroundColor(theme.tertiaryText)
-                            .lineLimit(1)
+                        if showPreparingPreview {
+                            OnboardingShimmerLabel(
+                                text: L("Preparing to download…"),
+                                font: theme.font(size: 11),
+                                baseColor: theme.tertiaryText,
+                                highlightColor: theme.primaryText
+                            )
+                        } else {
+                            Text(localProgressText)
+                                .font(theme.font(size: 11))
+                                .foregroundColor(theme.tertiaryText)
+                                .lineLimit(1)
+                        }
                     }
                     Spacer(minLength: 0)
                     inlineDownloadControls
                 }
 
-                OnboardingShimmerBar(
-                    progress: state.localBarProgress,
-                    color: state.isLocalPaused ? theme.tertiaryText : theme.accentColor,
-                    height: 6
-                )
+                if !showPreparingPreview {
+                    OnboardingShimmerBar(
+                        progress: state.localBarProgress,
+                        color: state.isLocalPaused ? theme.tertiaryText : theme.accentColor,
+                        height: 6
+                    )
+                }
             }
             .padding(.horizontal, OnboardingMetrics.cardPaddingH)
             .padding(.vertical, OnboardingMetrics.cardPaddingV)
