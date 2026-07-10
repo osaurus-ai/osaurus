@@ -1,0 +1,15 @@
+{
+  "id": "http_api.cache-stats-prefix-probe",
+  "domain": "http_api",
+  "label": "http api • prefix_hits increases after a prefix-sharing second request",
+  "query": "Summarize in one sentence: a lighthouse keeper walks the same spiral staircase every evening at dusk to light the lamp.",
+  "notes": "The live cross-check for the in-process CacheProof suite: two prefix-sharing chat requests over real HTTP, then /admin/cache-stats must report a higher aggregate prefix-hit count than before. SKIPs when the host has no local cache-enabled model. Off-CI (needs a local model).",
+  "fixtures": {},
+  "expect": {
+    "httpAPI": {
+      "scenario": "cache_stats",
+      "prefixProbe": true,
+      "maxTokens": 96
+    }
+  }
+}

@@ -1,0 +1,18 @@
+{
+  "id": "reasoning_channel.multi-turn-coherent",
+  "domain": "reasoning_channel",
+  "label": "reasoning channel • three-turn conversation stays coherent, no marker leak on any turn",
+  "query": "I'm planning a small dinner for 6 people. Suggest a simple three-course menu.",
+  "notes": "Multi-turn coherency is an AGENTS.md non-negotiable: every turn must produce visible text (no hidden reasoning-only output), no turn may leak parser markers, and no turn may verbatim-echo an earlier turn's private reasoning (built-in cross-turn echo check). The final turn's needle pins that turn 3 actually engaged with the running context. Off-CI (needs a model).",
+  "fixtures": {},
+  "expect": {
+    "reasoning": {
+      "followUpTurns": [
+        "One guest is vegetarian — adjust the main course accordingly.",
+        "Great. Now list just the main course on a single line starting with the words FINAL MAIN:"
+      ],
+      "maxTokens": 1024,
+      "visibleContains": ["FINAL MAIN"]
+    }
+  }
+}

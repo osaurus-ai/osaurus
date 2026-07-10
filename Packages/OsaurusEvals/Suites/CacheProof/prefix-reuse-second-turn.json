@@ -1,0 +1,17 @@
+{
+  "id": "cache_proof.prefix-reuse-second-turn",
+  "domain": "cache_proof",
+  "label": "cache proof • second turn in one session must reuse the shared prefix",
+  "query": "Summarize in one sentence: the quick brown fox jumps over the lazy dog, again and again, every single morning before breakfast.",
+  "notes": "The minimal scored reuse row: two turns in one session share the system-prompt + turn-1 prefix, so the reuse counter must move at least once on turn 2. Topology-aware: on full-attention models the floor reads kvPrefixHitsDelta; on hybrid-SSM models the runner applies the same floor to ssmCompanionHitsDelta (KV counters stay 0 there by design) and requireCompanionOnHybrid (default true) additionally demands companion movement. SKIPs on hosts with no local MLX engine. Off-CI (needs a local model).",
+  "fixtures": {},
+  "expect": {
+    "cacheProof": {
+      "followUpTurns": [
+        "Now say the same thing but as a haiku."
+      ],
+      "maxTokens": 128,
+      "minKvPrefixHitsDelta": 1
+    }
+  }
+}

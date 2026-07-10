@@ -1,0 +1,14 @@
+{
+  "id": "cache_proof.identical-query-replay",
+  "domain": "cache_proof",
+  "label": "cache proof • replaying the identical query is the guaranteed-hit shape",
+  "query": "List the seven days of the week, comma-separated.",
+  "notes": "No followUpTurns → the runner sends the query twice in one session, the strongest possible prefix overlap (system prompt + identical turn 1). If THIS shape doesn't produce a reuse hit, prefix caching is off or broken — the row is the cheapest possible smoke for the whole cache path. Topology mapping as elsewhere; requireCompanionOnHybrid default applies. Off-CI (needs a local model).",
+  "fixtures": {},
+  "expect": {
+    "cacheProof": {
+      "maxTokens": 96,
+      "minKvPrefixHitsDelta": 1
+    }
+  }
+}

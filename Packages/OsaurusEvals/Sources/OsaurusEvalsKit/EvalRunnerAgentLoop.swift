@@ -307,7 +307,8 @@ extension EvalRunner {
             maxIterations: exp.maxIterations ?? 10,
             contextWindowOverride: exp.contextWindowOverride,
             stopOnToolRejection: exp.stopOnToolRejection ?? false,
-            sandbox: sandboxMode
+            sandbox: sandboxMode,
+            cancelAfterToolCalls: exp.cancelAfterToolCalls
         )
 
         var verdicts: [CapabilityClaimsJudgement] = []

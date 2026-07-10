@@ -207,6 +207,105 @@ struct StreamingHintTests {
         #expect(decoded?.prefillTokensPerSecond == nil)
     }
 
+    // MARK: - StreamingToolHint round-trip pins
+    //
+    // Migrated verbatim from the OsaurusEvals `StreamingHint` suite
+    // (deterministic pure-data pins with no model in the loop — they
+    // belong in the unit lane, not the eval catalog). Each test keeps
+    // the original case's payload so no coverage was lost in the move.
+
+    private func expectToolNameRoundTrip(_ payload: String) {
+        let encoded = StreamingToolHint.encode(payload)
+        #expect(StreamingToolHint.isSentinel(encoded))
+        #expect(StreamingToolHint.decode(encoded) == payload)
+    }
+
+    private func expectArgsRoundTrip(_ payload: String) {
+        let encoded = StreamingToolHint.encodeArgs(payload)
+        #expect(StreamingToolHint.isSentinel(encoded))
+        #expect(StreamingToolHint.decodeArgs(encoded) == payload)
+    }
+
+    @Test func toolHint_encode_roundTripsToolName() {
+        expectToolNameRoundTrip("search_memory")
+    }
+
+    @Test func toolHint_encode_roundTripsUnicodeToolName() {
+        // Sentinel is U+FFFE; CJK + emoji payload proves encode/decode
+        // operate on full Unicode scalars (no byte-offset truncation) and
+        // that isSentinel keys off the leading sentinel scalar, not ASCII.
+        expectToolNameRoundTrip("工具_search_🔧")
+    }
+
+    @Test func toolHint_encode_emptyNameStillSentinelAndRoundTripsToEmpty() {
+        // An empty tool-name fragment must still produce a sentinel-prefixed
+        // delta (so the client routes it as a tool marker, not visible text)
+        // and decode back to the empty string rather than nil.
+        expectToolNameRoundTrip("")
+    }
+
+    @Test func toolHint_encodeArgs_roundTripsQuotesAndNewlines() {
+        expectArgsRoundTrip("{\"query\": \"line one\\nline two\", \"limit\": 5}")
+    }
+
+    @Test func toolHint_encodeArgs_roundTripsDeeplyNestedFragment() {
+        // A streamed args fragment can carry nested objects/arrays with
+        // embedded quotes. The hint layer must treat the fragment as opaque
+        // text and reproduce it byte-for-byte on decode — no
+        // re-serialization, no key reordering.
+        expectArgsRoundTrip(
+            "{\"filter\": {\"tags\": [\"a\", \"b\"], \"range\": {\"min\": 1, \"max\": 9}}, "
+                + "\"note\": \"q=\\\"x\\\"\"}"
+        )
+    }
+
+    @Test func toolHint_encodeArgs_preservesBackslashes() {
+        // Backslash-heavy payloads (a Windows path, a regex) are where a
+        // naive escape/unescape round-trip drops or doubles characters.
+        expectArgsRoundTrip("{\"path\": \"C:\\\\Users\\\\ada\\\\notes.txt\", \"pattern\": \"\\\\d+\\\\.\\\\d+\"}")
+    }
+
+    @Test func toolHint_encodeArgs_roundTripsEmptyObject() {
+        // A zero-argument tool call (e.g. capabilities_discover) streams its
+        // args as '{}'. Must round-trip intact rather than collapsing to "".
+        expectArgsRoundTrip("{}")
+    }
+
+    @Test func toolHint_encodeDone_preservesAllFourFields() {
+        let encoded = StreamingToolHint.encodeDone(
+            callId: "call_abc123",
+            name: "search_memory",
+            arguments: "{\"query\":\"alpha\"}",
+            result: "{\"ok\":true,\"result\":{\"hits\":2}}"
+        )
+        #expect(StreamingToolHint.isSentinel(encoded))
+        let decoded = StreamingToolHint.decodeDone(encoded)
+        #expect(decoded?.callId == "call_abc123")
+        #expect(decoded?.name == "search_memory")
+        #expect(decoded?.arguments == "{\"query\":\"alpha\"}")
+        #expect(decoded?.result == "{\"ok\":true,\"result\":{\"hits\":2}}")
+    }
+
+    @Test func toolHint_encodeDone_roundTripsErrorEnvelopeResult() {
+        // When the tool FAILED, the `result` field is itself a JSON
+        // error-envelope string; encodeDone/decodeDone must round-trip all
+        // four fields without the embedded JSON corrupting the outer JSON.
+        let errorEnvelope =
+            "{\"ok\":false,\"kind\":\"not_found\","
+            + "\"message\":\"File not found: notes/missing.txt.\",\"retryable\":false}"
+        let encoded = StreamingToolHint.encodeDone(
+            callId: "call_42",
+            name: "file_read",
+            arguments: "{\"path\": \"notes/missing.txt\"}",
+            result: errorEnvelope
+        )
+        let decoded = StreamingToolHint.decodeDone(encoded)
+        #expect(decoded?.callId == "call_42")
+        #expect(decoded?.name == "file_read")
+        #expect(decoded?.arguments == "{\"path\": \"notes/missing.txt\"}")
+        #expect(decoded?.result == errorEnvelope)
+    }
+
     // Issue #856 regression: the sentinel must NEVER appear in the
     // visible text of an assistant message. ChatView filters it out
     // before render. Here we lock in the contract that the decoder

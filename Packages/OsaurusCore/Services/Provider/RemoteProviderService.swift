@@ -4234,6 +4234,9 @@ struct RemoteChatRequest: Encodable {
             "claude-fable", "claude-mythos",
             "claude-opus-4-6", "claude-opus-4-7", "claude-opus-4-8",
             "claude-sonnet-4-6",
+            // Observed live 2026-07-09 (req_011CcscQwssbYSF8ZBJ8Awdp): HTTP 400
+            // "`temperature` is deprecated for this model." on claude-sonnet-5.
+            "claude-sonnet-5",
         ]
         let deprecatesSamplerKnobs = knobDeprecatingClaudePrefixes.contains {
             bareModel.hasPrefix($0)

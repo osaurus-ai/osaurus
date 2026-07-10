@@ -158,11 +158,16 @@ public enum EvalRunner {
                             .utf8
                     )
                 )
+                // Per-case flake policy: the case file's `trials` acts as a
+                // floor under the CLI's `--repeat`, so a known-flaky case
+                // always gets its declared trial count without the operator
+                // remembering the flag.
+                let trialsForCase = max(trialsWanted, max(1, testCase.trials ?? 1))
                 var trialRows: [EvalCaseReport] = []
-                for trial in 1 ... trialsWanted {
-                    if trialsWanted > 1 {
+                for trial in 1 ... trialsForCase {
+                    if trialsForCase > 1 {
                         FileHandle.standardError.write(
-                            Data("[evals]   trial \(trial)/\(trialsWanted) \(testCase.id)\n".utf8)
+                            Data("[evals]   trial \(trial)/\(trialsForCase) \(testCase.id)\n".utf8)
                         )
                     }
                     let row = await runOneWatchdogged(
@@ -184,7 +189,10 @@ public enum EvalRunner {
                     // repeating it adds no signal and wastes wall-clock.
                     if row.outcome == .skipped { break }
                 }
-                let merged = EvalCaseReport.mergedTrials(trialRows)
+                let merged = EvalCaseReport.mergedTrials(
+                    trialRows,
+                    passThreshold: testCase.passThreshold
+                )
                 rows.append(merged)
                 rowSink.append(merged)
                 onCaseCompleted?(merged)
@@ -243,6 +251,7 @@ public enum EvalRunner {
     private static let resourceSampledDomains: Set<String> = [
         "agent_loop", "capability_claims", "computer_use_loop", "capability_search",
         "default_agent", "subagent", "apple_script", "micro_perf",
+        "reasoning_channel", "cache_proof", "memory", "http_api",
     ]
 
     /// Wall-clock budget for any single tool execution in a
@@ -564,7 +573,21 @@ public enum EvalRunner {
         case "tool_result_grounding":
             return runToolResultGroundingCase(testCase, modelId: modelId)
         case "streaming_hint":
-            return runStreamingHintCase(testCase, modelId: modelId)
+            // Retired: the encode/decode round-trip pins were pure unit
+            // tests with no model in the loop. They now live in
+            // OsaurusCore's StreamingHintTests (Tests/Service/) — author
+            // new sentinel pins there, not in the eval catalog.
+            return .terminal(
+                id: testCase.id,
+                label: label,
+                domain: testCase.domain,
+                outcome: .errored,
+                notes: [
+                    "domain 'streaming_hint' was retired — the pins moved to "
+                        + "OsaurusCore Tests/Service/StreamingHintTests.swift."
+                ],
+                modelId: modelId
+            )
         case "prefix_hash":
             return runPrefixHashCase(testCase, modelId: modelId)
         case "argument_coercion":
@@ -572,7 +595,22 @@ public enum EvalRunner {
         case "sandbox_diagnostics":
             return runSandboxDiagnosticsCase(testCase, modelId: modelId)
         case "request_validation":
-            return runRequestValidationCase(testCase, modelId: modelId)
+            // Retired: pure type-level accept/reject pins over
+            // `unsupportedSamplerReason` moved to OsaurusCore's
+            // RequestValidationTests (Tests/Networking/); the live HTTP
+            // rejection contract is covered by `http_api` typed-error cases.
+            return .terminal(
+                id: testCase.id,
+                label: label,
+                domain: testCase.domain,
+                outcome: .errored,
+                notes: [
+                    "domain 'request_validation' was retired — unit pins live in "
+                        + "OsaurusCore Tests/Networking/RequestValidationTests.swift; "
+                        + "live rejections belong in the `http_api` domain."
+                ],
+                modelId: modelId
+            )
         case "computer_use":
             return runComputerUseCase(testCase, modelId: modelId)
         case "computer_use_loop":
@@ -604,18 +642,29 @@ public enum EvalRunner {
             return await runJudgeCalibrationCase(testCase, modelId: modelId)
         case "micro_perf":
             return await runMicroPerfCase(testCase, modelId: modelId)
+        case "reasoning_channel":
+            return await runReasoningChannelCase(testCase, modelId: modelId)
+        case "cache_proof":
+            return await runCacheProofCase(testCase, modelId: modelId)
+        case "http_api":
+            return await runHTTPAPICase(testCase, modelId: modelId)
+        case "memory":
+            return await runMemoryCase(testCase, modelId: modelId)
+        case "agent_channels":
+            return await runAgentChannelsCase(testCase, modelId: modelId)
         case "tools", "streaming", "contract":
-            // Scaffolded domains — runner implementation lives in a
-            // follow-up so cases can be authored against the format
-            // without forcing a heavyweight ChatEngine entry point
-            // into the public OsaurusCore surface yet.
+            // Retired scaffolds: the live HTTP lane (`http_api`) covers
+            // what these placeholders were reserved for. Kept as an
+            // explicit error (not the generic unknown-domain arm) so a
+            // stray legacy case file gets a migration hint.
             return .terminal(
                 id: testCase.id,
                 label: label,
                 domain: testCase.domain,
-                outcome: .skipped,
+                outcome: .errored,
                 notes: [
-                    "domain '\(testCase.domain)' runner not yet implemented in this build."
+                    "domain '\(testCase.domain)' was retired — author the case in the "
+                        + "`http_api` domain (expect.httpAPI) instead."
                 ],
                 modelId: modelId
             )
@@ -706,7 +755,7 @@ public enum EvalRunner {
     /// Convert a `JSONValue` (decoded from the case JSON) into the
     /// `Any` shape `SchemaValidator.validate` consumes. Mirrors the
     /// private `JSONValue.foundationValue` extension in SchemaValidator.
-    private static func jsonValueToAny(_ value: JSONValue) -> Any {
+    static func jsonValueToAny(_ value: JSONValue) -> Any {
         switch value {
         case .null: return NSNull()
         case .bool(let b): return b
@@ -803,87 +852,6 @@ public enum EvalRunner {
         case .array, .object:
             return false
         }
-    }
-
-    // MARK: - Streaming hint domain
-
-    /// Pure-data evaluator for `domain == "streaming_hint"`. Verifies
-    /// the encode → isSentinel → decode round-trip for every supported
-    /// `StreamingToolHint` operation.
-    private static func runStreamingHintCase(_ testCase: EvalCase, modelId: String) -> EvalCaseReport {
-        let label = testCase.label ?? testCase.id
-        guard let exp = testCase.expect.streamingHint else {
-            return Self.errored(testCase, label: label, modelId: modelId, note: "missing `expect.streamingHint`")
-        }
-
-        var notes: [String] = []
-        var passed = true
-        switch exp.op {
-        case .encode:
-            guard let payload = exp.payload else {
-                return Self.errored(testCase, label: label, modelId: modelId, note: "encode op needs `payload`")
-            }
-            let encoded = StreamingToolHint.encode(payload)
-            if !StreamingToolHint.isSentinel(encoded) {
-                passed = false
-                notes.append("isSentinel returned false on encoded payload")
-            }
-            if StreamingToolHint.decode(encoded) != payload {
-                passed = false
-                notes.append("decode did not round-trip payload")
-            }
-        case .encodeArgs:
-            guard let payload = exp.payload else {
-                return Self.errored(testCase, label: label, modelId: modelId, note: "encodeArgs op needs `payload`")
-            }
-            let encoded = StreamingToolHint.encodeArgs(payload)
-            if !StreamingToolHint.isSentinel(encoded) {
-                passed = false
-                notes.append("isSentinel returned false on encoded args")
-            }
-            if StreamingToolHint.decodeArgs(encoded) != payload {
-                passed = false
-                notes.append("decodeArgs did not round-trip payload")
-            }
-        case .encodeDone:
-            guard let callId = exp.callId, let name = exp.name,
-                let arguments = exp.arguments, let result = exp.result
-            else {
-                return Self.errored(
-                    testCase,
-                    label: label,
-                    modelId: modelId,
-                    note: "encodeDone needs callId/name/arguments/result"
-                )
-            }
-            let encoded = StreamingToolHint.encodeDone(
-                callId: callId,
-                name: name,
-                arguments: arguments,
-                result: result
-            )
-            if !StreamingToolHint.isSentinel(encoded) {
-                passed = false
-                notes.append("isSentinel returned false on encoded done")
-            }
-            guard let decoded = StreamingToolHint.decodeDone(encoded) else {
-                passed = false
-                notes.append("decodeDone returned nil")
-                break
-            }
-            if decoded.callId != callId { passed = false; notes.append("callId drift: \(decoded.callId)") }
-            if decoded.name != name { passed = false; notes.append("name drift: \(decoded.name)") }
-            if decoded.arguments != arguments { passed = false; notes.append("arguments drift") }
-            if decoded.result != result { passed = false; notes.append("result drift") }
-        }
-        return .terminal(
-            id: testCase.id,
-            label: label,
-            domain: testCase.domain,
-            outcome: passed ? .passed : .failed,
-            notes: notes,
-            modelId: modelId
-        )
     }
 
     // MARK: - Prefix hash domain
@@ -1049,63 +1017,6 @@ public enum EvalRunner {
             }
         default: return false
         }
-    }
-
-    // MARK: - Request validation domain
-
-    /// Pure-data evaluator for `domain == "request_validation"`. Pins
-    /// the accept/reject decision of `RequestValidator.unsupportedSamplerReason`
-    /// for the (`n`, `response_format.type`) tuple.
-    private static func runRequestValidationCase(_ testCase: EvalCase, modelId: String) -> EvalCaseReport {
-        let label = testCase.label ?? testCase.id
-        guard let exp = testCase.expect.requestValidation else {
-            return Self.errored(
-                testCase,
-                label: label,
-                modelId: modelId,
-                note: "missing `expect.requestValidation`"
-            )
-        }
-        let reason = RequestValidator.unsupportedSamplerReason(
-            n: exp.n,
-            responseFormatType: exp.responseFormatType
-        )
-        var passed = true
-        var notes: [String] = []
-        if exp.expectAccept {
-            if let reason {
-                passed = false
-                notes.append("expected accept, got reject: \(reason)")
-            } else {
-                notes.append("accepted (as expected)")
-            }
-        } else {
-            guard let reason else {
-                passed = false
-                notes.append("expected reject, got accept")
-                return .terminal(
-                    id: testCase.id,
-                    label: label,
-                    domain: testCase.domain,
-                    outcome: .failed,
-                    notes: notes,
-                    modelId: modelId
-                )
-            }
-            notes.append("rejected: \(reason)")
-            if let needle = exp.expectReasonContains, !reason.contains(needle) {
-                passed = false
-                notes.append("expected reason to contain '\(needle)'")
-            }
-        }
-        return .terminal(
-            id: testCase.id,
-            label: label,
-            domain: testCase.domain,
-            outcome: passed ? .passed : .failed,
-            notes: notes,
-            modelId: modelId
-        )
     }
 
     // MARK: - Computer Use domain

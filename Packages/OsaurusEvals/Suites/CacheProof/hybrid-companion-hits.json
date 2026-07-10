@@ -1,0 +1,18 @@
+{
+  "id": "cache_proof.hybrid-companion-hits",
+  "domain": "cache_proof",
+  "label": "cache proof • hybrid-SSM hosts must show companion-cache hits, not just KV",
+  "query": "Explain in two sentences why tides happen twice a day.",
+  "notes": "The hybrid-specific pin from AGENTS.md: 'Qwen-style hybrid SSM needs KV plus SSM companion rederive/hit proof; a KV hit alone is not enough.' The explicit minSsmCompanionHitsDelta floor is scored on hybrid hosts and skipped-with-note on full-attention hosts (the counter can never move there), so the same case file is honest on both topologies. Off-CI (needs a local model).",
+  "fixtures": {},
+  "expect": {
+    "cacheProof": {
+      "followUpTurns": [
+        "And why are some tides higher than others?"
+      ],
+      "maxTokens": 160,
+      "minSsmCompanionHitsDelta": 1,
+      "requireCompanionOnHybrid": true
+    }
+  }
+}

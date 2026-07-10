@@ -58,6 +58,25 @@ extension EvalRunner {
         let prompt = Array(repeating: testCase.query, count: repeatCount)
             .joined(separator: " ")
 
+        if let lifecycle = exp.lifecycle {
+            guard lifecycle == "cold_load" else {
+                return Self.errored(
+                    testCase,
+                    label: label,
+                    modelId: modelId,
+                    note: "unknown microPerf.lifecycle '\(lifecycle)' (supported: cold_load)"
+                )
+            }
+            return await runLifecycleCase(
+                testCase,
+                label: label,
+                modelId: modelId,
+                prompt: prompt,
+                maxTokens: exp.maxTokens,
+                reps: exp.reps
+            )
+        }
+
         let overallStart = Date()
         let transcript = await MicroPerfEvaluator.run(
             prompt: prompt,
@@ -202,6 +221,104 @@ extension EvalRunner {
                 prefillTokensPerSecond: prefillStats?.median,
                 ttftMs: ttftStats?.median,
                 completionTokens: counts.count == samples.count ? counts.reduce(0, +) : nil
+            )
+        )
+    }
+
+    /// Model-lifecycle rows (`lifecycle: "cold_load"`): each rep pays a
+    /// full unload → reload → first-token cycle, so the median cold TTFT
+    /// IS the user-visible model-swap latency. Trend telemetry only — no
+    /// hard floors (cold-load time is machine- and model-size-specific);
+    /// the diff/history tooling is the gate.
+    private static func runLifecycleCase(
+        _ testCase: EvalCase,
+        label: String,
+        modelId: String,
+        prompt: String,
+        maxTokens: Int,
+        reps: Int
+    ) async -> EvalCaseReport {
+        let overallStart = Date()
+        let transcript = await MicroPerfEvaluator.runLifecycle(
+            prompt: prompt,
+            maxTokens: maxTokens,
+            reps: reps
+        )
+        let totalWallMs = Date().timeIntervalSince(overallStart) * 1000
+
+        if let reason = transcript.skipReason {
+            return .terminal(
+                id: testCase.id,
+                label: label,
+                domain: testCase.domain,
+                outcome: .skipped,
+                notes: ["SKIP: \(reason)"],
+                modelId: modelId
+            )
+        }
+        if let err = transcript.error {
+            return EvalCaseReport(
+                id: testCase.id,
+                label: label,
+                domain: testCase.domain,
+                query: nil,
+                outcome: .errored,
+                notes: [
+                    "lifecycle run failed: \(err)",
+                    "completed cold reps: \(transcript.coldSamples.count)",
+                ],
+                modelId: modelId,
+                latencyMs: totalWallMs
+            )
+        }
+
+        var notes: [String] = [
+            "protocol: \(reps) cold reps (clearAll → generate) + 1 warm contrast · "
+                + "max_tokens \(maxTokens)"
+        ]
+        let coldTtft = MicroPerfStats(nonEmpty: transcript.coldSamples.compactMap(\.ttftMs))
+        if let coldTtft {
+            notes.append(
+                "cold-load TTFT ms: \(coldTtft.formatted(digits: 0)) (n=\(coldTtft.count)) — "
+                    + "includes full model load"
+            )
+        }
+        if let warm = transcript.warmSample, let warmTtft = warm.ttftMs {
+            notes.append(String(format: "warm TTFT ms: %.0f (model resident)", warmTtft))
+            if let coldTtft {
+                notes.append(
+                    String(
+                        format: "swap penalty: cold median − warm = %.0f ms",
+                        coldTtft.median - warmTtft
+                    )
+                )
+            }
+        }
+        let coldWall = MicroPerfStats(nonEmpty: transcript.coldSamples.map(\.wallMs))
+        if let coldWall {
+            notes.append(
+                "cold wall ms/rep: \(coldWall.formatted(digits: 0)) · total \(Int(totalWallMs))ms"
+            )
+        }
+        let decodeStats = MicroPerfStats(
+            nonEmpty: transcript.coldSamples.compactMap(\.decodeTokensPerSecond)
+        )
+        if let decodeStats {
+            notes.append("decode tok/s (cold reps): \(decodeStats.formatted(digits: 1))")
+        }
+
+        return EvalCaseReport(
+            id: testCase.id,
+            label: label,
+            domain: testCase.domain,
+            query: nil,
+            outcome: .passed,  // measurement row: trend telemetry, no floors
+            notes: notes,
+            modelId: modelId,
+            latencyMs: coldTtft?.median,
+            telemetry: EvalCaseTelemetry(
+                decodeTokensPerSecond: decodeStats?.median,
+                ttftMs: coldTtft?.median
             )
         )
     }

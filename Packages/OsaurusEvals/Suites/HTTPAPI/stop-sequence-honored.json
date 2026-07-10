@@ -1,0 +1,15 @@
+{
+  "id": "http_api.stop-sequence-honored",
+  "domain": "http_api",
+  "label": "http api • stop sequence actually stops generation before the stop text",
+  "query": "Count upward from 1, one number per line: 1, 2, 3 and so on. Do not stop on your own.",
+  "notes": "Behavioral contract, not shape: with stop set to '7' the returned content must NOT contain the stop text and finish_reason must be 'stop' — a server that ignores stop and runs to max_tokens fails both assertions. The counting prompt makes reaching the stop token near-certain. Off-CI (needs a model).",
+  "fixtures": {},
+  "expect": {
+    "httpAPI": {
+      "scenario": "stop_sequence",
+      "stopSequence": "7",
+      "maxTokens": 256
+    }
+  }
+}
