@@ -213,6 +213,19 @@ public struct RunTraceInspection: Codable, Sendable, Equatable {
         }
     }
 
+    private static func sanitizedDisplayText(_ value: String) -> String {
+        String(value.unicodeScalars.map { scalar -> Character in
+            let code = scalar.value
+            if (code < 0x20 && code != 0x09 && code != 0x0A && code != 0x0D)
+                || (0x202A ... 0x202E).contains(code)
+                || (0x2066 ... 0x2069).contains(code)
+                || code == 0x200E || code == 0x200F || code == 0x061C {
+                return "�"
+            }
+            return Character(String(scalar))
+        })
+    }
+
     private static func containsLocalPath(_ value: String) -> Bool {
         let patterns = [
             #"(?i)(?:file://)?/(?:Users|home|private|var|tmp)/[^\s\"'<>]+"#,
@@ -268,15 +281,15 @@ public struct RunTraceInspection: Codable, Sendable, Equatable {
             costUSD: Double?,
             notes: [String]
         ) {
-            self.title = title
-            self.status = status
-            self.runId = runId
-            self.agentId = agentId
-            self.sessionId = sessionId
-            self.triggerSource = triggerSource
-            self.modelId = modelId
-            self.startedAt = startedAt
-            self.endedAt = endedAt
+            self.title = RunTraceInspection.sanitizedDisplayText(title)
+            self.status = status.map(RunTraceInspection.sanitizedDisplayText)
+            self.runId = runId.map(RunTraceInspection.sanitizedDisplayText)
+            self.agentId = agentId.map(RunTraceInspection.sanitizedDisplayText)
+            self.sessionId = sessionId.map(RunTraceInspection.sanitizedDisplayText)
+            self.triggerSource = triggerSource.map(RunTraceInspection.sanitizedDisplayText)
+            self.modelId = modelId.map(RunTraceInspection.sanitizedDisplayText)
+            self.startedAt = startedAt.map(RunTraceInspection.sanitizedDisplayText)
+            self.endedAt = endedAt.map(RunTraceInspection.sanitizedDisplayText)
             self.durationMs = durationMs
             self.turnCount = turnCount
             self.stepCount = stepCount
@@ -285,7 +298,7 @@ public struct RunTraceInspection: Codable, Sendable, Equatable {
             self.tokensIn = tokensIn
             self.tokensOut = tokensOut
             self.costUSD = costUSD
-            self.notes = notes
+            self.notes = notes.map(RunTraceInspection.sanitizedDisplayText)
         }
     }
 
@@ -316,11 +329,11 @@ public struct RunTraceInspection: Codable, Sendable, Equatable {
         ) {
             self.index = index
             self.kind = kind
-            self.title = title
-            self.detail = detail
-            self.status = status
+            self.title = RunTraceInspection.sanitizedDisplayText(title)
+            self.detail = detail.map(RunTraceInspection.sanitizedDisplayText)
+            self.status = status.map(RunTraceInspection.sanitizedDisplayText)
             self.timingMs = timingMs
-            self.relatedToolCallIds = relatedToolCallIds
+            self.relatedToolCallIds = relatedToolCallIds.map(RunTraceInspection.sanitizedDisplayText)
         }
     }
 
@@ -349,15 +362,15 @@ public struct RunTraceInspection: Codable, Sendable, Equatable {
             redactedPaths: [String]
         ) {
             self.index = index
-            self.id = id
-            self.name = name
+            self.id = RunTraceInspection.sanitizedDisplayText(id)
+            self.name = RunTraceInspection.sanitizedDisplayText(name)
             self.turnIndex = turnIndex
-            self.argumentsPreview = argumentsPreview
-            self.argumentFormat = argumentFormat
-            self.resultPreview = resultPreview
-            self.resultStatus = resultStatus
+            self.argumentsPreview = RunTraceInspection.sanitizedDisplayText(argumentsPreview)
+            self.argumentFormat = RunTraceInspection.sanitizedDisplayText(argumentFormat)
+            self.resultPreview = resultPreview.map(RunTraceInspection.sanitizedDisplayText)
+            self.resultStatus = resultStatus.map(RunTraceInspection.sanitizedDisplayText)
             self.resultTurnIndex = resultTurnIndex
-            self.redactedPaths = redactedPaths
+            self.redactedPaths = redactedPaths.map(RunTraceInspection.sanitizedDisplayText)
         }
     }
 
@@ -403,8 +416,8 @@ public struct RunTraceInspection: Codable, Sendable, Equatable {
         ) {
             self.severity = severity
             self.code = code
-            self.path = path
-            self.message = message
+            self.path = RunTraceInspection.sanitizedDisplayText(path)
+            self.message = RunTraceInspection.sanitizedDisplayText(message)
         }
     }
 }
@@ -1440,7 +1453,13 @@ public enum RunTraceInspector {
     }
 
     private static func isSensitiveKey(_ key: String, options: Options) -> Bool {
-        let normalized = key.lowercased()
+        let normalized = key
+            .replacingOccurrences(
+                of: #"([a-z0-9])([A-Z])"#,
+                with: "$1_$2",
+                options: .regularExpression
+            )
+            .lowercased()
             .replacingOccurrences(of: "-", with: "_")
             .replacingOccurrences(of: " ", with: "_")
         return options.sensitiveKeyFragments.contains { matchesSensitiveKey(normalized, fragment: $0) }
@@ -1454,10 +1473,13 @@ public enum RunTraceInspector {
         case "token":
             return normalized.hasSuffix("_token")
         case "secret":
-            return normalized.hasSuffix("_secret")
+            return normalized.split(separator: "_").contains("secret")
         case "api_key", "apikey", "private_key", "access_token", "refresh_token", "id_token", "auth_token",
             "session_token":
-            return normalized.hasSuffix("_\(fragment)")
+            return normalized == fragment
+                || normalized.hasPrefix("\(fragment)_")
+                || normalized.hasSuffix("_\(fragment)")
+                || normalized.contains("_\(fragment)_")
         default:
             return normalized.hasPrefix("\(fragment)_") || normalized.hasSuffix("_\(fragment)")
         }
@@ -1817,6 +1839,7 @@ public enum RunTraceInspector {
             guard toolCallCount <= options.maximumToolCalls else { return }
             if let dict = value as? [String: Any] {
                 if let calls = dict["toolCalls"] as? [Any] { toolCallCount += calls.count }
+                if let usage = dict["toolUsage"] as? [Any] { toolCallCount += usage.count }
                 for child in dict.values { countToolCalls(child) }
             } else if let array = value as? [Any] {
                 for child in array { countToolCalls(child) }

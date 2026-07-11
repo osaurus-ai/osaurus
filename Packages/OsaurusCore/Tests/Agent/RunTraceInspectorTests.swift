@@ -445,6 +445,16 @@ struct RunTraceInspectorTests {
 
         #expect(inspection.findings.contains { $0.code == .resourceLimitExceeded })
         #expect(inspection.exportBlockReason?.contains("turns") == true)
+
+        let eval = Data(
+            "{\"modelId\":\"foundation\",\"startedAt\":\"2026-07-11T00:00:00Z\",\"cases\":[{\"id\":\"case\",\"domain\":\"agent\",\"outcome\":\"passed\",\"toolUsage\":[{\"tool\":\"a\"},{\"tool\":\"b\"}]}]}".utf8
+        )
+        let boundedEval = RunTraceInspector.inspect(
+            data: eval,
+            options: .init(maximumToolCalls: 1)
+        )
+        #expect(boundedEval.findings.contains { $0.code == .resourceLimitExceeded })
+        #expect(!boundedEval.canExport)
     }
 
     @Test func malformedOrUnrecognizedArtifactsCannotBeCopied() {
@@ -469,8 +479,10 @@ struct RunTraceInspectorTests {
         let bidi = RunTraceInspector.inspect(
             data: Data("{\"title\":\"safe\\u202Etxt\",\"steps\":[]}".utf8)
         )
-        #expect(throws: RunTraceInspection.ExportError.self) { try bidi.jsonReport() }
-        #expect(throws: RunTraceInspection.ExportError.self) { try bidi.markdownReport() }
+        #expect(bidi.summary.title == "safe�txt")
+        #expect(bidi.canExport)
+        _ = try bidi.jsonReport()
+        _ = try bidi.markdownReport()
 
         let localPath = RunTraceInspector.inspect(
             data: Data("{\"title\":\"/Users/alice/private.txt\",\"steps\":[]}".utf8)
@@ -490,6 +502,31 @@ struct RunTraceInspectorTests {
         #expect(detail.contains("tokenizer=qwen"))
         #expect(detail.contains("max_tokens=128"))
         #expect(!detail.contains("abcdefgh"))
+
+        let camelCase = Data(
+            #"{"title":"secrets","steps":[{"title":"one","detail":"{\"accessToken\":\"leak-a\",\"clientSecret\":\"leak-b\",\"privateKey\":\"leak-c\",\"aws_secret_access_key\":\"leak-d\"}"}]}"#.utf8
+        )
+        let camelInspection = RunTraceInspector.inspect(data: camelCase)
+        let camelDetail = try #require(camelInspection.steps.first?.detail)
+        #expect(!camelDetail.contains("leak-"))
+        #expect(camelDetail.components(separatedBy: "[REDACTED]").count == 5)
+        #expect(!String(decoding: try camelInspection.jsonReport(), as: UTF8.self).contains("leak-"))
+    }
+
+    @Test func uiFacingMetadataSanitizesBidirectionalControls() throws {
+        let inspection = RunTraceInspector.inspect(
+            data: Data(
+                "{\"title\":\"safe\\u202Etitle\",\"status\":\"ok\\u2066spoof\",\"steps\":[{\"title\":\"step\\u202Ename\",\"status\":\"done\\u2069\"}]}".utf8
+            )
+        )
+
+        #expect(!inspection.summary.title.contains("\u{202E}"))
+        #expect(!(inspection.summary.status ?? "").contains("\u{2066}"))
+        #expect(!inspection.steps[0].title.contains("\u{202E}"))
+        #expect(!(inspection.steps[0].status ?? "").contains("\u{2069}"))
+        #expect(inspection.canExport)
+        _ = try inspection.markdownReport()
+        _ = try inspection.jsonReport()
     }
 
     @Test func sourceLabelsDropPOSIXWindowsAndUNCPaths() throws {
