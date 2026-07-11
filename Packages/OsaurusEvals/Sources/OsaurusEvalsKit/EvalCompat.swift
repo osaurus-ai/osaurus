@@ -10,16 +10,52 @@
 //  edit to a shared blob).
 //
 //  This aggregator folds all contributions into a single compatibility
-//  leaderboard: per model, a `works / partial / broken` verdict plus the
-//  hardware coverage (chips, RAM band), worst-case footprint, decode-speed
-//  range, and a comparability check (did everyone grade the same catalog?).
+//  leaderboard with LATEST-RUN PRECEDENCE: per model, the newest contribution
+//  (and any others that graded the SAME catalog — the same exam on other
+//  devices) defines the headline row. Older-catalog runs are never pooled
+//  into the headline pass-rate; they are kept as per-model History. Each row
+//  carries the full ran/passed/failed/skipped/errored funnel, a per-domain
+//  breakdown (what the model is great at / weak at, and why cases skipped),
+//  hardware coverage, worst-case footprint, and decode-speed range.
 //
 //    contribute (per machine) ─▶ reports/community/*.json ─▶ compat ─▶ COMPATIBILITY.{md,json}
 //
 
 import Foundation
 
-/// One model's rolled-up compatibility across every contribution that ran it.
+/// One superseded (older-catalog) run of a model — kept as history so recency
+/// is explicit instead of silently pooled into the headline pass-rate.
+public struct PriorRunSummary: Codable, Sendable, Equatable {
+    public let startedAt: String?
+    public let build: String?
+    public let catalogHash: String?
+    public let passed: Int
+    public let scored: Int
+    public let skipped: Int
+    public let errored: Int
+    public let chip: String?
+    public let totalRamMb: Int?
+
+    public var passRate: Double? { scored > 0 ? Double(passed) / Double(scored) : nil }
+}
+
+/// Per-domain rollup for a model's CURRENT result set — the "what is this
+/// model great at (and what did it skip, and why)" signal.
+public struct DomainCompatibility: Codable, Sendable, Equatable {
+    public let passed: Int
+    public let scored: Int
+    public let skipped: Int
+    public let errored: Int
+    /// Skip-reason histogram (reason → count) merged across the current
+    /// contributions. May account for fewer than `skipped` cases when a
+    /// contribution predates skip-reason recording.
+    public let skipReasons: [String: Int]?
+
+    public var passRate: Double? { scored > 0 ? Double(passed) / Double(scored) : nil }
+}
+
+/// One model's compatibility row: the CURRENT result set (newest catalog),
+/// plus its superseded history.
 public struct ModelCompatibility: Codable, Sendable, Equatable {
     /// Coarse compatibility bucket. Distinguishes "the harness couldn't run
     /// this model" (`broken` — error-dominated / never scored) from "it runs
@@ -34,41 +70,59 @@ public struct ModelCompatibility: Codable, Sendable, Equatable {
     }
 
     public let model: String
+    /// Verdict computed from the CURRENT result set only.
     public let verdict: Verdict
-    /// How many contributions (machine × run) reported this model.
+    /// How many contributions (machine × run) are in the current result set
+    /// (same catalog as the newest run).
     public let contributions: Int
+    /// Current-set funnel: every case either scored (passed + failed),
+    /// skipped (didn't apply on that host), or errored (harness broke).
     public let passed: Int
     public let scored: Int
     public let skipped: Int
     public let errored: Int
-    /// Distinct chips that reported (hardware coverage).
+    /// Per-domain breakdown of the current set (pass-rate, skips + reasons).
+    public let perDomain: [String: DomainCompatibility]
+    /// Domains the model is great at: ≥90% pass-rate with ≥5 scored cases.
+    public let strengths: [String]
+    /// Weakest domain (lowest pass-rate with ≥5 scored, below 90%). nil when
+    /// every qualifying domain is strong.
+    public let weakest: String?
+    /// Distinct chips in the current set (hardware coverage).
     public let chips: [String]
-    /// RAM band of reporting machines, MB.
+    /// RAM band of current-set machines, MB.
     public let minRamMb: Int?
     public let maxRamMb: Int?
     /// Worst observed peak physical footprint (MB) — the RAM-gate headline.
     public let peakPhysFootprintMb: Double?
-    /// Decode throughput spread across contributions (tok/s).
+    /// Decode throughput spread across current contributions (tok/s).
     public let decodeTokensPerSecondMin: Double?
     public let decodeTokensPerSecondMax: Double?
-    /// Distinct catalog hashes seen. >1 means contributions graded different
-    /// case sets, so the aggregate pass-rate mixes denominators — surfaced as
-    /// a comparability caveat rather than silently averaged.
-    public let catalogHashes: [String]
-    /// Distinct Osaurus builds (version or commit) that reported.
-    public let builds: [String]
-    /// True when any contribution self-judged an LLM-judged suite (weaker
-    /// grade) — a trust caveat on the pass-rate.
+    /// Catalog hash the current set graded — the comparability key.
+    public let catalogHash: String?
+    /// Osaurus build (version or commit) of the newest run.
+    public let build: String?
+    /// `startedAt` of the newest run — the row's recency stamp.
+    public let asOf: String?
+    /// True when the current catalog is older than the newest catalog seen
+    /// anywhere in the contribution set — this model needs a fresh run.
+    public let stale: Bool
+    /// True when any current contribution self-judged an LLM-judged suite
+    /// (weaker grade) — a trust caveat on the pass-rate.
     public let hasSelfJudged: Bool
+    /// Older-catalog runs, newest first. Never pooled into the headline.
+    public let superseded: [PriorRunSummary]
 
     public var passRate: Double? { scored > 0 ? Double(passed) / Double(scored) : nil }
-    public var comparable: Bool { catalogHashes.count <= 1 }
+    /// Total cases the current set attempted (scored + skipped + errored).
+    public var attempted: Int { scored + skipped + errored }
 }
 
 /// One distinct machine that has contributed at least one run — the
 /// "comprehensive list of devices and sizes" axis of the crowdsourced
 /// leaderboard. Keyed by (chip, RAM): two M4 Pros with different RAM are
-/// different fit-envelopes and count as separate devices.
+/// different fit-envelopes and count as separate devices. Superseded runs
+/// still count here — device coverage is about who CAN run, not recency.
 public struct DeviceCoverage: Codable, Sendable, Equatable {
     public let chip: String
     public let totalRamMb: Int?
@@ -81,10 +135,10 @@ public struct DeviceCoverage: Codable, Sendable, Equatable {
 /// The full crowdsourced leaderboard.
 public struct CompatibilityReport: Codable, Sendable, Equatable {
     public let generatedAt: String
+    /// Total contribution files folded (current + superseded).
     public let contributions: Int
     public let models: [ModelCompatibility]
-    /// Distinct contributing device shapes (chip × RAM). Optional so
-    /// pre-existing COMPATIBILITY.json files still decode.
+    /// Distinct contributing device shapes (chip × RAM).
     public let devices: [DeviceCoverage]?
 
     public func toJSON(prettyPrinted: Bool = true) throws -> Data {
@@ -101,31 +155,95 @@ public struct CompatibilityReport: Codable, Sendable, Equatable {
         lines.append("# Osaurus Model Compatibility (community)")
         lines.append("")
         lines.append(
-            "Crowdsourced from \(contributions) contribution(s). "
+            "Crowdsourced from \(contributions) contribution(s). Each row reflects the model's "
+                + "**latest run** (newest case catalog); same-catalog runs on other devices fold in, "
+                + "older runs live under the model's History and are never pooled into the headline. "
                 + "Verdicts: **works** (runs cleanly), **partial** (runs with errors or low pass-rate), "
-                + "**broken** (error-dominated / never scored)."
+                + "**broken** (error-dominated / never scored). *stale* = the run predates the newest "
+                + "catalog and needs refreshing."
         )
         lines.append("")
         lines.append(
-            "| Model | Verdict | Pass | Contrib | Chips | RAM band | peak RAM | decode tok/s | builds |"
+            "| Model | Verdict | Pass | Fail | Skip | Err | Great at | Devices | peak RAM | decode tok/s | build | as of |"
         )
-        lines.append("| --- | --- | --- | --- | --- | --- | --- | --- | --- |")
+        lines.append("| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |")
         for m in models {
             let pass =
                 m.passRate.map { String(format: "%.0f%% (%d/%d)", $0 * 100, m.passed, m.scored) }
                 ?? "— (\(m.passed)/\(m.scored))"
-            let chips = m.chips.isEmpty ? "—" : m.chips.joined(separator: ", ")
-            let ramBand = Self.formatRamBand(minMb: m.minRamMb, maxMb: m.maxRamMb)
+            let failed = m.scored - m.passed
+            let devices = Self.formatDevices(chips: m.chips, minRamMb: m.minRamMb, maxRamMb: m.maxRamMb)
             let peak = m.peakPhysFootprintMb.map { String(format: "%.0fMB", $0) } ?? "—"
             let decode = Self.formatRange(m.decodeTokensPerSecondMin, m.decodeTokensPerSecondMax, fmt: "%.0f")
-            let builds = m.builds.isEmpty ? "—" : m.builds.joined(separator: ", ")
             var verdict = m.verdict.rawValue
-            if !m.comparable { verdict += " ⚠" }
+            if m.stale { verdict += " *(stale)*" }
+            var greatAt = m.strengths.isEmpty ? "—" : m.strengths.joined(separator: ", ")
+            if let weakest = m.weakest { greatAt += " · weak: \(weakest)" }
             lines.append(
-                "| `\(Self.shortModel(m.model))` | \(verdict) | \(pass) | \(m.contributions) "
-                    + "| \(chips) | \(ramBand) | \(peak) | \(decode) | \(builds) |"
+                "| `\(Self.shortModel(m.model))` | \(verdict) | \(pass) | \(failed) | \(m.skipped) "
+                    + "| \(m.errored) | \(greatAt) | \(devices) | \(peak) | \(decode) "
+                    + "| \(m.build ?? "—") | \(Self.formatDay(m.asOf)) |"
             )
         }
+
+        // ── Per-model detail: domain breakdown, skipped areas, history ──
+        lines.append("")
+        lines.append("## Model details")
+        for m in models {
+            lines.append("")
+            var heading = "### `\(Self.shortModel(m.model))`"
+            if m.stale { heading += " *(stale — needs a fresh run)*" }
+            lines.append(heading)
+            lines.append("")
+            var meta: [String] = []
+            meta.append("as of \(Self.formatDay(m.asOf))")
+            if let build = m.build { meta.append("build \(build)") }
+            if let hash = m.catalogHash { meta.append("catalog \(hash)") }
+            meta.append("\(m.contributions) contribution(s)")
+            lines.append("Current run: \(meta.joined(separator: " · ")).")
+            lines.append("")
+            lines.append("| Domain | Pass | Fail | Skip | Err |")
+            lines.append("| --- | --- | --- | --- | --- |")
+            for domain in m.perDomain.keys.sorted() {
+                guard let cell = m.perDomain[domain] else { continue }
+                let pass =
+                    cell.passRate.map {
+                        String(format: "%.0f%% (%d/%d)", $0 * 100, cell.passed, cell.scored)
+                    } ?? "— (\(cell.passed)/\(cell.scored))"
+                lines.append(
+                    "| \(domain) | \(pass) | \(cell.scored - cell.passed) | \(cell.skipped) | \(cell.errored) |"
+                )
+            }
+            let skippedDomains = m.perDomain.filter { $0.value.skipped > 0 }.keys.sorted()
+            if !skippedDomains.isEmpty {
+                lines.append("")
+                lines.append("Skipped areas:")
+                for domain in skippedDomains {
+                    guard let cell = m.perDomain[domain] else { continue }
+                    lines.append("- \(domain): \(cell.skipped) — \(Self.formatSkipReasons(cell))")
+                }
+            }
+            if !m.superseded.isEmpty {
+                lines.append("")
+                lines.append("History (superseded, not in the headline):")
+                for prior in m.superseded {
+                    let pass =
+                        prior.passRate.map {
+                            String(format: "%.0f%% (%d/%d)", $0 * 100, prior.passed, prior.scored)
+                        } ?? "— (\(prior.passed)/\(prior.scored))"
+                    var parts = ["\(Self.formatDay(prior.startedAt))"]
+                    if let build = prior.build { parts.append("build \(build)") }
+                    if let hash = prior.catalogHash { parts.append("catalog \(hash)") }
+                    parts.append(pass)
+                    if let chip = prior.chip {
+                        let ram = prior.totalRamMb.map { " (\(Self.gb($0)))" } ?? ""
+                        parts.append("\(chip)\(ram)")
+                    }
+                    lines.append("- \(parts.joined(separator: " · "))")
+                }
+            }
+        }
+
         if let devices, !devices.isEmpty {
             lines.append("")
             lines.append("## Device coverage")
@@ -138,27 +256,27 @@ public struct CompatibilityReport: Codable, Sendable, Equatable {
             lines.append("| Chip | RAM | Contributions | macOS |")
             lines.append("| --- | --- | --- | --- |")
             for d in devices {
-                let ram = d.totalRamMb.map { "\(Int((Double($0) / 1024).rounded()))GB" } ?? "—"
+                let ram = d.totalRamMb.map { Self.gb($0) } ?? "—"
                 let os = d.osVersions.isEmpty ? "—" : d.osVersions.joined(separator: ", ")
                 lines.append("| \(d.chip) | \(ram) | \(d.contributions) | \(os) |")
             }
         }
-        let caveats = models.filter { !$0.comparable || $0.hasSelfJudged }
+        let caveats = models.filter { $0.stale || $0.hasSelfJudged }
         if !caveats.isEmpty {
             lines.append("")
             lines.append("## Caveats")
             lines.append("")
             for m in caveats {
-                if !m.comparable {
+                if m.stale {
                     lines.append(
-                        "- `\(Self.shortModel(m.model))`: ⚠ mixed catalog hashes "
-                            + "(\(m.catalogHashes.joined(separator: ", "))) — contributions graded "
-                            + "different case sets, so the aggregate pass-rate mixes denominators."
+                        "- `\(Self.shortModel(m.model))`: stale — its newest run graded catalog "
+                            + "`\(m.catalogHash ?? "?")`, older than the newest catalog in this report; "
+                            + "a fresh `make evals-contribute` run would refresh the row."
                     )
                 }
                 if m.hasSelfJudged {
                     lines.append(
-                        "- `\(Self.shortModel(m.model))`: at least one contribution self-judged an "
+                        "- `\(Self.shortModel(m.model))`: the current run self-judged an "
                             + "LLM-judged suite — those rubric grades are weaker."
                     )
                 }
@@ -167,14 +285,43 @@ public struct CompatibilityReport: Codable, Sendable, Equatable {
         return lines.joined(separator: "\n") + "\n"
     }
 
-    private static func formatRamBand(minMb: Int?, maxMb: Int?) -> String {
-        func gb(_ mb: Int) -> String { "\(Int((Double(mb) / 1024).rounded()))GB" }
-        switch (minMb, maxMb) {
-        case let (lo?, hi?): return lo == hi ? gb(lo) : "\(gb(lo))–\(gb(hi))"
-        case let (lo?, nil): return gb(lo)
-        case let (nil, hi?): return gb(hi)
-        default: return "—"
+    static func formatSkipReasons(_ cell: DomainCompatibility) -> String {
+        let reasons = cell.skipReasons ?? [:]
+        let recorded = reasons.values.reduce(0, +)
+        var parts =
+            reasons
+            .sorted { $0.value == $1.value ? $0.key < $1.key : $0.value > $1.value }
+            .map { "\($0.key) (\($0.value))" }
+        let unrecorded = cell.skipped - recorded
+        if unrecorded > 0 {
+            parts.append(
+                parts.isEmpty
+                    ? "reasons unrecorded (pre-schema contribution)"
+                    : "\(unrecorded) unrecorded"
+            )
         }
+        return parts.joined(separator: ", ")
+    }
+
+    private static func formatDevices(chips: [String], minRamMb: Int?, maxRamMb: Int?) -> String {
+        guard !chips.isEmpty else { return "—" }
+        let ram: String
+        switch (minRamMb, maxRamMb) {
+        case let (lo?, hi?): ram = lo == hi ? gb(lo) : "\(gb(lo))–\(gb(hi))"
+        case let (lo?, nil): ram = gb(lo)
+        case let (nil, hi?): ram = gb(hi)
+        default: ram = ""
+        }
+        let joined = chips.joined(separator: ", ")
+        return ram.isEmpty ? joined : "\(joined) (\(ram))"
+    }
+
+    private static func gb(_ mb: Int) -> String { "\(Int((Double(mb) / 1024).rounded()))GB" }
+
+    /// Day part of an ISO8601 stamp ("2026-07-10T22:30:22Z" → "2026-07-10").
+    private static func formatDay(_ iso: String?) -> String {
+        guard let iso, !iso.isEmpty else { return "—" }
+        return String(iso.prefix(10))
     }
 
     private static func formatRange(_ lo: Double?, _ hi: Double?, fmt: String) -> String {
@@ -197,7 +344,8 @@ public struct CompatibilityReport: Codable, Sendable, Equatable {
 public enum EvalCompatBuilder {
     /// Fold a set of contribution matrices into the compatibility leaderboard.
     /// Each `EvalMatrix` may carry one or more model columns; columns are
-    /// grouped by `modelId` and aggregated across every contribution.
+    /// grouped by `modelId`, then split into the CURRENT result set (newest
+    /// catalog for that model) and superseded history.
     public static func build(from matrices: [EvalMatrix], generatedAt: String? = nil) -> CompatibilityReport {
         var columnsByModel: [String: [EvalMatrixModelColumn]] = [:]
         for matrix in matrices {
@@ -205,8 +353,20 @@ public enum EvalCompatBuilder {
                 columnsByModel[col.modelId, default: []].append(col)
             }
         }
+        // The newest catalog hash seen anywhere — the staleness reference.
+        // ISO8601 Z-stamps sort lexicographically, so string max is newest.
+        let latestCatalogHash =
+            columnsByModel.values
+            .flatMap { $0 }
+            .filter { $0.environment?.catalogHash != nil }
+            .max { ($0.startedAt ?? "") < ($1.startedAt ?? "") }?
+            .environment?.catalogHash
         let models = columnsByModel.keys.sorted().map { model -> ModelCompatibility in
-            aggregate(model: model, columns: columnsByModel[model] ?? [])
+            aggregate(
+                model: model,
+                columns: columnsByModel[model] ?? [],
+                latestCatalogHash: latestCatalogHash
+            )
         }
         return CompatibilityReport(
             generatedAt: generatedAt ?? isoNow(),
@@ -252,40 +412,131 @@ public enum EvalCompatBuilder {
             }
     }
 
-    private static func aggregate(model: String, columns: [EvalMatrixModelColumn]) -> ModelCompatibility {
-        let passed = columns.reduce(0) { $0 + $1.totalPassed }
-        let scored = columns.reduce(0) { $0 + $1.totalScored }
-        let skipped = columns.reduce(0) { acc, col in
-            acc + col.perDomain.values.reduce(0) { $0 + $1.skipped }
+    /// Split a model's columns into (current, superseded): the newest column
+    /// defines the current catalog; every column that graded the SAME catalog
+    /// folds into the current set (same exam, other devices). Everything else
+    /// is superseded — never pooled into the headline. When the newest column
+    /// has no catalog hash, comparability can't be verified, so the current
+    /// set is that single column.
+    static func splitCurrent(
+        _ columns: [EvalMatrixModelColumn]
+    ) -> (current: [EvalMatrixModelColumn], superseded: [EvalMatrixModelColumn]) {
+        let sorted = columns.sorted { ($0.startedAt ?? "") > ($1.startedAt ?? "") }
+        guard let newest = sorted.first else { return ([], []) }
+        guard let currentHash = newest.environment?.catalogHash else {
+            return ([newest], Array(sorted.dropFirst()))
         }
-        let errored = columns.reduce(0) { acc, col in
-            acc + col.perDomain.values.reduce(0) { $0 + $1.errored }
-        }
-        let envs = columns.compactMap(\.environment)
+        let current = sorted.filter { $0.environment?.catalogHash == currentHash }
+        let superseded = sorted.filter { $0.environment?.catalogHash != currentHash }
+        return (current, superseded)
+    }
+
+    private static func aggregate(
+        model: String,
+        columns: [EvalMatrixModelColumn],
+        latestCatalogHash: String?
+    ) -> ModelCompatibility {
+        let (current, superseded) = splitCurrent(columns)
+        let passed = current.reduce(0) { $0 + $1.totalPassed }
+        let scored = current.reduce(0) { $0 + $1.totalScored }
+        let perDomain = mergePerDomain(current)
+        let skipped = perDomain.values.reduce(0) { $0 + $1.skipped }
+        let errored = perDomain.values.reduce(0) { $0 + $1.errored }
+        let envs = current.compactMap(\.environment)
         let chips = orderedUnique(envs.compactMap(\.chip))
         let rams = envs.compactMap(\.totalRamMb)
-        let decodes = columns.compactMap(\.meanDecodeTokensPerSecond)
-        let catalogHashes = orderedUnique(envs.compactMap(\.catalogHash))
-        let builds = orderedUnique(envs.compactMap { $0.osaurusVersion ?? $0.commit })
-        let hasSelfJudged = envs.contains { $0.judge == "self-judge" }
+        let decodes = current.compactMap(\.meanDecodeTokensPerSecond)
+        let newest = current.first
+        let catalogHash = newest?.environment?.catalogHash
+        let (strengths, weakest) = strengthsAndWeakest(perDomain)
 
         return ModelCompatibility(
             model: model,
             verdict: verdict(passed: passed, scored: scored, errored: errored),
-            contributions: columns.count,
+            contributions: current.count,
             passed: passed,
             scored: scored,
             skipped: skipped,
             errored: errored,
+            perDomain: perDomain,
+            strengths: strengths,
+            weakest: weakest,
             chips: chips,
             minRamMb: rams.min(),
             maxRamMb: rams.max(),
-            peakPhysFootprintMb: columns.compactMap(\.peakPhysFootprintMb).max(),
+            peakPhysFootprintMb: current.compactMap(\.peakPhysFootprintMb).max(),
             decodeTokensPerSecondMin: decodes.min(),
             decodeTokensPerSecondMax: decodes.max(),
-            catalogHashes: catalogHashes,
-            builds: builds,
-            hasSelfJudged: hasSelfJudged
+            catalogHash: catalogHash,
+            build: newest?.environment.flatMap { $0.osaurusVersion ?? $0.commit },
+            asOf: newest?.startedAt,
+            stale: latestCatalogHash != nil && catalogHash != nil && catalogHash != latestCatalogHash,
+            hasSelfJudged: envs.contains { $0.judge == "self-judge" },
+            superseded: superseded.map(priorRunSummary)
+        )
+    }
+
+    /// Merge per-domain cells across the current set: counts sum; skip-reason
+    /// histograms merge (a cell with skips but no recorded reasons leaves the
+    /// deficit visible as `skipped - Σreasons`).
+    static func mergePerDomain(_ columns: [EvalMatrixModelColumn]) -> [String: DomainCompatibility] {
+        var merged: [String: (passed: Int, scored: Int, skipped: Int, errored: Int, reasons: [String: Int])] =
+            [:]
+        for col in columns {
+            for (domain, cell) in col.perDomain {
+                var entry = merged[domain] ?? (0, 0, 0, 0, [:])
+                entry.passed += cell.passed
+                entry.scored += cell.scored
+                entry.skipped += cell.skipped
+                entry.errored += cell.errored
+                for (reason, count) in cell.skipReasons ?? [:] {
+                    entry.reasons[reason, default: 0] += count
+                }
+                merged[domain] = entry
+            }
+        }
+        return merged.mapValues { entry in
+            DomainCompatibility(
+                passed: entry.passed,
+                scored: entry.scored,
+                skipped: entry.skipped,
+                errored: entry.errored,
+                skipReasons: entry.reasons.isEmpty ? nil : entry.reasons
+            )
+        }
+    }
+
+    /// Domains need ≥5 scored cases to qualify (a 2/2 domain isn't a
+    /// "strength"). Strengths: pass-rate ≥90%, best first. Weakest: the
+    /// lowest qualifying pass-rate, only when it's actually below the
+    /// strength bar.
+    static func strengthsAndWeakest(
+        _ perDomain: [String: DomainCompatibility]
+    ) -> (strengths: [String], weakest: String?) {
+        let qualifying = perDomain.compactMap { domain, cell -> (String, Double)? in
+            guard cell.scored >= 5, let rate = cell.passRate else { return nil }
+            return (domain, rate)
+        }
+        let strengths =
+            qualifying
+            .filter { $0.1 >= 0.9 }
+            .sorted { $0.1 == $1.1 ? $0.0 < $1.0 : $0.1 > $1.1 }
+            .map(\.0)
+        let weakest = qualifying.min { $0.1 == $1.1 ? $0.0 < $1.0 : $0.1 < $1.1 }
+        return (strengths, (weakest?.1 ?? 1.0) < 0.9 ? weakest?.0 : nil)
+    }
+
+    static func priorRunSummary(_ col: EvalMatrixModelColumn) -> PriorRunSummary {
+        PriorRunSummary(
+            startedAt: col.startedAt,
+            build: col.environment.flatMap { $0.osaurusVersion ?? $0.commit },
+            catalogHash: col.environment?.catalogHash,
+            passed: col.totalPassed,
+            scored: col.totalScored,
+            skipped: col.perDomain.values.reduce(0) { $0 + $1.skipped },
+            errored: col.perDomain.values.reduce(0) { $0 + $1.errored },
+            chip: col.environment?.chip,
+            totalRamMb: col.environment?.totalRamMb
         )
     }
 

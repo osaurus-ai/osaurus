@@ -19,6 +19,27 @@ public struct EvalMatrixDomainCell: Sendable, Codable, Equatable {
     public let scored: Int
     public let skipped: Int
     public let errored: Int
+    /// Skip-reason histogram (reason → count), taken from the first note of
+    /// each skipped case (the runner writes the gate reason there, e.g.
+    /// "sandbox unavailable: …"). nil when the cell has no skips OR the
+    /// contribution predates this field (reasons unrecorded) — so the
+    /// compatibility report can distinguish "nothing skipped" (skipped == 0)
+    /// from "skipped but why is unknown" (skipped > 0, skipReasons == nil).
+    public let skipReasons: [String: Int]?
+
+    public init(
+        passed: Int,
+        scored: Int,
+        skipped: Int,
+        errored: Int,
+        skipReasons: [String: Int]? = nil
+    ) {
+        self.passed = passed
+        self.scored = scored
+        self.skipped = skipped
+        self.errored = errored
+        self.skipReasons = skipReasons
+    }
 }
 
 public struct EvalMatrixModelColumn: Sendable, Codable, Equatable {
@@ -369,11 +390,18 @@ public enum EvalMatrixBuilder {
             for domain in allDomains {
                 let rows = cases.filter { $0.domain == domain }
                 guard !rows.isEmpty else { continue }
+                let skippedRows = rows.filter { $0.outcome == .skipped }
+                var skipReasons: [String: Int] = [:]
+                for row in skippedRows {
+                    let reason = row.notes.first ?? "unspecified"
+                    skipReasons[reason, default: 0] += 1
+                }
                 perDomain[domain] = EvalMatrixDomainCell(
                     passed: rows.filter { $0.outcome == .passed }.count,
                     scored: rows.filter { $0.outcome == .passed || $0.outcome == .failed }.count,
-                    skipped: rows.filter { $0.outcome == .skipped }.count,
-                    errored: rows.filter { $0.outcome == .errored }.count
+                    skipped: skippedRows.count,
+                    errored: rows.filter { $0.outcome == .errored }.count,
+                    skipReasons: skipReasons.isEmpty ? nil : skipReasons
                 )
             }
             let telem = cases.compactMap(\.telemetry).filter { !$0.isEmpty }

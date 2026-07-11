@@ -4,10 +4,11 @@ import Testing
 @testable import OsaurusEvalsKit
 
 /// Locks the crowdsourced compatibility aggregation: the verdict heuristic
-/// (works / partial / broken), folding many contributions of one model into a
-/// single row (summed pass/scored, hardware coverage, RAM band, decode range),
-/// the comparability caveat when contributions graded different catalogs, and
-/// the `--validate` PR gate that rejects provenance-less contributions.
+/// (works / partial / broken), latest-run precedence (the newest catalog per
+/// model defines the headline; same-catalog runs fold in; older runs become
+/// History and are never pooled), the full ran/skip/err funnel with skip
+/// reasons, per-domain strengths, the stale marker, and the `--validate`
+/// PR gate that rejects provenance-less contributions.
 @Suite
 struct EvalCompatTests {
 
@@ -17,14 +18,24 @@ struct EvalCompatTests {
         scored: Int,
         skipped: Int = 0,
         errored: Int = 0,
+        skipReasons: [String: Int]? = nil,
         decode: Double? = nil,
         peakRamMb: Double? = nil,
+        startedAt: String = "2026-06-19T00:00:00Z",
         env: RunEnvironment? = nil
     ) -> EvalMatrixModelColumn {
         EvalMatrixModelColumn(
             modelId: model,
-            startedAt: "2026-06-19T00:00:00Z",
-            perDomain: ["agent_loop": .init(passed: passed, scored: scored, skipped: skipped, errored: errored)],
+            startedAt: startedAt,
+            perDomain: [
+                "agent_loop": .init(
+                    passed: passed,
+                    scored: scored,
+                    skipped: skipped,
+                    errored: errored,
+                    skipReasons: skipReasons
+                )
+            ],
             totalPassed: passed,
             totalScored: scored,
             meanDecodeTokensPerSecond: decode,
@@ -78,9 +89,9 @@ struct EvalCompatTests {
         #expect(EvalCompatBuilder.verdict(passed: 0, scored: 0, errored: 0) == .unknown)
     }
 
-    // MARK: - aggregation
+    // MARK: - aggregation (same catalog folds across devices)
 
-    @Test func foldsMultipleContributionsOfOneModel() {
+    @Test func foldsSameCatalogContributionsOfOneModel() {
         let c1 = matrix([
             column(
                 model: "mlx-community/Qwen3-4B-4bit",
@@ -114,20 +125,209 @@ struct EvalCompatTests {
         #expect(m.peakPhysFootprintMb == 5200)  // worst observed
         #expect(m.decodeTokensPerSecondMin == 60)
         #expect(m.decodeTokensPerSecondMax == 95)
-        #expect(m.comparable)  // same catalog hash
+        #expect(m.catalogHash == "cafe")
+        #expect(m.superseded.isEmpty)
+        #expect(m.stale == false)
         #expect(m.verdict == .works)
     }
 
-    @Test func mixedCatalogHashesMarkNotComparable() {
-        let c1 = matrix([
-            column(model: "m", passed: 5, scored: 10, env: env(chip: "Apple M1", ramMb: 8192, catalog: "aaaa"))
+    // MARK: - latest-run precedence
+
+    @Test func newestCatalogWinsAndOlderRunsBecomeHistory() {
+        let old = matrix([
+            column(
+                model: "m",
+                passed: 9,
+                scored: 10,
+                startedAt: "2026-06-01T00:00:00Z",
+                env: env(chip: "Apple M1", ramMb: 8192, catalog: "aaaa", build: "0.9.0")
+            )
         ])
+        let new = matrix([
+            column(
+                model: "m",
+                passed: 5,
+                scored: 10,
+                startedAt: "2026-07-01T00:00:00Z",
+                env: env(chip: "Apple M4 Pro", ramMb: 49152, catalog: "bbbb", build: "1.0.0")
+            )
+        ])
+        let m = EvalCompatBuilder.build(from: [old, new]).models[0]
+        // Headline reflects ONLY the newest run — never pooled (5/10, not 14/20).
+        #expect(m.passed == 5)
+        #expect(m.scored == 10)
+        #expect(m.contributions == 1)
+        #expect(m.catalogHash == "bbbb")
+        #expect(m.build == "1.0.0")
+        #expect(m.asOf == "2026-07-01T00:00:00Z")
+        #expect(m.chips == ["Apple M4 Pro"])
+        // The old run is preserved as history.
+        #expect(m.superseded.count == 1)
+        #expect(m.superseded[0].catalogHash == "aaaa")
+        #expect(m.superseded[0].passed == 9)
+        #expect(m.superseded[0].scored == 10)
+        #expect(m.superseded[0].chip == "Apple M1")
+        #expect(m.stale == false)
+    }
+
+    @Test func sameCatalogAsNewestFoldsIntoCurrentSet() {
+        let device1 = matrix([
+            column(
+                model: "m",
+                passed: 8,
+                scored: 10,
+                startedAt: "2026-07-01T00:00:00Z",
+                env: env(chip: "Apple M4 Pro", ramMb: 49152, catalog: "bbbb")
+            )
+        ])
+        let device2 = matrix([
+            column(
+                model: "m",
+                passed: 7,
+                scored: 10,
+                startedAt: "2026-06-28T00:00:00Z",
+                env: env(chip: "Apple M2", ramMb: 16384, catalog: "bbbb")
+            )
+        ])
+        let ancient = matrix([
+            column(
+                model: "m",
+                passed: 1,
+                scored: 10,
+                startedAt: "2026-05-01T00:00:00Z",
+                env: env(chip: "Apple M1", ramMb: 8192, catalog: "aaaa")
+            )
+        ])
+        let m = EvalCompatBuilder.build(from: [device1, device2, ancient]).models[0]
+        #expect(m.contributions == 2)
+        #expect(m.passed == 15)
+        #expect(m.scored == 20)
+        #expect(m.superseded.count == 1)
+        #expect(m.superseded[0].catalogHash == "aaaa")
+    }
+
+    @Test func modelStuckOnOldCatalogIsMarkedStale() {
+        // Model `fresh` ran the newest catalog; model `old` only has a run
+        // against the previous catalog → stale.
+        let fresh = matrix([
+            column(
+                model: "fresh",
+                passed: 8,
+                scored: 10,
+                startedAt: "2026-07-01T00:00:00Z",
+                env: env(chip: "Apple M4 Pro", ramMb: 49152, catalog: "bbbb")
+            )
+        ])
+        let old = matrix([
+            column(
+                model: "old",
+                passed: 8,
+                scored: 10,
+                startedAt: "2026-06-01T00:00:00Z",
+                env: env(chip: "Apple M1", ramMb: 8192, catalog: "aaaa")
+            )
+        ])
+        let report = EvalCompatBuilder.build(from: [fresh, old])
+        let byName = Dictionary(uniqueKeysWithValues: report.models.map { ($0.model, $0) })
+        #expect(byName["fresh"]?.stale == false)
+        #expect(byName["old"]?.stale == true)
+        let md = report.formatMarkdown()
+        #expect(md.contains("*(stale)*"))
+        #expect(md.contains("`old`: stale"))
+    }
+
+    // MARK: - funnel + skip reasons + strengths
+
+    @Test func funnelCountsAndSkipReasonsSurvivePerDomainMerge() throws {
+        let c1 = matrix([
+            column(
+                model: "m",
+                passed: 8,
+                scored: 10,
+                skipped: 3,
+                errored: 1,
+                skipReasons: ["sandbox unavailable": 3],
+                env: env(chip: "Apple M4 Pro", ramMb: 49152, catalog: "cafe")
+            )
+        ])
+        // Same catalog, second device: reasons merge; a pre-schema
+        // contribution (skipReasons nil) leaves its skips unattributed.
         let c2 = matrix([
-            column(model: "m", passed: 5, scored: 10, env: env(chip: "Apple M1", ramMb: 8192, catalog: "bbbb"))
+            column(
+                model: "m",
+                passed: 6,
+                scored: 10,
+                skipped: 2,
+                env: env(chip: "Apple M2", ramMb: 16384, catalog: "cafe")
+            )
         ])
         let m = EvalCompatBuilder.build(from: [c1, c2]).models[0]
-        #expect(m.catalogHashes.count == 2)
-        #expect(m.comparable == false)
+        #expect(m.skipped == 5)
+        #expect(m.errored == 1)
+        #expect(m.attempted == 20 + 5 + 1)
+        let cell = try #require(m.perDomain["agent_loop"])
+        #expect(cell.skipped == 5)
+        #expect(cell.skipReasons == ["sandbox unavailable": 3])
+        let rendered = CompatibilityReport.formatSkipReasons(cell)
+        #expect(rendered.contains("sandbox unavailable (3)"))
+        #expect(rendered.contains("2 unrecorded"))
+    }
+
+    @Test func strengthsRequireVolumeAndHighPassRate() {
+        let perDomain: [String: DomainCompatibility] = [
+            "computer_use_loop": .init(passed: 10, scored: 10, skipped: 0, errored: 0, skipReasons: nil),
+            "agent_loop": .init(passed: 60, scored: 100, skipped: 0, errored: 0, skipReasons: nil),
+            // Perfect but tiny — not enough volume to call a strength.
+            "micro_perf": .init(passed: 2, scored: 2, skipped: 0, errored: 0, skipReasons: nil),
+        ]
+        let (strengths, weakest) = EvalCompatBuilder.strengthsAndWeakest(perDomain)
+        #expect(strengths == ["computer_use_loop"])
+        #expect(weakest == "agent_loop")
+    }
+
+    @Test func weakestIsNilWhenEveryQualifyingDomainIsStrong() {
+        let perDomain: [String: DomainCompatibility] = [
+            "agent_loop": .init(passed: 19, scored: 20, skipped: 0, errored: 0, skipReasons: nil)
+        ]
+        let (strengths, weakest) = EvalCompatBuilder.strengthsAndWeakest(perDomain)
+        #expect(strengths == ["agent_loop"])
+        #expect(weakest == nil)
+    }
+
+    @Test func markdownRendersFunnelDetailsAndHistory() {
+        let old = matrix([
+            column(
+                model: "acme/m-4bit",
+                passed: 9,
+                scored: 10,
+                startedAt: "2026-06-01T00:00:00Z",
+                env: env(chip: "Apple M1", ramMb: 8192, catalog: "aaaa")
+            )
+        ])
+        let new = matrix([
+            column(
+                model: "acme/m-4bit",
+                passed: 5,
+                scored: 10,
+                skipped: 2,
+                skipReasons: ["plugin missing": 2],
+                startedAt: "2026-07-01T00:00:00Z",
+                env: env(chip: "Apple M4 Pro", ramMb: 49152, catalog: "bbbb")
+            )
+        ])
+        let md = EvalCompatBuilder.build(from: [old, new]).formatMarkdown()
+        // Headline funnel columns.
+        #expect(md.contains("| Model | Verdict | Pass | Fail | Skip | Err |"))
+        #expect(md.contains("50% (5/10) | 5 | 2 | 0"))
+        // Detail section with per-domain table, skipped areas, and history.
+        #expect(md.contains("## Model details"))
+        #expect(md.contains("### `m-4bit`"))
+        #expect(md.contains("catalog bbbb"))
+        #expect(md.contains("| agent_loop | 50% (5/10) | 5 | 2 | 0 |"))
+        #expect(md.contains("- agent_loop: 2 — plugin missing (2)"))
+        #expect(md.contains("History (superseded, not in the headline):"))
+        #expect(md.contains("2026-06-01"))
+        #expect(md.contains("90% (9/10)"))
     }
 
     @Test func selfJudgedContributionRaisesCaveat() {

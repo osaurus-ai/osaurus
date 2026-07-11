@@ -18,15 +18,12 @@
       "totalRamMb" : 49152
     }
   ],
-  "generatedAt" : "2026-07-11T05:59:21.299Z",
+  "generatedAt" : "2026-07-11T06:26:20.566Z",
   "models" : [
     {
-      "builds" : [
-        "563f91746"
-      ],
-      "catalogHashes" : [
-        "8632f992dc0872b5"
-      ],
+      "asOf" : "2026-07-11T00:38:18Z",
+      "build" : "563f91746",
+      "catalogHash" : "8632f992dc0872b5",
       "chips" : [
         "Apple M4 Max"
       ],
@@ -40,17 +37,67 @@
       "model" : "OsaurusAI/Ornith-1.0-35B-MXFP8",
       "passed" : 184,
       "peakPhysFootprintMb" : 14586.865211486816,
+      "perDomain" : {
+        "agent_loop" : {
+          "errored" : 0,
+          "passed" : 83,
+          "scored" : 103,
+          "skipped" : 21
+        },
+        "apple_script" : {
+          "errored" : 0,
+          "passed" : 16,
+          "scored" : 16,
+          "skipped" : 19
+        },
+        "capability_claims" : {
+          "errored" : 0,
+          "passed" : 6,
+          "scored" : 8,
+          "skipped" : 3
+        },
+        "computer_use_loop" : {
+          "errored" : 0,
+          "passed" : 15,
+          "scored" : 23,
+          "skipped" : 0
+        },
+        "default_agent" : {
+          "errored" : 0,
+          "passed" : 27,
+          "scored" : 28,
+          "skipped" : 0
+        },
+        "micro_perf" : {
+          "errored" : 1,
+          "passed" : 3,
+          "scored" : 3,
+          "skipped" : 0
+        },
+        "subagent" : {
+          "errored" : 0,
+          "passed" : 34,
+          "scored" : 35,
+          "skipped" : 12
+        }
+      },
       "scored" : 216,
       "skipped" : 55,
-      "verdict" : "partial"
-    },
-    {
-      "builds" : [
+      "stale" : false,
+      "strengths" : [
+        "apple_script",
+        "subagent",
+        "default_agent"
+      ],
+      "superseded" : [
 
       ],
-      "catalogHashes" : [
-        "137408f3cdba4838"
-      ],
+      "verdict" : "partial",
+      "weakest" : "computer_use_loop"
+    },
+    {
+      "asOf" : "2026-07-05T18:46:28Z",
+      "catalogHash" : "137408f3cdba4838",
       "chips" : [
         "Apple M4 Pro"
       ],
@@ -64,17 +111,67 @@
       "model" : "OsaurusAI/Ornith-1.0-9B-MXFP4",
       "passed" : 188,
       "peakPhysFootprintMb" : 20613.585746765137,
+      "perDomain" : {
+        "agent_loop" : {
+          "errored" : 0,
+          "passed" : 66,
+          "scored" : 92,
+          "skipped" : 3
+        },
+        "apple_script" : {
+          "errored" : 0,
+          "passed" : 27,
+          "scored" : 35,
+          "skipped" : 0
+        },
+        "capability_claims" : {
+          "errored" : 0,
+          "passed" : 10,
+          "scored" : 11,
+          "skipped" : 0
+        },
+        "computer_use_loop" : {
+          "errored" : 0,
+          "passed" : 13,
+          "scored" : 23,
+          "skipped" : 0
+        },
+        "default_agent" : {
+          "errored" : 0,
+          "passed" : 26,
+          "scored" : 38,
+          "skipped" : 0
+        },
+        "micro_perf" : {
+          "errored" : 0,
+          "passed" : 3,
+          "scored" : 3,
+          "skipped" : 0
+        },
+        "subagent" : {
+          "errored" : 0,
+          "passed" : 43,
+          "scored" : 45,
+          "skipped" : 2
+        }
+      },
       "scored" : 247,
       "skipped" : 5,
-      "verdict" : "works"
+      "stale" : true,
+      "strengths" : [
+        "subagent",
+        "capability_claims"
+      ],
+      "superseded" : [
+
+      ],
+      "verdict" : "works",
+      "weakest" : "computer_use_loop"
     },
     {
-      "builds" : [
-        "563f91746"
-      ],
-      "catalogHashes" : [
-        "8632f992dc0872b5"
-      ],
+      "asOf" : "2026-07-10T21:03:57Z",
+      "build" : "563f91746",
+      "catalogHash" : "8632f992dc0872b5",
       "chips" : [
         "Apple M4 Max"
       ],
@@ -88,43 +185,154 @@
       "model" : "OsaurusAI/Ornith-1.0-9B-MXFP8",
       "passed" : 178,
       "peakPhysFootprintMb" : 10590.363494873047,
+      "perDomain" : {
+        "agent_loop" : {
+          "errored" : 0,
+          "passed" : 76,
+          "scored" : 103,
+          "skipped" : 21
+        },
+        "apple_script" : {
+          "errored" : 0,
+          "passed" : 16,
+          "scored" : 16,
+          "skipped" : 19
+        },
+        "capability_claims" : {
+          "errored" : 0,
+          "passed" : 8,
+          "scored" : 8,
+          "skipped" : 3
+        },
+        "computer_use_loop" : {
+          "errored" : 0,
+          "passed" : 14,
+          "scored" : 23,
+          "skipped" : 0
+        },
+        "default_agent" : {
+          "errored" : 0,
+          "passed" : 26,
+          "scored" : 28,
+          "skipped" : 0
+        },
+        "micro_perf" : {
+          "errored" : 0,
+          "passed" : 4,
+          "scored" : 4,
+          "skipped" : 0
+        },
+        "subagent" : {
+          "errored" : 0,
+          "passed" : 34,
+          "scored" : 35,
+          "skipped" : 12
+        }
+      },
       "scored" : 217,
       "skipped" : 55,
-      "verdict" : "works"
+      "stale" : false,
+      "strengths" : [
+        "apple_script",
+        "capability_claims",
+        "subagent",
+        "default_agent"
+      ],
+      "superseded" : [
+
+      ],
+      "verdict" : "works",
+      "weakest" : "computer_use_loop"
     },
     {
-      "builds" : [
-        "563f91746"
-      ],
-      "catalogHashes" : [
-        "137408f3cdba4838",
-        "8632f992dc0872b5"
-      ],
+      "asOf" : "2026-07-10T22:30:22Z",
+      "build" : "563f91746",
+      "catalogHash" : "8632f992dc0872b5",
       "chips" : [
-        "Apple M4 Max",
-        "Apple M4 Pro"
+        "Apple M4 Max"
       ],
-      "contributions" : 2,
+      "contributions" : 1,
       "decodeTokensPerSecondMax" : 27.498238115597296,
-      "decodeTokensPerSecondMin" : 13.46734269025956,
+      "decodeTokensPerSecondMin" : 27.498238115597296,
       "errored" : 0,
       "hasSelfJudged" : false,
       "maxRamMb" : 131072,
-      "minRamMb" : 49152,
+      "minRamMb" : 131072,
       "model" : "OsaurusAI/gemma-4-12B-it-MXFP8",
-      "passed" : 411,
-      "peakPhysFootprintMb" : 20535.99245452881,
-      "scored" : 464,
-      "skipped" : 60,
-      "verdict" : "works"
+      "passed" : 188,
+      "peakPhysFootprintMb" : 11488.548500061035,
+      "perDomain" : {
+        "agent_loop" : {
+          "errored" : 0,
+          "passed" : 80,
+          "scored" : 103,
+          "skipped" : 21
+        },
+        "apple_script" : {
+          "errored" : 0,
+          "passed" : 16,
+          "scored" : 16,
+          "skipped" : 19
+        },
+        "capability_claims" : {
+          "errored" : 0,
+          "passed" : 7,
+          "scored" : 8,
+          "skipped" : 3
+        },
+        "computer_use_loop" : {
+          "errored" : 0,
+          "passed" : 22,
+          "scored" : 23,
+          "skipped" : 0
+        },
+        "default_agent" : {
+          "errored" : 0,
+          "passed" : 26,
+          "scored" : 28,
+          "skipped" : 0
+        },
+        "micro_perf" : {
+          "errored" : 0,
+          "passed" : 4,
+          "scored" : 4,
+          "skipped" : 0
+        },
+        "subagent" : {
+          "errored" : 0,
+          "passed" : 33,
+          "scored" : 35,
+          "skipped" : 12
+        }
+      },
+      "scored" : 217,
+      "skipped" : 55,
+      "stale" : false,
+      "strengths" : [
+        "apple_script",
+        "computer_use_loop",
+        "subagent",
+        "default_agent"
+      ],
+      "superseded" : [
+        {
+          "catalogHash" : "137408f3cdba4838",
+          "chip" : "Apple M4 Pro",
+          "errored" : 0,
+          "passed" : 223,
+          "scored" : 247,
+          "skipped" : 5,
+          "startedAt" : "2026-07-04T03:35:10Z",
+          "totalRamMb" : 49152
+        }
+      ],
+      "verdict" : "works",
+      "weakest" : "agent_loop"
     },
     {
-      "builds" : [
-        "563f91746"
-      ],
-      "catalogHashes" : [
-        "8632f992dc0872b5"
-      ],
+      "asOf" : "2026-07-10T17:25:03Z",
+      "build" : "563f91746",
+      "catalogHash" : "8632f992dc0872b5",
       "chips" : [
         "Apple M4 Max"
       ],
@@ -138,17 +346,66 @@
       "model" : "OsaurusAI/gemma-4-E2B-it-8bit",
       "passed" : 117,
       "peakPhysFootprintMb" : 13531.474105834961,
+      "perDomain" : {
+        "agent_loop" : {
+          "errored" : 0,
+          "passed" : 47,
+          "scored" : 103,
+          "skipped" : 21
+        },
+        "apple_script" : {
+          "errored" : 0,
+          "passed" : 16,
+          "scored" : 16,
+          "skipped" : 19
+        },
+        "capability_claims" : {
+          "errored" : 0,
+          "passed" : 0,
+          "scored" : 8,
+          "skipped" : 3
+        },
+        "computer_use_loop" : {
+          "errored" : 0,
+          "passed" : 13,
+          "scored" : 23,
+          "skipped" : 0
+        },
+        "default_agent" : {
+          "errored" : 0,
+          "passed" : 6,
+          "scored" : 28,
+          "skipped" : 0
+        },
+        "micro_perf" : {
+          "errored" : 0,
+          "passed" : 4,
+          "scored" : 4,
+          "skipped" : 0
+        },
+        "subagent" : {
+          "errored" : 0,
+          "passed" : 31,
+          "scored" : 33,
+          "skipped" : 14
+        }
+      },
       "scored" : 215,
       "skipped" : 57,
-      "verdict" : "works"
-    },
-    {
-      "builds" : [
+      "stale" : false,
+      "strengths" : [
+        "apple_script",
+        "subagent"
+      ],
+      "superseded" : [
 
       ],
-      "catalogHashes" : [
-        "137408f3cdba4838"
-      ],
+      "verdict" : "works",
+      "weakest" : "capability_claims"
+    },
+    {
+      "asOf" : "2026-07-06T01:20:32Z",
+      "catalogHash" : "137408f3cdba4838",
       "chips" : [
         "Apple M4 Pro"
       ],
@@ -162,17 +419,67 @@
       "model" : "OsaurusAI/gemma-4-E4B-it-4bit",
       "passed" : 188,
       "peakPhysFootprintMb" : 19797.867179870605,
+      "perDomain" : {
+        "agent_loop" : {
+          "errored" : 0,
+          "passed" : 73,
+          "scored" : 92,
+          "skipped" : 3
+        },
+        "apple_script" : {
+          "errored" : 0,
+          "passed" : 24,
+          "scored" : 33,
+          "skipped" : 2
+        },
+        "capability_claims" : {
+          "errored" : 0,
+          "passed" : 9,
+          "scored" : 11,
+          "skipped" : 0
+        },
+        "computer_use_loop" : {
+          "errored" : 0,
+          "passed" : 21,
+          "scored" : 23,
+          "skipped" : 0
+        },
+        "default_agent" : {
+          "errored" : 0,
+          "passed" : 13,
+          "scored" : 38,
+          "skipped" : 0
+        },
+        "micro_perf" : {
+          "errored" : 0,
+          "passed" : 3,
+          "scored" : 3,
+          "skipped" : 0
+        },
+        "subagent" : {
+          "errored" : 0,
+          "passed" : 45,
+          "scored" : 45,
+          "skipped" : 2
+        }
+      },
       "scored" : 245,
       "skipped" : 7,
-      "verdict" : "works"
+      "stale" : true,
+      "strengths" : [
+        "subagent",
+        "computer_use_loop"
+      ],
+      "superseded" : [
+
+      ],
+      "verdict" : "works",
+      "weakest" : "default_agent"
     },
     {
-      "builds" : [
-        "563f91746"
-      ],
-      "catalogHashes" : [
-        "8632f992dc0872b5"
-      ],
+      "asOf" : "2026-07-10T20:29:44Z",
+      "build" : "563f91746",
+      "catalogHash" : "8632f992dc0872b5",
       "chips" : [
         "Apple M4 Max"
       ],
@@ -186,17 +493,67 @@
       "model" : "OsaurusAI/gemma-4-E4B-it-8bit",
       "passed" : 174,
       "peakPhysFootprintMb" : 16444.5698928833,
+      "perDomain" : {
+        "agent_loop" : {
+          "errored" : 0,
+          "passed" : 83,
+          "scored" : 103,
+          "skipped" : 21
+        },
+        "apple_script" : {
+          "errored" : 0,
+          "passed" : 16,
+          "scored" : 16,
+          "skipped" : 19
+        },
+        "capability_claims" : {
+          "errored" : 0,
+          "passed" : 7,
+          "scored" : 8,
+          "skipped" : 3
+        },
+        "computer_use_loop" : {
+          "errored" : 0,
+          "passed" : 22,
+          "scored" : 23,
+          "skipped" : 0
+        },
+        "default_agent" : {
+          "errored" : 0,
+          "passed" : 8,
+          "scored" : 28,
+          "skipped" : 0
+        },
+        "micro_perf" : {
+          "errored" : 0,
+          "passed" : 4,
+          "scored" : 4,
+          "skipped" : 0
+        },
+        "subagent" : {
+          "errored" : 0,
+          "passed" : 34,
+          "scored" : 35,
+          "skipped" : 12
+        }
+      },
       "scored" : 217,
       "skipped" : 55,
-      "verdict" : "works"
-    },
-    {
-      "builds" : [
+      "stale" : false,
+      "strengths" : [
+        "apple_script",
+        "subagent",
+        "computer_use_loop"
+      ],
+      "superseded" : [
 
       ],
-      "catalogHashes" : [
-        "137408f3cdba4838"
-      ],
+      "verdict" : "works",
+      "weakest" : "default_agent"
+    },
+    {
+      "asOf" : "2026-07-05T23:03:10Z",
+      "catalogHash" : "137408f3cdba4838",
       "chips" : [
         "Apple M4 Pro"
       ],
@@ -210,17 +567,67 @@
       "model" : "mlx-community/Qwen3-4B-4bit",
       "passed" : 198,
       "peakPhysFootprintMb" : 20583.414192199707,
+      "perDomain" : {
+        "agent_loop" : {
+          "errored" : 0,
+          "passed" : 66,
+          "scored" : 92,
+          "skipped" : 3
+        },
+        "apple_script" : {
+          "errored" : 0,
+          "passed" : 29,
+          "scored" : 34,
+          "skipped" : 1
+        },
+        "capability_claims" : {
+          "errored" : 0,
+          "passed" : 10,
+          "scored" : 11,
+          "skipped" : 0
+        },
+        "computer_use_loop" : {
+          "errored" : 0,
+          "passed" : 21,
+          "scored" : 23,
+          "skipped" : 0
+        },
+        "default_agent" : {
+          "errored" : 0,
+          "passed" : 24,
+          "scored" : 38,
+          "skipped" : 0
+        },
+        "micro_perf" : {
+          "errored" : 0,
+          "passed" : 3,
+          "scored" : 3,
+          "skipped" : 0
+        },
+        "subagent" : {
+          "errored" : 0,
+          "passed" : 45,
+          "scored" : 45,
+          "skipped" : 2
+        }
+      },
       "scored" : 246,
       "skipped" : 6,
-      "verdict" : "works"
-    },
-    {
-      "builds" : [
+      "stale" : true,
+      "strengths" : [
+        "subagent",
+        "computer_use_loop",
+        "capability_claims"
+      ],
+      "superseded" : [
 
       ],
-      "catalogHashes" : [
-        "137408f3cdba4838"
-      ],
+      "verdict" : "works",
+      "weakest" : "default_agent"
+    },
+    {
+      "asOf" : "2026-07-06T00:06:04Z",
+      "catalogHash" : "137408f3cdba4838",
       "chips" : [
         "Apple M4 Pro"
       ],
@@ -234,17 +641,66 @@
       "model" : "mlx-community/Qwen3.5-4B-OptiQ-4bit",
       "passed" : 212,
       "peakPhysFootprintMb" : 20487.085746765137,
+      "perDomain" : {
+        "agent_loop" : {
+          "errored" : 0,
+          "passed" : 83,
+          "scored" : 92,
+          "skipped" : 3
+        },
+        "apple_script" : {
+          "errored" : 0,
+          "passed" : 29,
+          "scored" : 35,
+          "skipped" : 0
+        },
+        "capability_claims" : {
+          "errored" : 0,
+          "passed" : 8,
+          "scored" : 11,
+          "skipped" : 0
+        },
+        "computer_use_loop" : {
+          "errored" : 0,
+          "passed" : 15,
+          "scored" : 23,
+          "skipped" : 0
+        },
+        "default_agent" : {
+          "errored" : 0,
+          "passed" : 31,
+          "scored" : 38,
+          "skipped" : 0
+        },
+        "micro_perf" : {
+          "errored" : 0,
+          "passed" : 3,
+          "scored" : 3,
+          "skipped" : 0
+        },
+        "subagent" : {
+          "errored" : 0,
+          "passed" : 43,
+          "scored" : 45,
+          "skipped" : 2
+        }
+      },
       "scored" : 247,
       "skipped" : 5,
-      "verdict" : "works"
-    },
-    {
-      "builds" : [
+      "stale" : true,
+      "strengths" : [
+        "subagent",
+        "agent_loop"
+      ],
+      "superseded" : [
 
       ],
-      "catalogHashes" : [
-        "137408f3cdba4838"
-      ],
+      "verdict" : "works",
+      "weakest" : "computer_use_loop"
+    },
+    {
+      "asOf" : "2026-07-05T18:46:28Z",
+      "catalogHash" : "137408f3cdba4838",
       "chips" : [
         "Apple M4 Pro"
       ],
@@ -258,9 +714,64 @@
       "model" : "xai/grok-4.3",
       "passed" : 228,
       "peakPhysFootprintMb" : 19637.49208831787,
+      "perDomain" : {
+        "agent_loop" : {
+          "errored" : 0,
+          "passed" : 89,
+          "scored" : 92,
+          "skipped" : 3
+        },
+        "apple_script" : {
+          "errored" : 0,
+          "passed" : 26,
+          "scored" : 35,
+          "skipped" : 0
+        },
+        "capability_claims" : {
+          "errored" : 0,
+          "passed" : 11,
+          "scored" : 11,
+          "skipped" : 0
+        },
+        "computer_use_loop" : {
+          "errored" : 0,
+          "passed" : 22,
+          "scored" : 23,
+          "skipped" : 0
+        },
+        "default_agent" : {
+          "errored" : 0,
+          "passed" : 34,
+          "scored" : 38,
+          "skipped" : 0
+        },
+        "micro_perf" : {
+          "errored" : 0,
+          "passed" : 3,
+          "scored" : 3,
+          "skipped" : 0
+        },
+        "subagent" : {
+          "errored" : 0,
+          "passed" : 43,
+          "scored" : 45,
+          "skipped" : 2
+        }
+      },
       "scored" : 247,
       "skipped" : 5,
-      "verdict" : "works"
+      "stale" : true,
+      "strengths" : [
+        "capability_claims",
+        "agent_loop",
+        "computer_use_loop",
+        "subagent"
+      ],
+      "superseded" : [
+
+      ],
+      "verdict" : "works",
+      "weakest" : "apple_script"
     }
   ]
 }
