@@ -10,6 +10,15 @@
 import Foundation
 
 public struct RunTraceInspection: Codable, Sendable, Equatable {
+    public enum ExportError: LocalizedError, Sendable, Equatable {
+        case unsafe(String)
+
+        public var errorDescription: String? {
+            switch self {
+            case .unsafe(let reason): "Report export is unavailable: \(reason)"
+            }
+        }
+    }
     public enum ArtifactKind: String, Codable, Sendable {
         case runTrace
         case evalReport
@@ -47,11 +56,29 @@ public struct RunTraceInspection: Codable, Sendable, Equatable {
         findings.contains { $0.severity == .error }
     }
 
-    public func jsonReport(prettyPrinted: Bool = true) throws -> Data {
-        try JSONEncoder.osaurusCanonical(prettyPrinted: prettyPrinted).encode(self)
+    public var exportBlockReason: String? {
+        let blockingCodes: Set<Finding.Code> = [
+            .fileReadFailed, .fileTooLarge, .resourceLimitExceeded, .inspectionCancelled,
+            .invalidJSON, .unsupportedArtifact, .invalidFieldType, .decodeFailed,
+            .malformedToolArguments, .malformedToolResult, .exportUnsafe,
+        ]
+        return findings.first(where: { blockingCodes.contains($0.code) })?.message
     }
 
-    public func markdownReport() -> String {
+    public var canExport: Bool { exportBlockReason == nil }
+
+    public func jsonReport(prettyPrinted: Bool = true) throws -> Data {
+        if let reason = exportBlockReason { throw ExportError.unsafe(reason) }
+        let data = try JSONEncoder.osaurusCanonical(prettyPrinted: prettyPrinted).encode(self)
+        let text = String(decoding: data, as: UTF8.self)
+        guard !Self.containsUnsafeUnicode(text), !Self.containsLocalPath(text) else {
+            throw ExportError.unsafe("report contains unsafe text or a local path")
+        }
+        return data
+    }
+
+    public func markdownReport() throws -> String {
+        if let reason = exportBlockReason { throw ExportError.unsafe(reason) }
         var lines: [String] = []
         lines.append("# Run Trace Diagnostic")
         lines.append("")
@@ -84,7 +111,7 @@ public struct RunTraceInspection: Codable, Sendable, Equatable {
             lines.append("")
             lines.append("## Notes")
             for note in summary.notes {
-                lines.append("- \(note)")
+                lines.append("- \(Self.escapeMarkdown(note))")
             }
         }
 
@@ -95,7 +122,7 @@ public struct RunTraceInspection: Codable, Sendable, Equatable {
         } else {
             for finding in findings {
                 lines.append(
-                    "- [\(finding.severity.rawValue)] \(finding.code.rawValue) at `\(finding.path)`: \(finding.message)"
+                    "- [\(finding.severity.rawValue)] \(finding.code.rawValue) at `\(Self.escapeCode(finding.path))`: \(Self.escapeMarkdown(finding.message))"
                 )
             }
         }
@@ -121,18 +148,22 @@ public struct RunTraceInspection: Codable, Sendable, Equatable {
         } else {
             for step in steps {
                 let status = step.status.map { " [\($0)]" } ?? ""
-                lines.append("- \(step.index). \(step.kind.rawValue): \(step.title)\(status)")
+                lines.append("- \(step.index). \(step.kind.rawValue): \(Self.escapeMarkdown(step.title))\(Self.escapeMarkdown(status))")
                 if let detail = step.detail, !detail.isEmpty {
-                    lines.append("  \(detail)")
+                    lines.append("  \(Self.escapeMarkdown(detail))")
                 }
             }
         }
-        return lines.joined(separator: "\n")
+        let report = lines.joined(separator: "\n")
+        guard !Self.containsUnsafeUnicode(report), !Self.containsLocalPath(report) else {
+            throw ExportError.unsafe("report contains unsafe text or a local path")
+        }
+        return report
     }
 
     private func appendBullet(_ label: String, _ value: String?, into lines: inout [String]) {
         guard let value, !value.isEmpty else { return }
-        lines.append("- \(label): \(value)")
+        lines.append("- \(Self.escapeMarkdown(label)): \(Self.escapeMarkdown(value))")
     }
 
     private static func formatDuration(ms: Double) -> String {
@@ -150,6 +181,49 @@ public struct RunTraceInspection: Codable, Sendable, Equatable {
             .replacingOccurrences(of: "\\", with: "\\\\")
             .replacingOccurrences(of: "|", with: "\\|")
             .replacingOccurrences(of: "\n", with: "<br>")
+    }
+
+    private static func escapeMarkdown(_ value: String) -> String {
+        value
+            .replacingOccurrences(of: "\\", with: "\\\\")
+            .replacingOccurrences(of: "`", with: "\\`")
+            .replacingOccurrences(of: "*", with: "\\*")
+            .replacingOccurrences(of: "_", with: "\\_")
+            .replacingOccurrences(of: "[", with: "\\[")
+            .replacingOccurrences(of: "]", with: "\\]")
+            .replacingOccurrences(of: "<", with: "&lt;")
+            .replacingOccurrences(of: ">", with: "&gt;")
+            .replacingOccurrences(of: "\r", with: " ")
+            .replacingOccurrences(of: "\n", with: " ")
+    }
+
+    private static func escapeCode(_ value: String) -> String {
+        value.replacingOccurrences(of: "`", with: "'").replacingOccurrences(of: "\n", with: " ")
+    }
+
+    private static func containsUnsafeUnicode(_ value: String) -> Bool {
+        value.unicodeScalars.contains { scalar in
+            let code = scalar.value
+            return (code < 0x20 && code != 0x09 && code != 0x0A && code != 0x0D)
+                || (0x202A ... 0x202E).contains(code)
+                || (0x2066 ... 0x2069).contains(code)
+                || code == 0x200E || code == 0x200F || code == 0x061C
+        }
+    }
+
+    private static func containsLocalPath(_ value: String) -> Bool {
+        let patterns = [
+            #"(?i)(?:file://)?/(?:Users|home|private|var|tmp)/[^\s\"'<>]+"#,
+            #"(?i)\b[A-Z]:\\(?:[^\\\s\"'<>]+\\)+[^\\\s\"'<>]*"#,
+            #"\\\\[^\\\s\"'<>]+\\[^\s\"'<>]+"#,
+        ]
+        return patterns.contains { pattern in
+            guard let regex = try? NSRegularExpression(pattern: pattern) else { return false }
+            return regex.firstMatch(
+                in: value,
+                range: NSRange(value.startIndex..<value.endIndex, in: value)
+            ) != nil
+        }
     }
 
     public struct Summary: Codable, Sendable, Equatable {
@@ -294,6 +368,9 @@ public struct RunTraceInspection: Codable, Sendable, Equatable {
 
         public enum Code: String, Codable, Sendable, Hashable {
             case fileReadFailed
+            case fileTooLarge
+            case resourceLimitExceeded
+            case inspectionCancelled
             case invalidJSON
             case unsupportedArtifact
             case missingRequiredField
@@ -308,6 +385,7 @@ public struct RunTraceInspection: Codable, Sendable, Equatable {
             case traceError
             case timingUnavailable
             case redactionApplied
+            case exportUnsafe
         }
 
         public let severity: Severity
@@ -333,19 +411,43 @@ public enum RunTraceInspector {
     public struct Options: Sendable, Equatable {
         public static let minimumPreviewLimit = 40
         public static let maximumPreviewLimit = 2_000
+        public static let defaultMaximumFileBytes = 4 * 1_024 * 1_024
+        public static let defaultMaximumNestingDepth = 64
+        public static let defaultMaximumStringBytes = 64 * 1_024
+        public static let defaultMaximumTurns = 2_000
+        public static let defaultMaximumSteps = 5_000
+        public static let defaultMaximumToolCalls = 5_000
 
         public let previewLimit: Int
         public let includeInformationalFindings: Bool
         public let sensitiveKeyFragments: [String]
+        public let maximumFileBytes: Int
+        public let maximumNestingDepth: Int
+        public let maximumStringBytes: Int
+        public let maximumTurns: Int
+        public let maximumSteps: Int
+        public let maximumToolCalls: Int
 
         public init(
             previewLimit: Int = 240,
             includeInformationalFindings: Bool = true,
-            sensitiveKeyFragments: [String] = Self.defaultSensitiveKeyFragments
+            sensitiveKeyFragments: [String] = Self.defaultSensitiveKeyFragments,
+            maximumFileBytes: Int = Self.defaultMaximumFileBytes,
+            maximumNestingDepth: Int = Self.defaultMaximumNestingDepth,
+            maximumStringBytes: Int = Self.defaultMaximumStringBytes,
+            maximumTurns: Int = Self.defaultMaximumTurns,
+            maximumSteps: Int = Self.defaultMaximumSteps,
+            maximumToolCalls: Int = Self.defaultMaximumToolCalls
         ) {
             self.previewLimit = min(Self.maximumPreviewLimit, max(Self.minimumPreviewLimit, previewLimit))
             self.includeInformationalFindings = includeInformationalFindings
             self.sensitiveKeyFragments = sensitiveKeyFragments.map { $0.lowercased() }
+            self.maximumFileBytes = max(1_024, maximumFileBytes)
+            self.maximumNestingDepth = max(4, maximumNestingDepth)
+            self.maximumStringBytes = max(256, maximumStringBytes)
+            self.maximumTurns = max(1, maximumTurns)
+            self.maximumSteps = max(1, maximumSteps)
+            self.maximumToolCalls = max(1, maximumToolCalls)
         }
 
         public static let defaultSensitiveKeyFragments = [
@@ -385,8 +487,46 @@ public enum RunTraceInspector {
         at url: URL,
         options: Options = Options()
     ) -> RunTraceInspection {
+        if Task.isCancelled {
+            return failedInspection(
+                sourcePath: safeSourcePath(url.path),
+                code: .inspectionCancelled,
+                message: "inspection was cancelled"
+            )
+        }
         do {
-            let data = try Data(contentsOf: url)
+            let values = try url.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey, .fileSizeKey])
+            guard values.isRegularFile == true, values.isSymbolicLink != true else {
+                return failedInspection(
+                    sourcePath: safeSourcePath(url.path),
+                    code: .fileReadFailed,
+                    message: "trace source must be a regular, non-symbolic-link file"
+                )
+            }
+            if let size = values.fileSize, size > options.maximumFileBytes {
+                return failedInspection(
+                    sourcePath: safeSourcePath(url.path),
+                    code: .fileTooLarge,
+                    message: "trace exceeds the \(options.maximumFileBytes)-byte inspection limit"
+                )
+            }
+            let handle = try FileHandle(forReadingFrom: url)
+            defer { try? handle.close() }
+            let data = try handle.read(upToCount: options.maximumFileBytes + 1) ?? Data()
+            guard data.count <= options.maximumFileBytes else {
+                return failedInspection(
+                    sourcePath: safeSourcePath(url.path),
+                    code: .fileTooLarge,
+                    message: "trace exceeds the \(options.maximumFileBytes)-byte inspection limit"
+                )
+            }
+            guard !Task.isCancelled else {
+                return failedInspection(
+                    sourcePath: safeSourcePath(url.path),
+                    code: .inspectionCancelled,
+                    message: "inspection was cancelled"
+                )
+            }
             return inspect(data: data, sourcePath: safeSourcePath(url.path), options: options)
         } catch {
             return failedInspection(
@@ -403,6 +543,27 @@ public enum RunTraceInspector {
         options: Options = Options()
     ) -> RunTraceInspection {
         let displaySourcePath = safeSourcePath(sourcePath)
+        guard data.count <= options.maximumFileBytes else {
+            return failedInspection(
+                sourcePath: displaySourcePath,
+                code: .fileTooLarge,
+                message: "trace exceeds the \(options.maximumFileBytes)-byte inspection limit"
+            )
+        }
+        if let violation = JSONResourceScanner.firstViolation(in: data, options: options) {
+            return failedInspection(
+                sourcePath: displaySourcePath,
+                code: .resourceLimitExceeded,
+                message: violation
+            )
+        }
+        guard !Task.isCancelled else {
+            return failedInspection(
+                sourcePath: displaySourcePath,
+                code: .inspectionCancelled,
+                message: "inspection was cancelled"
+            )
+        }
         let rootObject: Any
         do {
             rootObject = try JSONSerialization.jsonObject(with: data, options: [.fragmentsAllowed])
@@ -423,6 +584,14 @@ public enum RunTraceInspector {
                     path: "$",
                     message: "trace root must be a JSON object"
                 )
+            )
+        }
+
+        if let violation = collectionLimitViolation(in: root, options: options) {
+            return failedInspection(
+                sourcePath: displaySourcePath,
+                code: .resourceLimitExceeded,
+                message: violation
             )
         }
 
@@ -1296,11 +1465,9 @@ public enum RunTraceInspector {
 
     private static func safeSourcePath(_ sourcePath: String?) -> String? {
         guard let sourcePath, !sourcePath.isEmpty else { return sourcePath }
-        guard sourcePath.hasPrefix("/") else { return sourcePath }
-
-        let url = URL(fileURLWithPath: sourcePath)
-        let fileName = url.lastPathComponent
-        return fileName.isEmpty ? "(absolute path redacted)" : fileName
+        let normalized = sourcePath.replacingOccurrences(of: "\\", with: "/")
+        let fileName = normalized.split(separator: "/", omittingEmptySubsequences: true).last.map(String.init) ?? ""
+        return sanitizeText(fileName.isEmpty ? "(source path redacted)" : fileName)
     }
 
     private static func redactInlineSecrets(_ value: String, path: String) -> (text: String, paths: [String]) {
@@ -1602,7 +1769,7 @@ public enum RunTraceInspector {
     }
 
     private static func preview(_ value: String, limit: Int) -> String {
-        let collapsed = value
+        let collapsed = sanitizeText(value)
             .replacingOccurrences(of: "\r\n", with: "\n")
             .trimmingCharacters(in: .whitespacesAndNewlines)
         guard collapsed.count > limit else { return collapsed }
@@ -1625,5 +1792,92 @@ public enum RunTraceInspector {
             ? [.withInternetDateTime, .withFractionalSeconds]
             : [.withInternetDateTime]
         return formatter
+    }
+
+    private static func sanitizeText(_ value: String) -> String {
+        String(value.unicodeScalars.map { scalar -> Character in
+            let code = scalar.value
+            if (code < 0x20 && code != 0x09 && code != 0x0A && code != 0x0D)
+                || (0x202A ... 0x202E).contains(code)
+                || (0x2066 ... 0x2069).contains(code)
+                || code == 0x200E || code == 0x200F || code == 0x061C
+            {
+                return "�"
+            }
+            return Character(String(scalar))
+        })
+    }
+
+    private static func collectionLimitViolation(in root: [String: Any], options: Options) -> String? {
+        if let turns = root["turns"] as? [Any], turns.count > options.maximumTurns {
+            return "trace contains more than \(options.maximumTurns) turns"
+        }
+        if let steps = root["steps"] as? [Any], steps.count > options.maximumSteps {
+            return "trace contains more than \(options.maximumSteps) steps"
+        }
+        if let cases = root["cases"] as? [Any], cases.count > options.maximumSteps {
+            return "eval report contains more than \(options.maximumSteps) cases"
+        }
+        var toolCallCount = 0
+        func countToolCalls(_ value: Any) {
+            guard toolCallCount <= options.maximumToolCalls else { return }
+            if let dict = value as? [String: Any] {
+                if let calls = dict["toolCalls"] as? [Any] { toolCallCount += calls.count }
+                for child in dict.values { countToolCalls(child) }
+            } else if let array = value as? [Any] {
+                for child in array { countToolCalls(child) }
+            }
+        }
+        countToolCalls(root)
+        if toolCallCount > options.maximumToolCalls {
+            return "trace contains more than \(options.maximumToolCalls) tool calls"
+        }
+        return nil
+    }
+}
+
+private enum JSONResourceScanner {
+    static func firstViolation(in data: Data, options: RunTraceInspector.Options) -> String? {
+        var depth = 0
+        var inString = false
+        var escaped = false
+        var stringBytes = 0
+
+        for byte in data {
+            if inString {
+                if escaped {
+                    escaped = false
+                    stringBytes += 1
+                } else if byte == 0x5C {
+                    escaped = true
+                    stringBytes += 1
+                } else if byte == 0x22 {
+                    inString = false
+                    stringBytes = 0
+                } else {
+                    stringBytes += 1
+                    if stringBytes > options.maximumStringBytes {
+                        return "JSON string exceeds the \(options.maximumStringBytes)-byte limit"
+                    }
+                }
+                continue
+            }
+
+            switch byte {
+            case 0x22:
+                inString = true
+                stringBytes = 0
+            case 0x7B, 0x5B:
+                depth += 1
+                if depth > options.maximumNestingDepth {
+                    return "JSON nesting exceeds the depth limit of \(options.maximumNestingDepth)"
+                }
+            case 0x7D, 0x5D:
+                depth = max(0, depth - 1)
+            default:
+                break
+            }
+        }
+        return nil
     }
 }

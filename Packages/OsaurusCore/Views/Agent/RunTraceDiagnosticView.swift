@@ -35,6 +35,7 @@ public struct RunTraceDiagnosticView: View {
         .frame(maxWidth: .infinity, alignment: .topLeading)
     }
 
+    @ViewBuilder
     private var header: some View {
         HStack(spacing: 8) {
             Image(systemName: inspection.hasErrors ? "exclamationmark.triangle.fill" : "list.bullet.rectangle")
@@ -51,13 +52,14 @@ public struct RunTraceDiagnosticView: View {
             }
             Spacer()
             Button {
-                copy(inspection.markdownReport())
+                if let report = try? inspection.markdownReport() { copy(report) }
             } label: {
                 Image(systemName: "doc.on.doc")
                     .font(.system(size: 11))
             }
             .buttonStyle(.borderless)
             .localizedHelp("Copy Markdown report")
+            .disabled(!inspection.canExport)
 
             Button {
                 if let data = try? inspection.jsonReport(prettyPrinted: true),
@@ -71,9 +73,24 @@ public struct RunTraceDiagnosticView: View {
             }
             .buttonStyle(.borderless)
             .localizedHelp("Copy JSON report")
+            .disabled(!inspection.canExport)
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 10)
+        if let reason = inspection.exportBlockReason {
+            Label {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Report copy unavailable", bundle: .module)
+                    Text(reason).foregroundColor(theme.tertiaryText)
+                }
+                .font(.system(size: 10))
+            } icon: {
+                Image(systemName: "lock.trianglebadge.exclamationmark")
+            }
+            .foregroundColor(.orange)
+            .padding(.horizontal, 12)
+            .padding(.bottom, 8)
+        }
     }
 
     private var summaryStrip: some View {

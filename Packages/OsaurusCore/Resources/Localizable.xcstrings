@@ -43768,6 +43768,12 @@
             "value" : "JSON 보고서 복사"
           }
         },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Копировать отчет JSON"
+          }
+        },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "needs_review",
@@ -43788,6 +43794,12 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "Markdown 보고서 복사"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Копировать отчет Markdown"
           }
         },
         "zh-Hans" : {
@@ -137489,6 +137501,34 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "代碼倉庫"
+          }
+        }
+      }
+    },
+    "Report copy unavailable" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Bericht kann nicht kopiert werden"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "보고서를 복사할 수 없음"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Копирование отчета недоступно"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "无法复制报告"
           }
         }
       }

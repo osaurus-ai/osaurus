@@ -27,13 +27,20 @@ malformed, the inspector shows typed findings instead of silently hiding it.
 Copied reports abbreviate absolute source paths to the artifact filename so a
 debug bundle does not expose the user's home directory.
 
+Copy actions are disabled when inspection was cancelled, the artifact exceeded
+a resource limit, JSON was malformed or unsupported, a tool payload could not
+be parsed, or the final report still contains unsafe Unicode or a local path.
+The copy guarantee applies only to reports produced by the trace inspector. It
+does not claim that scheduler instructions, SQL changelog rows, errors, or other
+content elsewhere in the Activity tab are redacted.
+
 ## Programmatic usage
 
 ```swift
 let url = OsaurusPaths.agentRunTraceFile(agentId: agentId, runId: runId)
 let inspection = RunTraceInspector.inspectFile(at: url)
 
-let markdown = inspection.markdownReport()
+let markdown = try inspection.markdownReport()
 let json = try inspection.jsonReport(prettyPrinted: true)
 ```
 
@@ -54,7 +61,28 @@ Findings are typed and severity-scoped:
 
 Malformed artifacts return a `RunTraceInspection` with findings. Callers should
 not treat an empty summary as success; check `inspection.hasErrors` and display
-the findings.
+the findings. Before copying or exporting, check `inspection.canExport`; both
+report methods also throw when export safety cannot be established.
+
+## Resource limits
+
+The file reader uses a bounded `FileHandle` read and rejects symbolic links.
+Before Foundation materializes the JSON tree, a byte scanner enforces limits on
+file size, nesting depth, and individual string size. Parsed artifacts are also
+bounded by turn, step/case, and tool-call counts. Defaults are intentionally
+large enough for normal traces but prevent a trace file from becoming an
+unbounded memory or recursion workload:
+
+- 4 MiB per artifact
+- 64 levels of JSON nesting
+- 64 KiB per JSON string
+- 2,000 turns
+- 5,000 steps or eval cases
+- 5,000 tool calls
+
+Inspection runs off the main UI path. Selecting another run cancels the prior
+load, and request identity checks prevent a late result from replacing the
+newer selection.
 
 ## Redaction
 
@@ -80,6 +108,11 @@ It also scans text previews for common inline forms such as `Bearer ...`,
 previews only; raw trace files are not modified. Token-like diagnostic keys such
 as `max_tokens`, `token_type`, and `tokenizer` stay visible because they are not
 secrets.
+
+Report rendering escapes Markdown metacharacters and HTML, rejects remaining
+local paths, and refuses bidirectional-control or unsafe control text. This is
+a fail-closed diagnostic export policy, not a claim that heuristic secret-name
+matching can identify every possible user-defined secret.
 
 ## Timing
 

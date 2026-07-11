@@ -25,6 +25,7 @@ struct DatabaseHistoryView: View {
     @State private var loadError: String? = nil
     @State private var traceLoadError: String? = nil
     @State private var traceLoadRequestID: UUID? = nil
+    @State private var traceLoaderTask: Task<TraceLoadResult, Never>? = nil
 
     init(agentId: UUID) {
         self.agentId = agentId
@@ -47,6 +48,7 @@ struct DatabaseHistoryView: View {
         .task { await loadRuns() }
         .onChange(of: agentId) { _, _ in Task { await loadRuns() } }
         .onChange(of: selectedRunId) { _, _ in Task { await loadTrace() } }
+        .onDisappear { traceLoaderTask?.cancel() }
     }
 
     @ViewBuilder
@@ -346,7 +348,9 @@ struct DatabaseHistoryView: View {
 
     @MainActor
     private func loadTrace() async {
+        traceLoaderTask?.cancel()
         guard let runId = selectedRunId else {
+            traceLoaderTask = nil
             traceLoadRequestID = nil
             changelogRows = []
             traceInspection = nil
@@ -359,12 +363,15 @@ struct DatabaseHistoryView: View {
         traceLoadRequestID = requestID
         isLoadingTrace = true
 
-        let result = await Task.detached(priority: .userInitiated) {
+        let task = Task.detached(priority: .userInitiated) {
             DatabaseHistoryTraceLoader.load(agentId: agentId, runId: runId)
-        }.value
+        }
+        traceLoaderTask = task
+        let result = await task.value
         guard traceLoadRequestID == requestID, selectedRunId == runId else {
             return
         }
+        traceLoaderTask = nil
         traceInspection = result.inspection
         changelogRows = result.changelogRows
         traceLoadError = result.errorMessage

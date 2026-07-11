@@ -74,7 +74,7 @@ struct RunTraceInspectorTests {
 
         let inspection = RunTraceInspector.inspect(data: data, options: .init(previewLimit: 400))
         let notes = inspection.summary.notes.joined(separator: "\n")
-        let markdown = inspection.markdownReport()
+        let markdown = try inspection.markdownReport()
         let json = String(decoding: try inspection.jsonReport(prettyPrinted: true), as: UTF8.self)
 
         #expect(notes.contains("[REDACTED]"))
@@ -124,7 +124,7 @@ struct RunTraceInspectorTests {
 
     @Test func markdownAndJSONReportsAreConciseAndRedacted() throws {
         let inspection = try inspectFixture("valid-run")
-        let markdown = inspection.markdownReport()
+        let markdown = try inspection.markdownReport()
         let jsonData = try inspection.jsonReport(prettyPrinted: true)
         let json = String(decoding: jsonData, as: UTF8.self)
 
@@ -144,7 +144,7 @@ struct RunTraceInspectorTests {
             sourcePath: "/Users/alice/.osaurus/agents/private-agent/runs/private-run.json",
             options: .init(previewLimit: 400)
         )
-        let markdown = inspection.markdownReport()
+        let markdown = try inspection.markdownReport()
         let json = String(decoding: try inspection.jsonReport(prettyPrinted: true), as: UTF8.self)
 
         #expect(inspection.sourcePath == "private-run.json")
@@ -209,7 +209,7 @@ struct RunTraceInspectorTests {
         #expect(!preview.contains("sensitive-token"))
     }
 
-    @Test func markdownTableEscapesToolPreviewHTMLAndPipes() {
+    @Test func markdownTableEscapesToolPreviewHTMLAndPipes() throws {
         let data = Data(
             """
             {
@@ -254,7 +254,7 @@ struct RunTraceInspectorTests {
             """.utf8
         )
 
-        let markdown = RunTraceInspector.inspect(data: data, options: .init(previewLimit: 400)).markdownReport()
+        let markdown = try RunTraceInspector.inspect(data: data, options: .init(previewLimit: 400)).markdownReport()
 
         #expect(markdown.contains("render\\|html"))
         #expect(markdown.contains("unsafe &lt;tag&gt; &amp; value\\|with\\|pipes"))
@@ -397,6 +397,114 @@ struct RunTraceInspectorTests {
         let options = RunTraceInspector.Options(previewLimit: 50_000)
 
         #expect(options.previewLimit == RunTraceInspector.Options.maximumPreviewLimit)
+    }
+
+    @Test func boundedFileReadRejectsOversizedArtifactBeforeParsing() throws {
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: url) }
+        try Data(repeating: 0x20, count: 2_049).write(to: url)
+
+        let inspection = RunTraceInspector.inspectFile(
+            at: url,
+            options: .init(maximumFileBytes: 2_048)
+        )
+
+        #expect(inspection.findings.contains { $0.code == .fileTooLarge })
+        #expect(!inspection.canExport)
+        #expect(throws: RunTraceInspection.ExportError.self) { try inspection.markdownReport() }
+    }
+
+    @Test func hostileDepthAndLongStringsFailBeforeJSONMaterialization() {
+        let deep = Data((String(repeating: "[", count: 9) + "0" + String(repeating: "]", count: 9)).utf8)
+        let long = Data("{\"steps\":[{\"detail\":\"\(String(repeating: "a", count: 513))\"}]}".utf8)
+
+        let deepInspection = RunTraceInspector.inspect(
+            data: deep,
+            options: .init(maximumNestingDepth: 8)
+        )
+        let longInspection = RunTraceInspector.inspect(
+            data: long,
+            options: .init(maximumStringBytes: 512)
+        )
+
+        #expect(deepInspection.findings.contains { $0.code == .resourceLimitExceeded })
+        #expect(longInspection.findings.contains { $0.code == .resourceLimitExceeded })
+        #expect(!deepInspection.canExport)
+        #expect(!longInspection.canExport)
+    }
+
+    @Test func collectionLimitsBoundTurnsStepsAndToolCalls() {
+        let turns = (0 ..< 3).map { index in
+            "{\"id\":\"00000000-0000-0000-0000-00000000000\(index)\",\"role\":\"assistant\",\"content\":\"\",\"thinking\":null,\"toolCalls\":[],\"toolCallId\":null,\"toolResults\":null}"
+        }.joined(separator: ",")
+        let data = Data(
+            "{\"runId\":\"AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA\",\"agentId\":\"BBBBBBBB-BBBB-BBBB-BBBB-BBBBBBBBBBBB\",\"turns\":[\(turns)]}".utf8
+        )
+
+        let inspection = RunTraceInspector.inspect(data: data, options: .init(maximumTurns: 2))
+
+        #expect(inspection.findings.contains { $0.code == .resourceLimitExceeded })
+        #expect(inspection.exportBlockReason?.contains("turns") == true)
+    }
+
+    @Test func malformedOrUnrecognizedArtifactsCannotBeCopied() {
+        let malformed = RunTraceInspector.inspect(data: Data("{\"steps\":[".utf8))
+        let unknown = RunTraceInspector.inspect(data: Data("{\"private\":true}".utf8))
+
+        #expect(!malformed.canExport)
+        #expect(!unknown.canExport)
+        #expect(throws: RunTraceInspection.ExportError.self) { try malformed.jsonReport() }
+        #expect(throws: RunTraceInspection.ExportError.self) { try unknown.markdownReport() }
+    }
+
+    @Test func reportEscapesMarkdownAndRefusesBidirectionalMetadata() throws {
+        let markdownData = Data(
+            "{\"title\":\"[click](https://example.com)\",\"steps\":[{\"title\":\"*unsafe*\",\"detail\":\"<script>bad</script>\"}]}".utf8
+        )
+        let markdown = try RunTraceInspector.inspect(data: markdownData).markdownReport()
+        #expect(markdown.contains("\\[click\\](https://example.com)"))
+        #expect(markdown.contains("\\*unsafe\\*"))
+        #expect(markdown.contains("&lt;script&gt;"))
+
+        let bidi = RunTraceInspector.inspect(
+            data: Data("{\"title\":\"safe\\u202Etxt\",\"steps\":[]}".utf8)
+        )
+        #expect(throws: RunTraceInspection.ExportError.self) { try bidi.jsonReport() }
+        #expect(throws: RunTraceInspection.ExportError.self) { try bidi.markdownReport() }
+
+        let localPath = RunTraceInspector.inspect(
+            data: Data("{\"title\":\"/Users/alice/private.txt\",\"steps\":[]}".utf8)
+        )
+        #expect(throws: RunTraceInspection.ExportError.self) { try localPath.jsonReport() }
+        #expect(throws: RunTraceInspection.ExportError.self) { try localPath.markdownReport() }
+    }
+
+    @Test func redactionHasPositiveAndNegativeControls() throws {
+        let data = Data(
+            "{\"title\":\"controls\",\"steps\":[{\"title\":\"one\",\"detail\":\"api_key=abcdefgh tokenizer=qwen max_tokens=128\"}]}".utf8
+        )
+        let inspection = RunTraceInspector.inspect(data: data)
+        let detail = try #require(inspection.steps.first?.detail)
+
+        #expect(detail.contains("api_key=[REDACTED]"))
+        #expect(detail.contains("tokenizer=qwen"))
+        #expect(detail.contains("max_tokens=128"))
+        #expect(!detail.contains("abcdefgh"))
+    }
+
+    @Test func sourceLabelsDropPOSIXWindowsAndUNCPaths() throws {
+        let fixture = try fixtureData("valid-run")
+        for path in [
+            "/Users/alice/private/run.json",
+            #"C:\Users\Alice\private\run.json"#,
+            #"\\server\share\private\run.json"#,
+        ] {
+            let inspection = RunTraceInspector.inspect(data: fixture, sourcePath: path)
+            #expect(inspection.sourcePath == "run.json")
+            let report = try inspection.markdownReport()
+            #expect(!report.contains("Alice"))
+            #expect(!report.contains("server"))
+        }
     }
 
     private func fixtureData(_ name: String) throws -> Data {
