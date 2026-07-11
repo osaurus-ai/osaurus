@@ -20,6 +20,38 @@ public struct AppControl {
         )
     }
 
+    /// Bundle identifier of the Osaurus menu-bar app that hosts the server.
+    private static let appBundleID = "com.dinoki.osaurus"
+
+    /// Terminates the running app and waits until the process exits so a
+    /// subsequent launch observes settings written by a benchmark run.
+    @MainActor
+    public static func terminateAppAndWait(timeoutSeconds: TimeInterval = 20) async -> Bool {
+        guard requestAppTermination(force: false) else { return true }
+        let deadline = Date().addingTimeInterval(timeoutSeconds)
+        while Date() < deadline {
+            if !isAppRunning() { return true }
+            try? await Task.sleep(nanoseconds: 200_000_000)
+        }
+        _ = requestAppTermination(force: true)
+        try? await Task.sleep(nanoseconds: 500_000_000)
+        return !isAppRunning()
+    }
+
+    @MainActor
+    private static func requestAppTermination(force: Bool) -> Bool {
+        let apps = NSRunningApplication.runningApplications(withBundleIdentifier: appBundleID)
+        for app in apps {
+            _ = force ? app.forceTerminate() : app.terminate()
+        }
+        return !apps.isEmpty
+    }
+
+    @MainActor
+    private static func isAppRunning() -> Bool {
+        !NSRunningApplication.runningApplications(withBundleIdentifier: appBundleID).isEmpty
+    }
+
     @MainActor
     public static func launchAppIfNeeded() async {
         // Try to detect if server responds; if yes, nothing to do
