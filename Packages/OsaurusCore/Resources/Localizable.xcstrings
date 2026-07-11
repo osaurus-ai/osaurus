@@ -39221,9 +39221,6 @@
         }
       }
     },
-    "Could not clear saved token." : {
-
-    },
     "Could not create a secure login challenge" : {
       "localizations" : {
         "de" : {
@@ -75761,9 +75758,6 @@
           }
         }
       }
-    },
-    "Keychain storage is unavailable." : {
-
     },
     "Keys start with sk-." : {
       "comment" : "Hint to provide to the user about the expected format of the API key for the selected credential provider.",

@@ -17,7 +17,6 @@ struct GitHubSkillServiceImportTests {
             log: log,
             tokenProvider: GitHubImportTokenProvider(
                 explicitToken: { "explicit-token" },
-                savedToken: { nil },
                 environment: { ["GH_TOKEN": "env-token"] }
             )
         ) { request in
@@ -39,13 +38,12 @@ struct GitHubSkillServiceImportTests {
         #expect(requests.allSatisfy { $0.value(forHTTPHeaderField: "Authorization") == "Bearer explicit-token" })
     }
 
-    @Test func authenticatedRequestsUseSavedImporterTokenWhenExplicitTokenIsAbsent() async throws {
+    @Test func authenticatedRequestsUseConfiguredSharedToken() async throws {
         let log = RequestLog()
         let service = makeService(
             log: log,
             tokenProvider: GitHubImportTokenProvider(
-                explicitToken: { nil },
-                savedToken: { "saved-token" },
+                explicitToken: { "saved-token" },
                 environment: { ["GH_TOKEN": "env-token"] }
             )
         ) { request in
@@ -73,7 +71,6 @@ struct GitHubSkillServiceImportTests {
             log: log,
             tokenProvider: GitHubImportTokenProvider(
                 explicitToken: { nil },
-                savedToken: { nil },
                 environment: { [:] }
             )
         ) { request in
@@ -795,7 +792,6 @@ struct GitHubSkillServiceImportTests {
         log: RequestLog = RequestLog(),
         tokenProvider: any GitHubAuthTokenProviding = GitHubImportTokenProvider(
             explicitToken: { nil },
-            savedToken: { nil },
             environment: { [:] }
         ),
         checkpointStore: GitHubImportCheckpointStore = GitHubImportCheckpointStore(

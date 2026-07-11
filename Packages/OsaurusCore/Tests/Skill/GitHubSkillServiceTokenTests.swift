@@ -2,8 +2,8 @@
 //  GitHubSkillServiceTokenTests.swift
 //  OsaurusCoreTests
 //
-//  Covers the #1719 token-resolution helper: precedence, trimming, and
-//  blank-handling over an explicit environment (no process-env mutation).
+//  Covers GitHub token resolution without mutating process environment or
+//  reading the user's Keychain.
 //
 
 import Foundation
@@ -11,12 +11,8 @@ import Testing
 
 @testable import OsaurusCore
 
-@Suite(.serialized)
+@Suite
 struct GitHubSkillServiceTokenTests {
-    private let keychainAvailable: @Sendable () -> Bool = { false }
-    private let keychainUnavailable: @Sendable () -> Bool = { true }
-    private let inMemoryStore: @Sendable () -> Bool = { true }
-
     @Test func returnsNilWhenNeitherKeySet() {
         #expect(GitHubSkillService.gitHubToken(from: [:]) == nil)
         #expect(GitHubSkillService.gitHubToken(from: ["UNRELATED": "x"]) == nil)
@@ -30,9 +26,9 @@ struct GitHubSkillServiceTokenTests {
         #expect(GitHubSkillService.gitHubToken(from: ["GH_TOKEN": "ghp_xyz"]) == "ghp_xyz")
     }
 
-    @Test func ghTokenWinsOverGitHubToken() {
+    @Test func gitHubTokenWinsOverGhToken() {
         let env = ["GITHUB_TOKEN": "primary", "GH_TOKEN": "secondary"]
-        #expect(GitHubSkillService.gitHubToken(from: env) == "secondary")
+        #expect(GitHubSkillService.gitHubToken(from: env) == "primary")
     }
 
     @Test func trimsSurroundingWhitespace() {
@@ -45,194 +41,75 @@ struct GitHubSkillServiceTokenTests {
     }
 
     @Test func blankPrimaryFallsThroughToSecondary() {
-        let env = ["GH_TOKEN": "   ", "GITHUB_TOKEN": "fallback-token"]
-        #expect(GitHubSkillService.gitHubToken(from: env) == "fallback-token")
+        let env = ["GITHUB_TOKEN": "   ", "GH_TOKEN": "ghp_fallback"]
+        #expect(GitHubSkillService.gitHubToken(from: env) == "ghp_fallback")
     }
 
-    @Test func controlCharacterTokensAreIgnored() {
-        #expect(GitHubImportTokenKeychain.normalizedToken("line\nbreak") == nil)
-        #expect(GitHubImportTokenKeychain.normalizedToken("carriage\rreturn") == nil)
-        #expect(GitHubImportTokenKeychain.normalizedToken("tab\tchar") == nil)
-
-        let env = ["GH_TOKEN": "bad\nvalue", "GITHUB_TOKEN": "fallback-token"]
-        #expect(GitHubSkillService.gitHubToken(from: env) == "fallback-token")
+    @Test func controlCharacterPrimaryFallsThroughToSecondary() {
+        let env = ["GITHUB_TOKEN": "invalid\nvalue", "GH_TOKEN": "ghp_fallback"]
+        #expect(GitHubSkillService.gitHubToken(from: env) == "ghp_fallback")
     }
 
-    @Test func tokenProviderPrecedenceIsExplicitSavedThenEnvironment() {
-        let explicit = GitHubImportTokenProvider(
-            explicitToken: { " explicit-token " },
-            savedToken: { "saved-token" },
-            environment: { ["GH_TOKEN": "env-token"] }
-        ).token()
-        #expect(explicit?.value == "explicit-token")
-        #expect(explicit?.source == .explicit)
-
-        let saved = GitHubImportTokenProvider(
-            explicitToken: { nil },
-            savedToken: { " saved-token " },
-            environment: { ["GH_TOKEN": "env-token"] }
-        ).token()
-        #expect(saved?.value == "saved-token")
-        #expect(saved?.source == .savedKeychain)
-
-        let env = GitHubImportTokenProvider(
-            explicitToken: { nil },
-            savedToken: { nil },
-            environment: { ["GITHUB_TOKEN": "github-env", "GH_TOKEN": "gh-env"] }
-        ).token()
-        #expect(env?.value == "gh-env")
-        #expect(env?.source == .environment)
+    @Test func rejectsEmbeddedControlCharacters() {
+        #expect(GitHubSkillService.normalizedAuthToken("ghp_line\nbreak") == nil)
+        #expect(GitHubSkillService.normalizedAuthToken("ghp_carriage\rreturn") == nil)
+        #expect(GitHubSkillService.normalizedAuthToken("ghp_tab\tcharacter") == nil)
+        #expect(GitHubSkillService.normalizedAuthToken("ghp_null\0character") == nil)
     }
 
-    @Test func invalidExplicitTokenFallsThroughWithoutUsingBadValue() {
-        let token = GitHubImportTokenProvider(
-            explicitToken: { "bad\nexplicit" },
-            savedToken: { "saved-token" },
-            environment: { ["GH_TOKEN": "env-token"] }
-        ).token()
-
-        #expect(token?.value == "saved-token")
-        #expect(token?.source == .savedKeychain)
+    @Test func providerPrefersConfiguredTokenOverEnvironment() throws {
+        let provider = GitHubImportTokenProvider(
+            explicitToken: { " configured " },
+            environment: { ["GITHUB_TOKEN": "environment"] }
+        )
+        let token = try #require(provider.token())
+        #expect(token.value == "configured")
+        #expect(token.source == .explicit)
     }
 
-    @Test func importerKeychainRoundTripsWithoutPrefillingOrLeakingInvalidSaves() {
-        _ = GitHubImportTokenKeychain.clearToken(
-            keychainDisabled: keychainAvailable,
-            useInMemoryStore: inMemoryStore
+    @Test func providerFallsBackWhenConfiguredTokenIsInvalid() throws {
+        let provider = GitHubImportTokenProvider(
+            explicitToken: { "invalid\tvalue" },
+            environment: { ["GITHUB_TOKEN": "environment"] }
         )
-
-        #expect(
-            GitHubImportTokenKeychain.saveToken(
-                "  saved-token\n",
-                keychainDisabled: keychainAvailable,
-                useInMemoryStore: inMemoryStore
-            ) == .saved
-        )
-        #expect(
-            GitHubImportTokenKeychain.getToken(
-                keychainDisabled: keychainAvailable,
-                useInMemoryStore: inMemoryStore
-            ) == "saved-token"
-        )
-
-        #expect(
-            GitHubImportTokenKeychain.saveToken(
-                "   ",
-                keychainDisabled: keychainAvailable,
-                useInMemoryStore: inMemoryStore
-            ) == .ignoredBlank
-        )
-        #expect(
-            GitHubImportTokenKeychain.getToken(
-                keychainDisabled: keychainAvailable,
-                useInMemoryStore: inMemoryStore
-            ) == "saved-token"
-        )
-
-        #expect(
-            GitHubImportTokenKeychain.saveToken(
-                "bad\r\nvalue",
-                keychainDisabled: keychainAvailable,
-                useInMemoryStore: inMemoryStore
-            ) == .rejectedInvalid
-        )
-        #expect(
-            GitHubImportTokenKeychain.getToken(
-                keychainDisabled: keychainAvailable,
-                useInMemoryStore: inMemoryStore
-            ) == "saved-token"
-        )
-
-        #expect(
-            GitHubImportTokenKeychain.clearToken(
-                keychainDisabled: keychainAvailable,
-                useInMemoryStore: inMemoryStore
-            )
-        )
-        #expect(
-            GitHubImportTokenKeychain.getToken(
-                keychainDisabled: keychainAvailable,
-                useInMemoryStore: inMemoryStore
-            ) == nil
-        )
+        let token = try #require(provider.token())
+        #expect(token.value == "environment")
+        #expect(token.source == .environment)
     }
 
-    @Test func disabledKeychainReturnsNilAndNoOpsWithoutTouchingStoredValue() {
-        _ = GitHubImportTokenKeychain.clearToken(
-            keychainDisabled: keychainAvailable,
-            useInMemoryStore: inMemoryStore
-        )
-        defer {
-            _ = GitHubImportTokenKeychain.clearToken(
-                keychainDisabled: keychainAvailable,
-                useInMemoryStore: inMemoryStore
-            )
-        }
-        #expect(
-            GitHubImportTokenKeychain.saveToken(
-                "stored-token",
-                keychainDisabled: keychainAvailable,
-                useInMemoryStore: inMemoryStore
-            ) == .saved
-        )
-
-        #expect(
-            GitHubImportTokenKeychain.saveToken(
-                "disabled-token",
-                keychainDisabled: keychainUnavailable,
-                useInMemoryStore: inMemoryStore
-            ) == .unavailable
-        )
-        #expect(
-            GitHubImportTokenKeychain.getToken(
-                keychainDisabled: keychainUnavailable,
-                useInMemoryStore: inMemoryStore
-            ) == nil
-        )
-        #expect(
-            GitHubImportTokenKeychain.clearToken(
-                keychainDisabled: keychainUnavailable,
-                useInMemoryStore: inMemoryStore
-            )
-        )
-        #expect(
-            GitHubImportTokenKeychain.getToken(
-                keychainDisabled: keychainAvailable,
-                useInMemoryStore: inMemoryStore
-            ) == "stored-token"
-        )
+    @Test func storedTokenWinsOverEnvironment() {
+        let env = ["GITHUB_TOKEN": "from_env"]
+        #expect(GitHubSkillService.resolveToken(stored: "ghp_stored", environment: env) == "ghp_stored")
     }
 
-    @Test func importerTokenStorageIsScopedAwayFromOtherSecretServices() {
-        #expect(GitHubImportTokenKeychain.keychainService != "ai.osaurus.tools")
-        #expect(GitHubImportTokenKeychain.keychainService != "ai.osaurus.mcp")
-        #expect(GitHubImportTokenKeychain.keychainService != "ai.osaurus.remote")
-        #expect(GitHubImportTokenKeychain.keychainService != "ai.osaurus.agent-secrets")
+    @Test func fallsBackToEnvironmentWhenNoStoredToken() {
+        let env = ["GITHUB_TOKEN": "from_env"]
+        #expect(GitHubSkillService.resolveToken(stored: nil, environment: env) == "from_env")
+    }
 
-        _ = GitHubImportTokenKeychain.saveToken(
-            "saved-token",
-            keychainDisabled: keychainAvailable,
-            useInMemoryStore: inMemoryStore
-        )
-        #expect(
-            GitHubImportTokenKeychain.clearToken(
-                keychainDisabled: keychainAvailable,
-                useInMemoryStore: inMemoryStore
-            )
-        )
-        #expect(
-            GitHubImportTokenKeychain.getToken(
-                keychainDisabled: keychainAvailable,
-                useInMemoryStore: inMemoryStore
-            ) == nil
-        )
+    @Test func invalidStoredTokenFallsBackToEnvironment() {
+        let env = ["GITHUB_TOKEN": "from_env"]
+        #expect(GitHubSkillService.resolveToken(stored: "invalid\tvalue", environment: env) == "from_env")
+    }
+
+    @Test func blankStoredTokenFallsBackToEnvironment() {
+        let env = ["GH_TOKEN": "from_env"]
+        #expect(GitHubSkillService.resolveToken(stored: "   \n", environment: env) == "from_env")
+    }
+
+    @Test func trimsStoredTokenThatWins() {
+        #expect(GitHubSkillService.resolveToken(stored: "  ghp_stored\n", environment: [:]) == "ghp_stored")
+    }
+
+    @Test func returnsNilWhenNeitherStoredNorEnvironment() {
+        #expect(GitHubSkillService.resolveToken(stored: nil, environment: [:]) == nil)
+        #expect(GitHubSkillService.resolveToken(stored: "  ", environment: [:]) == nil)
     }
 
     @Test func checkpointAndErrorsDoNotSerializeResolvedTokenValue() throws {
         let sentinel = "sentinel-token-not-matched-by-redactor-\(UUID().uuidString)"
         let provider = GitHubImportTokenProvider(
-            explicitToken: { nil },
-            savedToken: { sentinel },
+            explicitToken: { sentinel },
             environment: { [:] }
         )
         #expect(provider.token()?.value == sentinel)
@@ -252,8 +129,7 @@ struct GitHubSkillServiceTokenTests {
                 )
             ]
         )
-        let encoded = try JSONEncoder().encode(checkpoint)
-        let json = String(decoding: encoded, as: UTF8.self)
+        let json = String(decoding: try JSONEncoder().encode(checkpoint), as: UTF8.self)
         let invalidURL = ["https:", "", "example.com", "not-github"].joined(separator: "/")
 
         #expect(!json.contains(sentinel))
@@ -265,31 +141,5 @@ struct GitHubSkillServiceTokenTests {
                 authenticated: true
             ).localizedDescription.contains(sentinel)
         )
-    }
-
-    // MARK: - resolveToken precedence (in-app keychain token vs env vars)
-
-    @Test func storedTokenWinsOverEnvironment() {
-        let env = ["GITHUB_TOKEN": "from_env"]
-        #expect(GitHubSkillService.resolveToken(stored: "ghp_stored", environment: env) == "ghp_stored")
-    }
-
-    @Test func fallsBackToEnvironmentWhenNoStoredToken() {
-        let env = ["GITHUB_TOKEN": "from_env"]
-        #expect(GitHubSkillService.resolveToken(stored: nil, environment: env) == "from_env")
-    }
-
-    @Test func blankStoredTokenFallsBackToEnvironment() {
-        let env = ["GH_TOKEN": "from_env"]
-        #expect(GitHubSkillService.resolveToken(stored: "   \n", environment: env) == "from_env")
-    }
-
-    @Test func trimsStoredTokenThatWins() {
-        #expect(GitHubSkillService.resolveToken(stored: "  ghp_stored\n", environment: [:]) == "ghp_stored")
-    }
-
-    @Test func returnsNilWhenNeitherStoredNorEnvironment() {
-        #expect(GitHubSkillService.resolveToken(stored: nil, environment: [:]) == nil)
-        #expect(GitHubSkillService.resolveToken(stored: "  ", environment: [:]) == nil)
     }
 }

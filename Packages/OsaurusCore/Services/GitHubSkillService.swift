@@ -39,8 +39,7 @@ public struct GitHubRepo: Codable, Hashable, Sendable {
     }
 }
 
-/// Source of the token used for GitHub API requests. Kept importer-local so
-/// plugin import does not grow a broad credential subsystem.
+/// Source of the token used for GitHub API requests.
 public enum GitHubAuthTokenSource: String, Codable, Sendable {
     case explicit
     case environment
@@ -62,11 +61,10 @@ public protocol GitHubAuthTokenProviding: Sendable {
     func token() -> GitHubAuthToken?
 }
 
-/// Narrow token provider for the GitHub plugin/skill importer.
+/// Narrow adapter from the shared GitHub credential to the plugin/skill importer.
 ///
 /// Preference order:
-/// 1. An explicitly supplied token closure (for future user-config wiring and
-///    focused tests).
+/// 1. The shared in-app token, or an explicitly supplied token closure in tests.
 /// 2. `GITHUB_TOKEN`.
 /// 3. `GH_TOKEN`.
 public struct GitHubImportTokenProvider: GitHubAuthTokenProviding {
@@ -74,30 +72,25 @@ public struct GitHubImportTokenProvider: GitHubAuthTokenProviding {
     private let environment: @Sendable () -> [String: String]
 
     public init(
-        explicitToken: @escaping @Sendable () -> String? = { GitHubAuth.token },
+        explicitToken: (@Sendable () -> String?)? = nil,
         environment: @escaping @Sendable () -> [String: String] = {
             ProcessInfo.processInfo.environment
         }
     ) {
-        self.explicitToken = explicitToken
+        self.explicitToken = explicitToken ?? { GitHubAuth.token }
         self.environment = environment
     }
 
     public func token() -> GitHubAuthToken? {
-        if let token = normalized(explicitToken()) {
+        if let token = GitHubSkillService.normalizedAuthToken(explicitToken()) {
             return GitHubAuthToken(value: token, source: .explicit)
         }
         if let token = GitHubSkillService.gitHubToken(from: environment()) {
             return GitHubAuthToken(value: token, source: .environment)
         }
         return nil
+        }
     }
-
-    private func normalized(_ raw: String?) -> String? {
-        let token = raw?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        return token.isEmpty ? nil : token
-    }
-}
 
 /// Import bounds applied before materialising repo content. These limits are
 /// intentionally scoped to GitHub plugin/skill import.
@@ -1378,7 +1371,7 @@ public enum GitHubSkillError: Error, LocalizedError {
                     "Retry after the reset time. If this keeps happening, use a token with a higher GitHub API quota."
             }
             return
-                "Set GH_TOKEN or GITHUB_TOKEN for development imports, or retry after GitHub resets the unauthenticated 60/hour quota."
+                "Open Advanced in the import sheet to save a GitHub token, or retry after GitHub resets the unauthenticated 60/hour quota."
         case .treeTruncated:
             return
                 "Retry with a repository/source that has fewer files, or split the plugin source so the GitHub Trees API can return a complete tree."
@@ -1434,10 +1427,12 @@ public final class GitHubSkillService: ObservableObject {
         return GlobalProxySettings.makeSession(base: config)
     }
 
-    /// A GitHub API token from the process environment, if present and
-    /// non-empty. Never logged. Honors GITHUB_TOKEN then GH_TOKEN.
+    /// Resolve the shared in-app credential before environment fallbacks.
     nonisolated static func gitHubToken() -> String? {
-        gitHubToken(from: ProcessInfo.processInfo.environment)
+        resolveToken(
+            stored: GitHubAuth.token,
+            environment: ProcessInfo.processInfo.environment
+        )
     }
 
     /// Pure token resolution over an explicit environment, so the precedence
@@ -1446,13 +1441,31 @@ public final class GitHubSkillService: ObservableObject {
     /// whitespace-only values are treated as absent.
     nonisolated static func gitHubToken(from env: [String: String]) -> String? {
         for key in ["GITHUB_TOKEN", "GH_TOKEN"] {
-            if let token = env[key]?.trimmingCharacters(in: .whitespacesAndNewlines),
-               !token.isEmpty
-            {
+            if let token = normalizedAuthToken(env[key]) {
                 return token
             }
         }
         return nil
+    }
+
+    /// Trim user input while rejecting embedded controls before constructing
+    /// an HTTP Authorization header.
+    nonisolated static func normalizedAuthToken(_ raw: String?) -> String? {
+        guard let token = raw?.trimmingCharacters(in: .whitespacesAndNewlines),
+            !token.isEmpty,
+            token.rangeOfCharacter(from: .controlCharacters) == nil
+        else {
+            return nil
+        }
+        return token
+    }
+
+    /// Resolve the shared in-app token before process-environment fallbacks.
+    nonisolated static func resolveToken(
+        stored: String?,
+        environment: [String: String]
+    ) -> String? {
+        normalizedAuthToken(stored) ?? gitHubToken(from: environment)
     }
 
     private nonisolated func githubRequest(

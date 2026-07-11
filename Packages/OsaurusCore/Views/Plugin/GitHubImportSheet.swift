@@ -1033,36 +1033,39 @@ struct GitHubImportSheet: View {
     // MARK: - Actions
 
     private func refreshSavedGitHubTokenStatus() {
-        hasSavedGitHubToken = GitHubImportTokenKeychain.hasToken()
+        hasSavedGitHubToken = GitHubAuth.hasToken
     }
 
     private func saveGitHubImportToken() {
-        switch GitHubImportTokenKeychain.saveToken(gitHubTokenInput) {
-        case .saved:
-            gitHubTokenInput = ""
-            refreshSavedGitHubTokenStatus()
-            gitHubTokenStatusIsError = false
-            gitHubTokenStatusMessage = L("Saved.")
-        case .ignoredBlank:
+        let trimmed = gitHubTokenInput.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
             gitHubTokenInput = ""
             refreshSavedGitHubTokenStatus()
             gitHubTokenStatusIsError = false
             gitHubTokenStatusMessage = L("Nothing to save.")
-        case .rejectedInvalid:
+            return
+        }
+        guard let token = GitHubSkillService.normalizedAuthToken(gitHubTokenInput) else {
             gitHubTokenStatusIsError = true
             gitHubTokenStatusMessage = L("Token contains unsupported control characters.")
-        case .unavailable:
-            gitHubTokenStatusIsError = true
-            gitHubTokenStatusMessage = L("Keychain storage is unavailable.")
+            return
         }
+
+        GitHubAuth.setToken(token)
+        gitHubService.reloadAuthentication()
+        gitHubTokenInput = ""
+        refreshSavedGitHubTokenStatus()
+        gitHubTokenStatusIsError = false
+        gitHubTokenStatusMessage = L("Saved.")
     }
 
     private func clearGitHubImportToken() {
-        let cleared = GitHubImportTokenKeychain.clearToken()
+        GitHubAuth.setToken(nil)
+        gitHubService.reloadAuthentication()
         gitHubTokenInput = ""
         refreshSavedGitHubTokenStatus()
-        gitHubTokenStatusIsError = !cleared
-        gitHubTokenStatusMessage = cleared ? L("Saved token cleared.") : L("Could not clear saved token.")
+        gitHubTokenStatusIsError = false
+        gitHubTokenStatusMessage = L("Saved token cleared.")
     }
 
     private func cancel() {
