@@ -189,10 +189,16 @@ struct ChipProfileCalibrationTests {
     // MARK: - Spec table
 
     @Test func specTableCoversKnownChipsAndRejectsUnknown() {
-        #expect(ChipProfileCalibration.specBandwidthGBps(brandString: "Apple M1") == 68)
-        #expect(ChipProfileCalibration.specBandwidthGBps(brandString: "Apple M3 Ultra") == 819)
-        #expect(ChipProfileCalibration.specBandwidthGBps(brandString: "Apple M4 Max") == 546)
-        #expect(ChipProfileCalibration.specBandwidthGBps(brandString: "Apple M5 Pro") == 307)
+        let expected: [String: Double] = [
+            "Apple M1": 68, "Apple M1 Pro": 200, "Apple M1 Max": 400, "Apple M1 Ultra": 800,
+            "Apple M2": 100, "Apple M2 Pro": 200, "Apple M2 Max": 400, "Apple M2 Ultra": 800,
+            "Apple M3": 100, "Apple M3 Pro": 150, "Apple M3 Max": 400, "Apple M3 Ultra": 819,
+            "Apple M4": 120, "Apple M4 Pro": 273, "Apple M4 Max": 546,
+            "Apple M5": 153, "Apple M5 Pro": 307, "Apple M5 Max": 614,
+        ]
+        for (brand, bandwidth) in expected {
+            #expect(ChipProfileCalibration.specBandwidthGBps(brandString: brand) == bandwidth)
+        }
         #expect(ChipProfileCalibration.specBandwidthGBps(brandString: "  Apple M2 \n") == 100)
         #expect(ChipProfileCalibration.specBandwidthGBps(brandString: "Apple M4 Extreme") == nil)
         #expect(

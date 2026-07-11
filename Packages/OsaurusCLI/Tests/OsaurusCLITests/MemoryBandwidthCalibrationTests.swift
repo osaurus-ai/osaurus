@@ -87,15 +87,17 @@ final class MemoryBandwidthCalibrationTests: XCTestCase {
     /// Spec-table parity with the Core copy, pinned by hardcoded rows (the
     /// two tables are shared-by-convention, not by code).
     func testSpecTableParityRows() {
-        XCTAssertEqual(MemoryBandwidthCalibration.specBandwidthGBps(brandString: "Apple M1"), 68)
-        XCTAssertEqual(
-            MemoryBandwidthCalibration.specBandwidthGBps(brandString: "Apple M1 Ultra"), 800)
-        XCTAssertEqual(
-            MemoryBandwidthCalibration.specBandwidthGBps(brandString: "Apple M3 Ultra"), 819)
-        XCTAssertEqual(
-            MemoryBandwidthCalibration.specBandwidthGBps(brandString: "Apple M4 Max"), 546)
-        XCTAssertEqual(
-            MemoryBandwidthCalibration.specBandwidthGBps(brandString: "Apple M5 Pro"), 307)
+        let expected: [String: Double] = [
+            "Apple M1": 68, "Apple M1 Pro": 200, "Apple M1 Max": 400, "Apple M1 Ultra": 800,
+            "Apple M2": 100, "Apple M2 Pro": 200, "Apple M2 Max": 400, "Apple M2 Ultra": 800,
+            "Apple M3": 100, "Apple M3 Pro": 150, "Apple M3 Max": 400, "Apple M3 Ultra": 819,
+            "Apple M4": 120, "Apple M4 Pro": 273, "Apple M4 Max": 546,
+            "Apple M5": 153, "Apple M5 Pro": 307, "Apple M5 Max": 614,
+        ]
+        for (brand, bandwidth) in expected {
+            XCTAssertEqual(
+                MemoryBandwidthCalibration.specBandwidthGBps(brandString: brand), bandwidth)
+        }
         XCTAssertNil(
             MemoryBandwidthCalibration.specBandwidthGBps(brandString: "Apple M4 Extreme"))
         XCTAssertNil(
@@ -206,6 +208,9 @@ final class MemoryBandwidthCalibrationTests: XCTestCase {
         XCTAssertTrue(ShowCommand.isMoEBundle(at: dir))
 
         try Data(#"{"text_config": {"num_local_experts": 8}}"#.utf8).write(to: configURL)
+        XCTAssertTrue(ShowCommand.isMoEBundle(at: dir))
+
+        try Data(#"{"n_routed_experts": 64}"#.utf8).write(to: configURL)
         XCTAssertTrue(ShowCommand.isMoEBundle(at: dir))
 
         try Data(#"{"model_type": "gemma4", "num_experts": 1}"#.utf8).write(to: configURL)

@@ -200,6 +200,10 @@ public struct BenchCommand: Command {
 
         let gbps = MemoryBandwidthCalibration.measureBandwidthGBps(
             bufferBytes: bufferBytes, threads: threads)
+        guard gbps > 0, gbps.isFinite else {
+            fputs("Calibration returned an invalid bandwidth measurement; result was not saved.\n", stderr)
+            exit(EXIT_FAILURE)
+        }
         print(String(
             format: "Measured memory bandwidth: %.1f GB/s (aggregate over %d threads)",
             gbps, threads))

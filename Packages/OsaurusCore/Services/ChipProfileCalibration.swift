@@ -150,18 +150,17 @@ enum ChipProfileCalibration {
 
     // MARK: - Decode-throughput estimator (pure)
 
-    /// Fraction of measured memcpy bandwidth a decode step achieves.
-    ///
-    /// Measured memcpy typically achieves 60–75% of theoretical bandwidth,
-    /// and decode streams weights in access patterns close to memcpy, so a
-    /// single mid-band factor gives a usable first-order estimate.
-    /// Calibration follow-ups can tune it per chip family.
+    /// Conservative utilization margin applied to either measured STREAM
+    /// bandwidth or a spec-sheet fallback. It accounts for kernel overhead,
+    /// non-weight traffic, and non-ideal access; it is not a conversion from
+    /// theoretical bandwidth to measured memcpy bandwidth.
     static let decodeEfficiency = 0.7
 
     /// tok/s ≈ bandwidth × efficiency ÷ bytes read per token. For a dense
     /// model every weight byte is read once per token, so bytes-per-token is
-    /// simply the on-disk weights size. (MoE models activate fewer bytes per
-    /// token; this estimate is a floor for them.)
+    /// approximated by on-disk weights size. Callers must suppress or label
+    /// architectures such as MoE and multimodal models where that assumption
+    /// does not represent active decode bytes.
     static func estimatedDecodeTps(weightsBytes: Int64, bandwidthGBps: Double) -> Double {
         guard weightsBytes > 0, bandwidthGBps > 0, bandwidthGBps.isFinite else { return 0 }
         return bandwidthGBps * 1e9 * decodeEfficiency / Double(weightsBytes)
@@ -235,7 +234,8 @@ enum ChipProfileCalibration {
         trials: Int = 3,
         threads: Int = defaultProbeThreadCount()
     ) -> Double {
-        precondition(threads > 0 && bufferBytes >= threads && trials > 0)
+        precondition(
+            threads > 0 && bufferBytes >= threads && trials > 0 && secondsPerTrial > 0)
         // Page-aligned so no trial pays for straddled cache lines at the ends.
         let alignment = 16_384
         let src = UnsafeMutableRawPointer.allocate(byteCount: bufferBytes, alignment: alignment)

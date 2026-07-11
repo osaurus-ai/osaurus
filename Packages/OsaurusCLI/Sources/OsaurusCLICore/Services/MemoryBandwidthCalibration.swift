@@ -110,9 +110,10 @@ enum MemoryBandwidthCalibration {
 
     // MARK: - Decode-throughput estimator
 
-    /// Fraction of memcpy bandwidth a decode step achieves; see the Core copy
-    /// for the rationale (memcpy reaches 60–75% of theoretical, decode
-    /// streams weights close to memcpy patterns). Keep in sync with
+    /// Conservative utilization margin applied to either a measured STREAM
+    /// bandwidth or a spec-sheet fallback. It accounts for kernel overhead,
+    /// non-weight traffic, and non-ideal access; it is not a conversion from
+    /// theoretical bandwidth to measured memcpy bandwidth. Keep in sync with
     /// `ChipProfileCalibration.decodeEfficiency`.
     static let decodeEfficiency = 0.7
 
@@ -168,7 +169,8 @@ enum MemoryBandwidthCalibration {
         trials: Int = 3,
         threads: Int = defaultThreadCount()
     ) -> Double {
-        precondition(threads > 0 && bufferBytes >= threads && trials > 0)
+        precondition(
+            threads > 0 && bufferBytes >= threads && trials > 0 && secondsPerTrial > 0)
         let alignment = 16_384  // page-aligned
         let src = UnsafeMutableRawPointer.allocate(byteCount: bufferBytes, alignment: alignment)
         let dst = UnsafeMutableRawPointer.allocate(byteCount: bufferBytes, alignment: alignment)
