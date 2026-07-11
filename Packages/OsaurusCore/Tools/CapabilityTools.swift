@@ -631,6 +631,7 @@ final class CapabilitiesLoadTool: OsaurusTool, @unchecked Sendable {
 
         var sections: [String] = []
         var failures: [LoadFailure] = []
+        let skillReferenceBudget = SkillReferenceBudget()
 
         for id in ids {
             let resolvedId: LoadId
@@ -645,13 +646,13 @@ final class CapabilitiesLoadTool: OsaurusTool, @unchecked Sendable {
             let outcome: LoadOutcome
             switch resolvedId.typePrefix {
             case "method":
-                outcome = await loadMethod(resolvedId.rawId)
+                outcome = await loadMethod(resolvedId.rawId, budget: skillReferenceBudget)
             case "tool":
                 outcome = await loadTool(resolvedId.rawId)
             case "skill":
-                outcome = await loadSkill(resolvedId.rawId)
+                outcome = await loadSkill(resolvedId.rawId, budget: skillReferenceBudget)
             case "plugin":
-                outcome = await loadPlugin(resolvedId.rawId)
+                outcome = await loadPlugin(resolvedId.rawId, budget: skillReferenceBudget)
             default:
                 outcome = .failure(
                     LoadFailure(
@@ -834,7 +835,10 @@ final class CapabilitiesLoadTool: OsaurusTool, @unchecked Sendable {
 
     // MARK: - Loaders
 
-    private func loadMethod(_ methodId: String) async -> LoadOutcome {
+    private func loadMethod(
+        _ methodId: String,
+        budget: SkillReferenceBudget
+    ) async -> LoadOutcome {
         if ChatExecutionContext.currentAgentId == Agent.defaultId {
             return .failure(
                 LoadFailure(
@@ -900,7 +904,7 @@ final class CapabilitiesLoadTool: OsaurusTool, @unchecked Sendable {
                 }
                 for (name, skill) in skills {
                     output += "\n## Skill: \(name)\n"
-                    output += await lightweightSkillInstructions(for: skill)
+                    output += await SkillManager.shared.buildFullInstructions(for: skill, budget: budget)
                     output += "\n\n"
                 }
             }
@@ -1117,18 +1121,10 @@ final class CapabilitiesLoadTool: OsaurusTool, @unchecked Sendable {
         return output
     }
 
-    private func lightweightSkillInstructions(for skill: Skill) async -> String {
-        var output = skill.instructions
-        let fileContext = await MainActor.run {
-            SkillManager.shared.skillLocationContext(for: skill)
-        }
-        if let fileContext {
-            output += "\n\n\(fileContext)"
-        }
-        return output
-    }
-
-    private func loadSkill(_ skillName: String) async -> LoadOutcome {
+    private func loadSkill(
+        _ skillName: String,
+        budget: SkillReferenceBudget
+    ) async -> LoadOutcome {
         if ChatExecutionContext.currentAgentId == Agent.defaultId {
             return .failure(
                 LoadFailure(
@@ -1157,7 +1153,7 @@ final class CapabilitiesLoadTool: OsaurusTool, @unchecked Sendable {
         if !skill.description.isEmpty {
             output += "*\(skill.description)*\n\n"
         }
-        output += await SkillManager.shared.buildFullInstructions(for: skill)
+        output += await SkillManager.shared.buildFullInstructions(for: skill, budget: budget)
         output += "\n\n"
 
         // A plugin skill governs its sibling tools, so auto-load the plugin's
@@ -1209,7 +1205,10 @@ final class CapabilitiesLoadTool: OsaurusTool, @unchecked Sendable {
     /// is the compact-manifest entry point: the tiered manifest lists one
     /// `plugin/<id>` per plugin, and loading it pulls in the group's tools
     /// plus any governing skill's instructions in a single call.
-    private func loadPlugin(_ rawId: String) async -> LoadOutcome {
+    private func loadPlugin(
+        _ rawId: String,
+        budget: SkillReferenceBudget
+    ) async -> LoadOutcome {
         if ChatExecutionContext.currentAgentId == Agent.defaultId {
             return .failure(
                 LoadFailure(
@@ -1264,7 +1263,7 @@ final class CapabilitiesLoadTool: OsaurusTool, @unchecked Sendable {
             if !skill.description.isEmpty {
                 output += "*\(skill.description)*\n\n"
             }
-            output += skill.instructions
+            output += await SkillManager.shared.buildFullInstructions(for: skill, budget: budget)
             output += "\n\n"
         }
 

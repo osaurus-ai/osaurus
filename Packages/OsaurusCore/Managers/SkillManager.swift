@@ -9,6 +9,23 @@ import Foundation
 import Observation
 import SwiftUI
 
+actor SkillReferenceBudget {
+    private var remainingFiles: Int
+    private var remainingBytes: Int
+
+    init(maxFiles: Int = 20, maxBytes: Int = 200_000) {
+        remainingFiles = max(0, maxFiles)
+        remainingBytes = max(0, maxBytes)
+    }
+
+    func claim(bytes: Int) -> Bool {
+        guard bytes >= 0, remainingFiles > 0, bytes <= remainingBytes else { return false }
+        remainingFiles -= 1
+        remainingBytes -= bytes
+        return true
+    }
+}
+
 public enum SkillFileError: Error, LocalizedError, Sendable {
     case cannotModifyBuiltIn
     case cannotModifyPluginSkill
@@ -711,42 +728,69 @@ public final class SkillManager {
     }
 
     public func buildFullInstructions(for skill: Skill) async -> String {
+        await buildFullInstructions(for: skill, budget: SkillReferenceBudget())
+    }
+
+    func buildFullInstructions(for skill: Skill, budget: SkillReferenceBudget) async -> String {
         var sections = [skill.instructions]
 
-        if let locationContext = skillLocationContext(for: skill) {
-            sections.append("\n\(locationContext)")
-        }
-
         if !skill.references.isEmpty {
-            let refs = await loadReferenceContents(for: skill)
+            let refs = await loadReferenceContents(for: skill, budget: budget)
             if !refs.isEmpty {
                 sections.append("\n## Reference Materials\n\n\(refs)")
             }
         }
 
+        let supportInventory = await buildSupportFileInventory(for: skill)
+        if !supportInventory.isEmpty {
+            sections.append("\n## Skill Package Files\n\n\(supportInventory)")
+        }
+
         return sections.joined(separator: "\n")
     }
 
-    public func skillLocationContext(for skill: Skill) -> String? {
-        guard !skill.isBuiltIn else { return nil }
-
-        let files = SkillStore.companionFiles(for: skill)
-        guard !files.isEmpty else { return nil }
+    private func buildSupportFileInventory(for skill: Skill) async -> String {
+        let supportFiles = await Task.detached(priority: .utility) {
+            SkillStore.supportFiles(from: skill)
+        }.value
+        guard !supportFiles.isEmpty else { return "" }
 
         var lines = [
-            "## Skill Files",
-            "Companion script files are listed relative to this skill's private directory.",
+            "Supporting files are listed for orientation only; loading a skill never executes them or reads their contents from scripts, assets, or templates.",
+            "Reference materials, when present, are loaded separately above.",
+            "Paths are relative to the skill package root. Inspect text scripts before running them, and run helper scripts only through an enabled execution tool when the user explicitly asks for execution.",
+            "The inventory is capped at \(SkillStore.supportFileInventoryLimit) support files.",
+            "",
         ]
-        for file in files.prefix(40) {
-            lines.append("- \(file.relativePath) (\(formatSize(file.size)))")
+
+        for file in supportFiles {
+            lines.append("- \(promptSafeSkillPath(file.relativePath)) (\(formatSize(file.size)))")
         }
-        if files.count > 40 {
-            lines.append("- at least \(files.count - 40) more file(s)")
-        }
+
         return lines.joined(separator: "\n")
     }
 
-    private func loadReferenceContents(for skill: Skill) async -> String {
+    private func promptSafeSkillPath(_ path: String) -> String {
+        let directionalFormattingControls = CharacterSet(
+            charactersIn: "\u{202A}\u{202B}\u{202C}\u{202D}\u{202E}\u{2066}\u{2067}\u{2068}\u{2069}"
+        )
+        var sanitized = String.UnicodeScalarView()
+        for scalar in path.unicodeScalars {
+            let shouldReplace = CharacterSet.controlCharacters.contains(scalar)
+                || CharacterSet.newlines.contains(scalar)
+                || directionalFormattingControls.contains(scalar)
+            if shouldReplace {
+                sanitized.append(contentsOf: "?".unicodeScalars)
+            } else {
+                sanitized.append(scalar)
+            }
+        }
+        return String(sanitized)
+    }
+    private func loadReferenceContents(
+        for skill: Skill,
+        budget: SkillReferenceBudget
+    ) async -> String {
         let textExtensions: Set<String> = [
             "md", "txt", "json", "yaml", "yml", "xml", "html", "css", "js", "ts",
             "swift", "py", "rb", "go", "rs", "java", "kt", "c", "cpp", "h", "hpp",
@@ -754,27 +798,28 @@ public final class SkillManager {
         ]
 
         var contents: [String] = []
-        var loadedCount = 0
         var omittedCount = 0
-        var remainingBytes = 200_000
+        let perReferenceLimit = 100_000
         for file in skill.references {
             let ext = (file.name as NSString).pathExtension.lowercased()
             guard textExtensions.contains(ext) || ext.isEmpty else { continue }
-            guard file.size < 100_000 else {
+            guard file.size < Int64(perReferenceLimit) else {
                 contents.append("### \(file.name)\n*File too large (>\(formatSize(file.size)))*\n")
-                continue
-            }
-            guard loadedCount < 20, remainingBytes > 0, file.size <= Int64(remainingBytes) else {
-                omittedCount += 1
                 continue
             }
 
             do {
-                let data = try await SkillStore.readFile(from: skill, relativePath: file.relativePath)
+                let data = try await SkillStore.readFile(
+                    from: skill,
+                    relativePath: file.relativePath,
+                    maxBytes: perReferenceLimit
+                )
+                guard await budget.claim(bytes: data.count) else {
+                    omittedCount += 1
+                    continue
+                }
                 if let text = String(data: data, encoding: .utf8) {
                     contents.append("### \(file.name)\n\n```\n\(text)\n```\n")
-                    loadedCount += 1
-                    remainingBytes = max(0, remainingBytes - data.count)
                 }
             } catch {
                 // Skip unreadable files

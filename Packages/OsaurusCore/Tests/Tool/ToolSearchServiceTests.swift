@@ -214,6 +214,47 @@ struct ToolSearchServiceTests {
     }
 
     @Test @MainActor
+    func rapidRegisterUnregisterRegisterKeepsLatestIndexMutation() async throws {
+        try await DynamicCatalogTestLock.shared.run {
+            let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent(
+                "osaurus-tool-index-ordering-\(UUID().uuidString)",
+                isDirectory: true
+            )
+            let previousOverride = ToolConfigurationStore.overrideDirectory
+            ToolConfigurationStore.overrideDirectory = tempDir
+            try? FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+            defer { ToolConfigurationStore.overrideDirectory = previousOverride }
+
+            let dbWasOpen = ToolDatabase.shared.isOpen
+            if !dbWasOpen { try ToolDatabase.shared.openInMemory() }
+            let name = "lane_b_index_ordering_\(UUID().uuidString.replacingOccurrences(of: "-", with: "_"))"
+            defer {
+                ToolRegistry.shared.unregister(names: [name])
+                try? ToolDatabase.shared.deleteEntry(id: name)
+                if !dbWasOpen { ToolDatabase.shared.close() }
+            }
+
+            ToolRegistry.shared.registerPluginTool(
+                IndexOrderingFixtureTool(name: name, description: "stale registration")
+            )
+            ToolRegistry.shared.unregister(names: [name])
+            ToolRegistry.shared.registerPluginTool(
+                IndexOrderingFixtureTool(name: name, description: "latest registration")
+            )
+            ToolRegistry.shared.setEnabled(true, for: name)
+            await ToolRegistry.shared.awaitToolIndexMutation(for: name)
+
+            let loaded = try ToolDatabase.shared.loadEntry(id: name)
+            let indexed = try #require(loaded)
+            #expect(indexed.description == "latest registration")
+
+            ToolRegistry.shared.unregister(names: [name])
+            await ToolRegistry.shared.awaitToolIndexMutation(for: name)
+            #expect(try ToolDatabase.shared.loadEntry(id: name) == nil)
+        }
+    }
+
+    @Test @MainActor
     func hybridSearchFallsBackToRegistryForEnabledToolsMissingFromOpenIndex() async throws {
         try await DynamicCatalogTestLock.shared.run {
             let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent(
@@ -393,6 +434,16 @@ private struct RegistryFallbackFixtureTool: OsaurusTool {
         ]),
         "required": .array([.string("query")]),
     ])
+
+    func execute(argumentsJSON: String) async throws -> String {
+        argumentsJSON
+    }
+}
+
+private struct IndexOrderingFixtureTool: OsaurusTool {
+    let name: String
+    let description: String
+    let parameters: JSONValue? = nil
 
     func execute(argumentsJSON: String) async throws -> String {
         argumentsJSON

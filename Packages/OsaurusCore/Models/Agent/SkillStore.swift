@@ -13,16 +13,21 @@ import Foundation
 public enum SkillStoreFileError: Error, LocalizedError, Sendable, Equatable {
     case invalidRelativePath
     case pathEscapesDirectory
+    case fileTooLarge(limitBytes: Int)
 
     public var errorDescription: String? {
         switch self {
         case .invalidRelativePath: return "Skill file path must be a non-empty relative path"
         case .pathEscapesDirectory: return "Skill file path escapes its containing directory"
+        case .fileTooLarge(let limitBytes):
+            return "Skill file exceeds the \(limitBytes)-byte read limit"
         }
     }
 }
 
 public enum SkillStore {
+    public static let supportFileInventoryLimit = 200
+    public static let supportFileInventoryDepthLimit = 8
 
     // MARK: - Public API
 
@@ -236,24 +241,6 @@ public enum SkillStore {
         return skillsDirectory().appendingPathComponent(dirName)
     }
 
-    /// List companion script files without reading their contents so loaded
-    /// skill instructions can reference sibling executables without expanding
-    /// them into prompt context or exposing arbitrary filenames from the skill
-    /// root.
-    public static func companionFiles(for skill: Skill) -> [SkillFile] {
-        let skillDir = skillDirectory(for: skill)
-        var remaining = 80
-        var files: [SkillFile] = []
-        files.append(
-            contentsOf: loadCompanionFiles(
-                in: skillDir.appendingPathComponent("scripts", isDirectory: true),
-                relativeTo: skillDir,
-                remaining: &remaining
-            )
-        )
-        return files
-    }
-
     // MARK: - File Operations
 
     /// Add a reference file to a skill
@@ -282,6 +269,56 @@ public enum SkillStore {
         let fileURL = try containedFileURL(for: relativePath, in: skillDir)
         try ensureResolvedContainment(of: fileURL, in: skillDir)
         return try Data(contentsOf: fileURL)
+    }
+
+    static func readFile(
+        from skill: Skill,
+        relativePath: String,
+        maxBytes: Int
+    ) async throws -> Data {
+        guard maxBytes >= 0 else { throw SkillStoreFileError.fileTooLarge(limitBytes: maxBytes) }
+        let skillDir = skillDirectory(for: skill)
+        let fileURL = try containedFileURL(for: relativePath, in: skillDir)
+        try ensureResolvedContainment(of: fileURL, in: skillDir)
+        let handle = try FileHandle(forReadingFrom: fileURL)
+        defer { try? handle.close() }
+        let data = try handle.read(upToCount: maxBytes + 1) ?? Data()
+        guard data.count <= maxBytes else {
+            throw SkillStoreFileError.fileTooLarge(limitBytes: maxBytes)
+        }
+        return data
+    }
+
+    /// List supporting files stored beside a skill. This is intentionally
+    /// metadata-only: callers can tell the model which helpers/templates exist
+    /// without reading or executing arbitrary files.
+    public static func supportFiles(
+        from skill: Skill,
+        subdirectories: [String] = ["scripts", "assets", "templates"],
+        maxFiles: Int = supportFileInventoryLimit,
+        maxDepth: Int = supportFileInventoryDepthLimit
+    ) -> [SkillFile] {
+        guard maxFiles > 0, maxDepth >= 0 else { return [] }
+        let effectiveMaxFiles = min(maxFiles, supportFileInventoryLimit)
+        let effectiveMaxDepth = min(maxDepth, supportFileInventoryDepthLimit)
+        let skillDir = skillDirectory(for: skill)
+        guard !isSymbolicLink(skillDir) else { return [] }
+        var files: [SkillFile] = []
+        var remaining = effectiveMaxFiles
+        for subdirectory in subdirectories {
+            guard (try? normalizedRelativeSkillFilePath(subdirectory)) == subdirectory else { continue }
+            files.append(
+                contentsOf: loadSupportFilesFromSubdirectory(
+                    skillDir,
+                    subdirectory: subdirectory,
+                    remainingLimit: &remaining,
+                    depth: 0,
+                    maxDepth: effectiveMaxDepth
+                )
+            )
+            if remaining <= 0 { break }
+        }
+        return files.sorted { $0.relativePath < $1.relativePath }
     }
 
     // MARK: - Private
@@ -419,6 +456,91 @@ public enum SkillStore {
         return loadFiles(in: subDir, relativeTo: skillDir)
     }
 
+    private static func loadSupportFilesFromSubdirectory(
+        _ skillDir: URL,
+        subdirectory: String,
+        remainingLimit: inout Int,
+        depth: Int,
+        maxDepth: Int
+    ) -> [SkillFile] {
+        let subDir = skillDir.appendingPathComponent(subdirectory, isDirectory: true)
+        return loadSupportFiles(
+            in: subDir,
+            relativeTo: skillDir,
+            remainingLimit: &remainingLimit,
+            depth: depth,
+            maxDepth: maxDepth
+        )
+    }
+
+    private static func loadSupportFiles(
+        in directory: URL,
+        relativeTo skillDir: URL,
+        remainingLimit: inout Int,
+        depth: Int,
+        maxDepth: Int
+    ) -> [SkillFile] {
+        guard remainingLimit > 0, depth <= maxDepth else { return [] }
+        let baseURL = skillDir.standardizedFileURL
+        let directoryURL = directory.standardizedFileURL
+        guard isContained(directoryURL, in: baseURL),
+            !isSymbolicLink(directoryURL)
+        else {
+            return []
+        }
+
+        guard
+            let entries = try? FileManager.default.contentsOfDirectory(
+                at: directoryURL,
+                includingPropertiesForKeys: [.fileSizeKey, .isDirectoryKey, .isRegularFileKey, .isSymbolicLinkKey],
+                options: [.skipsHiddenFiles]
+            )
+        else {
+            return []
+        }
+
+        var files: [SkillFile] = []
+        for entry in entries.sorted(by: { $0.path < $1.path }) where remainingLimit > 0 {
+            guard
+                let values = try? entry.resourceValues(
+                    forKeys: [.fileSizeKey, .isDirectoryKey, .isRegularFileKey, .isSymbolicLinkKey]
+                ),
+                values.isSymbolicLink == false
+            else {
+                continue
+            }
+
+            if values.isDirectory == true {
+                files.append(
+                    contentsOf: loadSupportFiles(
+                        in: entry,
+                        relativeTo: skillDir,
+                        remainingLimit: &remainingLimit,
+                        depth: depth + 1,
+                        maxDepth: maxDepth
+                    )
+                )
+                continue
+            }
+
+            guard values.isRegularFile == true,
+                let relativePath = relativePath(for: entry, in: skillDir)
+            else {
+                continue
+            }
+
+            files.append(
+                SkillFile(
+                    name: entry.lastPathComponent,
+                    relativePath: relativePath,
+                    size: Int64(values.fileSize ?? 0)
+                )
+            )
+            remainingLimit -= 1
+        }
+        return files
+    }
+
     private static func loadFiles(in directory: URL, relativeTo skillDir: URL) -> [SkillFile] {
         guard
             let entries = try? FileManager.default.contentsOfDirectory(
@@ -459,64 +581,6 @@ public enum SkillStore {
                     size: Int64(values.fileSize ?? 0)
                 )
             )
-        }
-        return files
-    }
-
-    private static func loadCompanionFiles(
-        in directory: URL,
-        relativeTo skillDir: URL,
-        depth: Int = 0,
-        remaining: inout Int
-    ) -> [SkillFile] {
-        guard remaining > 0, depth <= 4 else { return [] }
-        guard
-            let entries = try? FileManager.default.contentsOfDirectory(
-                at: directory,
-                includingPropertiesForKeys: [.fileSizeKey, .isDirectoryKey, .isRegularFileKey, .isSymbolicLinkKey],
-                options: [.skipsHiddenFiles]
-            )
-        else {
-            return []
-        }
-
-        var files: [SkillFile] = []
-        for entry in entries.sorted(by: { $0.path < $1.path }) where remaining > 0 {
-            guard
-                let values = try? entry.resourceValues(
-                    forKeys: [.fileSizeKey, .isDirectoryKey, .isRegularFileKey, .isSymbolicLinkKey]
-                ),
-                values.isSymbolicLink != true
-            else {
-                continue
-            }
-
-            if values.isDirectory == true {
-                files.append(
-                    contentsOf: loadCompanionFiles(
-                        in: entry,
-                        relativeTo: skillDir,
-                        depth: depth + 1,
-                        remaining: &remaining
-                    )
-                )
-                continue
-            }
-
-            guard values.isRegularFile == true,
-                let relativePath = relativePath(for: entry, in: skillDir)
-            else {
-                continue
-            }
-
-            files.append(
-                SkillFile(
-                    name: entry.lastPathComponent,
-                    relativePath: relativePath,
-                    size: Int64(values.fileSize ?? 0)
-                )
-            )
-            remaining -= 1
         }
         return files
     }

@@ -158,7 +158,7 @@ struct SkillStoreFileContainmentTests {
         }
     }
 
-    @Test func companionFilesListOnlyScriptsAndSkipSymlinks() async throws {
+    @Test func supportFilesListOnlyPackageDirectoriesAndSkipSymlinks() async throws {
         try await Self.withTempSkill { _, skill in
             let skillDir = SkillStore.skillDirectory(for: skill)
             let scriptsDir = skillDir.appendingPathComponent("scripts", isDirectory: true)
@@ -173,7 +173,7 @@ struct SkillStoreFileContainmentTests {
                 withDestinationURL: outsideScript
             )
 
-            let paths = Set(SkillStore.companionFiles(for: skill).map(\.relativePath))
+            let paths = Set(SkillStore.supportFiles(from: skill).map(\.relativePath))
             #expect(paths == ["scripts/visible.sh"])
         }
     }

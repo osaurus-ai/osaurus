@@ -898,6 +898,13 @@ struct CapabilitiesLoadToolTests {
                 let buffered = await CapabilityLoadBuffer.shared.drain()
                 #expect(!buffered.contains(where: { $0.function.name == denied.name }))
 
+                let bareResult = try await ChatExecutionContext.$currentAgentId.withValue(agent.id) {
+                    try await tool.execute(argumentsJSON: "{\"ids\": [\"\(denied.name)\"]}")
+                }
+                #expect(bareResult.contains("not enabled for this agent"))
+                #expect(bareResult.contains("availability: hidden_by_agent_scope"))
+                #expect(await CapabilityLoadBuffer.shared.drain().isEmpty)
+
                 _ = await AgentManager.shared.delete(id: agent.id)
             }
         }
@@ -1096,6 +1103,13 @@ struct CapabilitiesLoadToolTests {
             #expect(result.contains("availability: disabled"))
             let buffered = await CapabilityLoadBuffer.shared.drain()
             #expect(!buffered.contains(where: { $0.function.name == disabled.name }))
+
+            let bareResult = try await ChatExecutionContext.$currentAgentId.withValue(UUID()) {
+                try await tool.execute(argumentsJSON: "{\"ids\": [\"\(disabled.name)\"]}")
+            }
+            #expect(bareResult.contains("disabled"))
+            #expect(bareResult.contains("availability: disabled"))
+            #expect(await CapabilityLoadBuffer.shared.drain().isEmpty)
         }
     }
 
