@@ -263,12 +263,18 @@ run_child "${scoreboard_cmd[@]}"
 scoreboard_rc=$?
 
 scoreboard_json="${scoreboard_dir}/scoreboard.json"
-if [[ ! -f "$scoreboard_json" ]] || ! jq -e \
+selected_artifact_path=""
+if [[ -f "$scoreboard_json" ]] && jq -e \
   --arg artifactId "$artifact_id" \
-  --arg artifactPath "$report_dir_absolute" \
-  '.releaseCandidate.artifactId == $artifactId
-    and .releaseCandidate.artifactPath == $artifactPath' \
+  '.releaseCandidate.artifactId == $artifactId' \
   "$scoreboard_json" >/dev/null; then
+  selected_artifact_path="$(jq -r '.releaseCandidate.artifactPath // empty' "$scoreboard_json")"
+fi
+selected_artifact_path_absolute=""
+if [[ -d "$selected_artifact_path" ]]; then
+  selected_artifact_path_absolute="$(cd "$selected_artifact_path" && pwd -P)"
+fi
+if [[ "$selected_artifact_path_absolute" != "$report_dir_absolute" ]]; then
   write_status "scoreboard_failed" 2
   echo "eval watcher scoreboard did not select the current report as release candidate" >&2
   exit 2

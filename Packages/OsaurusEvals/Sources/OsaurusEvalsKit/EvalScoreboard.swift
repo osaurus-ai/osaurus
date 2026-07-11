@@ -28,10 +28,14 @@ public struct EvalScoreboardBundle: Sendable, Codable, Equatable {
 
     public var hasRunFailures: Bool {
         guard let releaseCandidate else {
-            return models.contains { $0.counts.failed > 0 || $0.counts.errored > 0 }
+            return models.isEmpty || models.contains {
+                $0.counts.total == 0 || $0.counts.failed > 0 || $0.counts.errored > 0
+            }
         }
-        return (releaseCandidate.local + releaseCandidate.frontier)
-            .contains { $0.counts.failed > 0 || $0.counts.errored > 0 }
+        let candidates = releaseCandidate.local + releaseCandidate.frontier
+        return candidates.isEmpty || candidates.contains {
+            $0.counts.total == 0 || $0.counts.failed > 0 || $0.counts.errored > 0
+        }
     }
 
     public func toJSON(prettyPrinted: Bool = true) throws -> Data {

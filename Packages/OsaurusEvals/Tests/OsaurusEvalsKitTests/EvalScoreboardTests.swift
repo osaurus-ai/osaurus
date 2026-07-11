@@ -338,6 +338,38 @@ struct EvalScoreboardTests {
         #expect(scoreboard.hasRunFailures)
     }
 
+    @Test func scoreboardFailsClosedForZeroCaseReleaseCandidate() {
+        let emptyReport = EvalReport(
+            modelId: "foundation",
+            startedAt: "2026-07-11T00:00:00Z",
+            cases: []
+        )
+        let bundle = EvalReviewReportBuilder.build(
+            manifest: manifest(
+                generatedAt: "2026-07-11T00:00:00Z",
+                commit: "zero-evidence",
+                artifactPath: "build/evals/watcher/main/zero/report",
+                artifactId: "zero-evidence"
+            ),
+            reports: [
+                input(
+                    suite: "AgentLoop",
+                    reportPath: "build/evals/watcher/main/zero/report/AgentLoop.json",
+                    report: emptyReport
+                ),
+            ]
+        )
+
+        let scoreboard = EvalScoreboardBuilder.build(
+            sourceRoots: [URL(fileURLWithPath: "build/evals/watcher/main")],
+            bundles: [EvalScoreboardInput(summaryPath: "summary.json", bundle: bundle)]
+        )
+
+        #expect(scoreboard.releaseCandidate?.artifactId == "zero-evidence")
+        #expect(scoreboard.hasRunFailures)
+        #expect(scoreboard.evidenceReportDescriptor(scoreboardPath: "scoreboard.json").status == .failed)
+    }
+
     private func fixtureReport(_ name: String) throws -> EvalReport {
         let url = try #require(
             Bundle.module.url(
