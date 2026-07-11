@@ -51,13 +51,19 @@ enum APISubstate: Equatable {
 }
 
 enum APITestResult: Equatable {
-    case success
-    case failure(String)
+    case success(ProviderSetupTestIdentity)
+    case failure(ProviderSetupFailure)
+}
+
+struct ProviderSetupTestIdentity: Equatable {
+    let config: ResolvedProviderConfig
+    let authMethod: ProviderPickerAuthMethod
+    let apiKeyInput: String?
 }
 
 // MARK: - Resolved provider config
 
-struct ResolvedProviderConfig {
+struct ResolvedProviderConfig: Equatable {
     let name: String
     let host: String
     let port: Int?
@@ -197,6 +203,7 @@ final class ConfigureAIState: ObservableObject {
     @Published var isTesting = false
     @Published var isSaving = false
     @Published var testResult: APITestResult? = nil
+    var apiTestRequestID: UUID?
     /// One-shot latch so the auto-advance-on-green and a manual CTA press can't
     /// both finalize. Reset whenever credentials are cleared (back / reselect).
     var hasFinalizedAPI = false
@@ -612,15 +619,17 @@ final class ConfigureAIState: ObservableObject {
     }
 
     var isAPISuccess: Bool {
-        if case .success = testResult { return true }
+        if case .success(let identity) = testResult {
+            return currentSetupTestIdentity() == identity
+        }
         return false
     }
 
     var apiButtonState: OnboardingButtonState {
         if isTesting || isSaving { return .loading }
         switch testResult {
-        case .success: return .success
-        case .failure(let m): return .error(m)
+        case .success: return isAPISuccess ? .success : .idle
+        case .failure(let failure): return .error(failure.userMessage)
         case nil: return .idle
         }
     }
@@ -644,6 +653,7 @@ final class ConfigureAIState: ObservableObject {
         addedProviderId = nil
         customForm.reset()
         testResult = nil
+        apiTestRequestID = nil
         hasFinalizedAPI = false
     }
 
@@ -715,6 +725,9 @@ final class ConfigureAIState: ObservableObject {
 
     func testAPIConnection() {
         guard let config = resolvedAPIConfig() else { return }
+        let testedIdentity = setupTestIdentity(config)
+        let requestID = UUID()
+        apiTestRequestID = requestID
         isTesting = true
         testResult = nil
 
@@ -722,7 +735,7 @@ final class ConfigureAIState: ObservableObject {
             guard let self = self else { return }
             let result: APITestResult
             do {
-                switch self.selectedAuthMethod {
+                switch testedIdentity.authMethod {
                 case .oauth(.openAICodex):
                     let tokens = try await OpenAICodexOAuthService.signIn()
                     self.oauthTokens = tokens
@@ -749,13 +762,71 @@ final class ConfigureAIState: ObservableObject {
                         headers: [:]
                     )
                 }
-                result = .success
+                result = .success(testedIdentity)
             } catch {
-                result = .failure(error.localizedDescription)
+                let draft = self.setupDraftProvider(config, authMethod: testedIdentity.authMethod)
+                let diagnosticMessage: String?
+                switch testedIdentity.authMethod {
+                case .oauth(.openAICodex):
+                    diagnosticMessage = OpenAICodexOAuthService.diagnosticMessage(for: error)
+                case .oauth(.xai):
+                    diagnosticMessage = XAIOAuthService.diagnosticMessage(for: error)
+                case .oauth(.openRouter), .apiKey, .none:
+                    diagnosticMessage = nil
+                }
+                result = .failure(
+                    ProviderFailureClassifier.classifySetupFailure(
+                        provider: draft,
+                        error: error,
+                        proxy: GlobalProxySettings.currentDiagnostic(),
+                        apiKeyPresent: !self.apiKey.isEmpty,
+                        oauthTokensPresent: self.oauthTokens != nil,
+                        diagnosticMessage: diagnosticMessage
+                    )
+                )
+            }
+            guard self.apiTestRequestID == requestID else { return }
+            guard self.currentSetupTestIdentity() == testedIdentity else {
+                self.isTesting = false
+                return
             }
             self.testResult = result
             self.isTesting = false
         }
+    }
+
+    private func setupTestIdentity(_ config: ResolvedProviderConfig) -> ProviderSetupTestIdentity {
+        ProviderSetupTestIdentity(
+            config: config,
+            authMethod: selectedAuthMethod,
+            apiKeyInput: selectedAuthMethod == .apiKey ? apiKey : nil
+        )
+    }
+
+    private func currentSetupTestIdentity() -> ProviderSetupTestIdentity? {
+        guard let config = resolvedAPIConfig() else { return nil }
+        return setupTestIdentity(config)
+    }
+
+    private func setupDraftProvider(
+        _ config: ResolvedProviderConfig,
+        authMethod: ProviderPickerAuthMethod
+    ) -> RemoteProvider {
+        let authType: RemoteProviderAuthType
+        switch authMethod {
+        case .oauth(.openAICodex): authType = .openAICodexOAuth
+        case .oauth(.xai): authType = .xaiOAuth
+        default: authType = config.authType
+        }
+        return RemoteProvider(
+            name: config.name,
+            host: config.host,
+            providerProtocol: config.providerProtocol,
+            port: config.port,
+            basePath: config.basePath,
+            authType: authType,
+            providerType: config.providerType
+        )
     }
 
     func saveProviderAndContinue(onComplete: () -> Void) {
@@ -1887,8 +1958,9 @@ struct ConfigureAICTA: View {
                 switch state.apiSubstate {
                 case .keyForm, .customForm:
                     Task {
-                        try? await Task.sleep(nanoseconds: 400_000_000)
+                        try? await Task.sleep(nanoseconds: 800_000_000)
                         await MainActor.run {
+                            guard state.isAPISuccess else { return }
                             state.saveProviderAndContinue(onComplete: onComplete)
                         }
                     }

@@ -57,7 +57,94 @@ struct ProviderFailureClassification: Sendable, Equatable {
     }
 }
 
+struct ProviderSetupFailure: Sendable, Equatable {
+    let classification: ProviderFailureClassification
+    let recoveryDetail: String?
+    let providerType: RemoteProviderType
+    let authType: RemoteProviderAuthType
+    let providerProtocol: RemoteProviderProtocol
+    let usesCustomPort: Bool
+    let hasBasePath: Bool
+    let apiKeyPresent: Bool
+    let oauthTokensPresent: Bool
+    let manualModelCount: Int
+    let proxyState: String
+
+    var userMessage: String {
+        [classification.title, recoveryDetail, classification.action]
+            .compactMap { $0 }
+            .joined(separator: ". ")
+    }
+
+    var pasteboardText: String {
+        [
+            "provider-setup-diagnostics",
+            "failure=\(classification.bucket.rawValue)",
+            "provider-type=\(providerType.rawValue)",
+            "auth-type=\(authType.rawValue)",
+            "scheme=\(providerProtocol.rawValue)",
+            "custom-port=\(usesCustomPort)",
+            "base-path-present=\(hasBasePath)",
+            "api-key-present=\(apiKeyPresent)",
+            "oauth-tokens-present=\(oauthTokensPresent)",
+            "manual-model-count=\(manualModelCount)",
+            "proxy=\(proxyState)",
+            "summary=\(classification.title)",
+            "action=\(classification.action)",
+        ].joined(separator: "\n")
+    }
+}
+
 enum ProviderFailureClassifier {
+    static func classifySetupFailure(
+        provider: RemoteProvider,
+        error: Error,
+        proxy: GlobalProxyDiagnosticState,
+        apiKeyPresent: Bool,
+        oauthTokensPresent: Bool,
+        diagnosticMessage: String? = nil
+    ) -> ProviderSetupFailure {
+        let credentialPresent =
+            apiKeyPresent || oauthTokensPresent || hasCredentialHeader(provider)
+        let missingOAuthTokens =
+            (provider.authType == .openAICodexOAuth || provider.authType == .xaiOAuth)
+            && !oauthTokensPresent
+        let result: ProviderFailureClassification
+        if let replay = (error as? RemoteProviderServiceError)?.replayDiagnostics,
+            let replayClassification = classifyReplay(
+                replay,
+                proxy: proxy,
+                credentialPresent: credentialPresent
+            ) {
+            result = replayClassification
+        } else if missingOAuthTokens {
+            result = classification(
+                .oauthTokenMissing,
+                detail: diagnosticMessage ?? error.localizedDescription
+            )
+        } else {
+            result = classifyMessage(
+                diagnosticMessage ?? error.localizedDescription,
+                proxy: proxy,
+                credentialPresent: credentialPresent
+            )
+        }
+
+        return ProviderSetupFailure(
+            classification: result,
+            recoveryDetail: diagnosticMessage,
+            providerType: provider.providerType,
+            authType: provider.authType,
+            providerProtocol: provider.providerProtocol,
+            usesCustomPort: provider.port != nil,
+            hasBasePath: !provider.basePath.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+            apiKeyPresent: apiKeyPresent,
+            oauthTokensPresent: oauthTokensPresent,
+            manualModelCount: provider.manualModelIds.count,
+            proxyState: setupProxyState(proxy)
+        )
+    }
+
     static func classify(
         provider: RemoteProvider,
         state: RemoteProviderState?,
@@ -417,6 +504,17 @@ enum ProviderFailureClassifier {
                 $0,
                 configuredSecretHeaderKeys: provider.secretHeaderKeys
             )
+        }
+    }
+
+    private static func setupProxyState(_ proxy: GlobalProxyDiagnosticState) -> String {
+        switch proxy {
+        case .disabled:
+            return "disabled"
+        case .active:
+            return "active"
+        case .invalid:
+            return "invalid"
         }
     }
 }

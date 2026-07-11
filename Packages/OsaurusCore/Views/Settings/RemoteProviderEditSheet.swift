@@ -164,6 +164,8 @@ private struct AddProviderFlow: View {
     @State private var oauthTokens: RemoteProviderOAuthTokens?
     @State private var isTesting = false
     @State private var testResult: ProviderTestResult?
+    @State private var testRequestID: UUID?
+    @State private var draftProviderID = UUID()
     @State private var hasAppeared = false
     /// Guards against saving twice: a successful test auto-finalizes the add,
     /// but the footer button is also still tappable during the brief green
@@ -263,6 +265,7 @@ private struct AddProviderFlow: View {
             }
             withAnimation { hasAppeared = true }
         }
+        .onDisappear { testRequestID = nil }
         .themedAlert(
             "Disable request timeout?",
             isPresented: $showNoTimeoutWarning,
@@ -510,6 +513,10 @@ private struct AddProviderFlow: View {
                 .padding(24)
             }
 
+            if case .failure(let failure) = testResult {
+                setupFailureBanner(failure)
+            }
+
             // Footer
             sheetFooter(canProceed: canTest) {
                 if testResult?.isSuccess == true || canSaveKnownProviderWithoutSuccessfulTest {
@@ -584,6 +591,10 @@ private struct AddProviderFlow: View {
                     advancedSettingsSection
                 }
                 .padding(24)
+            }
+
+            if case .failure(let failure) = testResult {
+                setupFailureBanner(failure)
             }
 
             // Footer
@@ -1296,10 +1307,9 @@ private struct AddProviderFlow: View {
                     Image(systemName: "xmark.circle.fill")
                         .font(.system(size: 12))
                         .foregroundColor(theme.errorColor)
-                    Text(error)
-                        .font(.system(size: 11))
+                    Text(error.classification.title)
+                        .font(.system(size: 11, weight: .semibold))
                         .foregroundColor(theme.errorColor)
-                        .lineLimit(2)
                 }
             }
             .padding(.horizontal, 10)
@@ -1309,6 +1319,39 @@ private struct AddProviderFlow: View {
                     .fill(result.isSuccess ? theme.successColor.opacity(0.1) : theme.errorColor.opacity(0.1))
             )
         }
+    }
+
+    private func setupFailureBanner(_ failure: ProviderSetupFailure) -> some View {
+        HStack(alignment: .top, spacing: 10) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .foregroundColor(theme.errorColor)
+            VStack(alignment: .leading, spacing: 3) {
+                Text(failure.classification.title)
+                    .font(.system(size: 11, weight: .semibold))
+                if let detail = failure.recoveryDetail {
+                    Text(detail)
+                        .font(.system(size: 10))
+                        .foregroundColor(theme.secondaryText)
+                        .lineLimit(2)
+                }
+                Text(failure.classification.action)
+                    .font(.system(size: 10))
+                    .foregroundColor(theme.secondaryText)
+                    .lineLimit(2)
+            }
+            Spacer(minLength: 8)
+            Button {
+                copySetupFailure(failure)
+            } label: {
+                Image(systemName: "doc.on.doc")
+            }
+            .buttonStyle(.plain)
+            .localizedHelp("Copy diagnostics")
+        }
+        .padding(.horizontal, 24)
+        .padding(.vertical, 10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(theme.errorColor.opacity(0.06))
     }
 
     private var actionButtonTitle: String {
@@ -1338,20 +1381,26 @@ private struct AddProviderFlow: View {
         guard let preset = selectedPreset else { return }
         let config = preset.configuration
         let connection = knownProviderConnection(for: preset)
+        let oauthKind = selectedOAuthKind
+        let testedProvider = draftKnownProvider(for: preset)
+        let testedAPIKeyInput = apiKey
+        let testedHeaders = customHeaders
 
         isTesting = true
         testResult = nil
+        let requestID = UUID()
+        testRequestID = requestID
 
         Task {
             do {
                 let models: [String]
-                if selectedOAuthKind == .openAICodex {
+                if oauthKind == .openAICodex {
                     let tokens = try await OpenAICodexOAuthService.signIn()
                     await MainActor.run {
                         oauthTokens = tokens
                     }
                     models = await OpenAICodexOAuthService.availableModels(for: tokens)
-                } else if selectedOAuthKind == .openRouter {
+                } else if oauthKind == .openRouter {
                     // The browser sign-in mints a regular OpenRouter API key.
                     // Stash it in `apiKey` so `saveKnownProvider` persists it
                     // via the same path as a pasted key, then verify by
@@ -1368,10 +1417,10 @@ private struct AddProviderFlow: View {
                         authType: .apiKey,
                         providerType: config.providerType,
                         apiKey: key,
-                        headers: HeaderEntry.buildHeaders(from: customHeaders),
-                        manualModelIds: parseManualModelIds(manualModelIdsText)
+                        headers: HeaderEntry.buildHeaders(from: testedHeaders),
+                        manualModelIds: testedProvider.manualModelIds
                     )
-                } else if selectedOAuthKind == .xai {
+                } else if oauthKind == .xai {
                     // Grok sign-in returns access/refresh tokens; stash them so
                     // `saveKnownProvider` persists them as `.xaiOAuth`. The
                     // browser sign-in IS the test — xAI OAuth tokens cannot list
@@ -1390,12 +1439,23 @@ private struct AddProviderFlow: View {
                         basePath: connection.basePath,
                         authType: .apiKey,
                         providerType: config.providerType,
-                        apiKey: apiKey,
-                        headers: HeaderEntry.buildHeaders(from: customHeaders),
-                        manualModelIds: parseManualModelIds(manualModelIdsText)
+                        apiKey: testedAPIKeyInput,
+                        headers: HeaderEntry.buildHeaders(from: testedHeaders),
+                        manualModelIds: testedProvider.manualModelIds
                     )
                 }
                 await MainActor.run {
+                    guard testRequestID == requestID else { return }
+                    guard matchesKnownTestInputs(
+                        preset: preset,
+                        provider: testedProvider,
+                        oauthKind: oauthKind,
+                        apiKeyInput: testedAPIKeyInput,
+                        headers: testedHeaders
+                    ) else {
+                        isTesting = false
+                        return
+                    }
                     withAnimation {
                         testResult = .success(models); isTesting = false
                     }
@@ -1403,18 +1463,49 @@ private struct AddProviderFlow: View {
                 // Auto-complete on green: a successful test/sign-in is the
                 // confirmation, so finalize without a second "Add Provider"
                 // press. The brief pause lets the green success state register.
-                try? await Task.sleep(nanoseconds: 450_000_000)
-                await MainActor.run { saveKnownProvider() }
-            } catch {
-                let message: String
-                switch selectedOAuthKind {
-                case .openAICodex: message = OpenAICodexOAuthService.diagnosticMessage(for: error)
-                case .xai: message = XAIOAuthService.diagnosticMessage(for: error)
-                default: message = error.localizedDescription
-                }
+                try? await Task.sleep(nanoseconds: 800_000_000)
                 await MainActor.run {
+                    guard testRequestID == requestID else { return }
+                    guard testResult?.isSuccess == true,
+                        matchesKnownTestInputs(
+                            preset: preset,
+                            provider: testedProvider,
+                            oauthKind: oauthKind,
+                            apiKeyInput: testedAPIKeyInput,
+                            headers: testedHeaders
+                        )
+                    else { return }
+                    saveKnownProvider()
+                }
+            } catch {
+                let diagnosticMessage: String?
+                switch oauthKind {
+                case .openAICodex: diagnosticMessage = OpenAICodexOAuthService.diagnosticMessage(for: error)
+                case .xai: diagnosticMessage = XAIOAuthService.diagnosticMessage(for: error)
+                default: diagnosticMessage = nil
+                }
+                let failure = ProviderFailureClassifier.classifySetupFailure(
+                    provider: testedProvider,
+                    error: error,
+                    proxy: GlobalProxySettings.currentDiagnostic(),
+                    apiKeyPresent: !apiKey.isEmpty,
+                    oauthTokensPresent: oauthTokens != nil,
+                    diagnosticMessage: diagnosticMessage
+                )
+                await MainActor.run {
+                    guard testRequestID == requestID else { return }
+                    guard matchesKnownTestInputs(
+                        preset: preset,
+                        provider: testedProvider,
+                        oauthKind: oauthKind,
+                        apiKeyInput: testedAPIKeyInput,
+                        headers: testedHeaders
+                    ) else {
+                        isTesting = false
+                        return
+                    }
                     withAnimation {
-                        testResult = .failure(message); isTesting = false
+                        testResult = .failure(failure); isTesting = false
                     }
                 }
             }
@@ -1471,9 +1562,14 @@ private struct AddProviderFlow: View {
         let trimmedBasePath = customBasePath.trimmingCharacters(in: .whitespaces)
         let port: Int? = customPort.trimmingCharacters(in: .whitespaces).isEmpty ? nil : Int(customPort)
         let testApiKey = customAuthType == .apiKey && !apiKey.isEmpty ? apiKey : nil
+        let testedProvider = draftCustomProvider()
+        let testedAPIKeyInput = apiKey
+        let testedHeaders = customHeaders
 
         isTesting = true
         testResult = nil
+        let requestID = UUID()
+        testRequestID = requestID
 
         Task {
             do {
@@ -1485,21 +1581,56 @@ private struct AddProviderFlow: View {
                     authType: customAuthType,
                     providerType: .openaiLegacy,
                     apiKey: testApiKey,
-                    headers: HeaderEntry.buildHeaders(from: customHeaders),
-                    manualModelIds: parseManualModelIds(manualModelIdsText)
+                    headers: HeaderEntry.buildHeaders(from: testedHeaders),
+                    manualModelIds: testedProvider.manualModelIds
                 )
                 await MainActor.run {
+                    guard testRequestID == requestID else { return }
+                    guard matchesCustomTestInputs(
+                        provider: testedProvider,
+                        apiKeyInput: testedAPIKeyInput,
+                        headers: testedHeaders
+                    ) else {
+                        isTesting = false
+                        return
+                    }
                     withAnimation {
                         testResult = .success(models); isTesting = false
                     }
                 }
                 // Auto-complete on green (see `testKnownProvider`).
-                try? await Task.sleep(nanoseconds: 450_000_000)
-                await MainActor.run { saveCustomProvider() }
-            } catch {
+                try? await Task.sleep(nanoseconds: 800_000_000)
                 await MainActor.run {
+                    guard testRequestID == requestID else { return }
+                    guard testResult?.isSuccess == true,
+                        matchesCustomTestInputs(
+                            provider: testedProvider,
+                            apiKeyInput: testedAPIKeyInput,
+                            headers: testedHeaders
+                        )
+                    else { return }
+                    saveCustomProvider()
+                }
+            } catch {
+                let failure = ProviderFailureClassifier.classifySetupFailure(
+                    provider: testedProvider,
+                    error: error,
+                    proxy: GlobalProxySettings.currentDiagnostic(),
+                    apiKeyPresent: testApiKey != nil,
+                    oauthTokensPresent: false
+                )
+                await MainActor.run {
+                    guard testRequestID == requestID else { return }
+                    guard matchesCustomTestInputs(
+                        provider: testedProvider,
+                        apiKeyInput: testedAPIKeyInput,
+                        headers: testedHeaders
+                    ) else {
+                        isTesting = false
+                        return
+                    }
                     withAnimation {
-                        testResult = .failure(error.localizedDescription); isTesting = false
+                        testResult = .failure(failure); isTesting = false
                     }
                 }
             }
@@ -1527,6 +1658,7 @@ private struct AddProviderFlow: View {
             autoConnect: true,
             timeout: timeout,
             disableTimeout: disableTimeout,
+            manualModelIds: parseManualModelIds(manualModelIdsText),
             secretHeaderKeys: secretKeys
         )
 
@@ -1540,6 +1672,87 @@ private struct AddProviderFlow: View {
         for header in customHeaders where header.isSecret && !header.key.isEmpty && !header.value.isEmpty {
             RemoteProviderKeychain.saveHeaderSecret(header.value, key: header.key, for: providerId)
         }
+    }
+
+    private func draftKnownProvider(for preset: ProviderPreset) -> RemoteProvider {
+        let config = preset.configuration
+        let connection = knownProviderConnection(for: preset)
+        let (regularHeaders, secretKeys) = HeaderEntry.partition(customHeaders)
+        let authType: RemoteProviderAuthType
+        switch selectedOAuthKind {
+        case .openAICodex: authType = .openAICodexOAuth
+        case .xai: authType = .xaiOAuth
+        default: authType = config.authType
+        }
+        return RemoteProvider(
+            id: draftProviderID,
+            name: config.name,
+            host: connection.host,
+            providerProtocol: connection.providerProtocol,
+            port: connection.port,
+            basePath: connection.basePath,
+            customHeaders: regularHeaders,
+            authType: authType,
+            providerType: config.providerType,
+            timeout: timeout,
+            disableTimeout: disableTimeout,
+            manualModelIds: parseManualModelIds(manualModelIdsText),
+            secretHeaderKeys: secretKeys
+        )
+    }
+
+    private func matchesKnownTestInputs(
+        preset: ProviderPreset,
+        provider testedProvider: RemoteProvider,
+        oauthKind testedOAuthKind: ProviderOAuthKind?,
+        apiKeyInput testedAPIKeyInput: String,
+        headers testedHeaders: [HeaderEntry]
+    ) -> Bool {
+        guard selectedOAuthKind == testedOAuthKind,
+            draftKnownProvider(for: preset) == testedProvider,
+            customHeaders == testedHeaders
+        else { return false }
+
+        // Browser sign-in is expected to populate credentials while the test
+        // is running. Pasted-key flows must retain the exact tested input.
+        return testedOAuthKind != nil || apiKey == testedAPIKeyInput
+    }
+
+    private func draftCustomProvider() -> RemoteProvider {
+        let trimmedName = customName.trimmingCharacters(in: .whitespaces)
+        let trimmedBasePath = customBasePath.trimmingCharacters(in: .whitespaces)
+        let (regularHeaders, secretKeys) = HeaderEntry.partition(customHeaders)
+        return RemoteProvider(
+            id: draftProviderID,
+            name: trimmedName.isEmpty ? "Custom Provider" : trimmedName,
+            host: customHost.trimmingCharacters(in: .whitespaces),
+            providerProtocol: customProtocol,
+            port: Int(customPort),
+            basePath: trimmedBasePath.isEmpty ? "/v1" : trimmedBasePath,
+            customHeaders: regularHeaders,
+            authType: customAuthType,
+            providerType: .openaiLegacy,
+            timeout: timeout,
+            disableTimeout: disableTimeout,
+            manualModelIds: parseManualModelIds(manualModelIdsText),
+            secretHeaderKeys: secretKeys
+        )
+    }
+
+    private func matchesCustomTestInputs(
+        provider testedProvider: RemoteProvider,
+        apiKeyInput testedAPIKeyInput: String,
+        headers testedHeaders: [HeaderEntry]
+    ) -> Bool {
+        draftCustomProvider() == testedProvider
+            && apiKey == testedAPIKeyInput
+            && customHeaders == testedHeaders
+    }
+
+    private func copySetupFailure(_ failure: ProviderSetupFailure) {
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        pasteboard.setString(failure.pasteboardText, forType: .string)
     }
 
     /// Resolve the connection for a known preset, applying the user's endpoint
@@ -1614,6 +1827,7 @@ private struct EditProviderFlow: View {
     // UI state
     @State private var isTesting = false
     @State private var testResult: ProviderTestResult?
+    @State private var testRequestID: UUID?
     @State private var hasAppeared = false
 
     // Diagnostics credential presence (drives the diagnostics report)
@@ -1648,6 +1862,10 @@ private struct EditProviderFlow: View {
                         customProviderEditContent
                     }
 
+                    if case .failure(let failure) = testResult {
+                        setupFailureCallout(failure)
+                    }
+
                     // Cancel the surrounding 24pt inset so diagnostics rows span
                     // the full sheet width (they carry their own internal padding).
                     ProviderDiagnosticsRowsView(report: diagnosticsReport, maxRows: nil)
@@ -1673,6 +1891,7 @@ private struct EditProviderFlow: View {
             Task { await refreshCredentialState() }
             withAnimation { hasAppeared = true }
         }
+        .onDisappear { testRequestID = nil }
         .themedAlert(
             "Disable request timeout?",
             isPresented: $showNoTimeoutWarning,
@@ -1790,6 +2009,7 @@ private struct EditProviderFlow: View {
 
                 ProviderSecureField(placeholder: "Leave blank to keep current", text: $apiKey)
                     .onChange(of: apiKey) { _, _ in
+                        testResult = nil
                         // User edited the field manually — clear any prior
                         // re-authorize confirmation/error so we don't show
                         // stale feedback against a typed key.
@@ -2386,6 +2606,40 @@ private struct EditProviderFlow: View {
         return L("Test")
     }
 
+    private func setupFailureCallout(_ failure: ProviderSetupFailure) -> some View {
+        HStack(alignment: .top, spacing: 10) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .foregroundColor(theme.errorColor)
+            VStack(alignment: .leading, spacing: 4) {
+                Text(failure.classification.title)
+                    .font(.system(size: 12, weight: .semibold))
+                if let detail = failure.recoveryDetail {
+                    Text(detail)
+                        .font(.system(size: 11))
+                        .foregroundColor(theme.secondaryText)
+                }
+                Text(failure.classification.action)
+                    .font(.system(size: 11))
+                    .foregroundColor(theme.secondaryText)
+            }
+            Spacer(minLength: 8)
+            Button {
+                let pasteboard = NSPasteboard.general
+                pasteboard.clearContents()
+                pasteboard.setString(failure.pasteboardText, forType: .string)
+            } label: {
+                Image(systemName: "doc.on.doc")
+            }
+            .buttonStyle(.plain)
+            .localizedHelp("Copy diagnostics")
+        }
+        .padding(12)
+        .background(
+            RoundedRectangle(cornerRadius: 8)
+                .fill(theme.errorColor.opacity(0.08))
+        )
+    }
+
     private var testButtonColor: Color {
         guard let result = testResult else { return theme.secondaryText }
         return result.isSuccess ? theme.successColor : theme.errorColor
@@ -2455,14 +2709,18 @@ private struct EditProviderFlow: View {
     }
 
     func testConnection() {
+        let requestID = UUID()
+        testRequestID = requestID
         isTesting = true
         testResult = nil
 
-        let trimmedHost = host.trimmingCharacters(in: .whitespaces)
-        let trimmedBasePath = basePath.trimmingCharacters(in: .whitespaces)
-        let port: Int? = portString.trimmingCharacters(in: .whitespaces).isEmpty ? nil : Int(portString)
         let testApiKey =
             authType == .apiKey ? (!apiKey.isEmpty ? apiKey : RemoteProviderKeychain.getAPIKey(for: provider.id)) : nil
+        let testedProvider = draftEditedProvider()
+        let testedAPIKeyInput = apiKey
+        let testedHeaders = customHeaders
+        let testedAPIKeyPresent = testApiKey != nil || apiKeyPresent
+        let testedOAuthTokensPresent = oauthTokensPresent
 
         Task {
             do {
@@ -2471,36 +2729,94 @@ private struct EditProviderFlow: View {
                 // Passing the provider id lets ChatGPT/Codex use the stored
                 // OAuth tokens to query the live catalog when signed in.
                 let models = try await RemoteProviderManager.shared.testConnection(
-                    host: trimmedHost,
-                    providerProtocol: providerProtocol,
-                    port: port,
-                    basePath: trimmedBasePath,
-                    authType: authType,
-                    providerType: providerType,
+                    host: testedProvider.host,
+                    providerProtocol: testedProvider.providerProtocol,
+                    port: testedProvider.port,
+                    basePath: testedProvider.basePath,
+                    authType: testedProvider.authType,
+                    providerType: testedProvider.providerType,
                     apiKey: testApiKey,
-                    headers: HeaderEntry.buildHeaders(from: customHeaders),
-                    manualModelIds: parseManualModelIds(manualModelIdsText),
+                    headers: HeaderEntry.buildHeaders(from: testedHeaders),
+                    manualModelIds: testedProvider.manualModelIds,
                     providerId: provider.id
                 )
                 await MainActor.run {
+                    guard testRequestID == requestID else { return }
+                    guard matchesEditedTestInputs(
+                        provider: testedProvider,
+                        apiKeyInput: testedAPIKeyInput,
+                        headers: testedHeaders
+                    ) else {
+                        isTesting = false
+                        return
+                    }
                     testResult = .success(models)
                     isTesting = false
                 }
             } catch {
-                let message: String
-                if authType == .openAICodexOAuth || providerType == .openAICodex {
-                    message = OpenAICodexOAuthService.diagnosticMessage(for: error)
-                } else if authType == .xaiOAuth {
-                    message = XAIOAuthService.diagnosticMessage(for: error)
+                let diagnosticMessage: String?
+                if testedProvider.authType == .openAICodexOAuth
+                    || testedProvider.providerType == .openAICodex
+                {
+                    diagnosticMessage = OpenAICodexOAuthService.diagnosticMessage(for: error)
+                } else if testedProvider.authType == .xaiOAuth {
+                    diagnosticMessage = XAIOAuthService.diagnosticMessage(for: error)
                 } else {
-                    message = error.localizedDescription
+                    diagnosticMessage = nil
                 }
+                let failure = ProviderFailureClassifier.classifySetupFailure(
+                    provider: testedProvider,
+                    error: error,
+                    proxy: GlobalProxySettings.currentDiagnostic(),
+                    apiKeyPresent: testedAPIKeyPresent,
+                    oauthTokensPresent: testedOAuthTokensPresent,
+                    diagnosticMessage: diagnosticMessage
+                )
                 await MainActor.run {
-                    testResult = .failure(message)
+                    guard testRequestID == requestID else { return }
+                    guard matchesEditedTestInputs(
+                        provider: testedProvider,
+                        apiKeyInput: testedAPIKeyInput,
+                        headers: testedHeaders
+                    ) else {
+                        isTesting = false
+                        return
+                    }
+                    testResult = .failure(failure)
                     isTesting = false
                 }
             }
         }
+    }
+
+    private func draftEditedProvider() -> RemoteProvider {
+        let (regularHeaders, secretKeys) = HeaderEntry.partition(customHeaders)
+        return RemoteProvider(
+            id: provider.id,
+            name: name.trimmingCharacters(in: .whitespaces),
+            host: host.trimmingCharacters(in: .whitespaces),
+            providerProtocol: providerProtocol,
+            port: Int(portString),
+            basePath: basePath.trimmingCharacters(in: .whitespaces),
+            customHeaders: regularHeaders,
+            authType: authType,
+            providerType: providerType,
+            enabled: provider.enabled,
+            timeout: timeout,
+            disableTimeout: disableTimeout,
+            manualModelIds: parseManualModelIds(manualModelIdsText),
+            secretHeaderKeys: secretKeys
+        )
+    }
+
+    private func matchesEditedTestInputs(
+        provider testedProvider: RemoteProvider,
+        apiKeyInput testedAPIKeyInput: String,
+        headers testedHeaders: [HeaderEntry]
+    ) -> Bool {
+        draftEditedProvider() == testedProvider
+            && apiKey == testedAPIKeyInput
+            && customHeaders == testedHeaders
     }
 
     private func save() {
@@ -2626,7 +2942,7 @@ private struct SegmentedToggleButton: View {
 
 private enum ProviderTestResult {
     case success([String])
-    case failure(String)
+    case failure(ProviderSetupFailure)
 
     var isSuccess: Bool {
         if case .success = self { return true }
@@ -2634,7 +2950,7 @@ private enum ProviderTestResult {
     }
 }
 
-struct HeaderEntry: Identifiable {
+struct HeaderEntry: Identifiable, Equatable {
     let id = UUID()
     var key: String
     var value: String
