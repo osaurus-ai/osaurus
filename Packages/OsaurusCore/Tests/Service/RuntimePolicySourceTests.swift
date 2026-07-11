@@ -685,7 +685,7 @@ struct RuntimePolicySourceTests {
         // SSM/hybrid mixer (vmlx-swift#126), and the ZAYA tool-aware template
         // activation from source_model.architecture (vmlx-swift#127) that
         // stops JANGTQ ZAYA bundles leaking raw tool-call XML.
-        let expectedRuntimeHardenedRevision = "c39192d9a8d2f56a35f053c7ca1ecba79ee802fc"
+        let expectedRuntimeHardenedRevision = "31b165cb0fa3ca49a8495971f8d906157906aeb6"
         let manifestRevision = try Self.vmlxPinRevision(in: manifest)
         let workspaceRevision = try Self.vmlxPinRevision(in: workspaceResolved)
         let appRevision = try Self.vmlxPinRevision(in: appResolved)
