@@ -30813,6 +30813,9 @@
         }
       }
     },
+    "Clear shared token" : {
+
+    },
     "Clear All" : {
       "localizations" : {
         "de" : {
@@ -132089,9 +132092,6 @@
         }
       }
     },
-    "Saved token cleared." : {
-
-    },
     "Saved token configured" : {
 
     },
@@ -139103,6 +139103,9 @@
           }
         }
       }
+    },
+    "Shared GitHub token removed from imports and plugin updates." : {
+
     },
     "Shared a file" : {
       "localizations" : {
@@ -153430,6 +153433,9 @@
           }
         }
       }
+    },
+    "The shared GitHub token is used by imports and plugin updates." : {
+
     },
     "The signing key for \"%@\" has changed. Uninstall the plugin and reinstall it to accept the new key." : {
       "localizations" : {

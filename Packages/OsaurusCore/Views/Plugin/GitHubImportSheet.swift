@@ -374,11 +374,16 @@ struct GitHubImportSheet: View {
                     .disabled(gitHubTokenInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
 
                     Button(action: clearGitHubImportToken) {
-                        Text("Clear", bundle: .module)
+                        Text("Clear shared token", bundle: .module)
                     }
                     .buttonStyle(GitHubSecondaryButtonStyle())
                     .disabled(!hasSavedGitHubToken && gitHubTokenInput.isEmpty)
                 }
+
+                Text("The shared GitHub token is used by imports and plugin updates.", bundle: .module)
+                    .font(.system(size: 10))
+                    .foregroundColor(theme.tertiaryText)
+                    .fixedSize(horizontal: false, vertical: true)
 
                 if let message = gitHubTokenStatusMessage {
                     Text(message)
@@ -1065,7 +1070,7 @@ struct GitHubImportSheet: View {
         gitHubTokenInput = ""
         refreshSavedGitHubTokenStatus()
         gitHubTokenStatusIsError = false
-        gitHubTokenStatusMessage = L("Saved token cleared.")
+        gitHubTokenStatusMessage = L("Shared GitHub token removed from imports and plugin updates.")
     }
 
     private func cancel() {

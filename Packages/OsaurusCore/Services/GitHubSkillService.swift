@@ -6,6 +6,7 @@
 //  Supports repositories with .claude-plugin/marketplace.json format.
 //
 
+import CryptoKit
 import Foundation
 import OsaurusRepository
 
@@ -1067,6 +1068,7 @@ public struct GitHubImportCheckpoint: Codable, Sendable {
     public let marketplacePluginNames: [String]
     public let marketplaceFingerprint: String?
     public var sourceFingerprints: [String: String]
+    public var manifestFingerprints: [String: String]
     public var manifests: [ClaudePluginManifest]
     public var updatedAt: Date
 
@@ -1075,6 +1077,7 @@ public struct GitHubImportCheckpoint: Codable, Sendable {
         case marketplacePluginNames
         case marketplaceFingerprint
         case sourceFingerprints
+        case manifestFingerprints
         case manifests
         case updatedAt
     }
@@ -1084,6 +1087,7 @@ public struct GitHubImportCheckpoint: Codable, Sendable {
         marketplacePluginNames: [String],
         marketplaceFingerprint: String? = nil,
         sourceFingerprints: [String: String] = [:],
+        manifestFingerprints: [String: String]? = nil,
         manifests: [ClaudePluginManifest],
         updatedAt: Date = Date()
     ) {
@@ -1091,6 +1095,23 @@ public struct GitHubImportCheckpoint: Codable, Sendable {
         self.marketplacePluginNames = marketplacePluginNames
         self.marketplaceFingerprint = marketplaceFingerprint
         self.sourceFingerprints = sourceFingerprints
+        if let manifestFingerprints {
+            self.manifestFingerprints = manifestFingerprints
+        } else {
+            var derivedFingerprints: [String: String] = [:]
+            for manifest in manifests {
+                guard let sourceFingerprint = sourceFingerprints[manifest.name],
+                    let fingerprint = Self.manifestFingerprint(
+                        for: manifest,
+                        sourceFingerprint: sourceFingerprint
+                    )
+                else {
+                    continue
+                }
+                derivedFingerprints[manifest.name] = fingerprint
+            }
+            self.manifestFingerprints = derivedFingerprints
+        }
         self.manifests = manifests
         self.updatedAt = updatedAt
     }
@@ -1108,6 +1129,8 @@ public struct GitHubImportCheckpoint: Codable, Sendable {
         )
         self.sourceFingerprints =
             (try? container.decode([String: String].self, forKey: .sourceFingerprints)) ?? [:]
+        self.manifestFingerprints =
+            (try? container.decode([String: String].self, forKey: .manifestFingerprints)) ?? [:]
         self.manifests = try container.decode([ClaudePluginManifest].self, forKey: .manifests)
         self.updatedAt = try container.decode(Date.self, forKey: .updatedAt)
     }
@@ -1131,11 +1154,36 @@ public struct GitHubImportCheckpoint: Codable, Sendable {
 
     public func manifest(named name: String, sourceFingerprint: String?) -> ClaudePluginManifest? {
         guard let sourceFingerprint,
-            sourceFingerprints[name] == sourceFingerprint
+            sourceFingerprints[name] == sourceFingerprint,
+            let manifest = manifests.first(where: { $0.name == name }),
+            let expected = manifestFingerprints[name],
+            expected == Self.manifestFingerprint(
+                for: manifest,
+                sourceFingerprint: sourceFingerprint
+            )
         else {
             return nil
         }
-        return manifests.first { $0.name == name }
+        return manifest
+    }
+
+    public static func manifestFingerprint(
+        for manifest: ClaudePluginManifest,
+        sourceFingerprint: String
+    ) -> String? {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        guard let manifestData = try? encoder.encode(manifest) else { return nil }
+
+        var material = Data("github-import-manifest-v1\0".utf8)
+        material.append(contentsOf: sourceFingerprint.utf8)
+        material.append(0)
+        material.append(manifestData)
+        return sha256Hex(material)
+    }
+
+    static func sha256Hex(_ data: Data) -> String {
+        SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
     }
 }
 
@@ -1182,15 +1230,14 @@ public final class GitHubImportCheckpointStore: @unchecked Sendable {
         try? fileManager.removeItem(at: fileURL(for: repo))
     }
 
+    static func fileName(for repo: GitHubRepo) -> String {
+        let identity = [repo.owner, repo.name, repo.branch]
+        let data = (try? JSONEncoder().encode(identity)) ?? Data(identity.joined(separator: "\0").utf8)
+        return "github-import-\(GitHubImportCheckpoint.sha256Hex(data)).json"
+    }
+
     private func fileURL(for repo: GitHubRepo) -> URL {
-        let raw = "\(repo.owner)__\(repo.name)__\(repo.branch)"
-        let safe = raw.map { char -> Character in
-            if char.isLetter || char.isNumber || char == "-" || char == "_" {
-                return char
-            }
-            return "_"
-        }
-        return directory.appendingPathComponent(String(safe)).appendingPathExtension("json")
+        directory.appendingPathComponent(Self.fileName(for: repo))
     }
 }
 
@@ -1718,6 +1765,11 @@ public final class GitHubSkillService: ObservableObject {
                 checkpoint?.manifests = manifests
                 if let sourceFingerprint {
                     checkpoint?.sourceFingerprints[plugin.name] = sourceFingerprint
+                    checkpoint?.manifestFingerprints[plugin.name] =
+                        GitHubImportCheckpoint.manifestFingerprint(
+                            for: manifest,
+                            sourceFingerprint: sourceFingerprint
+                        )
                 }
                 checkpoint?.updatedAt = Date()
                 if let checkpoint {

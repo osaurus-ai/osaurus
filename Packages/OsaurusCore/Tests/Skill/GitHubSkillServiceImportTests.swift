@@ -740,6 +740,95 @@ struct GitHubSkillServiceImportTests {
         #expect(store.load(repo: repo) == nil)
     }
 
+    @Test func poisonedCheckpointManifestIsIgnoredWhenLiveSourceFingerprintMatches() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(
+            "osaurus-github-import-poisoned-checkpoint-\(UUID().uuidString)",
+            isDirectory: true
+        )
+        let store = GitHubImportCheckpointStore(directory: directory)
+        let repo = GitHubRepo(owner: "acme", name: "widgets", branch: "main")
+        let marketplace = GitHubMarketplace(
+            name: "fixture",
+            owner: nil,
+            metadata: nil,
+            plugins: [MarketplacePlugin(name: "one", source: .localDirectory("./one"))]
+        )
+        let sourceFingerprint = "acme/widgets@main:one:one-sha"
+        let trusted = ClaudePluginManifest(
+            name: "one",
+            description: "trusted",
+            source: "one",
+            sourceRepo: repo,
+            skills: [ClaudeSkillEntry(path: "one/skills/trusted")]
+        )
+        let poisoned = ClaudePluginManifest(
+            name: "one",
+            description: "poisoned",
+            source: "one",
+            sourceRepo: repo,
+            skills: [ClaudeSkillEntry(path: "one/skills/poisoned")]
+        )
+        let trustedFingerprint = try #require(
+            GitHubImportCheckpoint.manifestFingerprint(
+                for: trusted,
+                sourceFingerprint: sourceFingerprint
+            )
+        )
+        store.save(
+            GitHubImportCheckpoint(
+                repo: repo,
+                marketplacePluginNames: ["one"],
+                marketplaceFingerprint: GitHubImportCheckpoint.fingerprint(for: marketplace),
+                sourceFingerprints: ["one": sourceFingerprint],
+                manifestFingerprints: ["one": trustedFingerprint],
+                manifests: [poisoned]
+            )
+        )
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let service = makeService(checkpointStore: store) { request in
+            switch request.url?.path {
+            case "/repos/acme/widgets":
+                return .json(#"{"default_branch":"main"}"#)
+            case "/repos/acme/widgets/contents/.claude-plugin/marketplace.json":
+                return .text(#"{"name":"fixture","plugins":[{"name":"one","source":"./one"}]}"#)
+            case "/repos/acme/widgets/git/trees/main":
+                return .json(
+                    #"{"sha":"rootsha","truncated":false,"tree":[{"path":"one","type":"tree","sha":"one-sha"},{"path":"one/skills","type":"tree","sha":"skills-sha"},{"path":"one/skills/fresh","type":"tree","sha":"fresh-sha"},{"path":"one/skills/fresh/SKILL.md","type":"blob","size":42,"sha":"skill-sha"}]}"#
+                )
+            default:
+                return .notFound()
+            }
+        }
+        defer { service.invalidateForTests() }
+
+        let result = try await service.fetchPlugins(from: "acme/widgets")
+
+        #expect(result.plugins.map(\.name) == ["one"])
+        #expect(result.plugins[0].skills.map(\.path) == ["one/skills/fresh"])
+        #expect(service.importProgress?.resumedFromCheckpoint == false)
+    }
+
+    @Test func checkpointFileIdentityDoesNotCollapseRepositoryPunctuation() {
+        let dotted = GitHubRepo(owner: "acme", name: "foo.bar", branch: "main")
+        let underscored = GitHubRepo(owner: "acme", name: "foo_bar", branch: "main")
+
+        #expect(
+            GitHubImportCheckpointStore.fileName(for: dotted)
+                != GitHubImportCheckpointStore.fileName(for: underscored)
+        )
+    }
+
+    @Test func checkpointFileIdentityDoesNotCollapseRefSeparators() {
+        let slashed = GitHubRepo(owner: "acme", name: "widgets", branch: "feature/x")
+        let underscored = GitHubRepo(owner: "acme", name: "widgets", branch: "feature_x")
+
+        #expect(
+            GitHubImportCheckpointStore.fileName(for: slashed)
+                != GitHubImportCheckpointStore.fileName(for: underscored)
+        )
+    }
+
     @Test func checkpointCompatibilityRejectsChangedMarketplaceSources() {
         let repo = GitHubRepo(owner: "acme", name: "widgets", branch: "main")
         let original = GitHubMarketplace(
