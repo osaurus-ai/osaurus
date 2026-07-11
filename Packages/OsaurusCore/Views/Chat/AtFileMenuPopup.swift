@@ -95,15 +95,16 @@ struct AtFileMenuPopup: View {
                         .foregroundColor(theme.primaryText)
                         .lineLimit(1)
                         .truncationMode(.middle)
-                    Text("Click to grant access\u{2026}", bundle: .module)
-                        .font(.system(size: 11))
-                        .foregroundColor(theme.accentColor)
+                    HStack(spacing: 3) {
+                        Text("Click to grant access\u{2026}", bundle: .module)
+                            .font(.system(size: 11))
+                        // Slanting arrow signals the row opens an external picker.
+                        Image(systemName: "arrow.up.right")
+                            .font(.system(size: 10, weight: .semibold))
+                    }
+                    .foregroundColor(theme.accentColor)
                 }
                 Spacer()
-                // Slanting arrow signals the row opens an external picker.
-                Image(systemName: "arrow.up.right")
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundColor(theme.accentColor)
             }
             .padding(.horizontal, 12)
             .frame(height: 48)
