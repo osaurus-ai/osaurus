@@ -68,8 +68,8 @@ struct ProviderConnectivityCenterTests {
         #expect(snapshot.filtered(by: .disabled).map(\.provider.name) == ["Azure"])
         #expect(snapshot.filtered(by: .attention).contains { $0.provider.name == "Lemonade" })
         #expect(!snapshot.filtered(by: .attention).contains { $0.provider.name == "Azure" })
-        #expect(snapshot.issueKindCounts[.connection] == 1)
-        #expect(snapshot.groupedReportsByPrimaryIssueKind[.connection]?.map(\.provider.name) == ["Lemonade"])
+        #expect(snapshot.issueKindCounts[.authentication] == 1)
+        #expect(snapshot.groupedReportsByPrimaryIssueKind[.authentication]?.map(\.provider.name) == ["Lemonade"])
         #expect(snapshot.pasteboardText.contains("Provider connectivity diagnostics"))
         #expect(snapshot.pasteboardText.contains("https://proxy.example.com:8443"))
         #expect(!snapshot.pasteboardText.contains("secret-token"))
@@ -268,19 +268,40 @@ struct ProviderConnectivityCenterTests {
             provider: provider,
             state: state,
             proxy: .invalid("Proxy host 'localhost' is reserved for local networking."),
-            credentialPresence: RemoteProviderCredentialPresence(apiKeyPresent: false)
+            credentialPresence: RemoteProviderCredentialPresence(apiKeyPresent: true)
         )
 
         #expect(report.issueKinds == [.authentication, .connection, .proxy])
-        #expect(report.primaryIssueKind == .connection)
-        #expect(report.summary.contains("Connection"))
-        #expect(report.recommendedAction?.contains("Test") == true)
+        #expect(report.primaryIssueKind == .authentication)
+        #expect(report.summary.contains("Authentication rejected"))
+        #expect(report.recommendedAction?.contains("Verify the credential") == true)
 
         let snapshot = ProviderConnectivitySnapshot(reports: [report], proxy: .disabled)
         #expect(snapshot.issueKindCounts == [.authentication: 1, .connection: 1, .proxy: 1])
         #expect(snapshot.filtered(by: .attention, issueKind: .authentication).map(\.provider.name) == ["Broken API"])
         #expect(snapshot.filtered(by: .attention, issueKind: .connection).map(\.provider.name) == ["Broken API"])
         #expect(snapshot.filtered(by: .attention, issueKind: .proxy).map(\.provider.name) == ["Broken API"])
+    }
+
+    @Test func classifiedTimeoutOverridesGenericConnectionGuidance() {
+        let provider = RemoteProvider(
+            name: "Slow API",
+            host: "api.example.test",
+            authType: .none
+        )
+        var state = RemoteProviderState(providerId: provider.id)
+        state.lastError = "The request timed out."
+
+        let report = ProviderConnectivityCenter.providerReport(
+            provider: provider,
+            state: state,
+            proxy: .disabled,
+            credentialPresence: RemoteProviderCredentialPresence()
+        )
+
+        #expect(report.primaryIssueKind == .connection)
+        #expect(report.summary.contains("Request timed out"))
+        #expect(report.recommendedAction?.contains("Retry") == true)
     }
 
     @Test func infoRowsDoNotBecomeReportIssues() {

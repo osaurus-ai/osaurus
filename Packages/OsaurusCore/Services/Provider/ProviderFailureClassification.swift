@@ -168,7 +168,7 @@ enum ProviderFailureClassifier {
         let phase = replay.phase.lowercased()
         let status = response.statusCode
 
-        if status == 401 || status == 403 {
+        if status == 401 {
             return classification(.authRejected, detail: L("HTTP \(status) from provider. Evidence: \(replay.summary)"))
         }
 
@@ -177,8 +177,11 @@ enum ProviderFailureClassifier {
         }
 
         if phase.contains("model") {
-            if status == 404 || status == 405 || status >= 500 {
+            if status == 404 || status == 405 || status == 501 {
                 return classification(.modelsEndpointUnavailable, detail: L("HTTP \(status) from the models endpoint. Evidence: \(replay.summary)"))
+            }
+            if status >= 500 {
+                return classification(.badResponse, detail: L("HTTP \(status) from the models endpoint. Evidence: \(replay.summary)"))
             }
             if status == 200 && bodyLooksLikeSchemaMismatch(body) {
                 return classification(.modelsSchemaMismatch, detail: L("The models endpoint responded with an unexpected schema. Evidence: \(replay.summary)"))
@@ -187,21 +190,20 @@ enum ProviderFailureClassifier {
 
         if body.contains("model_not_found")
             || body.contains("model not found")
-            || body.contains("does not exist")
             || body.contains("unsupported model") {
             return classification(.unsupportedModel, detail: L("The provider rejected the selected model. Evidence: \(replay.summary)"))
         }
 
-        if status == 400 || status == 422 || bodyLooksLikeRequestShapeRejection(body) {
+        if bodyLooksLikeRequestShapeRejection(body) {
             return classification(.requestRejected, detail: L("HTTP \(status) suggests the provider rejected the request shape. Evidence: \(replay.summary)"))
         }
 
-            if bodyLooksLikeSchemaMismatch(body) {
-                if phase.contains("model") {
-                    return classification(.modelsSchemaMismatch, detail: L("The models endpoint responded with an unexpected schema. Evidence: \(replay.summary)"))
-                }
-                return classification(.badResponse, detail: L("The provider response did not match the expected schema. Evidence: \(replay.summary)"))
+        if bodyLooksLikeSchemaMismatch(body) {
+            if phase.contains("model") {
+                return classification(.modelsSchemaMismatch, detail: L("The models endpoint responded with an unexpected schema. Evidence: \(replay.summary)"))
             }
+            return classification(.badResponse, detail: L("The provider response did not match the expected schema. Evidence: \(replay.summary)"))
+        }
 
         if status < 200 || status >= 300 {
             return classification(.badResponse, detail: L("HTTP \(status) from provider. Evidence: \(replay.summary)"))
@@ -223,7 +225,7 @@ enum ProviderFailureClassifier {
         if case .active = proxy, lower.contains("proxy") {
             return classification(.proxyConnectFailed, detail: detail)
         }
-        if lower.contains("http 401") || lower.contains("http 403") || lower.contains("unauthorized") {
+        if lower.contains("http 401") {
             return classification(.authRejected, detail: detail)
         }
         if bodyLooksLikeAuthRejection(lower) {
@@ -232,7 +234,7 @@ enum ProviderFailureClassifier {
         if lower.contains("oauth") && (lower.contains("token") || lower.contains("sign-in")) {
             return classification(.oauthTokenMissing, detail: detail)
         }
-        if lower.contains("api key") || lower.contains("apikey") || lower.contains("authorization") {
+        if lower.contains("api key") || lower.contains("apikey") {
             if credentialPresent {
                 return classification(.authRejected, detail: detail)
             }
@@ -256,16 +258,17 @@ enum ProviderFailureClassifier {
         if lower.contains("no models available") {
             return classification(.modelsSchemaMismatch, detail: detail)
         }
-        if lower.contains("invalid /models response") || lower.contains("invalid response") {
+        if lower.contains("invalid /models response") {
             return classification(.modelsSchemaMismatch, detail: detail)
         }
         if lower.contains("http 404") || lower.contains("http 405") {
             return classification(.modelsEndpointUnavailable, detail: detail)
         }
-        if lower.contains("http 400")
-            || lower.contains("http 422")
-            || bodyLooksLikeRequestShapeRejection(lower) {
+        if bodyLooksLikeRequestShapeRejection(lower) {
             return classification(.requestRejected, detail: detail)
+        }
+        if lower.contains("invalid response") {
+            return classification(.badResponse, detail: detail)
         }
 
         return classification(.unknown, detail: detail)
@@ -391,6 +394,7 @@ enum ProviderFailureClassifier {
     private static func bodyLooksLikeAuthRejection(_ body: String) -> Bool {
         body.contains("invalid_api_key")
             || body.contains("invalid api key")
+            || body.contains("incorrect api key")
             || body.contains("invalid authorization")
             || body.contains("authentication failed")
             || body.contains("auth failed")

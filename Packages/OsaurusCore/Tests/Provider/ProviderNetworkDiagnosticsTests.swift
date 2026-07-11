@@ -280,6 +280,15 @@ struct ProviderNetworkDiagnosticsTests {
                 .modelsSchemaMismatch
             ),
             (
+                "models-upstream-failure",
+                provider,
+                replayState(provider, url: url, statusCode: 503, body: #"{"error":"upstream unavailable"}"#),
+                .disabled,
+                false,
+                false,
+                .badResponse
+            ),
+            (
                 "request-shape",
                 provider,
                 replayState(provider, url: url, statusCode: 400, body: #"{"error":"unknown parameter tool_choice"}"#),
@@ -322,7 +331,49 @@ struct ProviderNetworkDiagnosticsTests {
                 .disabled,
                 true,
                 false,
-                .authRejected
+                .unknown
+            ),
+            (
+                "model-permission-wording-is-not-auth",
+                provider,
+                errorState(provider, message: "unauthorized for this model or region"),
+                .disabled,
+                true,
+                false,
+                .unknown
+            ),
+            (
+                "forbidden-entitlement-is-not-auth",
+                provider,
+                replayState(provider, url: url, statusCode: 403, body: #"{"error":"plan entitlement required"}"#),
+                .disabled,
+                true,
+                false,
+                .badResponse
+            ),
+            (
+                "generic-400-is-not-request-shape",
+                provider,
+                replayState(provider, url: url, statusCode: 400, body: #"{"error":"billing account unavailable"}"#),
+                .disabled,
+                true,
+                false,
+                .badResponse
+            ),
+            (
+                "non-model-resource-does-not-exist",
+                provider,
+                replayState(
+                    provider,
+                    url: url,
+                    phase: "chat-completion",
+                    statusCode: 409,
+                    body: #"{"error":"resource does not exist"}"#
+                ),
+                .disabled,
+                true,
+                false,
+                .badResponse
             ),
             (
                 "json-schema-in-chat-phase",
@@ -334,6 +385,24 @@ struct ProviderNetworkDiagnosticsTests {
                     statusCode: 200,
                     body: #"{"error":"schema mismatch"}"#
                 ),
+                .disabled,
+                false,
+                false,
+                .badResponse
+            ),
+            (
+                "invalid-response-format-message",
+                provider,
+                errorState(provider, message: "Invalid response_format for this endpoint"),
+                .disabled,
+                false,
+                false,
+                .requestRejected
+            ),
+            (
+                "generic-invalid-response-message",
+                provider,
+                errorState(provider, message: "Invalid response from provider"),
                 .disabled,
                 false,
                 false,
@@ -408,6 +477,43 @@ struct ProviderNetworkDiagnosticsTests {
         // "/models" appears in the detail text across all localizations.
         #expect(row("models", in: report).detail?.contains("/models") == true)
         #expect(row("format", in: report).detail?.contains("response_format=json_schema") == true)
+    }
+
+    @Test func remoteReportEmitsSpecificFailureRowForTransportAndHTTPFailures() throws {
+        let provider = RemoteProvider(
+            name: "OpenAI Compatible",
+            host: "api.example.test",
+            authType: .apiKey,
+            providerType: .openaiLegacy
+        )
+        let url = try #require(URL(string: "https://api.example.test/v1/models"))
+
+        let timeoutReport = ProviderNetworkDiagnostics.remoteProviderReport(
+            provider: provider,
+            state: replayState(provider, url: url, transportError: URLError(.timedOut)),
+            proxy: .disabled,
+            apiKeyPresent: true,
+            oauthTokensPresent: false
+        )
+        let timeout = row("failure-timeout", in: timeoutReport)
+        #expect(timeout.value == L("Request timed out"))
+        #expect(timeout.action?.contains("Retry") == true)
+
+        let authReport = ProviderNetworkDiagnostics.remoteProviderReport(
+            provider: provider,
+            state: replayState(
+                provider,
+                url: url,
+                statusCode: 400,
+                body: #"{"error":{"message":"Incorrect API key provided","code":"invalid_api_key"}}"#
+            ),
+            proxy: .disabled,
+            apiKeyPresent: true,
+            oauthTokensPresent: false
+        )
+        let auth = row("failure-auth", in: authReport)
+        #expect(auth.value == L("Authentication rejected"))
+        #expect(auth.action?.contains("Verify the credential") == true)
     }
 
     @Test func proxyDiagnosticDistinguishesInvalidConfiguredProxy() {
