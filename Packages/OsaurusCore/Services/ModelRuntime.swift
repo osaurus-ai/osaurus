@@ -1271,7 +1271,8 @@ public actor ModelRuntime {
         incomingWeightsBytes: Int64,
         incomingLoadFootprintBytes: Int64,
         excludingResident excludedName: String?,
-        modelDirectory: URL? = nil
+        modelDirectory: URL? = nil,
+        refuseOnShortfall: Bool = false
     ) throws {
         let physical = Int64(ProcessInfo.processInfo.physicalMemory)
         guard physical > 0, incomingWeightsBytes > 0 else { return }
@@ -1298,6 +1299,36 @@ public actor ModelRuntime {
         )
 
         lastRAMFeasibility = assessment
+
+        // Materialized (mmap-off) loads make the verdict authoritative: a
+        // load that truly cannot fit aborts in a Metal command-buffer
+        // completion handler mid-materialization instead of degrading
+        // gracefully. Refuse those with a clear error. macOS does reclaim
+        // its own file cache under allocation pressure (the Python runtime
+        // materializes this same 94 GB pack repeatedly with a warm cache),
+        // so grant the same 10%-of-physical reclaim slack the advisory
+        // verdict uses; the margin covers load-time transients. KV headroom
+        // is deliberately not required up front — KV grows later under the
+        // normal budget.
+        if refuseOnShortfall {
+            let workingMargin: Int64 = 4 << 30
+            let required = incomingLoadFootprintBytes + workingMargin
+            let available = assessment.availableMemoryBytes
+            let reclaimSlack = physical / 10
+            if available > 0, required > available + reclaimSlack {
+                genLog.error(
+                    "loadContainer: refusing materialized load of \(modelName, privacy: .public): required=\(required, privacy: .public) available=\(available, privacy: .public)"
+                )
+                throw NSError(
+                    domain: "ModelRuntime",
+                    code: 507,
+                    userInfo: [
+                        NSLocalizedDescriptionKey:
+                            "Not enough free memory to load \(modelName): it needs ~\(required >> 30) GB free (\(incomingLoadFootprintBytes >> 30) GB of weights plus working margin) but only \(available >> 30) GB is available. Close other apps or unload other models, then retry."
+                    ]
+                )
+            }
+        }
 
         switch assessment.verdict {
         case .ok:
@@ -1475,6 +1506,30 @@ public actor ModelRuntime {
             next.resume()
         } else {
             coldLoadActive = false
+        }
+    }
+
+    /// True while any model load is registered or holds the cold-load slot.
+    /// Background housekeeping (chat warm-up, residency-switch preload/GC)
+    /// checks this before acting: under the strict single-model policy a
+    /// late-arriving background load cancels whatever is already loading, so
+    /// a stale-selection warm-up firing during an explicit API load evicts
+    /// the user's model mid-materialization.
+    func hasLoadInFlight() -> Bool {
+        !loadingTasks.isEmpty || coldLoadActive
+    }
+
+    /// True when some model other than `name` is resident. Speculative
+    /// warm-ups consult this: loading a non-resident model under the strict
+    /// single-model policy evicts whoever is resident, so a launch-time
+    /// warm-up for a restored UI selection must not fire over a model an API
+    /// client is actively using. Matches both the full picker id and its
+    /// unprefixed tail against the canonical cache keys.
+    func hasResidentModelOther(than name: String) -> Bool {
+        let tail = name.split(separator: "/").last.map(String.init) ?? name
+        return modelCache.keys.contains {
+            $0.caseInsensitiveCompare(name) != .orderedSame
+                && $0.caseInsensitiveCompare(tail) != .orderedSame
         }
     }
 
@@ -1736,13 +1791,33 @@ public actor ModelRuntime {
         // below — were blind under the default strict policy. The value also
         // feeds `mlxCacheLimit()` and the `/health` + model-picker surfaces.
         let weightsBytes = Self.computeWeightsSizeBytes(at: localURL, modelName: name)
-        let loadFootprintBytes = Self.effectiveLoadFootprintBytes(
-            rawWeightsBytes: weightsBytes,
-            modelDirectory: localURL,
-            modelName: name
-        )
+        // A near-RAM-scale pack loads materialized (vmlx disables mmap so
+        // its pages stay resident instead of refaulting from SSD every
+        // decode step). Its real footprint is the full weight size — the
+        // mmap hot-subset heuristic below under-counted Hy3-JANG_2K's 94 GB
+        // as 28 GB — and the feasibility verdict becomes authoritative:
+        // materialization allocates anonymous pages faster than macOS
+        // reclaims file cache, so proceeding into a shortfall dies as a
+        // Metal command-buffer abort mid-load, not graceful pressure
+        // (observed live: available 101 GB loaded clean, 89 GB crashed).
+        let willMaterialize =
+            !Self.resolveMemorySafetyLoadPlan(
+                modelName: name,
+                modelDirectory: localURL,
+                settings: ServerRuntimeSettingsStore.snapshot(),
+                baseLoadConfiguration: .osaurusProduction,
+                inspectBundleFacts: true
+            ).loadConfiguration.useMmapSafetensors
+        let loadFootprintBytes =
+            willMaterialize
+            ? weightsBytes
+            : Self.effectiveLoadFootprintBytes(
+                rawWeightsBytes: weightsBytes,
+                modelDirectory: localURL,
+                modelName: name
+            )
         genLog.info(
-            "loadContainer: pre-load checks done model=\(name, privacy: .public) weightsBytes=\(weightsBytes, privacy: .public) loadFootprintBytes=\(loadFootprintBytes, privacy: .public)"
+            "loadContainer: pre-load checks done model=\(name, privacy: .public) weightsBytes=\(weightsBytes, privacy: .public) loadFootprintBytes=\(loadFootprintBytes, privacy: .public) materialized=\(willMaterialize, privacy: .public)"
         )
 
         // Reserve this load's footprint the instant it's known, BEFORE the
@@ -1768,13 +1843,16 @@ public actor ModelRuntime {
         // Pre-load RAM feasibility assessment (all policies). After strict
         // eviction / flexible budget trimming above, `resident` reflects what
         // will still be alive when this load lands. Pressure is reported via
-        // health/logs, but RAM fullness is not a user-requested load block.
+        // health/logs; for mmap loads RAM fullness is not a user-requested
+        // load block, but a materialized load short on free memory is
+        // refused outright — see `willMaterialize` above.
         try checkRAMFeasibility(
             modelName: name,
             incomingWeightsBytes: weightsBytes,
             incomingLoadFootprintBytes: loadFootprintBytes,
             excludingResident: name,
-            modelDirectory: localURL
+            modelDirectory: localURL,
+            refuseOnShortfall: willMaterialize
         )
 
         // Tool-call format + reasoning parser are stamped automatically by

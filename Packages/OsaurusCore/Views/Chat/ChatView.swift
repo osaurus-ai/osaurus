@@ -385,6 +385,14 @@ final class ChatSession: ObservableObject {
     nonisolated(unsafe) private var modelCacheCancellable: AnyCancellable?
     /// Flag to prevent auto-persist during initial load or programmatic resets
     private var isLoadingModel: Bool = false
+    /// The model the user last picked by hand this session. Picker-list
+    /// rebuilds (`applyPickerItems`) fire whenever runtime state changes —
+    /// including the load the pick itself triggered — and previously let the
+    /// agent's saved default snap the selection back (stale chip: pick HY3,
+    /// chip reverts to Qwen, and the follow-up warm-up loads the WRONG model
+    /// over the user's in-flight load). A manual pick outranks the agent
+    /// default for as long as it remains a valid option.
+    private var lastManualModelSelection: String?
 
     nonisolated(unsafe) private var localModelsObserver: NSObjectProtocol?
     /// Observer for `.privacyFilterRedactionsApproved`. Folds every
@@ -577,6 +585,7 @@ final class ChatSession: ObservableObject {
             .sink { [weak self] newModel in
                 guard let self = self, !self.isLoadingModel else { return }
                 guard let model = newModel else { return }
+                self.lastManualModelSelection = model
                 let pid = self.agentId ?? Agent.defaultId
                 // Mode 2 (remote agent run): the model is pinned to the remote
                 // agent's own model. Don't write that pin into the LOCAL agent's
@@ -808,10 +817,18 @@ final class ChatSession: ObservableObject {
 
         // Options changed (e.g., remote models loaded) - re-check agent's preferred model.
         // This corrects the initial fallback to "foundation" when remote models weren't yet available.
+        // A model the user picked by hand outranks the agent's saved default:
+        // rebuilds fire on runtime state changes (including the load that the
+        // pick itself started), and letting the default win here snapped the
+        // chip back to the old model and warm-loaded it over the user's pick.
         let effectiveModel = AgentManager.shared.effectiveModel(for: agentId ?? Agent.defaultId)
         let newSelected: String?
 
-        if let model = effectiveModel, newOptionIds.contains(model) {
+        if let manual = lastManualModelSelection, selectedModel == manual,
+            newOptionIds.contains(manual)
+        {
+            newSelected = manual
+        } else if let model = effectiveModel, newOptionIds.contains(model) {
             newSelected = model
         } else if let prev = selectedModel, newOptionIds.contains(prev) {
             newSelected = prev

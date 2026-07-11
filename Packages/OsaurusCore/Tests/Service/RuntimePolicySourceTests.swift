@@ -2078,8 +2078,14 @@ struct RuntimePolicySourceTests {
             loadPreflight.contains("let weightsBytes = Self.computeWeightsSizeBytes(at: localURL, modelName: name)")
         )
         #expect(
-            loadPreflight.contains("let loadFootprintBytes = Self.effectiveLoadFootprintBytes("),
-            "Routed mmap/JANGTQ loads must feed the RAM gate with vMLX's effective hot working set, not the whole safetensors shard total."
+            loadPreflight.contains("? weightsBytes")
+                && loadPreflight.contains(": Self.effectiveLoadFootprintBytes("),
+            "Routed mmap/JANGTQ loads must feed the RAM gate with vMLX's effective hot working set; materialized near-RAM-scale loads must budget the full weight size instead."
+        )
+        #expect(
+            loadPreflight.contains("!Self.resolveMemorySafetyLoadPlan(")
+                && loadPreflight.contains("refuseOnShortfall: willMaterialize"),
+            "Whether a load materializes must come from the resolved memory-safety plan (single source of truth with vmlx), and materialized loads must make the RAM verdict authoritative — proceeding into a shortfall aborts in a Metal completion handler instead of degrading."
         )
         // Feasibility gate + concurrent-load reservation must run before the
         // load task is allocated, so a cold load can't bypass RAM accounting.

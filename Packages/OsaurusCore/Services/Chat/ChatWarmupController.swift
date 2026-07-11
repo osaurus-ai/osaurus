@@ -76,6 +76,10 @@ final class ChatWarmupController: ObservableObject {
     private var scheduleTask: Task<Void, Never>?
     private var inFlightWarmup: Task<Void, Never>?
     private var inFlightWarmupID: UUID?
+    /// The model of the most recent user-driven selection change. A warm-up
+    /// for this model may displace a resident model; all other (speculative)
+    /// warm-ups may only fill an empty slot — see `performWarmup`.
+    private var userIntentWarmupModel: String?
     /// The immediate switch operation in flight (cancel stale warm-up →
     /// evict per policy → schedule the new model's warm-up). Tracked so the
     /// pre-send handshake can wait for the eviction to settle and so rapid
@@ -180,6 +184,12 @@ final class ChatWarmupController: ObservableObject {
         }
 
         guard let newModel, !newModel.isEmpty else { return }
+
+        // The user just picked this model by hand — the follow-up warm-up is
+        // allowed to displace whatever is resident. Speculative warm-ups
+        // (session became active, post-run re-warm) are not; see
+        // `performWarmup`'s resident-model guard.
+        userIntentWarmupModel = newModel
 
         let policy =
             ServerConfigurationStore.load()?.modelEvictionPolicy ?? .strictSingleModel
@@ -319,6 +329,35 @@ final class ChatWarmupController: ObservableObject {
         }
         guard !Task.isCancelled else { return }
         guard shouldAttemptWarmup(session: session) else { return }
+
+        // Never warm up over a load already in flight: under strict
+        // single-model residency this warm-up's own load would cancel the
+        // in-flight one (an explicit API request, or another window), and
+        // its prefill can be torn down mid-encode by the reciprocal
+        // eviction — a Metal command-buffer abort, not a graceful skip.
+        if await ModelRuntime.shared.hasLoadInFlight() {
+            state = .cold
+            debugLog(
+                "[ChatWarmup] skipped model=\(payload.model): another model load is in flight"
+            )
+            return
+        }
+
+        // Speculative warm-ups must not evict. Loading a non-resident model
+        // under strict single-model residency evicts whoever IS resident —
+        // observed live as a launch-time warm-up for the restored UI
+        // selection unloading the 94 GB model an API client had just
+        // loaded. Only the warm-up that follows the user's own model pick
+        // (`userIntentWarmupModel`) may displace a resident model.
+        if payload.model != userIntentWarmupModel,
+            await ModelRuntime.shared.hasResidentModelOther(than: payload.model)
+        {
+            state = .cold
+            debugLog(
+                "[ChatWarmup] skipped model=\(payload.model): a different model is resident and this warm-up lacks user intent"
+            )
+            return
+        }
 
         state = .warming
         let id = UUID()
