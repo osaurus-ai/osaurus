@@ -61,6 +61,29 @@ final class MemoryBandwidthCalibrationTests: XCTestCase {
         XCTAssertEqual(record.probeThreads, 8)
     }
 
+    func testReadValidRecordRejectsMismatchedChipAndInvalidBounds() throws {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("calibration-record-\(UUID().uuidString).json")
+        defer { try? FileManager.default.removeItem(at: url) }
+
+        try Data(Self.recordFixtureJSON.utf8).write(to: url)
+        XCTAssertNotNil(
+            MemoryBandwidthCalibration.readValidRecord(at: url, forChip: "Apple M4 Pro"))
+        XCTAssertNil(
+            MemoryBandwidthCalibration.readValidRecord(at: url, forChip: "Apple M5 Max"))
+
+        let invalidRecords = [
+            #"{"measuredBandwidthGBps": 0, "chip": "Apple M4 Pro", "probeThreads": 8}"#,
+            #"{"measuredBandwidthGBps": -1, "chip": "Apple M4 Pro", "probeThreads": 8}"#,
+            #"{"measuredBandwidthGBps": 210, "chip": "Apple M4 Pro", "probeThreads": 0}"#,
+        ]
+        for json in invalidRecords {
+            try Data(json.utf8).write(to: url)
+            XCTAssertNil(
+                MemoryBandwidthCalibration.readValidRecord(at: url, forChip: "Apple M4 Pro"))
+        }
+    }
+
     /// Spec-table parity with the Core copy, pinned by hardcoded rows (the
     /// two tables are shared-by-convention, not by code).
     func testSpecTableParityRows() {

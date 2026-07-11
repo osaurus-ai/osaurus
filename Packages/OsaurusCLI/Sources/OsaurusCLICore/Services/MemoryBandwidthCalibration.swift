@@ -36,9 +36,9 @@ enum MemoryBandwidthCalibration {
         let probeThreads: Int
     }
 
-    /// `~/.osaurus/config/chip-profile.json` — the server-side reader is
-    /// `ChipProfileCalibration` (OsaurusCore), which re-reads on mtime change,
-    /// so a fresh calibration applies without a server restart.
+    /// `~/.osaurus/config/chip-profile.json` — the Core-side reader is
+    /// `ChipProfileCalibration` (OsaurusCore), while the CLI reads it fresh
+    /// each time `osaurus show` runs.
     static func fileURL() -> URL {
         Configuration.root()
             .appendingPathComponent("config", isDirectory: true)
@@ -67,10 +67,13 @@ enum MemoryBandwidthCalibration {
 
     /// Stored record, or nil when absent, undecodable, or measured on a
     /// different chip (same invalidation rule as the Core reader).
-    static func readValidRecord() -> Record? {
-        guard let data = try? Data(contentsOf: fileURL()),
+    static func readValidRecord(
+        at url: URL = fileURL(),
+        forChip liveChip: String = chipBrandString()
+    ) -> Record? {
+        guard let data = try? Data(contentsOf: url),
             let record = try? JSONDecoder().decode(Record.self, from: data),
-            record.chip == chipBrandString(),
+            record.chip == liveChip,
             record.measuredBandwidthGBps > 0,
             record.measuredBandwidthGBps.isFinite,
             record.probeThreads > 0

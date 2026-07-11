@@ -184,10 +184,10 @@ public struct BenchCommand: Command {
     /// Runs the parallel aggregate STREAM-copy bandwidth probe IN THIS
     /// PROCESS (bandwidth is a machine property — measuring it in the CLI is
     /// equivalent to measuring it in the server) and persists the result to
-    /// `~/.osaurus/config/chip-profile.json`, which the server re-reads
-    /// (mtime-checked, see `ChipProfileCalibration` in OsaurusCore) — no
-    /// restart needed. The probe allocates two large buffers and hammers
-    /// memory for ~2.4 s; it only ever runs from this explicit verb.
+    /// `~/.osaurus/config/chip-profile.json`, which `osaurus show` reads on
+    /// its next run and OsaurusCore can validate through
+    /// `ChipProfileCalibration`. The probe allocates two large buffers and
+    /// hammers memory for ~2.4 s; it only ever runs from this explicit verb.
     static func calibrate() -> Never {
         let chip = MemoryBandwidthCalibration.chipBrandString()
         let bufferBytes = MemoryBandwidthCalibration.defaultBufferBytes()
@@ -223,7 +223,7 @@ public struct BenchCommand: Command {
         }
         fputs(
             "Persisted to \(MemoryBandwidthCalibration.fileURL().path) — "
-                + "`osaurus show` and the server pick it up on next read.\n",
+                + "`osaurus show` picks it up on its next run.\n",
             stderr)
         exit(EXIT_SUCCESS)
     }
