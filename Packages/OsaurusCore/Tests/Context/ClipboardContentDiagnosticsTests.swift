@@ -195,6 +195,51 @@ struct ClipboardContentDiagnosticsTests {
         #expect(!controller.isProcessing)
     }
 
+    @Test @MainActor func delayedCopyAttemptStillGetsFocusGrace() async {
+        let copyGate = SelectionCaptureGate()
+        let completionGate = SelectionCaptureGate()
+        let focusGraceGate = SelectionCaptureGate()
+        var focusGraceStarted = false
+        var toggleCount = 0
+        let controller = SelectionHotkeyIntentController(
+            openDelayNanos: 1,
+            postCopyFocusDelayNanos: 2,
+            sleep: { nanoseconds in
+                if nanoseconds == 2 {
+                    focusGraceStarted = true
+                    await focusGraceGate.wait()
+                } else {
+                    await Task.yield()
+                }
+            }
+        )
+
+        let accepted = controller.invoke(
+            captureSelection: { copyAttempted in
+                await copyGate.wait()
+                copyAttempted()
+                await completionGate.wait()
+            },
+            toggleOverlay: { toggleCount += 1 }
+        )
+        #expect(accepted)
+
+        for _ in 0 ..< 10 { await Task.yield() }
+        copyGate.release()
+        for _ in 0 ..< 10 where !focusGraceStarted { await Task.yield() }
+        #expect(focusGraceStarted)
+        #expect(toggleCount == 0)
+
+        focusGraceGate.release()
+        for _ in 0 ..< 10 where toggleCount == 0 { await Task.yield() }
+        #expect(toggleCount == 1)
+
+        completionGate.release()
+        for _ in 0 ..< 10 where controller.isProcessing { await Task.yield() }
+        #expect(toggleCount == 1)
+        #expect(!controller.isProcessing)
+    }
+
     @Test @MainActor func readFailureAfterCopyArmsQuietDrain() async {
         var snapshotCalls = 0
         var copyCount = 0

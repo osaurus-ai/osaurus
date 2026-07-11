@@ -1813,6 +1813,7 @@ final class SelectionHotkeyIntentController {
     typealias CaptureSelection = @MainActor (@escaping @MainActor () -> Void) async -> Void
 
     private let openDelayNanos: UInt64
+    private let postCopyFocusDelayNanos: UInt64
     private let sleep: Sleep
     private var activeTask: Task<Void, Never>?
     private var activeID: UUID?
@@ -1820,11 +1821,13 @@ final class SelectionHotkeyIntentController {
 
     init(
         openDelayNanos: UInt64 = 150_000_000,
+        postCopyFocusDelayNanos: UInt64 = 50_000_000,
         sleep: @escaping Sleep = { nanoseconds in
             try? await Task.sleep(nanoseconds: nanoseconds)
         }
     ) {
         self.openDelayNanos = openDelayNanos
+        self.postCopyFocusDelayNanos = postCopyFocusDelayNanos
         self.sleep = sleep
     }
 
@@ -1848,23 +1851,36 @@ final class SelectionHotkeyIntentController {
 
             var deadlineElapsed = false
             var copyAttempted = false
+            var postCopyFocusDelayElapsed = false
+            var postCopyFocusTask: Task<Void, Never>?
             let deadlineTask = Task { @MainActor [weak self] in
                 guard let self else { return }
                 await sleep(openDelayNanos)
                 guard !Task.isCancelled else { return }
                 deadlineElapsed = true
-                if copyAttempted {
+                if postCopyFocusDelayElapsed {
                     toggleOnce(intentID: intentID, toggleOverlay: toggleOverlay)
                 }
             }
 
             await captureSelection {
                 copyAttempted = true
-                if deadlineElapsed {
-                    self.toggleOnce(intentID: intentID, toggleOverlay: toggleOverlay)
+                postCopyFocusTask = Task { @MainActor [weak self] in
+                    guard let self else { return }
+                    await sleep(postCopyFocusDelayNanos)
+                    guard !Task.isCancelled else { return }
+                    postCopyFocusDelayElapsed = true
+                    if deadlineElapsed {
+                        toggleOnce(intentID: intentID, toggleOverlay: toggleOverlay)
+                    }
                 }
             }
-            deadlineTask.cancel()
+            if copyAttempted {
+                await deadlineTask.value
+                await postCopyFocusTask?.value
+            } else {
+                deadlineTask.cancel()
+            }
             toggleOnce(intentID: intentID, toggleOverlay: toggleOverlay)
             finish(intentID: intentID)
         }
