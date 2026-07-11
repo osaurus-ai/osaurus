@@ -225,6 +225,16 @@ struct FloatingInputCard: View {
     private var slashRegistry = SlashCommandRegistry.shared
     @State private var slashSelectedIndex: Int = 0
 
+    // MARK: - "@" File Menu State
+
+    /// Highlighted row in the "@" file completion popup.
+    @State private var atSelectedIndex: Int = 0
+    /// Filesystem entries for the current "@" query. Populated off the main
+    /// actor by `atMenuTask` so directory enumeration never blocks the UI.
+    @State private var atMenuItems: [AtFileItem] = []
+    /// In-flight listing task; cancelled and replaced on every query change.
+    @State private var atMenuTask: Task<Void, Never>?
+
     // MARK: - Input History State
 
     /// Terminal-style history navigation position + stashed draft.
@@ -257,6 +267,31 @@ struct FloatingInputCard: View {
 
     private var showSlashPopup: Bool {
         activeSlashQuery != nil && !slashFilteredCommands.isEmpty
+    }
+
+    /// Non-nil when the cursor is inside an "@" file token (e.g. "@src/ma" or
+    /// "look at @src/ma"). The "@" must start the text or follow whitespace.
+    /// Unlike the slash token, the query may contain "/" (a path); it ends only
+    /// at a space or newline. Returns nil once the token is completed/dismissed.
+    private var activeAtQuery: String? {
+        guard let atRange = localText.range(of: "@", options: .backwards) else { return nil }
+
+        // The "@" must be at the start of the text or preceded by whitespace,
+        // so email-style "name@host" tokens don't trigger the menu.
+        let before = localText[..<atRange.lowerBound]
+        if let lastChar = before.last, !lastChar.isWhitespace { return nil }
+
+        // Everything after "@" is the path query; a space or newline ends it.
+        let afterAt = String(localText[atRange.upperBound...])
+        guard !afterAt.contains(" ") && !afterAt.contains("\n") else { return nil }
+
+        return afterAt
+    }
+
+    /// Show the "@" menu only when a query is active and it produced entries,
+    /// and never at the same time as the slash popup.
+    private var showAtPopup: Bool {
+        activeAtQuery != nil && !atMenuItems.isEmpty && !showSlashPopup
     }
 
     // Local state for text input to prevent parent re-renders on every keystroke
@@ -625,6 +660,22 @@ struct FloatingInputCard: View {
                         )
                     }
 
+                    // "@" file menu popup — appears above the input card
+                    if showAtPopup {
+                        AtFileMenuPopup(
+                            items: atMenuItems,
+                            selectedIndex: $atSelectedIndex,
+                            onSelect: applyAtItem
+                        )
+                        .padding(.horizontal, 20)
+                        .transition(
+                            .asymmetric(
+                                insertion: .opacity.combined(with: .scale(scale: 0.98, anchor: .bottom)),
+                                removal: .opacity.combined(with: .scale(scale: 0.98, anchor: .bottom))
+                            )
+                        )
+                    }
+
                     inputCard
                         .padding(.horizontal, 20)
                         .padding(.bottom, 20)
@@ -781,10 +832,21 @@ struct FloatingInputCard: View {
             .onChange(of: localText) { _, _ in
                 // Reset popup selection whenever the typed query changes
                 slashSelectedIndex = 0
+                atSelectedIndex = 0
+                // Re-list the "@" menu off the main actor for the new query.
+                refreshAtMenu()
+            }
+            .onDisappear {
+                atMenuTask?.cancel()
             }
             .onChange(of: showSlashPopup) { _, isVisible in
                 // Keep registry in sync so the global key monitor can suppress
                 // Escape from closing the window while the popup is open.
+                SlashCommandRegistry.shared.isPopupVisible = isVisible
+            }
+            .onChange(of: showAtPopup) { _, isVisible in
+                // Same Escape-suppression treatment for the "@" file menu so
+                // dismissing it doesn't also close the window.
                 SlashCommandRegistry.shared.isPopupVisible = isVisible
             }
             .onDisappear {
@@ -1674,6 +1736,49 @@ extension FloatingInputCard {
             text = newText
             isFocused = true
             onSkillSelected?(command.id)
+        }
+    }
+
+    // MARK: - "@" File Menu
+
+    /// Replace the trailing "@…" token with `replacement`, preserving the text
+    /// before the "@".
+    private func replacingAtToken(with replacement: String) -> String {
+        guard let atRange = localText.range(of: "@", options: .backwards) else {
+            return replacement
+        }
+        return String(localText[..<atRange.lowerBound]) + replacement
+    }
+
+    /// Apply a selected file/folder to the input. Folders keep the popup open
+    /// with a trailing "/" so the user can drill deeper CLI-style; files insert
+    /// the path followed by a space, which closes the token.
+    private func applyAtItem(_ item: AtFileItem) {
+        let inserted = item.isDirectory ? "@\(item.path)/" : "@\(item.path) "
+        let newText = replacingAtToken(with: inserted)
+        localText = newText
+        text = newText
+        isFocused = true
+    }
+
+    /// Refresh `atMenuItems` for the current "@" query off the main actor.
+    /// Cancels any prior listing so fast typing can't pile up work. A nil query
+    /// (token dismissed) clears the list synchronously.
+    private func refreshAtMenu() {
+        atMenuTask?.cancel()
+        guard let query = activeAtQuery else {
+            atMenuItems = []
+            return
+        }
+        // Snapshot the folder root here (main actor); the enumeration itself
+        // runs detached so filesystem I/O never blocks the UI.
+        let rootPath = FolderContextService.cachedRootPath
+        atMenuTask = Task {
+            let items = await Task.detached(priority: .userInitiated) {
+                AtFileMenu.list(query: query, rootPath: rootPath)
+            }.value
+            if Task.isCancelled { return }
+            atMenuItems = items
         }
     }
 
@@ -4609,6 +4714,10 @@ extension FloatingInputCard {
                     if slashSelectedIndex < cmds.count {
                         applySlashCommand(cmds[slashSelectedIndex])
                     }
+                } else if showAtPopup {
+                    if atSelectedIndex < atMenuItems.count {
+                        applyAtItem(atMenuItems[atSelectedIndex])
+                    }
                 } else {
                     syncAndSend()
                 }
@@ -4618,20 +4727,40 @@ extension FloatingInputCard {
                 ? {
                     slashSelectedIndex = max(0, slashSelectedIndex - 1)
                     return true
-                } : { handleHistoryArrowUp() },
+                }
+                : showAtPopup
+                    ? {
+                        atSelectedIndex = max(0, atSelectedIndex - 1)
+                        return true
+                    } : { handleHistoryArrowUp() },
             onArrowDown: showSlashPopup
                 ? {
                     let maxIndex = slashFilteredCommands.count - 1
                     slashSelectedIndex = min(maxIndex, slashSelectedIndex + 1)
                     return true
-                } : { handleHistoryArrowDown() },
+                }
+                : showAtPopup
+                    ? {
+                        let maxIndex = atMenuItems.count - 1
+                        atSelectedIndex = min(maxIndex, atSelectedIndex + 1)
+                        return true
+                    } : { handleHistoryArrowDown() },
             onEscape: showSlashPopup
                 ? {
                     // Dismiss popup by clearing the slash prefix
                     localText = ""
                     text = ""
                     return true
-                } : nil,
+                }
+                : showAtPopup
+                    ? {
+                        // Dismiss by removing just the "@…" token, keeping any
+                        // text the user typed before it.
+                        let newText = replacingAtToken(with: "")
+                        localText = newText
+                        text = newText
+                        return true
+                    } : nil,
             onPasteText: { pasted in
                 guard pasted.utf8.count >= Self.pastedContentThreshold else { return false }
                 withAnimation(theme.springAnimation()) {
