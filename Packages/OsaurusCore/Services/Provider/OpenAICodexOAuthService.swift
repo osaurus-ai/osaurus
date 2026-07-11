@@ -84,7 +84,13 @@ public enum OpenAICodexOAuthService {
     public static let scope = "openid profile email offline_access"
     public static let codexBaseHost = "chatgpt.com"
     public static let codexBasePath = "/backend-api"
-    public static let modelsURL = URL(string: "https://\(codexBaseHost)\(codexBasePath)/models")!
+    /// Codex API base path, matching codex-rs's `CHATGPT_CODEX_BASE_URL`
+    /// (`https://chatgpt.com/backend-api/codex`). Model discovery must use this
+    /// path: the plain `/backend-api/models` endpoint is the ChatGPT web-app
+    /// catalog, which serves experiment slugs (e.g. "gpt-5.5-wm") that the
+    /// Codex Responses backend rejects.
+    public static let codexAPIBasePath = "\(codexBasePath)/codex"
+    public static let modelsURL = URL(string: "https://\(codexBaseHost)\(codexAPIBasePath)/models")!
 
     // MARK: - Provider Factory
 
@@ -199,7 +205,7 @@ public enum OpenAICodexOAuthService {
     ) async throws -> [String] {
         var components = URLComponents(url: modelsURL, resolvingAgainstBaseURL: false)!
         components.queryItems = [
-            URLQueryItem(name: "client_version", value: clientVersion())
+            URLQueryItem(name: "client_version", value: codexClientVersion)
         ]
 
         var request = URLRequest(url: components.url!)
@@ -394,15 +400,11 @@ public enum OpenAICodexOAuthService {
     // MARK: - Internals
 
     /// `client_version` query parameter sent to the Codex `/models` endpoint.
-    /// Mirrors what the Codex CLI does (it sends its own crate version) so the
-    /// backend can gate model availability per client.
-    private static func clientVersion() -> String {
-        let bundleVersion = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String
-        if let bundleVersion, !bundleVersion.isEmpty {
-            return "osaurus-\(bundleVersion)"
-        }
-        return "0.99.0"
-    }
+    /// Tracks the openai/codex CLI release: the backend silently filters the
+    /// catalog for older or unrecognized versions (non-semver values like
+    /// "osaurus-1.2.3" get the wrong subset entirely). Bump this to the
+    /// current Codex CLI release when new models stop appearing in discovery.
+    public static let codexClientVersion = "0.144.1"
 
     // MARK: Wire types
 

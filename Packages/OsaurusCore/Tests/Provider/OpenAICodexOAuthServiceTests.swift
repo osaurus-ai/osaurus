@@ -64,6 +64,32 @@ struct OpenAICodexOAuthServiceTests {
         #expect(tokens.isExpired)
     }
 
+    @Test func modelsURL_usesCodexAPICatalogPath() {
+        // Discovery must hit the Codex catalog (`/backend-api/codex/models`),
+        // matching codex-rs's CHATGPT_CODEX_BASE_URL. The plain
+        // `/backend-api/models` endpoint is the ChatGPT web-app catalog, which
+        // serves experiment slugs (e.g. "gpt-5.5-wm") that the Codex
+        // Responses backend rejects.
+        let components = URLComponents(
+            url: OpenAICodexOAuthService.modelsURL,
+            resolvingAgainstBaseURL: false
+        )
+        #expect(components?.scheme == "https")
+        #expect(components?.host == "chatgpt.com")
+        #expect(components?.path == "/backend-api/codex/models")
+    }
+
+    @Test func codexClientVersion_isPlainSemver() {
+        // The backend gates the catalog by `client_version` and expects a
+        // Codex CLI semver; non-semver values (like the old
+        // "osaurus-<version>" scheme) silently get the wrong model subset.
+        let version = OpenAICodexOAuthService.codexClientVersion
+        #expect(
+            version.range(of: #"^\d+\.\d+\.\d+$"#, options: .regularExpression) != nil,
+            "client_version \(version) must be a plain Codex CLI semver"
+        )
+    }
+
     @Test func supportedModels_containsCurrentCatalog() {
         let models = OpenAICodexOAuthService.supportedModels
         let expected = [
