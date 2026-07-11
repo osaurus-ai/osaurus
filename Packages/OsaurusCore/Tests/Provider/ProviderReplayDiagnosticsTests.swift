@@ -181,7 +181,7 @@ struct ProviderReplayDiagnosticsTests {
             code: 4,
             userInfo: [
                 NSLocalizedDescriptionKey:
-                    "Could not read (/Users/mmeding/Library/Application Support/osaurus/Secrets/token.json), at:/Users/mmeding/My Documents/keys/id_rsa, path/Users/mmeding/secrets.json, or /var/root/token.txt",
+                    "Could not read (/Users/mmeding/Library/Application Support/osaurus/Secrets/token.json), at:/Users/mmeding/My Documents/keys/id_rsa, path/Users/mmeding/secrets.json, HOME=/Users/mmeding/.env, path=/Users/mmeding/env.path, or /var/root/token.txt",
             ]
         )
 
@@ -209,6 +209,8 @@ struct ProviderReplayDiagnosticsTests {
             "private.json",
             "id_rsa",
             "secrets.json",
+            "path.env",
+            ".env",
             "token.txt",
             "custom-secret-value",
             "sk-local-path-body-secret",
@@ -216,5 +218,24 @@ struct ProviderReplayDiagnosticsTests {
         ] {
             #expect(!copied.contains(leak))
         }
+    }
+
+    @Test func redactedBodyDoesNotOverRedactRemoteURIs() {
+        let remotePayload = "Could not connect to https://api.example.com/v1/users/me because the network failed"
+        let safeRemotePayload = ProviderDiagnosticRedactor.safe(remotePayload)
+
+        #expect(safeRemotePayload.contains("/v1/users/me"))
+        #expect(!safeRemotePayload.contains("redacted-local-path"))
+
+        let remoteTmpPayload =
+            "Could not fetch https://cdn.example.com/tmp/build/artifact.tar.gz from artifact cache"
+        let safeRemoteTmpPayload = ProviderDiagnosticRedactor.safe(remoteTmpPayload)
+        #expect(safeRemoteTmpPayload.contains("/tmp/build/artifact.tar.gz"))
+        #expect(!safeRemoteTmpPayload.contains("redacted-local-path"))
+
+        let localPayload = "Could not read /Users/example/Library/Application Support/osaurus/config.json"
+        let safeLocalPayload = ProviderDiagnosticRedactor.safe(localPayload)
+        #expect(safeLocalPayload.contains("/[redacted-local-path]"))
+        #expect(!safeLocalPayload.contains("/Users/example/Library/Application"))
     }
 }

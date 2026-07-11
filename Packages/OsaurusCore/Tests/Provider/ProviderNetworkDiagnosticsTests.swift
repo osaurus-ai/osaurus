@@ -316,6 +316,30 @@ struct ProviderNetworkDiagnosticsTests {
                 .badResponse
             ),
             (
+                "auth-word-with-credential-present",
+                provider,
+                errorState(provider, message: "authorization service unavailable"),
+                .disabled,
+                true,
+                false,
+                .authRejected
+            ),
+            (
+                "json-schema-in-chat-phase",
+                provider,
+                replayState(
+                    provider,
+                    url: url,
+                    phase: "chat-completion",
+                    statusCode: 200,
+                    body: #"{"error":"schema mismatch"}"#
+                ),
+                .disabled,
+                false,
+                false,
+                .badResponse
+            ),
+            (
                 "unknown",
                 provider,
                 errorState(provider, message: "Provider returned an unexpected upstream condition."),
@@ -476,6 +500,7 @@ struct ProviderNetworkDiagnosticsTests {
     private func replayState(
         _ provider: RemoteProvider,
         url: URL,
+        phase: String = "test_model_discovery",
         statusCode: Int? = nil,
         body: String? = nil,
         transportError: Error? = nil
@@ -493,7 +518,7 @@ struct ProviderNetworkDiagnosticsTests {
         var state = RemoteProviderState(providerId: provider.id)
         state.lastError = transportError?.localizedDescription ?? "HTTP \(statusCode ?? 500)"
         state.lastReplayDiagnostics = ProviderReplayDiagnosticBundle(
-            phase: "test_model_discovery",
+            phase: phase,
             request: request,
             response: response,
             responseData: body.map { Data($0.utf8) },

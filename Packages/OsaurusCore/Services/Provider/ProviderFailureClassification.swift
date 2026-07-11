@@ -197,7 +197,10 @@ enum ProviderFailureClassifier {
         }
 
         if bodyLooksLikeSchemaMismatch(body) {
-            return classification(.modelsSchemaMismatch, detail: L("The provider response did not match the expected schema. Evidence: \(replay.summary)"))
+            if phase.contains("model") {
+                return classification(.modelsSchemaMismatch, detail: L("The models endpoint response did not match the expected schema. Evidence: \(replay.summary)"))
+            }
+            return classification(.badResponse, detail: L("The provider response did not match the expected schema. Evidence: \(replay.summary)"))
         }
 
         if status < 200 || status >= 300 {
@@ -230,6 +233,9 @@ enum ProviderFailureClassifier {
             return classification(.oauthTokenMissing, detail: detail)
         }
         if lower.contains("api key") || lower.contains("apikey") || lower.contains("authorization") {
+            if credentialPresent {
+                return classification(.authRejected, detail: detail)
+            }
             return classification(.missingCredential, detail: detail)
         }
         if lower.contains("timed out") || lower.contains("timeout") {

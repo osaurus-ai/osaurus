@@ -229,7 +229,18 @@ enum ProviderDiagnosticRedactor {
             (#"\bsk-[A-Za-z0-9._-]{8,}\b"#, "sk-***"),
             (#"\bosk-[A-Za-z0-9._-]{8,}\b"#, "osk-***"),
             (#"(?i)file://(?:localhost)?/(Users|private/var|var/folders|private/tmp|tmp|var/root)[^,;:(){}\[\]<>"'\r\n]*"#, "file://[redacted-local-path]"),
-            (#"(?i)/(Users|private/var|var/folders|private/tmp|tmp|var/root)/[^,;:(){}\[\]<>"'\r\n]*"#, "/[redacted-local-path]"),
+            (
+                #"(?i)(^|[\s"'\(\)\[\]\{\}\;,:=\r\n\t=<])/(Users|private/var|var/folders|private/tmp|tmp|var/root)/[^,;:(){}\[\]<>\"'\r\n]*"#,
+                "$1/[redacted-local-path]"
+            ),
+            (
+                #"(?i)(^|[\s"'\(\)\[\]\{\}\;,:=\r\n\t=<])([A-Za-z_][A-Za-z0-9_-]*)=/(Users|private/var|var/folders|private/tmp|tmp|var/root)/[^,;:(){}\[\]<>\"'\r\n]*"#,
+                "$1/[redacted-local-path]"
+            ),
+            (
+                #"(?i)(^|[\s"'\(\)\[\]\{\}\;,:=\r\n\t=<])(at|path|home|file|dir|folder|location|log)/(Users|private/var|var/folders|private/tmp|tmp|var/root)/[^,;:(){}\[\]<>\"'\r\n]*"#,
+                "$1/[redacted-local-path]"
+            ),
         ]
 
         for replacement in replacements {
