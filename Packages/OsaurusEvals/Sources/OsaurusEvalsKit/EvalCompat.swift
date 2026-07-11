@@ -196,6 +196,44 @@ public struct CompatibilityReport: Codable, Sendable, Equatable {
                 + "**broken** (error-dominated / never scored). *stale* = the run predates the newest "
                 + "catalog and needs refreshing."
         )
+
+        // ── Contributors first: this board exists because people donate
+        // machine-hours, so credit leads. ──
+        if let contributors, !contributors.isEmpty {
+            lines.append("")
+            lines.append("## Contributors")
+            lines.append("")
+            let names = contributors.map(\.name)
+            let honorRoll: String
+            switch names.count {
+            case 1: honorRoll = "**\(names[0])**"
+            case 2: honorRoll = "**\(names[0])** and **\(names[1])**"
+            default:
+                honorRoll =
+                    names.dropLast().map { "**\($0)**" }.joined(separator: ", ")
+                    + ", and **\(names.last!)**"
+            }
+            lines.append(
+                "This leaderboard exists because \(honorRoll) donated machine-hours to run "
+                    + "the suites. Ranked by contributed runs (every run counts, current and "
+                    + "superseded), then by breadth of models and device shapes covered. "
+                    + "Attribution comes from the contribution's `contributor` provenance, "
+                    + "falling back to the git author who added the file. Want on this list? "
+                    + "See `reports/community/README.md` — one command, one PR."
+            )
+            lines.append("")
+            lines.append("| # | Contributor | Runs | Models | Devices |")
+            lines.append("| --- | --- | --- | --- | --- |")
+            for (index, c) in contributors.enumerated() {
+                let name = index == 0 ? "**\(c.name)**" : c.name
+                lines.append(
+                    "| \(index + 1) | \(name) | \(c.contributions) | \(c.models) | \(c.devices) |"
+                )
+            }
+        }
+
+        lines.append("")
+        lines.append("## Models")
         lines.append("")
         lines.append(
             "| Model | Verdict | Pass | Fail | Skip | Err | Great at | Devices | peak RAM | decode tok/s | build | as of |"
@@ -284,25 +322,6 @@ public struct CompatibilityReport: Codable, Sendable, Equatable {
             }
         }
 
-        if let contributors, !contributors.isEmpty {
-            lines.append("")
-            lines.append("## Contributors")
-            lines.append("")
-            lines.append(
-                "Ranked by contributed runs (every run counts, current and superseded), "
-                    + "then by breadth of models and device shapes covered. Attribution comes "
-                    + "from the contribution's `contributor` provenance, falling back to the "
-                    + "git author who added the file."
-            )
-            lines.append("")
-            lines.append("| # | Contributor | Runs | Models | Devices |")
-            lines.append("| --- | --- | --- | --- | --- |")
-            for (index, c) in contributors.enumerated() {
-                lines.append(
-                    "| \(index + 1) | \(c.name) | \(c.contributions) | \(c.models) | \(c.devices) |"
-                )
-            }
-        }
         if let devices, !devices.isEmpty {
             lines.append("")
             lines.append("## Device coverage")

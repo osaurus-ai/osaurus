@@ -432,8 +432,14 @@ struct EvalCompatTests {
         #expect(ranking[1] == ContributorRank(name: "bob", contributions: 1, models: 1, devices: 1))
         let md = report.formatMarkdown()
         #expect(md.contains("## Contributors"))
-        #expect(md.contains("| 1 | alice | 3 | 2 | 2 |"))
+        // Contributors lead the report — rendered above the model table.
+        let contributorsIndex = try #require(md.range(of: "## Contributors")?.lowerBound)
+        let modelsIndex = try #require(md.range(of: "## Models")?.lowerBound)
+        #expect(contributorsIndex < modelsIndex)
+        // Top contributor is bolded; honor-roll prose credits everyone.
+        #expect(md.contains("| 1 | **alice** | 3 | 2 | 2 |"))
         #expect(md.contains("| 2 | bob | 1 | 1 | 1 |"))
+        #expect(md.contains("**alice** and **bob** donated machine-hours"))
         // Attribution shows up in the model details: m1's current run is
         // alice's alone; m2's current set folds alice + bob (same catalog).
         #expect(md.contains("by alice."))

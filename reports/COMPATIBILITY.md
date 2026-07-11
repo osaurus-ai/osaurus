@@ -2,6 +2,17 @@
 
 Crowdsourced from 11 contribution(s). Each row reflects the model's **latest run** (newest case catalog); same-catalog runs on other devices fold in, older runs live under the model's History and are never pooled into the headline. Verdicts: **works** (runs cleanly), **partial** (runs with errors or low pass-rate), **broken** (error-dominated / never scored). *stale* = the run predates the newest catalog and needs refreshing.
 
+## Contributors
+
+This leaderboard exists because **tpae** and **Michael Meding** donated machine-hours to run the suites. Ranked by contributed runs (every run counts, current and superseded), then by breadth of models and device shapes covered. Attribution comes from the contribution's `contributor` provenance, falling back to the git author who added the file. Want on this list? See `reports/community/README.md` — one command, one PR.
+
+| # | Contributor | Runs | Models | Devices |
+| --- | --- | --- | --- | --- |
+| 1 | **tpae** | 6 | 6 | 1 |
+| 2 | Michael Meding | 5 | 5 | 1 |
+
+## Models
+
 | Model | Verdict | Pass | Fail | Skip | Err | Great at | Devices | peak RAM | decode tok/s | build | as of |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | `Ornith-1.0-35B-MXFP8` | partial | 85% (184/216) | 32 | 55 | 1 | apple_script, subagent, default_agent · weak: computer_use_loop | Apple M4 Max (128GB) | 14587MB | 17 | 563f91746 | 2026-07-11 |
@@ -211,15 +222,6 @@ Current run: as of 2026-07-05 · catalog 137408f3cdba4838 · 1 contribution(s) �
 Skipped areas:
 - agent_loop: 3 — reasons unrecorded (pre-schema contribution)
 - subagent: 2 — reasons unrecorded (pre-schema contribution)
-
-## Contributors
-
-Ranked by contributed runs (every run counts, current and superseded), then by breadth of models and device shapes covered. Attribution comes from the contribution's `contributor` provenance, falling back to the git author who added the file.
-
-| # | Contributor | Runs | Models | Devices |
-| --- | --- | --- | --- | --- |
-| 1 | tpae | 6 | 6 | 1 |
-| 2 | Michael Meding | 5 | 5 | 1 |
 
 ## Device coverage
 
