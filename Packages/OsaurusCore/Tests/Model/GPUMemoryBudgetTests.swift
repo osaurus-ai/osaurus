@@ -83,6 +83,31 @@ struct GPUMemoryBudgetTests {
         #expect(ornith.compatibility(totalMemoryGB: 48) == .tooLarge)
     }
 
+    /// The proportional 25% overhead is a stand-in for KV + buffers, but KV is
+    /// capped by the runtime and does not scale with weight size. Uncapped it
+    /// charged a 94 GiB pack 23.6 GiB of headroom it never allocates, pricing
+    /// it at 118 GiB — right at the "too large" cliff on a 128 GB Mac, and
+    /// over it for anything bigger. The pack in fact loads, stays resident,
+    /// and decodes normally. Capping the absolute overhead keeps it offered.
+    @Test("A 94 GiB pack is offered on a 128 GB Mac, not withheld as too large")
+    func hy3ScalePackIsOfferedOn128GB() {
+        let hy3 = Self.model("hy3-jang-2k", gbOnDisk: 94.4)
+        #expect(hy3.compatibility(totalMemoryGB: 128) != .tooLarge)
+    }
+
+    /// The cap must not loosen small- and mid-size sizing: below ~64 GB of
+    /// weights the proportional 25% is already under the ceiling, so those
+    /// estimates — and every verdict derived from them — are unchanged.
+    @Test("Capping absolute overhead leaves sub-64 GB models' estimates untouched")
+    func overheadCapDoesNotAffectSmallerModels() {
+        for gb in [4.0, 12.0, 34.17, 60.0] {
+            let m = Self.model("probe-\(Int(gb))", gbOnDisk: gb)
+            let expected = gb * 1.25
+            let actual = try! #require(m.estimatedMemoryGB)
+            #expect(abs(actual - expected) < 0.01)
+        }
+    }
+
     @Test("The same bundle is tight at 64 GB and comfortable at 96 GB and up")
     func ornith35BMXFP8FitsLargerMachines() {
         let ornith = Self.model("ornith-35b-mxfp8", gbOnDisk: 34.17)
