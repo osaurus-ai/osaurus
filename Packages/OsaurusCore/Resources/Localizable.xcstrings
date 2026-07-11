@@ -39241,6 +39241,26 @@
         }
       }
     },
+    "a file" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "a file"
+          }
+        }
+      }
+    },
+    "an image" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "an image"
+          }
+        }
+      }
+    },
     "Captured selected text (%lld characters)." : {
       "localizations" : {
         "en" : {
@@ -39257,6 +39277,16 @@
           "stringUnit" : {
             "state" : "new",
             "value" : "No selection was copied. Select text in the frontmost app and try again."
+          }
+        }
+      }
+    },
+    "non-text content" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "non-text content"
           }
         }
       }

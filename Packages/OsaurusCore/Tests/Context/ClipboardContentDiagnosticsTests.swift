@@ -107,19 +107,15 @@ struct ClipboardContentDiagnosticsTests {
     }
 
     @Test func selectionGrabNonTextReportUsesRedactedContentSummary() {
-        let file = ClipboardService.ClipboardContent.file(
-            URL(fileURLWithPath: "/Users/example/Desktop/Secret Merger Plan.pdf")
-        )
         let report = ClipboardService.SelectionGrabReport(
-            outcome: .capturedNonText(file.redactedDiagnosticDescription),
+            outcome: .capturedNonText(kind: .file),
             sourceApp: "Finder"
         )
 
         #expect(report.needsUserAttention == false)
         #expect(report.userFacingMessage.contains("a file"))
-        #expect(report.redactedDiagnosticDescription.contains("file(extension: pdf)"))
-        #expect(report.redactedDiagnosticDescription.contains("Secret") == false)
-        #expect(report.redactedDiagnosticDescription.contains("/Users/example") == false)
+        #expect(report.redactedDiagnosticDescription.contains("kind: file"))
+        #expect(report.redactedDiagnosticDescription.contains("Finder"))
     }
 
     @Test func hotkeySelectionGrabAwaitsBeforeOverlayTakesFocus() throws {
@@ -133,7 +129,8 @@ struct ClipboardContentDiagnosticsTests {
         #expect(!applySection.contains("grabSelectionReport()"))
 
         let helperSection = String(source[helperStart.lowerBound ..< source.endIndex])
-        #expect(helperSection.contains("withTaskGroup(of: Bool.self)"))
+        #expect(helperSection.contains("Task {") )
+        #expect(helperSection.contains("grabSelectionReport()"))
         #expect(helperSection.contains("try? await Task.sleep"))
     }
 

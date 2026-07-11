@@ -40,9 +40,37 @@ public final class ClipboardService: ObservableObject {
     }
 
     public struct SelectionGrabReport: Equatable, Sendable {
+        public enum NonTextKind: String, Equatable, Sendable {
+            case image
+            case file
+            case nonText
+
+            var noun: String {
+                switch self {
+                case .image:
+                    return L("an image")
+                case .file:
+                    return L("a file")
+                case .nonText:
+                    return L("non-text content")
+                }
+            }
+
+            var diagnosticTag: String {
+                switch self {
+                case .image:
+                    return "image"
+                case .file:
+                    return "file"
+                case .nonText:
+                    return "non_text"
+                }
+            }
+        }
+
         public enum Outcome: Equatable, Sendable {
             case capturedText(characterCount: Int)
-            case capturedNonText(String)
+            case capturedNonText(kind: NonTextKind)
             case accessibilityDenied
             case pasteboardReadFailed
             case noReadableContent
@@ -66,10 +94,9 @@ public final class ClipboardService: ObservableObject {
         public var userFacingMessage: String {
             switch outcome {
             case .capturedText(let count):
-                return L("Captured selected text (\(count) characters).")
-            case .capturedNonText(let summary):
-                let noun = summary.hasPrefix("image(") ? "an image" : summary.hasPrefix("file(") ? "a file" : "non-text content"
-                return L("Captured \(noun), but only text selections can be inserted automatically.")
+                return String(format: L("Captured selected text (%lld characters)."), Int64(count))
+            case .capturedNonText(let kind):
+                return String(format: L("Captured %@, but only text selections can be inserted automatically."), kind.noun)
             case .accessibilityDenied:
                 return L("Osaurus could not request the selection. Enable Accessibility permission, then try again.")
             case .pasteboardReadFailed:
@@ -86,8 +113,8 @@ public final class ClipboardService: ObservableObject {
             switch outcome {
             case .capturedText(let count):
                 return "selection_grab(outcome: captured_text, characters: \(count), source: \(source))"
-            case .capturedNonText(let summary):
-                return "selection_grab(outcome: captured_non_text, content: \(summary), source: \(source))"
+            case .capturedNonText(let kind):
+                return "selection_grab(outcome: captured_non_text, kind: \(kind.diagnosticTag), source: \(source))"
             case .accessibilityDenied:
                 return "selection_grab(outcome: accessibility_denied, source: \(source))"
             case .pasteboardReadFailed:
@@ -362,10 +389,18 @@ public final class ClipboardService: ObservableObject {
                         ),
                         text: text
                     )
-                case .image, .file:
+                case .image:
                     return finishSelectionGrab(
                         report: SelectionGrabReport(
-                            outcome: .capturedNonText(content.redactedDiagnosticDescription),
+                            outcome: .capturedNonText(kind: .image),
+                            sourceApp: sourceApp
+                        ),
+                        text: nil
+                    )
+                case .file:
+                    return finishSelectionGrab(
+                        report: SelectionGrabReport(
+                            outcome: .capturedNonText(kind: .file),
                             sourceApp: sourceApp
                         ),
                         text: nil

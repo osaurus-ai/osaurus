@@ -1827,21 +1827,14 @@ extension AppDelegate {
     private func captureSelectionForHotkey(withMaxWaitNanos maxWaitNanos: UInt64) async {
         guard !isCapturingSelectionForHotkey else { return }
         isCapturingSelectionForHotkey = true
-        defer { isCapturingSelectionForHotkey = false }
 
-        await withTaskGroup(of: Bool.self) { group in
-            group.addTask {
-                _ = await ClipboardService.shared.grabSelectionReport()
-                return true
-            }
-            group.addTask {
-                try? await Task.sleep(nanoseconds: maxWaitNanos)
-                return false
-            }
-
-            _ = await group.next()
-            group.cancelAll()
+        _ = Task { @MainActor in
+            await ClipboardService.shared.grabSelectionReport()
+            isCapturingSelectionForHotkey = false
         }
+
+        try? await Task.sleep(nanoseconds: maxWaitNanos)
+        isCapturingSelectionForHotkey = false
     }
     fileprivate func handleDeepLink(_ url: URL) {
         let scheme = url.scheme?.lowercased() ?? ""
