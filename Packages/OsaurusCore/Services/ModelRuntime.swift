@@ -966,8 +966,15 @@ public actor ModelRuntime {
         /// weights on every decode step. Distinct from ordinary RAM pressure:
         /// the budget is a fixed fraction of installed memory, so closing
         /// other apps cannot make room — only a smaller model can.
+        ///
+        /// Judged on the **weights**, not weights + KV headroom. The weights
+        /// are what must stay resident for every decode step; the KV cache
+        /// grows lazily under its own cap and is evictable. Charging the
+        /// worst-case KV allowance against the working set is what made a
+        /// 94 GiB pack that loads and decodes normally on a 128 GB Mac report
+        /// as needing 128 GB.
         public var exceedsGPUBudget: Bool {
-            gpuBudgetBytes > 0 && requiredAvailableBytes > gpuBudgetBytes
+            gpuBudgetBytes > 0 && incomingLoadFootprintBytes > gpuBudgetBytes
         }
 
         /// UI severity for the chat input's tight-fit disclaimer.
@@ -987,7 +994,19 @@ public actor ModelRuntime {
         /// UI-layer gate only — the runtime load path stays advisory (see
         /// `checkRAMFeasibility`).
         public var loadPressureSeverity: LoadPressureSeverity {
-            if projectedBytes > hardLimitBytes || requiredAvailableBytes > physicalMemoryBytes {
+            // Judge the hard ceiling on the resident working set (weights of
+            // everything resident plus the incoming footprint), NOT on the
+            // worst-case KV headroom: KV grows lazily under its own runtime
+            // cap and is evictable, exactly as `exceedsGPUBudget` documents
+            // below. Charging the full KV allowance here disabled the send
+            // button for a 94 GiB pack that loads and decodes normally on a
+            // 128 GB Mac (the projection claimed it "needs 128.3 GB"). The
+            // hard limit already embeds headroom below physical memory, so
+            // no extra margin is added on top.
+            let residentProjection = projectedBytes - kvHeadroomBytes
+            if residentProjection > hardLimitBytes
+                || incomingLoadFootprintBytes > physicalMemoryBytes
+            {
                 return .block
             }
             // A working set past the GPU budget gets paged even on an
@@ -1083,12 +1102,22 @@ public actor ModelRuntime {
                 else { return nil }
                 return hidden / heads
             }()
-        let maxPositions =
+        // The KV cache never grows past the server's configured cap, and it
+        // grows lazily — vmlx allocates in steps as the conversation extends,
+        // it does not preallocate the model's theoretical window. Budgeting
+        // the declared `max_position_embeddings` therefore invents memory the
+        // load will never touch: Hy3 advertises 262144 positions, which prices
+        // its KV at 80 GiB and made a 94 GiB pack look like it needed 128 GB
+        // on a 128 GB Mac — a model that in fact loads and decodes fine. Cap
+        // the estimate at the KV limit the runtime will actually enforce.
+        let declaredPositions =
             effectiveKVPositionBudget(config: config)
             ?? intValue(config["max_position_embeddings"])
             ?? intValue(config["max_sequence_length"])
             ?? intValue(config["seq_length"])
             ?? 32768
+        let kvCap = ServerRuntimeSettingsStore.snapshot().cache.defaultMaxKVSize ?? 8192
+        let maxPositions = min(declaredPositions, max(kvCap, 4096))
         guard let kvHeads, let headDim, kvHeads > 0, headDim > 0, maxPositions > 0 else {
             return nil
         }

@@ -40,16 +40,22 @@ struct GPUMemoryBudgetTests {
         #expect(GPUMemoryBudget.budgetGB(physicalMemoryGB: 0) == 0)
     }
 
-    /// Metal is consulted only for the host, and only ever to lower the
-    /// budget. Whatever machine this runs on, the verdict can never be more
-    /// optimistic than the conservative default split.
-    @Test("Metal can only tighten the host budget, never loosen it")
-    func metalOnlyTightens() {
+    /// For the machine we're actually running on, Metal's advertised working
+    /// set is ground truth — it may tighten the default (a pinned
+    /// `iogpu.wired_limit_mb`) or loosen it (large-memory Macs, where the
+    /// fixed 25% host reserve is far more than macOS actually holds back and
+    /// the default wrongly declared fitting models impossible). Only the
+    /// conservative default applies to machines we can't measure.
+    @Test("The host budget is Metal's advertised working set when available")
+    func hostBudgetUsesAdvertisedWorkingSet() {
         let host = GPUMemoryBudget.hostPhysicalMemoryGB
-        #expect(
-            GPUMemoryBudget.budgetGB(physicalMemoryGB: host)
-                <= GPUMemoryBudget.defaultBudgetGB(physicalMemoryGB: host)
-        )
+        let resolved = GPUMemoryBudget.budgetGB(physicalMemoryGB: host)
+        if let advertised = GPUMemoryBudget.hostAdvertisedBudgetGB {
+            #expect(resolved == advertised)
+            #expect(resolved <= host)
+        } else {
+            #expect(resolved == GPUMemoryBudget.defaultBudgetGB(physicalMemoryGB: host))
+        }
     }
 
     /// A hypothetical RAM size must resolve identically regardless of the
