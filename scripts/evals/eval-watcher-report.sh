@@ -245,7 +245,7 @@ fi
 
 cd "$repo_root" || exit
 mkdir -p "$report_dir" "$scoreboard_dir"
-report_dir_absolute="$(cd "$report_dir" && pwd -L)"
+report_dir_absolute="$(cd "$report_dir" && pwd -P)"
 
 run_child "${report_cmd[@]}"
 report_rc=$?
@@ -278,8 +278,19 @@ echo ""
 echo "eval watcher report: ${report_dir}"
 echo "eval watcher scoreboard: ${scoreboard_dir}"
 
-final_rc="$report_rc"
-if [[ "$scoreboard_rc" -gt "$final_rc" ]]; then
+# The report command treats every comparison regression as blocking. The
+# scoreboard owns the configurable regression threshold, while report
+# execution failures (including zero evidence) always remain blocking.
+report_has_run_failures="$(jq -r '
+  (.models | length == 0) or
+  any(.models[]; (.counts.total == 0) or (.counts.failed > 0) or (.counts.errored > 0))
+' "${report_dir}/summary.json")"
+if [[ "$report_has_run_failures" == "true" ]]; then
+  final_rc="$report_rc"
+  if [[ "$final_rc" -eq 0 ]]; then
+    final_rc=1
+  fi
+else
   final_rc="$scoreboard_rc"
 fi
 if [[ "$final_rc" -ne 0 ]]; then

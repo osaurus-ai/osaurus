@@ -87,6 +87,7 @@ extension OsaurusEvalsCLI {
         for model in models {
             let modelReportDir = opts.outDir
                 .appendingPathComponent("reports", isDirectory: true)
+                .appendingPathComponent(model.role.rawValue, isDirectory: true)
                 .appendingPathComponent(sanitizedPathSegment(model.rawModelId), isDirectory: true)
             try FileManager.default.createDirectory(at: modelReportDir, withIntermediateDirectories: true)
 
@@ -209,6 +210,7 @@ extension OsaurusEvalsCLI {
         for input in reports {
             let modelDir = outDir
                 .appendingPathComponent("reports", isDirectory: true)
+                .appendingPathComponent(input.role.rawValue, isDirectory: true)
                 .appendingPathComponent(sanitizedPathSegment(input.report.modelId), isDirectory: true)
             try FileManager.default.createDirectory(at: modelDir, withIntermediateDirectories: true)
             let modelKey = "\(input.role.rawValue)\u{1F}\(input.report.modelId)"

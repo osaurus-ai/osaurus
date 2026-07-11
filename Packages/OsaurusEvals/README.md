@@ -181,7 +181,7 @@ and frontier lanes. It writes `build/evals/pr-report/<timestamp>/` unless
 - `summary.json` — machine-readable aggregate summary.
 - `evidence-registry.json` — unified evidence registry snapshot pointing at
   the report `summary.json` artifact.
-- `reports/<model>/<suite>.json` — raw `EvalReport` output for each lane.
+- `reports/<role>/<model>/<suite>.json` — raw `EvalReport` output for each lane.
 - `compare.md` / `compare.json` — baseline-vs-current diff when a baseline is
   supplied.
 

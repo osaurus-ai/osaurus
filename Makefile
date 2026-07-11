@@ -189,6 +189,7 @@ EVALS_FLOOR_FLAG ?= --fail-on-floor
 LOCAL_MODEL ?= foundation
 FRONTIER_MODEL ?= openai/gpt-4o-mini
 EVALS_PR_REPORT_OUT ?= build/evals/pr-report/$(shell date -u +%Y%m%dT%H%M%SZ)
+EVALS_PR_REPORT_OUT := $(EVALS_PR_REPORT_OUT)
 EVALS_WATCHER_CHANNEL ?= main
 EVALS_WATCHER_OUT ?= build/evals/watcher
 EVALS_REPORT_PRESET ?= local-frontier
@@ -196,6 +197,7 @@ EVALS_WATCHER_ARTIFACT_ID ?=
 EVALS_MAX_REGRESSIONS ?= 0
 EVALS_SCOREBOARD_ROOT ?= $(EVALS_WATCHER_OUT)/$(EVALS_WATCHER_CHANNEL)
 EVALS_SCOREBOARD_OUT ?= build/evals/scoreboard/$(shell date -u +%Y%m%dT%H%M%SZ)
+EVALS_SCOREBOARD_OUT := $(EVALS_SCOREBOARD_OUT)
 ifeq ($(strip $(EVALS_FROM_REPORTS)$(PLAN_ONLY)),)
 EVALS_WATCHER_PREP := evals-prep
 endif

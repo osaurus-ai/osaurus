@@ -5,6 +5,34 @@ import Testing
 @testable import OsaurusEvalsKit
 
 struct EvalReviewReportTests {
+    @Test func emptyReportFailsClosedAsNoEvidence() {
+        let bundle = EvalReviewReportBuilder.build(
+            manifest: manifest(),
+            reports: []
+        )
+
+        #expect(bundle.hasRunFailures)
+        #expect(bundle.formatMarkdown().contains("Verdict: NO EVIDENCE"))
+    }
+
+    @Test func zeroCaseModelFailsClosedAsNoEvidence() throws {
+        let bundle = EvalReviewReportBuilder.build(
+            manifest: manifest(),
+            reports: [
+                input(
+                    role: .local,
+                    suite: "AgentLoop",
+                    report: report(modelId: "foundation", rows: [])
+                ),
+            ]
+        )
+
+        let local = try #require(bundle.models.first)
+        #expect(local.counts.total == 0)
+        #expect(bundle.hasRunFailures)
+        #expect(bundle.formatMarkdown().contains("Verdict: NO EVIDENCE"))
+    }
+
     @Test func aggregateSummaryCountsOutcomesAcrossModelsAndSuites() throws {
         let bundle = EvalReviewReportBuilder.build(
             manifest: manifest(commands: [
@@ -92,6 +120,7 @@ struct EvalReviewReportTests {
                         ("pass-to-skip", .passed, []),
                         ("failed-to-error", .failed, ["failed before"]),
                         ("skipped-to-error", .skipped, ["skipped before"]),
+                        ("skipped-to-failed", .skipped, ["skipped before"]),
                         ("removed", .passed, []),
                     ]
                 )
@@ -111,6 +140,7 @@ struct EvalReviewReportTests {
                         ("pass-to-skip", .skipped, ["coverage unavailable"]),
                         ("failed-to-error", .errored, ["runner crashed"]),
                         ("skipped-to-error", .errored, ["bootstrap crashed"]),
+                        ("skipped-to-failed", .failed, ["assertion failed"]),
                         ("new-failure", .errored, ["new error"]),
                         ("new-pass", .passed, []),
                     ]
@@ -132,6 +162,7 @@ struct EvalReviewReportTests {
                 "pass-to-skip",
                 "regression",
                 "skipped-to-error",
+                "skipped-to-failed",
             ]
         )
         #expect(comparison.newFailures.map(\.id) == ["new-failure"])

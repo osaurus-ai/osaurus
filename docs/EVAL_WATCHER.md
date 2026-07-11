@@ -55,7 +55,7 @@ Each watcher run writes:
 - `build/evals/watcher/<channel>/<timestamp>/report/evidence-registry.json`
 - `build/evals/watcher/<channel>/<timestamp>/report/summary.json`
 - `build/evals/watcher/<channel>/<timestamp>/report/summary.md`
-- `build/evals/watcher/<channel>/<timestamp>/report/reports/<model>/<suite>.json`
+- `build/evals/watcher/<channel>/<timestamp>/report/reports/<role>/<model>/<suite>.json`
 - `compare.json` and `compare.md` when `BASELINE_DIR` is supplied
 - `watcher-status.json` with completed, failed, or canceled wrapper status
 
@@ -69,7 +69,7 @@ The scoreboard refresh writes:
 
 Watcher artifacts are maintainer evidence, not automatically public-safe
 uploads. `summary.md`, `manifest.json`, and `watcher-status.json` include local
-artifact paths and command provenance. Raw files under `reports/<model>/` are
+artifact paths and command provenance. Raw files under `reports/<role>/<model>/` are
 the full `EvalReport` payloads and may include case prompts, failure notes, and
 other run context. Before attaching artifacts to a public PR or issue, prefer
 sharing the generated Markdown summary plus any intentionally redacted

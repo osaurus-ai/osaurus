@@ -299,7 +299,9 @@ public struct EvalReviewReportBundle: Sendable, Codable, Equatable {
     public let comparison: EvalReviewComparisonSummary?
 
     public var hasRunFailures: Bool {
-        models.contains { $0.counts.failed > 0 || $0.counts.errored > 0 }
+        models.isEmpty || models.contains {
+            $0.counts.total == 0 || $0.counts.failed > 0 || $0.counts.errored > 0
+        }
     }
 
     public var hasBlockingRegressions: Bool {
@@ -491,6 +493,9 @@ public struct EvalReviewReportBundle: Sendable, Codable, Equatable {
 
     private func verdictLabel() -> String {
         if hasBlockingRegressions { return "REGRESSED" }
+        if models.isEmpty || models.contains(where: { $0.counts.total == 0 }) {
+            return "NO EVIDENCE"
+        }
         if hasRunFailures { return "EVAL FAILURES PRESENT" }
         return "PASS"
     }
@@ -880,7 +885,7 @@ public enum EvalReviewReportBuilder {
         guard let baseline, let current else { return false }
         if baseline == .passed && current != .passed { return true }
         if baseline == .failed && current == .errored { return true }
-        if baseline == .skipped && current == .errored { return true }
+        if baseline == .skipped && isFailing(current) { return true }
         return false
     }
 
