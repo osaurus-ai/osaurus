@@ -1,6 +1,14 @@
 {
-  "contributions" : 6,
+  "contributions" : 11,
   "devices" : [
+    {
+      "chip" : "Apple M4 Max",
+      "contributions" : 5,
+      "osVersions" : [
+        "26.5.1"
+      ],
+      "totalRamMb" : 131072
+    },
     {
       "chip" : "Apple M4 Pro",
       "contributions" : 6,
@@ -10,8 +18,32 @@
       "totalRamMb" : 49152
     }
   ],
-  "generatedAt" : "2026-07-10T13:53:03.530Z",
+  "generatedAt" : "2026-07-11T05:59:21.299Z",
   "models" : [
+    {
+      "builds" : [
+        "563f91746"
+      ],
+      "catalogHashes" : [
+        "8632f992dc0872b5"
+      ],
+      "chips" : [
+        "Apple M4 Max"
+      ],
+      "contributions" : 1,
+      "decodeTokensPerSecondMax" : 16.79048719532851,
+      "decodeTokensPerSecondMin" : 16.79048719532851,
+      "errored" : 1,
+      "hasSelfJudged" : false,
+      "maxRamMb" : 131072,
+      "minRamMb" : 131072,
+      "model" : "OsaurusAI/Ornith-1.0-35B-MXFP8",
+      "passed" : 184,
+      "peakPhysFootprintMb" : 14586.865211486816,
+      "scored" : 216,
+      "skipped" : 55,
+      "verdict" : "partial"
+    },
     {
       "builds" : [
 
@@ -38,26 +70,76 @@
     },
     {
       "builds" : [
-
+        "563f91746"
       ],
       "catalogHashes" : [
-        "137408f3cdba4838"
+        "8632f992dc0872b5"
       ],
       "chips" : [
-        "Apple M4 Pro"
+        "Apple M4 Max"
       ],
       "contributions" : 1,
-      "decodeTokensPerSecondMax" : 13.46734269025956,
+      "decodeTokensPerSecondMax" : 29.489864669001758,
+      "decodeTokensPerSecondMin" : 29.489864669001758,
+      "errored" : 0,
+      "hasSelfJudged" : false,
+      "maxRamMb" : 131072,
+      "minRamMb" : 131072,
+      "model" : "OsaurusAI/Ornith-1.0-9B-MXFP8",
+      "passed" : 178,
+      "peakPhysFootprintMb" : 10590.363494873047,
+      "scored" : 217,
+      "skipped" : 55,
+      "verdict" : "works"
+    },
+    {
+      "builds" : [
+        "563f91746"
+      ],
+      "catalogHashes" : [
+        "137408f3cdba4838",
+        "8632f992dc0872b5"
+      ],
+      "chips" : [
+        "Apple M4 Max",
+        "Apple M4 Pro"
+      ],
+      "contributions" : 2,
+      "decodeTokensPerSecondMax" : 27.498238115597296,
       "decodeTokensPerSecondMin" : 13.46734269025956,
       "errored" : 0,
       "hasSelfJudged" : false,
-      "maxRamMb" : 49152,
+      "maxRamMb" : 131072,
       "minRamMb" : 49152,
       "model" : "OsaurusAI/gemma-4-12B-it-MXFP8",
-      "passed" : 223,
+      "passed" : 411,
       "peakPhysFootprintMb" : 20535.99245452881,
-      "scored" : 247,
-      "skipped" : 5,
+      "scored" : 464,
+      "skipped" : 60,
+      "verdict" : "works"
+    },
+    {
+      "builds" : [
+        "563f91746"
+      ],
+      "catalogHashes" : [
+        "8632f992dc0872b5"
+      ],
+      "chips" : [
+        "Apple M4 Max"
+      ],
+      "contributions" : 1,
+      "decodeTokensPerSecondMax" : 37.89698670026965,
+      "decodeTokensPerSecondMin" : 37.89698670026965,
+      "errored" : 0,
+      "hasSelfJudged" : true,
+      "maxRamMb" : 131072,
+      "minRamMb" : 131072,
+      "model" : "OsaurusAI/gemma-4-E2B-it-8bit",
+      "passed" : 117,
+      "peakPhysFootprintMb" : 13531.474105834961,
+      "scored" : 215,
+      "skipped" : 57,
       "verdict" : "works"
     },
     {
@@ -82,6 +164,30 @@
       "peakPhysFootprintMb" : 19797.867179870605,
       "scored" : 245,
       "skipped" : 7,
+      "verdict" : "works"
+    },
+    {
+      "builds" : [
+        "563f91746"
+      ],
+      "catalogHashes" : [
+        "8632f992dc0872b5"
+      ],
+      "chips" : [
+        "Apple M4 Max"
+      ],
+      "contributions" : 1,
+      "decodeTokensPerSecondMax" : 30.397899015253056,
+      "decodeTokensPerSecondMin" : 30.397899015253056,
+      "errored" : 0,
+      "hasSelfJudged" : false,
+      "maxRamMb" : 131072,
+      "minRamMb" : 131072,
+      "model" : "OsaurusAI/gemma-4-E4B-it-8bit",
+      "passed" : 174,
+      "peakPhysFootprintMb" : 16444.5698928833,
+      "scored" : 217,
+      "skipped" : 55,
       "verdict" : "works"
     },
     {
