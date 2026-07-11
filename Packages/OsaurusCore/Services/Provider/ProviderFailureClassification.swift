@@ -91,13 +91,24 @@ enum ProviderFailureClassifier {
             break
         }
 
-        if let replay = state?.lastReplayDiagnostics,
-           let replayClassification = classifyReplay(replay, proxy: proxy) {
-            return replayClassification
+        if let replay = state?.lastReplayDiagnostics {
+            let credentialPresent = apiKeyPresent || oauthTokensPresent || hasCredentialHeader(provider)
+            if let replayClassification = classifyReplay(
+                replay,
+                proxy: proxy,
+                credentialPresent: credentialPresent
+            ) {
+                return replayClassification
+            }
         }
 
         if let error = state?.lastError, !error.isEmpty {
-            return classifyMessage(error, proxy: proxy)
+            let credentialPresent = apiKeyPresent || oauthTokensPresent || hasCredentialHeader(provider)
+            return classifyMessage(
+                error,
+                proxy: proxy,
+                credentialPresent: credentialPresent
+            )
         }
 
         return nil
@@ -126,7 +137,8 @@ enum ProviderFailureClassifier {
 
     private static func classifyReplay(
         _ replay: ProviderReplayDiagnosticBundle,
-        proxy: GlobalProxyDiagnosticState
+        proxy: GlobalProxyDiagnosticState,
+        credentialPresent: Bool
     ) -> ProviderFailureClassification? {
         if case .active = proxy,
            let transportError = replay.transportError?.lowercased(),
@@ -143,7 +155,12 @@ enum ProviderFailureClassifier {
         }
 
         if let transportError = replay.transportError, !transportError.isEmpty {
-            return classifyMessage(transportError, proxy: proxy, evidence: replay.summary)
+            return classifyMessage(
+                transportError,
+                proxy: proxy,
+                credentialPresent: credentialPresent,
+                evidence: replay.summary
+            )
         }
 
         guard let response = replay.response else { return nil }
@@ -193,6 +210,7 @@ enum ProviderFailureClassifier {
     private static func classifyMessage(
         _ message: String,
         proxy: GlobalProxyDiagnosticState,
+        credentialPresent: Bool = false,
         evidence: String? = nil
     ) -> ProviderFailureClassification {
         let safeMessage = ProviderDiagnosticRedactor.safe(message, maxLength: 240)
