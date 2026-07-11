@@ -277,6 +277,24 @@ struct ModelRuntimeRAMFeasibilityTests {
         #expect(f.loadPressureSeverity == .warn)
     }
 
+    /// Hy3-JANG_2K live case: 94.4 GB materialized footprint plus a ~34 GB
+    /// worst-case KV headroom on a 128 GB Mac. The pack loads and decodes
+    /// normally (phys_footprint ~96 GB, ~10 tok/s), but charging the full KV
+    /// allowance against the hard ceiling disabled the send button with
+    /// "needs ~128.3 GB". KV grows lazily under its own runtime cap — the
+    /// block judgment uses the resident working set, not weights + max-KV.
+    @Test("Worst-case KV headroom does not block a pack whose weights fit")
+    func kvHeadroomDoesNotBlockFittingWeights() {
+        let physical = 128 * gb
+        let f = assess(
+            footprint: Int64(94.4 * Double(gb)),
+            kvHeadroom: 34 * gb,
+            physical: physical,
+            available: 100 * gb
+        )
+        #expect(f.loadPressureSeverity != .block)
+    }
+
     @Test("A 48 GB Mac budgets 36 GB to the GPU")
     func gpuBudgetForFortyEightGigMac() {
         #expect(ModelRuntime.gpuBudgetBytes(physicalMemoryBytes: 48 * gb) == 36 * gb)
