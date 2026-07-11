@@ -15,6 +15,77 @@ import XCTest
 @testable import OsaurusCLICore
 
 final class BenchKVMatrixTests: XCTestCase {
+    func testRuntimeSettingsResponseUsesAdminAPISnakeCaseCodecKey() {
+        let response: [String: Any] = [
+            "status": "ok",
+            "settings": [
+                "cache": ["live_kv_codec": "turboquant"],
+            ],
+        ]
+
+        XCTAssertEqual(
+            BenchCommand.activeLiveKVCodec(inRuntimeSettingsResponse: response),
+            "turboquant"
+        )
+        XCTAssertNil(
+            BenchCommand.activeLiveKVCodec(inRuntimeSettingsResponse: [
+                "settings": ["cache": ["liveKVCodec": "turboquant"]],
+            ])
+        )
+    }
+
+    func testTurboQuantProbeSetsExplicitBitsAndPreservesOtherFields() throws {
+        let mutated = try BenchCommand.configData(
+            settingLiveKVCodec: "turboquant",
+            in: sampleConfig
+        )
+        let root = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: mutated) as? [String: Any]
+        )
+        let cache = try XCTUnwrap(root["cache"] as? [String: Any])
+
+        XCTAssertEqual(cache["liveKVCodec"] as? String, "turboquant")
+        XCTAssertEqual(cache["turboQuantKeyBits"] as? Int, 3)
+        XCTAssertEqual(cache["turboQuantValueBits"] as? Int, 3)
+    }
+
+    func testEffectiveKVModeRequiresMatchingCacheEnabledModel() {
+        let response: [String: Any] = [
+            "models": [
+                [
+                    "name": "mlx/model-a",
+                    "cache_enabled": true,
+                    "effective_kv_mode": "turbo(3,3)",
+                ],
+                [
+                    "name": "mlx/model-b",
+                    "cache_enabled": false,
+                    "effective_kv_mode": "fp16",
+                ],
+            ],
+        ]
+
+        XCTAssertEqual(
+            BenchCommand.effectiveKVMode(
+                inCacheStatsResponse: response,
+                model: "mlx/model-a"
+            ),
+            "turbo(3,3)"
+        )
+        XCTAssertNil(
+            BenchCommand.effectiveKVMode(
+                inCacheStatsResponse: response,
+                model: "mlx/model-b"
+            )
+        )
+        XCTAssertNil(
+            BenchCommand.effectiveKVMode(
+                inCacheStatsResponse: response,
+                model: "mlx/missing"
+            )
+        )
+    }
+
     /// Shaped like a real (abridged) server-runtime.json: nested `cache`
     /// object plus sibling sections that must survive the codec edit.
     private let sampleConfig = Data(
@@ -36,7 +107,7 @@ final class BenchKVMatrixTests: XCTestCase {
 
     // MARK: - Config read/modify/restore
 
-    func testSettingCodecRewritesOnlyTheCodecField() throws {
+    func testSettingTurboQuantPreservesSiblingsAndSetsRequiredBits() throws {
         let mutated = try BenchCommand.configData(
             settingLiveKVCodec: "turboquant", in: sampleConfig)
 
@@ -51,7 +122,8 @@ final class BenchKVMatrixTests: XCTestCase {
         let cache = try XCTUnwrap(root["cache"] as? [String: Any])
         XCTAssertEqual(cache["defaultMaxKVSize"] as? Int, 65536)
         XCTAssertEqual(cache["storedKVCodec"] as? String, "auto")
-        XCTAssertTrue(cache["turboQuantKeyBits"] is NSNull)
+        XCTAssertEqual(cache["turboQuantKeyBits"] as? Int, 3)
+        XCTAssertEqual(cache["turboQuantValueBits"] as? Int, 3)
     }
 
     func testRoundTripOnTempFileRestoresOriginalBytes() throws {
@@ -95,9 +167,10 @@ final class BenchKVMatrixTests: XCTestCase {
     func testCodecBlockCanOnlyRepresentVerifiedEvidence() {
         let scenarios: [[String: Any]] = [["target_prompt_tokens": 8192]]
         let block = BenchCommand.kvMatrixCodecBlock(
-            codec: "engine_selected", scenarios: scenarios)
+            codec: "engine_selected", effectiveKVMode: "fp16", scenarios: scenarios)
         XCTAssertEqual(block["codec"] as? String, "engine_selected")
         XCTAssertEqual(block["codec_verified"] as? Bool, true)
+        XCTAssertEqual(block["effective_kv_mode"] as? String, "fp16")
         XCTAssertEqual((block["scenarios"] as? [[String: Any]])?.count, 1)
         XCTAssertEqual(
             block["description"] as? String,

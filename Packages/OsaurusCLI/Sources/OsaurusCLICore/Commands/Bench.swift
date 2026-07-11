@@ -380,6 +380,7 @@ public struct BenchCommand: Command {
     /// `VMLXKVCacheCodec` contract in `server-runtime.json`). Baseline first,
     /// so turboquant cells can be reported against engine-selected behavior.
     static let kvMatrixCodecs = ["engine_selected", "turboquant"]
+    static let kvMatrixTurboQuantBits = 3
 
     static let kvMatrixCodecDescriptions: [String: String] = [
         "engine_selected":
@@ -505,10 +506,26 @@ public struct BenchCommand: Command {
             // Absorb the cold model load after the restart so it doesn't
             // pollute the first uncached TTFT sample (same warm-up as
             // --tune-prefill).
-            _ = try? await measureOnce(
-                base: base, model: model,
-                prompt: makePrompt(targetTokens: 256, nonce: "kv-warm-\(UUID().uuidString)"),
-                maxTokens: 8)
+            do {
+                _ = try await measureOnce(
+                    base: base, model: model,
+                    prompt: makePrompt(targetTokens: 256, nonce: "kv-warm-\(UUID().uuidString)"),
+                    maxTokens: 8)
+            } catch {
+                fatal = "[\(codec)] warm-up generation failed: \(error.localizedDescription)"
+                break measurement
+            }
+            guard let effectiveKVMode = await effectiveKVMode(base: base, model: model) else {
+                fatal = "[\(codec)] /admin/cache-stats did not report an effective KV mode for \(model)"
+                break measurement
+            }
+            if codec == "turboquant",
+               effectiveKVMode != "turbo(\(kvMatrixTurboQuantBits),\(kvMatrixTurboQuantBits))" {
+                fatal =
+                    "[turboquant] runtime reports effective KV mode \"\(effectiveKVMode)\"; "
+                    + "expected turbo(\(kvMatrixTurboQuantBits),\(kvMatrixTurboQuantBits))"
+                break measurement
+            }
 
             var scenarios: [[String: Any]] = []
             for target in options.promptTokens {
@@ -567,7 +584,13 @@ public struct BenchCommand: Command {
                         medianDecodeTps: median(uncached.map { $0.decodeTps }),
                         lowConfidence: lowConfidence))
             }
-            codecBlocks.append(kvMatrixCodecBlock(codec: codec, scenarios: scenarios))
+            codecBlocks.append(
+                kvMatrixCodecBlock(
+                    codec: codec,
+                    effectiveKVMode: effectiveKVMode,
+                    scenarios: scenarios
+                )
+            )
         }
 
         // Restore the user's config bytes unconditionally (defer-style: this
@@ -646,9 +669,9 @@ public struct BenchCommand: Command {
                 "ttft": "request start → first non-empty content delta",
                 "decode_tps": "(completion_tokens - 1) / (last delta - first delta)",
                 "codec_application":
-                    "cache.liveKVCodec written to server-runtime.json, full app restart per codec (the file is only read at launch), active setting verified after every restart, and original config restored afterwards",
+                    "cache.liveKVCodec written to server-runtime.json (TurboQuant uses explicit 3/3 bits), full app restart per codec, active setting verified after every restart, effective mode verified from /admin/cache-stats after generation, and original config restored afterwards",
                 "codec_verified":
-                    "always true in an emitted report; an unavailable endpoint, malformed response, or mismatch aborts the run",
+                    "always true in an emitted report; settings and effective runtime mode are both verified, and any unavailable endpoint, malformed response, or mismatch aborts the run",
                 "low_confidence":
                     "cells with any sample below \(kvMatrixLowConfidenceCompletionTokens) completion_tokens are flagged low_confidence: the decode window is too short for a stable tok/s estimate",
                 "context":
@@ -660,11 +683,16 @@ public struct BenchCommand: Command {
 
     /// Per-codec block of the JSON report. Pure so the codec_verified
     /// plumbing is unit-testable.
-    static func kvMatrixCodecBlock(codec: String, scenarios: [[String: Any]]) -> [String: Any] {
+    static func kvMatrixCodecBlock(
+        codec: String,
+        effectiveKVMode: String,
+        scenarios: [[String: Any]]
+    ) -> [String: Any] {
         [
             "codec": codec,
             "description": kvMatrixCodecDescriptions[codec] ?? "",
             "codec_verified": true,
+            "effective_kv_mode": effectiveKVMode,
             "scenarios": scenarios,
         ]
     }
@@ -811,8 +839,10 @@ public struct BenchCommand: Command {
             .appendingPathComponent("server-runtime.json")
     }
 
-    /// Returns `data` re-serialized with `cache.liveKVCodec` set to `codec`,
-    /// leaving every other field untouched. Throws instead of inventing
+    /// Returns `data` re-serialized with the requested live codec. The
+    /// TurboQuant probe also sets explicit 3/3 bits because a codec selection
+    /// with nil bit widths resolves to fp16. Every unrelated field is kept.
+    /// Throws instead of inventing
     /// structure: a document without a `cache` object is not a runtime
     /// settings file, and writing a partial one could destroy user config.
     static func configData(settingLiveKVCodec codec: String, in data: Data) throws -> Data {
@@ -823,6 +853,10 @@ public struct BenchCommand: Command {
             throw KVMatrixError.malformedConfig("no \"cache\" object")
         }
         cache["liveKVCodec"] = codec
+        if codec == "turboquant" {
+            cache["turboQuantKeyBits"] = kvMatrixTurboQuantBits
+            cache["turboQuantValueBits"] = kvMatrixTurboQuantBits
+        }
         root["cache"] = cache
         return try JSONSerialization.data(
             withJSONObject: root, options: [.prettyPrinted, .sortedKeys])
@@ -880,11 +914,38 @@ public struct BenchCommand: Command {
     /// endpoint is unavailable or malformed. The caller fails closed because
     /// an unverified codec label cannot be used as runtime evidence.
     static func activeLiveKVCodec(base: URL) async -> String? {
-        guard let obj = await fetchJSON(base.appendingPathComponent("admin/runtime-settings")),
-            let settings = obj["settings"] as? [String: Any],
-            let cache = settings["cache"] as? [String: Any]
+        guard let response = await fetchJSON(base.appendingPathComponent("admin/runtime-settings"))
         else { return nil }
-        return cache["liveKVCodec"] as? String
+        return activeLiveKVCodec(inRuntimeSettingsResponse: response)
+    }
+
+    /// The admin API uses snake_case even though server-runtime.json uses
+    /// Codable's camelCase keys. Keep the two contracts explicit so a config
+    /// key can never accidentally stand in for live runtime verification.
+    static func activeLiveKVCodec(
+        inRuntimeSettingsResponse response: [String: Any]
+    ) -> String? {
+        guard let settings = response["settings"] as? [String: Any],
+              let cache = settings["cache"] as? [String: Any]
+        else { return nil }
+        return cache["live_kv_codec"] as? String
+    }
+
+    static func effectiveKVMode(base: URL, model: String) async -> String? {
+        guard let response = await fetchJSON(base.appendingPathComponent("admin/cache-stats"))
+        else { return nil }
+        return effectiveKVMode(inCacheStatsResponse: response, model: model)
+    }
+
+    static func effectiveKVMode(
+        inCacheStatsResponse response: [String: Any],
+        model: String
+    ) -> String? {
+        guard let models = response["models"] as? [[String: Any]],
+              let row = models.first(where: { ($0["name"] as? String) == model }),
+              row["cache_enabled"] as? Bool == true
+        else { return nil }
+        return row["effective_kv_mode"] as? String
     }
 
     struct KVMatrixCell {
