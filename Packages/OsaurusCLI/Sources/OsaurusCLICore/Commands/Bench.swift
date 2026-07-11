@@ -919,16 +919,16 @@ public struct BenchCommand: Command {
         return activeLiveKVCodec(inRuntimeSettingsResponse: response)
     }
 
-    /// The admin API uses snake_case even though server-runtime.json uses
-    /// Codable's camelCase keys. Keep the two contracts explicit so a config
-    /// key can never accidentally stand in for live runtime verification.
+    /// `/admin/runtime-settings` serializes the settings value through its
+    /// Codable contract, so this key intentionally matches server-runtime.json.
+    /// `/admin/cache-stats` uses a separate hand-built snake_case contract.
     static func activeLiveKVCodec(
         inRuntimeSettingsResponse response: [String: Any]
     ) -> String? {
         guard let settings = response["settings"] as? [String: Any],
               let cache = settings["cache"] as? [String: Any]
         else { return nil }
-        return cache["live_kv_codec"] as? String
+        return cache["liveKVCodec"] as? String
     }
 
     static func effectiveKVMode(base: URL, model: String) async -> String? {

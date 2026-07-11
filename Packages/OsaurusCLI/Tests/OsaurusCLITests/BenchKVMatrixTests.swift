@@ -15,11 +15,11 @@ import XCTest
 @testable import OsaurusCLICore
 
 final class BenchKVMatrixTests: XCTestCase {
-    func testRuntimeSettingsResponseUsesAdminAPISnakeCaseCodecKey() {
+    func testRuntimeSettingsResponseUsesCodableCodecKey() {
         let response: [String: Any] = [
             "status": "ok",
             "settings": [
-                "cache": ["live_kv_codec": "turboquant"],
+                "cache": ["liveKVCodec": "turboquant"],
             ],
         ]
 
@@ -29,7 +29,7 @@ final class BenchKVMatrixTests: XCTestCase {
         )
         XCTAssertNil(
             BenchCommand.activeLiveKVCodec(inRuntimeSettingsResponse: [
-                "settings": ["cache": ["liveKVCodec": "turboquant"]],
+                "settings": ["cache": ["live_kv_codec": "turboquant"]],
             ])
         )
     }
