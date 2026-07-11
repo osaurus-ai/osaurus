@@ -63,9 +63,11 @@ public enum SearchProviderCatalog {
         SearchEndpoint(
             url: "https://api.tavily.com/search",
             method: "POST",
-            headers: ["Content-Type": "application/json"],
+            headers: [
+                "Content-Type": "application/json",
+                "Authorization": "Bearer {{secret.api_key}}",
+            ],
             body: [
-                SearchRequestParam(name: "api_key", value: "{{secret.api_key}}"),
                 SearchRequestParam(name: "query", value: "{{query}}"),
                 SearchRequestParam(name: "max_results", value: "{{max_results}}", type: "int"),
                 SearchRequestParam(name: "search_depth", value: "basic"),
@@ -399,46 +401,50 @@ public enum SearchProviderCatalog {
         id: "kagi",
         name: "Kagi",
         summary: L("Premium ad-free search (paid API)."),
-        pricingNote: L("Paid: $25 credit minimum"),
+        pricingNote: L("Paid: pay-per-use (billed separately from a Kagi subscription)"),
         instructions: [
-            L("Sign in at kagi.com and open Settings → Advanced → API portal."),
-            L("Generate an API token."),
+            L("Sign in at kagi.com and open the API portal at kagi.com/api."),
+            L("Add a payment method under API Billing, then copy your API key."),
             L("Paste it below."),
         ],
-        signupURL: "https://kagi.com/settings?p=api",
+        signupURL: "https://kagi.com/api",
         homepage: "https://help.kagi.com/kagi/api/search.html",
         secrets: [
             SearchSecretField(
                 id: "api_key",
-                label: L("Kagi API token"),
-                url: "https://kagi.com/settings?p=api"
+                label: L("Kagi API key"),
+                url: "https://kagi.com/api"
             )
         ],
         endpoints: [
-            SearchCategory.web: kagiEndpoint(),
-            SearchCategory.news: kagiEndpoint(),
+            SearchCategory.web: kagiEndpoint(workflow: "search", resultsPath: "data.search"),
+            SearchCategory.news: kagiEndpoint(workflow: "news", resultsPath: "data.news"),
         ]
     )
 
-    private static func kagiEndpoint() -> SearchEndpoint {
+    private static func kagiEndpoint(workflow: String, resultsPath: String) -> SearchEndpoint {
         SearchEndpoint(
-            url: "https://kagi.com/api/v0/search",
-            headers: ["Authorization": "Bot {{secret.api_key}}"],
-            query: [
-                SearchRequestParam(name: "q", value: "{{query}}"),
-                SearchRequestParam(name: "limit", value: "{{max_results}}"),
-                SearchRequestParam(name: "offset", value: "{{offset}}"),
+            url: "https://kagi.com/api/v1/search",
+            method: "POST",
+            headers: [
+                "Content-Type": "application/json",
+                "Authorization": "Bearer {{secret.api_key}}",
+            ],
+            body: [
+                SearchRequestParam(name: "query", value: "{{query}}"),
+                SearchRequestParam(name: "workflow", value: workflow),
+                SearchRequestParam(name: "limit", value: "{{max_results}}", type: "int"),
+                SearchRequestParam(name: "page", value: "{{page}}", type: "int"),
             ],
             response: SearchResponseMapping(
-                resultsPath: "data",
+                // v1 buckets results by type, so no t == 0 filter is needed.
+                resultsPath: resultsPath,
                 item: SearchHitFieldPaths(
                     title: "title",
                     url: "url",
                     snippet: "snippet",
-                    publishedDate: "published"
-                ),
-                // Kagi mixes result types; organic hits carry t == 0.
-                filter: SearchItemFilter(path: "t", equals: "0")
+                    publishedDate: "time"
+                )
             )
         )
     }
@@ -459,46 +465,36 @@ public enum SearchProviderCatalog {
             SearchSecretField(id: "api_key", label: L("You.com API key"), url: "https://api.you.com")
         ],
         endpoints: [
-            SearchCategory.web: SearchEndpoint(
-                url: "https://api.ydc-index.io/search",
-                headers: ["X-API-Key": "{{secret.api_key}}", "Accept": "application/json"],
-                query: youQueryParams(),
-                response: SearchResponseMapping(
-                    resultsPath: "hits",
-                    item: youItemPaths()
-                )
-            ),
-            SearchCategory.news: SearchEndpoint(
-                url: "https://api.ydc-index.io/news",
-                headers: ["X-API-Key": "{{secret.api_key}}", "Accept": "application/json"],
-                query: youQueryParams(),
-                response: SearchResponseMapping(
-                    resultsPath: "news.results",
-                    item: youItemPaths()
-                )
-            ),
+            // The v1 API is a single unified endpoint returning both web and
+            // news buckets; only the results path differs per category.
+            SearchCategory.web: youEndpoint(resultsPath: "results.web"),
+            SearchCategory.news: youEndpoint(resultsPath: "results.news"),
         ]
     )
 
-    private static func youQueryParams() -> [SearchRequestParam] {
-        [
-            SearchRequestParam(name: "query", value: "{{query}}"),
-            SearchRequestParam(name: "num_web_results", value: "{{max_results}}"),
-            SearchRequestParam(
-                name: "recency",
-                value: "{{time_range}}",
-                omitIfEmpty: true,
-                map: ["d": "day", "w": "week", "m": "month", "y": "year"]
-            ),
-        ]
-    }
-
-    private static func youItemPaths() -> SearchHitFieldPaths {
-        SearchHitFieldPaths(
-            title: "title",
-            url: "url",
-            snippet: "description|snippet",
-            publishedDate: "date_published|age"
+    private static func youEndpoint(resultsPath: String) -> SearchEndpoint {
+        SearchEndpoint(
+            url: "https://ydc-index.io/v1/search",
+            headers: ["X-API-Key": "{{secret.api_key}}", "Accept": "application/json"],
+            query: [
+                SearchRequestParam(name: "query", value: "{{query}}"),
+                SearchRequestParam(name: "count", value: "{{max_results}}"),
+                SearchRequestParam(
+                    name: "freshness",
+                    value: "{{time_range}}",
+                    omitIfEmpty: true,
+                    map: ["d": "day", "w": "week", "m": "month", "y": "year"]
+                ),
+            ],
+            response: SearchResponseMapping(
+                resultsPath: resultsPath,
+                item: SearchHitFieldPaths(
+                    title: "title",
+                    url: "url",
+                    snippet: "description|snippets",
+                    publishedDate: "page_age"
+                )
+            )
         )
     }
 
