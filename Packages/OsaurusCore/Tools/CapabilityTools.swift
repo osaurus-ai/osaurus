@@ -896,15 +896,29 @@ final class CapabilitiesLoadTool: OsaurusTool, @unchecked Sendable {
             }
 
             if !method.skillsUsed.isEmpty {
-                let skills: [(String, Skill)] = await MainActor.run {
+                let allowedSkillNames = await grantedSkillNamesForCurrentAgent()
+                let (skills, blockedSkills): ([(String, Skill)], [String]) = await MainActor.run {
+                    var allowed: [(String, Skill)] = []
+                    var blocked: [String] = []
                     method.skillsUsed.compactMap { name in
                         SkillManager.shared.skill(named: name).map { (name, $0) }
+                    }.forEach { pair in
+                        let (name, skill) = pair
+                        if skill.enabled && (allowedSkillNames?.contains(skill.name) ?? true) {
+                            allowed.append((name, skill))
+                        } else {
+                            blocked.append(name)
+                        }
                     }
+                    return (allowed, blocked)
                 }
                 for (name, skill) in skills {
                     output += "\n## Skill: \(name)\n"
                     output += await SkillManager.shared.buildFullInstructions(for: skill, budget: budget)
                     output += "\n\n"
+                }
+                if !blockedSkills.isEmpty {
+                    output += "Skipped disabled or ungranted skills: \(blockedSkills.joined(separator: ", "))\n"
                 }
             }
 
@@ -1087,6 +1101,20 @@ final class CapabilitiesLoadTool: OsaurusTool, @unchecked Sendable {
         }
     }
 
+    /// Mirrors the tool grant boundary for every path that can inject skill
+    /// instructions or package references into the model context.
+    private func grantedSkillNamesForCurrentAgent() async -> Set<String>? {
+        let id: UUID
+        if let contextId = ChatExecutionContext.currentAgentId {
+            id = contextId
+        } else {
+            id = await MainActor.run { AgentManager.shared.activeAgent.id }
+        }
+        return await MainActor.run {
+            AgentManager.shared.effectiveEnabledSkillNames(for: id).map(Set.init)
+        }
+    }
+
     /// Buffer the named tools' specs into the session load buffer so they
     /// become callable after the next drain. Returns the `Auto-loaded tools`
     /// summary line, or an empty string when there is nothing to load. Shared
@@ -1146,6 +1174,15 @@ final class CapabilitiesLoadTool: OsaurusTool, @unchecked Sendable {
         guard skill.enabled else {
             return .failure(
                 LoadFailure(kind: .rejected, message: "Skill '\(skill.name)' is disabled.")
+            )
+        }
+        let allowedSkillNames = await grantedSkillNamesForCurrentAgent()
+        if let allowedSkillNames, !allowedSkillNames.contains(skill.name) {
+            return .failure(
+                LoadFailure(
+                    kind: .rejected,
+                    message: "Skill '\(skill.name)' is not enabled for this agent."
+                )
             )
         }
         var output = "## Skill: \(skill.name)\n"
@@ -1254,8 +1291,13 @@ final class CapabilitiesLoadTool: OsaurusTool, @unchecked Sendable {
         // Governing skill(s) first — their instructions teach the tool
         // ordering a name-only manifest can't convey. Mirrors `loadSkill`.
         var output = ""
+        let allowedSkillNames = await grantedSkillNamesForCurrentAgent()
         let governingSkills = await MainActor.run {
-            SkillManager.shared.skills.filter { $0.enabled && $0.pluginId == pluginId }
+            SkillManager.shared.skills.filter {
+                $0.enabled
+                    && $0.pluginId == pluginId
+                    && (allowedSkillNames?.contains($0.name) ?? true)
+            }
         }
         for skill in governingSkills {
             output += "## Skill: \(skill.name)\n"

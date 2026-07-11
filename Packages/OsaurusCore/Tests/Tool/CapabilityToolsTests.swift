@@ -965,11 +965,13 @@ struct CapabilitiesLoadToolTests {
                     pluginId: plugin.id
                 )
                 await SkillManager.shared.registerPluginSkill(skill)
+                let persistedSkill = try #require(SkillManager.shared.skill(for: skill.id))
 
                 let agent = Agent(
                     name: "SkillAutoLoad-\(UUID().uuidString.prefix(6))",
                     agentAddress: "skill-autoload-\(UUID().uuidString)",
-                    manualToolNames: [groupTool.name]
+                    manualToolNames: [groupTool.name],
+                    manualSkillNames: [persistedSkill.name]
                 )
                 AgentManager.shared.add(agent)
                 _ = await CapabilityLoadBuffer.shared.drain()
@@ -977,7 +979,7 @@ struct CapabilitiesLoadToolTests {
                 let tool = CapabilitiesLoadTool()
                 let result = try await ChatExecutionContext.$currentAgentId.withValue(agent.id) {
                     try await tool.execute(
-                        argumentsJSON: "{\"ids\": [\"skill/\(skill.name)\"]}"
+                        argumentsJSON: "{\"ids\": [\"skill/\(persistedSkill.name)\"]}"
                     )
                 }
 
@@ -990,8 +992,21 @@ struct CapabilitiesLoadToolTests {
                 let buffered = await CapabilityLoadBuffer.shared.drain()
                 #expect(buffered.contains(where: { $0.function.name == groupTool.name }))
 
+                let deniedAgent = Agent(
+                    name: "SkillDenied-\(UUID().uuidString.prefix(6))",
+                    agentAddress: "skill-denied-\(UUID().uuidString)",
+                    manualToolNames: [groupTool.name],
+                    manualSkillNames: []
+                )
+                AgentManager.shared.add(deniedAgent)
+                let deniedResult = try await ChatExecutionContext.$currentAgentId.withValue(deniedAgent.id) {
+                    try await tool.execute(argumentsJSON: "{\"ids\": [\"skill/\(persistedSkill.name)\"]}")
+                }
+                #expect(deniedResult.contains("not enabled for this agent"))
+
                 await SkillManager.shared.unregisterPluginSkills(pluginId: plugin.id)
                 _ = await AgentManager.shared.delete(id: agent.id)
+                _ = await AgentManager.shared.delete(id: deniedAgent.id)
             }
         }
     }
