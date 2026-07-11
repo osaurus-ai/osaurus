@@ -542,6 +542,7 @@ public final class ChatWindowManager: NSObject, ObservableObject {
         windows[windowId] = ChatWindowInfo(
             id: windowId,
             agentId: context.agentId,
+            sessionId: context.id,
             createdAt: Date()
         )
 

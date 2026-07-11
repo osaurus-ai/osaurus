@@ -34,6 +34,25 @@ The copy guarantee applies only to reports produced by the trace inspector. It
 does not claim that scheduler instructions, SQL changelog rows, errors, or other
 content elsewhere in the Activity tab are redacted.
 
+## Run continuity
+
+The Activity tab also links a persisted run to its saved chat when that link is
+available. `Open Chat` reuses the live background task first, focuses an
+already-open saved chat second, and only then opens the persisted session. A
+chat is never opened through a run owned by another agent.
+
+`Cancel Run` appears only when `BackgroundTaskManager` still owns the exact
+persisted run id. A database row whose status is `running` is not sufficient
+evidence that work is live, so stale rows never receive a cancel action.
+
+On an unclean app exit, a persisted `running` row can outlive the process that
+owned it. The next Activity load marks only pre-process orphan rows as
+`interrupted`; current-process and manager-owned rows are excluded. The
+reconciliation timestamp is approximate. An interrupted run is not a model
+failure, and its previous inference stream cannot be resumed, though its saved
+chat can still be opened when available. Clean app termination continues to
+record active tasks as `cancelled`.
+
 ## Programmatic usage
 
 ```swift
@@ -127,6 +146,7 @@ Focused coverage lives in:
 
 ```text
 Packages/OsaurusCore/Tests/Agent/RunTraceInspectorTests.swift
+Packages/OsaurusCore/Tests/Agent/AgentRunContinuityTests.swift
 Packages/OsaurusCore/Tests/Agent/Fixtures/RunTrace/
 ```
 
@@ -135,5 +155,6 @@ Run the focused lane from the repository root:
 ```bash
 OSAURUS_DISABLE_KEYCHAIN_FOR_TESTS=1 \
 OSAURUS_TEST_ROOT=/tmp/osaurus-test \
-swift test --package-path Packages/OsaurusCore --filter RunTraceInspectorTests
+swift test --package-path Packages/OsaurusCore \
+  --filter 'RunTraceInspectorTests|AgentRunContinuityTests'
 ```

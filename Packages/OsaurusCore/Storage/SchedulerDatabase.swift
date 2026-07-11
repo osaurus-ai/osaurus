@@ -87,6 +87,7 @@ public enum AgentRunStatus: String, Codable, Sendable, CaseIterable {
     case error
     case cancelled
     case clamped
+    case interrupted
 }
 
 /// One row in `agent_next_run`. The "next run" slot is a single row per
@@ -140,6 +141,7 @@ public struct AgentRunRecord: Codable, Sendable, Equatable {
     public var tokensOut: Int?
     public var costUSD: Double?
     public var error: String?
+    public var sessionId: UUID?
 
     public init(
         id: UUID,
@@ -153,7 +155,8 @@ public struct AgentRunRecord: Codable, Sendable, Equatable {
         tokensIn: Int? = nil,
         tokensOut: Int? = nil,
         costUSD: Double? = nil,
-        error: String? = nil
+        error: String? = nil,
+        sessionId: UUID? = nil
     ) {
         self.id = id
         self.agentId = agentId
@@ -167,6 +170,7 @@ public struct AgentRunRecord: Codable, Sendable, Equatable {
         self.tokensOut = tokensOut
         self.costUSD = costUSD
         self.error = error
+        self.sessionId = sessionId
     }
 }
 
@@ -189,7 +193,7 @@ public struct AgentPauseRecord: Codable, Sendable, Equatable {
 public final class SchedulerDatabase: @unchecked Sendable {
     public static let shared = SchedulerDatabase()
 
-    private static let schemaVersion = 1
+    private static let schemaVersion = 2
 
     private var db: OpaquePointer?
     private let queue = DispatchQueue(label: "ai.osaurus.scheduler.database")
@@ -267,6 +271,7 @@ public final class SchedulerDatabase: @unchecked Sendable {
     private func runMigrations() throws {
         let current = try getSchemaVersion()
         if current < 1 { try migrateToV1() }
+        if current < 2 { try migrateToV2() }
     }
 
     private func getSchemaVersion() throws -> Int {
@@ -281,6 +286,19 @@ public final class SchedulerDatabase: @unchecked Sendable {
 
     private func setSchemaVersion(_ v: Int) throws {
         try executeRaw("PRAGMA user_version = \(v)")
+    }
+
+    private func tableHasColumn(_ table: String, _ column: String) -> Bool {
+        var found = false
+        try? executeRaw("PRAGMA table_info(\(table))") { statement in
+            while sqlite3_step(statement) == SQLITE_ROW {
+                if String(cString: sqlite3_column_text(statement, 1)) == column {
+                    found = true
+                    break
+                }
+            }
+        }
+        return found
     }
 
     private func migrateToV1() throws {
@@ -338,6 +356,20 @@ public final class SchedulerDatabase: @unchecked Sendable {
         )
 
         try setSchemaVersion(1)
+    }
+
+    private func migrateToV2() throws {
+        try executeRaw("BEGIN IMMEDIATE")
+        do {
+            if !tableHasColumn("agent_runs", "session_id") {
+                try executeRaw("ALTER TABLE agent_runs ADD COLUMN session_id TEXT")
+            }
+            try setSchemaVersion(2)
+            try executeRaw("COMMIT")
+        } catch {
+            try? executeRaw("ROLLBACK")
+            throw error
+        }
     }
 
     // MARK: - agent_next_run
@@ -457,6 +489,7 @@ public final class SchedulerDatabase: @unchecked Sendable {
         triggerKind: AgentRunTriggerKind,
         triggerPayload: String? = nil,
         instructions: String,
+        sessionId: UUID? = nil,
         startedAt: Date = Date(),
         id: UUID = UUID()
     ) throws -> UUID {
@@ -464,8 +497,8 @@ public final class SchedulerDatabase: @unchecked Sendable {
             """
                 INSERT INTO agent_runs
                     (id, agent_id, trigger_kind, trigger_payload, instructions,
-                     started_at, status)
-                VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+                     started_at, status, session_id)
+                VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
             """,
             bind: { stmt in
                 Self.bindText(stmt, index: 1, value: id.uuidString)
@@ -475,6 +508,7 @@ public final class SchedulerDatabase: @unchecked Sendable {
                 Self.bindText(stmt, index: 5, value: instructions)
                 sqlite3_bind_int64(stmt, 6, Int64(startedAt.timeIntervalSince1970))
                 Self.bindText(stmt, index: 7, value: AgentRunStatus.running.rawValue)
+                Self.bindText(stmt, index: 8, value: sessionId?.uuidString)
             },
             process: { stmt in
                 let step = sqlite3_step(stmt)
@@ -539,7 +573,7 @@ public final class SchedulerDatabase: @unchecked Sendable {
             """
                 SELECT id, trigger_kind, trigger_payload, instructions,
                        started_at, ended_at, status, tokens_in, tokens_out,
-                       cost_usd, error
+                       cost_usd, error, session_id
                 FROM agent_runs
                 WHERE agent_id = ?1
             """
@@ -569,6 +603,48 @@ public final class SchedulerDatabase: @unchecked Sendable {
             }
         )
         return records
+    }
+
+    /// Marks rows left running by an earlier process as interrupted. Timestamps are
+    /// stored to the second, so current manager-owned rows are protected by `excluding`.
+    @discardableResult
+    public func reconcileInterruptedRuns(
+        startedBefore processStartedAt: Date,
+        excluding activeRunIds: Set<UUID>,
+        endedAt: Date = Date()
+    ) throws -> Int {
+        var sql =
+            "UPDATE agent_runs SET ended_at = ?1, status = ?2, error = NULL "
+            + "WHERE status = ?3 AND started_at <= ?4"
+        let sortedIds = activeRunIds.map(\.uuidString).sorted()
+        if !sortedIds.isEmpty {
+            let placeholders = (0..<sortedIds.count).map { "?\($0 + 5)" }.joined(separator: ",")
+            sql += " AND id NOT IN (\(placeholders))"
+        }
+
+        var changed = 0
+        try prepareAndExecute(
+            sql,
+            bind: { stmt in
+                sqlite3_bind_int64(stmt, 1, Int64(endedAt.timeIntervalSince1970))
+                Self.bindText(stmt, index: 2, value: AgentRunStatus.interrupted.rawValue)
+                Self.bindText(stmt, index: 3, value: AgentRunStatus.running.rawValue)
+                sqlite3_bind_int64(stmt, 4, Int64(processStartedAt.timeIntervalSince1970))
+                for (offset, id) in sortedIds.enumerated() {
+                    Self.bindText(stmt, index: offset + 5, value: id)
+                }
+            },
+            process: { stmt in
+                let step = sqlite3_step(stmt)
+                guard step == SQLITE_DONE else {
+                    throw SchedulerDatabaseError.failedToExecute(
+                        "reconcileInterruptedRuns: step returned \(step)"
+                    )
+                }
+                changed = Int(sqlite3_changes(self.db))
+            }
+        )
+        return changed
     }
 
     /// Count of runs in the rolling window ending `now` that we should
@@ -738,6 +814,8 @@ public final class SchedulerDatabase: @unchecked Sendable {
         let tokensOut: Int? = sqlite3_column_type(stmt, 8) == SQLITE_NULL ? nil : Int(sqlite3_column_int(stmt, 8))
         let cost: Double? = sqlite3_column_type(stmt, 9) == SQLITE_NULL ? nil : sqlite3_column_double(stmt, 9)
         let error = sqlite3_column_text(stmt, 10).map { String(cString: $0) }
+        let sessionId = sqlite3_column_text(stmt, 11)
+            .flatMap { UUID(uuidString: String(cString: $0)) }
 
         return AgentRunRecord(
             id: runId,
@@ -751,7 +829,8 @@ public final class SchedulerDatabase: @unchecked Sendable {
             tokensIn: tokensIn,
             tokensOut: tokensOut,
             costUSD: cost,
-            error: error
+            error: error,
+            sessionId: sessionId
         )
     }
 

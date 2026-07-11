@@ -381,6 +381,7 @@ public final class NextRunScheduler {
         case .cancelled: return "was cancelled"
         case .clamped: return "was clamped"
         case .running: return "was still running"
+        case .interrupted: return "was interrupted when Osaurus stopped"
         }
     }
 

@@ -336,6 +336,8 @@ extension ScheduleRunStatus {
             self = .cancelled
         case .clamped:
             self = .skipped
+        case .interrupted:
+            self = .cancelled
         }
     }
 }

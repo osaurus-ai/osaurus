@@ -11,12 +11,66 @@
 
 import SwiftUI
 
+enum ActivityRunChatRouting {
+    static func sessionBelongsToRun(sessionAgentId: UUID?, runAgentId: UUID) -> Bool {
+        (sessionAgentId ?? Agent.defaultId) == runAgentId
+    }
+}
+
+enum ActivityRunRefreshPolicy {
+    static func shouldReload(previouslyLive: Bool, currentlyLive: Bool) -> Bool {
+        previouslyLive || currentlyLive
+    }
+}
+
+enum ActivityRunFilter: String, CaseIterable, Identifiable {
+    case all
+    case active
+    case completed
+    case attention
+
+    var id: String { rawValue }
+
+    var label: LocalizedStringKey {
+        switch self {
+        case .all: return "All"
+        case .active: return "Active"
+        case .completed: return "Done"
+        case .attention: return "Attention"
+        }
+    }
+
+    func includes(_ run: AgentRunRecord, liveRunIds: Set<UUID>) -> Bool {
+        switch self {
+        case .all:
+            return true
+        case .active:
+            return liveRunIds.contains(run.id)
+        case .completed:
+            return run.status == .success
+        case .attention:
+            return run.status == .error || run.status == .interrupted
+        }
+    }
+
+    static func matchesSearch(_ run: AgentRunRecord, searchText: String) -> Bool {
+        let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !query.isEmpty else { return true }
+        return run.status.rawValue.lowercased().contains(query)
+            || run.triggerKind.rawValue.lowercased().contains(query)
+            || run.instructions.lowercased().contains(query)
+    }
+}
+
 struct DatabaseHistoryView: View {
     @Environment(\.theme) private var theme
+    @ObservedObject private var backgroundManager = BackgroundTaskManager.shared
 
     let agentId: UUID
 
     @State private var runs: [AgentRunRecord] = []
+    @State private var filter: ActivityRunFilter = .all
+    @State private var searchText = ""
     @State private var selectedRunId: UUID? = nil
     @State private var changelogRows: [ChangelogEntry] = []
     @State private var traceInspection: RunTraceInspection?
@@ -26,6 +80,8 @@ struct DatabaseHistoryView: View {
     @State private var traceLoadError: String?
     @State private var traceLoadRequestID: UUID?
     @State private var traceLoaderTask: Task<TraceLoadResult, Never>?
+    @State private var didReconcileInterruptedRuns = false
+    @State private var actionError: String?
 
     init(agentId: UUID) {
         self.agentId = agentId
@@ -45,10 +101,26 @@ struct DatabaseHistoryView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(theme.primaryBackground)
-        .task { await loadRuns() }
-        .onChange(of: agentId) { _, _ in Task { await loadRuns() } }
-        .onChange(of: selectedRunId) { _, _ in Task { await loadTrace() } }
+        .task { await activityRefreshLoop() }
+        .onChange(of: agentId) { _, _ in
+            didReconcileInterruptedRuns = false
+            actionError = nil
+            selectedRunId = nil
+            runs = []
+            Task { await loadRuns() }
+        }
+        .onChange(of: selectedRunId) { _, _ in
+            actionError = nil
+            Task { await loadTrace() }
+        }
         .onDisappear { traceLoaderTask?.cancel() }
+    }
+
+    private var filteredRuns: [AgentRunRecord] {
+        runs.filter { run in
+            filter.includes(run, liveRunIds: backgroundManager.liveAgentRunIds)
+                && ActivityRunFilter.matchesSearch(run, searchText: searchText)
+        }
     }
 
     @ViewBuilder
@@ -70,18 +142,53 @@ struct DatabaseHistoryView: View {
             }
             .padding(.horizontal, 14)
             .padding(.vertical, 9)
+            VStack(spacing: 7) {
+                Picker("Run status", selection: $filter) {
+                    ForEach(ActivityRunFilter.allCases) { value in
+                        Text(value.label, bundle: .module).tag(value)
+                    }
+                }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+
+                HStack(spacing: 6) {
+                    Image(systemName: "magnifyingglass")
+                        .foregroundColor(theme.tertiaryText)
+                    TextField("Search runs", text: $searchText)
+                        .textFieldStyle(.plain)
+                }
+                .font(.system(size: 11))
+                .padding(.horizontal, 8)
+                .frame(height: 26)
+                .background(
+                    RoundedRectangle(cornerRadius: 5)
+                        .fill(theme.secondaryBackground)
+                )
+            }
+            .padding(.horizontal, 10)
+            .padding(.bottom, 8)
             Divider().foregroundColor(theme.primaryBorder)
             if isLoadingRuns {
                 ProgressView().padding(24)
-            } else if runs.isEmpty {
-                Text("No runs yet. When the agent works on a schedule or automation, each run shows up here.", bundle: .module)
+            } else if let loadError {
+                Text(loadError)
+                    .font(.system(size: 11))
+                    .foregroundColor(.red)
+                    .padding(16)
+            } else if filteredRuns.isEmpty {
+                Text(
+                    runs.isEmpty
+                        ? "No runs yet. When the agent works on a schedule or automation, each run shows up here."
+                        : "No runs match this filter.",
+                    bundle: .module
+                )
                     .font(.system(size: 12))
                     .foregroundColor(theme.tertiaryText)
                     .padding(24)
             } else {
                 ScrollView {
                     LazyVStack(alignment: .leading, spacing: 1) {
-                        ForEach(runs, id: \.id) { run in
+                        ForEach(filteredRuns, id: \.id) { run in
                             runRow(run)
                         }
                     }
@@ -156,6 +263,9 @@ struct DatabaseHistoryView: View {
         case .clamped:
             Image(systemName: "exclamationmark.triangle.fill")
                 .foregroundColor(.yellow)
+        case .interrupted:
+            Image(systemName: "bolt.slash.circle.fill")
+                .foregroundColor(.orange)
         }
     }
 
@@ -242,6 +352,14 @@ struct DatabaseHistoryView: View {
                     .foregroundColor(.red)
                     .lineLimit(3)
             }
+            if run.status == .interrupted {
+                Text(
+                    "Osaurus stopped before this run recorded completion. The model did not report a failure, and the prior stream cannot be resumed.",
+                    bundle: .module
+                )
+                .font(.system(size: 10))
+                .foregroundColor(.orange)
+            }
             HStack(spacing: 12) {
                 if let tin = run.tokensIn {
                     statBadge(label: "in", value: "\(tin)")
@@ -258,6 +376,46 @@ struct DatabaseHistoryView: View {
                 .font(.system(size: 11))
                 .foregroundColor(theme.tertiaryText)
                 .lineLimit(3)
+            HStack(spacing: 8) {
+                if run.sessionId != nil
+                    || backgroundManager.taskId(forAgentRunId: run.id, agentId: run.agentId) != nil
+                {
+                    Button {
+                        openChat(for: run)
+                    } label: {
+                        Label {
+                            Text("Open Chat", bundle: .module)
+                        } icon: {
+                            Image(systemName: "bubble.left.and.bubble.right")
+                        }
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                }
+                if let taskId = backgroundManager.taskId(
+                    forAgentRunId: run.id,
+                    agentId: run.agentId
+                ) {
+                    Button(role: .destructive) {
+                        backgroundManager.cancelTask(taskId)
+                        Task { await loadRuns() }
+                    } label: {
+                        Label {
+                            Text("Cancel Run", bundle: .module)
+                        } icon: {
+                            Image(systemName: "stop.fill")
+                        }
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                }
+                Spacer()
+            }
+            if let actionError {
+                Text(actionError)
+                    .font(.system(size: 10))
+                    .foregroundColor(.red)
+            }
         }
         .padding(12)
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -328,11 +486,28 @@ struct DatabaseHistoryView: View {
 
     @MainActor
     private func loadRuns() async {
-        isLoadingRuns = true
-        defer { isLoadingRuns = false }
+        let requestedAgentId = agentId
+        let shouldReconcile = !didReconcileInterruptedRuns
+        let showInitialSpinner = runs.isEmpty
+        if showInitialSpinner { isLoadingRuns = true }
+        defer {
+            if showInitialSpinner { isLoadingRuns = false }
+        }
         do {
             try SchedulerDatabase.shared.open()
-            runs = try SchedulerDatabase.shared.runs(agentId: agentId, limit: 200)
+            if shouldReconcile {
+                _ = try SchedulerDatabase.shared.reconcileInterruptedRuns(
+                    startedBefore: backgroundManager.processStartedAt,
+                    excluding: backgroundManager.liveAgentRunIds
+                )
+                didReconcileInterruptedRuns = true
+            }
+            let refreshedRuns = try await Task.detached(priority: .utility) {
+                try SchedulerDatabase.shared.runs(agentId: requestedAgentId, limit: 200)
+            }.value
+            guard agentId == requestedAgentId else { return }
+            runs = refreshedRuns
+            loadError = nil
             if let current = selectedRunId,
                 runs.contains(where: { $0.id == current })
             {
@@ -376,6 +551,76 @@ struct DatabaseHistoryView: View {
         changelogRows = result.changelogRows
         traceLoadError = result.errorMessage
         isLoadingTrace = false
+    }
+
+    @MainActor
+    private func activityRefreshLoop() async {
+        await loadRuns()
+        var previouslyLive = !backgroundManager.liveAgentRunIds.isEmpty
+        while !Task.isCancelled {
+            do {
+                try await Task.sleep(for: .seconds(5))
+            } catch {
+                return
+            }
+            let currentlyLive = !backgroundManager.liveAgentRunIds.isEmpty
+            if ActivityRunRefreshPolicy.shouldReload(
+                previouslyLive: previouslyLive,
+                currentlyLive: currentlyLive
+            ) {
+                await loadRuns()
+            }
+            previouslyLive = currentlyLive
+        }
+    }
+
+    @MainActor
+    private func openChat(for run: AgentRunRecord) {
+        actionError = nil
+        if let taskId = backgroundManager.taskId(forAgentRunId: run.id, agentId: run.agentId) {
+            backgroundManager.openTaskWindow(taskId)
+            return
+        }
+        guard let sessionId = run.sessionId else {
+            actionError = String(localized: "No chat is linked to this run.", bundle: .module)
+            return
+        }
+        if let existing = ChatWindowManager.shared.findWindow(bySessionId: sessionId) {
+            guard ActivityRunChatRouting.sessionBelongsToRun(
+                sessionAgentId: existing.agentId,
+                runAgentId: run.agentId
+            ) else {
+                actionError = String(
+                    localized: "The linked chat belongs to another agent.",
+                    bundle: .module
+                )
+                return
+            }
+            ChatWindowManager.shared.showWindow(id: existing.id)
+            return
+        }
+        guard let session = ChatSessionStore.load(id: sessionId) else {
+            actionError = String(
+                localized: "The linked chat is no longer available.",
+                bundle: .module
+            )
+            return
+        }
+        guard ActivityRunChatRouting.sessionBelongsToRun(
+            sessionAgentId: session.agentId,
+            runAgentId: run.agentId
+        ) else {
+            actionError = String(
+                localized: "The linked chat belongs to another agent.",
+                bundle: .module
+            )
+            return
+        }
+        ChatWindowManager.shared.createWindow(
+            agentId: run.agentId,
+            sessionData: session,
+            showImmediately: true
+        )
     }
 }
 

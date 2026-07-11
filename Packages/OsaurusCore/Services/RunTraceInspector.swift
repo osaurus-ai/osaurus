@@ -1108,7 +1108,9 @@ public enum RunTraceInspector {
             )
         }
         if let status = optionalString(root["status"]) {
-            let knownStatuses = ["success", "error", "cancelled", "clamped", "running"]
+            let knownStatuses = [
+                "success", "error", "cancelled", "clamped", "running", "interrupted",
+            ]
             if !knownStatuses.contains(status) {
                 findings.append(
                     .init(
