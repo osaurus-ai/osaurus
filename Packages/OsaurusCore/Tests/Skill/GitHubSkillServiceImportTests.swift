@@ -740,6 +740,67 @@ struct GitHubSkillServiceImportTests {
         #expect(store.load(repo: repo) == nil)
     }
 
+    @Test func sameServiceRetryClearsTreeCacheAndRejectsStaleCheckpoint() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(
+            "osaurus-github-import-same-service-retry-\(UUID().uuidString)",
+            isDirectory: true
+        )
+        let store = GitHubImportCheckpointStore(directory: directory)
+        let log = RequestLog()
+        let repo = GitHubRepo(owner: "acme", name: "widgets", branch: "main")
+        let marketplace = GitHubMarketplace(
+            name: "fixture",
+            owner: nil,
+            metadata: nil,
+            plugins: [MarketplacePlugin(name: "one", source: .localDirectory("./one"))]
+        )
+        let service = makeService(log: log, checkpointStore: store) { request in
+            switch request.url?.path {
+            case "/repos/acme/widgets":
+                return .json(#"{"default_branch":"main"}"#)
+            case "/repos/acme/widgets/contents/.claude-plugin/marketplace.json":
+                return .text(#"{"name":"fixture","plugins":[{"name":"one","source":"./one"}]}"#)
+            case "/repos/acme/widgets/git/trees/main":
+                let treeRequestCount = log.requests().filter {
+                    $0.url?.path == "/repos/acme/widgets/git/trees/main"
+                }.count
+                let generation = treeRequestCount == 1 ? "old" : "fresh"
+                return .json(
+                    #"{"sha":"root-\#(generation)","truncated":false,"tree":[{"path":"one","type":"tree","sha":"one-\#(generation)-sha"},{"path":"one/skills","type":"tree","sha":"skills-\#(generation)-sha"},{"path":"one/skills/\#(generation)","type":"tree","sha":"skill-dir-\#(generation)-sha"},{"path":"one/skills/\#(generation)/SKILL.md","type":"blob","size":42,"sha":"skill-\#(generation)-sha"}]}"#
+                )
+            default:
+                return .notFound()
+            }
+        }
+        defer {
+            service.invalidateForTests()
+            try? FileManager.default.removeItem(at: directory)
+        }
+
+        let first = try await service.fetchPlugins(from: "acme/widgets")
+        #expect(first.plugins[0].skills.map(\.path) == ["one/skills/old"])
+
+        store.save(
+            GitHubImportCheckpoint(
+                repo: repo,
+                marketplacePluginNames: ["one"],
+                marketplaceFingerprint: GitHubImportCheckpoint.fingerprint(for: marketplace),
+                sourceFingerprints: ["one": "acme/widgets@main:one:one-old-sha"],
+                manifests: first.plugins
+            )
+        )
+
+        let retried = try await service.fetchPlugins(from: "acme/widgets")
+
+        #expect(retried.plugins[0].skills.map(\.path) == ["one/skills/fresh"])
+        #expect(service.importProgress?.resumedFromCheckpoint == false)
+        #expect(
+            log.requests().filter {
+                $0.url?.path == "/repos/acme/widgets/git/trees/main"
+            }.count == 2
+        )
+    }
+
     @Test func poisonedCheckpointManifestIsIgnoredWhenLiveSourceFingerprintMatches() async throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(
             "osaurus-github-import-poisoned-checkpoint-\(UUID().uuidString)",

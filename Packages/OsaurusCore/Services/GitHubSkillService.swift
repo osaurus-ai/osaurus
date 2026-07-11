@@ -1330,6 +1330,10 @@ private struct GitHubTreeSnapshot: Sendable {
 private actor GitHubRecursiveTreeCache {
     private var snapshots: [String: GitHubTreeSnapshot] = [:]
 
+    func clear() {
+        snapshots.removeAll(keepingCapacity: true)
+    }
+
     func snapshot(
         for repo: GitHubRepo,
         load: @Sendable () async throws -> GitHubTreeSnapshot
@@ -1635,6 +1639,7 @@ public final class GitHubSkillService: ObservableObject {
         isLoading = true
         error = nil
         importProgress = nil
+        await treeCache.clear()
 
         defer { isLoading = false }
 
@@ -1714,6 +1719,7 @@ public final class GitHubSkillService: ObservableObject {
         isLoading = true
         error = nil
         importProgress = nil
+        await treeCache.clear()
 
         defer { isLoading = false }
 
