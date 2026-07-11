@@ -116,7 +116,7 @@ struct ClipboardContentDiagnosticsTests {
         )
 
         #expect(report.needsUserAttention == false)
-        #expect(report.userFacingMessage.contains("file(extension: pdf)"))
+        #expect(report.userFacingMessage.contains("a file"))
         #expect(report.redactedDiagnosticDescription.contains("file(extension: pdf)"))
         #expect(report.redactedDiagnosticDescription.contains("Secret") == false)
         #expect(report.redactedDiagnosticDescription.contains("/Users/example") == false)
@@ -125,8 +125,16 @@ struct ClipboardContentDiagnosticsTests {
     @Test func hotkeySelectionGrabAwaitsBeforeOverlayTakesFocus() throws {
         let source = try sourceFile("AppDelegate.swift")
 
-        #expect(source.contains("_ = await ClipboardService.shared.grabSelectionReport()"))
-        #expect(!source.contains("Task {\n                        _ = await ClipboardService.shared.grabSelectionReport()"))
+        let applyHotkeyStart = try #require(source.range(of: "func applyChatHotkey()"))
+        let helperStart = try #require(source.range(of: "private func captureSelectionForHotkey"))
+        let applySection = String(source[applyHotkeyStart.lowerBound ..< helperStart.lowerBound])
+
+        #expect(applySection.contains("captureSelectionForHotkey(withMaxWaitNanos"))
+        #expect(!applySection.contains("grabSelectionReport()"))
+
+        let helperSection = String(source[helperStart.lowerBound ..< source.endIndex])
+        #expect(helperSection.contains("withTaskGroup(of: Bool.self)"))
+        #expect(helperSection.contains("try? await Task.sleep"))
     }
 
     @Test func selectionFailureChipTakesPriorityOverUnreadClipboardChip() throws {

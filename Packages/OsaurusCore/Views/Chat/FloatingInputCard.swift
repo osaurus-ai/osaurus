@@ -600,7 +600,8 @@ struct FloatingInputCard: View {
             || (displayContextTokens > 0 && !isRemoteAgentRun)
             || isSandboxAvailable
             || isDefaultConfigAgent
-            || (appConfig.chatConfig.enableClipboardMonitoring && clipboardService.hasNewContent)
+            || (appConfig.chatConfig.enableClipboardMonitoring && (clipboardService.hasNewContent
+            || clipboardService.lastSelectionGrabReport?.needsUserAttention == true))
             || showCreditsChip
     }
 

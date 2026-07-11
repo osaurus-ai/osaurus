@@ -36,6 +36,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
     private var shouldLoadPluginsAfterFirstServerStart = false
     private var hasCompletedFirstServerStartWork = false
     private var launchEmbeddingInitTask: Task<Void, Never>?
+    private var isCapturingSelectionForHotkey = false
     private var keychainDisabledTestMode: Bool {
         StorageKeyManager.disablesKeychainForProcess
     }
@@ -1811,12 +1812,35 @@ extension AppDelegate {
                 // if opening (about to be shown), and clipboard monitoring is enabled, trigger a selection grab before showing Osaurus
                 // to capture content from the currently active application.
                 if !ChatWindowManager.shared.hasVisibleWindows && cfg.enableClipboardMonitoring {
-                    // Finish the bounded selection grab before the overlay takes focus.
-                    _ = await ClipboardService.shared.grabSelectionReport()
+                    // Avoid waiting the full 500ms in the common case.
+                    // If the grab finishes, the overlay opens sooner with fresh diagnostics;
+                    // if it stalls, we still open within 150ms and surface a result when ready.
+                    await self?.captureSelectionForHotkey(withMaxWaitNanos: 150_000_000)
                 }
 
                 self?.toggleChatOverlay()
             }
+        }
+    }
+
+    @MainActor
+    private func captureSelectionForHotkey(withMaxWaitNanos maxWaitNanos: UInt64) async {
+        guard !isCapturingSelectionForHotkey else { return }
+        isCapturingSelectionForHotkey = true
+        defer { isCapturingSelectionForHotkey = false }
+
+        await withTaskGroup(of: Bool.self) { group in
+            group.addTask {
+                _ = await ClipboardService.shared.grabSelectionReport()
+                return true
+            }
+            group.addTask {
+                try? await Task.sleep(nanoseconds: maxWaitNanos)
+                return false
+            }
+
+            _ = await group.next()
+            group.cancelAll()
         }
     }
     fileprivate func handleDeepLink(_ url: URL) {

@@ -68,7 +68,8 @@ public final class ClipboardService: ObservableObject {
             case .capturedText(let count):
                 return L("Captured selected text (\(count) characters).")
             case .capturedNonText(let summary):
-                return L("Captured \(summary), but only text selections can be inserted automatically.")
+                let noun = summary.hasPrefix("image(") ? "an image" : summary.hasPrefix("file(") ? "a file" : "non-text content"
+                return L("Captured \(noun), but only text selections can be inserted automatically.")
             case .accessibilityDenied:
                 return L("Osaurus could not request the selection. Enable Accessibility permission, then try again.")
             case .pasteboardReadFailed:
@@ -233,6 +234,9 @@ public final class ClipboardService: ObservableObject {
             if markIdenticalAsNew {
                 hasNewContent = true
                 lastSelectionGrabReport = nil
+                if let frontmost = NSWorkspace.shared.frontmostApplication {
+                    lastSourceApp = frontmost.localizedName ?? frontmost.bundleIdentifier
+                }
             }
             return content
         }
@@ -379,6 +383,10 @@ public final class ClipboardService: ObservableObject {
 
     private func contentPublished(forChangeCount changeCount: Int) -> ClipboardContent? {
         guard currentContentChangeCount == changeCount else { return nil }
+        hasNewContent = true
+        if let frontmost = NSWorkspace.shared.frontmostApplication {
+            lastSourceApp = frontmost.localizedName ?? frontmost.bundleIdentifier
+        }
         return currentContent
     }
 
