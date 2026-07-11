@@ -551,6 +551,91 @@ struct RemoteChatRequestEncodingTests {
         #expect(payload["store"] as? Bool == false)
     }
 
+    @Test func codexResponsesLite_rewritesToolsInstructionsAndAffinity() throws {
+        let request = Self.makeRequest(
+            model: "gpt-5.6-luna",
+            maxTokens: 1024,
+            reasoningEffort: "high",
+            tools: [Self.weatherTool],
+            messages: [
+                ChatMessage(role: "system", content: "Be concise."),
+                ChatMessage(role: "user", content: "Weather in Paris?"),
+            ]
+        )
+        let sessionId = "019f4860-9ca3-7000-81e9-08939c58b0fa"
+        let data = try request.toCodexOpenResponsesRequest()
+            .toCodexOAuthPayloadData(responsesLiteSessionId: sessionId)
+        let payload = try Self.decodeAsDictionary(data)
+
+        #expect(payload["tools"] == nil)
+        #expect(payload["instructions"] == nil)
+        #expect(payload["tool_choice"] as? String == "auto")
+        #expect(payload["parallel_tool_calls"] as? Bool == false)
+        #expect(payload["prompt_cache_key"] as? String == sessionId)
+        #expect(payload["store"] as? Bool == false)
+        #expect(payload["include"] as? [String] == ["reasoning.encrypted_content"])
+
+        let reasoning = try #require(payload["reasoning"] as? [String: Any])
+        #expect(reasoning["effort"] as? String == "high")
+        #expect(reasoning["summary"] as? String == "auto")
+        #expect(reasoning["context"] as? String == "all_turns")
+
+        let input = try #require(payload["input"] as? [[String: Any]])
+        #expect(input.count == 3)
+        #expect(input[0]["type"] as? String == "additional_tools")
+        #expect(input[0]["role"] as? String == "developer")
+        let embeddedTools = try #require(input[0]["tools"] as? [[String: Any]])
+        #expect(embeddedTools.first?["name"] as? String == "get_weather")
+        #expect(input[1]["type"] as? String == "message")
+        #expect(input[1]["role"] as? String == "developer")
+        let developerContent = try #require(input[1]["content"] as? [[String: Any]])
+        #expect(developerContent.first?["type"] as? String == "input_text")
+        #expect(developerContent.first?["text"] as? String == "Be concise.")
+        #expect(input[2]["role"] as? String == "user")
+    }
+
+    @Test func codexLegacyResponses_keepsTopLevelToolsAndInstructions() throws {
+        let request = Self.makeRequest(
+            model: "gpt-5.5",
+            maxTokens: 1024,
+            tools: [Self.weatherTool],
+            messages: [
+                ChatMessage(role: "system", content: "Be concise."),
+                ChatMessage(role: "user", content: "Weather in Paris?"),
+            ]
+        )
+        let payload = try Self.decodeAsDictionary(
+            request.toCodexOpenResponsesRequest().toCodexOAuthPayloadData()
+        )
+
+        #expect(payload["tools"] is [[String: Any]])
+        #expect(payload["instructions"] as? String == "Be concise.")
+        #expect(payload["parallel_tool_calls"] == nil)
+        #expect(payload["prompt_cache_key"] == nil)
+    }
+
+    @Test func codexResponsesLiteUUID_isVersion7RFC4122() throws {
+        let date = Date(timeIntervalSince1970: 1_700_000_000)
+        let random = try #require(UUID(uuidString: "00112233-4455-4677-8899-aabbccddeeff"))
+        let generated = RemoteProviderService.makeUUIDv7(now: date, randomUUID: random)
+        let components = generated.split(separator: "-")
+
+        #expect(components.count == 5)
+        #expect(components[2].first == "7")
+        #expect(["8", "9", "a", "b"].contains(String(components[3].first ?? "x")))
+        #expect(UUID(uuidString: generated) != nil)
+    }
+
+    @Test func codexResponsesLiteHeaders_matchCodexContract() {
+        let sessionId = "019f4860-9ca3-7000-81e9-08939c58b0fa"
+        let headers = RemoteProviderService.codexResponsesLiteHeaders(sessionId: sessionId)
+
+        #expect(headers["session-id"] == sessionId)
+        #expect(headers["x-session-affinity"] == sessionId)
+        #expect(headers["version"] == OpenAICodexOAuthService.codexClientVersion)
+        #expect(headers["x-openai-internal-codex-responses-lite"] == "true")
+    }
+
     @Test func azureProvider_usesAPIKeyHeader() throws {
         let providerId = UUID()
         defer { RemoteProviderKeychain.deleteAPIKey(for: providerId) }

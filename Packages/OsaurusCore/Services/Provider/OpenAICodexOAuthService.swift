@@ -185,7 +185,25 @@ public enum OpenAICodexOAuthService {
         public let rawEntryCount: Int
         public let compatibleCount: Int
         public let filteredModels: [FilteredModel]
+        /// Picker-visible models that require Codex's Responses Lite wire
+        /// contract. This comes from the live catalog's
+        /// `use_responses_lite` field; do not infer it from model names.
+        public let responsesLiteModels: Set<String>
         public let fetchedAt: Date
+
+        public init(
+            rawEntryCount: Int,
+            compatibleCount: Int,
+            filteredModels: [FilteredModel],
+            responsesLiteModels: Set<String> = [],
+            fetchedAt: Date
+        ) {
+            self.rawEntryCount = rawEntryCount
+            self.compatibleCount = compatibleCount
+            self.filteredModels = filteredModels
+            self.responsesLiteModels = responsesLiteModels
+            self.fetchedAt = fetchedAt
+        }
     }
 
     private static let lastDiscoverySummaryBox = OSAllocatedUnfairLock<ModelDiscoverySummary?>(initialState: nil)
@@ -195,6 +213,16 @@ public enum OpenAICodexOAuthService {
     /// Codex catalog endpoint regardless of how many providers point at it.
     public static var lastModelDiscoverySummary: ModelDiscoverySummary? {
         lastDiscoverySummaryBox.withLock { $0 }
+    }
+
+    /// Whether the latest authenticated Codex catalog says `modelId` requires
+    /// Responses Lite. A missing catalog entry deliberately returns false:
+    /// fallback models predate the Lite contract, while live GPT-5.6 entries
+    /// carry the authoritative flag.
+    public static func usesResponsesLite(modelId: String) -> Bool {
+        lastDiscoverySummaryBox.withLock {
+            $0?.responsesLiteModels.contains(modelId) == true
+        }
     }
 
     /// Live model catalog fetched from the ChatGPT/Codex backend, matching what
@@ -252,6 +280,11 @@ public enum OpenAICodexOAuthService {
             rawEntryCount: decoded.models.count,
             compatibleCount: models.count,
             filteredModels: filtered,
+            responsesLiteModels: Set(
+                compatible
+                    .filter { $0.use_responses_lite == true }
+                    .map(\.slug)
+            ),
             fetchedAt: Date()
         )
         return (models, summary)
@@ -439,6 +472,7 @@ public enum OpenAICodexOAuthService {
         let visibility: String?
         let priority: Int?
         let shell_type: String?
+        let use_responses_lite: Bool?
     }
 
     private struct TokenResponse: Decodable {

@@ -161,6 +161,22 @@ struct OpenAICodexOAuthServiceTests {
         )
     }
 
+    @Test func decodeModelCatalog_preservesResponsesLiteCapability() throws {
+        let payload = """
+            {"models":[
+                {"slug":"gpt-5.6-sol","visibility":"list","priority":1,"shell_type":"shell_command","use_responses_lite":true},
+                {"slug":"gpt-5.6-terra","visibility":"list","priority":2,"shell_type":"shell_command","use_responses_lite":true},
+                {"slug":"gpt-5.6-luna","visibility":"list","priority":3,"shell_type":"shell_command","use_responses_lite":true},
+                {"slug":"gpt-5.5","visibility":"list","priority":4,"shell_type":"shell_command","use_responses_lite":false}
+            ]}
+            """
+        let (models, summary) = try OpenAICodexOAuthService.decodeModelCatalog(Data(payload.utf8))
+
+        #expect(models == ["gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna", "gpt-5.5"])
+        #expect(summary.responsesLiteModels == ["gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"])
+        #expect(!summary.responsesLiteModels.contains("gpt-5.5"))
+    }
+
     @Test func decodeModelCatalog_throwsTypedErrorForUnreadablePayload() {
         #expect(throws: OpenAICodexOAuthError.self) {
             _ = try OpenAICodexOAuthService.decodeModelCatalog(Data(#"{"models":"unexpected"}"#.utf8))
