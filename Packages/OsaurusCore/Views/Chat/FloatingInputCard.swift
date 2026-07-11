@@ -237,6 +237,9 @@ struct FloatingInputCard: View {
     /// Resolved directory for the latest listing; used to label + re-grant a
     /// denied folder.
     @State private var atMenuDirectory: String = ""
+    /// True while a listing is in flight for a brand-new query (no prior items
+    /// to keep showing). Suppresses an empty-state flash before results arrive.
+    @State private var atMenuLoading: Bool = false
     /// In-flight listing task; cancelled and replaced on every query change.
     @State private var atMenuTask: Task<Void, Never>?
 
@@ -293,12 +296,26 @@ struct FloatingInputCard: View {
         return afterAt
     }
 
-    /// Show the "@" menu when a query is active and it either produced entries
-    /// or hit a denied folder (whose recovery row we still want to surface).
+    /// Show the "@" menu when a query is active and there's something useful to
+    /// display: entries, a denied-folder recovery row, or an empty-folder
+    /// notice. Hidden for a not-found path (still being typed) and while the
+    /// first results for a new query are loading (avoids an empty flash).
     /// Never shown at the same time as the slash popup.
     private var showAtPopup: Bool {
         guard activeAtQuery != nil, !showSlashPopup else { return false }
-        return !atMenuItems.isEmpty || atMenuStatus == .denied
+        if !atMenuItems.isEmpty { return true }
+        switch atMenuStatus {
+        case .denied: return true
+        case .notFound: return false
+        case .ok: return !atMenuLoading  // empty folder / no matches, once loaded
+        }
+    }
+
+    /// Whether the current "@" query is narrowing by a partial name (vs. listing
+    /// a whole directory), used to pick the right empty-state wording.
+    private var atMenuIsFiltering: Bool {
+        guard let query = activeAtQuery else { return false }
+        return !query.isEmpty && !query.hasSuffix("/")
     }
 
     // Local state for text input to prevent parent re-renders on every keystroke
@@ -1758,9 +1775,13 @@ extension FloatingInputCard {
         guard let query = activeAtQuery else {
             atMenuItems = []
             atMenuStatus = .ok
+            atMenuLoading = false
             syncPopupVisibility()
             return
         }
+        // Only treat this as a blocking "load" when we have nothing to show yet;
+        // when refining an existing list we keep the current rows visible.
+        atMenuLoading = atMenuItems.isEmpty
         // Snapshot the folder root here (main actor); the enumeration itself
         // runs detached so filesystem I/O never blocks the UI.
         let rootPath = FolderContextService.cachedRootPath
@@ -1772,6 +1793,7 @@ extension FloatingInputCard {
             atMenuItems = result.items
             atMenuStatus = result.status
             atMenuDirectory = result.directory
+            atMenuLoading = false
             syncPopupVisibility()
         }
     }
@@ -4794,6 +4816,7 @@ extension FloatingInputCard {
                 items: atMenuItems,
                 status: atMenuStatus,
                 deniedDirectoryName: (atMenuDirectory as NSString).lastPathComponent,
+                emptyMessage: atMenuIsFiltering ? L("No matching files") : L("This folder is empty"),
                 selectedIndex: $atSelectedIndex,
                 onSelect: applyAtItem,
                 onGrantAccess: grantAtMenuAccess

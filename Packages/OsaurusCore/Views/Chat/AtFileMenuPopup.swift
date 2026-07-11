@@ -16,6 +16,9 @@ struct AtFileMenuPopup: View {
     let status: AtFileMenuStatus
     /// Leaf name of the blocked directory, shown in the denied row.
     let deniedDirectoryName: String
+    /// Message for the empty state (e.g. "This folder is empty" vs "No matching
+    /// files"), decided by the caller which knows whether a filter is active.
+    let emptyMessage: String
     @Binding var selectedIndex: Int
     let onSelect: (AtFileItem) -> Void
     /// Invoked from the denied row to re-request access to the folder.
@@ -35,6 +38,8 @@ struct AtFileMenuPopup: View {
                 .opacity(0.2)
             if status == .denied {
                 deniedRow
+            } else if items.isEmpty {
+                emptyRow
             } else {
                 fileList
             }
@@ -90,17 +95,44 @@ struct AtFileMenuPopup: View {
                         .foregroundColor(theme.primaryText)
                         .lineLimit(1)
                         .truncationMode(.middle)
-                    Text("Grant access\u{2026}", bundle: .module)
+                    Text("Click to grant access\u{2026}", bundle: .module)
                         .font(.system(size: 11))
                         .foregroundColor(theme.accentColor)
                 }
                 Spacer()
+                // Slanting arrow signals the row opens an external picker.
+                Image(systemName: "arrow.up.right")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundColor(theme.accentColor)
             }
             .padding(.horizontal, 12)
             .frame(height: 48)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+    }
+
+    // MARK: - Empty State
+
+    /// Non-interactive row shown when the directory read fine but has nothing to
+    /// list, so the menu reads as "nothing here" rather than looking broken.
+    private var emptyRow: some View {
+        HStack(spacing: 10) {
+            ZStack {
+                RoundedRectangle(cornerRadius: 6, style: .continuous)
+                    .fill(theme.tertiaryBackground.opacity(0.5))
+                    .frame(width: 24, height: 24)
+                Image(systemName: "folder")
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundColor(theme.tertiaryText)
+            }
+            Text(emptyMessage)
+                .font(.system(size: 13, weight: .medium))
+                .foregroundColor(theme.secondaryText)
+            Spacer()
+        }
+        .padding(.horizontal, 12)
+        .frame(height: rowHeight)
     }
 
     // MARK: - File List
