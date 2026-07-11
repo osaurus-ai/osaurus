@@ -285,7 +285,8 @@ extension OsaurusEvalsCLI {
 
         if let comparison = bundle.comparison {
             try encoder.encode(comparison).write(
-                to: outDir.appendingPathComponent("compare.json")
+                to: outDir.appendingPathComponent("compare.json"),
+                options: .atomic
             )
             try bundle.formatComparisonMarkdown().write(
                 to: outDir.appendingPathComponent("compare.md"),

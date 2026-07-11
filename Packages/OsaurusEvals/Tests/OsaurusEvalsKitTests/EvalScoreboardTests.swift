@@ -282,6 +282,62 @@ struct EvalScoreboardTests {
         }
     }
 
+    @Test func reusedArtifactIdPrefersNewerRegisteredRun() throws {
+        let root = try temporaryDirectory()
+        let olderDir = root.appendingPathComponent("main/older/report", isDirectory: true)
+        let newerDir = root.appendingPathComponent("main/newer/report", isDirectory: true)
+        let artifactId = "stable-release-candidate"
+        let olderBundle = EvalReviewReportBuilder.build(
+            manifest: manifest(
+                generatedAt: "2026-06-17T00:00:00Z",
+                commit: "passing-old",
+                artifactPath: olderDir.path,
+                artifactId: artifactId
+            ),
+            reports: [
+                input(
+                    suite: "AgentLoop",
+                    reportPath: olderDir.appendingPathComponent("AgentLoop.json").path,
+                    report: passingFixtureReport()
+                ),
+            ]
+        )
+        let newerBundle = EvalReviewReportBuilder.build(
+            manifest: manifest(
+                generatedAt: "2026-06-18T00:00:00Z",
+                commit: "failing-new",
+                artifactPath: newerDir.path,
+                artifactId: artifactId
+            ),
+            reports: [
+                input(
+                    suite: "AgentLoop",
+                    reportPath: newerDir.appendingPathComponent("AgentLoop.json").path,
+                    report: try fixtureReport("current")
+                ),
+            ]
+        )
+        try writeBundle(
+            olderBundle,
+            to: olderDir,
+            registeredAt: Date(timeIntervalSince1970: 100)
+        )
+        try writeBundle(
+            newerBundle,
+            to: newerDir,
+            registeredAt: Date(timeIntervalSince1970: 200)
+        )
+
+        let loaded = try EvalScoreboardBuilder.loadBundlesRecursively(from: [root])
+        let scoreboard = EvalScoreboardBuilder.build(sourceRoots: [root], bundles: loaded)
+
+        #expect(loaded.count == 1)
+        #expect(loaded.first?.bundle.manifest.commit == "failing-new")
+        #expect(scoreboard.releaseCandidate?.artifactId == artifactId)
+        #expect(scoreboard.releaseCandidate?.commit == "failing-new")
+        #expect(scoreboard.hasRunFailures)
+    }
+
     private func fixtureReport(_ name: String) throws -> EvalReport {
         let url = try #require(
             Bundle.module.url(
@@ -365,11 +421,18 @@ struct EvalScoreboardTests {
         return url
     }
 
-    private func writeBundle(_ bundle: EvalReviewReportBundle, to reportDir: URL) throws {
+    private func writeBundle(
+        _ bundle: EvalReviewReportBundle,
+        to reportDir: URL,
+        registeredAt: Date = Date()
+    ) throws {
         try FileManager.default.createDirectory(at: reportDir, withIntermediateDirectories: true)
         let summaryURL = reportDir.appendingPathComponent(EvalReviewReportBundle.summaryFileName)
         try bundle.toJSON(prettyPrinted: true).write(to: summaryURL, options: .atomic)
-        try bundle.evidenceRegistryJSON(summaryPath: summaryURL.path).write(
+        try bundle.evidenceRegistryJSON(
+            summaryPath: summaryURL.path,
+            registeredAt: registeredAt
+        ).write(
             to: reportDir.appendingPathComponent(EvalReviewReportBundle.evidenceRegistryFileName),
             options: .atomic
         )

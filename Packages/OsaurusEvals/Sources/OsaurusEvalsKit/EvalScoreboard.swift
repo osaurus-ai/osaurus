@@ -506,7 +506,11 @@ public enum EvalScoreboardBuilder {
         let fm = FileManager.default
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601
-        var summariesByID: [String: EvidenceReportSummary] = [:]
+        var registeredAt = Date.distantPast
+        let registry = EvidenceReportRegistryService(
+            fileManager: fm,
+            now: { registeredAt }
+        )
         for root in roots {
             var isDirectory: ObjCBool = false
             guard fm.fileExists(atPath: root.path, isDirectory: &isDirectory) else {
@@ -546,15 +550,33 @@ public enum EvalScoreboardBuilder {
                 }
                 do {
                     let snapshot = try decoder.decode(EvidenceReportRegistrySnapshot.self, from: data)
-                    for summary in snapshot.reports where summariesByID[summary.id] == nil {
-                        summariesByID[summary.id] = summary
+                    for summary in snapshot.reports {
+                        registeredAt = summary.registeredAt
+                        let artifactError =
+                            summary.artifact.availability == .error
+                            ? summary.artifact.message ?? "registered artifact error"
+                            : nil
+                        registry.register(
+                            EvidenceReportDescriptor(
+                                id: summary.id,
+                                kind: summary.kind,
+                                source: summary.source,
+                                artifactPath: summary.artifact.path,
+                                status: summary.status,
+                                counts: summary.counts,
+                                startedAt: summary.startedAt,
+                                completedAt: summary.completedAt,
+                                metadata: summary.metadata,
+                                artifactError: artifactError
+                            )
+                        )
                     }
                 } catch {
                     throw EvalScoreboardError.invalidEvidenceRegistry(url.path, error.localizedDescription)
                 }
             }
         }
-        let summaries = Array(summariesByID.values)
+        let summaries = registry.list()
         guard !summaries.isEmpty else {
             throw EvalScoreboardError.noEvidenceRegistries(roots.map(\.path).joined(separator: ", "))
         }

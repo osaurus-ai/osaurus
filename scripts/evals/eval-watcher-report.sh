@@ -127,12 +127,29 @@ while [[ $# -gt 0 ]]; do
 done
 
 stamp="$(date -u +%Y%m%dT%H%M%SZ)"
+
+validate_id() {
+  local label="$1"
+  local value="$2"
+  if [[ -z "$value" || "$value" == "." || "$value" == ".." || ! "$value" =~ ^[A-Za-z0-9._-]+$ ]]; then
+    echo "invalid ${label}: use only A-Z, a-z, 0-9, dot, underscore, or hyphen" >&2
+    exit 2
+  fi
+}
+
+validate_id "channel" "$channel"
 lane_root="${out_root%/}/${channel}"
 run_root="${lane_root}/${stamp}"
 report_dir="${run_root}/report"
 scoreboard_dir="${lane_root}/scoreboard/latest"
 if [[ -z "$artifact_id" ]]; then
   artifact_id="${channel}-${stamp}"
+fi
+validate_id "artifact id" "$artifact_id"
+
+if ! command -v jq >/dev/null 2>&1; then
+  echo "jq is required to write and validate watcher artifacts" >&2
+  exit 2
 fi
 
 child_pid=""
@@ -141,18 +158,20 @@ write_status() {
   local status="$1"
   local rc="$2"
   mkdir -p "$run_root"
-  cat >"${run_root}/watcher-status.json" <<STATUS
-{
-  "artifactId": "${artifact_id}",
-  "channel": "${channel}",
-  "reportDir": "${report_dir}",
-  "scoreboardDir": "${scoreboard_dir}",
-  "status": "${status}",
-  "exitCode": ${rc}
-}
-STATUS
+  jq -n \
+    --arg artifactId "$artifact_id" \
+    --arg channel "$channel" \
+    --arg reportDir "$report_dir" \
+    --arg scoreboardDir "$scoreboard_dir" \
+    --arg status "$status" \
+    --argjson exitCode "$rc" \
+    '{artifactId: $artifactId, channel: $channel, reportDir: $reportDir,
+      scoreboardDir: $scoreboardDir, status: $status, exitCode: $exitCode}' \
+    >"${run_root}/watcher-status.json"
 }
 
+# Invoked indirectly by the INT/TERM trap below.
+# shellcheck disable=SC2329
 cancel_watcher() {
   local rc=130
   if [[ -n "$child_pid" ]]; then
@@ -226,25 +245,46 @@ fi
 
 cd "$repo_root" || exit
 mkdir -p "$report_dir" "$scoreboard_dir"
+report_dir_absolute="$(cd "$report_dir" && pwd -L)"
 
 run_child "${report_cmd[@]}"
 report_rc=$?
 
-if [[ "$report_rc" -ne 0 && ! -f "${report_dir}/summary.json" ]]; then
-  write_status "report_failed" "$report_rc"
-  exit "$report_rc"
+if [[ ! -f "${report_dir}/summary.json" || ! -f "${report_dir}/evidence-registry.json" ]]; then
+  final_rc="$report_rc"
+  if [[ "$final_rc" -eq 0 ]]; then
+    final_rc=2
+  fi
+  write_status "report_failed" "$final_rc"
+  exit "$final_rc"
 fi
 
 run_child "${scoreboard_cmd[@]}"
 scoreboard_rc=$?
 
+scoreboard_json="${scoreboard_dir}/scoreboard.json"
+if [[ ! -f "$scoreboard_json" ]] || ! jq -e \
+  --arg artifactId "$artifact_id" \
+  --arg artifactPath "$report_dir_absolute" \
+  '.releaseCandidate.artifactId == $artifactId
+    and .releaseCandidate.artifactPath == $artifactPath' \
+  "$scoreboard_json" >/dev/null; then
+  write_status "scoreboard_failed" 2
+  echo "eval watcher scoreboard did not select the current report as release candidate" >&2
+  exit 2
+fi
+
 echo ""
 echo "eval watcher report: ${report_dir}"
 echo "eval watcher scoreboard: ${scoreboard_dir}"
 
-if [[ "$scoreboard_rc" -ne 0 ]]; then
-  write_status "scoreboard_failed" "$scoreboard_rc"
-  exit "$scoreboard_rc"
+final_rc="$report_rc"
+if [[ "$scoreboard_rc" -gt "$final_rc" ]]; then
+  final_rc="$scoreboard_rc"
 fi
-write_status "completed" "$scoreboard_rc"
-exit "$scoreboard_rc"
+if [[ "$final_rc" -ne 0 ]]; then
+  write_status "failed" "$final_rc"
+  exit "$final_rc"
+fi
+write_status "completed" 0
+exit 0

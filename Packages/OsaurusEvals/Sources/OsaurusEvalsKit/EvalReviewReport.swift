@@ -722,7 +722,7 @@ public enum EvalReviewReportBuilder {
             throw EvalReviewReportError.pathNotFound(root.path)
         }
 
-        let urls: [URL]
+        let allJSONURLs: [URL]
         if isDirectory.boolValue {
             guard let enumerator = fm.enumerator(
                 at: root,
@@ -731,7 +731,7 @@ public enum EvalReviewReportBuilder {
             ) else {
                 throw EvalReviewReportError.noReports(root.path)
             }
-            urls = enumerator.compactMap { item in
+            allJSONURLs = enumerator.compactMap { item in
                 guard let url = item as? URL, url.pathExtension.lowercased() == "json" else {
                     return nil
                 }
@@ -739,24 +739,44 @@ public enum EvalReviewReportBuilder {
             }
             .sorted { $0.path < $1.path }
         } else {
-            urls = [root]
+            allJSONURLs = [root]
+        }
+
+        let reportURLs: [URL]
+        if isDirectory.boolValue {
+            let reportsRoot = root.appendingPathComponent("reports", isDirectory: true)
+            var reportsRootIsDirectory: ObjCBool = false
+            if fm.fileExists(atPath: reportsRoot.path, isDirectory: &reportsRootIsDirectory),
+               reportsRootIsDirectory.boolValue {
+                let prefix = reportsRoot.standardizedFileURL.path + "/"
+                reportURLs = allJSONURLs.filter {
+                    $0.standardizedFileURL.path.hasPrefix(prefix)
+                }
+            } else {
+                reportURLs = allJSONURLs.filter {
+                    !bundleMetadataFileNames.contains($0.lastPathComponent)
+                }
+            }
+        } else {
+            reportURLs = allJSONURLs
         }
 
         let decoder = JSONDecoder()
-        let roleHints = roleHintsByModelId(from: urls, decoder: decoder)
-        let reports = urls.compactMap { url -> EvalReviewReportInput? in
-            guard let data = try? Data(contentsOf: url),
-                  let report = try? decoder.decode(EvalReport.self, from: data)
-            else {
-                return nil
+        let roleHints = roleHintsByModelId(from: allJSONURLs, decoder: decoder)
+        let reports = try reportURLs.map { url -> EvalReviewReportInput in
+            do {
+                let data = try Data(contentsOf: url)
+                let report = try decoder.decode(EvalReport.self, from: data)
+                return EvalReviewReportInput(
+                    role: roleHints[report.modelId] ?? roleFromPath(url, fallback: role),
+                    suite: url.deletingPathExtension().lastPathComponent,
+                    suitePath: url.path,
+                    reportPath: url.path,
+                    report: report
+                )
+            } catch {
+                throw EvalReviewReportError.invalidReport(url.path, error.localizedDescription)
             }
-            return EvalReviewReportInput(
-                role: roleHints[report.modelId] ?? roleFromPath(url, fallback: role),
-                suite: url.deletingPathExtension().lastPathComponent,
-                suitePath: url.path,
-                reportPath: url.path,
-                report: report
-            )
         }
 
         guard !reports.isEmpty else {
@@ -787,7 +807,7 @@ public enum EvalReviewReportBuilder {
             let lhs = baseline.byKey[key]
             let rhs = current.byKey[key]
             let delta = EvalReviewCaseDelta(baseline: lhs, current: rhs)
-            if lhs?.outcome == .passed && isFailing(rhs?.outcome) {
+            if isBlockingRegression(baseline: lhs?.outcome, current: rhs?.outcome) {
                 regressions.append(delta)
             } else if isFailing(lhs?.outcome) && rhs?.outcome == .passed {
                 fixed.append(delta)
@@ -853,6 +873,26 @@ public enum EvalReviewReportBuilder {
         outcome == .failed || outcome == .errored
     }
 
+    private static func isBlockingRegression(
+        baseline: EvalCaseOutcome?,
+        current: EvalCaseOutcome?
+    ) -> Bool {
+        guard let baseline, let current else { return false }
+        if baseline == .passed && current != .passed { return true }
+        if baseline == .failed && current == .errored { return true }
+        if baseline == .skipped && current == .errored { return true }
+        return false
+    }
+
+    private static let bundleMetadataFileNames: Set<String> = [
+        EvalReviewReportBundle.manifestFileName,
+        EvalReviewReportBundle.summaryFileName,
+        EvalReviewReportBundle.evidenceRegistryFileName,
+        "compare.json",
+        "scoreboard.json",
+        "watcher-status.json",
+    ]
+
     private static func roleFromPath(_ url: URL, fallback: EvalReviewModelRole) -> EvalReviewModelRole {
         let parts = url.pathComponents.map { $0.lowercased() }
         if parts.contains(EvalReviewModelRole.frontier.rawValue) { return .frontier }
@@ -891,6 +931,7 @@ public enum EvalReviewReportBuilder {
 public enum EvalReviewReportError: Error, LocalizedError, Equatable {
     case pathNotFound(String)
     case noReports(String)
+    case invalidReport(String, String)
 
     public var errorDescription: String? {
         switch self {
@@ -898,6 +939,8 @@ public enum EvalReviewReportError: Error, LocalizedError, Equatable {
             return "path does not exist: \(path)"
         case .noReports(let path):
             return "no eval report JSON files found at: \(path)"
+        case .invalidReport(let path, let reason):
+            return "invalid eval report JSON at \(path): \(reason)"
         }
     }
 }

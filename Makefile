@@ -196,6 +196,9 @@ EVALS_WATCHER_ARTIFACT_ID ?=
 EVALS_MAX_REGRESSIONS ?= 0
 EVALS_SCOREBOARD_ROOT ?= $(EVALS_WATCHER_OUT)/$(EVALS_WATCHER_CHANNEL)
 EVALS_SCOREBOARD_OUT ?= build/evals/scoreboard/$(shell date -u +%Y%m%dT%H%M%SZ)
+ifeq ($(strip $(EVALS_FROM_REPORTS)$(PLAN_ONLY)),)
+EVALS_WATCHER_PREP := evals-prep
+endif
 # Auto-discovered list of every subdirectory under Suites/. Adding a new
 # `Suites/MyDomain/` automatically picks it up here — no Makefile edit
 # required when a new suite lands.
@@ -385,7 +388,7 @@ evals-compat:
 # Defaults to the required local+frontier lanes and AgentLoop +
 # AgentLoopFrontier suites. SandboxFrontier is opt-in because it needs host
 # sandbox prerequisites.
-evals-pr-report:
+evals-pr-report: evals-prep
 	@mkdir -p "$(EVALS_PR_REPORT_OUT)"
 	swift run --package-path Packages/OsaurusEvals osaurus-evals report \
 		--local-model "$(LOCAL_MODEL)" \
@@ -396,7 +399,7 @@ evals-pr-report:
 		$(if $(INCLUDE_SANDBOX_FRONTIER),--include-sandbox-frontier,)
 	@echo "Wrote eval PR report to $(EVALS_PR_REPORT_OUT)"
 
-evals-pr-report-baseline:
+evals-pr-report-baseline: evals-prep
 	@if [[ -z "$(BASELINE_DIR)" ]]; then \
 		echo "BASELINE_DIR is required, e.g. make evals-pr-report-baseline BASELINE_DIR=build/evals/main-report"; \
 		exit 2; \
@@ -412,7 +415,7 @@ evals-pr-report-baseline:
 		$(if $(INCLUDE_SANDBOX_FRONTIER),--include-sandbox-frontier,)
 	@echo "Wrote eval PR report with baseline comparison to $(EVALS_PR_REPORT_OUT)"
 
-evals-watcher-report:
+evals-watcher-report: $(EVALS_WATCHER_PREP)
 	scripts/evals/eval-watcher-report.sh \
 		--channel "$(EVALS_WATCHER_CHANNEL)" \
 		--out-root "$(EVALS_WATCHER_OUT)" \

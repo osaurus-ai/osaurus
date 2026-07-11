@@ -89,6 +89,9 @@ struct EvalReviewReportTests {
                         ("fixed", .failed, ["old failure"]),
                         ("persistent", .failed, ["still failing before"]),
                         ("changed-skip", .skipped, ["missing sandbox before"]),
+                        ("pass-to-skip", .passed, []),
+                        ("failed-to-error", .failed, ["failed before"]),
+                        ("skipped-to-error", .skipped, ["skipped before"]),
                         ("removed", .passed, []),
                     ]
                 )
@@ -103,8 +106,11 @@ struct EvalReviewReportTests {
                     rows: [
                         ("regression", .failed, ["new failure"]),
                         ("fixed", .passed, []),
-                        ("persistent", .errored, ["still failing now"]),
+                        ("persistent", .failed, ["still failing now"]),
                         ("changed-skip", .passed, []),
+                        ("pass-to-skip", .skipped, ["coverage unavailable"]),
+                        ("failed-to-error", .errored, ["runner crashed"]),
+                        ("skipped-to-error", .errored, ["bootstrap crashed"]),
                         ("new-failure", .errored, ["new error"]),
                         ("new-pass", .passed, []),
                     ]
@@ -120,7 +126,14 @@ struct EvalReviewReportTests {
         let comparison = try #require(bundle.comparison)
 
         #expect(comparison.hasBlockingRegressions)
-        #expect(comparison.regressions.map(\.id) == ["regression"])
+        #expect(
+            comparison.regressions.map(\.id) == [
+                "failed-to-error",
+                "pass-to-skip",
+                "regression",
+                "skipped-to-error",
+            ]
+        )
         #expect(comparison.newFailures.map(\.id) == ["new-failure"])
         #expect(comparison.fixed.map(\.id) == ["fixed"])
         #expect(comparison.persistentFailures.map(\.id) == ["persistent"])
@@ -243,6 +256,20 @@ struct EvalReviewReportTests {
         #expect(input.role == .frontier)
         #expect(input.report.modelId == "openai/gpt-4o-mini")
         #expect(input.suite == "AgentLoop")
+    }
+
+    @Test func loadingStoredBundleRejectsCorruptReportJSON() throws {
+        let root = try temporaryDirectory()
+        let reportsDir = root
+            .appendingPathComponent("reports", isDirectory: true)
+            .appendingPathComponent("foundation", isDirectory: true)
+        try FileManager.default.createDirectory(at: reportsDir, withIntermediateDirectories: true)
+        let reportURL = reportsDir.appendingPathComponent("AgentLoop.json")
+        try Data("{".utf8).write(to: reportURL)
+
+        #expect(throws: EvalReviewReportError.self) {
+            _ = try EvalReviewReportBuilder.loadReportsRecursively(from: root)
+        }
     }
 
     private func input(

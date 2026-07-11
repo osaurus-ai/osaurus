@@ -90,7 +90,8 @@ Scoreboard rebuilds use the unified evidence registry snapshots as the report
 discovery layer. `summary.json` remains the eval report artifact payload, but a
 bundle is not consumed by the watcher scoreboard unless its
 `evidence-registry.json` registers that artifact with the eval review report
-source.
+source. Reused registry IDs resolve through the registry service's normal
+newest-registration precedence.
 
 The scoreboard includes:
 
@@ -112,7 +113,8 @@ make evals-watcher-report \
 ```
 
 This reads existing `EvalReport` JSON, builds the same report bundle shape, and
-refreshes the same registry-backed scoreboard files.
+refreshes the same registry-backed scoreboard files. Live Make targets run
+`evals-prep`; fixture and plan-only watcher runs skip that model-asset step.
 
 ## Stop and Cancel
 
@@ -120,7 +122,14 @@ The watcher wrapper traps `INT` and `TERM`. If a maintainer stops a long model
 run, the active child process is terminated, `watcher-status.json` records
 `canceled`, and the wrapper exits `130` without refreshing the scoreboard from a
 partial report. A report that completes with eval failures still refreshes the
-scoreboard so the failed artifact remains visible.
+scoreboard so the failed artifact remains visible, then the wrapper preserves
+the non-zero report exit. The wrapper also requires both report registry and
+summary files and verifies that the scoreboard selected the current artifact as
+its release candidate.
+
+Watcher channels and artifact IDs are single path segments limited to ASCII
+letters, digits, dots, underscores, and hyphens; `.` and `..` are rejected.
+The wrapper requires `jq` for status JSON encoding and scoreboard validation.
 
 ## Dedicated Mac Runner
 
@@ -150,9 +159,7 @@ Use these controls to keep frontier spend bounded:
 - `PLAN_ONLY=1` prints the watcher commands without executing them.
 - `BASELINE_DIR=<dir>` reuses a stored baseline instead of repeating it.
 - `EVALS_MAX_REGRESSIONS=<n>` changes only the scoreboard threshold report and
-  exit status; it does not hide the underlying comparison counts. If the report
-  bundle records failures but the relaxed threshold allows the scoreboard to
-  pass, automation should still inspect the report summary before treating the
-  run as release evidence.
+  comparison gate; it does not hide the underlying comparison counts or relax
+  run failures. A report with failed or errored cases remains non-zero.
 - Leave `INCLUDE_SANDBOX_FRONTIER` unset unless the runner has the sandbox
   prerequisites and budget for those cases.

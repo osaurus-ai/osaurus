@@ -234,8 +234,11 @@ through those registry snapshots and then reads their registered `summary.json`
 artifacts. The manifest carries the artifact ID, and the scoreboard summarizes
 the latest release-candidate run, local/frontier model presets, baseline
 comparison counts, and the no-regression threshold
-(`EVALS_MAX_REGRESSIONS`, default `0`). The scoreboard can also be rebuilt from
-existing registry-backed bundles without running a model:
+(`EVALS_MAX_REGRESSIONS`, default `0`). Reused registry IDs follow the evidence
+registry's newest-registration precedence. The watcher verifies that the
+current report is the selected release candidate and preserves report failures
+in its final exit status. The scoreboard can also be rebuilt from existing
+registry-backed bundles without running a model:
 
 ```bash
 make evals-scoreboard \
