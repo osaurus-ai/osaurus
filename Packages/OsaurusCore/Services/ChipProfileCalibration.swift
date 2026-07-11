@@ -99,7 +99,11 @@ enum ChipProfileCalibration {
         var record: CalibrationRecord?
         if mtime != nil,
             let data = try? Data(contentsOf: url),
-            let decoded = try? JSONDecoder().decode(CalibrationRecord.self, from: data) {
+            let decoded = try? JSONDecoder().decode(CalibrationRecord.self, from: data),
+            decoded.measuredBandwidthGBps > 0,
+            decoded.measuredBandwidthGBps.isFinite,
+            decoded.probeThreads > 0,
+            !decoded.chip.isEmpty {
             record = decoded
             calibrationLog.info(
                 "loaded calibration record: \(decoded.measuredBandwidthGBps, privacy: .public) GB/s on \(decoded.chip, privacy: .public)"
@@ -159,7 +163,7 @@ enum ChipProfileCalibration {
     /// simply the on-disk weights size. (MoE models activate fewer bytes per
     /// token; this estimate is a floor for them.)
     static func estimatedDecodeTps(weightsBytes: Int64, bandwidthGBps: Double) -> Double {
-        guard weightsBytes > 0 else { return 0 }
+        guard weightsBytes > 0, bandwidthGBps > 0, bandwidthGBps.isFinite else { return 0 }
         return bandwidthGBps * 1e9 * decodeEfficiency / Double(weightsBytes)
     }
 

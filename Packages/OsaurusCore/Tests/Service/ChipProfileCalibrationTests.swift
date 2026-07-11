@@ -116,6 +116,26 @@ struct ChipProfileCalibrationTests {
         }
     }
 
+    @Test func invalidCalibrationBoundsAreIgnored() throws {
+        try withTempStore { url in
+            let invalidRecords = [
+                #"{"measuredBandwidthGBps": 0, "chip": "Apple M5 Max", "probeThreads": 8}"#,
+                #"{"measuredBandwidthGBps": -1, "chip": "Apple M5 Max", "probeThreads": 8}"#,
+                #"{"measuredBandwidthGBps": 391, "chip": "Apple M5 Max", "probeThreads": 0}"#,
+                #"{"measuredBandwidthGBps": 391, "chip": "", "probeThreads": 8}"#,
+            ]
+            try FileManager.default.createDirectory(
+                at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+            for (index, json) in invalidRecords.enumerated() {
+                try Data(json.utf8).write(to: url, options: .atomic)
+                try FileManager.default.setAttributes(
+                    [.modificationDate: Date().addingTimeInterval(Double(index + 1))],
+                    ofItemAtPath: url.path)
+                #expect(ChipProfileCalibration.storedRecord() == nil)
+            }
+        }
+    }
+
     // MARK: - Estimator
 
     @Test func estimatorMatchesTheDocumentedFormula() {
@@ -127,6 +147,12 @@ struct ChipProfileCalibrationTests {
         // Degenerate weights must not divide by zero.
         #expect(
             ChipProfileCalibration.estimatedDecodeTps(weightsBytes: 0, bandwidthGBps: 391) == 0)
+        #expect(
+            ChipProfileCalibration.estimatedDecodeTps(
+                weightsBytes: weights, bandwidthGBps: 0) == 0)
+        #expect(
+            ChipProfileCalibration.estimatedDecodeTps(
+                weightsBytes: weights, bandwidthGBps: .infinity) == 0)
     }
 
     @Test func profileEstimatorPrefersMeasuredOverSpec() {

@@ -70,7 +70,10 @@ enum MemoryBandwidthCalibration {
     static func readValidRecord() -> Record? {
         guard let data = try? Data(contentsOf: fileURL()),
             let record = try? JSONDecoder().decode(Record.self, from: data),
-            record.chip == chipBrandString()
+            record.chip == chipBrandString(),
+            record.measuredBandwidthGBps > 0,
+            record.measuredBandwidthGBps.isFinite,
+            record.probeThreads > 0
         else { return nil }
         return record
     }
@@ -112,7 +115,7 @@ enum MemoryBandwidthCalibration {
 
     /// tok/s ≈ bandwidth × efficiency ÷ weights bytes read per token.
     static func estimatedDecodeTps(weightsBytes: Int64, bandwidthGBps: Double) -> Double {
-        guard weightsBytes > 0 else { return 0 }
+        guard weightsBytes > 0, bandwidthGBps > 0, bandwidthGBps.isFinite else { return 0 }
         return bandwidthGBps * 1e9 * decodeEfficiency / Double(weightsBytes)
     }
 

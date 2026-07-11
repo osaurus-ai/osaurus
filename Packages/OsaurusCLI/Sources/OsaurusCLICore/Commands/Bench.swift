@@ -118,22 +118,13 @@ public struct BenchCommand: Command {
             exit(EXIT_FAILURE)
         }
 
-        let report: [String: Any] = [
-            "schema": "osaurus-bench/1",
-            "timestamp": ISO8601DateFormatter().string(from: Date()),
-            "model": model,
-            "max_tokens": options.maxTokens,
-            "runs": options.runs,
-            "hardware": (health["hardware"] as? [String: Any]) ?? NSNull(),
-            "scenarios": scenarios,
-            "methodology": [
-                "sampling": "temperature 0 (greedy)",
-                "token_counts": "server usage via stream_options.include_usage",
-                "ttft": "request start → first non-empty content delta",
-                "decode_tps": "(completion_tokens - 1) / (last delta - first delta)",
-                "prefill_tps": "prompt_tokens / uncached TTFT (includes template + tokenize)",
-            ],
-        ]
+        let report = makeReport(
+            model: model,
+            maxTokens: options.maxTokens,
+            runs: options.runs,
+            health: health,
+            scenarios: scenarios
+        )
 
         let data: Data
         do {
@@ -158,6 +149,34 @@ public struct BenchCommand: Command {
             print(String(bytes: data, encoding: .utf8) ?? "{}")
         }
         exit(EXIT_SUCCESS)
+    }
+
+    /// Single report contract for the normal benchmark lane. Calibration and
+    /// prefill tuning persist their own state but do not fork this schema.
+    static func makeReport(
+        model: String,
+        maxTokens: Int,
+        runs: Int,
+        health: [String: Any],
+        scenarios: [[String: Any]],
+        timestamp: String = ISO8601DateFormatter().string(from: Date())
+    ) -> [String: Any] {
+        [
+            "schema": "osaurus-bench/1",
+            "timestamp": timestamp,
+            "model": model,
+            "max_tokens": maxTokens,
+            "runs": runs,
+            "hardware": (health["hardware"] as? [String: Any]) ?? NSNull(),
+            "scenarios": scenarios,
+            "methodology": [
+                "sampling": "temperature 0 (greedy)",
+                "token_counts": "server usage via stream_options.include_usage",
+                "ttft": "request start → first non-empty content delta",
+                "decode_tps": "(completion_tokens - 1) / (last delta - first delta)",
+                "prefill_tps": "prompt_tokens / uncached TTFT (includes template + tokenize)",
+            ],
+        ]
     }
 
     // MARK: - Memory-bandwidth calibration (`--calibrate`)

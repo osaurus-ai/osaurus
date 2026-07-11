@@ -88,6 +88,39 @@ final class MemoryBandwidthCalibrationTests: XCTestCase {
         XCTAssertEqual(tps, 391e9 * 0.7 / 18.2e9, accuracy: 1e-9)
         XCTAssertEqual(
             MemoryBandwidthCalibration.estimatedDecodeTps(weightsBytes: 0, bandwidthGBps: 391), 0)
+        XCTAssertEqual(
+            MemoryBandwidthCalibration.estimatedDecodeTps(
+                weightsBytes: 1_000_000_000, bandwidthGBps: 0),
+            0)
+        XCTAssertEqual(
+            MemoryBandwidthCalibration.estimatedDecodeTps(
+                weightsBytes: 1_000_000_000, bandwidthGBps: -.infinity),
+            0)
+    }
+
+    func testBenchmarkReportRemainsVersionOneCompatible() throws {
+        let report = BenchCommand.makeReport(
+            model: "test/model",
+            maxTokens: 64,
+            runs: 2,
+            health: ["hardware": ["chip": "Apple M4 Pro"]],
+            scenarios: [["target_prompt_tokens": 1_024]],
+            timestamp: "2026-07-11T00:00:00Z"
+        )
+        let data = try JSONSerialization.data(withJSONObject: report, options: [.sortedKeys])
+        let object = try XCTUnwrap(
+            try JSONSerialization.jsonObject(with: data) as? [String: Any])
+
+        XCTAssertEqual(object["schema"] as? String, "osaurus-bench/1")
+        XCTAssertEqual(object["model"] as? String, "test/model")
+        XCTAssertEqual(object["max_tokens"] as? Int, 64)
+        XCTAssertEqual(object["runs"] as? Int, 2)
+        XCTAssertNotNil(object["hardware"] as? [String: Any])
+        XCTAssertEqual((object["scenarios"] as? [[String: Any]])?.count, 1)
+        XCTAssertEqual(
+            Set(object.keys),
+            Set(["schema", "timestamp", "model", "max_tokens", "runs", "hardware", "scenarios", "methodology"])
+        )
     }
 
     /// Tiny-buffer smoke run only (full ~1 GiB probe is user-initiated via
@@ -137,6 +170,23 @@ final class MemoryBandwidthCalibrationTests: XCTestCase {
         XCTAssertNil(
             ShowCommand.weightsBytes(
                 under: dir.appendingPathComponent("missing", isDirectory: true)))
+    }
+
+    func testMoEBundlesAreDetectedForEstimateSuppression() throws {
+        let dir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("show-moe-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let configURL = dir.appendingPathComponent("config.json")
+
+        try Data(#"{"num_experts": 64}"#.utf8).write(to: configURL)
+        XCTAssertTrue(ShowCommand.isMoEBundle(at: dir))
+
+        try Data(#"{"text_config": {"num_local_experts": 8}}"#.utf8).write(to: configURL)
+        XCTAssertTrue(ShowCommand.isMoEBundle(at: dir))
+
+        try Data(#"{"model_type": "gemma4", "num_experts": 1}"#.utf8).write(to: configURL)
+        XCTAssertFalse(ShowCommand.isMoEBundle(at: dir))
     }
 
     /// The server's `/health` scan root is the authoritative models base
