@@ -289,9 +289,13 @@ echo "eval watcher scoreboard: ${scoreboard_dir}"
 # execution failures (including zero evidence) always remain blocking.
 report_has_run_failures="$(jq -r '
   (.models | length == 0) or
-  any(.models[]; (.counts.total == 0) or (.counts.failed > 0) or (.counts.errored > 0))
+  any(.models[];
+    ((.counts.passed + .counts.failed + .counts.errored) == 0) or
+    (.counts.failed > 0) or (.counts.errored > 0))
 ' "${report_dir}/summary.json")"
-if [[ "$report_has_run_failures" == "true" ]]; then
+if [[ "$report_rc" -ge 2 ]]; then
+  final_rc="$report_rc"
+elif [[ "$report_has_run_failures" == "true" ]]; then
   final_rc="$report_rc"
   if [[ "$final_rc" -eq 0 ]]; then
     final_rc=1

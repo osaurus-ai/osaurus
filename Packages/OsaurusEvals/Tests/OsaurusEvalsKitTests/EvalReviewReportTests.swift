@@ -33,6 +33,25 @@ struct EvalReviewReportTests {
         #expect(bundle.formatMarkdown().contains("Verdict: NO EVIDENCE"))
     }
 
+    @Test func allSkippedModelFailsClosedAsNoEvidence() {
+        let bundle = EvalReviewReportBuilder.build(
+            manifest: manifest(),
+            reports: [
+                input(
+                    role: .local,
+                    suite: "AgentLoop",
+                    report: report(
+                        modelId: "foundation",
+                        rows: [("agent_loop.unavailable", .skipped, ["host unavailable"])]
+                    )
+                ),
+            ]
+        )
+
+        #expect(bundle.hasRunFailures)
+        #expect(bundle.formatMarkdown().contains("Verdict: NO EVIDENCE"))
+    }
+
     @Test func aggregateSummaryCountsOutcomesAcrossModelsAndSuites() throws {
         let bundle = EvalReviewReportBuilder.build(
             manifest: manifest(commands: [

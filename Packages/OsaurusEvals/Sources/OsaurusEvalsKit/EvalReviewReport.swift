@@ -300,7 +300,8 @@ public struct EvalReviewReportBundle: Sendable, Codable, Equatable {
 
     public var hasRunFailures: Bool {
         models.isEmpty || models.contains {
-            $0.counts.total == 0 || $0.counts.failed > 0 || $0.counts.errored > 0
+            ($0.counts.passed + $0.counts.failed + $0.counts.errored == 0)
+                || $0.counts.failed > 0 || $0.counts.errored > 0
         }
     }
 
@@ -493,7 +494,9 @@ public struct EvalReviewReportBundle: Sendable, Codable, Equatable {
 
     private func verdictLabel() -> String {
         if hasBlockingRegressions { return "REGRESSED" }
-        if models.isEmpty || models.contains(where: { $0.counts.total == 0 }) {
+        if models.isEmpty || models.contains(where: {
+            $0.counts.passed + $0.counts.failed + $0.counts.errored == 0
+        }) {
             return "NO EVIDENCE"
         }
         if hasRunFailures { return "EVAL FAILURES PRESENT" }

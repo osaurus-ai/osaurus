@@ -29,12 +29,14 @@ public struct EvalScoreboardBundle: Sendable, Codable, Equatable {
     public var hasRunFailures: Bool {
         guard let releaseCandidate else {
             return models.isEmpty || models.contains {
-                $0.counts.total == 0 || $0.counts.failed > 0 || $0.counts.errored > 0
+                ($0.counts.passed + $0.counts.failed + $0.counts.errored == 0)
+                    || $0.counts.failed > 0 || $0.counts.errored > 0
             }
         }
         let candidates = releaseCandidate.local + releaseCandidate.frontier
         return candidates.isEmpty || candidates.contains {
-            $0.counts.total == 0 || $0.counts.failed > 0 || $0.counts.errored > 0
+            ($0.counts.passed + $0.counts.failed + $0.counts.errored == 0)
+                || $0.counts.failed > 0 || $0.counts.errored > 0
         }
     }
 
