@@ -23,6 +23,32 @@
 
 import Foundation
 
+/// One contribution as loaded from disk: the matrix plus a file-level
+/// fallback contributor (the git author who added the file) for columns whose
+/// environment predates the self-declared `contributor` field.
+public struct EvalContribution: Sendable {
+    public let matrix: EvalMatrix
+    public let fallbackContributor: String?
+
+    public init(matrix: EvalMatrix, fallbackContributor: String? = nil) {
+        self.matrix = matrix
+        self.fallbackContributor = fallbackContributor
+    }
+}
+
+/// One row of the contributor ranking: who has contributed the most runs,
+/// across how many distinct models and device shapes.
+public struct ContributorRank: Codable, Sendable, Equatable {
+    public let name: String
+    /// Contribution columns attributed to this person (current + superseded —
+    /// every run counts; the ranking rewards volume and coverage).
+    public let contributions: Int
+    /// Distinct models this person has reported.
+    public let models: Int
+    /// Distinct device shapes (chip × RAM) this person has reported from.
+    public let devices: Int
+}
+
 /// One superseded (older-catalog) run of a model — kept as history so recency
 /// is explicit instead of silently pooled into the headline pass-rate.
 public struct PriorRunSummary: Codable, Sendable, Equatable {
@@ -35,6 +61,7 @@ public struct PriorRunSummary: Codable, Sendable, Equatable {
     public let errored: Int
     public let chip: String?
     public let totalRamMb: Int?
+    public let contributor: String?
 
     public var passRate: Double? { scored > 0 ? Double(passed) / Double(scored) : nil }
 }
@@ -110,6 +137,9 @@ public struct ModelCompatibility: Codable, Sendable, Equatable {
     /// True when any current contribution self-judged an LLM-judged suite
     /// (weaker grade) — a trust caveat on the pass-rate.
     public let hasSelfJudged: Bool
+    /// Who ran the current set (self-declared `contributor`, or the git
+    /// author who added the contribution file). Empty when unattributable.
+    public let contributors: [String]
     /// Older-catalog runs, newest first. Never pooled into the headline.
     public let superseded: [PriorRunSummary]
 
@@ -140,6 +170,10 @@ public struct CompatibilityReport: Codable, Sendable, Equatable {
     public let models: [ModelCompatibility]
     /// Distinct contributing device shapes (chip × RAM).
     public let devices: [DeviceCoverage]?
+    /// Contributor ranking — most runs first (every run counts, current and
+    /// superseded; volume and coverage are what the community leaderboard
+    /// rewards). nil when no contribution could be attributed.
+    public let contributors: [ContributorRank]?
 
     public func toJSON(prettyPrinted: Bool = true) throws -> Data {
         let encoder = JSONEncoder()
@@ -200,6 +234,9 @@ public struct CompatibilityReport: Codable, Sendable, Equatable {
             if let build = m.build { meta.append("build \(build)") }
             if let hash = m.catalogHash { meta.append("catalog \(hash)") }
             meta.append("\(m.contributions) contribution(s)")
+            if !m.contributors.isEmpty {
+                meta.append("by \(m.contributors.joined(separator: ", "))")
+            }
             lines.append("Current run: \(meta.joined(separator: " · ")).")
             lines.append("")
             lines.append("| Domain | Pass | Fail | Skip | Err |")
@@ -239,11 +276,33 @@ public struct CompatibilityReport: Codable, Sendable, Equatable {
                         let ram = prior.totalRamMb.map { " (\(Self.gb($0)))" } ?? ""
                         parts.append("\(chip)\(ram)")
                     }
+                    if let contributor = prior.contributor {
+                        parts.append("by \(contributor)")
+                    }
                     lines.append("- \(parts.joined(separator: " · "))")
                 }
             }
         }
 
+        if let contributors, !contributors.isEmpty {
+            lines.append("")
+            lines.append("## Contributors")
+            lines.append("")
+            lines.append(
+                "Ranked by contributed runs (every run counts, current and superseded), "
+                    + "then by breadth of models and device shapes covered. Attribution comes "
+                    + "from the contribution's `contributor` provenance, falling back to the "
+                    + "git author who added the file."
+            )
+            lines.append("")
+            lines.append("| # | Contributor | Runs | Models | Devices |")
+            lines.append("| --- | --- | --- | --- | --- |")
+            for (index, c) in contributors.enumerated() {
+                lines.append(
+                    "| \(index + 1) | \(c.name) | \(c.contributions) | \(c.models) | \(c.devices) |"
+                )
+            }
+        }
         if let devices, !devices.isEmpty {
             lines.append("")
             lines.append("## Device coverage")
@@ -342,15 +401,37 @@ public struct CompatibilityReport: Codable, Sendable, Equatable {
 }
 
 public enum EvalCompatBuilder {
-    /// Fold a set of contribution matrices into the compatibility leaderboard.
-    /// Each `EvalMatrix` may carry one or more model columns; columns are
-    /// grouped by `modelId`, then split into the CURRENT result set (newest
-    /// catalog for that model) and superseded history.
+    /// One model column plus its resolved contributor (the column's
+    /// self-declared `environment.contributor`, falling back to the
+    /// file-level git author).
+    struct AttributedColumn {
+        let column: EvalMatrixModelColumn
+        let contributor: String?
+    }
+
+    /// Convenience overload for matrices with no file-level attribution.
     public static func build(from matrices: [EvalMatrix], generatedAt: String? = nil) -> CompatibilityReport {
-        var columnsByModel: [String: [EvalMatrixModelColumn]] = [:]
-        for matrix in matrices {
-            for col in matrix.models {
-                columnsByModel[col.modelId, default: []].append(col)
+        build(from: matrices.map { EvalContribution(matrix: $0) }, generatedAt: generatedAt)
+    }
+
+    /// Fold a set of contributions into the compatibility leaderboard.
+    /// Each contribution may carry one or more model columns; columns are
+    /// grouped by `modelId`, then split into the CURRENT result set (newest
+    /// catalog for that model) and superseded history. Contributor identity
+    /// resolves per column (env block first, git-author fallback second) and
+    /// feeds both per-model attribution and the contributor ranking.
+    public static func build(
+        from contributions: [EvalContribution],
+        generatedAt: String? = nil
+    ) -> CompatibilityReport {
+        var columnsByModel: [String: [AttributedColumn]] = [:]
+        for contribution in contributions {
+            for col in contribution.matrix.models {
+                let attributed = AttributedColumn(
+                    column: col,
+                    contributor: col.environment?.contributor ?? contribution.fallbackContributor
+                )
+                columnsByModel[col.modelId, default: []].append(attributed)
             }
         }
         // The newest catalog hash seen anywhere — the staleness reference.
@@ -358,9 +439,9 @@ public enum EvalCompatBuilder {
         let latestCatalogHash =
             columnsByModel.values
             .flatMap { $0 }
-            .filter { $0.environment?.catalogHash != nil }
-            .max { ($0.startedAt ?? "") < ($1.startedAt ?? "") }?
-            .environment?.catalogHash
+            .filter { $0.column.environment?.catalogHash != nil }
+            .max { ($0.column.startedAt ?? "") < ($1.column.startedAt ?? "") }?
+            .column.environment?.catalogHash
         let models = columnsByModel.keys.sorted().map { model -> ModelCompatibility in
             aggregate(
                 model: model,
@@ -368,12 +449,52 @@ public enum EvalCompatBuilder {
                 latestCatalogHash: latestCatalogHash
             )
         }
+        let ranking = rankContributors(columnsByModel.values.flatMap { $0 })
         return CompatibilityReport(
             generatedAt: generatedAt ?? isoNow(),
-            contributions: matrices.count,
+            contributions: contributions.count,
             models: models,
-            devices: deviceCoverage(from: matrices)
+            devices: deviceCoverage(from: contributions.map(\.matrix)),
+            contributors: ranking.isEmpty ? nil : ranking
         )
+    }
+
+    /// Rank contributors by volume, then breadth: contribution count,
+    /// distinct models, distinct device shapes, name. Every attributed run
+    /// counts — current and superseded alike (a superseded run was still
+    /// work donated to the project).
+    static func rankContributors(_ columns: [AttributedColumn]) -> [ContributorRank] {
+        struct Acc {
+            var contributions = 0
+            var models = Set<String>()
+            var devices = Set<String>()
+        }
+        var byName: [String: Acc] = [:]
+        for attributed in columns {
+            guard let name = attributed.contributor else { continue }
+            var acc = byName[name] ?? Acc()
+            acc.contributions += 1
+            acc.models.insert(attributed.column.modelId)
+            if let env = attributed.column.environment, let chip = env.chip {
+                acc.devices.insert("\(chip)|\(env.totalRamMb ?? 0)")
+            }
+            byName[name] = acc
+        }
+        return byName
+            .map { name, acc in
+                ContributorRank(
+                    name: name,
+                    contributions: acc.contributions,
+                    models: acc.models.count,
+                    devices: acc.devices.count
+                )
+            }
+            .sorted {
+                if $0.contributions != $1.contributions { return $0.contributions > $1.contributions }
+                if $0.models != $1.models { return $0.models > $1.models }
+                if $0.devices != $1.devices { return $0.devices > $1.devices }
+                return $0.name < $1.name
+            }
     }
 
     /// Group every contribution column by (chip, RAM) into the distinct-device
@@ -419,24 +540,25 @@ public enum EvalCompatBuilder {
     /// has no catalog hash, comparability can't be verified, so the current
     /// set is that single column.
     static func splitCurrent(
-        _ columns: [EvalMatrixModelColumn]
-    ) -> (current: [EvalMatrixModelColumn], superseded: [EvalMatrixModelColumn]) {
-        let sorted = columns.sorted { ($0.startedAt ?? "") > ($1.startedAt ?? "") }
+        _ columns: [AttributedColumn]
+    ) -> (current: [AttributedColumn], superseded: [AttributedColumn]) {
+        let sorted = columns.sorted { ($0.column.startedAt ?? "") > ($1.column.startedAt ?? "") }
         guard let newest = sorted.first else { return ([], []) }
-        guard let currentHash = newest.environment?.catalogHash else {
+        guard let currentHash = newest.column.environment?.catalogHash else {
             return ([newest], Array(sorted.dropFirst()))
         }
-        let current = sorted.filter { $0.environment?.catalogHash == currentHash }
-        let superseded = sorted.filter { $0.environment?.catalogHash != currentHash }
+        let current = sorted.filter { $0.column.environment?.catalogHash == currentHash }
+        let superseded = sorted.filter { $0.column.environment?.catalogHash != currentHash }
         return (current, superseded)
     }
 
     private static func aggregate(
         model: String,
-        columns: [EvalMatrixModelColumn],
+        columns: [AttributedColumn],
         latestCatalogHash: String?
     ) -> ModelCompatibility {
-        let (current, superseded) = splitCurrent(columns)
+        let (currentAttributed, supersededAttributed) = splitCurrent(columns)
+        let current = currentAttributed.map(\.column)
         let passed = current.reduce(0) { $0 + $1.totalPassed }
         let scored = current.reduce(0) { $0 + $1.totalScored }
         let perDomain = mergePerDomain(current)
@@ -472,7 +594,8 @@ public enum EvalCompatBuilder {
             asOf: newest?.startedAt,
             stale: latestCatalogHash != nil && catalogHash != nil && catalogHash != latestCatalogHash,
             hasSelfJudged: envs.contains { $0.judge == "self-judge" },
-            superseded: superseded.map(priorRunSummary)
+            contributors: orderedUnique(currentAttributed.compactMap(\.contributor)),
+            superseded: supersededAttributed.map(priorRunSummary)
         )
     }
 
@@ -526,8 +649,9 @@ public enum EvalCompatBuilder {
         return (strengths, (weakest?.1 ?? 1.0) < 0.9 ? weakest?.0 : nil)
     }
 
-    static func priorRunSummary(_ col: EvalMatrixModelColumn) -> PriorRunSummary {
-        PriorRunSummary(
+    static func priorRunSummary(_ attributed: AttributedColumn) -> PriorRunSummary {
+        let col = attributed.column
+        return PriorRunSummary(
             startedAt: col.startedAt,
             build: col.environment.flatMap { $0.osaurusVersion ?? $0.commit },
             catalogHash: col.environment?.catalogHash,
@@ -536,7 +660,8 @@ public enum EvalCompatBuilder {
             skipped: col.perDomain.values.reduce(0) { $0 + $1.skipped },
             errored: col.perDomain.values.reduce(0) { $0 + $1.errored },
             chip: col.environment?.chip,
-            totalRamMb: col.environment?.totalRamMb
+            totalRamMb: col.environment?.totalRamMb,
+            contributor: attributed.contributor
         )
     }
 
@@ -560,6 +685,16 @@ public enum EvalCompatBuilder {
     /// a raw `EvalReport` folded into a single-report matrix — so a community
     /// dir tolerates both contribution matrices and raw reports.
     public static func loadContributions(in dir: URL) throws -> [EvalMatrix] {
+        try loadContributionFiles(in: dir).map(\.matrix)
+    }
+
+    /// Like `loadContributions(in:)`, but attaches a file-level fallback
+    /// contributor per file (e.g. the git author who added it) for columns
+    /// whose environment predates the self-declared `contributor` field.
+    public static func loadContributionFiles(
+        in dir: URL,
+        fallbackContributor: (URL) -> String? = { _ in nil }
+    ) throws -> [EvalContribution] {
         let fm = FileManager.default
         var isDir: ObjCBool = false
         guard fm.fileExists(atPath: dir.path, isDirectory: &isDir) else {
@@ -575,17 +710,27 @@ public enum EvalCompatBuilder {
             urls = [dir]
         }
         let decoder = JSONDecoder()
-        var matrices: [EvalMatrix] = []
+        var contributions: [EvalContribution] = []
         for url in urls {
             guard let data = try? Data(contentsOf: url) else { continue }
-            if let matrix = try? decoder.decode(EvalMatrix.self, from: data), !matrix.models.isEmpty {
-                matrices.append(matrix)
+            let matrix: EvalMatrix
+            if let decoded = try? decoder.decode(EvalMatrix.self, from: data), !decoded.models.isEmpty {
+                matrix = decoded
             } else if let report = try? decoder.decode(EvalReport.self, from: data), !report.cases.isEmpty {
-                matrices.append(EvalMatrixBuilder.build(from: [report]))
+                matrix = EvalMatrixBuilder.build(from: [report])
+            } else {
+                continue
             }
+            let needsFallback = matrix.models.contains { $0.environment?.contributor == nil }
+            contributions.append(
+                EvalContribution(
+                    matrix: matrix,
+                    fallbackContributor: needsFallback ? fallbackContributor(url) : nil
+                )
+            )
         }
-        if matrices.isEmpty { throw EvalMatrixError.noReports(dir.path) }
-        return matrices
+        if contributions.isEmpty { throw EvalMatrixError.noReports(dir.path) }
+        return contributions
     }
 
     /// Validate a community dir: every `*.json` must decode to a contribution

@@ -54,7 +54,8 @@ struct EvalCompatTests {
         ramMb: Int,
         catalog: String,
         build: String = "1.2.3",
-        judge: String = "xai/grok-4.3"
+        judge: String = "xai/grok-4.3",
+        contributor: String? = nil
     ) -> RunEnvironment {
         RunEnvironment(
             chip: chip,
@@ -64,7 +65,8 @@ struct EvalCompatTests {
             runModel: "m",
             judge: judge,
             catalogHash: catalog,
-            caseCount: 1
+            caseCount: 1,
+            contributor: contributor
         )
     }
 
@@ -341,6 +343,111 @@ struct EvalCompatTests {
         ])
         let m = EvalCompatBuilder.build(from: [c]).models[0]
         #expect(m.hasSelfJudged)
+    }
+
+    // MARK: - contributor attribution + ranking
+
+    @Test func environmentContributorBeatsFileFallback() {
+        let selfDeclared = EvalContribution(
+            matrix: matrix([
+                column(
+                    model: "a",
+                    passed: 8,
+                    scored: 10,
+                    env: env(chip: "Apple M4 Pro", ramMb: 49152, catalog: "cafe", contributor: "alice")
+                )
+            ]),
+            fallbackContributor: "committer-bob"
+        )
+        let preSchema = EvalContribution(
+            matrix: matrix([
+                column(
+                    model: "b",
+                    passed: 7,
+                    scored: 10,
+                    env: env(chip: "Apple M1", ramMb: 8192, catalog: "cafe")
+                )
+            ]),
+            fallbackContributor: "committer-bob"
+        )
+        let report = EvalCompatBuilder.build(from: [selfDeclared, preSchema])
+        let byName = Dictionary(uniqueKeysWithValues: report.models.map { ($0.model, $0) })
+        #expect(byName["a"]?.contributors == ["alice"])
+        #expect(byName["b"]?.contributors == ["committer-bob"])
+    }
+
+    @Test func contributorRankingCountsAllRunsAndBreadth() throws {
+        // alice: 3 runs (one superseded), 2 models, 2 device shapes.
+        // bob: 1 run, 1 model, 1 device.
+        let contributions = [
+            EvalContribution(
+                matrix: matrix([
+                    column(
+                        model: "m1",
+                        passed: 8,
+                        scored: 10,
+                        startedAt: "2026-07-01T00:00:00Z",
+                        env: env(chip: "Apple M4 Pro", ramMb: 49152, catalog: "new", contributor: "alice")
+                    )
+                ])
+            ),
+            EvalContribution(
+                matrix: matrix([
+                    column(
+                        model: "m1",
+                        passed: 5,
+                        scored: 10,
+                        startedAt: "2026-06-01T00:00:00Z",
+                        env: env(chip: "Apple M1", ramMb: 8192, catalog: "old", contributor: "alice")
+                    )
+                ])
+            ),
+            EvalContribution(
+                matrix: matrix([
+                    column(
+                        model: "m2",
+                        passed: 9,
+                        scored: 10,
+                        startedAt: "2026-07-01T00:00:00Z",
+                        env: env(chip: "Apple M4 Pro", ramMb: 49152, catalog: "new", contributor: "alice")
+                    )
+                ])
+            ),
+            EvalContribution(
+                matrix: matrix([
+                    column(
+                        model: "m2",
+                        passed: 6,
+                        scored: 10,
+                        startedAt: "2026-07-02T00:00:00Z",
+                        env: env(chip: "Apple M3 Max", ramMb: 65536, catalog: "new", contributor: "bob")
+                    )
+                ])
+            ),
+        ]
+        let report = EvalCompatBuilder.build(from: contributions)
+        let ranking = try #require(report.contributors)
+        #expect(ranking.count == 2)
+        #expect(ranking[0] == ContributorRank(name: "alice", contributions: 3, models: 2, devices: 2))
+        #expect(ranking[1] == ContributorRank(name: "bob", contributions: 1, models: 1, devices: 1))
+        let md = report.formatMarkdown()
+        #expect(md.contains("## Contributors"))
+        #expect(md.contains("| 1 | alice | 3 | 2 | 2 |"))
+        #expect(md.contains("| 2 | bob | 1 | 1 | 1 |"))
+        // Attribution shows up in the model details: m1's current run is
+        // alice's alone; m2's current set folds alice + bob (same catalog).
+        #expect(md.contains("by alice."))
+        #expect(md.contains("by alice, bob."))
+    }
+
+    @Test func unattributedContributionsProduceNoRanking() {
+        let report = EvalCompatBuilder.build(from: [
+            matrix([
+                column(model: "m", passed: 5, scored: 10, env: env(chip: "Apple M1", ramMb: 8192, catalog: "x"))
+            ])
+        ])
+        #expect(report.contributors == nil)
+        #expect(!report.formatMarkdown().contains("## Contributors"))
     }
 
     // MARK: - device coverage

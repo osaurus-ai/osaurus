@@ -48,6 +48,23 @@ if [[ -n "${KV_REGIME:-}" ]]; then
   export OSAURUS_EVALS_KV_REGIME="${KV_REGIME}"
 fi
 
+# Contributor identity for attribution + the leaderboard's contributor
+# ranking. Override with CONTRIBUTOR=<handle>; otherwise resolved from the
+# GitHub CLI login (preferred — matches the PR author) or git config.
+if [[ -z "${CONTRIBUTOR:-}" ]]; then
+  CONTRIBUTOR="$(gh api user --jq .login 2>/dev/null || true)"
+fi
+if [[ -z "${CONTRIBUTOR:-}" ]]; then
+  CONTRIBUTOR="$(git -C "${REPO_ROOT}" config github.user 2>/dev/null || true)"
+fi
+if [[ -z "${CONTRIBUTOR:-}" ]]; then
+  CONTRIBUTOR="$(git -C "${REPO_ROOT}" config user.name 2>/dev/null || true)"
+fi
+if [[ -n "${CONTRIBUTOR:-}" ]]; then
+  export OSAURUS_EVALS_CONTRIBUTOR="${CONTRIBUTOR}"
+  log "Contributing as: ${CONTRIBUTOR} (override with CONTRIBUTOR=<handle>)"
+fi
+
 # Filename: <chip>-<model>-<date>.json — descriptive and collision-resistant
 # across contributors and machines. Computed up front so a PR=1 re-run can
 # submit today's already-produced file without re-running the whole suite.
@@ -107,7 +124,7 @@ import json, sys
 m = json.load(open(sys.argv[1]))
 env = (m.get("models") or [{}])[0].get("environment") or {}
 parts = []
-for key in ("chip", "totalRamMb", "osVersion", "commit", "judge", "kvRegime", "catalogHash"):
+for key in ("chip", "totalRamMb", "osVersion", "commit", "judge", "kvRegime", "catalogHash", "contributor"):
     v = env.get(key)
     if v is None:
         continue

@@ -65,6 +65,7 @@ comparable and trustworthy:
 | `judge` | LLM-judged suites depend on the judge; `self-judge` is weaker (caveat). |
 | `kvRegime` | Swings RAM + speed. |
 | `catalogHash` | The comparability key — two runs with the same hash graded the *same* case set. |
+| `contributor` | Who ran it — attribution + the contributor ranking. Auto-resolved by `evals-contribute` (gh login / git config; `CONTRIBUTOR=` overrides). |
 
 ## Verdicts
 
@@ -100,6 +101,12 @@ needs a fresh contribution.
   flagged), backed by a full per-domain breakdown in the detail section.
 - **History** — superseded (older-catalog) runs, listed per model with their
   own pass-rates so drift across catalogs/builds stays visible.
+- **Contributors** — every run is attributed and ranked. `evals-contribute`
+  stamps your identity into the contribution's provenance (resolved from your
+  GitHub CLI login or git config; override with `CONTRIBUTOR=<handle>`), and
+  older files fall back to the git author who added them. The leaderboard
+  ranks contributors by runs contributed (current and superseded both count),
+  then by breadth of models and device shapes covered.
 
 ## Maintainers: regenerate the leaderboard
 

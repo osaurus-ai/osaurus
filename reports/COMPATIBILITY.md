@@ -19,7 +19,7 @@ Crowdsourced from 11 contribution(s). Each row reflects the model's **latest run
 
 ### `Ornith-1.0-35B-MXFP8`
 
-Current run: as of 2026-07-11 · build 563f91746 · catalog 8632f992dc0872b5 · 1 contribution(s).
+Current run: as of 2026-07-11 · build 563f91746 · catalog 8632f992dc0872b5 · 1 contribution(s) · by Michael Meding.
 
 | Domain | Pass | Fail | Skip | Err |
 | --- | --- | --- | --- | --- |
@@ -39,7 +39,7 @@ Skipped areas:
 
 ### `Ornith-1.0-9B-MXFP4` *(stale — needs a fresh run)*
 
-Current run: as of 2026-07-05 · catalog 137408f3cdba4838 · 1 contribution(s).
+Current run: as of 2026-07-05 · catalog 137408f3cdba4838 · 1 contribution(s) · by tpae.
 
 | Domain | Pass | Fail | Skip | Err |
 | --- | --- | --- | --- | --- |
@@ -57,7 +57,7 @@ Skipped areas:
 
 ### `Ornith-1.0-9B-MXFP8`
 
-Current run: as of 2026-07-10 · build 563f91746 · catalog 8632f992dc0872b5 · 1 contribution(s).
+Current run: as of 2026-07-10 · build 563f91746 · catalog 8632f992dc0872b5 · 1 contribution(s) · by Michael Meding.
 
 | Domain | Pass | Fail | Skip | Err |
 | --- | --- | --- | --- | --- |
@@ -77,7 +77,7 @@ Skipped areas:
 
 ### `gemma-4-12B-it-MXFP8`
 
-Current run: as of 2026-07-10 · build 563f91746 · catalog 8632f992dc0872b5 · 1 contribution(s).
+Current run: as of 2026-07-10 · build 563f91746 · catalog 8632f992dc0872b5 · 1 contribution(s) · by Michael Meding.
 
 | Domain | Pass | Fail | Skip | Err |
 | --- | --- | --- | --- | --- |
@@ -96,11 +96,11 @@ Skipped areas:
 - subagent: 12 — reasons unrecorded (pre-schema contribution)
 
 History (superseded, not in the headline):
-- 2026-07-04 · catalog 137408f3cdba4838 · 90% (223/247) · Apple M4 Pro (48GB)
+- 2026-07-04 · catalog 137408f3cdba4838 · 90% (223/247) · Apple M4 Pro (48GB) · by tpae
 
 ### `gemma-4-E2B-it-8bit`
 
-Current run: as of 2026-07-10 · build 563f91746 · catalog 8632f992dc0872b5 · 1 contribution(s).
+Current run: as of 2026-07-10 · build 563f91746 · catalog 8632f992dc0872b5 · 1 contribution(s) · by Michael Meding.
 
 | Domain | Pass | Fail | Skip | Err |
 | --- | --- | --- | --- | --- |
@@ -120,7 +120,7 @@ Skipped areas:
 
 ### `gemma-4-E4B-it-4bit` *(stale — needs a fresh run)*
 
-Current run: as of 2026-07-06 · catalog 137408f3cdba4838 · 1 contribution(s).
+Current run: as of 2026-07-06 · catalog 137408f3cdba4838 · 1 contribution(s) · by tpae.
 
 | Domain | Pass | Fail | Skip | Err |
 | --- | --- | --- | --- | --- |
@@ -139,7 +139,7 @@ Skipped areas:
 
 ### `gemma-4-E4B-it-8bit`
 
-Current run: as of 2026-07-10 · build 563f91746 · catalog 8632f992dc0872b5 · 1 contribution(s).
+Current run: as of 2026-07-10 · build 563f91746 · catalog 8632f992dc0872b5 · 1 contribution(s) · by Michael Meding.
 
 | Domain | Pass | Fail | Skip | Err |
 | --- | --- | --- | --- | --- |
@@ -159,7 +159,7 @@ Skipped areas:
 
 ### `Qwen3-4B-4bit` *(stale — needs a fresh run)*
 
-Current run: as of 2026-07-05 · catalog 137408f3cdba4838 · 1 contribution(s).
+Current run: as of 2026-07-05 · catalog 137408f3cdba4838 · 1 contribution(s) · by tpae.
 
 | Domain | Pass | Fail | Skip | Err |
 | --- | --- | --- | --- | --- |
@@ -178,7 +178,7 @@ Skipped areas:
 
 ### `Qwen3.5-4B-OptiQ-4bit` *(stale — needs a fresh run)*
 
-Current run: as of 2026-07-06 · catalog 137408f3cdba4838 · 1 contribution(s).
+Current run: as of 2026-07-06 · catalog 137408f3cdba4838 · 1 contribution(s) · by tpae.
 
 | Domain | Pass | Fail | Skip | Err |
 | --- | --- | --- | --- | --- |
@@ -196,7 +196,7 @@ Skipped areas:
 
 ### `grok-4.3` *(stale — needs a fresh run)*
 
-Current run: as of 2026-07-05 · catalog 137408f3cdba4838 · 1 contribution(s).
+Current run: as of 2026-07-05 · catalog 137408f3cdba4838 · 1 contribution(s) · by tpae.
 
 | Domain | Pass | Fail | Skip | Err |
 | --- | --- | --- | --- | --- |
@@ -211,6 +211,15 @@ Current run: as of 2026-07-05 · catalog 137408f3cdba4838 · 1 contribution(s).
 Skipped areas:
 - agent_loop: 3 — reasons unrecorded (pre-schema contribution)
 - subagent: 2 — reasons unrecorded (pre-schema contribution)
+
+## Contributors
+
+Ranked by contributed runs (every run counts, current and superseded), then by breadth of models and device shapes covered. Attribution comes from the contribution's `contributor` provenance, falling back to the git author who added the file.
+
+| # | Contributor | Runs | Models | Devices |
+| --- | --- | --- | --- | --- |
+| 1 | tpae | 6 | 6 | 1 |
+| 2 | Michael Meding | 5 | 5 | 1 |
 
 ## Device coverage
 
