@@ -466,8 +466,7 @@ public final class ToolRegistry: ObservableObject {
             externallyDeniedToolNames.contains(name)
         else { return false }
         if ChatExecutionContext.authenticatedHostFolderRoot != nil,
-            hostFolderAllowedWhenAuthenticated.contains(name)
-        {
+            hostFolderAllowedWhenAuthenticated.contains(name) {
             return false
         }
         return true
@@ -724,7 +723,7 @@ public final class ToolRegistry: ObservableObject {
             // discover returned). Scoped to capability tools ONLY — other tool
             // results (file contents, shell/web output) can be large or
             // sensitive and have no place in this diagnostic.
-            var resultForLog: String? = nil
+            var resultForLog: String?
             defer {
                 var line =
                     "       TOOL-EXEC-END   name=\(name) "
@@ -982,8 +981,7 @@ public final class ToolRegistry: ObservableObject {
         // marker is a leading root key, so scanning the whole string just to
         // detect it could hang the UI.
         if raw.prefix(4096).contains("\"action\":\"\(SecretPromptAction.actionKey)\""),
-            SecretPromptParser.parse(raw) != nil
-        {
+            SecretPromptParser.parse(raw) != nil {
             return raw
         }
 
@@ -1414,8 +1412,7 @@ public final class ToolRegistry: ObservableObject {
     func registerMCPTool(_ tool: MCPProviderTool) {
         let name = tool.name
         if let existing = toolsByName[name] as? MCPProviderTool,
-            existing.providerId != tool.providerId
-        {
+            existing.providerId != tool.providerId {
             NSLog(
                 "[ToolRegistry] MCP tool name collision on '\(name)': "
                     + "existing provider '\(existing.providerName)' (\(existing.providerId)) "

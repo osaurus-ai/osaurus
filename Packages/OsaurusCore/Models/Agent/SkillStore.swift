@@ -633,8 +633,7 @@ public enum SkillStore {
 
                 var isDirectory: ObjCBool = false
                 if FileManager.default.fileExists(atPath: skillDir.path, isDirectory: &isDirectory),
-                    isDirectory.boolValue
-                {
+                    isDirectory.boolValue {
                     try? FileManager.default.removeItem(at: file)
                     continue
                 }

@@ -551,8 +551,7 @@ public actor ToolSearchService {
         }
 
         if acceptedHits.contains(where: { $0.bm25Rank == nil && $0.embedRank == nil })
-            && !registryFallbackScored.isEmpty
-        {
+            && !registryFallbackScored.isEmpty {
             ToolIndexLogger.search.notice(
                 "Hybrid search used registry fallback for missing index rows; missingCandidates=\(registryFallbackScored.count, privacy: .public) accepted=\(acceptedHits.filter { $0.bm25Rank == nil && $0.embedRank == nil }.count, privacy: .public)"
             )
@@ -782,8 +781,7 @@ public actor ToolSearchService {
         for (key, value) in properties {
             parts.append(key)
             if case .object(let propSchema) = value,
-                case .string(let desc) = propSchema["description"]
-            {
+                case .string(let desc) = propSchema["description"] {
                 parts.append(desc)
             }
         }
@@ -874,8 +872,7 @@ public actor ToolSearchService {
         for (key, value) in properties {
             parts.append(key)
             if case .object(let propSchema) = value,
-                case .string(let desc) = propSchema["description"]
-            {
+                case .string(let desc) = propSchema["description"] {
                 parts.append(desc)
             }
         }

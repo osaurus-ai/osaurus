@@ -358,8 +358,7 @@ public actor ToolIndexService {
         }
         if reasons.contains(.hiddenByAgentScope)
             || reasons.contains(.hiddenByExecutionMode)
-            || reasons.contains(.notSelectedByPreflight)
-        {
+            || reasons.contains(.notSelectedByPreflight) {
             return .hidden
         }
         if availability.isCallableNow {

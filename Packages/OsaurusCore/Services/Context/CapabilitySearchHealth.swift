@@ -162,7 +162,7 @@ public enum CapabilitySearchDiagnostics {
     /// `nonisolated` so non-main-actor callers (e.g.
     /// `CapabilitySearch.search`) don't have to hop the main actor
     /// just to stringify a `Sendable` struct.
-    public nonisolated static func formatSummary(_ health: CapabilitySearchHealth) -> String {
+    nonisolated public static func formatSummary(_ health: CapabilitySearchHealth) -> String {
         var parts: [String] = [
             "registry=\(health.registryToolCount)",
             "index=\(health.indexedToolCount)",

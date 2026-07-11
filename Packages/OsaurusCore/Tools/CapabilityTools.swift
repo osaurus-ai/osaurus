@@ -518,8 +518,7 @@ final class CapabilitiesDiscoverTool: OsaurusTool, @unchecked Sendable {
 
         let normalized = trimmed.replacingOccurrences(of: #"<|"|>"#, with: #"""#)
         if let data = normalized.data(using: .utf8),
-            let array = try? JSONSerialization.jsonObject(with: data) as? [String]
-        {
+            let array = try? JSONSerialization.jsonObject(with: data) as? [String] {
             return array
         }
 
@@ -705,8 +704,8 @@ final class CapabilitiesLoadTool: OsaurusTool, @unchecked Sendable {
     private struct LoadFailure {
         let kind: ToolEnvelope.Kind
         let message: String
-        var field: String? = nil
-        var expected: String? = nil
+        var field: String?
+        var expected: String?
     }
 
     private enum LoadOutcome {
