@@ -39231,32 +39231,22 @@
         }
       }
     },
-    "Captured %@, but only text selections can be inserted automatically." : {
+    "Captured a file, but only text selections can be inserted automatically." : {
       "localizations" : {
         "en" : {
           "stringUnit" : {
             "state" : "new",
-            "value" : "Captured %@, but only text selections can be inserted automatically."
+            "value" : "Captured a file, but only text selections can be inserted automatically."
           }
         }
       }
     },
-    "a file" : {
+    "Captured an image, but only text selections can be inserted automatically." : {
       "localizations" : {
         "en" : {
           "stringUnit" : {
             "state" : "new",
-            "value" : "a file"
-          }
-        }
-      }
-    },
-    "an image" : {
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "new",
-            "value" : "an image"
+            "value" : "Captured an image, but only text selections can be inserted automatically."
           }
         }
       }
@@ -39277,16 +39267,6 @@
           "stringUnit" : {
             "state" : "new",
             "value" : "No selection was copied. Select text in the frontmost app and try again."
-          }
-        }
-      }
-    },
-    "non-text content" : {
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "new",
-            "value" : "non-text content"
           }
         }
       }

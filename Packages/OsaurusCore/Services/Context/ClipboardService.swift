@@ -43,18 +43,6 @@ public final class ClipboardService: ObservableObject {
         public enum NonTextKind: String, Equatable, Sendable {
             case image
             case file
-            case nonText
-
-            var noun: String {
-                switch self {
-                case .image:
-                    return L("an image")
-                case .file:
-                    return L("a file")
-                case .nonText:
-                    return L("non-text content")
-                }
-            }
 
             var diagnosticTag: String {
                 switch self {
@@ -62,8 +50,6 @@ public final class ClipboardService: ObservableObject {
                     return "image"
                 case .file:
                     return "file"
-                case .nonText:
-                    return "non_text"
                 }
             }
         }
@@ -96,7 +82,12 @@ public final class ClipboardService: ObservableObject {
             case .capturedText(let count):
                 return String(format: L("Captured selected text (%lld characters)."), Int64(count))
             case .capturedNonText(let kind):
-                return String(format: L("Captured %@, but only text selections can be inserted automatically."), kind.noun)
+                switch kind {
+                case .image:
+                    return L("Captured an image, but only text selections can be inserted automatically.")
+                case .file:
+                    return L("Captured a file, but only text selections can be inserted automatically.")
+                }
             case .accessibilityDenied:
                 return L("Osaurus could not request the selection. Enable Accessibility permission, then try again.")
             case .pasteboardReadFailed:
@@ -132,6 +123,12 @@ public final class ClipboardService: ObservableObject {
         let text: String?
     }
 
+    private enum SelectionPasteboardResult: Equatable, Sendable {
+        case content(ClipboardContent)
+        case noReadableContent
+        case readFailed
+    }
+
     /// The current content on the pasteboard
     @Published public private(set) var currentContent: ClipboardContent?
 
@@ -149,6 +146,7 @@ public final class ClipboardService: ObservableObject {
     private var timer: AnyCancellable?
     /// Guards against overlapping pasteboard reads if one outlives the poll interval.
     private var isChecking = false
+    private var isGrabbingSelection = false
     private let keyboardService = KeyboardSimulationService.shared
 
     /// Serializes every `NSPasteboard` access. `NSPasteboard` is not thread-safe:
@@ -232,7 +230,7 @@ public final class ClipboardService: ObservableObject {
 
     /// Poll the pasteboard and, if its content changed, publish it.
     @discardableResult
-    private func performPasteboardRefresh(markIdenticalAsNew: Bool = false) async -> ClipboardContent? {
+    private func performPasteboardRefresh(markIdenticalAsNew: Bool = false) async -> SelectionPasteboardResult {
         let knownChangeCount = lastChangeCount
 
         // Both the `changeCount` poll and the content read run off-main: every
@@ -242,8 +240,12 @@ public final class ClipboardService: ObservableObject {
         // (never `readObjects(forClasses:)`), which are safe to call off the main actor.
         // They run on the shared serial pasteboard queue so they never overlap another
         // pasteboard access and corrupt its internal type cache.
-        guard let changeCount = await Self.onPasteboardQueue({ $0.changeCount }) else { return nil }
-        guard changeCount != knownChangeCount else { return nil }
+        guard let changeCount = await Self.onPasteboardQueue({ $0.changeCount }) else {
+            return .readFailed
+        }
+        guard changeCount != knownChangeCount else {
+            return .noReadableContent
+        }
 
         print("[ClipboardService] Pasteboard change detected. Count: \(changeCount) (was \(knownChangeCount))")
         lastChangeCount = changeCount
@@ -251,7 +253,7 @@ public final class ClipboardService: ObservableObject {
         let detected = (await Self.onPasteboardQueue { Self.detectContent(in: $0) }).flatMap { $0 }
         guard let content = detected else {
             print("[ClipboardService] Change detected but no meaningful content found on pasteboard.")
-            return nil
+            return .noReadableContent
         }
 
         // Only update if content actually changed
@@ -265,7 +267,7 @@ public final class ClipboardService: ObservableObject {
                     lastSourceApp = frontmost.localizedName ?? frontmost.bundleIdentifier
                 }
             }
-            return content
+            return .content(content)
         }
 
         // Build the redacted diagnostic off the main actor: the `.text`
@@ -287,7 +289,7 @@ public final class ClipboardService: ObservableObject {
             lastSourceApp = frontmost.localizedName ?? frontmost.bundleIdentifier
             print("[ClipboardService] Source app identified: \(lastSourceApp ?? "unknown")")
         }
-        return content
+        return .content(content)
     }
 
     nonisolated private static func detectContent(in pb: NSPasteboard) -> ClipboardContent? {
@@ -342,6 +344,18 @@ public final class ClipboardService: ObservableObject {
     }
 
     private func grabSelectionResult() async -> SelectionGrabResult {
+        guard !isGrabbingSelection else {
+            return finishSelectionGrab(
+                report: SelectionGrabReport(
+                    outcome: .pasteboardUnchanged,
+                    sourceApp: Self.currentFrontmostApplicationName()
+                ),
+                text: nil
+            )
+        }
+        isGrabbingSelection = true
+        defer { isGrabbingSelection = false }
+
         let sourceApp = Self.currentFrontmostApplicationName()
         guard let startChangeCount = await Self.onPasteboardQueue({ $0.changeCount }) else {
             return finishSelectionGrab(
@@ -373,7 +387,29 @@ public final class ClipboardService: ObservableObject {
                     "[ClipboardService] Pasteboard update detected at iteration \(i+1). New count: \(currentChangeCount)"
                 )
                 let refreshed = await performPasteboardRefresh(markIdenticalAsNew: true)
-                guard let content = refreshed ?? contentPublished(forChangeCount: currentChangeCount) else {
+                let content: ClipboardContent?
+                switch refreshed {
+                case .readFailed:
+                    return finishSelectionGrab(
+                        report: SelectionGrabReport(
+                            outcome: .pasteboardReadFailed,
+                            sourceApp: sourceApp
+                        ),
+                        text: nil
+                    )
+                case .noReadableContent:
+                    content = contentPublished(forChangeCount: currentChangeCount)
+                    if content == nil {
+                        return finishSelectionGrab(
+                            report: SelectionGrabReport(outcome: .noReadableContent, sourceApp: sourceApp),
+                            text: nil
+                        )
+                    }
+                case .content(let publishedContent):
+                    content = publishedContent
+                }
+
+                guard let content else {
                     return finishSelectionGrab(
                         report: SelectionGrabReport(outcome: .noReadableContent, sourceApp: sourceApp),
                         text: nil

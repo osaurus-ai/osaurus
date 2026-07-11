@@ -113,7 +113,7 @@ struct ClipboardContentDiagnosticsTests {
         )
 
         #expect(report.needsUserAttention == false)
-        #expect(report.userFacingMessage.contains("a file"))
+        #expect(report.userFacingMessage == "Captured a file, but only text selections can be inserted automatically.")
         #expect(report.redactedDiagnosticDescription.contains("kind: file"))
         #expect(report.redactedDiagnosticDescription.contains("Finder"))
     }
@@ -129,9 +129,9 @@ struct ClipboardContentDiagnosticsTests {
         #expect(!applySection.contains("grabSelectionReport()"))
 
         let helperSection = String(source[helperStart.lowerBound ..< source.endIndex])
-        #expect(helperSection.contains("Task {") )
-        #expect(helperSection.contains("grabSelectionReport()"))
-        #expect(helperSection.contains("try? await Task.sleep"))
+        #expect(helperSection.contains("withCheckedContinuation"))
+        #expect(helperSection.contains("resumeSelectionFlowOnce(timeout:"))
+        #expect(helperSection.contains("Task.sleep"))
     }
 
     @Test func selectionFailureChipTakesPriorityOverUnreadClipboardChip() throws {

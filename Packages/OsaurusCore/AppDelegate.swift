@@ -1828,13 +1828,43 @@ extension AppDelegate {
         guard !isCapturingSelectionForHotkey else { return }
         isCapturingSelectionForHotkey = true
 
-        _ = Task { @MainActor in
+        let grabTask = Task { @MainActor in
             await ClipboardService.shared.grabSelectionReport()
-            isCapturingSelectionForHotkey = false
         }
 
-        try? await Task.sleep(nanoseconds: maxWaitNanos)
-        isCapturingSelectionForHotkey = false
+        let didTimeOut = await withCheckedContinuation {
+            (continuation: CheckedContinuation<Bool, Never>) in
+            let lock = OSAllocatedUnfairLock(initialState: false)
+            func resumeSelectionFlowOnce(timeout: Bool) {
+                lock.withLock { didResume in
+                    guard !didResume else { return }
+                    didResume = true
+                }
+                continuation.resume(returning: timeout)
+            }
+
+            Task {
+                _ = await grabTask.value
+                resumeSelectionFlowOnce(timeout: false)
+            }
+
+            Task {
+                try? await Task.sleep(nanoseconds: maxWaitNanos)
+                resumeSelectionFlowOnce(timeout: true)
+            }
+        }
+
+        if !didTimeOut {
+            isCapturingSelectionForHotkey = false
+            return
+        }
+
+        Task {
+            _ = await grabTask.value
+            await MainActor.run {
+                isCapturingSelectionForHotkey = false
+            }
+        }
     }
     fileprivate func handleDeepLink(_ url: URL) {
         let scheme = url.scheme?.lowercased() ?? ""
