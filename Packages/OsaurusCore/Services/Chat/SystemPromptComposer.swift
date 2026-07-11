@@ -2108,7 +2108,8 @@ public struct SystemPromptComposer: Sendable {
                 byName.removeValue(forKey: "search_memory")
             }
             if !snapshot.webSearchEnabled {
-                for name in ["web_search", "search_and_extract"] where !keep.contains(name) {
+                for name in ["web_search", "search_and_extract", "research_web"]
+                where !keep.contains(name) {
                     byName.removeValue(forKey: name)
                 }
             }
