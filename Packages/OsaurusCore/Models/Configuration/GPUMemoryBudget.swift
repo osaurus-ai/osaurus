@@ -59,19 +59,13 @@ enum GPUMemoryBudget {
 
     /// Working-set budget for a Mac with `physicalMemoryGB` of unified memory.
     ///
-    /// For a *hypothetical* machine (the catalog reasoning about hardware we
-    /// aren't running on, or a test) this is the conservative documented split
-    /// — stable across OS releases and never optimistic.
-    ///
-    /// For the machine we're actually running on, Metal's advertised working
-    /// set is ground truth and is used as-is, whether that raises or lowers
-    /// the default. Lowering matters for a user who pinned
-    /// `iogpu.wired_limit_mb` below the split. Raising matters on large-memory
-    /// Macs, where the fixed 25% host reserve is far more than macOS actually
-    /// holds back: a 128 GB M5 Max advertises ~107 GiB, so the 96 GiB default
-    /// declared a 94 GiB model impossible — a model that in fact loads,
-    /// stays resident, and decodes without paging. The host reserve doesn't
-    /// scale with RAM, so a fixed fraction can't express it.
+    /// Metal is consulted only for the machine we're actually running on, and
+    /// only ever to *lower* the budget — a user who has pinned
+    /// `iogpu.wired_limit_mb` below the default split gets the tighter number,
+    /// but nobody gets a more optimistic one than `defaultBudgetGB`. Callers
+    /// passing a hypothetical RAM size (the catalog reasoning about another
+    /// machine, or a test) always land on the pure default, so the verdict
+    /// never depends on the host it was computed on.
     static func budgetGB(physicalMemoryGB: Double) -> Double {
         let base = defaultBudgetGB(physicalMemoryGB: physicalMemoryGB)
         guard
@@ -79,6 +73,6 @@ enum GPUMemoryBudget {
             abs(physicalMemoryGB - hostPhysicalMemoryGB) < 1.0,
             let advertised = hostAdvertisedBudgetGB
         else { return base }
-        return advertised
+        return min(base, advertised)
     }
 }

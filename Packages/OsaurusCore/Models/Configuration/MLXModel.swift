@@ -507,21 +507,6 @@ struct MLXModel: Identifiable, Codable {
     /// default leaves more slack and stops landing users on a model that
     /// "fits" the estimate but chokes once a long-context KV cache grows.
     private static let overheadMultiplier: Double = 1.25
-    /// Ceiling on the *absolute* headroom the multiplier may add, in GB.
-    ///
-    /// The 25% is a proportional stand-in for KV + buffers, but KV scales with
-    /// layers × KV heads × context and is capped by the runtime — it does not
-    /// scale with weight size. Left unbounded the multiplier invents headroom
-    /// that no model allocates: a 94 GiB pack is charged 23.6 GiB of overhead
-    /// and priced at 118 GiB, which on a 128 GB Mac (≈107 GiB working set)
-    /// pushes a model that loads and decodes normally to the edge of
-    /// "too large" — and pushes anything bigger over it. Real KV at the
-    /// default cap plus Metal buffers fits comfortably inside this ceiling.
-    ///
-    /// Only models above ~64 GB of weights are affected: below that, 25% is
-    /// already under the ceiling and the estimate is unchanged, so small- and
-    /// mid-size Mac sizing keeps its existing, validated behaviour.
-    private static let maxOverheadGB: Double = 16.0
 
     /// Numeric parameter count in billions (e.g. "7B" -> 7.0, "270M" -> 0.27)
     var parameterCountBillions: Double? {
@@ -563,16 +548,13 @@ struct MLXModel: Identifiable, Codable {
     /// the `params × bytesPerParameter` constant heuristic. The heuristic is
     /// only the fallback for entries we haven't sized yet.
     var estimatedMemoryGB: Double? {
-        let weightsGB: Double
         if let dlBytes = downloadSizeBytes, dlBytes > 0 {
-            weightsGB = Double(dlBytes) / Self.bytesPerGB
-        } else if let params = parameterCountBillions {
-            weightsGB = params * bytesPerParameter * 1e9 / Self.bytesPerGB
-        } else {
-            return nil
+            return Double(dlBytes) * Self.overheadMultiplier / Self.bytesPerGB
         }
-        let overhead = min(weightsGB * (Self.overheadMultiplier - 1.0), Self.maxOverheadGB)
-        return weightsGB + overhead
+        if let params = parameterCountBillions {
+            return params * bytesPerParameter * 1e9 * Self.overheadMultiplier / Self.bytesPerGB
+        }
+        return nil
     }
 
     /// Formatted estimated memory string (e.g. "~3.5 GB")
