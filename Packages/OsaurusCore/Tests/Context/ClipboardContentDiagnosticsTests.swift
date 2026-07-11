@@ -101,7 +101,7 @@ struct ClipboardContentDiagnosticsTests {
         #expect(denied.userFacingMessage.contains("Accessibility"))
         #expect(denied.redactedDiagnosticDescription == "selection_grab(outcome: accessibility_denied, source: Safari)")
 
-        #expect(unchanged.needsUserAttention)
+        #expect(!unchanged.needsUserAttention)
         #expect(unchanged.userFacingMessage.contains("No selection"))
         #expect(unchanged.redactedDiagnosticDescription == "selection_grab(outcome: pasteboard_unchanged, source: unknown)")
     }

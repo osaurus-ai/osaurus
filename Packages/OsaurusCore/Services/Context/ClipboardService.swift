@@ -56,7 +56,9 @@ public final class ClipboardService: ObservableObject {
             switch outcome {
             case .capturedText, .capturedNonText:
                 return false
-            case .accessibilityDenied, .pasteboardReadFailed, .noReadableContent, .pasteboardUnchanged:
+            case .pasteboardUnchanged:
+                return false
+            case .accessibilityDenied, .pasteboardReadFailed, .noReadableContent:
                 return true
             }
         }
