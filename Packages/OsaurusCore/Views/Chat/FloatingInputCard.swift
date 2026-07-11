@@ -821,22 +821,17 @@ struct FloatingInputCard: View {
                 slashSelectedIndex = 0
                 atSelectedIndex = 0
                 // Re-list the "@" menu off the main actor for the new query.
+                // (folds in the registry sync so it costs no extra body chain
+                // link — the whole chain is at the type-checker's limit.)
                 refreshAtMenu()
+            }
+            .onChange(of: showSlashPopup) { _, _ in
+                // Keep registry in sync so the global key monitor can suppress
+                // Escape from closing the window while either popup is open.
+                syncPopupVisibility()
             }
             .onDisappear {
                 atMenuTask?.cancel()
-            }
-            .onChange(of: showSlashPopup) { _, isVisible in
-                // Keep registry in sync so the global key monitor can suppress
-                // Escape from closing the window while the popup is open.
-                SlashCommandRegistry.shared.isPopupVisible = isVisible
-            }
-            .onChange(of: showAtPopup) { _, isVisible in
-                // Same Escape-suppression treatment for the "@" file menu so
-                // dismissing it doesn't also close the window.
-                SlashCommandRegistry.shared.isPopupVisible = isVisible
-            }
-            .onDisappear {
                 SlashCommandRegistry.shared.isPopupVisible = false
             }
             .onChange(of: focusTrigger) { _, _ in
@@ -1755,6 +1750,7 @@ extension FloatingInputCard {
         atMenuTask?.cancel()
         guard let query = activeAtQuery else {
             atMenuItems = []
+            syncPopupVisibility()
             return
         }
         // Snapshot the folder root here (main actor); the enumeration itself
@@ -1766,7 +1762,16 @@ extension FloatingInputCard {
             }.value
             if Task.isCancelled { return }
             atMenuItems = items
+            syncPopupVisibility()
         }
+    }
+
+    /// Mirror whether either completion popup is showing into the shared
+    /// registry so the global key monitor can suppress Escape (which would
+    /// otherwise close the window) while a popup is open. Folded into
+    /// `refreshAtMenu` and the slash `onChange` so it adds no body chain link.
+    private func syncPopupVisibility() {
+        SlashCommandRegistry.shared.isPopupVisible = showSlashPopup || showAtPopup
     }
 
     // MARK: - Input Key Handling
