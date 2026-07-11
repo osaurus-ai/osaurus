@@ -661,20 +661,7 @@ struct FloatingInputCard: View {
                     }
 
                     // "@" file menu popup — appears above the input card
-                    if showAtPopup {
-                        AtFileMenuPopup(
-                            items: atMenuItems,
-                            selectedIndex: $atSelectedIndex,
-                            onSelect: applyAtItem
-                        )
-                        .padding(.horizontal, 20)
-                        .transition(
-                            .asymmetric(
-                                insertion: .opacity.combined(with: .scale(scale: 0.98, anchor: .bottom)),
-                                removal: .opacity.combined(with: .scale(scale: 0.98, anchor: .bottom))
-                            )
-                        )
-                    }
+                    atFileMenuPopupView
 
                     inputCard
                         .padding(.horizontal, 20)
@@ -1780,6 +1767,68 @@ extension FloatingInputCard {
             if Task.isCancelled { return }
             atMenuItems = items
         }
+    }
+
+    // MARK: - Input Key Handling
+
+    /// Return/Enter in the text field: apply the highlighted popup entry when a
+    /// popup is open, otherwise send the message.
+    private func handleInputCommit() {
+        if showSlashPopup {
+            let cmds = slashFilteredCommands
+            if slashSelectedIndex < cmds.count {
+                applySlashCommand(cmds[slashSelectedIndex])
+            }
+        } else if showAtPopup {
+            if atSelectedIndex < atMenuItems.count {
+                applyAtItem(atMenuItems[atSelectedIndex])
+            }
+        } else {
+            syncAndSend()
+        }
+    }
+
+    /// Up arrow: move the open popup's selection, else navigate input history.
+    private func handleInputArrowUp() -> Bool {
+        if showSlashPopup {
+            slashSelectedIndex = max(0, slashSelectedIndex - 1)
+            return true
+        }
+        if showAtPopup {
+            atSelectedIndex = max(0, atSelectedIndex - 1)
+            return true
+        }
+        return handleHistoryArrowUp()
+    }
+
+    /// Down arrow: move the open popup's selection, else navigate input history.
+    private func handleInputArrowDown() -> Bool {
+        if showSlashPopup {
+            slashSelectedIndex = min(slashFilteredCommands.count - 1, slashSelectedIndex + 1)
+            return true
+        }
+        if showAtPopup {
+            atSelectedIndex = min(atMenuItems.count - 1, atSelectedIndex + 1)
+            return true
+        }
+        return handleHistoryArrowDown()
+    }
+
+    /// Escape while a popup is open: dismiss it. The slash popup clears the
+    /// prefix; the "@" menu removes just its token so surrounding text survives.
+    private func handlePopupEscape() -> Bool {
+        if showSlashPopup {
+            localText = ""
+            text = ""
+            return true
+        }
+        if showAtPopup {
+            let newText = replacingAtToken(with: "")
+            localText = newText
+            text = newText
+            return true
+        }
+        return false
     }
 
     private func handleBuiltInSlashAction(_ name: String) {
@@ -4698,6 +4747,26 @@ extension FloatingInputCard {
         }
     }
 
+    /// The "@" file completion popup, extracted from `mainContent` to keep that
+    /// view builder within the Swift type-checker's reach.
+    @ViewBuilder
+    private var atFileMenuPopupView: some View {
+        if showAtPopup {
+            AtFileMenuPopup(
+                items: atMenuItems,
+                selectedIndex: $atSelectedIndex,
+                onSelect: applyAtItem
+            )
+            .padding(.horizontal, 20)
+            .transition(
+                .asymmetric(
+                    insertion: .opacity.combined(with: .scale(scale: 0.98, anchor: .bottom)),
+                    removal: .opacity.combined(with: .scale(scale: 0.98, anchor: .bottom))
+                )
+            )
+        }
+    }
+
     private var textInputArea: some View {
         EditableTextView(
             text: $localText,
@@ -4708,59 +4777,11 @@ extension FloatingInputCard {
             isComposing: $isComposing,
             maxHeight: maxHeight,
             focusController: textViewFocusController,
-            onCommit: {
-                if showSlashPopup {
-                    let cmds = slashFilteredCommands
-                    if slashSelectedIndex < cmds.count {
-                        applySlashCommand(cmds[slashSelectedIndex])
-                    }
-                } else if showAtPopup {
-                    if atSelectedIndex < atMenuItems.count {
-                        applyAtItem(atMenuItems[atSelectedIndex])
-                    }
-                } else {
-                    syncAndSend()
-                }
-            },
+            onCommit: { handleInputCommit() },
             onShiftCommit: nil,
-            onArrowUp: showSlashPopup
-                ? {
-                    slashSelectedIndex = max(0, slashSelectedIndex - 1)
-                    return true
-                }
-                : showAtPopup
-                    ? {
-                        atSelectedIndex = max(0, atSelectedIndex - 1)
-                        return true
-                    } : { handleHistoryArrowUp() },
-            onArrowDown: showSlashPopup
-                ? {
-                    let maxIndex = slashFilteredCommands.count - 1
-                    slashSelectedIndex = min(maxIndex, slashSelectedIndex + 1)
-                    return true
-                }
-                : showAtPopup
-                    ? {
-                        let maxIndex = atMenuItems.count - 1
-                        atSelectedIndex = min(maxIndex, atSelectedIndex + 1)
-                        return true
-                    } : { handleHistoryArrowDown() },
-            onEscape: showSlashPopup
-                ? {
-                    // Dismiss popup by clearing the slash prefix
-                    localText = ""
-                    text = ""
-                    return true
-                }
-                : showAtPopup
-                    ? {
-                        // Dismiss by removing just the "@…" token, keeping any
-                        // text the user typed before it.
-                        let newText = replacingAtToken(with: "")
-                        localText = newText
-                        text = newText
-                        return true
-                    } : nil,
+            onArrowUp: { handleInputArrowUp() },
+            onArrowDown: { handleInputArrowDown() },
+            onEscape: (showSlashPopup || showAtPopup) ? { handlePopupEscape() } : nil,
             onPasteText: { pasted in
                 guard pasted.utf8.count >= Self.pastedContentThreshold else { return false }
                 withAnimation(theme.springAnimation()) {
