@@ -70,7 +70,9 @@ public struct RunTraceInspection: Codable, Sendable, Equatable {
     public func jsonReport(prettyPrinted: Bool = true) throws -> Data {
         if let reason = exportBlockReason { throw ExportError.unsafe(reason) }
         let data = try JSONEncoder.osaurusCanonical(prettyPrinted: prettyPrinted).encode(self)
-        let text = String(decoding: data, as: UTF8.self)
+        guard let text = String(data: data, encoding: .utf8) else {
+            throw ExportError.unsafe("report is not valid UTF-8")
+        }
         guard !Self.containsUnsafeUnicode(text), !Self.containsLocalPath(text) else {
             throw ExportError.unsafe("report contains unsafe text or a local path")
         }
@@ -1372,16 +1374,14 @@ public enum RunTraceInspector {
         }
         let lookedLikeJSON = trimmed.hasPrefix("{") || trimmed.hasPrefix("[")
         if let data = trimmed.data(using: .utf8),
-            let parsed = try? JSONSerialization.jsonObject(with: data, options: [.fragmentsAllowed])
-        {
+            let parsed = try? JSONSerialization.jsonObject(with: data, options: [.fragmentsAllowed]) {
             let redacted = redactJSON(parsed, path: path, options: options)
             if JSONSerialization.isValidJSONObject(redacted.value),
                 let encoded = try? JSONSerialization.data(
                     withJSONObject: redacted.value,
                     options: .osaurusCanonical
                 ),
-                let text = String(data: encoded, encoding: .utf8)
-            {
+                let text = String(data: encoded, encoding: .utf8) {
                 return RedactedPreview(
                     text: preview(text, limit: options.previewLimit),
                     format: "json",
@@ -1512,8 +1512,7 @@ public enum RunTraceInspector {
         var inlineIndex = 0
 
         while search < value.endIndex,
-            let open = value[search...].firstIndex(of: "{")
-        {
+            let open = value[search...].firstIndex(of: "{") {
             guard let close = matchingJSONObjectEnd(in: value, from: open) else {
                 break
             }
@@ -1523,8 +1522,7 @@ public enum RunTraceInspector {
             let candidate = String(value[open..<end])
             let inlinePath = "\(path).inlineJSON[\(inlineIndex)]"
             if let data = candidate.data(using: .utf8),
-                let parsed = try? JSONSerialization.jsonObject(with: data, options: [.fragmentsAllowed])
-            {
+                let parsed = try? JSONSerialization.jsonObject(with: data, options: [.fragmentsAllowed]) {
                 let redacted = redactJSON(parsed, path: inlinePath, options: options)
                 if !redacted.paths.isEmpty,
                     JSONSerialization.isValidJSONObject(redacted.value),
@@ -1532,8 +1530,7 @@ public enum RunTraceInspector {
                         withJSONObject: redacted.value,
                         options: .osaurusCanonical
                     ),
-                    let text = String(data: encoded, encoding: .utf8)
-                {
+                    let text = String(data: encoded, encoding: .utf8) {
                     output.append(text)
                     paths.append(contentsOf: redacted.paths)
                 } else {
@@ -1593,13 +1590,11 @@ public enum RunTraceInspector {
         if let success = dict["success"] as? Bool, success == false { return "error" }
         if let ok = dict["ok"] as? Bool, ok == false { return "error" }
         if let status = optionalString(dict["status"]),
-            ["error", "failed", "failure"].contains(status.lowercased())
-        {
+            ["error", "failed", "failure"].contains(status.lowercased()) {
             return "error"
         }
         if let type = optionalString(dict["type"]),
-            ["error", "tool_error"].contains(type.lowercased())
-        {
+            ["error", "tool_error"].contains(type.lowercased()) {
             return "error"
         }
         if let error = dict["error"] {
@@ -1800,8 +1795,7 @@ public enum RunTraceInspector {
             if (code < 0x20 && code != 0x09 && code != 0x0A && code != 0x0D)
                 || (0x202A ... 0x202E).contains(code)
                 || (0x2066 ... 0x2069).contains(code)
-                || code == 0x200E || code == 0x200F || code == 0x061C
-            {
+                || code == 0x200E || code == 0x200F || code == 0x061C {
                 return "�"
             }
             return Character(String(scalar))

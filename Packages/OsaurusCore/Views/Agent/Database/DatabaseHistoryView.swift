@@ -19,13 +19,13 @@ struct DatabaseHistoryView: View {
     @State private var runs: [AgentRunRecord] = []
     @State private var selectedRunId: UUID? = nil
     @State private var changelogRows: [ChangelogEntry] = []
-    @State private var traceInspection: RunTraceInspection? = nil
+    @State private var traceInspection: RunTraceInspection?
     @State private var isLoadingRuns = true
     @State private var isLoadingTrace = false
     @State private var loadError: String? = nil
-    @State private var traceLoadError: String? = nil
-    @State private var traceLoadRequestID: UUID? = nil
-    @State private var traceLoaderTask: Task<TraceLoadResult, Never>? = nil
+    @State private var traceLoadError: String?
+    @State private var traceLoadRequestID: UUID?
+    @State private var traceLoaderTask: Task<TraceLoadResult, Never>?
 
     init(agentId: UUID) {
         self.agentId = agentId
@@ -379,7 +379,7 @@ struct DatabaseHistoryView: View {
     }
 }
 
-fileprivate enum DatabaseHistoryTraceLoader {
+private enum DatabaseHistoryTraceLoader {
     static func load(agentId: UUID, runId: UUID) -> TraceLoadResult {
         let traceURL = OsaurusPaths.agentRunTraceFile(agentId: agentId, runId: runId)
         let inspection: RunTraceInspection?
@@ -430,7 +430,7 @@ fileprivate enum DatabaseHistoryTraceLoader {
     }
 }
 
-fileprivate struct TraceLoadResult: Sendable {
+private struct TraceLoadResult: Sendable {
     let inspection: RunTraceInspection?
     let changelogRows: [ChangelogEntry]
     let errorMessage: String?

@@ -63,8 +63,7 @@ public struct RunTraceDiagnosticView: View {
 
             Button {
                 if let data = try? inspection.jsonReport(prettyPrinted: true),
-                    let json = String(data: data, encoding: .utf8)
-                {
+                    let json = String(data: data, encoding: .utf8) {
                     copy(json)
                 }
             } label: {
