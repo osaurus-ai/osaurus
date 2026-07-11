@@ -196,12 +196,12 @@ enum ProviderFailureClassifier {
             return classification(.requestRejected, detail: L("HTTP \(status) suggests the provider rejected the request shape. Evidence: \(replay.summary)"))
         }
 
-        if bodyLooksLikeSchemaMismatch(body) {
-            if phase.contains("model") {
-                return classification(.modelsSchemaMismatch, detail: L("The models endpoint response did not match the expected schema. Evidence: \(replay.summary)"))
+            if bodyLooksLikeSchemaMismatch(body) {
+                if phase.contains("model") {
+                    return classification(.modelsSchemaMismatch, detail: L("The models endpoint responded with an unexpected schema. Evidence: \(replay.summary)"))
+                }
+                return classification(.badResponse, detail: L("The provider response did not match the expected schema. Evidence: \(replay.summary)"))
             }
-            return classification(.badResponse, detail: L("The provider response did not match the expected schema. Evidence: \(replay.summary)"))
-        }
 
         if status < 200 || status >= 300 {
             return classification(.badResponse, detail: L("HTTP \(status) from provider. Evidence: \(replay.summary)"))
