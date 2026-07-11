@@ -1810,6 +1810,7 @@ extension AppDelegate {
 @MainActor
 final class SelectionHotkeyIntentController {
     typealias Sleep = @MainActor (UInt64) async -> Void
+    typealias CaptureSelection = @MainActor (@escaping @MainActor () -> Void) async -> Void
 
     private let openDelayNanos: UInt64
     private let sleep: Sleep
@@ -1829,7 +1830,7 @@ final class SelectionHotkeyIntentController {
 
     @discardableResult
     func invoke(
-        captureSelection: (@MainActor () async -> Void)?,
+        captureSelection: CaptureSelection?,
         toggleOverlay: @escaping @MainActor () -> Void
     ) -> Bool {
         guard activeTask == nil else { return false }
@@ -1845,14 +1846,24 @@ final class SelectionHotkeyIntentController {
                 return
             }
 
+            var deadlineElapsed = false
+            var copyAttempted = false
             let deadlineTask = Task { @MainActor [weak self] in
                 guard let self else { return }
                 await sleep(openDelayNanos)
                 guard !Task.isCancelled else { return }
-                toggleOnce(intentID: intentID, toggleOverlay: toggleOverlay)
+                deadlineElapsed = true
+                if copyAttempted {
+                    toggleOnce(intentID: intentID, toggleOverlay: toggleOverlay)
+                }
             }
 
-            await captureSelection()
+            await captureSelection {
+                copyAttempted = true
+                if deadlineElapsed {
+                    self.toggleOnce(intentID: intentID, toggleOverlay: toggleOverlay)
+                }
+            }
             deadlineTask.cancel()
             toggleOnce(intentID: intentID, toggleOverlay: toggleOverlay)
             finish(intentID: intentID)
@@ -1889,10 +1900,12 @@ extension AppDelegate {
     }
 
     private func handleChatHotkey(clipboardMonitoringEnabled: Bool) {
-        let captureSelection: (@MainActor () async -> Void)?
+        let captureSelection: SelectionHotkeyIntentController.CaptureSelection?
         if !ChatWindowManager.shared.hasVisibleWindows && clipboardMonitoringEnabled {
-            captureSelection = {
-                _ = await ClipboardService.shared.grabSelectionReport()
+            captureSelection = { onCopyAttempted in
+                _ = await ClipboardService.shared.grabSelectionReport(
+                    onCopyAttempted: onCopyAttempted
+                )
             }
         } else {
             captureSelection = nil

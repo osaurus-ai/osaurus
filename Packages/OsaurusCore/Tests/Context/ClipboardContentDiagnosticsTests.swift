@@ -161,7 +161,8 @@ struct ClipboardContentDiagnosticsTests {
     }
 
     @Test @MainActor func rapidHotkeysCoalesceIntoOneOverlayToggle() async {
-        let gate = SelectionCaptureGate()
+        let copyGate = SelectionCaptureGate()
+        let completionGate = SelectionCaptureGate()
         var toggleCount = 0
         let controller = SelectionHotkeyIntentController(
             openDelayNanos: 1,
@@ -169,22 +170,64 @@ struct ClipboardContentDiagnosticsTests {
         )
 
         let accepted = controller.invoke(
-            captureSelection: { await gate.wait() },
+            captureSelection: { copyAttempted in
+                await copyGate.wait()
+                copyAttempted()
+                await completionGate.wait()
+            },
             toggleOverlay: { toggleCount += 1 }
         )
         let coalesced = controller.invoke(
-            captureSelection: { Issue.record("coalesced capture must not start") },
+            captureSelection: { _ in Issue.record("coalesced capture must not start") },
             toggleOverlay: { toggleCount += 1 }
         )
 
-        for _ in 0 ..< 10 where toggleCount == 0 { await Task.yield() }
+        for _ in 0 ..< 10 { await Task.yield() }
         #expect(accepted)
         #expect(!coalesced)
+        #expect(toggleCount == 0)
+        copyGate.release()
+        for _ in 0 ..< 10 where toggleCount == 0 { await Task.yield() }
         #expect(toggleCount == 1)
-        gate.release()
+        completionGate.release()
         for _ in 0 ..< 10 where controller.isProcessing { await Task.yield() }
         #expect(toggleCount == 1)
         #expect(!controller.isProcessing)
+    }
+
+    @Test @MainActor func readFailureAfterCopyArmsQuietDrain() async {
+        var snapshotCalls = 0
+        var copyCount = 0
+        var sleepsBeforeSecondCopy = 0
+        let transaction = SelectionCaptureTransaction(
+            dependencies: .init(
+                snapshot: {
+                    snapshotCalls += 1
+                    if snapshotCalls == 2 { return nil }
+                    return .init(changeCount: copyCount + 1, content: nil)
+                },
+                postCopy: {
+                    copyCount += 1
+                    return true
+                },
+                sleep: { _ in
+                    if copyCount == 1 { sleepsBeforeSecondCopy += 1 }
+                }
+            ),
+            timing: .init(
+                pollIntervalNanos: 50_000_000,
+                captureTimeoutNanos: 50_000_000,
+                drainQuietNanos: 100_000_000,
+                drainLimitNanos: 200_000_000
+            )
+        )
+
+        let first = await transaction.capture(sourceApp: "Notes")
+        _ = await transaction.capture(sourceApp: "Mail")
+
+        #expect(first.report.outcome == .pasteboardReadFailed)
+        #expect(copyCount == 2)
+        #expect(sleepsBeforeSecondCopy >= 3)
     }
 
     @Test @MainActor func identicalClipboardContentStillCountsAsFreshSelection() async {

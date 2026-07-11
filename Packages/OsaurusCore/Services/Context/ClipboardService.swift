@@ -337,14 +337,21 @@ public final class ClipboardService: ObservableObject {
     /// The report never includes selected text. Call `grabSelection()` when the
     /// caller actually needs the selected payload for composer insertion.
     @discardableResult
-    public func grabSelectionReport() async -> SelectionGrabReport {
-        await grabSelectionResult().report
+    public func grabSelectionReport(
+        onCopyAttempted: (@MainActor () -> Void)? = nil
+    ) async -> SelectionGrabReport {
+        await grabSelectionResult(onCopyAttempted: onCopyAttempted).report
     }
 
-    private func grabSelectionResult() async -> SelectionCaptureTransaction.Result {
+    private func grabSelectionResult(
+        onCopyAttempted: (@MainActor () -> Void)? = nil
+    ) async -> SelectionCaptureTransaction.Result {
         // Capture before Osaurus takes focus so diagnostics retain the real source app.
         let sourceApp = Self.currentFrontmostApplicationName()
-        let result = await selectionCapture.capture(sourceApp: sourceApp)
+        let result = await selectionCapture.capture(
+            sourceApp: sourceApp,
+            onCopyAttempted: onCopyAttempted
+        )
         if let content = result.content, let changeCount = result.changeCount {
             currentContent = content
             currentContentChangeCount = changeCount
@@ -442,7 +449,10 @@ final class SelectionCaptureTransaction {
         )
     }
 
-    func capture(sourceApp: String?) async -> Result {
+    func capture(
+        sourceApp: String?,
+        onCopyAttempted: (@MainActor () -> Void)? = nil
+    ) async -> Result {
         guard !captureInFlight else {
             return failure(.pasteboardUnchanged, sourceApp: sourceApp)
         }
@@ -451,14 +461,18 @@ final class SelectionCaptureTransaction {
 
         if requiresQuietDrain {
             guard await drainLateResponse() else {
+                onCopyAttempted?()
                 return failure(.pasteboardUnchanged, sourceApp: sourceApp)
             }
         }
 
         guard let baseline = await dependencies.snapshot() else {
+            onCopyAttempted?()
             return failure(.pasteboardReadFailed, sourceApp: sourceApp)
         }
-        guard dependencies.postCopy() else {
+        let copyPosted = dependencies.postCopy()
+        onCopyAttempted?()
+        guard copyPosted else {
             return failure(.accessibilityDenied, sourceApp: sourceApp)
         }
 
@@ -467,6 +481,7 @@ final class SelectionCaptureTransaction {
             await dependencies.sleep(timing.pollIntervalNanos)
             elapsed += timing.pollIntervalNanos
             guard let snapshot = await dependencies.snapshot() else {
+                requiresQuietDrain = true
                 return failure(.pasteboardReadFailed, sourceApp: sourceApp)
             }
             guard snapshot.changeCount != baseline.changeCount else { continue }
