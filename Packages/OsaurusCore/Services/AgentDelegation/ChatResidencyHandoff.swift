@@ -231,6 +231,18 @@ enum ChatResidencyHandoff {
     /// loaded. Returns `true` only when the model is in the live runtime cache
     /// after the load. Never throws: callers branch on the Bool and retry.
     private static func reloadAndVerify(_ name: String) async -> Bool {
+        // A restore may displace a resident model — that is its job — but it
+        // must not preempt a load already in flight. Under the strict
+        // single-model policy this preload would cancel that load, and the
+        // client waiting on it (an API request, another chat window) gets a
+        // bare CancellationError tens of seconds into materializing a large
+        // pack. Report the restore as not-yet-done; the caller retries.
+        if await ModelRuntime.shared.hasLoadInFlight() {
+            logger.info(
+                "Orchestrator restore: deferring preload of \(name, privacy: .public) — another model load is in flight"
+            )
+            return false
+        }
         do {
             try await ModelRuntime.shared.preload(name: name)
         } catch {
