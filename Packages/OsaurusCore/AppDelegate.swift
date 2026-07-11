@@ -1832,24 +1832,36 @@ extension AppDelegate {
             await ClipboardService.shared.grabSelectionReport()
         }
 
-        let didTimeOut = await withCheckedContinuation {
-            (continuation: CheckedContinuation<Bool, Never>) in
+        let timeoutTask = Task { () async -> Bool in
+            do {
+                try await Task.sleep(nanoseconds: maxWaitNanos)
+                return true
+            } catch {
+                return false
+            }
+        }
+
+        let didTimeOut = await withCheckedContinuation { (continuation: CheckedContinuation<Bool, Never>) in
             let lock = OSAllocatedUnfairLock(initialState: false)
             func resumeSelectionFlowOnce(timeout: Bool) {
-                lock.withLock { didResume in
-                    guard !didResume else { return }
-                    didResume = true
+                let shouldResume = lock.withLock { state in
+                    guard !state else { return false }
+                    state = true
+                    return true
                 }
+                guard shouldResume else { return }
                 continuation.resume(returning: timeout)
             }
 
             Task {
                 _ = await grabTask.value
+                timeoutTask.cancel()
                 resumeSelectionFlowOnce(timeout: false)
             }
 
             Task {
-                try? await Task.sleep(nanoseconds: maxWaitNanos)
+                let timedOut = await timeoutTask.value
+                guard timedOut else { return }
                 resumeSelectionFlowOnce(timeout: true)
             }
         }

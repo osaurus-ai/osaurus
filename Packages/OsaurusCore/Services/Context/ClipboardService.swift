@@ -345,11 +345,13 @@ public final class ClipboardService: ObservableObject {
 
     private func grabSelectionResult() async -> SelectionGrabResult {
         guard !isGrabbingSelection else {
-            return finishSelectionGrab(
-                report: SelectionGrabReport(
-                    outcome: .pasteboardUnchanged,
-                    sourceApp: Self.currentFrontmostApplicationName()
-                ),
+            print("[ClipboardService] Skipping selection grab: another selection grab is already running.")
+            return SelectionGrabResult(
+                report: lastSelectionGrabReport
+                    ?? SelectionGrabReport(
+                        outcome: .pasteboardUnchanged,
+                        sourceApp: Self.currentFrontmostApplicationName()
+                    ),
                 text: nil
             )
         }
@@ -453,7 +455,10 @@ public final class ClipboardService: ObservableObject {
     }
 
     private func contentPublished(forChangeCount changeCount: Int) -> ClipboardContent? {
-        guard currentContentChangeCount == changeCount else { return nil }
+        guard let currentPublishedChangeCount = currentContentChangeCount,
+              currentPublishedChangeCount >= changeCount else {
+            return nil
+        }
         hasNewContent = true
         if let frontmost = NSWorkspace.shared.frontmostApplication {
             lastSourceApp = frontmost.localizedName ?? frontmost.bundleIdentifier
