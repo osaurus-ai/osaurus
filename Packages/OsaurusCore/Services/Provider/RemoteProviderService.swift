@@ -2862,11 +2862,16 @@ public actor RemoteProviderService: ToolCapableService {
         guard let tokens = cachedOAuthTokens else {
             throw OpenAICodexOAuthError.missingSignInTokens
         }
+        // The Codex backend routes some models (e.g. gpt-5.6-luna) by
+        // originator + User-Agent identity; without a Codex CLI-style user
+        // agent the request resolves to a missing internal engine and fails
+        // with HTTP 404 "Model not found" (openai/codex#31967).
         return [
             "Authorization": "Bearer \(tokens.accessToken)",
             "chatgpt-account-id": tokens.accountId,
             "OpenAI-Beta": "responses=experimental",
             "originator": "codex_cli_rs",
+            "User-Agent": OpenAICodexOAuthService.codexUserAgent(),
         ]
     }
 

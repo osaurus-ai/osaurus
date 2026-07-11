@@ -215,6 +215,7 @@ public enum OpenAICodexOAuthService {
         request.setValue(tokens.accountId, forHTTPHeaderField: "chatgpt-account-id")
         request.setValue("codex_cli_rs", forHTTPHeaderField: "originator")
         request.setValue("responses=experimental", forHTTPHeaderField: "OpenAI-Beta")
+        request.setValue(codexUserAgent(), forHTTPHeaderField: "User-Agent")
 
         let data = try await performRequest(request, operation: .modelCatalog)
         let (models, summary) = try decodeModelCatalog(data)
@@ -405,6 +406,27 @@ public enum OpenAICodexOAuthService {
     /// "osaurus-1.2.3" get the wrong subset entirely). Bump this to the
     /// current Codex CLI release when new models stop appearing in discovery.
     public static let codexClientVersion = "0.144.1"
+
+    /// Codex CLI-style `User-Agent`, mirroring codex-rs's
+    /// `get_codex_user_agent()` format:
+    /// `codex_cli_rs/<version> (<os> <version>; <arch>) <terminal>`.
+    /// The Codex backend routes some models (e.g. gpt-5.6-luna) to internal
+    /// engines based on the originator + User-Agent identity; requests with a
+    /// non-Codex user agent land in a cohort whose engine does not exist and
+    /// fail with HTTP 404 "Model not found" even though the catalog lists the
+    /// model (openai/codex#31967).
+    public static func codexUserAgent() -> String {
+        let os = ProcessInfo.processInfo.operatingSystemVersion
+        #if arch(arm64)
+            let arch = "arm64"
+        #elseif arch(x86_64)
+            let arch = "x86_64"
+        #else
+            let arch = "unknown"
+        #endif
+        return
+            "codex_cli_rs/\(codexClientVersion) (Mac OS \(os.majorVersion).\(os.minorVersion).\(os.patchVersion); \(arch)) unknown"
+    }
 
     // MARK: Wire types
 

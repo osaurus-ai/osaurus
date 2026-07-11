@@ -90,6 +90,22 @@ struct OpenAICodexOAuthServiceTests {
         )
     }
 
+    @Test func codexUserAgent_matchesCodexCLIFormat() {
+        // Backend model routing (e.g. gpt-5.6-luna) depends on a Codex
+        // CLI-shaped User-Agent: `codex_cli_rs/<semver> (<os> <ver>; <arch>)
+        // <terminal>`. A default CFNetwork user agent routes those models to
+        // a missing internal engine (HTTP 404 "Model not found").
+        let userAgent = OpenAICodexOAuthService.codexUserAgent()
+        #expect(
+            userAgent.range(
+                of: #"^codex_cli_rs/\d+\.\d+\.\d+ \(Mac OS \d+\.\d+\.\d+; (arm64|x86_64|unknown)\) unknown$"#,
+                options: .regularExpression
+            ) != nil,
+            "User-Agent \(userAgent) does not match the Codex CLI format"
+        )
+        #expect(userAgent.contains("/\(OpenAICodexOAuthService.codexClientVersion) "))
+    }
+
     @Test func supportedModels_containsCurrentCatalog() {
         let models = OpenAICodexOAuthService.supportedModels
         let expected = [
