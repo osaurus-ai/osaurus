@@ -232,6 +232,11 @@ struct FloatingInputCard: View {
     /// Filesystem entries for the current "@" query. Populated off the main
     /// actor by `atMenuTask` so directory enumeration never blocks the UI.
     @State private var atMenuItems: [AtFileItem] = []
+    /// Outcome of the latest listing; `.denied` drives the recovery affordance.
+    @State private var atMenuStatus: AtFileMenuStatus = .ok
+    /// Resolved directory for the latest listing; used to label + re-grant a
+    /// denied folder.
+    @State private var atMenuDirectory: String = ""
     /// In-flight listing task; cancelled and replaced on every query change.
     @State private var atMenuTask: Task<Void, Never>?
 
@@ -288,10 +293,12 @@ struct FloatingInputCard: View {
         return afterAt
     }
 
-    /// Show the "@" menu only when a query is active and it produced entries,
-    /// and never at the same time as the slash popup.
+    /// Show the "@" menu when a query is active and it either produced entries
+    /// or hit a denied folder (whose recovery row we still want to surface).
+    /// Never shown at the same time as the slash popup.
     private var showAtPopup: Bool {
-        activeAtQuery != nil && !atMenuItems.isEmpty && !showSlashPopup
+        guard activeAtQuery != nil, !showSlashPopup else { return false }
+        return !atMenuItems.isEmpty || atMenuStatus == .denied
     }
 
     // Local state for text input to prevent parent re-renders on every keystroke
@@ -1750,6 +1757,7 @@ extension FloatingInputCard {
         atMenuTask?.cancel()
         guard let query = activeAtQuery else {
             atMenuItems = []
+            atMenuStatus = .ok
             syncPopupVisibility()
             return
         }
@@ -1757,12 +1765,37 @@ extension FloatingInputCard {
         // runs detached so filesystem I/O never blocks the UI.
         let rootPath = FolderContextService.cachedRootPath
         atMenuTask = Task {
-            let items = await Task.detached(priority: .userInitiated) {
+            let result = await Task.detached(priority: .userInitiated) {
                 AtFileMenu.list(query: query, rootPath: rootPath)
             }.value
             if Task.isCancelled { return }
-            atMenuItems = items
+            atMenuItems = result.items
+            atMenuStatus = result.status
+            atMenuDirectory = result.directory
             syncPopupVisibility()
+        }
+    }
+
+    /// Recover from a denied folder. macOS won't re-prompt after a denial, but
+    /// because the app is non-sandboxed, the user explicitly picking the folder
+    /// in an open panel re-grants TCC access. On success we re-list so browsing
+    /// resumes in place. The panel is a main-actor modal (user interaction);
+    /// the listing it triggers stays off the main thread.
+    private func grantAtMenuAccess() {
+        let directory = atMenuDirectory
+        guard !directory.isEmpty else { return }
+        Task {
+            let panel = NSOpenPanel()
+            panel.canChooseFiles = false
+            panel.canChooseDirectories = true
+            panel.canCreateDirectories = false
+            panel.allowsMultipleSelection = false
+            panel.directoryURL = URL(fileURLWithPath: directory)
+            panel.prompt = L("Grant Access")
+            panel.message = L("Grant osaurus access to this folder")
+            guard await panel.beginModal() == .OK else { return }
+            isFocused = true
+            refreshAtMenu()
         }
     }
 
@@ -4759,8 +4792,11 @@ extension FloatingInputCard {
         if showAtPopup {
             AtFileMenuPopup(
                 items: atMenuItems,
+                status: atMenuStatus,
+                deniedDirectoryName: (atMenuDirectory as NSString).lastPathComponent,
                 selectedIndex: $atSelectedIndex,
-                onSelect: applyAtItem
+                onSelect: applyAtItem,
+                onGrantAccess: grantAtMenuAccess
             )
             .padding(.horizontal, 20)
             .transition(

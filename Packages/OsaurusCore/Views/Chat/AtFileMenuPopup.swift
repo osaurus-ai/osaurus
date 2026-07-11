@@ -12,8 +12,14 @@ import SwiftUI
 
 struct AtFileMenuPopup: View {
     let items: [AtFileItem]
+    /// Outcome of the current listing; drives the denied-access affordance.
+    let status: AtFileMenuStatus
+    /// Leaf name of the blocked directory, shown in the denied row.
+    let deniedDirectoryName: String
     @Binding var selectedIndex: Int
     let onSelect: (AtFileItem) -> Void
+    /// Invoked from the denied row to re-request access to the folder.
+    let onGrantAccess: () -> Void
 
     @Environment(\.theme) private var theme
 
@@ -27,7 +33,11 @@ struct AtFileMenuPopup: View {
             header
             Divider()
                 .opacity(0.2)
-            fileList
+            if status == .denied {
+                deniedRow
+            } else {
+                fileList
+            }
         }
         .frame(maxWidth: .infinity)
         .background(popupBackground)
@@ -56,6 +66,41 @@ struct AtFileMenuPopup: View {
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 7)
+    }
+
+    // MARK: - Denied Access Row
+
+    /// Shown when macOS blocked the folder. Tapping re-requests access via an
+    /// open panel — the only in-app way to recover, since the OS won't re-prompt
+    /// on its own after a denial.
+    private var deniedRow: some View {
+        Button(action: onGrantAccess) {
+            HStack(spacing: 10) {
+                ZStack {
+                    RoundedRectangle(cornerRadius: 6, style: .continuous)
+                        .fill(theme.accentColor.opacity(0.15))
+                        .frame(width: 24, height: 24)
+                    Image(systemName: "lock.fill")
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundColor(theme.accentColor)
+                }
+                VStack(alignment: .leading, spacing: 1) {
+                    Text("Can't access \(deniedDirectoryName)", bundle: .module)
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundColor(theme.primaryText)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                    Text("Grant access\u{2026}", bundle: .module)
+                        .font(.system(size: 11))
+                        .foregroundColor(theme.accentColor)
+                }
+                Spacer()
+            }
+            .padding(.horizontal, 12)
+            .frame(height: 48)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
     }
 
     // MARK: - File List

@@ -15,6 +15,33 @@
 
 import Foundation
 
+/// Outcome of enumerating a directory for the "@" menu, so the UI can tell an
+/// empty folder apart from one macOS (TCC) blocked or a path that doesn't exist.
+public enum AtFileMenuStatus: Sendable, Equatable {
+    /// The directory was read (it may still contain zero matching entries).
+    case ok
+    /// The OS denied access — typically a TCC-protected folder (Desktop,
+    /// Documents, Downloads, iCloud, removable/network volumes) whose prompt
+    /// was declined. macOS won't re-prompt; recovery needs explicit consent.
+    case denied
+    /// The directory doesn't exist or isn't a directory.
+    case notFound
+}
+
+/// Result of a single "@" listing: the rows, the outcome, and the resolved
+/// directory (used to label + re-grant access on a `denied` result).
+public struct AtFileMenuResult: Sendable, Equatable {
+    public let items: [AtFileItem]
+    public let status: AtFileMenuStatus
+    public let directory: String
+
+    public init(items: [AtFileItem], status: AtFileMenuStatus, directory: String) {
+        self.items = items
+        self.status = status
+        self.directory = directory
+    }
+}
+
 /// A single row in the "@" file menu.
 public struct AtFileItem: Identifiable, Equatable, Sendable {
     public let name: String
@@ -70,7 +97,7 @@ public enum AtFileMenu {
     /// name. Directories sort before files, then case-insensitive alphabetical.
     ///
     /// Synchronous, blocking filesystem I/O — call from off the main actor.
-    public static func list(query: String, rootPath: URL?) -> [AtFileItem] {
+    public static func list(query: String, rootPath: URL?) -> AtFileMenuResult {
         let (dir, filter) = resolve(query: query, rootPath: rootPath)
         let lowerFilter = filter.lowercased()
 
@@ -78,13 +105,16 @@ public enum AtFileMenu {
         let options: FileManager.DirectoryEnumerationOptions =
             filter.hasPrefix(".") ? [] : [.skipsHiddenFiles]
 
-        guard
-            let entries = try? FileManager.default.contentsOfDirectory(
+        let entries: [URL]
+        do {
+            entries = try FileManager.default.contentsOfDirectory(
                 at: dir,
                 includingPropertiesForKeys: [.isDirectoryKey],
                 options: options
             )
-        else { return [] }
+        } catch {
+            return AtFileMenuResult(items: [], status: classify(error), directory: dir.path)
+        }
 
         var items: [AtFileItem] = []
         items.reserveCapacity(entries.count)
@@ -100,9 +130,26 @@ public enum AtFileMenu {
             return a.name.localizedCaseInsensitiveCompare(b.name) == .orderedAscending
         }
 
-        if items.count > maxResults {
-            return Array(items.prefix(maxResults))
+        let capped = items.count > maxResults ? Array(items.prefix(maxResults)) : items
+        return AtFileMenuResult(items: capped, status: .ok, directory: dir.path)
+    }
+
+    /// Map a `contentsOfDirectory` failure onto a menu status. A permission
+    /// denial (TCC or POSIX) is distinguished from a missing path so the UI can
+    /// offer a recovery affordance only when it would actually help.
+    private static func classify(_ error: Error) -> AtFileMenuStatus {
+        let nsError = error as NSError
+        if nsError.domain == NSCocoaErrorDomain {
+            if nsError.code == NSFileReadNoPermissionError { return .denied }
+            if nsError.code == NSFileReadNoSuchFileError { return .notFound }
         }
-        return items
+        // Cocoa often wraps the raw POSIX error; check it too (EPERM/EACCES).
+        if let underlying = nsError.userInfo[NSUnderlyingErrorKey] as? NSError,
+            underlying.domain == NSPOSIXErrorDomain,
+            underlying.code == Int(EPERM) || underlying.code == Int(EACCES)
+        {
+            return .denied
+        }
+        return .notFound
     }
 }
