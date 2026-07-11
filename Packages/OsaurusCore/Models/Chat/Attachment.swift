@@ -325,9 +325,9 @@ public struct Attachment: Codable, Sendable, Equatable, Identifiable {
     }
 
     public static func redactedFilename(from raw: String, fallback: String = "attachment") -> String {
-        let basename = (raw as NSString).lastPathComponent
+        let basename = (raw.replacingOccurrences(of: "\\", with: "/") as NSString).lastPathComponent
         let trimmed = basename.trimmingCharacters(in: .whitespacesAndNewlines)
-        return trimmed.isEmpty ? fallback : trimmed
+        return trimmed.isEmpty || trimmed == "." || trimmed == ".." ? fallback : trimmed
     }
 
     private var genericKindLabel: String {
@@ -369,8 +369,12 @@ public struct Attachment: Codable, Sendable, Equatable, Identifiable {
         switch kind {
         case .image(let data):
             return data
-        case .imageRef(let hash, _):
-            return try? AttachmentBlobStore.read(hash)
+        case .imageRef(let hash, let byteCount):
+            return try? AttachmentBlobStore.read(
+                hash,
+                maximumBytes: AttachmentBlobStore.maximumImageBytes,
+                expectedByteCount: byteCount
+            )
         default:
             return nil
         }
@@ -389,8 +393,12 @@ public struct Attachment: Codable, Sendable, Equatable, Identifiable {
         switch kind {
         case .audio(let data, _, _):
             return data
-        case .audioRef(let hash, _, _, _):
-            return try? AttachmentBlobStore.read(hash)
+        case .audioRef(let hash, let byteCount, _, _):
+            return try? AttachmentBlobStore.read(
+                hash,
+                maximumBytes: AttachmentBlobStore.maximumAudioBytes,
+                expectedByteCount: byteCount
+            )
         default:
             return nil
         }
@@ -407,8 +415,12 @@ public struct Attachment: Codable, Sendable, Equatable, Identifiable {
         switch kind {
         case .video(let data, _):
             return data
-        case .videoRef(let hash, _, _):
-            return try? AttachmentBlobStore.read(hash)
+        case .videoRef(let hash, let byteCount, _):
+            return try? AttachmentBlobStore.read(
+                hash,
+                maximumBytes: AttachmentBlobStore.maximumVideoBytes,
+                expectedByteCount: byteCount
+            )
         default:
             return nil
         }
@@ -422,7 +434,10 @@ public struct Attachment: Codable, Sendable, Equatable, Identifiable {
         case .document(_, let content, _):
             return content
         case .documentRef(_, let hash, _):
-            return (try? AttachmentBlobStore.read(hash)).flatMap { String(data: $0, encoding: .utf8) }
+            return (try? AttachmentBlobStore.read(
+                hash,
+                maximumBytes: AttachmentBlobStore.maximumDocumentBytes
+            )).flatMap { String(data: $0, encoding: .utf8) }
         default:
             return nil
         }

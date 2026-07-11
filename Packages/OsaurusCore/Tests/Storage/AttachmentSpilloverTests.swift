@@ -16,6 +16,26 @@ import Testing
 @Suite(.serialized)
 struct AttachmentSpilloverTests {
 
+    private static func expectReadError(
+        hash: String,
+        maximumBytes: Int = AttachmentBlobStore.maximumVideoBytes,
+        expectedByteCount: Int? = nil,
+        matching predicate: (AttachmentBlobError) -> Bool
+    ) {
+        do {
+            _ = try AttachmentBlobStore.read(
+                hash,
+                maximumBytes: maximumBytes,
+                expectedByteCount: expectedByteCount
+            )
+            Issue.record("expected attachment blob read to fail")
+        } catch let error as AttachmentBlobError {
+            #expect(predicate(error))
+        } catch {
+            Issue.record("unexpected error type: \(error)")
+        }
+    }
+
     private static func setUpEnv() throws -> URL {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(
             "osaurus-spill-tests-\(UUID().uuidString)"
@@ -54,7 +74,7 @@ struct AttachmentSpilloverTests {
             switch result[0].kind {
             case .imageRef(let hash, let byteCount):
                 #expect(byteCount == bigBytes.count)
-                let url = AttachmentBlobStore.blobURL(for: hash)
+                let url = try AttachmentBlobStore.blobURL(for: hash)
                 #expect(FileManager.default.fileExists(atPath: url.path))
                 let head = try Data(contentsOf: url).prefix(1)
                 #expect(head.first == EncryptedFileStore.version)
@@ -110,7 +130,7 @@ struct AttachmentSpilloverTests {
                 #expect(result[0].structuredDocumentMetadata == StructuredDocumentAttachmentMetadata(document))
                 #expect(result[0].loadDocumentContent() == body)
 
-                let url = AttachmentBlobStore.blobURL(for: hash)
+                let url = try AttachmentBlobStore.blobURL(for: hash)
                 let encrypted = try Data(contentsOf: url)
                 #expect(encrypted.first == EncryptedFileStore.version)
 
@@ -152,6 +172,120 @@ struct AttachmentSpilloverTests {
             let dir = AttachmentBlobStore.blobsDir()
             let entries = try FileManager.default.contentsOfDirectory(at: dir, includingPropertiesForKeys: nil)
             #expect(entries.count == 1)
+        }
+    }
+
+    @Test
+    func readRejectsTraversalNonHexAndWrongLengthBeforePathResolution() async throws {
+        try await StoragePathsTestLock.shared.run {
+            let root = try Self.setUpEnv()
+            defer { Self.tearDownEnv(root) }
+
+            for invalid in ["../history.sqlite", String(repeating: "g", count: 64), String(repeating: "a", count: 63)] {
+                Self.expectReadError(hash: invalid) {
+                    if case .invalidReference = $0 { return true }
+                    return false
+                }
+            }
+
+            #expect(!AttachmentBlobStore.exists("../history.sqlite"))
+        }
+    }
+
+    @Test
+    func readRejectsSymbolicLinkEvenWhenTargetBytesMatchHash() async throws {
+        try await StoragePathsTestLock.shared.run {
+            let root = try Self.setUpEnv()
+            defer { Self.tearDownEnv(root) }
+
+            let bytes = Data("outside secret".utf8)
+            let hash = AttachmentBlobStore.contentHash(bytes)
+            let outside = root.appendingPathComponent("outside-secret")
+            try bytes.write(to: outside)
+            let logical = try AttachmentBlobStore.logicalBlobURL(for: hash)
+            try FileManager.default.createDirectory(
+                at: logical.deletingLastPathComponent(),
+                withIntermediateDirectories: true
+            )
+            try FileManager.default.createSymbolicLink(at: logical, withDestinationURL: outside)
+
+            Self.expectReadError(hash: hash) {
+                if case .symbolicLink = $0 { return true }
+                return false
+            }
+        }
+    }
+
+    @Test
+    func readRejectsOversizedBlobBeforeLoadingIt() async throws {
+        try await StoragePathsTestLock.shared.run {
+            let root = try Self.setUpEnv()
+            defer { Self.tearDownEnv(root) }
+
+            let bytes = Data(repeating: 0xA5, count: 32)
+            let hash = AttachmentBlobStore.contentHash(bytes)
+            let logical = try AttachmentBlobStore.logicalBlobURL(for: hash)
+            try FileManager.default.createDirectory(
+                at: logical.deletingLastPathComponent(),
+                withIntermediateDirectories: true
+            )
+            try bytes.write(to: logical)
+
+            Self.expectReadError(hash: hash, maximumBytes: 16) {
+                if case .oversized(16) = $0 { return true }
+                return false
+            }
+        }
+    }
+
+    @Test
+    func readRejectsHashAndDeclaredSizeMismatches() async throws {
+        try await StoragePathsTestLock.shared.run {
+            let root = try Self.setUpEnv()
+            defer { Self.tearDownEnv(root) }
+
+            let expected = Data("expected".utf8)
+            let hash = AttachmentBlobStore.contentHash(expected)
+            let logical = try AttachmentBlobStore.logicalBlobURL(for: hash)
+            try FileManager.default.createDirectory(
+                at: logical.deletingLastPathComponent(),
+                withIntermediateDirectories: true
+            )
+            try Data("tampered".utf8).write(to: logical)
+
+            Self.expectReadError(hash: hash) {
+                if case .integrityMismatch = $0 { return true }
+                return false
+            }
+
+            let sizeChecked = Data("size checked".utf8)
+            let validHash = try AttachmentBlobStore.write(sizeChecked)
+            Self.expectReadError(hash: validHash, expectedByteCount: expected.count + 1) {
+                if case .sizeMismatch(let declared, let actual) = $0 {
+                    return declared == expected.count + 1 && actual == sizeChecked.count
+                }
+                return false
+            }
+        }
+    }
+
+    @Test
+    func attachmentLoadersDoNotCrossHydrateKinds() async throws {
+        try await StoragePathsTestLock.shared.run {
+            let root = try Self.setUpEnv()
+            defer { Self.tearDownEnv(root) }
+
+            let bytes = Data("plain document".utf8)
+            let hash = try AttachmentBlobStore.write(bytes)
+            let document = Attachment(
+                kind: .documentRef(filename: "notes.txt", hash: hash, fileSize: bytes.count)
+            )
+            let image = Attachment(kind: .imageRef(hash: hash, byteCount: bytes.count + 1))
+
+            #expect(document.loadDocumentContent() == "plain document")
+            #expect(document.loadImageData() == nil)
+            #expect(image.loadDocumentContent() == nil)
+            #expect(image.loadImageData() == nil)
         }
     }
 

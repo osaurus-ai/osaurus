@@ -1282,6 +1282,20 @@ final class ChatSession: ObservableObject {
         return ChatMessage(role: "user", content: messageText)
     }
 
+    /// Determine whether an attachment turn uses multipart model input without
+    /// loading blob bytes. The actual message builder remains responsible for
+    /// integrity validation and may fail closed if a persisted ref is corrupt.
+    private static func attachmentsRenderAsMultimodalParts(
+        _ attachments: [Attachment],
+        supportsImages: Bool,
+        supportsAudio: Bool,
+        supportsVideo: Bool
+    ) -> Bool {
+        (supportsImages && attachments.hasImages)
+            || (supportsAudio && attachments.hasAudios)
+            || (supportsVideo && attachments.hasVideos)
+    }
+
     /// Prepend a user turn's frozen memory / screen-context prefix to its
     /// rendered message. The prefix already carries its trailing separator
     /// (`SystemPromptComposer.composeInjectedUserPrefix`), so this is a pure
@@ -3470,15 +3484,13 @@ final class ChatSession: ObservableObject {
         guard turn.injectedContextPrefix == nil else { return }
         // Parity with the legacy injector guard: a turn that renders as a
         // multimodal parts message never carries an injected prefix.
-        if !turn.attachments.isEmpty {
-            let rendered = Self.buildUserChatMessage(
-                content: turn.content,
-                attachments: turn.attachments,
-                supportsImages: selectedModelSupportsImages,
-                supportsAudio: selectedModelSupportsAudio,
-                supportsVideo: selectedModelSupportsVideo
-            )
-            if rendered.contentParts != nil { return }
+        if Self.attachmentsRenderAsMultimodalParts(
+            turn.attachments,
+            supportsImages: selectedModelSupportsImages,
+            supportsAudio: selectedModelSupportsAudio,
+            supportsVideo: selectedModelSupportsVideo
+        ) {
+            return
         }
         guard
             let prefix = SystemPromptComposer.composeInjectedUserPrefix(

@@ -39,6 +39,38 @@ struct ChatSessionExporterTests {
         #expect(markdown.contains("private") == false)
     }
 
+    @Test func markdownRedactsWindowsAndUNCPaths() {
+        let session = ChatSessionData(
+            title: "Export",
+            turns: [
+                ChatTurnData(
+                    role: .user,
+                    content: "",
+                    attachments: [
+                        Attachment.document(
+                            filename: #"C:\Users\Alice\private\assessment.txt"#,
+                            content: "rubric",
+                            fileSize: 6
+                        ),
+                        Attachment.audio(
+                            Data([0x01]),
+                            format: "wav",
+                            filename: #"\\server\share\private\voice.wav"#
+                        ),
+                    ]
+                )
+            ]
+        )
+
+        let markdown = ChatSessionExporter.markdown(for: session)
+
+        #expect(markdown.contains("assessment.txt"))
+        #expect(markdown.contains("voice.wav"))
+        #expect(markdown.contains("Alice") == false)
+        #expect(markdown.contains("server") == false)
+        #expect(markdown.contains("private") == false)
+    }
+
     @Test func zipPreservesTextBackedDocumentExtension() async throws {
         try await StoragePathsTestLock.shared.run {
             let root = FileManager.default.temporaryDirectory.appendingPathComponent(
@@ -117,12 +149,12 @@ struct ChatSessionExporterTests {
             try await FileManager.default.unzipItem(at: zipURL, to: unzipRoot)
 
             let exportedMarkdown = unzipRoot
-                .appendingPathComponent("chat", isDirectory: true)
+                .appendingPathComponent("attachment", isDirectory: true)
                 .appendingPathComponent("chat.md")
             let exportedAttachment = unzipRoot
-                .appendingPathComponent("chat", isDirectory: true)
+                .appendingPathComponent("attachment", isDirectory: true)
                 .appendingPathComponent("attachments", isDirectory: true)
-                .appendingPathComponent("chat")
+                .appendingPathComponent("attachment")
             let allPaths = try FileManager.default.subpathsOfDirectory(atPath: unzipRoot.path)
 
             #expect(FileManager.default.fileExists(atPath: exportedMarkdown.path))
