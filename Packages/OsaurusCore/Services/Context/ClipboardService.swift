@@ -70,9 +70,7 @@ public final class ClipboardService: ObservableObject {
             switch outcome {
             case .capturedText, .capturedNonText:
                 return false
-            case .pasteboardUnchanged:
-                return false
-            case .accessibilityDenied, .pasteboardReadFailed, .noReadableContent:
+            case .accessibilityDenied, .pasteboardReadFailed, .noReadableContent, .pasteboardUnchanged:
                 return true
             }
         }
@@ -95,7 +93,8 @@ public final class ClipboardService: ObservableObject {
             case .noReadableContent:
                 return L("The selection copied, but the pasteboard did not contain readable text.")
             case .pasteboardUnchanged:
-                return L("No selection was copied. Select text in the frontmost app and try again.")
+                return L("Selection unavailable") + ". "
+                    + L("No selection was copied. Select text in the frontmost app and try again.")
             }
         }
 
@@ -116,11 +115,6 @@ public final class ClipboardService: ObservableObject {
                 return "selection_grab(outcome: pasteboard_unchanged, source: \(source))"
             }
         }
-    }
-
-    private struct SelectionGrabResult: Sendable {
-        let report: SelectionGrabReport
-        let text: String?
     }
 
     private enum SelectionPasteboardResult: Equatable, Sendable {
@@ -146,8 +140,7 @@ public final class ClipboardService: ObservableObject {
     private var timer: AnyCancellable?
     /// Guards against overlapping pasteboard reads if one outlives the poll interval.
     private var isChecking = false
-    private var isGrabbingSelection = false
-    private let keyboardService = KeyboardSimulationService.shared
+    private let selectionCapture: SelectionCaptureTransaction
 
     /// Serializes every `NSPasteboard` access. `NSPasteboard` is not thread-safe:
     /// its internal type cache (`_updateTypeCacheIfNeeded`) is shared mutable state,
@@ -167,7 +160,7 @@ public final class ClipboardService: ObservableObject {
     /// concurrently, and AppKit's non-thread-safe type cache can throw an
     /// `NSRangeException` mid-read. Catching it here degrades a poll to a no-op
     /// instead of terminating the app on an exception Swift can't `catch`.
-    nonisolated private static func onPasteboardQueue<T: Sendable>(
+    nonisolated fileprivate static func onPasteboardQueue<T: Sendable>(
         _ work: @escaping @Sendable (NSPasteboard) -> T
     ) async -> T? {
         await withCheckedContinuation { continuation in
@@ -186,7 +179,12 @@ public final class ClipboardService: ObservableObject {
         }
     }
 
-    private init() {
+    private convenience init() {
+        self.init(selectionCapture: SelectionCaptureTransaction.live())
+    }
+
+    init(selectionCapture: SelectionCaptureTransaction) {
+        self.selectionCapture = selectionCapture
         // monitoring is started/stopped by AppDelegate based on window visibility
     }
 
@@ -292,7 +290,7 @@ public final class ClipboardService: ObservableObject {
         return .content(content)
     }
 
-    nonisolated private static func detectContent(in pb: NSPasteboard) -> ClipboardContent? {
+    nonisolated fileprivate static func detectContent(in pb: NSPasteboard) -> ClipboardContent? {
         // 1. try file URLs (copied files in Finder). Avoid
         // `readObjects(forClasses:)`: Sentry APPLE-MACOS-2N showed AppKit
         // mutating its internal type-conversion array while enumerating there.
@@ -343,127 +341,18 @@ public final class ClipboardService: ObservableObject {
         await grabSelectionResult().report
     }
 
-    private func grabSelectionResult() async -> SelectionGrabResult {
-        guard !isGrabbingSelection else {
-            print("[ClipboardService] Skipping selection grab: another selection grab is already running.")
-            return SelectionGrabResult(
-                report: lastSelectionGrabReport
-                    ?? SelectionGrabReport(
-                        outcome: .pasteboardUnchanged,
-                        sourceApp: Self.currentFrontmostApplicationName()
-                    ),
-                text: nil
-            )
-        }
-        isGrabbingSelection = true
-        defer { isGrabbingSelection = false }
-
+    private func grabSelectionResult() async -> SelectionCaptureTransaction.Result {
+        // Capture before Osaurus takes focus so diagnostics retain the real source app.
         let sourceApp = Self.currentFrontmostApplicationName()
-        guard let startChangeCount = await Self.onPasteboardQueue({ $0.changeCount }) else {
-            return finishSelectionGrab(
-                report: SelectionGrabReport(outcome: .pasteboardReadFailed, sourceApp: sourceApp),
-                text: nil
-            )
+        let result = await selectionCapture.capture(sourceApp: sourceApp)
+        if let content = result.content, let changeCount = result.changeCount {
+            currentContent = content
+            currentContentChangeCount = changeCount
+            lastChangeCount = changeCount
+            hasNewContent = true
+            lastSourceApp = sourceApp
         }
-        print("[ClipboardService] Starting grabSelection. Current changeCount: \(startChangeCount)")
-
-        // 1. simulate Cmd+C
-        let posted = keyboardService.copySelection()
-        print("[ClipboardService] copySelection() call returned: \(posted)")
-
-        if !posted {
-            print("[ClipboardService] FAILED to post Cmd+C event. Likely missing accessibility permissions.")
-            return finishSelectionGrab(
-                report: SelectionGrabReport(outcome: .accessibilityDenied, sourceApp: sourceApp),
-                text: nil
-            )
-        }
-
-        // 2. wait for update (up to 500ms)
-        print("[ClipboardService] Waiting for pasteboard update...")
-        for i in 0 ..< 10 {
-            try? await Task.sleep(nanoseconds: 50_000_000)  // 50ms
-            guard let currentChangeCount = await Self.onPasteboardQueue({ $0.changeCount }) else { continue }
-            if currentChangeCount != startChangeCount {
-                print(
-                    "[ClipboardService] Pasteboard update detected at iteration \(i+1). New count: \(currentChangeCount)"
-                )
-                let refreshed = await performPasteboardRefresh(markIdenticalAsNew: true)
-                let content: ClipboardContent?
-                switch refreshed {
-                case .readFailed:
-                    return finishSelectionGrab(
-                        report: SelectionGrabReport(
-                            outcome: .pasteboardReadFailed,
-                            sourceApp: sourceApp
-                        ),
-                        text: nil
-                    )
-                case .noReadableContent:
-                    content = contentPublished(forChangeCount: currentChangeCount)
-                    if content == nil {
-                        return finishSelectionGrab(
-                            report: SelectionGrabReport(outcome: .noReadableContent, sourceApp: sourceApp),
-                            text: nil
-                        )
-                    }
-                case .content(let publishedContent):
-                    content = publishedContent
-                }
-
-                guard let content else {
-                    return finishSelectionGrab(
-                        report: SelectionGrabReport(outcome: .noReadableContent, sourceApp: sourceApp),
-                        text: nil
-                    )
-                }
-
-                switch content {
-                case .text(let text):
-                    return finishSelectionGrab(
-                        report: SelectionGrabReport(
-                            outcome: .capturedText(characterCount: text.count),
-                            sourceApp: sourceApp
-                        ),
-                        text: text
-                    )
-                case .image:
-                    return finishSelectionGrab(
-                        report: SelectionGrabReport(
-                            outcome: .capturedNonText(kind: .image),
-                            sourceApp: sourceApp
-                        ),
-                        text: nil
-                    )
-                case .file:
-                    return finishSelectionGrab(
-                        report: SelectionGrabReport(
-                            outcome: .capturedNonText(kind: .file),
-                            sourceApp: sourceApp
-                        ),
-                        text: nil
-                    )
-                }
-            }
-        }
-
-        print("[ClipboardService] TIMEOUT: Pasteboard did not update after 500ms.")
-        return finishSelectionGrab(
-            report: SelectionGrabReport(outcome: .pasteboardUnchanged, sourceApp: sourceApp),
-            text: nil
-        )
-    }
-
-    private func contentPublished(forChangeCount changeCount: Int) -> ClipboardContent? {
-        guard let currentPublishedChangeCount = currentContentChangeCount,
-              currentPublishedChangeCount >= changeCount else {
-            return nil
-        }
-        hasNewContent = true
-        if let frontmost = NSWorkspace.shared.frontmostApplication {
-            lastSourceApp = frontmost.localizedName ?? frontmost.bundleIdentifier
-        }
-        return currentContent
+        return finishSelectionGrab(result)
     }
 
     private static func currentFrontmostApplicationName() -> String? {
@@ -471,10 +360,12 @@ public final class ClipboardService: ObservableObject {
             ?? NSWorkspace.shared.frontmostApplication?.bundleIdentifier
     }
 
-    private func finishSelectionGrab(report: SelectionGrabReport, text: String?) -> SelectionGrabResult {
-        print("[ClipboardService] \(report.redactedDiagnosticDescription)")
-        lastSelectionGrabReport = report
-        return SelectionGrabResult(report: report, text: text)
+    private func finishSelectionGrab(
+        _ result: SelectionCaptureTransaction.Result
+    ) -> SelectionCaptureTransaction.Result {
+        print("[ClipboardService] \(result.report.redactedDiagnosticDescription)")
+        lastSelectionGrabReport = result.report
+        return result
     }
 
     /// Mark the current clipboard content as "read"
@@ -486,5 +377,177 @@ public final class ClipboardService: ObservableObject {
     /// Clear the latest selection-grab diagnostic after the user has seen it.
     public func dismissSelectionGrabReport() {
         lastSelectionGrabReport = nil
+    }
+}
+
+/// A single Cmd+C transaction with a quiet-drain boundary after timeout.
+///
+/// The boundary is required because the pasteboard does not identify which
+/// keyboard event produced a change. A timed-out response is drained before a
+/// later transaction snapshots its baseline, so it cannot be accepted as the
+/// later selection.
+@MainActor
+final class SelectionCaptureTransaction {
+    struct Snapshot: Equatable, Sendable {
+        let changeCount: Int
+        let content: ClipboardService.ClipboardContent?
+    }
+
+    struct Result: Equatable, Sendable {
+        let report: ClipboardService.SelectionGrabReport
+        let text: String?
+        let content: ClipboardService.ClipboardContent?
+        let changeCount: Int?
+    }
+
+    struct Timing: Equatable, Sendable {
+        var pollIntervalNanos: UInt64 = 50_000_000
+        var captureTimeoutNanos: UInt64 = 500_000_000
+        var drainQuietNanos: UInt64 = 500_000_000
+        var drainLimitNanos: UInt64 = 1_000_000_000
+    }
+
+    struct Dependencies {
+        var snapshot: () async -> Snapshot?
+        var postCopy: () -> Bool
+        var sleep: (UInt64) async -> Void
+    }
+
+    private let dependencies: Dependencies
+    private let timing: Timing
+    private var captureInFlight = false
+    private var requiresQuietDrain = false
+
+    init(dependencies: Dependencies, timing: Timing = Timing()) {
+        self.dependencies = dependencies
+        self.timing = timing
+    }
+
+    static func live() -> SelectionCaptureTransaction {
+        SelectionCaptureTransaction(
+            dependencies: Dependencies(
+                snapshot: {
+                    await ClipboardService.onPasteboardQueue { pasteboard in
+                        Snapshot(
+                            changeCount: pasteboard.changeCount,
+                            content: ClipboardService.detectContent(in: pasteboard)
+                        )
+                    }
+                },
+                postCopy: { KeyboardSimulationService.shared.copySelection() },
+                sleep: { nanoseconds in
+                    try? await Task.sleep(nanoseconds: nanoseconds)
+                }
+            )
+        )
+    }
+
+    func capture(sourceApp: String?) async -> Result {
+        guard !captureInFlight else {
+            return failure(.pasteboardUnchanged, sourceApp: sourceApp)
+        }
+        captureInFlight = true
+        defer { captureInFlight = false }
+
+        if requiresQuietDrain {
+            guard await drainLateResponse() else {
+                return failure(.pasteboardUnchanged, sourceApp: sourceApp)
+            }
+        }
+
+        guard let baseline = await dependencies.snapshot() else {
+            return failure(.pasteboardReadFailed, sourceApp: sourceApp)
+        }
+        guard dependencies.postCopy() else {
+            return failure(.accessibilityDenied, sourceApp: sourceApp)
+        }
+
+        var elapsed: UInt64 = 0
+        while elapsed < timing.captureTimeoutNanos {
+            await dependencies.sleep(timing.pollIntervalNanos)
+            elapsed += timing.pollIntervalNanos
+            guard let snapshot = await dependencies.snapshot() else {
+                return failure(.pasteboardReadFailed, sourceApp: sourceApp)
+            }
+            guard snapshot.changeCount != baseline.changeCount else { continue }
+            requiresQuietDrain = false
+            return result(for: snapshot, sourceApp: sourceApp)
+        }
+
+        requiresQuietDrain = true
+        return failure(.pasteboardUnchanged, sourceApp: sourceApp)
+    }
+
+    private func drainLateResponse() async -> Bool {
+        guard var previous = await dependencies.snapshot() else { return false }
+        var quiet: UInt64 = 0
+        var elapsed: UInt64 = 0
+
+        while quiet < timing.drainQuietNanos && elapsed < timing.drainLimitNanos {
+            await dependencies.sleep(timing.pollIntervalNanos)
+            elapsed += timing.pollIntervalNanos
+            guard let current = await dependencies.snapshot() else { return false }
+            if current.changeCount == previous.changeCount {
+                quiet += timing.pollIntervalNanos
+            } else {
+                previous = current
+                quiet = 0
+            }
+        }
+
+        let drained = quiet >= timing.drainQuietNanos
+        requiresQuietDrain = !drained
+        return drained
+    }
+
+    private func result(for snapshot: Snapshot, sourceApp: String?) -> Result {
+        guard let content = snapshot.content else {
+            return failure(.noReadableContent, sourceApp: sourceApp)
+        }
+        switch content {
+        case .text(let text):
+            return Result(
+                report: ClipboardService.SelectionGrabReport(
+                    outcome: .capturedText(characterCount: text.count),
+                    sourceApp: sourceApp
+                ),
+                text: text,
+                content: content,
+                changeCount: snapshot.changeCount
+            )
+        case .image:
+            return nonTextResult(.image, content: content, snapshot: snapshot, sourceApp: sourceApp)
+        case .file:
+            return nonTextResult(.file, content: content, snapshot: snapshot, sourceApp: sourceApp)
+        }
+    }
+
+    private func nonTextResult(
+        _ kind: ClipboardService.SelectionGrabReport.NonTextKind,
+        content: ClipboardService.ClipboardContent,
+        snapshot: Snapshot,
+        sourceApp: String?
+    ) -> Result {
+        Result(
+            report: ClipboardService.SelectionGrabReport(
+                outcome: .capturedNonText(kind: kind),
+                sourceApp: sourceApp
+            ),
+            text: nil,
+            content: content,
+            changeCount: snapshot.changeCount
+        )
+    }
+
+    private func failure(
+        _ outcome: ClipboardService.SelectionGrabReport.Outcome,
+        sourceApp: String?
+    ) -> Result {
+        Result(
+            report: ClipboardService.SelectionGrabReport(outcome: outcome, sourceApp: sourceApp),
+            text: nil,
+            content: nil,
+            changeCount: nil
+        )
     }
 }

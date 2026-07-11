@@ -36,7 +36,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
     private var shouldLoadPluginsAfterFirstServerStart = false
     private var hasCompletedFirstServerStartWork = false
     private var launchEmbeddingInitTask: Task<Void, Never>?
-    private var isCapturingSelectionForHotkey = false
+    private let selectionHotkeyIntent = SelectionHotkeyIntentController()
     private var keychainDisabledTestMode: Bool {
         StorageKeyManager.disablesKeychainForProcess
     }
@@ -1803,80 +1803,105 @@ extension AppDelegate {
     }
 }
 
+/// Coalesces hotkey intent for the complete selection-capture lifetime.
+///
+/// The overlay may open at the UI deadline while capture continues, but a
+/// second hotkey cannot toggle it closed until that transaction finishes.
+@MainActor
+final class SelectionHotkeyIntentController {
+    typealias Sleep = @MainActor (UInt64) async -> Void
+
+    private let openDelayNanos: UInt64
+    private let sleep: Sleep
+    private var activeTask: Task<Void, Never>?
+    private var activeID: UUID?
+    private var didToggle = false
+
+    init(
+        openDelayNanos: UInt64 = 150_000_000,
+        sleep: @escaping Sleep = { nanoseconds in
+            try? await Task.sleep(nanoseconds: nanoseconds)
+        }
+    ) {
+        self.openDelayNanos = openDelayNanos
+        self.sleep = sleep
+    }
+
+    @discardableResult
+    func invoke(
+        captureSelection: (@MainActor () async -> Void)?,
+        toggleOverlay: @escaping @MainActor () -> Void
+    ) -> Bool {
+        guard activeTask == nil else { return false }
+
+        let intentID = UUID()
+        activeID = intentID
+        didToggle = false
+        activeTask = Task { [weak self] in
+            guard let self else { return }
+            guard let captureSelection else {
+                toggleOnce(intentID: intentID, toggleOverlay: toggleOverlay)
+                finish(intentID: intentID)
+                return
+            }
+
+            let deadlineTask = Task { @MainActor [weak self] in
+                guard let self else { return }
+                await sleep(openDelayNanos)
+                guard !Task.isCancelled else { return }
+                toggleOnce(intentID: intentID, toggleOverlay: toggleOverlay)
+            }
+
+            await captureSelection()
+            deadlineTask.cancel()
+            toggleOnce(intentID: intentID, toggleOverlay: toggleOverlay)
+            finish(intentID: intentID)
+        }
+        return true
+    }
+
+    var isProcessing: Bool { activeTask != nil }
+
+    private func toggleOnce(intentID: UUID, toggleOverlay: @MainActor () -> Void) {
+        guard activeID == intentID, !didToggle else { return }
+        didToggle = true
+        toggleOverlay()
+    }
+
+    private func finish(intentID: UUID) {
+        guard activeID == intentID else { return }
+        activeTask = nil
+        activeID = nil
+        didToggle = false
+    }
+}
+
 // MARK: Deep Link Handling
 extension AppDelegate {
     func applyChatHotkey() {
         let cfg = ChatConfigurationStore.load()
+        let clipboardMonitoringEnabled = cfg.enableClipboardMonitoring
         HotKeyManager.shared.register(hotkey: cfg.hotkey) { [weak self] in
-            Task { @MainActor in
-                // if opening (about to be shown), and clipboard monitoring is enabled, trigger a selection grab before showing Osaurus
-                // to capture content from the currently active application.
-                if !ChatWindowManager.shared.hasVisibleWindows && cfg.enableClipboardMonitoring {
-                    // Avoid waiting the full 500ms in the common case.
-                    // If the grab finishes, the overlay opens sooner with fresh diagnostics;
-                    // if it stalls, we still open within 150ms and surface a result when ready.
-                    await self?.captureSelectionForHotkey(withMaxWaitNanos: 150_000_000)
-                }
-
-                self?.toggleChatOverlay()
+            Task { @MainActor [weak self] in
+                self?.handleChatHotkey(clipboardMonitoringEnabled: clipboardMonitoringEnabled)
             }
         }
     }
 
-    @MainActor
-    private func captureSelectionForHotkey(withMaxWaitNanos maxWaitNanos: UInt64) async {
-        guard !isCapturingSelectionForHotkey else { return }
-        isCapturingSelectionForHotkey = true
-
-        let grabTask = Task { @MainActor in
-            await ClipboardService.shared.grabSelectionReport()
+    private func handleChatHotkey(clipboardMonitoringEnabled: Bool) {
+        let captureSelection: (@MainActor () async -> Void)?
+        if !ChatWindowManager.shared.hasVisibleWindows && clipboardMonitoringEnabled {
+            captureSelection = {
+                _ = await ClipboardService.shared.grabSelectionReport()
+            }
+        } else {
+            captureSelection = nil
         }
 
-        let timeoutTask = Task { () async -> Bool in
-            do {
-                try await Task.sleep(nanoseconds: maxWaitNanos)
-                return true
-            } catch {
-                return false
-            }
-        }
-
-        let didTimeOut = await withCheckedContinuation { (continuation: CheckedContinuation<Bool, Never>) in
-            let lock = OSAllocatedUnfairLock(initialState: false)
-            func resumeSelectionFlowOnce(timeout: Bool) {
-                let shouldResume = lock.withLock { state in
-                    guard !state else { return false }
-                    state = true
-                    return true
-                }
-                guard shouldResume else { return }
-                continuation.resume(returning: timeout)
-            }
-
-            Task {
-                _ = await grabTask.value
-                timeoutTask.cancel()
-                resumeSelectionFlowOnce(timeout: false)
-            }
-
-            Task {
-                let timedOut = await timeoutTask.value
-                guard timedOut else { return }
-                resumeSelectionFlowOnce(timeout: true)
-            }
-        }
-
-        if !didTimeOut {
-            isCapturingSelectionForHotkey = false
-            return
-        }
-
-        Task {
-            _ = await grabTask.value
-            await MainActor.run {
-                isCapturingSelectionForHotkey = false
-            }
-        }
+        selectionHotkeyIntent.invoke(
+            captureSelection: captureSelection,
+            toggleOverlay: { [weak self] in self?.toggleChatOverlay() }
+        )
     }
     fileprivate func handleDeepLink(_ url: URL) {
         let scheme = url.scheme?.lowercased() ?? ""
