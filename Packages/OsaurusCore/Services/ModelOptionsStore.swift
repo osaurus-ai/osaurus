@@ -34,11 +34,13 @@ final class ModelOptionsStore: ObservableObject {
                     for: modelId,
                     persisted: stored.options
                 )
-                if normalized.isEmpty {
-                    userDefaults.removeObject(forKey: prefix + modelId)
-                    return nil
-                }
-                return normalized
+                // Deliberately keep the stored payload even when normalization
+                // drops everything: catalog-backed choices (e.g. a Codex
+                // `ultra` effort) normalize to empty while the provider is
+                // still disconnected and the dynamic capability catalog is
+                // unpopulated. Deleting here would permanently lose the
+                // user's choice before the catalog arrives to validate it.
+                return normalized.isEmpty ? nil : normalized
             }
 
             let decoded = try decoder.decode([String: ModelOptionValue].self, from: data)

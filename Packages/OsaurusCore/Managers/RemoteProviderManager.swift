@@ -934,10 +934,23 @@ public final class RemoteProviderManager: ObservableObject {
         return models
     }
 
+    /// One connected provider's cached model list plus its route identity.
+    /// `providerType` and `host` let consumers (the model picker cache)
+    /// distinguish the ChatGPT/Codex OAuth route from the official
+    /// `api.openai.com` API-key route, so the same slug never receives the
+    /// wrong provider's capability set.
+    public struct CachedProviderModels: Sendable {
+        public let providerId: UUID
+        public let providerName: String
+        public let providerType: RemoteProviderType
+        public let host: String
+        public let models: [String]
+    }
+
     /// Get all available models synchronously from cached state
-    public func cachedAvailableModels() -> [(providerId: UUID, providerName: String, models: [String])] {
+    public func cachedAvailableModels() -> [CachedProviderModels] {
         ensureManagedOsaurusRouterProviderIfNeeded()
-        var result: [(providerId: UUID, providerName: String, models: [String])] = []
+        var result: [CachedProviderModels] = []
 
         for provider in configuration.providers {
             if let state = providerStates[provider.id], state.isConnected {
@@ -947,7 +960,15 @@ public final class RemoteProviderManager: ObservableObject {
                     .replacingOccurrences(of: " ", with: "-")
                     .replacingOccurrences(of: "/", with: "-")
                 let prefixedModels = state.discoveredModels.map { "\(prefix)/\($0)" }
-                result.append((providerId: provider.id, providerName: provider.name, models: prefixedModels))
+                result.append(
+                    CachedProviderModels(
+                        providerId: provider.id,
+                        providerName: provider.name,
+                        providerType: provider.providerType,
+                        host: provider.host,
+                        models: prefixedModels
+                    )
+                )
             }
         }
 

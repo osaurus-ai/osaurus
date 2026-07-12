@@ -806,14 +806,27 @@ final class ChatSession: ObservableObject {
     /// Reconcile the session against a fresh picker list. Shared by the
     /// explicit `refreshPickerItems()` (which first triggers a rebuild) and
     /// the `$items` subscription (which receives the cache's already-rebuilt
-    /// list). Idempotent: a no-op when the option ids are unchanged.
+    /// list). Idempotent: a no-op when nothing (ids or metadata) changed.
     func applyPickerItems(_ newOptions: [ModelPickerItem]) {
         let newOptionIds = newOptions.map { $0.id }
         let optionsChanged = pickerItems.map({ $0.id }) != newOptionIds
 
         isDiscoveringModels = false
 
-        guard optionsChanged else { return }
+        guard optionsChanged else {
+            // Same model set, but the item metadata may have changed — e.g. a
+            // Codex catalog refetch that updates reasoning capabilities or
+            // default effort labels while ids stay identical. Republish the
+            // items and re-normalize the active options against the refreshed
+            // dynamic capability set so a stale effort level (Terra `ultra`
+            // after a catalog narrowing) is dropped instead of hitting the
+            // wire, without disturbing the model selection.
+            if pickerItems != newOptions {
+                pickerItems = newOptions
+                loadActiveModelOptions(for: selectedModel)
+            }
+            return
+        }
 
         // Options changed (e.g., remote models loaded) - re-check agent's preferred model.
         // This corrects the initial fallback to "foundation" when remote models weren't yet available.

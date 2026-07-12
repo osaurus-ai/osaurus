@@ -106,6 +106,12 @@ struct ModelPickerItem: Identifiable, Hashable {
     /// filter the Osaurus tab by context limit; `nil` when unknown.
     let contextLength: Int?
 
+    /// Catalog-driven reasoning-effort capabilities for remote models: the
+    /// live ChatGPT/Codex catalog contract, or the documented official
+    /// OpenAI GPT-5.6 API-key contract. Nil for models without a dynamic
+    /// effort surface (they keep the static profile fallback).
+    let reasoningCapabilities: ModelReasoningCapabilities?
+
     /// Image-generation metadata. Nil for text/remote chat models.
     let imageKind: String?
     let imageCapabilities: ImageModelCapabilities?
@@ -126,6 +132,7 @@ struct ModelPickerItem: Identifiable, Hashable {
         inputPriceMicroPerMTok: Int64? = nil,
         outputPriceMicroPerMTok: Int64? = nil,
         contextLength: Int? = nil,
+        reasoningCapabilities: ModelReasoningCapabilities? = nil,
         imageKind: String? = nil,
         imageCapabilities: ImageModelCapabilities? = nil,
         imageDefaultSteps: Int? = nil,
@@ -144,6 +151,7 @@ struct ModelPickerItem: Identifiable, Hashable {
         self.inputPriceMicroPerMTok = inputPriceMicroPerMTok
         self.outputPriceMicroPerMTok = outputPriceMicroPerMTok
         self.contextLength = contextLength
+        self.reasoningCapabilities = reasoningCapabilities
         self.imageKind = imageKind
         self.imageCapabilities = imageCapabilities
         self.imageDefaultSteps = imageDefaultSteps
@@ -220,6 +228,52 @@ extension ModelPickerItem {
             displayName: displayName(fromModelId: modelId),
             source: .remote(providerName: providerName, providerId: providerId)
         )
+    }
+
+    /// Create a ChatGPT/Codex remote model picker item enriched with the
+    /// live catalog's display name and per-model reasoning capabilities.
+    /// `metadata` is nil for fallback (pre-catalog) slugs, which then behave
+    /// exactly like plain remote items.
+    static func fromCodexRemoteModel(
+        modelId: String,
+        providerName: String,
+        providerId: UUID,
+        metadata: CodexModelMetadata?
+    ) -> ModelPickerItem {
+        let catalogDisplayName = metadata?.displayName?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        return ModelPickerItem(
+            id: modelId,
+            displayName: (catalogDisplayName?.isEmpty == false ? catalogDisplayName : nil)
+                ?? displayName(fromModelId: modelId),
+            source: .remote(providerName: providerName, providerId: providerId),
+            reasoningCapabilities: metadata.flatMap(ModelReasoningCapabilities.init(codex:))
+        )
+    }
+
+    /// Create a picker item for the official `api.openai.com` API-key route.
+    /// GPT-5.6 models attach the documented public reasoning profile
+    /// (`none` … `max`, never Codex-only `ultra`); every other id keeps the
+    /// plain `/v1/models` id/display behavior and the generic static
+    /// profile fallback.
+    static func fromOfficialOpenAIModel(
+        modelId: String,
+        providerName: String,
+        providerId: UUID
+    ) -> ModelPickerItem {
+        ModelPickerItem(
+            id: modelId,
+            displayName: displayName(fromModelId: modelId),
+            source: .remote(providerName: providerName, providerId: providerId),
+            reasoningCapabilities: isPublicGPT56ModelId(modelId) ? .officialOpenAIGPT56 : nil
+        )
+    }
+
+    /// Whether a (possibly provider-prefixed) id names a GPT-5.6 model
+    /// covered by the documented public API reasoning contract.
+    static func isPublicGPT56ModelId(_ id: String) -> Bool {
+        let bare = id.split(separator: "/").last.map(String.init) ?? id
+        return bare.lowercased().hasPrefix("gpt-5.6")
     }
 
     /// Create an Osaurus Router model picker item enriched with the router's

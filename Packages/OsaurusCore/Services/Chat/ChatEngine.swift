@@ -313,7 +313,10 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
         guard let requestOptions else {
             return [:]
         }
-        guard ModelProfileRegistry.profile(for: model) != nil else {
+        guard
+            ModelProfileRegistry.profile(for: model) != nil
+                || ModelProfileRegistry.reasoningCapabilities(for: model) != nil
+        else {
             return requestOptions
         }
         return ModelProfileRegistry.normalizedOptions(for: model, persisted: requestOptions)

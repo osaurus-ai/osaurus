@@ -330,7 +330,6 @@ struct FloatingInputCard: View {
     @Environment(\.colorScheme) private var colorScheme
     @State private var isDragOver = false
     @State private var showModelPicker = false
-    @State private var showModelOptionsPicker = false
     @State private var showImageSizePicker = false
     @State private var showContextBreakdown = false
     @State private var contextHoverTask: Task<Void, Never>?
@@ -2166,9 +2165,28 @@ extension FloatingInputCard {
         return ModelProfileRegistry.options(for: model)
     }
 
-    private var hasNonThinkingOptions: Bool {
-        let thinkingId = selectedModel.flatMap { ModelProfileRegistry.profile(for: $0)?.thinkingOption?.id }
-        return activeProfileOptions.contains { $0.id != thinkingId }
+    /// Catalog-driven reasoning capabilities for the selected model (Codex
+    /// live catalog / official OpenAI GPT-5.6 contract). When present, the
+    /// effort control renders inline with the model chip instead of the
+    /// separate options chip.
+    private var inlineEffortCapabilities: ModelReasoningCapabilities? {
+        guard let capabilities = selectedPickerItem?.reasoningCapabilities,
+            !capabilities.isEmpty
+        else { return nil }
+        return capabilities
+    }
+
+    /// The reasoning suffix the model chip should display ("· Extra High",
+    /// "· Instruct"): the explicit persisted choice, otherwise the
+    /// catalog/profile default (display-only; an unset option sends no
+    /// override on the wire). Covers both capability-enriched remote models
+    /// and static profiles with a segmented reasoning option.
+    private var inlineReasoningSuffix: String? {
+        guard let model = selectedModel else { return nil }
+        return ModelProfileRegistry.inlineReasoningSuffixLabel(
+            for: model,
+            values: activeModelOptions
+        )
     }
 
     private var selectorRow: some View {
@@ -2206,10 +2224,6 @@ extension FloatingInputCard {
 
                 if autoSpeakAssistant {
                     autoSpeakToggleChip
-                }
-
-                if hasNonThinkingOptions, !isRemoteAgentRun {
-                    modelOptionsSelectorChip
                 }
 
                 // Sandbox toggle: visible whenever the sandbox is available on
@@ -2753,6 +2767,19 @@ extension FloatingInputCard {
                             .foregroundColor(isSelectedModelDeprecated ? .orange : theme.secondaryText)
                             .lineLimit(1)
 
+                        // Effective reasoning effort/mode for models with a
+                        // segmented reasoning option (Codex catalog, official
+                        // OpenAI GPT-5.6, DSV4/Mistral/Hy3 profiles),
+                        // matching ChatGPT's "model · effort" hierarchy.
+                        // Shows the catalog/profile default when no explicit
+                        // choice exists.
+                        if let suffix = inlineReasoningSuffix {
+                            Text(verbatim: "· \(suffix)")
+                                .font(theme.font(size: CGFloat(theme.captionSize) - 1, weight: .regular))
+                                .foregroundColor(theme.tertiaryText)
+                                .lineLimit(1)
+                        }
+
                         // Show VLM indicator
                         if option.isVLM {
                             Image(systemName: "eye")
@@ -2794,6 +2821,7 @@ extension FloatingInputCard {
                 options: cachedPickerItems,
                 selectedModel: $selectedModel,
                 agentId: agentId,
+                optionsControl: modelPickerOptionsControl,
                 onDismiss: dismissModelPicker
             )
         }
@@ -2809,6 +2837,60 @@ extension FloatingInputCard {
                 cachedPickerItems = newItems
             }
         }
+    }
+
+    /// Inline options section for the model popover: every non-thinking
+    /// option the selected model exposes (catalog-driven effort, static
+    /// profile segments, toggles). Selecting persists an explicit value;
+    /// resetting removes it so the default shows while the backend applies
+    /// it naturally (nothing is sent on the wire).
+    private var modelPickerOptionsControl: ModelPickerOptionsControl? {
+        guard let model = selectedModel else { return nil }
+        let capabilities = inlineEffortCapabilities
+        let thinkingId = ModelProfileRegistry.profile(for: model)?.thinkingOption?.id
+        // The standalone Thinking chip owns the thinking toggle; the picker
+        // section renders everything else.
+        let options = activeProfileOptions.filter { $0.id != thinkingId }
+        guard !options.isEmpty else { return nil }
+
+        // Display-only defaults: the catalog default for capability-enriched
+        // effort, otherwise the static profile's defaults.
+        let defaults: [String: ModelOptionValue]
+        if let capabilities {
+            if let defaultLevel = capabilities.defaultLevelId {
+                defaults = ["reasoningEffort": .string(defaultLevel)]
+            } else {
+                defaults = [:]
+            }
+        } else {
+            defaults = ModelProfileRegistry.defaults(for: model)
+        }
+
+        return ModelPickerOptionsControl(
+            capabilities: capabilities,
+            options: options,
+            values: activeModelOptions,
+            defaults: defaults,
+            onChange: { optionId, newValue in
+                // Deferred write for the same reason as `toggleThinking`'s
+                // saved options: the popover's anchor (the model chip)
+                // renders the effort label from `activeModelOptions`, and
+                // resizing the anchor during the popover's own update
+                // crashes NSPopover.
+                DispatchQueue.main.async {
+                    var updated = activeModelOptions
+                    if let newValue {
+                        updated[optionId] = newValue
+                    } else {
+                        updated.removeValue(forKey: optionId)
+                    }
+                    activeModelOptions = updated
+                    if let model = selectedModel {
+                        ModelOptionsStore.shared.saveOptions(updated, for: model)
+                    }
+                }
+            }
+        )
     }
 
     // MARK: - Thinking Toggle
@@ -2883,74 +2965,6 @@ extension FloatingInputCard {
         if let model = selectedModel {
             ModelOptionsStore.shared.saveOptions(activeModelOptions, for: model)
         }
-    }
-
-    // MARK: - Model Options Chip
-
-    private var modelOptionsSummary: String {
-        guard let model = selectedModel,
-            ModelProfileRegistry.profile(for: model) != nil
-        else { return "" }
-        let nonDefault = activeProfileOptions.compactMap { option -> String? in
-            guard let current = activeModelOptions[option.id] else { return nil }
-            if case .segmented(let segments) = option.kind {
-                return segments.first(where: { $0.id == current.stringValue })?.label
-            }
-            if case .bool(let v) = current { return v ? option.label : nil }
-            return nil
-        }
-        if nonDefault.isEmpty { return "Default" }
-        return nonDefault.joined(separator: ", ")
-    }
-
-    private var modelOptionsSelectorChip: some View {
-        SelectorChip(isActive: showModelOptionsPicker) {
-            showModelOptionsPicker.toggle()
-        } content: {
-            HStack(spacing: 5) {
-                Image(systemName: "slider.horizontal.3")
-                    .font(theme.font(size: CGFloat(theme.captionSize) - 2, weight: .medium))
-                    .foregroundColor(theme.tertiaryText)
-
-                Text(modelOptionsSummary)
-                    .font(theme.font(size: CGFloat(theme.captionSize), weight: .medium))
-                    .foregroundColor(theme.secondaryText)
-                    .lineLimit(1)
-
-                Image(systemName: "chevron.up.chevron.down")
-                    .font(theme.font(size: CGFloat(theme.captionSize) - 3, weight: .semibold))
-                    .foregroundColor(theme.tertiaryText)
-            }
-        }
-        .popover(isPresented: $showModelOptionsPicker, arrowEdge: .top) {
-            ModelOptionsSelectorView(
-                options: activeProfileOptions,
-                values: modelOptionsBinding,
-                profileName: selectedModel.flatMap { ModelProfileRegistry.profile(for: $0)?.displayName } ?? "",
-                thinkingOptionId: selectedModel.flatMap { ModelProfileRegistry.profile(for: $0)?.thinkingOption?.id }
-            )
-        }
-    }
-
-    private var modelOptionsBinding: Binding<[String: ModelOptionValue]> {
-        Binding(
-            get: { activeModelOptions },
-            set: { newValues in
-                // Defer the write off the popover's synchronous update. The
-                // selector popover is anchored to a chip whose label reads
-                // `activeModelOptions` (`modelOptionsSummary`); mutating it
-                // inline resizes/replaces that anchor while the popover is
-                // presenting, which makes NSPopover dereference a freed
-                // positioning view (EXC_BAD_ACCESS). Hopping to the next
-                // runloop tick lets the current update finish first.
-                DispatchQueue.main.async {
-                    activeModelOptions = newValues
-                    if let model = selectedModel {
-                        ModelOptionsStore.shared.saveOptions(newValues, for: model)
-                    }
-                }
-            }
-        )
     }
 
     // MARK: - Sandbox Toggle Chip
@@ -6209,191 +6223,6 @@ private struct SelectorChip<Content: View>: View {
                 lineWidth: 1
             )
     }
-}
-
-// MARK: - Model Options Selector View
-
-/// Popover that groups all model-specific options into a single panel.
-private struct ModelOptionsSelectorView: View {
-    let options: [ModelOptionDefinition]
-    @Binding var values: [String: ModelOptionValue]
-    let profileName: String
-    let thinkingOptionId: String?
-
-    @Environment(\.theme) private var theme
-
-    private var hasExplicitOptions: Bool { !values.isEmpty }
-
-    var body: some View {
-        VStack(spacing: 0) {
-            header
-            Divider().background(theme.primaryBorder.opacity(0.3))
-            optionRows
-        }
-        .frame(width: 300)
-        .popoverCard(
-            cornerRadius: 12,
-            accentOpacity: (0.06, 0.04),
-            borderOpacity: 0.15,
-            shadowOpacity: 0.25,
-            shadowRadius: 20,
-            shadowOffsetY: 10
-        )
-    }
-
-    // MARK: - Header
-
-    private var header: some View {
-        HStack {
-            Image(systemName: "slider.horizontal.3")
-                .font(.system(size: 12, weight: .semibold))
-                .foregroundColor(theme.secondaryText)
-
-            Text(profileName)
-                .font(.system(size: 13, weight: .semibold))
-                .foregroundColor(theme.primaryText)
-
-            Spacer()
-
-            if hasExplicitOptions {
-                Button {
-                    values = [:]
-                } label: {
-                    HStack(spacing: 3) {
-                        Image(systemName: "arrow.uturn.backward")
-                            .font(.system(size: 9))
-                        Text("Reset", bundle: .module)
-                            .font(.system(size: 11, weight: .medium))
-                    }
-                    .foregroundColor(theme.secondaryText)
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 4)
-                    .background(
-                        RoundedRectangle(cornerRadius: 6, style: .continuous)
-                            .fill(theme.secondaryBackground.opacity(0.8))
-                    )
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 6, style: .continuous)
-                            .strokeBorder(theme.primaryBorder.opacity(0.12), lineWidth: 1)
-                    )
-                }
-                .buttonStyle(.plain)
-                .pointingHandCursor()
-            }
-        }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 12)
-    }
-
-    // MARK: - Option Rows
-
-    private var optionRows: some View {
-        let filteredOptions = options.filter { $0.id != thinkingOptionId }
-
-        return VStack(spacing: 0) {
-            ForEach(Array(filteredOptions.enumerated()), id: \.element.id) { index, option in
-                if index > 0 {
-                    Divider().background(theme.primaryBorder.opacity(0.15)).padding(.horizontal, 14)
-                }
-                switch option.kind {
-                case .segmented(let segments):
-                    segmentedRow(option: option, segments: segments)
-                case .toggle(let defaultValue):
-                    toggleRow(option: option, defaultValue: defaultValue)
-                }
-            }
-        }
-        .padding(.vertical, 4)
-    }
-
-    private func segmentedRow(option: ModelOptionDefinition, segments: [ModelOptionSegment]) -> some View {
-        let currentId = values[option.id]?.stringValue ?? segments.first?.id ?? ""
-        let isExplicit = values[option.id] != nil
-
-        return VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 6) {
-                if let icon = option.icon {
-                    Image(systemName: icon)
-                        .font(.system(size: 11, weight: .medium))
-                        .foregroundColor(isExplicit ? theme.accentColor : theme.tertiaryText)
-                }
-                Text(option.label)
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundColor(theme.primaryText)
-            }
-
-            wrappedSegments(segments: segments, currentId: currentId, optionId: option.id)
-        }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 10)
-    }
-
-    private func wrappedSegments(segments: [ModelOptionSegment], currentId: String, optionId: String) -> some View {
-        FlowLayout(spacing: 6) {
-            ForEach(segments) { segment in
-                let isSelected = segment.id == currentId
-                Button {
-                    values[optionId] = .string(segment.id)
-                } label: {
-                    Text(segment.label)
-                        .font(.system(size: 11, weight: isSelected ? .semibold : .medium))
-                        .foregroundColor(isSelected ? theme.accentColor : theme.secondaryText)
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 5)
-                        .background(
-                            RoundedRectangle(cornerRadius: 6, style: .continuous)
-                                .fill(
-                                    isSelected
-                                        ? theme.accentColor.opacity(theme.isDark ? 0.15 : 0.1)
-                                        : theme.secondaryBackground.opacity(0.6)
-                                )
-                        )
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 6, style: .continuous)
-                                .strokeBorder(
-                                    isSelected
-                                        ? theme.accentColor.opacity(0.3)
-                                        : theme.primaryBorder.opacity(0.12),
-                                    lineWidth: 1
-                                )
-                        )
-                }
-                .buttonStyle(.plain)
-                .pointingHandCursor()
-            }
-        }
-    }
-
-    private func toggleRow(option: ModelOptionDefinition, defaultValue: Bool) -> some View {
-        let isOn = values[option.id]?.boolValue ?? defaultValue
-        let isExplicit = values[option.id] != nil
-
-        return HStack(spacing: 6) {
-            if let icon = option.icon {
-                Image(systemName: icon)
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundColor(isExplicit ? theme.accentColor : theme.tertiaryText)
-            }
-            Text(option.label)
-                .font(.system(size: 12, weight: .semibold))
-                .foregroundColor(theme.primaryText)
-
-            Spacer()
-
-            Toggle(
-                "",
-                isOn: Binding(
-                    get: { isOn },
-                    set: { values[option.id] = .bool($0) }
-                )
-            )
-            .toggleStyle(.switch)
-            .controlSize(.mini)
-        }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 10)
-    }
-
 }
 
 // MARK: - Input Action Button
