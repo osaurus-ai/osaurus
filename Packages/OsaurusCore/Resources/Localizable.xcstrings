@@ -173084,6 +173084,14 @@
         "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "模型包摘要" } }
       }
     },
+    "Auto tool choice" : {
+      "localizations" : {
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "Automatische Werkzeugwahl" } },
+        "ko" : { "stringUnit" : { "state" : "translated", "value" : "자동 도구 선택" } },
+        "ru" : { "stringUnit" : { "state" : "translated", "value" : "Автоматический выбор инструмента" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "自动工具选择" } }
+      }
+    },
     "Decode speed" : {
       "localizations" : {
         "de" : { "stringUnit" : { "state" : "translated", "value" : "Dekodiergeschwindigkeit" } },

@@ -8,8 +8,10 @@ an Osaurus tool workflow.
 ## Evidence contract
 
 Each run hashes every regular file in the selected bundle and binds the report
-to that exact SHA-256 digest. Symbolic links and non-regular entries fail the
-inspection. The report also records:
+to that exact SHA-256 digest. Non-regular entries fail inspection. Hugging Face
+snapshot symlinks are accepted only when their once-resolved target is a
+regular file contained by the same repository; other symlinks fail. The report
+also records:
 
 - the bundle chat-template source and any runtime fallback;
 - the declared tool parser or format;
@@ -18,10 +20,12 @@ inspection. The report also records:
   otherwise an explicit `unverified` source rather than an asserted pin;
 - per-probe stop reason, token count, and decode token/s when emitted.
 
-Reports are stored as versioned JSON under
+Reports are stored as private, versioned JSON under
 `~/.osaurus/config/model-verification/`, registered as `live_proof` evidence,
-and projected into `model-ledger.json` with their exact bundle digest. The
-ledger projection does not change the production-serving decision.
+and projected into `model-ledger.json` with their exact bundle digest and a
+configuration-relative artifact path. Loading a validated saved report
+re-registers it after restart. The ledger projection does not change the
+production-serving decision.
 
 ## Live probes
 
@@ -31,13 +35,15 @@ checks:
 
 1. visible generation;
 2. a dedicated, closed reasoning channel when the bundle declares one;
-3. a schema-valid fixture tool call;
-4. continuation grounded in the executed fixture result;
-5. a second schema-valid tool call after tool history;
-6. no visible reasoning, parser, or tool markers;
-7. a reported natural stop/EOS reason;
-8. positive decode token/s;
-9. cooperative cancellation after the live stream emits its first event.
+3. production-default `auto` tool selection;
+4. a schema-valid fixture tool call and arguments;
+5. continuation grounded in the executed fixture result;
+6. a second schema-valid tool call after tool history;
+7. no visible reasoning, parser, or tool markers in visible or reasoning text;
+8. a reported natural stop/EOS reason;
+9. positive decode token/s;
+10. stream termination within a bounded deadline after cancellation, with no
+    post-cancel deltas.
 
 Reasoning is `unsupported`, rather than failed, when the bundle declares no
 reasoning mode. A missing chat template blocks tool-call proof even if a runtime

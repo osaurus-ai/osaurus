@@ -20,6 +20,7 @@ enum LocalModelVerificationClassification: String, Codable, CaseIterable, Sendab
 enum LocalModelVerificationProbe: String, Codable, CaseIterable, Sendable {
     case generation
     case reasoning
+    case autoToolChoice = "auto_tool_choice"
     case schemaValidToolCall = "schema_valid_tool_call"
     case toolResultContinuation = "tool_result_continuation"
     case secondToolCall = "second_tool_call"
@@ -44,44 +45,139 @@ enum LocalModelCancellationProbeOutcome: Equatable, Sendable {
 }
 
 enum LocalModelCancellationHandshake {
+    private final class Observation: @unchecked Sendable {
+        private let lock = NSLock()
+        private var cancelled = false
+        private var observedDelta = false
+        private var postCancelDeltas = 0
+
+        func recordDelta() -> Bool {
+            lock.lock()
+            defer { lock.unlock() }
+            if cancelled { postCancelDeltas += 1 }
+            let isFirst = !observedDelta
+            observedDelta = true
+            return isFirst
+        }
+
+        func markCancelled() {
+            lock.lock()
+            cancelled = true
+            lock.unlock()
+        }
+
+        var observedPostCancelDelta: Bool {
+            lock.lock()
+            defer { lock.unlock() }
+            return postCancelDeltas > 0
+        }
+
+        var wasCancelled: Bool {
+            lock.lock()
+            defer { lock.unlock() }
+            return cancelled
+        }
+    }
+
+    private enum Event: Sendable {
+        case started
+        case completed(ResultKind)
+    }
+
+    private enum ResultKind: Sendable {
+        case terminatedAfterCancellation
+        case completedBeforeCancellation
+        case cancelled
+        case failed(String)
+    }
+
     static func run(
-        timeout: Duration = .seconds(30),
+        startTimeout: Duration = .seconds(30),
+        terminationTimeout: Duration = .seconds(5),
+        teardown: @escaping @Sendable () async -> Void = {},
         operation: @escaping @Sendable (@escaping @Sendable () -> Void) async throws -> Void
     ) async -> LocalModelCancellationProbeOutcome {
-        let started = AsyncStream<Void>.makeStream()
+        let events = AsyncStream<Event>.makeStream()
+        let observation = Observation()
         let task = Task {
-            defer { started.continuation.finish() }
-            try await operation {
-                started.continuation.yield()
+            do {
+                try await operation {
+                    if observation.recordDelta() {
+                        events.continuation.yield(.started)
+                    }
+                }
+                events.continuation.yield(.completed(
+                    observation.wasCancelled
+                        ? .terminatedAfterCancellation
+                        : .completedBeforeCancellation
+                ))
+            } catch is CancellationError {
+                events.continuation.yield(.completed(.cancelled))
+            } catch {
+                let code = (error as NSError).code
+                events.continuation.yield(.completed(.failed("runtime_stream_error_\(code)")))
             }
+            events.continuation.finish()
         }
-        let observedStart = await withTaskGroup(of: Bool.self) { group in
+
+        let firstEvent: Event? = await withTaskGroup(of: Event?.self) { group in
             group.addTask {
-                for await _ in started.stream { return true }
-                return false
+                for await event in events.stream { return event }
+                return nil
             }
             group.addTask {
-                try? await Task.sleep(for: timeout)
-                return false
+                try? await Task.sleep(for: startTimeout)
+                return nil
             }
-            let result = await group.next() ?? false
+            guard let result = await group.next() else { return nil }
             group.cancelAll()
             return result
         }
-        guard observedStart else {
+        guard case .started = firstEvent else {
             task.cancel()
-            _ = await task.result
+            if case .completed(.failed(let code)) = firstEvent {
+                return .failed("cancellation_stream_start_\(code)")
+            }
+            if case .completed(.completedBeforeCancellation) = firstEvent {
+                return .blocked("The generation stream completed before an in-flight event was observed.")
+            }
             return .blocked("No generation event was observed before the bounded cancellation deadline.")
         }
 
+        observation.markCancelled()
         task.cancel()
-        switch await task.result {
-        case .failure(let error) where error is CancellationError:
+        let teardownTask = Task { await teardown() }
+        let completion: ResultKind? = await withTaskGroup(of: ResultKind?.self) { group in
+            group.addTask {
+                for await event in events.stream {
+                    if case .completed(let result) = event { return result }
+                }
+                return nil
+            }
+            group.addTask {
+                try? await Task.sleep(for: terminationTimeout)
+                return nil
+            }
+            guard let result = await group.next() else { return nil }
+            group.cancelAll()
+            return result
+        }
+        guard let completion else {
+            task.cancel()
+            teardownTask.cancel()
+            return .failed("cancellation_stream_termination_timeout")
+        }
+        teardownTask.cancel()
+        if observation.observedPostCancelDelta {
+            return .failed("cancellation_stream_emitted_after_cancel")
+        }
+        switch completion {
+        case .terminatedAfterCancellation, .cancelled:
             return .passed
-        case .failure(let error):
-            return .failed("The in-flight generation failed during cancellation: \(error)")
-        case .success:
-            return .failed("The in-flight generation completed without acknowledging cancellation.")
+        case .completedBeforeCancellation:
+            return .blocked("The generation stream completed before cancellation could be exercised.")
+        case .failed(let code):
+            return .failed("cancellation_stream_teardown_\(code)")
         }
     }
 }
@@ -113,6 +209,7 @@ struct LocalModelVerificationProbeResult: Codable, Equatable, Sendable, Identifi
     let probe: LocalModelVerificationProbe
     let status: LocalModelVerificationProbeStatus
     let detail: String
+    let errorCode: String?
     let tokenCount: Int?
     let tokensPerSecond: Double?
     let stopReason: String?
@@ -133,7 +230,7 @@ struct LocalModelBundleEvidence: Codable, Equatable, Sendable {
 }
 
 struct LocalModelVerificationArtifact: Codable, Equatable, Sendable {
-    static let currentSchemaVersion = 2
+    static let currentSchemaVersion = 3
 
     let schemaVersion: Int
     let modelId: String
@@ -144,8 +241,8 @@ struct LocalModelVerificationArtifact: Codable, Equatable, Sendable {
     let completedAt: Date
     let probes: [LocalModelVerificationProbeResult]
 
-    var failedOrBlocked: [LocalModelVerificationProbeResult] {
-        probes.filter { $0.status != .passed }
+    var nonPassingEvidence: [LocalModelVerificationProbeResult] {
+        probes.filter { $0.status == .failed || $0.status == .error || $0.status == .blocked }
     }
 
     func isStale(currentDigest: String?) -> Bool {
@@ -161,7 +258,7 @@ struct LocalModelVerificationArtifact: Codable, Equatable, Sendable {
 
 enum LocalModelVerificationAuthority {
     static let requiredProbes: Set<LocalModelVerificationProbe> = [
-        .generation, .schemaValidToolCall, .toolResultContinuation, .secondToolCall,
+        .generation, .autoToolChoice, .schemaValidToolCall, .toolResultContinuation, .secondToolCall,
         .markerLeakage, .stopAndEOS, .throughput, .cancellation,
     ]
 
@@ -170,9 +267,10 @@ enum LocalModelVerificationAuthority {
     ) -> LocalModelVerificationClassification {
         let grouped = Dictionary(grouping: rows, by: \.probe)
         let requiredRows = requiredProbes.compactMap { grouped[$0]?.first }
+        let allRequiredRows = rows.filter { requiredProbes.contains($0.probe) }
         let hasDuplicateRequiredProbe = requiredProbes.contains { (grouped[$0]?.count ?? 0) != 1 }
 
-        if requiredRows.contains(where: { $0.status == .error || $0.status == .failed }) {
+        if allRequiredRows.contains(where: { $0.status == .error || $0.status == .failed }) {
             return .failed
         }
         if let throughput = grouped[.throughput]?.first, throughput.status == .passed {
@@ -184,7 +282,8 @@ enum LocalModelVerificationAuthority {
             return requiredRows.contains(where: { $0.status == .passed }) ? .partial : .unproven
         }
         if requiredRows.allSatisfy({ $0.status == .passed }) {
-            return rows.first(where: { $0.probe == .reasoning })?.status == .failed
+            let reasoningStatus = rows.first(where: { $0.probe == .reasoning })?.status
+            return reasoningStatus == .failed || reasoningStatus == .error
                 ? .partial
                 : .proven
         }
@@ -194,7 +293,13 @@ enum LocalModelVerificationAuthority {
     }
 
     static func validates(_ artifact: LocalModelVerificationArtifact) -> Bool {
-        classify(artifact.probes) == artifact.classification
+        validDigest(artifact.bundle.digest)
+            && classify(artifact.probes) == artifact.classification
+    }
+
+    static func validDigest(_ digest: String) -> Bool {
+        guard digest.count == 71, digest.hasPrefix("sha256:") else { return false }
+        return digest.dropFirst(7).allSatisfy { $0.isHexDigit }
     }
 }
 
@@ -316,36 +421,33 @@ actor MLXLocalModelVerificationEngine: LocalModelVerificationEngine {
     }
 
     func probeCancellation(modelId: String, modelName: String) async -> LocalModelCancellationProbeOutcome {
-        await LocalModelCancellationHandshake.run { observedStart in
-            let parameters = GenerationParameters(
-                temperature: nil,
-                maxTokens: 2_048,
-                maxTokensExplicit: true,
-                suppressProgressUI: true,
-                requestSource: .httpAPI
-            )
-            let stream = try await ModelRuntime.shared.streamWithTools(
-                messages: [ChatMessage(
-                    role: "user",
-                    content: "Count upward indefinitely, one number per line."
-                )],
-                parameters: parameters,
-                stopSequences: [],
-                tools: [],
-                toolChoice: nil,
-                modelId: modelId,
-                modelName: modelName
-            )
-            var observedEvent = false
-            for try await _ in stream {
-                if !observedEvent {
-                    observedEvent = true
-                    observedStart()
+        await LocalModelCancellationHandshake.run(
+            teardown: { await ModelRuntime.shared.cancelGeneration(name: modelName) },
+            operation: { observedDelta in
+                let parameters = GenerationParameters(
+                    temperature: nil,
+                    maxTokens: 2_048,
+                    maxTokensExplicit: true,
+                    suppressProgressUI: true,
+                    requestSource: .httpAPI
+                )
+                let stream = try await ModelRuntime.shared.streamWithTools(
+                    messages: [ChatMessage(
+                        role: "user",
+                        content: "Count upward indefinitely, one number per line."
+                    )],
+                    parameters: parameters,
+                    stopSequences: [],
+                    tools: [],
+                    toolChoice: nil,
+                    modelId: modelId,
+                    modelName: modelName
+                )
+                for try await _ in stream {
+                    observedDelta()
                 }
-                try Task.checkCancellation()
             }
-            try Task.checkCancellation()
-        }
+        )
     }
 }
 
@@ -364,6 +466,11 @@ enum LocalModelBundleInspector {
                 return "The model bundle contains a symbolic link or non-regular entry: \(path)"
             }
         }
+    }
+
+    private struct BundleFile {
+        let logicalURL: URL
+        let contentURL: URL
     }
 
     static func inspect(
@@ -389,7 +496,7 @@ enum LocalModelBundleInspector {
         }
 
         let huggingFaceRepositoryRoot = huggingFaceRepositoryRoot(for: directory)
-        var files: [URL] = []
+        var files: [BundleFile] = []
         for case let url as URL in enumerator {
             try cancellationCheck()
             let values = try url.resourceValues(forKeys: keys)
@@ -401,28 +508,35 @@ enum LocalModelBundleInspector {
                 else {
                     throw InspectionError.unsafeEntry(url.path)
                 }
-                files.append(url)
+                files.append(BundleFile(logicalURL: url, contentURL: resolved))
                 continue
             }
             if values.isDirectory == true { continue }
             guard values.isRegularFile == true else {
                 throw InspectionError.unsafeEntry(url.path)
             }
-            files.append(url)
+            files.append(BundleFile(logicalURL: url, contentURL: url))
         }
-        files.sort { relativePath($0, under: directory) < relativePath($1, under: directory) }
+        files.sort {
+            relativePath($0.logicalURL, under: directory)
+                < relativePath($1.logicalURL, under: directory)
+        }
 
         var rootHasher = SHA256()
         var stateHasher = SHA256()
         var totalBytes: Int64 = 0
         for file in files {
             try cancellationCheck()
-            let relative = relativePath(file, under: directory)
-            let values = try file.resourceValues(forKeys: keys)
-            stateHasher.update(data: Data(relative.utf8))
-            stateHasher.update(data: Data("\(values.fileSize ?? 0)".utf8))
-            stateHasher.update(data: Data("\(values.contentModificationDate?.timeIntervalSince1970 ?? 0)".utf8))
-            let handle = try FileHandle(forReadingFrom: file)
+            let relative = relativePath(file.logicalURL, under: directory)
+            let values = try file.contentURL.resourceValues(forKeys: keys)
+            update(&stateHasher, domain: "path", value: relative)
+            update(&stateHasher, domain: "size", value: "\(values.fileSize ?? 0)")
+            update(
+                &stateHasher,
+                domain: "mtime",
+                value: "\(values.contentModificationDate?.timeIntervalSince1970 ?? 0)"
+            )
+            let handle = try FileHandle(forReadingFrom: file.contentURL)
             defer { try? handle.close() }
             var fileHasher = SHA256()
             var fileBytes: Int64 = 0
@@ -440,13 +554,15 @@ enum LocalModelBundleInspector {
             withUnsafeBytes(of: fileBytes.bigEndian) { rootHasher.update(bufferPointer: $0) }
         }
 
-        let tokenizer = jsonObject(at: directory.appendingPathComponent("tokenizer_config.json"))
-        let config = jsonObject(at: directory.appendingPathComponent("config.json"))
-        let generation = jsonObject(at: directory.appendingPathComponent("generation_config.json"))
-        let jang = jsonObject(at: directory.appendingPathComponent("jang_config.json"))
+        let contentByRelativePath = Dictionary(uniqueKeysWithValues: files.map {
+            (relativePath($0.logicalURL, under: directory), $0.contentURL)
+        })
+        let tokenizer = contentByRelativePath["tokenizer_config.json"].flatMap(jsonObject(at:))
+        let config = contentByRelativePath["config.json"].flatMap(jsonObject(at:))
+        let generation = contentByRelativePath["generation_config.json"].flatMap(jsonObject(at:))
+        let jang = contentByRelativePath["jang_config.json"].flatMap(jsonObject(at:))
         let hasTokenizerTemplate = tokenizer?["chat_template"] != nil
-        let hasStandaloneTemplate = fm.fileExists(
-            atPath: directory.appendingPathComponent("chat_template.jinja").path)
+        let hasStandaloneTemplate = contentByRelativePath["chat_template.jinja"] != nil
         let templateSource: String
         let templateFallback: String?
         let declaredTemplateSource = firstString(keys: ["chat_template_source"], in: [jang])
@@ -471,9 +587,16 @@ enum LocalModelBundleInspector {
             keys: ["parser", "format", "tool_call_parser", "tool_calling"],
             in: [jang, tokenizer, config]
         )
-        let reasoningCapability = LocalReasoningCapability.readChatTemplate(at: directory)
+        let standaloneTemplate = contentByRelativePath["chat_template.jinja"]
+            .flatMap { try? Data(contentsOf: $0) }
+            .flatMap { String(data: $0, encoding: .utf8) }
+        let tokenizerTemplate = tokenizer?["chat_template"] as? String
+        let jangCapability = contentByRelativePath["jang_config.json"]
+            .flatMap { try? Data(contentsOf: $0) }
+            .flatMap(LocalReasoningCapability.analyzeJangConfig(data:))
+        let reasoningCapability = (standaloneTemplate ?? tokenizerTemplate)
             .map(LocalReasoningCapability.analyze(template:))
-            ?? LocalReasoningCapability.readJangConfigReasoning(at: directory)
+            ?? jangCapability
         let reasoningDeclared = reasoningCapability?.supportsThinking == true
         let defaults = (generation ?? [:]).reduce(into: [String: String]()) { output, entry in
             guard let rendered = scalarString(entry.value) else { return }
@@ -496,36 +619,7 @@ enum LocalModelBundleInspector {
     }
 
     static func currentStateFingerprint(directory: URL) throws -> String {
-        let fm = FileManager.default
-        let keys: Set<URLResourceKey> = [
-            .isRegularFileKey, .isSymbolicLinkKey, .isDirectoryKey, .fileSizeKey,
-            .contentModificationDateKey,
-        ]
-        guard let enumerator = fm.enumerator(
-            at: directory,
-            includingPropertiesForKeys: Array(keys),
-            options: [.skipsHiddenFiles]
-        ) else { throw InspectionError.missingBundle }
-        var entries: [(String, Int, TimeInterval)] = []
-        for case let url as URL in enumerator {
-            let values = try url.resourceValues(forKeys: keys)
-            if values.isSymbolicLink == true { throw InspectionError.unsafeEntry(url.path) }
-            if values.isDirectory == true { continue }
-            guard values.isRegularFile == true else { throw InspectionError.unsafeEntry(url.path) }
-            entries.append((
-                relativePath(url, under: directory),
-                values.fileSize ?? 0,
-                values.contentModificationDate?.timeIntervalSince1970 ?? 0
-            ))
-        }
-        entries.sort { $0.0 < $1.0 }
-        var hasher = SHA256()
-        for entry in entries {
-            hasher.update(data: Data(entry.0.utf8))
-            hasher.update(data: Data("\(entry.1)".utf8))
-            hasher.update(data: Data("\(entry.2)".utf8))
-        }
-        return "sha256:" + hasher.finalize().map { String(format: "%02x", $0) }.joined()
+        try inspect(directory: directory).stateFingerprint
     }
 
     private static func relativePath(_ url: URL, under root: URL) -> String {
@@ -547,6 +641,15 @@ enum LocalModelBundleInspector {
         let path = url.standardizedFileURL.path
         let rootPath = root.standardizedFileURL.path
         return path == rootPath || path.hasPrefix(rootPath + "/")
+    }
+
+    private static func update(_ hasher: inout SHA256, domain: String, value: String) {
+        let domainData = Data(domain.utf8)
+        let valueData = Data(value.utf8)
+        withUnsafeBytes(of: UInt64(domainData.count).bigEndian) { hasher.update(bufferPointer: $0) }
+        hasher.update(data: domainData)
+        withUnsafeBytes(of: UInt64(valueData.count).bigEndian) { hasher.update(bufferPointer: $0) }
+        hasher.update(data: valueData)
     }
 
     private static func jsonObject(at url: URL) -> [String: Any]? {
@@ -671,6 +774,10 @@ actor LocalModelVerificationArtifactStore {
         try fileManager.removeItem(at: url)
     }
 
+    func relativeArtifactPath(at url: URL) -> String {
+        "model-verification/\(url.deletingLastPathComponent().lastPathComponent)/\(url.lastPathComponent)"
+    }
+
     private static func modelStorageKey(_ modelId: String) -> String {
         SHA256.hash(data: Data(modelId.utf8))
             .map { String(format: "%02x", $0) }
@@ -718,20 +825,25 @@ actor LocalModelVerificationService {
     }
 
     func latest(modelId: String) async -> (LocalModelVerificationArtifact, URL)? {
-        await store.latest(modelId: modelId)
+        guard let latest = await store.latest(modelId: modelId) else { return nil }
+        register(artifact: latest.artifact, at: latest.url)
+        return latest
     }
 
     func verify(model: MLXModel) async throws -> (LocalModelVerificationArtifact, URL) {
         try await store.begin(modelId: model.id)
         var savedArtifactURL: URL?
+        var ledgerProjected = false
         do {
             let startedAt = now()
             let bundle = try LocalModelBundleInspector.inspect(directory: model.localDirectory)
             let probes = try await runProbes(model: model, bundle: bundle)
+            try Task.checkCancellation()
             let completedBundle = try LocalModelBundleInspector.inspect(directory: model.localDirectory)
             guard completedBundle.digest == bundle.digest else {
                 throw VerificationError.bundleChangedDuringVerification
             }
+            try Task.checkCancellation()
             let artifact = LocalModelVerificationArtifact(
                 schemaVersion: LocalModelVerificationArtifact.currentSchemaVersion,
                 modelId: model.id,
@@ -742,21 +854,29 @@ actor LocalModelVerificationService {
                 completedAt: now(),
                 probes: probes
             )
+            try Task.checkCancellation()
             let url = try await store.save(artifact)
             savedArtifactURL = url
+            try Task.checkCancellation()
+            let relativeArtifactPath = await store.relativeArtifactPath(at: url)
             try ModelCapabilityLedger.saveVerification(
                 classification: artifact.classification,
                 digest: artifact.bundle.digest,
-                artifactPath: url.path,
+                artifactPath: relativeArtifactPath,
                 measuredAt: ISO8601DateFormatter().string(from: artifact.completedAt),
                 for: model.id
             )
+            ledgerProjected = true
+            try Task.checkCancellation()
             register(artifact: artifact, at: url)
             await store.end(modelId: model.id)
             return (artifact, url)
         } catch {
             if let savedArtifactURL {
                 try? await store.removeArtifact(at: savedArtifactURL)
+            }
+            if ledgerProjected {
+                try? ModelCapabilityLedger.removeVerification(for: model.id)
             }
             await store.end(modelId: model.id)
             throw error
@@ -768,7 +888,7 @@ actor LocalModelVerificationService {
         bundle: LocalModelBundleEvidence
     ) async throws -> [LocalModelVerificationProbeResult] {
         var rows: [LocalModelVerificationProbeResult] = []
-        let plain = await attempt(
+        let plain = try await attempt(
             model: model,
             request: LocalModelLiveProbeRequest(
                 messages: [ChatMessage(role: "user", content: "Reply with exactly READY.")],
@@ -781,11 +901,13 @@ actor LocalModelVerificationService {
             passed: plain.transcript?.visibleText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false,
             passDetail: "The model produced visible text through the native MLX chat path.",
             failure: plain.error ?? "The model produced no visible final answer.",
+            errorCode: plain.errorCode,
             transcript: plain.transcript
         ))
 
+        var reasoningTranscript: LocalModelLiveProbeTranscript?
         if bundle.reasoningDeclared {
-            let reasoningProbe = await attempt(
+            let reasoningProbe = try await attempt(
                 model: model,
                 request: LocalModelLiveProbeRequest(
                     messages: [ChatMessage(
@@ -796,6 +918,7 @@ actor LocalModelVerificationService {
                     modelOptions: ["reasoningEffort": .string("high")]
                 )
             )
+            reasoningTranscript = reasoningProbe.transcript
             try Task.checkCancellation()
             rows.append(result(
                 .reasoning,
@@ -804,86 +927,125 @@ actor LocalModelVerificationService {
                     && reasoningProbe.transcript?.unclosedReasoning == false,
                 passDetail: "The runtime emitted a dedicated, closed reasoning channel.",
                 failure: reasoningProbe.error ?? "The bundle declares reasoning, but this run emitted no clean reasoning channel plus visible answer.",
+                errorCode: reasoningProbe.errorCode,
                 transcript: reasoningProbe.transcript
             ))
         } else {
             rows.append(row(.reasoning, .unsupported, "The bundle does not declare a reasoning mode; no reasoning pass is claimed."))
         }
 
-        let tool = fixtureTool()
-        let first = await attempt(
-            model: model,
-            request: LocalModelLiveProbeRequest(
-                messages: [ChatMessage(role: "user", content: "Use city_temperature for Paris. Do not guess.")],
-                tools: [tool], toolChoice: .required, maxTokens: 128, stopSequences: []
-            )
-        )
-        try Task.checkCancellation()
-        let firstArgsValid = validCityArguments(first.transcript?.toolArguments, expected: "Paris")
-        rows.append(result(
-            .schemaValidToolCall,
-            passed: first.transcript?.toolName == "city_temperature" && firstArgsValid,
-            passDetail: "The model emitted city_temperature with schema-valid JSON arguments.",
-            failure: first.error ?? "The first tool call was missing, named incorrectly, or had invalid arguments.",
-            transcript: first.transcript
-        ))
-
-        var continuation: (transcript: LocalModelLiveProbeTranscript?, error: String?) = (nil, nil)
-        var second: (transcript: LocalModelLiveProbeTranscript?, error: String?) = (nil, nil)
-        if first.transcript?.toolName == "city_temperature", firstArgsValid {
-            let callId = "verification_call_1"
-            let history = [
-                ChatMessage(role: "user", content: "Use city_temperature for Paris. Do not guess."),
-                ChatMessage(
-                    role: "assistant", content: nil,
-                    tool_calls: [ToolCall(
-                        id: callId, type: "function",
-                        function: ToolCallFunction(name: "city_temperature", arguments: first.transcript?.toolArguments ?? "{}")
-                    )],
-                    tool_call_id: nil
-                ),
-                ChatMessage(role: "tool", content: #"{"city":"Paris","celsius":21}"#, tool_calls: nil, tool_call_id: callId),
-            ]
-            continuation = await attempt(
-                model: model,
-                request: LocalModelLiveProbeRequest(
-                    messages: history + [ChatMessage(role: "user", content: "State the returned Paris temperature in one sentence.")],
-                    tools: [tool], toolChoice: .auto, maxTokens: 96, stopSequences: []
-                )
-            )
-            try Task.checkCancellation()
-            let grounded = continuation.transcript?.visibleText.contains("21") == true
-            rows.append(result(
-                .toolResultContinuation,
-                passed: grounded,
-                passDetail: "The continuation consumed the executed fixture result and returned 21.",
-                failure: continuation.error ?? "The continuation did not ground its answer in the injected tool result.",
-                transcript: continuation.transcript
-            ))
-            second = await attempt(
-                model: model,
-                request: LocalModelLiveProbeRequest(
-                    messages: history + [ChatMessage(role: "user", content: "Now use city_temperature for Berlin. Do not guess.")],
-                    tools: [tool], toolChoice: .required, maxTokens: 128, stopSequences: []
-                )
-            )
-            try Task.checkCancellation()
-            rows.append(result(
-                .secondToolCall,
-                passed: second.transcript?.toolName == "city_temperature"
-                    && validCityArguments(second.transcript?.toolArguments, expected: "Berlin"),
-                passDetail: "The model emitted a second schema-valid tool call after tool history.",
-                failure: second.error ?? "The model failed the second tool call after result history.",
-                transcript: second.transcript
-            ))
+        var first: (
+            transcript: LocalModelLiveProbeTranscript?, error: String?, errorCode: String?
+        ) = (nil, nil, nil)
+        var continuation: (
+            transcript: LocalModelLiveProbeTranscript?, error: String?, errorCode: String?
+        ) = (nil, nil, nil)
+        var second: (
+            transcript: LocalModelLiveProbeTranscript?, error: String?, errorCode: String?
+        ) = (nil, nil, nil)
+        if bundle.templateFallback != nil {
+            for probe in [
+                LocalModelVerificationProbe.autoToolChoice, .schemaValidToolCall,
+                .toolResultContinuation, .secondToolCall,
+            ] {
+                rows.append(row(
+                    probe,
+                    .blocked,
+                    "The bundle has no declared chat template; dependent tool evidence remains unproven."
+                ))
+            }
         } else {
-            rows.append(row(.toolResultContinuation, .blocked, "Blocked because the first tool call did not validate."))
-            rows.append(row(.secondToolCall, .blocked, "Blocked because the first tool call did not validate."))
+            let tool = fixtureTool()
+            first = try await attempt(
+                model: model,
+                request: LocalModelLiveProbeRequest(
+                    messages: [ChatMessage(role: "user", content: "Use city_temperature for Paris. Do not guess.")],
+                    tools: [tool], toolChoice: .auto, maxTokens: 128, stopSequences: []
+                )
+            )
+            try Task.checkCancellation()
+            rows.append(result(
+                .autoToolChoice,
+                passed: first.transcript?.toolName == "city_temperature"
+                    && validCityArguments(first.transcript?.toolArguments, expected: "Paris"),
+                passDetail: "The model selected a schema-valid tool through production auto choice.",
+                failure: first.error ?? "The model did not select the fixture tool through auto choice.",
+                errorCode: first.errorCode,
+                transcript: first.transcript
+            ))
+            rows.append(result(
+                .schemaValidToolCall,
+                passed: first.transcript?.toolName == "city_temperature"
+                    && validCityArguments(first.transcript?.toolArguments, expected: "Paris"),
+                passDetail: "The model emitted city_temperature with schema-valid JSON arguments.",
+                failure: first.error ?? "The first tool call was missing, named incorrectly, or had invalid arguments.",
+                errorCode: first.errorCode,
+                transcript: first.transcript
+            ))
+            let firstArgsValid = validCityArguments(first.transcript?.toolArguments, expected: "Paris")
+            if first.transcript?.toolName == "city_temperature", firstArgsValid {
+                let callId = "verification_call_1"
+                let history = [
+                    ChatMessage(role: "user", content: "Use city_temperature for Paris. Do not guess."),
+                    ChatMessage(
+                        role: "assistant", content: nil,
+                        tool_calls: [ToolCall(
+                            id: callId, type: "function",
+                            function: ToolCallFunction(name: "city_temperature", arguments: first.transcript?.toolArguments ?? "{}")
+                        )],
+                        tool_call_id: nil
+                    ),
+                    ChatMessage(role: "tool", content: #"{"city":"Paris","celsius":21}"#, tool_calls: nil, tool_call_id: callId),
+                ]
+                continuation = try await attempt(
+                    model: model,
+                    request: LocalModelLiveProbeRequest(
+                        messages: history + [ChatMessage(role: "user", content: "State the returned Paris temperature in one sentence.")],
+                        tools: [tool], toolChoice: .auto, maxTokens: 96, stopSequences: []
+                    )
+                )
+                try Task.checkCancellation()
+                rows.append(result(
+                    .toolResultContinuation,
+                    passed: continuation.transcript.map {
+                        groundedTemperatureAnswer($0.visibleText, city: "Paris", celsius: 21)
+                    } == true,
+                    passDetail: "The continuation consumed the executed fixture result and returned 21 C.",
+                    failure: continuation.error ?? "The continuation did not ground its answer in the injected tool result.",
+                    errorCode: continuation.errorCode,
+                    transcript: continuation.transcript
+                ))
+                second = try await attempt(
+                    model: model,
+                    request: LocalModelLiveProbeRequest(
+                        messages: history + [ChatMessage(role: "user", content: "Now use city_temperature for Berlin. Do not guess.")],
+                        tools: [tool], toolChoice: .required, maxTokens: 128, stopSequences: []
+                    )
+                )
+                try Task.checkCancellation()
+                rows.append(result(
+                    .secondToolCall,
+                    passed: second.transcript?.toolName == "city_temperature"
+                        && validCityArguments(second.transcript?.toolArguments, expected: "Berlin"),
+                    passDetail: "The model emitted a second schema-valid tool call after tool history.",
+                    failure: second.error ?? "The model failed the second tool call after result history.",
+                    errorCode: second.errorCode,
+                    transcript: second.transcript
+                ))
+            } else {
+                rows.append(row(.toolResultContinuation, .blocked, "Blocked because the first tool call did not validate."))
+                rows.append(row(.secondToolCall, .blocked, "Blocked because the first tool call did not validate."))
+            }
         }
 
-        let transcripts = [plain.transcript, first.transcript, continuation.transcript, second.transcript]
+        let transcripts = [
+            plain.transcript, reasoningTranscript, first.transcript,
+            continuation.transcript, second.transcript,
+        ]
             .compactMap { $0 }
-        let leaked = transcripts.flatMap { markerLeaks(in: $0.visibleText) }
+        let leaked = transcripts.flatMap {
+            markerLeaks(in: $0.visibleText) + markerLeaks(in: $0.reasoningText)
+        }
         if transcripts.isEmpty {
             rows.append(row(
                 .markerLeakage,
@@ -915,6 +1077,7 @@ actor LocalModelVerificationService {
             probe: .throughput,
             status: rates.isEmpty ? .failed : .passed,
             detail: rates.isEmpty ? "No positive decode token/s evidence was emitted." : "Recorded positive decode throughput.",
+            errorCode: rates.isEmpty ? "throughput_missing" : nil,
             tokenCount: transcripts.compactMap(\.tokenCount).max(),
             tokensPerSecond: rates.max(),
             stopReason: nil
@@ -929,15 +1092,16 @@ actor LocalModelVerificationService {
                 "A generation event was observed before the in-flight request acknowledged cancellation."
             ))
         case .blocked(let detail):
-            rows.append(row(.cancellation, .blocked, detail))
-        case .failed(let detail):
-            rows.append(row(.cancellation, .failed, detail))
-        }
-        if bundle.templateFallback != nil {
             rows.append(row(
-                .schemaValidToolCall,
-                .blocked,
-                "The bundle has no declared chat template; runtime fallback use remains unproven even if output parsed."
+                .cancellation, .blocked, detail,
+                errorCode: "cancellation_stream_not_started"
+            ))
+        case .failed(let code):
+            rows.append(row(
+                .cancellation,
+                .failed,
+                "The runtime stream did not terminate cleanly after cancellation.",
+                errorCode: code
             ))
         }
         return deduplicate(rows)
@@ -946,14 +1110,33 @@ actor LocalModelVerificationService {
     private func attempt(
         model: MLXModel,
         request: LocalModelLiveProbeRequest
-    ) async -> (transcript: LocalModelLiveProbeTranscript?, error: String?) {
+    ) async throws -> (
+        transcript: LocalModelLiveProbeTranscript?,
+        error: String?,
+        errorCode: String?
+    ) {
         do {
-            return (try await engine.generate(modelId: model.id, modelName: model.name, request: request), nil)
+            return (
+                try await engine.generate(modelId: model.id, modelName: model.name, request: request),
+                nil,
+                nil
+            )
         } catch is CancellationError {
-            return (nil, "Probe was cancelled.")
+            throw CancellationError()
         } catch {
-            return (nil, String(describing: error))
+            return (nil, "The runtime probe failed.", "runtime_probe_failed")
         }
+    }
+
+    private func groundedTemperatureAnswer(_ text: String, city: String, celsius: Int) -> Bool {
+        let lowered = text.lowercased()
+        guard lowered.contains(city.lowercased()) else { return false }
+        let escaped = NSRegularExpression.escapedPattern(for: String(celsius))
+        return lowered.range(
+            of: #"(?<![0-9.])"# + escaped
+                + #"(?:\.0+)?\s*(?:°\s*c|celsius|c\b|degrees?\s*c(?:elsius)?)(?![0-9])"#,
+            options: .regularExpression
+        ) != nil
     }
 
     private func fixtureTool() -> Tool {
@@ -985,7 +1168,9 @@ actor LocalModelVerificationService {
     private func markerLeaks(in text: String) -> [String] {
         let markers = [
             "<think>", "</think>", "<tool_call>", "</tool_call>",
-            "<|tool_call|>", "<|channel|>", "<|analysis|>", "\u{FFFE}",
+            "<|tool_call|>", "<|channel|>", "<|analysis|>", "<|recipient|>",
+            "<|start|>", "<|end|>", "<|im_start|>", "<|im_end|>",
+            "<|python_tag|>", "assistant to=", "\u{FFFE}",
         ]
         return markers.filter { text.localizedCaseInsensitiveContains($0) }
     }
@@ -995,12 +1180,14 @@ actor LocalModelVerificationService {
         passed: Bool,
         passDetail: String,
         failure: String,
+        errorCode: String?,
         transcript: LocalModelLiveProbeTranscript?
     ) -> LocalModelVerificationProbeResult {
         LocalModelVerificationProbeResult(
             probe: probe,
             status: passed ? .passed : (transcript == nil ? .error : .failed),
             detail: passed ? passDetail : failure,
+            errorCode: passed ? nil : errorCode,
             tokenCount: transcript?.tokenCount,
             tokensPerSecond: transcript?.tokensPerSecond,
             stopReason: transcript?.stopReason
@@ -1010,10 +1197,12 @@ actor LocalModelVerificationService {
     private func row(
         _ probe: LocalModelVerificationProbe,
         _ status: LocalModelVerificationProbeStatus,
-        _ detail: String
+        _ detail: String,
+        errorCode: String? = nil
     ) -> LocalModelVerificationProbeResult {
         LocalModelVerificationProbeResult(
             probe: probe, status: status, detail: detail,
+            errorCode: errorCode,
             tokenCount: nil, tokensPerSecond: nil, stopReason: nil
         )
     }

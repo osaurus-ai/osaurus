@@ -7,17 +7,20 @@ private actor ScriptedVerificationEngine: LocalModelVerificationEngine {
     private var transcripts: [LocalModelLiveProbeTranscript]
     private let cancellationOutcome: LocalModelCancellationProbeOutcome
     private let onFirstGenerate: (@Sendable () -> Void)?
+    private let throwCancellationAtRequest: Int?
     private var didRunFirstGenerate = false
     private(set) var requests: [LocalModelLiveProbeRequest] = []
 
     init(
         transcripts: [LocalModelLiveProbeTranscript],
         cancellationOutcome: LocalModelCancellationProbeOutcome = .passed,
-        onFirstGenerate: (@Sendable () -> Void)? = nil
+        onFirstGenerate: (@Sendable () -> Void)? = nil,
+        throwCancellationAtRequest: Int? = nil
     ) {
         self.transcripts = transcripts
         self.cancellationOutcome = cancellationOutcome
         self.onFirstGenerate = onFirstGenerate
+        self.throwCancellationAtRequest = throwCancellationAtRequest
     }
 
     func generate(
@@ -26,6 +29,9 @@ private actor ScriptedVerificationEngine: LocalModelVerificationEngine {
         request: LocalModelLiveProbeRequest
     ) async throws -> LocalModelLiveProbeTranscript {
         requests.append(request)
+        if requests.count == throwCancellationAtRequest {
+            throw CancellationError()
+        }
         if !didRunFirstGenerate {
             didRunFirstGenerate = true
             onFirstGenerate?()
@@ -75,6 +81,7 @@ struct LocalModelVerificationWorkbenchTests {
             probe: probe,
             status: status,
             detail: "fixture",
+            errorCode: nil,
             tokenCount: probe == .throughput ? 8 : nil,
             tokensPerSecond: tokensPerSecond,
             stopReason: probe == .stopAndEOS ? "eos" : nil
@@ -294,6 +301,41 @@ struct LocalModelVerificationWorkbenchTests {
         }
     }
 
+    @Test func inspectorPinsResolvedHuggingFaceContentAgainstSymlinkRetarget() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("hf-retarget-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let repository = root.appendingPathComponent("models--org--repo", isDirectory: true)
+        let blobs = repository.appendingPathComponent("blobs", isDirectory: true)
+        let snapshot = repository.appendingPathComponent("snapshots/revision", isDirectory: true)
+        try FileManager.default.createDirectory(at: blobs, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: snapshot, withIntermediateDirectories: true)
+        let firstBlob = blobs.appendingPathComponent("first")
+        let secondBlob = blobs.appendingPathComponent("second")
+        try Data("first".utf8).write(to: firstBlob)
+        try Data("other".utf8).write(to: secondBlob)
+        let weight = snapshot.appendingPathComponent("model.safetensors")
+        try FileManager.default.createSymbolicLink(
+            atPath: weight.path, withDestinationPath: "../../blobs/first"
+        )
+        let expected = try LocalModelBundleInspector.inspect(directory: snapshot)
+
+        var checks = 0
+        let pinned = try LocalModelBundleInspector.inspect(directory: snapshot) {
+            checks += 1
+            if checks == 2 {
+                try FileManager.default.removeItem(at: weight)
+                try FileManager.default.createSymbolicLink(
+                    atPath: weight.path, withDestinationPath: "../../blobs/second"
+                )
+            }
+        }
+        #expect(pinned.digest == expected.digest)
+        #expect(pinned.stateFingerprint == expected.stateFingerprint)
+        #expect(try LocalModelBundleInspector.currentStateFingerprint(directory: snapshot)
+            != expected.stateFingerprint)
+    }
+
     @Test func completeToolSequenceProducesProvenArtifactAndIntegratesRegistryAndLedger() async throws {
         let engine = ScriptedVerificationEngine(transcripts: [
             transcript(),
@@ -321,10 +363,14 @@ struct LocalModelVerificationWorkbenchTests {
             )
             #expect(record["verificationClassification"] as? String == "proven")
             #expect((record["verificationDigest"] as? String)?.hasPrefix("sha256:") == true)
-            #expect(record["verificationArtifactPath"] as? String == url.path)
+            let recordedPath = try #require(record["verificationArtifactPath"] as? String)
+            #expect(recordedPath.hasPrefix("model-verification/"))
+            #expect(!recordedPath.hasPrefix("/"))
+            #expect(!recordedPath.contains(NSHomeDirectory()))
 
             let requests = await engine.capturedRequests()
             #expect(requests.count == 4)
+            #expect(requests[1].toolChoice == .auto)
             #expect(requests[2].messages.contains { $0.role == "tool" && $0.content?.contains("21") == true })
             #expect(requests[3].messages.contains { $0.role == "tool" })
         }
@@ -339,7 +385,9 @@ struct LocalModelVerificationWorkbenchTests {
             #expect(artifact.probes.first { $0.probe == .schemaValidToolCall }?.status == .error)
             #expect(artifact.probes.first { $0.probe == .toolResultContinuation }?.status == .blocked)
             #expect(artifact.probes.first { $0.probe == .markerLeakage }?.status == .blocked)
-            #expect(registry.list().first?.counts.errored == 2)
+            #expect(artifact.probes.first { $0.probe == .generation }?.errorCode == "runtime_probe_failed")
+            #expect(!artifact.probes.contains { $0.detail.contains(NSHomeDirectory()) })
+            #expect(registry.list().first?.counts.errored == 3)
         }
     }
 
@@ -348,7 +396,10 @@ struct LocalModelVerificationWorkbenchTests {
         try await withEnvironment(engine: engine, template: false) { service, model, _, _ in
             let (artifact, _) = try await service.verify(model: model)
             #expect(artifact.bundle.templateFallback != nil)
-            #expect(artifact.probes.first { $0.probe == .schemaValidToolCall }?.status == .error)
+            #expect(artifact.probes.first { $0.probe == .autoToolChoice }?.status == .blocked)
+            #expect(artifact.probes.first { $0.probe == .schemaValidToolCall }?.status == .blocked)
+            #expect(artifact.probes.first { $0.probe == .toolResultContinuation }?.status == .blocked)
+            #expect(artifact.probes.first { $0.probe == .secondToolCall }?.status == .blocked)
             #expect(artifact.classification == .failed)
         }
     }
@@ -392,25 +443,71 @@ struct LocalModelVerificationWorkbenchTests {
     }
 
     @Test func cancellationHandshakeRequiresObservedInFlightGeneration() async {
-        let passed = await LocalModelCancellationHandshake.run(timeout: .seconds(1)) { started in
+        let passed = await LocalModelCancellationHandshake.run(
+            startTimeout: .seconds(1), terminationTimeout: .seconds(1)
+        ) { started in
             started()
             try await Task.sleep(for: .seconds(30))
         }
         #expect(passed == .passed)
 
-        let blocked = await LocalModelCancellationHandshake.run(timeout: .milliseconds(20)) { _ in }
+        let blocked = await LocalModelCancellationHandshake.run(
+            startTimeout: .milliseconds(20)
+        ) { _ in }
         guard case .blocked = blocked else {
             Issue.record("A request that never starts must remain blocked")
             return
         }
 
-        let completed = await LocalModelCancellationHandshake.run(timeout: .seconds(1)) { started in
+        let completed = await LocalModelCancellationHandshake.run(
+            startTimeout: .seconds(1)
+        ) { started in
             started()
         }
-        guard case .failed = completed else {
+        guard case .blocked = completed else {
+            Issue.record("Completion before a generated delta must remain blocked")
+            return
+        }
+    }
+
+    @Test func cancellationHandshakeRejectsNonCooperativeAndPostCancelStreams() async {
+        let clock = ContinuousClock()
+        let startedAt = clock.now
+        let nonCooperative = await LocalModelCancellationHandshake.run(
+            startTimeout: .seconds(1), terminationTimeout: .milliseconds(25)
+        ) { observed in
+            observed()
+            await withCheckedContinuation { continuation in
+                DispatchQueue.global().asyncAfter(deadline: .now() + 0.5) {
+                    continuation.resume()
+                }
+            }
+        }
+        #expect(nonCooperative == .failed("cancellation_stream_termination_timeout"))
+        #expect(startedAt.duration(to: clock.now) < .milliseconds(250))
+
+        let postCancel = await LocalModelCancellationHandshake.run(
+            startTimeout: .seconds(1), terminationTimeout: .seconds(1)
+        ) { observed in
+            observed()
+            do {
+                try await Task.sleep(for: .seconds(30))
+            } catch is CancellationError {
+                observed()
+            }
+        }
+        #expect(postCancel == .failed("cancellation_stream_emitted_after_cancel"))
+
+        let preYieldFailure = await LocalModelCancellationHandshake.run(
+            startTimeout: .seconds(1)
+        ) { _ in
+            throw CocoaError(.fileReadCorruptFile)
+        }
+        guard case .failed(let code) = preYieldFailure else {
             Issue.record("Completion without cancellation acknowledgement must fail")
             return
         }
+        #expect(code.hasPrefix("cancellation_stream_start_runtime_stream_error_"))
     }
 
     @Test func publicationGuardRejectsCancelledAndReplacedRuns() {
@@ -487,6 +584,59 @@ struct LocalModelVerificationWorkbenchTests {
             let (artifact, _) = try await service.verify(model: model)
             #expect(artifact.probes.first { $0.probe == .reasoning }?.status == .unsupported)
             #expect(artifact.classification == .proven)
+            #expect(!artifact.nonPassingEvidence.contains { $0.probe == .reasoning })
+        }
+    }
+
+    @Test func reasoningErrorAndReasoningMarkerLeakCannotBeProven() async throws {
+        let errorEngine = ScriptedVerificationEngine(transcripts: [transcript()])
+        try await withEnvironment(engine: errorEngine, reasoning: true) { service, model, _, _ in
+            let (artifact, _) = try await service.verify(model: model)
+            #expect(artifact.probes.first { $0.probe == .reasoning }?.status == .error)
+            #expect(artifact.classification != .proven)
+        }
+
+        let markerEngine = ScriptedVerificationEngine(transcripts: [
+            transcript(),
+            transcript(visible: "4", reasoning: "<|recipient|> hidden"),
+            transcript(visible: "", tool: "city_temperature", arguments: #"{"city":"Paris"}"#),
+            transcript(visible: "Paris is 21 C."),
+            transcript(visible: "", tool: "city_temperature", arguments: #"{"city":"Berlin"}"#),
+        ])
+        try await withEnvironment(engine: markerEngine, reasoning: true) { service, model, _, _ in
+            let (artifact, _) = try await service.verify(model: model)
+            #expect(artifact.probes.first { $0.probe == .markerLeakage }?.status == .failed)
+            #expect(artifact.classification == .failed)
+        }
+    }
+
+    @Test func continuationGroundingRejectsUnrelatedAndEmbeddedNumbers() async throws {
+        for answer in ["Paris temperature is 2100 C.", "Paris has 21 people; temperature unavailable."] {
+            let engine = ScriptedVerificationEngine(transcripts: [
+                transcript(),
+                transcript(visible: "", tool: "city_temperature", arguments: #"{"city":"Paris"}"#),
+                transcript(visible: answer),
+                transcript(visible: "", tool: "city_temperature", arguments: #"{"city":"Berlin"}"#),
+            ])
+            try await withEnvironment(engine: engine) { service, model, _, _ in
+                let (artifact, _) = try await service.verify(model: model)
+                #expect(artifact.probes.first { $0.probe == .toolResultContinuation }?.status == .failed)
+                #expect(artifact.classification == .failed)
+            }
+        }
+    }
+
+    @Test func cancellationNeverPublishesPartialEvidence() async throws {
+        let engine = ScriptedVerificationEngine(
+            transcripts: [transcript()], throwCancellationAtRequest: 1
+        )
+        try await withEnvironment(engine: engine) { service, model, registry, ledgerURL in
+            await #expect(throws: CancellationError.self) {
+                try await service.verify(model: model)
+            }
+            #expect(await service.latest(modelId: model.id) == nil)
+            #expect(registry.list().isEmpty)
+            #expect(!FileManager.default.fileExists(atPath: ledgerURL.path))
         }
     }
 
@@ -607,6 +757,14 @@ struct LocalModelVerificationWorkbenchTests {
                     measuredAt: "now", for: "org/model"
                 )
             }
+            #expect(throws: (any Error).self) {
+                try ModelCapabilityLedger.saveVerification(
+                    classification: .proven,
+                    digest: "sha256:" + String(repeating: "z", count: 64),
+                    artifactPath: "model-verification/a.json",
+                    measuredAt: "now", for: "org/model"
+                )
+            }
             try ModelCapabilityLedger.saveVerification(
                 classification: .partial,
                 digest: "sha256:" + String(repeating: "b", count: 64),
@@ -637,6 +795,89 @@ struct LocalModelVerificationWorkbenchTests {
                     as? NSNumber
             ).intValue
             #expect(permissions & 0o777 == 0o600)
+        }
+    }
+
+    @Test func corruptLedgerIsNotSilentlyReplaced() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("ledger-corrupt-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let url = root.appendingPathComponent("ledger.json")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let corrupt = Data("{not-json".utf8)
+        try corrupt.write(to: url)
+        ModelCapabilityLedger.$fileURLOverrideForTests.withValue(url) {
+            #expect(throws: (any Error).self) {
+                try ModelCapabilityLedger.save(
+                    record: .init(source: "fixture"), for: "org/model"
+                )
+            }
+            #expect(throws: (any Error).self) {
+                try ModelCapabilityLedger.saveVerification(
+                    classification: .partial,
+                    digest: "sha256:" + String(repeating: "a", count: 64),
+                    artifactPath: "model-verification/a.json",
+                    measuredAt: "now", for: "org/model"
+                )
+            }
+            #expect((try? Data(contentsOf: url)) == corrupt)
+        }
+    }
+
+    @Test func concurrentLedgerWritersPreserveServingAndVerificationRecords() async throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("ledger-concurrent-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let url = root.appendingPathComponent("ledger.json")
+        try await ModelCapabilityLedger.$fileURLOverrideForTests.withValue(url) {
+            try await withThrowingTaskGroup(of: Void.self) { group in
+                for index in 0..<12 {
+                    group.addTask {
+                        try ModelCapabilityLedger.save(
+                            record: .init(source: "serving-\(index)"),
+                            for: "org/serving-\(index)"
+                        )
+                    }
+                    group.addTask {
+                        try ModelCapabilityLedger.saveVerification(
+                            classification: .partial,
+                            digest: "sha256:" + String(repeating: "a", count: 64),
+                            artifactPath: "model-verification/\(index).json",
+                            measuredAt: "now", for: "org/verification-\(index)"
+                        )
+                    }
+                }
+                try await group.waitForAll()
+            }
+            let raw = try #require(
+                try JSONSerialization.jsonObject(with: Data(contentsOf: url)) as? [String: Any]
+            )
+            for index in 0..<12 {
+                #expect(raw["org/serving_\(index)"] != nil)
+                #expect(raw[ModelCapabilityLedger.verificationStorageKey(
+                    "org/verification-\(index)"
+                )] != nil)
+            }
+        }
+    }
+
+    @Test func loadingValidatedArtifactReRegistersRestartEvidence() async throws {
+        let engine = ScriptedVerificationEngine(transcripts: [
+            transcript(),
+            transcript(visible: "", tool: "city_temperature", arguments: #"{"city":"Paris"}"#),
+            transcript(visible: "Paris is 21 C."),
+            transcript(visible: "", tool: "city_temperature", arguments: #"{"city":"Berlin"}"#),
+        ])
+        try await withEnvironment(engine: engine) { service, model, _, _ in
+            _ = try await service.verify(model: model)
+            let restartedRegistry = EvidenceReportRegistryService()
+            let restarted = LocalModelVerificationService(
+                engine: ScriptedVerificationEngine(transcripts: []),
+                store: LocalModelVerificationArtifactStore(),
+                registry: restartedRegistry
+            )
+            #expect(await restarted.latest(modelId: model.id) != nil)
+            #expect(restartedRegistry.list().count == 1)
         }
     }
 }

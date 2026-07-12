@@ -105,10 +105,14 @@ struct ModelDetailView: View, Identifiable {
     @State private var verificationArtifact: LocalModelVerificationArtifact?
     @State private var verificationArtifactURL: URL?
     @State private var verificationIsStale = false
+    @State private var verificationTerminalInvalidated = false
     @State private var isVerifyingModel = false
     @State private var verificationError: String?
     @State private var verificationTask: Task<Void, Never>?
+    @State private var activeVerificationModelId: String?
     @State private var verificationPublicationGuard = LocalModelVerificationPublicationGuard()
+    @State private var verificationLoadTask: Task<Void, Never>?
+    @State private var verificationLoadGuard = LocalModelVerificationPublicationGuard()
 
     init(model: MLXModel, variants: [MLXModel] = []) {
         self._selectedModel = State(initialValue: model)
@@ -179,7 +183,7 @@ struct ModelDetailView: View, Identifiable {
                 await loadDownloadState()
             }
 
-            Task { await loadVerification() }
+            startVerificationLoad()
 
             Task {
                 await estimateIfNeeded()
@@ -190,14 +194,17 @@ struct ModelDetailView: View, Identifiable {
         .onReceive(NotificationCenter.default.publisher(for: .localModelsChanged)) { _ in
             // The shared cache is invalidated on this notification; re-resolve
             // off-main so the checkmark stays in sync after a download or delete.
-            cancelModelVerification()
             Task {
                 await loadDownloadState()
-                await loadVerification()
             }
+            if let activeVerificationModelId, activeVerificationModelId != model.id {
+                cancelModelVerification()
+            }
+            startVerificationLoad()
         }
         .onDisappear {
             cancelModelVerification()
+            cancelVerificationLoad()
         }
     }
 
@@ -208,6 +215,7 @@ struct ModelDetailView: View, Identifiable {
     private func selectVariant(_ variant: MLXModel) {
         guard variant.id != selectedModel.id else { return }
         cancelModelVerification()
+        cancelVerificationLoad()
         selectedModel = variant
 
         estimatedSize = nil
@@ -227,11 +235,12 @@ struct ModelDetailView: View, Identifiable {
         verificationArtifact = nil
         verificationArtifactURL = nil
         verificationIsStale = false
+        verificationTerminalInvalidated = false
         verificationError = nil
 
         Task { await loadDiagnostics() }
         Task { await loadDownloadState() }
-        Task { await loadVerification() }
+        startVerificationLoad()
         Task {
             await estimateIfNeeded()
             await loadHFDetails()
@@ -624,7 +633,7 @@ struct ModelDetailView: View, Identifiable {
                 .disabled(!resolvedIsDownloaded || isVerifyingModel)
             }
 
-            if let artifact = verificationArtifact {
+            if !isVerifyingModel, let artifact = verificationArtifact {
                 LazyVGrid(
                     columns: [
                         GridItem(.flexible(), spacing: 14, alignment: .topLeading),
@@ -678,27 +687,32 @@ struct ModelDetailView: View, Identifiable {
                     )
                 }
 
-                if !artifact.failedOrBlocked.isEmpty {
+                if !artifact.nonPassingEvidence.isEmpty {
                     Divider().background(theme.cardBorder)
                     VStack(alignment: .leading, spacing: 7) {
                         Text("Non-passing evidence", bundle: .module)
                             .font(.system(size: 10, weight: .bold))
                             .foregroundColor(theme.tertiaryText)
                             .textCase(.uppercase)
-                        ForEach(artifact.failedOrBlocked) { probe in
+                        ForEach(artifact.nonPassingEvidence) { probe in
                             HStack(alignment: .top, spacing: 7) {
                                 Image(systemName: verificationProbeIcon(probe.status))
                                     .font(.system(size: 10, weight: .semibold))
                                     .foregroundColor(verificationProbeTint(probe.status))
                                     .frame(width: 12)
                                 VStack(alignment: .leading, spacing: 2) {
-                                    Text(probe.probe.rawValue.replacingOccurrences(of: "_", with: " ").capitalized)
+                                    Text(verificationProbeLabel(probe.probe))
                                         .font(.system(size: 11, weight: .semibold))
                                         .foregroundColor(theme.secondaryText)
                                     Text(probe.detail)
                                         .font(.system(size: 10))
                                         .foregroundColor(theme.tertiaryText)
                                         .fixedSize(horizontal: false, vertical: true)
+                                    if let errorCode = probe.errorCode {
+                                        Text(errorCode)
+                                            .font(.system(size: 9, design: .monospaced))
+                                            .foregroundColor(theme.tertiaryText)
+                                    }
                                 }
                             }
                         }
@@ -756,6 +770,7 @@ struct ModelDetailView: View, Identifiable {
     }
 
     private var verificationTint: Color {
+        if isVerifyingModel { return theme.accentColor }
         if verificationIsStale { return theme.warningColor }
         guard let classification = verificationArtifact?.classification else {
             return theme.tertiaryText
@@ -768,6 +783,7 @@ struct ModelDetailView: View, Identifiable {
     }
 
     private var verificationIcon: String {
+        if isVerifyingModel { return "hourglass" }
         if verificationIsStale { return "arrow.triangle.2.circlepath" }
         switch verificationArtifact?.classification {
         case .proven: return "checkmark.shield.fill"
@@ -797,6 +813,11 @@ struct ModelDetailView: View, Identifiable {
         }
     }
 
+    private func verificationProbeLabel(_ probe: LocalModelVerificationProbe) -> String {
+        if probe == .autoToolChoice { return L("Auto tool choice") }
+        return probe.rawValue.replacingOccurrences(of: "_", with: " ").capitalized
+    }
+
     private func verificationProbeTint(_ status: LocalModelVerificationProbeStatus) -> Color {
         switch status {
         case .passed: return theme.successColor
@@ -806,14 +827,25 @@ struct ModelDetailView: View, Identifiable {
     }
 
     private func verificationRate(_ artifact: LocalModelVerificationArtifact) -> String {
-        guard let rate = artifact.probes.compactMap(\.tokensPerSecond).max() else {
+        guard let rate = artifact.probes.first(where: { $0.probe == .throughput })?
+            .tokensPerSecond, rate.isFinite, rate > 0
+        else {
             return L("Not recorded")
         }
         return String(format: "%.1f tok/s", rate)
     }
 
-    private func loadVerification() async {
+    private func startVerificationLoad() {
+        verificationLoadTask?.cancel()
         let target = model
+        let token = verificationLoadGuard.begin(modelId: target.id)
+        verificationLoadTask = Task { await loadVerification(target: target, token: token) }
+    }
+
+    private func loadVerification(
+        target: MLXModel,
+        token: LocalModelVerificationPublicationGuard.Token
+    ) async {
         let latest = await LocalModelVerificationService.shared.latest(modelId: target.id)
         let digest: String? = if latest == nil {
             nil
@@ -821,11 +853,18 @@ struct ModelDetailView: View, Identifiable {
             await exactBundleDigest(directory: target.localDirectory)
         }
         await MainActor.run {
-            guard isCurrent(target.id) else { return }
+            guard verificationLoadGuard.permits(token, currentModelId: model.id) else { return }
             verificationArtifact = latest?.0
             verificationArtifactURL = latest?.1
-            verificationIsStale = latest?.0.isStale(currentDigest: digest) ?? false
+            verificationIsStale = verificationTerminalInvalidated
+                || (latest?.0.isStale(currentDigest: digest) ?? false)
         }
+    }
+
+    private func cancelVerificationLoad() {
+        verificationLoadGuard.invalidate()
+        verificationLoadTask?.cancel()
+        verificationLoadTask = nil
     }
 
     private func exactBundleDigest(directory: URL) async -> String? {
@@ -843,6 +882,7 @@ struct ModelDetailView: View, Identifiable {
         verificationPublicationGuard.invalidate()
         verificationTask?.cancel()
         verificationTask = nil
+        activeVerificationModelId = nil
         isVerifyingModel = false
     }
 
@@ -852,6 +892,7 @@ struct ModelDetailView: View, Identifiable {
         verificationError = nil
         isVerifyingModel = true
         let target = model
+        activeVerificationModelId = target.id
         let publicationToken = verificationPublicationGuard.begin(modelId: target.id)
         verificationTask = Task {
             do {
@@ -865,9 +906,12 @@ struct ModelDetailView: View, Identifiable {
                     verificationArtifact = result.0
                     verificationArtifactURL = result.1
                     verificationIsStale = false
+                    verificationTerminalInvalidated = false
                     verificationError = nil
                     isVerifyingModel = false
+                    activeVerificationModelId = nil
                     verificationTask = nil
+                    startVerificationLoad()
                 }
             } catch is CancellationError {
                 await MainActor.run {
@@ -876,7 +920,10 @@ struct ModelDetailView: View, Identifiable {
                         currentModelId: model.id
                     ) else { return }
                     isVerifyingModel = false
+                    verificationTerminalInvalidated = true
+                    activeVerificationModelId = nil
                     verificationTask = nil
+                    startVerificationLoad()
                 }
             } catch {
                 await MainActor.run {
@@ -886,7 +933,10 @@ struct ModelDetailView: View, Identifiable {
                     ) else { return }
                     verificationError = error.localizedDescription
                     isVerifyingModel = false
+                    verificationTerminalInvalidated = true
+                    activeVerificationModelId = nil
                     verificationTask = nil
+                    startVerificationLoad()
                 }
             }
         }

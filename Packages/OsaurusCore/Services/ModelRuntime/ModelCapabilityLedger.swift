@@ -182,12 +182,16 @@ enum ModelCapabilityLedger {
             return cache.records
         }
         var records: [String: Record] = [:]
-        if mtime != nil,
-            let data = try? Data(contentsOf: url),
-            let decoded = try? JSONDecoder().decode([String: Record].self, from: data) {
-            records = decoded
-            ledgerLog.info(
-                "loaded \(records.count, privacy: .public) capability record(s)")
+        if mtime != nil {
+            do {
+                let data = try Data(contentsOf: url)
+                records = try JSONDecoder().decode([String: Record].self, from: data)
+                ledgerLog.info(
+                    "loaded \(records.count, privacy: .public) capability record(s)")
+            } catch {
+                ledgerLog.error("capability ledger is unreadable or corrupt; preserving prior cache")
+                return cache.checkedURL == url ? cache.records : [:]
+            }
         }
         cache = CacheBox(records: records, mtime: mtime, checkedURL: url)
         return records
@@ -198,17 +202,13 @@ enum ModelCapabilityLedger {
     /// target key is overlaid, so every other record survives verbatim,
     /// including fields this build does not know about (the gauntlet-written
     /// `probes`/`evidence` maps; a `[String: Record]` decode/re-encode round
-    /// trip would strip them from EVERY record). The residual race is
-    /// whole-file last-write-wins: a writer working from a stale snapshot
-    /// can lose the OTHER writer's key, but never an unrelated record or
-    /// field it merely carried along.
+    /// trip would strip them from every record). All writers share the same
+    /// lock, so each merge observes the prior completed write.
     static func save(record: Record, for modelName: String) throws {
+        lock.lock()
+        defer { lock.unlock() }
         let url = fileURL
-        var records: [String: Any] = [:]
-        if let data = try? Data(contentsOf: url),
-            let existing = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
-            records = existing
-        }
+        var records = try rawRecordsForWrite(at: url)
         let encoded = try JSONEncoder().encode(record)
         records[normalize(modelName)] = try JSONSerialization.jsonObject(with: encoded)
         try FileManager.default.createDirectory(
@@ -228,17 +228,15 @@ enum ModelCapabilityLedger {
         if failVerificationWriteForTests {
             throw CocoaError(.fileWriteUnknown)
         }
-        guard digest.hasPrefix("sha256:"), digest.count == 71 else {
+        guard LocalModelVerificationAuthority.validDigest(digest) else {
             throw CocoaError(.fileWriteInvalidFileName, userInfo: [
                 NSLocalizedDescriptionKey: "Verification evidence requires a full SHA-256 bundle digest."
             ])
         }
+        lock.lock()
+        defer { lock.unlock() }
         let url = fileURL
-        var records: [String: Any] = [:]
-        if let data = try? Data(contentsOf: url),
-            let existing = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
-            records = existing
-        }
+        var records = try rawRecordsForWrite(at: url)
         let key = verificationStorageKey(modelName)
         var target = records[key] as? [String: Any] ?? [:]
         target["verificationClassification"] = classification.rawValue
@@ -249,6 +247,17 @@ enum ModelCapabilityLedger {
         records[key] = target
         try FileManager.default.createDirectory(
             at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        let data = try JSONSerialization.data(
+            withJSONObject: records, options: [.prettyPrinted, .sortedKeys])
+        try writePrivateLedger(data, to: url)
+    }
+
+    static func removeVerification(for modelName: String) throws {
+        lock.lock()
+        defer { lock.unlock() }
+        let url = fileURL
+        var records = try rawRecordsForWrite(at: url)
+        records.removeValue(forKey: verificationStorageKey(modelName))
         let data = try JSONSerialization.data(
             withJSONObject: records, options: [.prettyPrinted, .sortedKeys])
         try writePrivateLedger(data, to: url)
@@ -285,5 +294,14 @@ enum ModelCapabilityLedger {
         } else {
             try fileManager.moveItem(at: temporaryURL, to: url)
         }
+    }
+
+    private static func rawRecordsForWrite(at url: URL) throws -> [String: Any] {
+        guard FileManager.default.fileExists(atPath: url.path) else { return [:] }
+        let data = try Data(contentsOf: url)
+        guard let records = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            throw CocoaError(.fileReadCorruptFile)
+        }
+        return records
     }
 }
