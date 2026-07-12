@@ -3175,12 +3175,18 @@ public actor ModelRuntime {
             inspectBundleFacts
             ? LoadBundleFacts.inspect(bundleURL: modelDirectory)
             : nil
-        let plan = settings.resolvedMemorySafetyPlan(
+        var plan = settings.resolvedMemorySafetyPlan(
             baseLoadConfiguration: baseLoadConfiguration,
             bundleFacts: bundleFacts,
             host: MemoryStatus.snapshot(),
             request: nil
         )
+        if forceMaterializedWeights {
+            plan.loadConfiguration.useMmapSafetensors = false
+            genLog.warning(
+                "loadContainer: OSAURUS_MATERIALIZE_WEIGHTS enabled; forcing materialized weight loading for \(modelName, privacy: .public)"
+            )
+        }
         if !plan.blockingIssues.isEmpty {
             let issueSummary = plan.blockingIssues
                 .map { "\($0.field): \($0.message)" }
@@ -3190,6 +3196,13 @@ public actor ModelRuntime {
             )
         }
         return plan
+    }
+
+    private nonisolated static var forceMaterializedWeights: Bool {
+        let value = ProcessInfo.processInfo.environment["OSAURUS_MATERIALIZE_WEIGHTS"]?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+        return value == "1" || value == "true" || value == "yes"
     }
 
     private nonisolated static func describeDraftStrategy(

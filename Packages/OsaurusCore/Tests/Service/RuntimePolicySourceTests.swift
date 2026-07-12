@@ -2030,6 +2030,26 @@ struct RuntimePolicySourceTests {
         )
     }
 
+    @Test("ModelRuntime applies the materialized-weights override through memory safety resolution")
+    func modelRuntimeAppliesMaterializedWeightsOverrideCentrally() throws {
+        let runtime = try Self.source("Services/ModelRuntime.swift")
+        let start = try #require(runtime.range(of: "private nonisolated static func resolveMemorySafetyLoadPlan("))
+        let end = try #require(
+            runtime.range(
+                of: "private nonisolated static func describeDraftStrategy(",
+                range: start.upperBound ..< runtime.endIndex
+            )
+        )
+        let body = String(runtime[start.lowerBound ..< end.lowerBound])
+
+        #expect(body.contains("var plan = settings.resolvedMemorySafetyPlan("))
+        #expect(body.contains("if forceMaterializedWeights {"))
+        #expect(body.contains("plan.loadConfiguration.useMmapSafetensors = false"))
+        #expect(body.contains("OSAURUS_MATERIALIZE_WEIGHTS enabled"))
+        #expect(body.contains("environment[\"OSAURUS_MATERIALIZE_WEIGHTS\"]"))
+        #expect(body.contains("value == \"1\" || value == \"true\" || value == \"yes\""))
+    }
+
     @Test("ModelRuntime keeps weight-size directory scans out of the default load path")
     func modelRuntimeWeightSizePreflightIsManualMultiModelOnly() throws {
         let runtime = try Self.source("Services/ModelRuntime.swift")
