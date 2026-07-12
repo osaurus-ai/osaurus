@@ -11,8 +11,10 @@
 //     rate (immune to first-token amortization)
 //   - Reasoning + content + tool-arg tokens count uniformly so thinking
 //     ON and thinking OFF on the same model show the same number
-//   - `finalRate()` falls back to full-generation average ONLY when
-//     warm-up never elapsed (response too short to converge)
+//   - `finalRate()` returns nil when warm-up never elapsed (response too
+//     short to converge) — it does NOT invent an average over the delivery
+//     span, which reads as thousands of tok/s on a burst-delivered reply.
+//     The caller falls back to the engine's real decode wall-clock rate.
 //
 // If any of these flip, expect user-visible regressions in the chat
 // stats card. The rationale for each numeric default is in
@@ -133,22 +135,42 @@ struct RollingTokenRateTests {
 
     // MARK: - Final rate fallback
 
-    @Test("finalRate: falls back to full-gen average when warm-up never elapsed")
-    func finalRate_shortResponse_fallsBackToAverage() {
+    @Test("finalRate: reports nothing rather than inventing a rate for a short reply")
+    func finalRate_shortResponse_reportsNothing() {
         var r = RollingTokenRate()
         let t0 = Date()
         // 3 tokens in 0.2s — never passes either warm-up gate.
         r.observe(tokens: 1, at: t0.addingTimeInterval(0.0))
         r.observe(tokens: 1, at: t0.addingTimeInterval(0.1))
         r.observe(tokens: 1, at: t0.addingTimeInterval(0.2))
-        // currentRate is nil — warm-up not satisfied.
         #expect(r.currentRate(at: t0.addingTimeInterval(0.2)) == nil)
-        // finalRate returns the full-gen average (3 tokens / 0.2s = 15).
-        guard let final = r.finalRate() else {
-            Issue.record("finalRate should fall back even when currentRate is nil")
-            return
+
+        // This used to return `totalTokens / (lastAt - firstAt)` = ~15 tok/s, which
+        // LOOKS reasonable — and that plausibility is exactly why the bug survived:
+        // the same expression is a lie whenever delivery is bursty (below). This type
+        // only sees arrival timestamps and has no honest denominator for a reply that
+        // never converged, so it says so. The caller substitutes the engine's real
+        // decode wall-clock rate.
+        #expect(r.finalRate() == nil)
+    }
+
+    @Test("finalRate: a short reply delivered in one burst never reports thousands of tok/s")
+    func finalRate_burstDelivery_isNotPhysicallyImpossible() {
+        var r = RollingTokenRate()
+        let t0 = Date()
+        // The real shape of the bug: a 7-token answer arrives coalesced, so first and
+        // last observation land ~3ms apart. `totalTokens / (lastAt - firstAt)` is then
+        // 7 / 0.003 ≈ 2333 tok/s — the `2397.3 tok/s • 7 tokens` seen in the chat card.
+        // No local model decodes at 2000+ tok/s; the number was an artifact of when the
+        // bytes were *delivered*, not of how fast anything was generated.
+        r.observe(tokens: 4, at: t0)
+        r.observe(tokens: 3, at: t0.addingTimeInterval(0.003))
+
+        let rate = r.finalRate()
+        #expect(rate == nil, "got \(String(describing: rate)) — a delivery burst is not a decode speed")
+        if let rate {
+            #expect(rate < 1000, "a rate this high is not physically achievable and must never be shown")
         }
-        #expect(final >= 14 && final <= 16, "expected ~15 tok/s, got \(final)")
     }
 
     @Test("finalRate: prefers rolling steady-state when warmed up")
