@@ -241,7 +241,8 @@ public enum AttachmentBlobStore {
                 let hash = try write(data)
                 return Attachment(
                     id: attachment.id,
-                    kind: .imageRef(hash: hash, byteCount: data.count)
+                    kind: .imageRef(hash: hash, byteCount: data.count),
+                    structuredDocumentMetadata: attachment.structuredDocumentMetadata
                 )
             } catch {
                 log.warning("image spill failed; keeping inline (size=\(data.count)): \(error.localizedDescription)")

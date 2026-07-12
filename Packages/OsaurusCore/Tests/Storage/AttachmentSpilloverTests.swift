@@ -168,6 +168,111 @@ struct AttachmentSpilloverTests {
     }
 
     @Test
+    func imagePageProvenanceSurvivesReloadAndTamperingFailsClosed() async throws {
+        try await StoragePathsTestLock.shared.run {
+            let root = try Self.setUpEnv()
+            defer { Self.tearDownEnv(root) }
+
+            var pageBytes = Data([0x89, 0x50, 0x4E, 0x47])
+            pageBytes.append(Data(repeating: 0x42, count: 32 * 1024))
+            let provenance = DocumentAttachmentProvenance(
+                sourceSHA256: Attachment.sha256(Data("source pdf".utf8)),
+                contentSHA256: Attachment.sha256(pageBytes),
+                sourceTrust: .userSelectedLocalFile,
+                inspectedAt: Date(timeIntervalSince1970: 1_783_939_200),
+                sourceModificationTime: Date(timeIntervalSince1970: 1_783_939_100),
+                stableSourceID: Attachment.sha256(Data("stable image pdf".utf8))
+            )
+            let metadata = StructuredDocumentAttachmentMetadata(
+                formatId: "pdf",
+                representationFormatId: "pdf-page-image",
+                filename: "scan.pdf",
+                fileSize: 48 * 1024,
+                createdAt: Date(timeIntervalSince1970: 1_783_939_200),
+                provenance: provenance
+            )
+            let attachment = Attachment(
+                kind: .image(pageBytes),
+                structuredDocumentMetadata: metadata
+            )
+            let session = ChatSessionData(
+                title: "Persisted Page",
+                turns: [ChatTurnData(role: .user, content: "", attachments: [attachment])]
+            )
+            let database = ChatHistoryDatabase()
+            try database.openInMemory()
+            defer { database.close() }
+
+            try database.saveSession(session)
+            let reloadedSession = try #require(database.loadSession(id: session.id))
+            let reloaded = try #require(reloadedSession.turns.first?.attachments.first)
+            guard case .imageRef(_, let byteCount) = reloaded.kind else {
+                Issue.record("expected persisted imageRef")
+                return
+            }
+
+            #expect(byteCount == pageBytes.count)
+            #expect(reloaded.structuredDocumentMetadata == metadata)
+            #expect(reloaded.structuredDocumentMetadata?.provenance == provenance)
+            #expect(reloaded.loadImageData() == pageBytes)
+            try await Task { @MainActor in
+                try ChatSession.validateAttachmentsForSend([reloaded])
+            }.value
+
+            let replacementBytes = Data(repeating: 0x19, count: pageBytes.count)
+            let replacementHash = try AttachmentBlobStore.write(replacementBytes)
+            let replacedAttachment = Attachment(
+                id: reloaded.id,
+                kind: .imageRef(hash: replacementHash, byteCount: replacementBytes.count),
+                structuredDocumentMetadata: reloaded.structuredDocumentMetadata
+            )
+            var replacedSession = reloadedSession
+            replacedSession.turns[0].attachments = [replacedAttachment]
+            try database.saveSession(replacedSession)
+            let tamperedSession = try #require(database.loadSession(id: session.id))
+            let tampered = try #require(tamperedSession.turns.first?.attachments.first)
+
+            #expect(tampered.structuredDocumentMetadata?.provenance == provenance)
+            #expect(tampered.unverifiedImageData() == replacementBytes)
+            #expect(tampered.loadImageData() == nil)
+            let sendRejected = await Task { @MainActor in
+                do {
+                    try ChatSession.validateAttachmentsForSend([tampered])
+                    return false
+                } catch ChatSession.AttachmentSendValidationError.integrityFailed {
+                    return true
+                } catch {
+                    return false
+                }
+            }.value
+            #expect(sendRejected)
+
+            let zipURL = root.appendingPathComponent("tampered-export.zip")
+            let unzipURL = root.appendingPathComponent("tampered-export", isDirectory: true)
+            try await Task { @MainActor in
+                try await ChatSessionExporter.writeZip(session: tamperedSession, to: zipURL)
+            }.value
+            try await FileManager.default.unzipItem(at: zipURL, to: unzipURL)
+            let bundleURL = unzipURL.appendingPathComponent("Persisted Page", isDirectory: true)
+            let decoder = JSONDecoder()
+            decoder.dateDecodingStrategy = .iso8601
+            let manifest = try decoder.decode(
+                ChatSessionExporter.AttachmentProvenanceManifest.self,
+                from: Data(contentsOf: bundleURL.appendingPathComponent("provenance.json"))
+            )
+            let exportedFiles = try FileManager.default.contentsOfDirectory(
+                atPath: bundleURL.appendingPathComponent("attachments", isDirectory: true).path
+            )
+
+            #expect(manifest.attachments.count == 1)
+            #expect(manifest.attachments[0].provenance == provenance)
+            #expect(manifest.attachments[0].availability == .integrityFailed)
+            #expect(manifest.attachments[0].exportedFilename == nil)
+            #expect(exportedFiles.isEmpty)
+        }
+    }
+
+    @Test
     func dedupReusesSameBlob() async throws {
         try await StoragePathsTestLock.shared.run {
             let root = try Self.setUpEnv()
