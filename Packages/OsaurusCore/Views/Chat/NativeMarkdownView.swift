@@ -275,6 +275,17 @@ final class NativeMarkdownView: NSView {
     /// which needs live layout). Lets the find bar scroll to the exact line
     /// of the current match inside a message taller than the viewport.
     func rectOfSearchOccurrence(_ index: Int) -> NSRect? {
+        // The upper bound was checked here; the lower bound was not, and this
+        // subscript trapped in production (Sentry APPLE-MACOS-10V: Array._checkSubscript,
+        // reached from the find bar's scroll-to-match). `searchAllOccurrenceRanges` is
+        // rebuilt on every highlight pass while the find bar navigates against counts
+        // taken from the *model's* text, so the index arriving here is not something this
+        // view can vouch for. Treat it as untrusted and answer "no such occurrence"
+        // rather than crashing the app mid-search.
+        guard index >= 0 else {
+            assertionFailure("negative search occurrence index \(index)")
+            return nil
+        }
         if index < searchAllOccurrenceRanges.count {
             guard let tv = textView, tv.window != nil else { return nil }
             let range = searchAllOccurrenceRanges[index]
