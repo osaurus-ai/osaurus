@@ -426,4 +426,82 @@ struct ChatAttachmentSecurityTests {
         #expect(inputs[1].localSamples?.sampleRate == 16_000)
         #expect(inputs[1].localSamples?.preencodedAttachmentId == liveAudio.id)
     }
+
+    @Test func sendGateRejectsProvenanceFailureWithPathFreeError() {
+        let expected = Data([0x89, 0x50, 0x4E, 0x47, 0x01])
+        let corrupted = Data([0x89, 0x50, 0x4E, 0x47, 0x02])
+        let attachment = Self.provenanceImage(bytes: corrupted, expectedBytes: expected)
+
+        do {
+            try ChatSession.validateAttachmentsForSend([attachment])
+            Issue.record("Expected integrity validation to block send")
+        } catch let error as ChatSession.AttachmentSendValidationError {
+            let message = error.localizedDescription
+            #expect(message.contains("/Users/") == false)
+            #expect(message.contains("scan.pdf") == false)
+            #expect(message.contains("integrity verification"))
+        } catch {
+            Issue.record("Unexpected validation error: \(error)")
+        }
+    }
+
+    @Test func sendGateAcceptsVerifiedAttachmentAndPrefixUsesRenderedMedia() throws {
+        let image = Data([0x89, 0x50, 0x4E, 0x47, 0x01])
+        let valid = Self.provenanceImage(bytes: image, expectedBytes: image)
+        let corrupt = Self.provenanceImage(
+            bytes: Data([0x89, 0x50, 0x4E, 0x47, 0x02]),
+            expectedBytes: image
+        )
+        let missing = Attachment(
+            kind: .imageRef(hash: String(repeating: "0", count: 64), byteCount: 12)
+        )
+
+        try ChatSession.validateAttachmentsForSend([valid])
+        #expect(
+            ChatSession.attachmentsRenderAsMultimodalParts(
+                [valid],
+                supportsImages: true,
+                supportsAudio: false,
+                supportsVideo: false
+            )
+        )
+        #expect(
+            ChatSession.attachmentsRenderAsMultimodalParts(
+                [corrupt],
+                supportsImages: true,
+                supportsAudio: false,
+                supportsVideo: false
+            ) == false
+        )
+        #expect(
+            ChatSession.attachmentsRenderAsMultimodalParts(
+                [missing],
+                supportsImages: true,
+                supportsAudio: false,
+                supportsVideo: false
+            ) == false
+        )
+    }
+
+    private static func provenanceImage(bytes: Data, expectedBytes: Data) -> OsaurusCore.Attachment {
+        let provenance = DocumentAttachmentProvenance(
+            sourceSHA256: Attachment.sha256(Data("source".utf8)),
+            contentSHA256: Attachment.sha256(expectedBytes),
+            sourceTrust: .userSelectedLocalFile,
+            inspectedAt: Date(timeIntervalSince1970: 1_700_000_000),
+            sourceModificationTime: nil,
+            stableSourceID: Attachment.sha256(Data("stable".utf8))
+        )
+        return Attachment(
+            kind: .image(bytes),
+            structuredDocumentMetadata: StructuredDocumentAttachmentMetadata(
+                formatId: "pdf",
+                representationFormatId: "pdf-page-image",
+                filename: "/Users/alice/private/scan.pdf",
+                fileSize: Int64(bytes.count),
+                createdAt: Date(),
+                provenance: provenance
+            )
+        )
+    }
 }

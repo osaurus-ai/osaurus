@@ -7,6 +7,7 @@
 //
 
 import CryptoKit
+import Darwin
 import Foundation
 
 public struct DocumentIntakePreview: Sendable, Identifiable {
@@ -91,28 +92,46 @@ public struct DocumentIntakeService: Sendable {
         self.pdfFallbackParser = pdfFallbackParser
     }
 
-    public func prepare(url: URL) async throws -> DocumentIntakePreview {
+    public func prepare(
+        url: URL,
+        sourceTrust: DocumentSecurityMetadata.SourceTrust = .unknown
+    ) async throws -> DocumentIntakePreview {
         let limit = try studio.chatIntakeLimit(for: url)
-        let before = try Self.snapshot(url: url, maximumBytes: limit)
-        let sourceDigest = try Self.digest(url: url, maximumBytes: limit)
+        let captured = try Self.capture(url: url, maximumBytes: limit)
+        let privateSource = try Self.materialize(captured, originalURL: url)
+        defer { Self.removePrivateSource(privateSource) }
+        return try await prepareCaptured(
+            originalURL: url,
+            privateURL: privateSource.fileURL,
+            captured: captured,
+            sourceTrust: sourceTrust
+        )
+    }
+
+    private func prepareCaptured(
+        originalURL: URL,
+        privateURL: URL,
+        captured: CapturedSource,
+        sourceTrust: DocumentSecurityMetadata.SourceTrust
+    ) async throws -> DocumentIntakePreview {
         try Task.checkCancellation()
 
-        let document = try await studio.parse(url: url)
+        let parsed = try await studio.parse(url: privateURL)
         try Task.checkCancellation()
+        let document = Self.restoringSourceFacts(
+            parsed,
+            originalURL: originalURL,
+            captured: captured,
+            sourceTrust: sourceTrust
+        )
         let inspection = try studio.inspect(document)
 
-        let after = try Self.snapshot(url: url, maximumBytes: limit)
-        let afterDigest = try Self.digest(url: url, maximumBytes: limit)
-        guard before == after, sourceDigest == afterDigest else {
-            throw DocumentIntakeError.sourceChangedDuringInspection
-        }
-
         let provenance = Self.provenance(
-            sourceDigest: sourceDigest,
+            sourceDigest: captured.digest,
             content: Data(document.textFallback.utf8),
-            trust: document.security.sourceTrust,
+            trust: sourceTrust,
             inspectedAt: document.security.inspectedAt,
-            modificationDate: before.modificationDate
+            modificationDate: captured.modificationDate
         )
         return DocumentIntakePreview(
             document: document,
@@ -122,29 +141,61 @@ public struct DocumentIntakeService: Sendable {
     }
 
     func prepareForComposer(url: URL) async throws -> DocumentIntakePreparedResult {
-        if let pageImages = try await prepareImageOnlyPDFFallback(url: url) {
+        let trust = DocumentSecurityMetadata.SourceTrust.userSelectedLocalFile
+        let limit = try studio.chatIntakeLimit(for: url)
+        let captured = try Self.capture(url: url, maximumBytes: limit)
+        let privateSource = try Self.materialize(captured, originalURL: url)
+        defer { Self.removePrivateSource(privateSource) }
+        if url.pathExtension.lowercased() == "pdf",
+            let pageImages = try imageOnlyAttachments(
+                originalURL: url,
+                privateURL: privateSource.fileURL,
+                captured: captured,
+                sourceTrust: trust
+            )
+        {
             return .attachments(pageImages)
         }
-        return .preview(try await prepare(url: url))
+        return .preview(
+            try await prepareCaptured(
+                originalURL: url,
+                privateURL: privateSource.fileURL,
+                captured: captured,
+                sourceTrust: trust
+            )
+        )
     }
 
     /// Returns rendered page-image attachments only when the selected PDF has
     /// no text representation. The same bounded snapshot/digest contract used
     /// by structured intake protects this compatibility fallback.
-    public func prepareImageOnlyPDFFallback(url: URL) async throws -> [Attachment]? {
+    public func prepareImageOnlyPDFFallback(
+        url: URL,
+        sourceTrust: DocumentSecurityMetadata.SourceTrust = .unknown
+    ) async throws -> [Attachment]? {
         guard url.pathExtension.lowercased() == "pdf" else { return nil }
         let limit = try studio.chatIntakeLimit(for: url)
-        let before = try Self.snapshot(url: url, maximumBytes: limit)
-        let sourceDigest = try Self.digest(url: url, maximumBytes: limit)
+        let captured = try Self.capture(url: url, maximumBytes: limit)
+        let privateSource = try Self.materialize(captured, originalURL: url)
+        defer { Self.removePrivateSource(privateSource) }
+        return try imageOnlyAttachments(
+            originalURL: url,
+            privateURL: privateSource.fileURL,
+            captured: captured,
+            sourceTrust: sourceTrust
+        )
+    }
+
+    private func imageOnlyAttachments(
+        originalURL: URL,
+        privateURL: URL,
+        captured: CapturedSource,
+        sourceTrust: DocumentSecurityMetadata.SourceTrust
+    ) throws -> [Attachment]? {
         try Task.checkCancellation()
-        let attachments = try pdfFallbackParser(url)
+        let attachments = try pdfFallbackParser(privateURL)
         try Task.checkCancellation()
 
-        let after = try Self.snapshot(url: url, maximumBytes: limit)
-        let afterDigest = try Self.digest(url: url, maximumBytes: limit)
-        guard before == after, sourceDigest == afterDigest else {
-            throw DocumentIntakeError.sourceChangedDuringInspection
-        }
         guard !attachments.isEmpty, attachments.allSatisfy(\.isImage) else { return nil }
         let inspectedAt = Date()
         return try attachments.map { attachment in
@@ -152,11 +203,11 @@ public struct DocumentIntakeService: Sendable {
                 throw DocumentIntakeError.sourceReadFailed
             }
             let provenance = Self.provenance(
-                sourceDigest: sourceDigest,
+                sourceDigest: captured.digest,
                 content: imageBytes,
-                trust: .userSelectedLocalFile,
+                trust: sourceTrust,
                 inspectedAt: inspectedAt,
-                modificationDate: before.modificationDate
+                modificationDate: captured.modificationDate
             )
             return Attachment(
                 id: attachment.id,
@@ -164,8 +215,8 @@ public struct DocumentIntakeService: Sendable {
                 structuredDocumentMetadata: StructuredDocumentAttachmentMetadata(
                     formatId: "pdf",
                     representationFormatId: "pdf-page-image",
-                    filename: url.lastPathComponent,
-                    fileSize: before.size,
+                    filename: originalURL.lastPathComponent,
+                    fileSize: captured.size,
                     createdAt: inspectedAt,
                     fileExtension: "pdf",
                     documentKind: .pdf,
@@ -199,27 +250,45 @@ public struct DocumentIntakeService: Sendable {
         return result
     }
 
-    private struct SourceSnapshot: Equatable {
+    private struct CapturedSource: Sendable {
+        let data: Data
         let size: Int64
         let modificationDate: Date?
+        let digest: String
     }
 
-    private static func snapshot(url: URL, maximumBytes: Int64) throws -> SourceSnapshot {
-        let values = try url.resourceValues(
-            forKeys: [.isRegularFileKey, .isSymbolicLinkKey, .fileSizeKey, .contentModificationDateKey]
-        )
-        guard values.isRegularFile == true, values.isSymbolicLink != true else {
+    private struct PrivateSource {
+        let directoryURL: URL
+        let fileURL: URL
+    }
+
+    private static func capture(url: URL, maximumBytes: Int64) throws -> CapturedSource {
+        let descriptor = url.path.withCString {
+            Darwin.open($0, O_RDONLY | O_CLOEXEC | O_NOFOLLOW)
+        }
+        guard descriptor >= 0 else {
+            if errno == ELOOP { throw DocumentIntakeError.sourceIsNotRegularFile }
+            throw DocumentIntakeError.sourceReadFailed
+        }
+        let handle = FileHandle(fileDescriptor: descriptor, closeOnDealloc: true)
+        var facts = stat()
+        guard Darwin.fstat(descriptor, &facts) == 0 else {
+            try? handle.close()
+            throw DocumentIntakeError.sourceReadFailed
+        }
+        guard facts.st_mode & S_IFMT == S_IFREG else {
+            try? handle.close()
             throw DocumentIntakeError.sourceIsNotRegularFile
         }
-        let size = Int64(values.fileSize ?? 0)
-        guard size <= maximumBytes else { throw DocumentIntakeError.sourceTooLarge(maximumBytes) }
-        return SourceSnapshot(size: size, modificationDate: values.contentModificationDate)
-    }
+        guard facts.st_size <= maximumBytes else {
+            try? handle.close()
+            throw DocumentIntakeError.sourceTooLarge(maximumBytes)
+        }
 
-    private static func digest(url: URL, maximumBytes: Int64) throws -> String {
         do {
-            let handle = try FileHandle(forReadingFrom: url)
             defer { try? handle.close() }
+            var bytes = Data()
+            bytes.reserveCapacity(Int(max(0, facts.st_size)))
             var hasher = SHA256()
             var total: Int64 = 0
             while true {
@@ -228,9 +297,19 @@ public struct DocumentIntakeService: Sendable {
                 if chunk.isEmpty { break }
                 total += Int64(chunk.count)
                 guard total <= maximumBytes else { throw DocumentIntakeError.sourceTooLarge(maximumBytes) }
+                bytes.append(chunk)
                 hasher.update(data: chunk)
             }
-            return hasher.finalize().map { String(format: "%02x", $0) }.joined()
+            let modified = Date(
+                timeIntervalSince1970: TimeInterval(facts.st_mtimespec.tv_sec)
+                    + TimeInterval(facts.st_mtimespec.tv_nsec) / 1_000_000_000
+            )
+            return CapturedSource(
+                data: bytes,
+                size: total,
+                modificationDate: modified,
+                digest: hasher.finalize().map { String(format: "%02x", $0) }.joined()
+            )
         } catch let error as DocumentIntakeError {
             throw error
         } catch is CancellationError {
@@ -238,6 +317,70 @@ public struct DocumentIntakeService: Sendable {
         } catch {
             throw DocumentIntakeError.sourceReadFailed
         }
+    }
+
+    private static func materialize(_ captured: CapturedSource, originalURL: URL) throws -> PrivateSource {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("osaurus-document-intake-\(UUID().uuidString)", isDirectory: true)
+        let filename = Attachment.redactedFilename(from: originalURL.lastPathComponent)
+        let file = directory.appendingPathComponent(filename)
+        do {
+            try FileManager.default.createDirectory(
+                at: directory,
+                withIntermediateDirectories: false,
+                attributes: [.posixPermissions: 0o700]
+            )
+            try captured.data.write(to: file, options: .atomic)
+            try FileManager.default.setAttributes([.posixPermissions: 0o400], ofItemAtPath: file.path)
+            try FileManager.default.setAttributes([.posixPermissions: 0o500], ofItemAtPath: directory.path)
+            return PrivateSource(directoryURL: directory, fileURL: file)
+        } catch {
+            try? FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: directory.path)
+            try? FileManager.default.removeItem(at: directory)
+            throw DocumentIntakeError.sourceReadFailed
+        }
+    }
+
+    private static func removePrivateSource(_ source: PrivateSource) {
+        try? FileManager.default.setAttributes(
+            [.posixPermissions: 0o700],
+            ofItemAtPath: source.directoryURL.path
+        )
+        try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: source.fileURL.path)
+        try? FileManager.default.removeItem(at: source.directoryURL)
+    }
+
+    private static func restoringSourceFacts(
+        _ document: StructuredDocument,
+        originalURL: URL,
+        captured: CapturedSource,
+        sourceTrust: DocumentSecurityMetadata.SourceTrust
+    ) -> StructuredDocument {
+        let security = document.security
+        let correctedSecurity = DocumentSecurityMetadata(
+            inspectionStatus: security.inspectionStatus,
+            sourceTrust: sourceTrust,
+            formatId: security.formatId,
+            fileExtension: security.fileExtension,
+            uti: security.uti,
+            declaredMimeType: security.declaredMimeType,
+            sha256: captured.digest,
+            isEncrypted: security.isEncrypted,
+            activeContentTypes: security.activeContentTypes,
+            externalReferences: security.externalReferences,
+            findings: security.findings,
+            inspectedAt: security.inspectedAt
+        )
+        return StructuredDocument(
+            formatId: document.formatId,
+            filename: originalURL.lastPathComponent,
+            fileSize: captured.size,
+            representation: document.representation,
+            structure: document.structure,
+            security: correctedSecurity,
+            textFallback: document.textFallback,
+            createdAt: document.createdAt
+        )
     }
 
     private static func provenance(
@@ -251,7 +394,7 @@ public struct DocumentIntakeService: Sendable {
         return DocumentAttachmentProvenance(
             sourceSHA256: sourceDigest,
             contentSHA256: Attachment.sha256(content),
-            sourceTrust: trust == .unknown ? .userSelectedLocalFile : trust,
+            sourceTrust: trust,
             inspectedAt: inspectedAt,
             sourceModificationTime: modificationDate,
             stableSourceID: stableID

@@ -15455,6 +15455,40 @@
         }
       }
     },
+    "An attached file failed integrity verification." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Eine angehängte Datei hat die Integritätsprüfung nicht bestanden."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "첨부 파일이 무결성 검증에 실패했습니다."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Прикрепленный файл не прошел проверку целостности."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "附件未通过完整性验证。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "附件未通過完整性驗證。"
+          }
+        }
+      }
+    },
     "Animation" : {
       "localizations" : {
         "de" : {
@@ -39217,6 +39251,40 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "無法附加文件"
+          }
+        }
+      }
+    },
+    "Could not send message" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Nachricht konnte nicht gesendet werden"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "메시지를 보낼 수 없음"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Не удалось отправить сообщение"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "无法发送消息"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "無法傳送訊息"
           }
         }
       }

@@ -1282,18 +1282,41 @@ final class ChatSession: ObservableObject {
         return ChatMessage(role: "user", content: messageText)
     }
 
+    enum AttachmentSendValidationError: LocalizedError, Equatable {
+        case integrityFailed
+
+        var errorDescription: String? {
+            "An attached file failed integrity verification. Remove it and attach the file again."
+        }
+    }
+
+    static func validateAttachmentsForSend(_ attachments: [Attachment]) throws {
+        for attachment in attachments where attachment.structuredDocumentMetadata?.provenance != nil {
+            if attachment.isDocument, attachment.verifiedDocumentContent() == nil {
+                throw AttachmentSendValidationError.integrityFailed
+            }
+            if attachment.isImage, attachment.loadImageData() == nil {
+                throw AttachmentSendValidationError.integrityFailed
+            }
+        }
+    }
+
     /// Determine whether an attachment turn uses multipart model input without
     /// loading blob bytes. The actual message builder remains responsible for
     /// integrity validation and may fail closed if a persisted ref is corrupt.
-    private static func attachmentsRenderAsMultimodalParts(
+    static func attachmentsRenderAsMultimodalParts(
         _ attachments: [Attachment],
         supportsImages: Bool,
         supportsAudio: Bool,
         supportsVideo: Bool
     ) -> Bool {
-        (supportsImages && attachments.hasImages)
-            || (supportsAudio && attachments.hasAudios)
-            || (supportsVideo && attachments.hasVideos)
+        buildUserChatMessage(
+            content: "",
+            attachments: attachments,
+            supportsImages: supportsImages,
+            supportsAudio: supportsAudio,
+            supportsVideo: supportsVideo
+        ).contentParts != nil
     }
 
     /// Prepend a user turn's frozen memory / screen-context prefix to its
@@ -3507,6 +3530,18 @@ final class ChatSession: ObservableObject {
         let hasContent = !trimmed.isEmpty || !attachments.isEmpty
         let isRegeneration = !hasContent && !turns.isEmpty
         guard hasContent || isRegeneration else { return }
+        do {
+            try Self.validateAttachmentsForSend(turns.flatMap(\.attachments) + attachments)
+        } catch {
+            if input.isEmpty { input = text }
+            if pendingAttachments.isEmpty { pendingAttachments = attachments }
+            ToastManager.shared.error(
+                L("Could not send message"),
+                message: (error as? LocalizedError)?.errorDescription
+                    ?? L("An attached file failed integrity verification.")
+            )
+            return
+        }
         guard activeRunId == nil, !isStreaming else {
             restoreTurnsRollbackAfterAbortedRegeneration()
             return

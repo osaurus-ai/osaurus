@@ -381,7 +381,10 @@ public enum ChatSessionExporter {
 
     private static func exportFilename(for attachment: Attachment, fallback: String) -> String {
         let base = attachment.redactedFilename ?? fallback
-        guard case .documentRef = attachment.kind else { return base }
+        // ZIP document payloads are extracted UTF-8 text regardless of whether
+        // their storage is inline or blob-backed. Never retain a package/source
+        // extension that would misrepresent those exported bytes.
+        guard attachment.isDocument else { return base }
         let ext = (base as NSString).pathExtension
         if ext.lowercased() == "txt" {
             return base

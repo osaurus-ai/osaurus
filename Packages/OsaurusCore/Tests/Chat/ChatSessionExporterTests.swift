@@ -71,7 +71,7 @@ struct ChatSessionExporterTests {
         #expect(markdown.contains("private") == false)
     }
 
-    @Test func zipPreservesTextBackedDocumentExtension() async throws {
+    @Test func zipRemapsInlineExtractedDocumentTextToTxt() async throws {
         try await StoragePathsTestLock.shared.run {
             let root = FileManager.default.temporaryDirectory.appendingPathComponent(
                 "osaurus-chat-export-text-tests-\(UUID().uuidString)"
@@ -108,10 +108,15 @@ struct ChatSessionExporterTests {
             let exportedDocument = unzipRoot
                 .appendingPathComponent("Notes Export", isDirectory: true)
                 .appendingPathComponent("attachments", isDirectory: true)
-                .appendingPathComponent("notes.md")
+                .appendingPathComponent("notes.txt")
             let markdown = try String(contentsOf: exportedMarkdown, encoding: .utf8)
 
             #expect(FileManager.default.fileExists(atPath: exportedDocument.path))
+            #expect(
+                FileManager.default.fileExists(
+                    atPath: exportedDocument.deletingLastPathComponent().appendingPathComponent("notes.md").path
+                ) == false
+            )
             #expect(markdown.contains("document: notes.md"))
             #expect(markdown.contains("/Users/mmeding") == false)
         }
@@ -154,7 +159,7 @@ struct ChatSessionExporterTests {
             let exportedAttachment = unzipRoot
                 .appendingPathComponent("attachment", isDirectory: true)
                 .appendingPathComponent("attachments", isDirectory: true)
-                .appendingPathComponent("attachment")
+                .appendingPathComponent("attachment.txt")
             let allPaths = try FileManager.default.subpathsOfDirectory(atPath: unzipRoot.path)
 
             #expect(FileManager.default.fileExists(atPath: exportedMarkdown.path))

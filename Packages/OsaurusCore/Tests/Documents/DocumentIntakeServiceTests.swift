@@ -32,7 +32,7 @@ struct DocumentIntakeServiceTests {
         #expect(decoded.verifiedDocumentContent() == "parsed source bytes")
     }
 
-    @Test func sourceModificationDuringParseFailsClosed() async throws {
+    @Test func parserCannotMutatePrivateCapturedSource() async throws {
         let registry = DocumentFormatRegistry()
         registry.register(adapter: MutatingFixtureAdapter())
         let service = DocumentIntakeService(studio: BusinessDocumentStudioService(registry: registry))
@@ -41,9 +41,29 @@ struct DocumentIntakeServiceTests {
         let url = root.appendingPathComponent("mutable.mutating-intake")
         try Data("before".utf8).write(to: url)
 
-        await #expect(throws: DocumentIntakeError.sourceChangedDuringInspection) {
+        do {
             _ = try await service.prepare(url: url)
+            Issue.record("Expected the parser's attempted write to the immutable capture to fail")
+        } catch {
+            #expect(try String(contentsOf: url, encoding: .utf8) == "before")
         }
+    }
+
+    @Test func replaceAndRestoreAttackCannotChangeParsedBytes() async throws {
+        let root = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let url = root.appendingPathComponent("report.restore-intake")
+        let original = Data("trusted original".utf8)
+        try original.write(to: url)
+        let registry = DocumentFormatRegistry()
+        registry.register(adapter: RestoreAttackAdapter(originalURL: url))
+        let service = DocumentIntakeService(studio: BusinessDocumentStudioService(registry: registry))
+
+        let preview = try await service.prepare(url: url)
+
+        #expect(preview.document.textFallback == "parsed trusted original")
+        #expect(preview.provenance.sourceSHA256 == Attachment.sha256(original))
+        #expect(try Data(contentsOf: url) == original)
     }
 
     @Test func symbolicLinkSourceIsRejectedBeforeParsing() async throws {
@@ -98,7 +118,7 @@ struct DocumentIntakeServiceTests {
         }
     }
 
-    @Test func imageOnlyPDFFallbackRejectsSourceMutation() async throws {
+    @Test func imageOnlyPDFFallbackParserCannotMutatePrivateCapture() async throws {
         let root = try temporaryDirectory()
         defer { try? FileManager.default.removeItem(at: root) }
         let url = root.appendingPathComponent("scan.pdf")
@@ -108,9 +128,33 @@ struct DocumentIntakeServiceTests {
             return [.image(Data([0x01, 0x02]))]
         })
 
-        await #expect(throws: DocumentIntakeError.sourceChangedDuringInspection) {
+        do {
             _ = try await service.prepareImageOnlyPDFFallback(url: url)
+            Issue.record("Expected the PDF parser's attempted write to the immutable capture to fail")
+        } catch {
+            #expect(try String(contentsOf: url, encoding: .utf8) == "before")
         }
+    }
+
+    @Test func imageOnlyPDFReplaceAndRestoreAttackUsesCapturedBytes() async throws {
+        let root = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let url = root.appendingPathComponent("scan.pdf")
+        let original = Data("trusted pdf".utf8)
+        let image = Data([0x89, 0x50, 0x4E, 0x47])
+        try original.write(to: url)
+        let service = DocumentIntakeService(pdfFallbackParser: { capturedURL in
+            try Data("attacker replacement".utf8).write(to: url, options: .atomic)
+            try original.write(to: url, options: .atomic)
+            #expect(capturedURL != url)
+            #expect(try Data(contentsOf: capturedURL) == original)
+            return [.image(image)]
+        })
+
+        let attachments = try #require(try await service.prepareImageOnlyPDFFallback(url: url))
+        let provenance = try #require(attachments.first?.structuredDocumentMetadata?.provenance)
+        #expect(provenance.sourceSHA256 == Attachment.sha256(original))
+        #expect(try Data(contentsOf: url) == original)
     }
 
     @Test func imageOnlyPDFFallbackCarriesPathFreeVerifiedProvenance() async throws {
@@ -128,10 +172,36 @@ struct DocumentIntakeServiceTests {
         #expect(attachment.loadImageData() == image)
         #expect(provenance.sourceSHA256 == Attachment.sha256(source))
         #expect(provenance.contentSHA256 == Attachment.sha256(image))
+        #expect(provenance.sourceTrust == .unknown)
         #expect(attachment.structuredDocumentMetadata?.representationFormatId == "pdf-page-image")
 
         let json = String(decoding: try JSONEncoder().encode(attachment), as: UTF8.self)
         #expect(json.contains(root.path) == false)
+    }
+
+    @Test func sourceTrustIsCallerOwnedAndNeverImplicitlyUpgraded() async throws {
+        let registry = DocumentFormatRegistry()
+        registry.register(adapter: FixtureAdapter(formatId: "intake", extensions: ["intake"]))
+        let service = DocumentIntakeService(studio: BusinessDocumentStudioService(registry: registry))
+        let root = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let url = root.appendingPathComponent("trust.intake")
+        try Data("trust".utf8).write(to: url)
+
+        let unknown = try await service.prepare(url: url)
+        let plugin = try await service.prepare(url: url, sourceTrust: .pluginProvided)
+        let composer = try await service.prepareForComposer(url: url)
+
+        #expect(unknown.provenance.sourceTrust == .unknown)
+        #expect(unknown.document.security.sourceTrust == .unknown)
+        #expect(plugin.provenance.sourceTrust == .pluginProvided)
+        #expect(plugin.document.security.sourceTrust == .pluginProvided)
+        guard case .preview(let composerPreview) = composer else {
+            Issue.record("Expected a structured composer preview")
+            return
+        }
+        #expect(composerPreview.provenance.sourceTrust == .userSelectedLocalFile)
+        #expect(composerPreview.document.security.sourceTrust == .userSelectedLocalFile)
     }
 
     @Test func intakeAndConversionMessagesDoNotExposePathsOrRawErrors() {
@@ -378,6 +448,31 @@ struct DocumentIntakeServiceTests {
                     underlying: PlainTextRepresentation(text: "parsed")
                 ),
                 textFallback: "parsed"
+            )
+        }
+    }
+
+    private struct RestoreAttackAdapter: DocumentFormatAdapter {
+        let formatId = "restore-intake"
+        let extensions: Set<String> = ["restore-intake"]
+        let originalURL: URL
+
+        func canHandle(url: URL, uti: String?) -> Bool { true }
+
+        func parse(url: URL, sizeLimit: Int64) async throws -> StructuredDocument {
+            let original = try Data(contentsOf: originalURL)
+            try Data("attacker replacement".utf8).write(to: originalURL, options: .atomic)
+            try original.write(to: originalURL, options: .atomic)
+            let captured = try String(contentsOf: url, encoding: .utf8)
+            return StructuredDocument(
+                formatId: formatId,
+                filename: url.lastPathComponent,
+                fileSize: Int64(captured.utf8.count),
+                representation: AnyStructuredRepresentation(
+                    formatId: formatId,
+                    underlying: PlainTextRepresentation(text: captured)
+                ),
+                textFallback: "parsed \(captured)"
             )
         }
     }
