@@ -685,7 +685,22 @@ struct RuntimePolicySourceTests {
         // SSM/hybrid mixer (vmlx-swift#126), and the ZAYA tool-aware template
         // activation from source_model.architecture (vmlx-swift#127) that
         // stops JANGTQ ZAYA bundles leaking raw tool-call XML.
-        let expectedRuntimeHardenedRevision = "31b165cb0fa3ca49a8495971f8d906157906aeb6"
+        //
+        // Now also carries the cache-store memory budget on all four KV store
+        // paths and the Hunyuan bare-marker aliases (vmlx-swift#139), the
+        // host-scaled store margin plus the Hy3 reasoning-stamp demotion pin
+        // (#140), and the memory-safety level actually reaching the prefix-cache
+        // store (#141) -- the "Safety Level" slider used to be a stored field no
+        // resolver read, so it moved nothing.
+        //
+        // This assertion is a repin tripwire, and it earned its keep: PR #1986
+        // shipped titled "(+ vmlx repin)" carrying no repin at all, and the live
+        // gate run against that build proved only the osaurus-side change while
+        // appearing to bless the engine work too. Note the pin lives in FOUR
+        // files -- Package.swift, Packages/OsaurusCore/Package.resolved, and both
+        // xcworkspace Package.resolved files. Miss one and the app resolves a
+        // revision nobody proved.
+        let expectedRuntimeHardenedRevision = "08234c17d1a5ed1381784d929ac517caddd164d1"
         let manifestRevision = try Self.vmlxPinRevision(in: manifest)
         let workspaceRevision = try Self.vmlxPinRevision(in: workspaceResolved)
         let appRevision = try Self.vmlxPinRevision(in: appResolved)
