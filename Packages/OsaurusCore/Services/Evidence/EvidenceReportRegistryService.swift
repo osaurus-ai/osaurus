@@ -7,14 +7,17 @@
 
 import Foundation
 
-public final class EvidenceReportRegistryService {
+public final class EvidenceReportRegistryService: @unchecked Sendable {
+    public static let shared = EvidenceReportRegistryService()
+
     private var summariesByID: [String: EvidenceReportSummary] = [:]
+    private let lock = NSLock()
     private let fileManager: FileManager
-    private let now: () -> Date
+    private let now: @Sendable () -> Date
 
     public init(
         fileManager: FileManager = .default,
-        now: @escaping () -> Date = Date.init
+        now: @escaping @Sendable () -> Date = Date.init
     ) {
         self.fileManager = fileManager
         self.now = now
@@ -33,6 +36,8 @@ public final class EvidenceReportRegistryService {
         _ descriptor: EvidenceReportDescriptor,
         relativeTo baseURL: URL? = nil
     ) -> EvidenceReportSummary {
+        lock.lock()
+        defer { lock.unlock() }
         let summary = makeSummary(from: descriptor, relativeTo: baseURL)
         if let existing = summariesByID[summary.id] {
             summariesByID[summary.id] = preferredSummary(existing, summary)
@@ -43,16 +48,26 @@ public final class EvidenceReportRegistryService {
     }
 
     public func list(_ filter: EvidenceReportFilter = EvidenceReportFilter()) -> [EvidenceReportSummary] {
-        summariesByID.values
+        lock.lock()
+        defer { lock.unlock() }
+        return summariesByID.values
             .filter { filter.includes($0) }
             .sorted(by: Self.sortSummaries)
     }
 
     public func snapshot(_ filter: EvidenceReportFilter = EvidenceReportFilter()) -> EvidenceReportRegistrySnapshot {
-        EvidenceReportRegistrySnapshot(reports: list(filter))
+        lock.lock()
+        defer { lock.unlock() }
+        return EvidenceReportRegistrySnapshot(
+            reports: summariesByID.values
+                .filter { filter.includes($0) }
+                .sorted(by: Self.sortSummaries)
+        )
     }
 
     public func removeAll() {
+        lock.lock()
+        defer { lock.unlock() }
         summariesByID.removeAll()
     }
 
