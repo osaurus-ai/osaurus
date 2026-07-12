@@ -69,6 +69,9 @@ public final class TranscriptionCleanupService {
                 temperature: 0.1,
                 maxTokens: max(256, trimmed.count),
                 timeout: Self.cleanupTimeout,
+                // Tidying a voice transcript is never worth evicting the model
+                // the user is chatting with. Declined → we keep the raw text.
+                intent: .background
             )
             return postProcess(response: response, rawText: rawText, trimmed: trimmed, start: start, source: "core")
         } catch CoreModelError.modelUnavailable(let requested) {
@@ -85,10 +88,39 @@ public final class TranscriptionCleanupService {
 
     // MARK: - Local MLX fallback
 
+    /// Pick a model this fallback may use without disturbing the user.
+    ///
+    /// This path used to take `installed.first` — an arbitrary model, chosen by
+    /// install order. Under the strict single-model runtime that loads it and
+    /// **evicts whatever the user is chatting with**, to clean up a voice
+    /// transcript. So: prefer a model that is already resident (free, no load),
+    /// accept any installed model when the runtime is idle, and otherwise
+    /// decline — a tidier transcript is not worth the user's model.
+    private func backgroundSafeModel(from installed: [String]) async -> String? {
+        guard !installed.isEmpty else { return nil }
+
+        let resident = await ModelRuntime.shared.residentModelNames()
+        if let alreadyLoaded = installed.first(where: { candidate in
+            let tail = candidate.split(separator: "/").last.map(String.init) ?? candidate
+            return resident.contains {
+                $0.caseInsensitiveCompare(candidate) == .orderedSame
+                    || $0.caseInsensitiveCompare(tail) == .orderedSame
+            }
+        }) {
+            return alreadyLoaded
+        }
+
+        // Nothing of ours is resident. Only fill a genuinely empty slot, and
+        // never race a load the user is waiting on.
+        if await ModelRuntime.shared.hasLoadInFlight() { return nil }
+        if !resident.isEmpty { return nil }
+        return installed.first
+    }
+
     private func tryLocalFallback(userPrompt: String, rawText: String, trimmed: String) async -> String {
         let installed = MLXService.getAvailableModels()
-        guard let fallbackModel = installed.first else {
-            debugLog("[cleanup] FALLBACK: no local MLX models installed, using raw")
+        guard let fallbackModel = await backgroundSafeModel(from: installed) else {
+            debugLog("[cleanup] FALLBACK: no background-safe local model, using raw")
             return rawText
         }
         debugLog("[cleanup] Local fallback model: \(fallbackModel)")

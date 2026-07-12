@@ -17,6 +17,11 @@ public enum CoreModelError: Error, LocalizedError, Equatable {
     case modelUnavailable(String)
     case circuitBreakerOpen
     case timedOut
+    /// A background call wanted a local MLX model that isn't the one
+    /// currently resident (or loading). Serving it would evict the
+    /// user's model, so the call was declined instead. Best-effort
+    /// callers should degrade quietly; this is not a failure.
+    case backgroundWouldEvictUserModel(String)
 
     public var errorDescription: String? {
         switch self {
@@ -26,8 +31,25 @@ public enum CoreModelError: Error, LocalizedError, Equatable {
             return "Core model temporarily unavailable (too many recent failures)"
         case .timedOut:
             return "Core model call timed out"
+        case .backgroundWouldEvictUserModel(let model):
+            return "Skipped background call to '\(model)': loading it would evict the model in use"
         }
     }
+}
+
+/// Who is waiting on a `CoreModelService` call.
+///
+/// This matters because the runtime is strictly single-model: loading model B
+/// evicts resident model A, and a new load cancels an in-flight one. A call the
+/// user is waiting on has earned that right. A housekeeping call — memory
+/// distillation, voice-transcript cleanup, a greeting — has not: it must never
+/// evict the model the user is chatting with, nor cancel the load they are
+/// staring at a spinner for.
+public enum CoreModelIntent: Sendable {
+    /// The user is waiting on this call. May load/evict as needed.
+    case interactive
+    /// Housekeeping. Declines rather than disturb a resident or loading model.
+    case background
 }
 
 /// Resolution snapshot for the configured core model. Surfaced in the
@@ -102,7 +124,8 @@ public actor CoreModelService {
         temperature: Double = 0.3,
         maxTokens: Int = 2048,
         timeout: TimeInterval = 60,
-        fallbackModel: String? = nil
+        fallbackModel: String? = nil,
+        intent: CoreModelIntent = .interactive
     ) async throws -> String {
         try await generate(
             prompt: prompt,
@@ -111,6 +134,7 @@ public actor CoreModelService {
             maxTokens: maxTokens,
             timeout: timeout,
             fallbackModel: fallbackModel,
+            intent: intent,
             modelOptions: [:]
         )
     }
@@ -122,6 +146,7 @@ public actor CoreModelService {
         maxTokens: Int = 2048,
         timeout: TimeInterval = 60,
         fallbackModel: String? = nil,
+        intent: CoreModelIntent = .interactive,
         modelOptions: [String: ModelOptionValue]
     ) async throws -> String {
         try checkBreakerOrEnterHalfOpen()
@@ -143,7 +168,8 @@ public actor CoreModelService {
                 fallback: fallback,
                 messages: messages,
                 params: params,
-                timeout: timeout
+                timeout: timeout,
+                intent: intent
             )
         } catch {
             try recordFailureAndThrow(error)
@@ -158,16 +184,19 @@ public actor CoreModelService {
         fallback: String?,
         messages: [ChatMessage],
         params: GenerationParameters,
-        timeout: TimeInterval
+        timeout: TimeInterval,
+        intent: CoreModelIntent
     ) async throws -> String {
         guard let primary else {
             guard let fb = fallback else { throw CoreModelError.modelUnavailable("none") }
             logger.info("Core model unset; using chat model '\(fb)' as fallback")
-            return try await runWithRetries(model: fb, messages: messages, params: params, timeout: timeout)
+            return try await runWithRetries(
+                model: fb, messages: messages, params: params, timeout: timeout, intent: intent)
         }
 
         do {
-            return try await runWithRetries(model: primary, messages: messages, params: params, timeout: timeout)
+            return try await runWithRetries(
+                model: primary, messages: messages, params: params, timeout: timeout, intent: intent)
         } catch let coreErr as CoreModelError {
             // Configuration-level failure: the primary's identifier
             // can't be routed at all (Foundation Model on pre-26 macOS,
@@ -180,7 +209,8 @@ public actor CoreModelService {
                 fb != primary
             else { throw coreErr }
             logger.info("Core model '\(primary)' unavailable; falling back to chat model '\(fb)'")
-            return try await runWithRetries(model: fb, messages: messages, params: params, timeout: timeout)
+            return try await runWithRetries(
+                model: fb, messages: messages, params: params, timeout: timeout, intent: intent)
         } catch is CancellationError {
             // Caller walked away mid-flight — don't spend the fallback
             // model on a generation no one is waiting for.
@@ -204,7 +234,8 @@ public actor CoreModelService {
                 model: fb,
                 messages: messages,
                 params: params,
-                timeout: timeout
+                timeout: timeout,
+                intent: intent
             )
         }
     }
@@ -323,13 +354,15 @@ public actor CoreModelService {
         model: String,
         messages: [ChatMessage],
         params: GenerationParameters,
-        timeout: TimeInterval
+        timeout: TimeInterval,
+        intent: CoreModelIntent
     ) async throws -> String {
         var lastError: Error?
         for attempt in 0 ..< Self.maxRetries {
             do {
                 let result = try await withTimeout(seconds: timeout) {
-                    try await self.executeModelCall(model: model, messages: messages, params: params)
+                    try await self.executeModelCall(
+                        model: model, messages: messages, params: params, intent: intent)
                 }
                 clearBreakerState()
                 return result
@@ -368,6 +401,13 @@ public actor CoreModelService {
             throw error
         }
         if let coreErr = error as? CoreModelError, case .modelUnavailable = coreErr {
+            throw coreErr
+        }
+        // A declined background call is a policy decision, not a backend fault.
+        // Counting it would let a long chat session — where a model is legitimately
+        // resident the whole time — trip the breaker and lock the *user's* own
+        // interactive calls out behind a bogus "circuitBreakerOpen".
+        if let coreErr = error as? CoreModelError, case .backgroundWouldEvictUserModel = coreErr {
             throw coreErr
         }
 
@@ -426,7 +466,8 @@ public actor CoreModelService {
     private func executeModelCall(
         model: String,
         messages: [ChatMessage],
-        params: GenerationParameters
+        params: GenerationParameters,
+        intent: CoreModelIntent
     ) async throws -> String {
         let remoteServices: [ModelService] = await MainActor.run {
             RemoteProviderManager.shared.connectedServices()
@@ -440,6 +481,9 @@ public actor CoreModelService {
 
         switch route {
         case .service(let service, let effectiveModel):
+            if intent == .background, service.id == MLXService.shared.id {
+                try await Self.declineIfItWouldDisturbTheUsersModel(effectiveModel)
+            }
             let promptLen = messages.last?.content?.count ?? 0
             logger.debug(
                 "Routing to \(service.id) (model: \(effectiveModel), prompt: \(promptLen) chars)"
@@ -451,6 +495,26 @@ public actor CoreModelService {
             )
         case .none:
             throw CoreModelError.modelUnavailable(model)
+        }
+    }
+
+    /// The MLX runtime is strictly single-model: loading `model` evicts whoever
+    /// is resident, and starting a load cancels one already in flight. Neither is
+    /// acceptable on behalf of a background caller — memory distillation must not
+    /// throw away the model the user is mid-conversation with, and voice-transcript
+    /// cleanup must not cancel the load the user is watching a spinner for.
+    ///
+    /// Same rule the warm-up and greeting paths already follow: filling an *empty*
+    /// slot is fine, disturbing an occupied one is not. Remote and Foundation
+    /// routes don't touch GPU residency, so this only gates the local MLX route.
+    private static func declineIfItWouldDisturbTheUsersModel(_ model: String) async throws {
+        if await ModelRuntime.shared.hasLoadInFlight() {
+            logger.info("Declining background call for '\(model)': a model load is in flight")
+            throw CoreModelError.backgroundWouldEvictUserModel(model)
+        }
+        if await ModelRuntime.shared.hasResidentModelOther(than: model) {
+            logger.info("Declining background call for '\(model)': another model is resident")
+            throw CoreModelError.backgroundWouldEvictUserModel(model)
         }
     }
 

@@ -205,6 +205,14 @@ public actor ModelRuntime {
         return modelCache[name] != nil
     }
 
+    /// Models currently held resident. Background callers that can run against
+    /// *any* model (voice-transcript cleanup, for one) use this to pick the one
+    /// already in memory instead of an arbitrary installed model, which under the
+    /// strict single-model policy would evict whatever the user is chatting with.
+    func residentModelNames() -> [String] {
+        Array(modelCache.keys)
+    }
+
     /// Warm-load an installed local model without starting generation. Used by
     /// delegated jobs that temporarily evict chat models for unified-memory
     /// headroom, then restore the prior resident set after the helper job.
