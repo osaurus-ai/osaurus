@@ -117,21 +117,21 @@ struct ThemedAlertCenterTests {
         let scope = ThemedAlertScope.chat(UUID())
 
         let plain = ThemedAlertRequest(title: "Plain", message: "Body", buttons: [], onDismiss: {})
-        #expect(plain.headerImageName == nil)
+        #expect(plain.headerImageNames.isEmpty)
         #expect(plain.headerImageAccessibilityLabel == nil)
 
         let artwork = ThemedAlertRequest(
             title: "Launch",
             message: "Body",
-            headerImageName: "osaurus-thanks",
-            headerImageAccessibilityLabel: "Osaurus dinosaur saying thank you",
+            headerImageNames: ["osaurus-thanks", "ph-cat"],
+            headerImageAccessibilityLabel: "Osaurus dinosaur and the Product Hunt kitty saying thank you",
             buttons: [],
             onDismiss: {}
         )
-        #expect(artwork.headerImageName == "osaurus-thanks")
+        #expect(artwork.headerImageNames == ["osaurus-thanks", "ph-cat"])
 
         center.present(artwork, scope: scope)
-        #expect(center.active(for: scope)?.headerImageName == "osaurus-thanks")
+        #expect(center.active(for: scope)?.headerImageNames == ["osaurus-thanks", "ph-cat"])
         center.dismiss(scope: scope, id: artwork.id)
         #expect(center.active(for: scope) == nil)
     }

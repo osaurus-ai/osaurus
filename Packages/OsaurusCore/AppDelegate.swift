@@ -2436,8 +2436,9 @@ extension AppDelegate {
                     Thank you for being here early.
                     """
                 ),
-                headerImageName: "osaurus-thanks",
-                headerImageAccessibilityLabel: L("Osaurus dinosaur saying thank you"),
+                headerImageNames: ["osaurus-thanks", "ph-cat"],
+                headerImageAccessibilityLabel: L(
+                    "Osaurus dinosaur and the Product Hunt kitty saying thank you"),
                 buttons: [
                     // "Maybe later" carries the cancel role so Escape and an
                     // outside click follow the same permanent-dismiss path.

@@ -107,13 +107,14 @@ public struct ThemedAlertRequest: Identifiable {
     public let title: String
     /// Optional message displayed below the title
     public let message: String?
-    /// Optional asset-catalog image (module bundle) rendered above the title
-    /// in place of the standard SF Symbol circle. Use for announcement-style
-    /// dialogs that carry their own artwork (e.g. the Product Hunt launch
-    /// dinosaur). `nil` keeps the existing icon header for every other alert.
-    public let headerImageName: String?
-    /// Accessibility description for `headerImageName`. Ignored when no
-    /// header image is set.
+    /// Optional asset-catalog images (module bundle) rendered side by side
+    /// above the title in place of the standard SF Symbol circle. Use for
+    /// announcement-style dialogs that carry their own artwork (e.g. the
+    /// Product Hunt launch dinosaur + kitty). Empty keeps the existing icon
+    /// header for every other alert.
+    public let headerImageNames: [String]
+    /// Accessibility description for the header artwork as a whole. Ignored
+    /// when no header images are set.
     public let headerImageAccessibilityLabel: String?
     /// Optional accessory view rendered between the message and the button row.
     /// Use for extras like a "Don't ask again" toggle.
@@ -141,7 +142,7 @@ public struct ThemedAlertRequest: Identifiable {
         id: UUID = UUID(),
         title: String,
         message: String?,
-        headerImageName: String? = nil,
+        headerImageNames: [String] = [],
         headerImageAccessibilityLabel: String? = nil,
         accessory: AnyView? = nil,
         buttons: [AlertButtonConfig],
@@ -153,7 +154,7 @@ public struct ThemedAlertRequest: Identifiable {
         self.id = id
         self.title = title
         self.message = message
-        self.headerImageName = headerImageName
+        self.headerImageNames = headerImageNames
         self.headerImageAccessibilityLabel = headerImageAccessibilityLabel
         self.accessory = accessory
         self.buttons = buttons
@@ -213,7 +214,7 @@ private struct ThemedAlertDialogContent: View {
 
     let title: String
     let message: String?
-    var headerImageName: String? = nil
+    var headerImageNames: [String] = []
     var headerImageAccessibilityLabel: String? = nil
     let accessory: AnyView?
     let buttons: [AlertButtonConfig]
@@ -325,16 +326,21 @@ private struct ThemedAlertDialogContent: View {
 
     private var headerSection: some View {
         VStack(spacing: 12) {
-            if let headerImageName {
+            if !headerImageNames.isEmpty {
                 // Custom artwork header (announcement-style dialogs). Kept
                 // small and static — no pulsing ring — so it reads as a
                 // friendly mark, not an attention grab.
-                Image(headerImageName, bundle: .module)
-                    .resizable()
-                    .aspectRatio(contentMode: .fit)
-                    .frame(height: 72)
-                    .accessibilityLabel(headerImageAccessibilityLabel ?? "")
-                    .accessibilityHidden(headerImageAccessibilityLabel == nil)
+                HStack(alignment: .bottom, spacing: 12) {
+                    ForEach(headerImageNames, id: \.self) { name in
+                        Image(name, bundle: .module)
+                            .resizable()
+                            .aspectRatio(contentMode: .fit)
+                            .frame(height: 84)
+                    }
+                }
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel(headerImageAccessibilityLabel ?? "")
+                .accessibilityHidden(headerImageAccessibilityLabel == nil)
             } else {
                 iconHeader
             }
@@ -656,7 +662,7 @@ public struct ThemedAlertHost: View {
                 ThemedAlertDialogContent(
                     title: request.title,
                     message: request.message,
-                    headerImageName: request.headerImageName,
+                    headerImageNames: request.headerImageNames,
                     headerImageAccessibilityLabel: request.headerImageAccessibilityLabel,
                     accessory: request.accessory,
                     buttons: request.buttons,
