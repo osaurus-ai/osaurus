@@ -383,6 +383,7 @@ public enum CUScrollDirection: String, Sendable, Codable, CaseIterable {
 /// pid context). These are the actions the loop's Verify folds with a capture.
 public enum CUElementAction: Sendable {
     case click(id: String, button: CUMouseButton = .left, doubleClick: Bool = false)
+    case focus(id: String)
     case setValue(id: String, value: String)
     case typeText(id: String?, pid: Int32?, text: String, replace: Bool = true)
     case pressKey(pid: Int32?, key: String, modifiers: [String] = [])

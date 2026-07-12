@@ -150,6 +150,40 @@ final class ComputerUsePromptQueueTests: XCTestCase {
         _ = await other.value
     }
 
+    func testOneShotSubmissionApprovalCannotEnableApproveRemaining() async {
+        let id = "one-shot-\(UUID().uuidString)"
+        let binding = SubmissionApprovalBinding(
+            snapshotId: 7,
+            appName: "Safari",
+            verb: .click,
+            targetLabel: "button \"Submit\"",
+            actionLabel: "Click mark 1"
+        )
+        let oneShot = ActionPreview(
+            appName: "Safari",
+            actionLabel: "Click mark 1",
+            targetLabel: "button \"Submit\"",
+            effect: .consequential,
+            note: nil,
+            approvalScope: .oneShot(binding)
+        )
+
+        let first = Task { await self.queue.requestConfirmation(oneShot, toolCallId: id) }
+        await waitUntil({ self.pendingId(forToolCallId: id) != nil }, "the one-shot prompt to park")
+        guard let firstId = pendingId(forToolCallId: id) else { return }
+        queue.resolveApprovingRest(id: firstId)
+        let firstApproved = await first.value
+        XCTAssertTrue(firstApproved)
+
+        let second = Task { await self.queue.requestConfirmation(oneShot, toolCallId: id) }
+        await waitUntil({ self.pendingId(forToolCallId: id) != nil }, "the second one-shot prompt to park")
+        guard let secondId = pendingId(forToolCallId: id) else { return }
+        queue.resolve(id: secondId, approved: false)
+        let secondApproved = await second.value
+        XCTAssertFalse(secondApproved)
+        queue.cancelAll(forToolCallId: id)
+    }
+
     // MARK: Cloud-vision consent
 
     func testConsentResolvesToChoice() async {

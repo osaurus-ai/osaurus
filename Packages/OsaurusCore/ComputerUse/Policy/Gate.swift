@@ -29,6 +29,11 @@ public struct ActionPreview: Sendable, Equatable {
     /// sees exactly what will run before approving. `nil` for Computer Use
     /// actions, which carry no script.
     public let scriptBody: String?
+    /// Approval scope for this exact prompt. Reusable approvals may participate
+    /// in the run's app/effect-scoped "approve remaining" convenience. A
+    /// one-shot approval is bound to one observed submission action and must
+    /// never be satisfied by a prior blanket approval.
+    public let approvalScope: ActionApprovalScope
 
     public init(
         appName: String?,
@@ -37,7 +42,8 @@ public struct ActionPreview: Sendable, Equatable {
         effect: EffectClass,
         note: String?,
         typedText: String? = nil,
-        scriptBody: String? = nil
+        scriptBody: String? = nil,
+        approvalScope: ActionApprovalScope = .reusable
     ) {
         self.appName = appName
         self.actionLabel = actionLabel
@@ -46,6 +52,12 @@ public struct ActionPreview: Sendable, Equatable {
         self.note = note
         self.typedText = typedText
         self.scriptBody = scriptBody
+        self.approvalScope = approvalScope
+    }
+
+    public var allowsApproveRemaining: Bool {
+        if case .reusable = approvalScope { return true }
+        return false
     }
 
     /// One-line summary for the feed / prompt.
@@ -55,6 +67,12 @@ public struct ActionPreview: Sendable, Equatable {
         if let appName, !appName.isEmpty { s += " in \(appName)" }
         return s
     }
+}
+
+/// Whether one approval may be reused for later actions in the run.
+public enum ActionApprovalScope: Sendable, Equatable {
+    case reusable
+    case oneShot(SubmissionApprovalBinding)
 }
 
 /// What the gate decided for one proposed action.

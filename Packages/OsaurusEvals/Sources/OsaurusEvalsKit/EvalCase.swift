@@ -1784,6 +1784,12 @@ public struct EvalCase: Sendable, Codable, Identifiable {
         /// When true, failure notes report lengths instead of raw final values
         /// and summaries. Use for fixtures with form contents or user-like data.
         public let redactEvidenceValues: Bool?
+        /// Optional `ComputerUseFormEvidence.SubmissionState` raw value that
+        /// must be reached by the real loop (for example `verified`).
+        public let expectSubmissionState: String?
+        /// Require at least one confirmation whose scope is the exact,
+        /// non-reusable browser submission binding.
+        public let requireOneShotSubmissionApproval: Bool?
         /// Optional scripted model: a sequence of `agent_action` arguments-JSON
         /// strings that DRIVE the loop deterministically in place of a live
         /// model (via the `AgentStepProvider` seam). Lets failure-recovery and
@@ -1807,6 +1813,8 @@ public struct EvalCase: Sendable, Codable, Identifiable {
             expectVerbsInOrder: [String]? = nil,
             scoredMaxModelTokens: Int? = nil,
             redactEvidenceValues: Bool? = nil,
+            expectSubmissionState: String? = nil,
+            requireOneShotSubmissionApproval: Bool? = nil,
             scriptedActions: [String]? = nil
         ) {
             self.app = app
@@ -1824,6 +1832,8 @@ public struct EvalCase: Sendable, Codable, Identifiable {
             self.expectVerbsInOrder = expectVerbsInOrder
             self.scoredMaxModelTokens = scoredMaxModelTokens
             self.redactEvidenceValues = redactEvidenceValues
+            self.expectSubmissionState = expectSubmissionState
+            self.requireOneShotSubmissionApproval = requireOneShotSubmissionApproval
             self.scriptedActions = scriptedActions
         }
     }

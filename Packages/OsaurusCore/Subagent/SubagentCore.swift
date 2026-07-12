@@ -121,6 +121,14 @@ public enum SubagentError: Error, Sendable {
     case denied(String)
     /// User declined an interactive approval / stopped the run.
     case userDenied(String)
+    /// The user stopped after an external action may already have crossed its
+    /// trust boundary. Structured evidence prevents blind retries.
+    case userDeniedAfterAction(
+        message: String,
+        state: String,
+        submissionPerformed: Bool,
+        submissionMayHaveOccurred: Bool
+    )
     /// The kind cannot run right now (no model, tools not registered, agent
     /// missing). Not retryable as-is.
     case unavailable(String)
@@ -146,6 +154,18 @@ public enum SubagentError: Error, Sendable {
             return ToolEnvelope.failure(kind: .rejected, message: m, tool: tool, retryable: false)
         case .userDenied(let m):
             return ToolEnvelope.failure(kind: .userDenied, message: m, tool: tool, retryable: false)
+        case .userDeniedAfterAction(let m, let state, let performed, let mayHaveOccurred):
+            return ToolEnvelope.failure(
+                kind: .userDenied,
+                message: m,
+                tool: tool,
+                retryable: false,
+                metadata: [
+                    "submission_state": state,
+                    "submission_performed": performed,
+                    "submission_may_have_occurred": mayHaveOccurred,
+                ]
+            )
         case .unavailable(let m):
             return ToolEnvelope.failure(kind: .unavailable, message: m, tool: tool, retryable: false)
         case .invalidArgs(let m, let field, let expected):

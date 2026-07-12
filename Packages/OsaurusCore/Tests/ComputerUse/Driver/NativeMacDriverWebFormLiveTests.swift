@@ -108,6 +108,10 @@ final class NativeMacDriverWebFormLiveTests: XCTestCase {
 
         XCTAssertTrue(fillResult.outcome.isSuccess, "Form fill loop did not finish.")
         XCTAssertFalse(fillResult.metrics.cloudVisionUsed, "Live web-form proof should stay AX-only.")
+        XCTAssertEqual(fillResult.formEvidence.fillActions, 3)
+        XCTAssertEqual(fillResult.formEvidence.verifiedFillActions, 3)
+        XCTAssertEqual(fillResult.formEvidence.preparationState, .readyForReview)
+        XCTAssertEqual(fillResult.formEvidence.submissionState, .notEncountered)
 
         let filledState = try await pollRequestState(pid: launched.pid, timeout: 5)
         XCTAssertTrue(filledState.teamFilled, "Team field was not filled.")
@@ -147,6 +151,13 @@ final class NativeMacDriverWebFormLiveTests: XCTestCase {
 
         let confirmations = await submitRecorder.previews()
         XCTAssertEqual(confirmations.map(\.effect), [.consequential])
+        XCTAssertFalse(confirmations.first?.allowsApproveRemaining ?? true)
+        guard case .oneShot(let binding) = confirmations.first?.approvalScope else {
+            return XCTFail("Live browser submit did not request exact one-shot approval.")
+        }
+        XCTAssertEqual(binding.appName, browserName)
+        XCTAssertEqual(binding.verb, .click)
+        XCTAssertEqual(submitResult.formEvidence.submissionState, .verified)
 
         let submitted = try await pollSubmittedState(pid: launched.pid, timeout: 10)
         XCTAssertTrue(submitted, "Submitted status was not visible through accessibility.")

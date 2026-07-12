@@ -28,6 +28,7 @@ public actor MockMacDriver: MacDriver {
 
     /// Optional queue of action results; when empty, actions succeed.
     private var actionResultQueue: [CUActionResult] = []
+    private var afterNextAction: (@Sendable () -> Void)?
 
     // MARK: Recorded calls (for assertions)
 
@@ -75,6 +76,9 @@ public actor MockMacDriver: MacDriver {
     }
     public func enqueueActionResults(_ results: [CUActionResult]) {
         actionResultQueue.append(contentsOf: results)
+    }
+    public func setAfterNextAction(_ action: @escaping @Sendable () -> Void) {
+        afterNextAction = action
     }
 
     // MARK: MacDriver
@@ -161,7 +165,11 @@ public actor MockMacDriver: MacDriver {
 
     public func perform(_ action: CUElementAction) async -> CUActionResult {
         elementActions.append(action)
-        return nextActionResult()
+        let result = nextActionResult()
+        let hook = afterNextAction
+        afterNextAction = nil
+        hook?()
+        return result
     }
 
     public func coordinate(_ action: CUCoordinateAction) async -> CUActionResult {

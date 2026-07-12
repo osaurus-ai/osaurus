@@ -172,6 +172,23 @@ final class ElementInteraction: @unchecked Sendable {
         }
     }
 
+    /// Restore focus without activating the target. Submission approval must
+    /// never use the ordinary click fallback because that click could submit.
+    func focusElementWithoutActivation(id: String) -> ElementActionResult {
+        switch resolve(id: id) {
+        case .failure(let err): return err
+        case .ok(let element):
+            let result = AXUIElementSetAttributeValue(
+                element.axElement,
+                kAXFocusedAttribute as CFString,
+                true as CFTypeRef
+            )
+            return result == .success
+                ? .ok()
+                : .fail("The element could not be focused without activation")
+        }
+    }
+
     func rightClickElement(id: String) -> ElementActionResult {
         switch resolve(id: id) {
         case .failure(let err): return err

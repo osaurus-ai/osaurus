@@ -255,22 +255,45 @@ final class ComputerUseKind: SubagentKind, @unchecked Sendable {
     /// `execution_error` carrying the loop's own reason so the parent can
     /// pivot without a blind retry. Shared by the production and eval paths so
     /// the envelope mapping the `subagent` eval lane asserts is the real one.
-    private static func mapOutcome(
+    static func mapOutcome(
         _ result: ComputerUseRunResult,
         model: String
     ) throws -> SubagentResult {
         switch result.outcome {
         case .done(let summary):
+            let submissionPerformed = result.formEvidence.submissionState == .acted
+                || result.formEvidence.submissionState == .verified
+            let submissionMayHaveOccurred =
+                result.formEvidence.submissionState == .actionExecutedUnverified
             return SubagentResult(
                 payload: [
                     "kind": "computer_use",
                     "model": model,
                     "summary": summary,
                     "steps": result.metrics.steps,
+                    "form_preparation_state": result.formEvidence.preparationState.rawValue,
+                    "submission_state": result.formEvidence.submissionState.rawValue,
+                    "submission_performed": submissionPerformed,
+                    "submission_verified": result.formEvidence.submissionState == .verified,
+                    "submission_may_have_occurred": submissionMayHaveOccurred,
                 ] as [String: Any],
                 summary: summary
             )
         case .interrupted:
+            if result.formEvidence.submissionState == .acted
+                || result.formEvidence.submissionState == .verified
+                || result.formEvidence.submissionState == .actionExecutedUnverified {
+                throw SubagentError.userDeniedAfterAction(
+                    message:
+                        "Computer Use was stopped after an approved action reached macOS. "
+                        + "Verify the form before retrying.",
+                    state: result.formEvidence.submissionState.rawValue,
+                    submissionPerformed: result.formEvidence.submissionState == .acted
+                        || result.formEvidence.submissionState == .verified,
+                    submissionMayHaveOccurred:
+                        result.formEvidence.submissionState == .actionExecutedUnverified
+                )
+            }
             throw SubagentError.userDenied("Computer Use was stopped by the user.")
         case .gaveUp, .deadEnd, .stepCapReached, .failed:
             throw SubagentError.executionFailed(message: result.outcome.summary, retryable: false)

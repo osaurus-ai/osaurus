@@ -99,6 +99,39 @@ then runs only the phases the chosen verb needs:
 5. **Verify** — after an element-addressed mutation the loop re-perceives and
    reports the delta so the model can confirm the action landed before moving on.
 
+### Browser form submission boundary
+
+Browser form completion has a run-level stop-before-submit boundary that is
+stricter than the configurable autonomy policy. Activating a submit-like browser
+control, pressing Return/Enter, or typing text containing a newline that could
+route through HID fallback in a browser always pauses before the possible
+submission action. This remains true under the `autonomous` preset.
+
+Approval is one-shot and bound to the exact action, target, app, and AX snapshot.
+It cannot be satisfied by **Approve remaining**. After approval the loop captures
+the form again and compares privacy-safe fingerprints; if the app, form values,
+or target changed while approval was pending, the approval expires and no driver
+action runs. Secure-field values participate only in a process-keyed in-memory
+fingerprint; secure labels and typed payloads are never rendered in the
+approval. Declining leaves the form unsubmitted and finishes the run as ready
+for review. Stop/cancel checked after the prompt and immediately before
+actuation also prevents a post-cancel submit.
+
+`ComputerUseRunResult.formEvidence` records successful fills, verified fills,
+the preparation state (`filled`, `verified`, `ready_for_review`), the approved
+binding, and whether submission reached `ready_for_review`, `approved`, `acted`,
+or `verified`. Newline typing that may route through HID is recorded as
+`action_executed_unverified` after execution because the same input can either
+edit a multiline field or submit a form. The parent payload exposes
+`submission_may_have_occurred` for that state and must verify the page before
+retrying. It stores fingerprints rather than readable form values.
+
+If the user stops after macOS has already accepted an approved submission
+action, the tool returns a non-retryable `user_denied` envelope carrying
+`submission_state`, `submission_performed`, and
+`submission_may_have_occurred`. Parent agents must inspect those fields and
+verify the page rather than assuming that cancellation rolled the action back.
+
 ### Run limits (`RunLimits`)
 
 | Knob | Default | Meaning |

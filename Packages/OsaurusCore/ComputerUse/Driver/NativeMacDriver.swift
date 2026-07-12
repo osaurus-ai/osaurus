@@ -198,6 +198,11 @@ public struct NativeMacDriver: MacDriver {
                 }
                 return mapActionResult(r)
 
+            case let .focus(id):
+                return mapActionResult(
+                    ElementInteraction.shared.focusElementWithoutActivation(id: id)
+                )
+
             case let .setValue(id, value):
                 return mapActionResult(ElementInteraction.shared.setElementValue(id: id, value: value))
 

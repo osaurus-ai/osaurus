@@ -95,10 +95,16 @@ public enum RunOutcome: Sendable, Equatable {
 public struct ComputerUseRunResult: Sendable {
     public let outcome: RunOutcome
     public let metrics: ComputerUseRunMetrics
+    public let formEvidence: ComputerUseFormEvidence
 
-    public init(outcome: RunOutcome, metrics: ComputerUseRunMetrics) {
+    public init(
+        outcome: RunOutcome,
+        metrics: ComputerUseRunMetrics,
+        formEvidence: ComputerUseFormEvidence = ComputerUseFormEvidence()
+    ) {
         self.outcome = outcome
         self.metrics = metrics
+        self.formEvidence = formEvidence
     }
 }
 
@@ -218,6 +224,7 @@ public enum ComputerUseLoop {
         // need Screen Recording) for the whole run.
         let availability = await driver.availability()
         var metrics = ComputerUseRunMetrics()
+        var formEvidence = ComputerUseFormEvidence()
         // The tier the next AX-resolution capture runs at. Escalates when a target
         // won't resolve; resets to ax once one does.
         var currentTier: CaptureTier = .ax
@@ -321,7 +328,7 @@ public enum ComputerUseLoop {
                 )
             )
             feed.finish(success: outcome.isSuccess, summary: outcome.summary)
-            return ComputerUseRunResult(outcome: outcome, metrics: metrics)
+            return ComputerUseRunResult(outcome: outcome, metrics: metrics, formEvidence: formEvidence)
         }
 
         while true {
@@ -449,7 +456,25 @@ public enum ComputerUseLoop {
 
             // Terminal verbs end the run immediately.
             if action.verb == .done {
-                return terminate(.done(summary: action.reason ?? "Completed."))
+                if formEvidence.fillActions > 0,
+                    formEvidence.fillActions == formEvidence.verifiedFillActions,
+                    let lastSnapshot,
+                    SubmissionBoundary.hasSubmitControl(in: lastSnapshot) {
+                    formEvidence.preparationState = .readyForReview
+                }
+                let summary: String
+                if formEvidence.submissionState == .actionExecutedUnverified {
+                    summary =
+                        "The approved input action ran and may have submitted the form; "
+                        + "verify the result before retrying."
+                } else if formEvidence.preparationState == .readyForReview,
+                    formEvidence.submissionState != .acted,
+                    formEvidence.submissionState != .verified {
+                    summary = "The form is ready for review; no submission was performed."
+                } else {
+                    summary = action.reason ?? "Completed."
+                }
+                return terminate(.done(summary: summary))
             }
             if action.verb == .giveUp {
                 return terminate(.gaveUp(reason: action.reason ?? "The goal could not be achieved."))
@@ -566,7 +591,7 @@ public enum ComputerUseLoop {
                     appName: action.app,
                     targetLabel: action.app
                 )
-                if await applyGate(
+                switch await applyGate(
                     openDecision,
                     action: action,
                     confirm: confirm,
@@ -574,8 +599,10 @@ public enum ComputerUseLoop {
                     advancedStep: &advancedStep,
                     metrics: &metrics,
                     feed: feed,
-                    step: step + 1
+                    step: step + 1,
+                    interrupt: interrupt
                 ) {
+                case .perform:
                     switch await handleOpen(action: action, driver: driver, feed: feed, step: step + 1) {
                     case .opened(let pid, let app, let view, let snapshot, let render):
                         currentPid = pid
@@ -586,6 +613,12 @@ public enum ComputerUseLoop {
                     case .failure(let message):
                         toolResult = "Could not open app: \(message)"
                     }
+                case .skip:
+                    break
+                case .interrupted:
+                    return terminate(.interrupted)
+                case .readyForReview:
+                    return terminate(.done(summary: "Ready for review; no submission was performed."))
                 }
 
             case .click, .doubleClick, .rightClick, .drag, .type, .setValue, .clear, .pressKey, .scroll:
@@ -705,13 +738,54 @@ public enum ComputerUseLoop {
                 )
                 metrics.recordEffect(effect)
                 let targetLabel = resolvedElement.map { describe($0) } ?? action.target?.describe
-                let decision = await gate.evaluate(
+                let policyDecision = await gate.evaluate(
                     action: action,
                     effect: effect,
                     appName: currentApp,
                     targetLabel: targetLabel
                 )
-                if await applyGate(
+                let submissionElement = resolvedElement
+                    ?? (action.verb == .pressKey ? snapshot.elements.first(where: \.focused) : nil)
+                let submissionBinding = SubmissionBoundary.binding(
+                    action: action,
+                    element: submissionElement,
+                    snapshot: snapshot,
+                    appName: currentApp,
+                    effect: effect
+                )
+                let decision: GateDecision
+                if submissionBinding != nil, case .reject = policyDecision {
+                    decision = policyDecision
+                } else if let submissionBinding {
+                    formEvidence.submissionBinding = submissionBinding
+                    formEvidence.submissionState = .readyForReview
+                    if formEvidence.fillActions > 0 {
+                        formEvidence.preparationState = .readyForReview
+                    }
+                    let formDetail =
+                        formEvidence.fillActions > 0
+                        ? "The form is filled. Submission is stopped until you approve this exact action."
+                        : "A possible form submission is stopped until you approve this exact action."
+                    feed.emit(
+                        SubagentActivityEvent(
+                            step: step + 1,
+                            kind: .phase,
+                            title: "Ready for review",
+                            detail: formDetail
+                        )
+                    )
+                    decision = .confirm(
+                        SubmissionBoundary.confirmationPreview(
+                            action: action,
+                            binding: submissionBinding,
+                            note: action.note
+                        )
+                    )
+                } else {
+                    decision = policyDecision
+                }
+
+                switch await applyGate(
                     decision,
                     action: action,
                     confirm: confirm,
@@ -719,8 +793,68 @@ public enum ComputerUseLoop {
                     advancedStep: &advancedStep,
                     metrics: &metrics,
                     feed: feed,
-                    step: step + 1
+                    step: step + 1,
+                    interrupt: interrupt
                 ) {
+                case .perform:
+                    if submissionBinding != nil {
+                        formEvidence.submissionState = .approved
+                    }
+                    if let submissionBinding {
+                        guard !interrupt.isInterrupted, !Task.isCancelled else {
+                            return terminate(.interrupted)
+                        }
+                        let approvalSnapshot = await driver.capture(pid: pid, tier: .ax)
+                        guard !interrupt.isInterrupted, !Task.isCancelled else {
+                            return terminate(.interrupted)
+                        }
+                        guard let freshElement = SubmissionBoundary.revalidatedElement(
+                            for: submissionBinding,
+                            action: action,
+                            snapshot: approvalSnapshot
+                        ) else {
+                            lastSnapshot = approvalSnapshot
+                            lastView = AgentView.build(from: approvalSnapshot, previous: lastView)
+                            formEvidence.submissionState = .readyForReview
+                            toolResult =
+                                "The form changed while approval was pending. Nothing was submitted. "
+                                + "Review the refreshed form and approve the new exact action if it is still correct."
+                            advancedStep = false
+                            feed.emit(
+                                SubagentActivityEvent(
+                                    step: step + 1,
+                                    kind: .blocked,
+                                    title: "Submission approval expired",
+                                    detail: "The app, form snapshot, or submit target changed before execution."
+                                )
+                            )
+                            break
+                        }
+                        if action.verb != .pressKey {
+                            resolvedElement = freshElement
+                        } else if !freshElement.id.isEmpty, !freshElement.focused {
+                            let focusResult = await driver.perform(.focus(id: freshElement.id))
+                            guard focusResult.success else {
+                                formEvidence.submissionState = .readyForReview
+                                toolResult =
+                                    "The approved form control could not be focused again. Nothing was submitted."
+                                advancedStep = false
+                                feed.emit(
+                                    SubagentActivityEvent(
+                                        step: step + 1,
+                                        kind: .blocked,
+                                        title: "Submission focus changed",
+                                        detail: "The approved keyboard target could not be restored safely."
+                                    )
+                                )
+                                break
+                            }
+                        }
+                        lastSnapshot = approvalSnapshot
+                        lastView = AgentView.build(from: approvalSnapshot, previous: lastView)
+                    }
+                    var actionSucceeded = false
+                    var actionVerified = false
                     toolResult = await act(
                         action: action,
                         element: resolvedElement,
@@ -734,9 +868,44 @@ public enum ComputerUseLoop {
                         lastSnapshot: &lastSnapshot,
                         metrics: &metrics,
                         feed: feed,
-                        step: step + 1
+                        step: step + 1,
+                        interrupt: interrupt,
+                        completion: { success, changed in
+                            actionSucceeded = success
+                            actionVerified = changed
+                        }
                     )
+                    if action.verb == .type || action.verb == .setValue || action.verb == .clear {
+                        if actionSucceeded {
+                            formEvidence.fillActions += 1
+                            formEvidence.preparationState = .filled
+                        }
+                        if actionSucceeded, actionVerified {
+                            formEvidence.verifiedFillActions += 1
+                            formEvidence.preparationState = .verified
+                        }
+                    }
+                    if submissionBinding != nil {
+                        if !SubmissionBoundary.canPerformSubmission(action) {
+                            formEvidence.submissionState =
+                                actionSucceeded ? .actionExecutedUnverified : .readyForReview
+                        } else if actionSucceeded {
+                            formEvidence.submissionState = actionVerified ? .verified : .acted
+                        } else {
+                            formEvidence.submissionState = .readyForReview
+                        }
+                    }
                     consecutiveDeadEnd = 0
+                case .skip:
+                    break
+                case .interrupted:
+                    return terminate(.interrupted)
+                case .readyForReview:
+                    let summary =
+                        formEvidence.fillActions > 0
+                        ? "The form is filled and ready for review; no submission was performed."
+                        : "Submission was declined; the form was left unsubmitted."
+                    return terminate(.done(summary: summary))
                 }
 
             case .done, .giveUp:
@@ -775,6 +944,13 @@ public enum ComputerUseLoop {
     /// and report whether the caller should perform the action. Both gated paths
     /// (`open` and the element-addressed verbs) share this so the
     /// block / confirm / decline wording and counters stay identical.
+    private enum GateApplication {
+        case perform
+        case skip
+        case interrupted
+        case readyForReview
+    }
+
     private static func applyGate(
         _ decision: GateDecision,
         action: AgentAction,
@@ -783,8 +959,9 @@ public enum ComputerUseLoop {
         advancedStep: inout Bool,
         metrics: inout ComputerUseRunMetrics,
         feed: SubagentFeed,
-        step: Int
-    ) async -> Bool {
+        step: Int,
+        interrupt: InterruptToken
+    ) async -> GateApplication {
         switch decision {
         case .reject(let reason):
             metrics.blocked += 1
@@ -793,7 +970,7 @@ public enum ComputerUseLoop {
             )
             toolResult = "That action is not allowed: \(reason). Choose a different action."
             advancedStep = false
-            return false
+            return .skip
         case .confirm(let preview):
             metrics.confirmsRequested += 1
             feed.emit(
@@ -804,18 +981,27 @@ public enum ComputerUseLoop {
                     detail: preview.note
                 )
             )
-            if await confirm(preview) {
+            let approved = await confirm(preview)
+            guard !interrupt.isInterrupted, !Task.isCancelled else {
+                toolResult = "The run was stopped before the action could execute."
+                advancedStep = false
+                return .interrupted
+            }
+            if approved {
                 metrics.confirmsApproved += 1
                 feed.emit(SubagentActivityEvent(step: step, kind: .confirmed, title: "Approved: \(action.feedLabel)"))
-                return true
+                return .perform
             }
             metrics.confirmsDeclined += 1
             feed.emit(SubagentActivityEvent(step: step, kind: .denied, title: "Declined: \(action.feedLabel)"))
             toolResult = "The user declined that action. Try a different approach or ask to stop."
             advancedStep = false
-            return false
+            if case .oneShot = preview.approvalScope {
+                return .readyForReview
+            }
+            return .skip
         case .run:
-            return true
+            return interrupt.isInterrupted || Task.isCancelled ? .interrupted : .perform
         }
     }
 
@@ -1044,8 +1230,13 @@ public enum ComputerUseLoop {
         lastSnapshot: inout CUSnapshot?,
         metrics: inout ComputerUseRunMetrics,
         feed: SubagentFeed,
-        step: Int
+        step: Int,
+        interrupt: InterruptToken? = nil,
+        completion: ((Bool, Bool) -> Void)? = nil
     ) async -> String {
+        guard interrupt?.isInterrupted != true, !Task.isCancelled else {
+            return "The run was stopped before the action could execute."
+        }
         metrics.actsAttempted += 1
         var result: CUActionResult
         switch action.verb {
@@ -1096,6 +1287,14 @@ public enum ComputerUseLoop {
             return "Unsupported action."
         }
 
+        // Record whether the driver crossed the action boundary before checking
+        // cancellation. A stop can arrive after the OS accepted the action; in
+        // that case evidence must not claim that nothing happened.
+        completion?(result.success, false)
+        guard interrupt?.isInterrupted != true, !Task.isCancelled else {
+            return "The run was stopped; no fallback or verification action was performed."
+        }
+
         // Coordinate fallback. The element resolved against the immutable
         // snapshot value copy (so `TargetResolver` was happy) but the action
         // failed at the LIVE AX layer because the ref died between capture and
@@ -1108,6 +1307,9 @@ public enum ComputerUseLoop {
         //     since an id-addressed edit can't survive a stale ref. set_value
         //     and clear are expressed as a wholesale replace (clear = empty).
         if (result.removed || result.stale), let element {
+            guard interrupt?.isInterrupted != true, !Task.isCancelled else {
+                return "The run was stopped before the fallback action could execute."
+            }
             let center = element.center
             let cx = Double(center.x)
             let cy = Double(center.y)
@@ -1208,6 +1410,7 @@ public enum ComputerUseLoop {
                 success: result.success
             )
         )
+        completion?(result.success, view.hasChanges)
 
         var out = result.success ? "Action succeeded." : "Action failed: \(result.error ?? "unknown")."
         if result.stale { out += " (the element went stale)" }

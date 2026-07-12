@@ -66,8 +66,9 @@ swift test --package-path Packages/OsaurusCore \
 This live driver lane is manual-only and skipped by default CI. It opens the
 existing local WebForm fixture in Safari, requires a GUI session and
 Accessibility permission, and asserts loop success, AX end states, no cloud
-vision use, consequential submit confirmation, filled fields, accepted terms,
-and submitted status. To avoid reading unrelated browser tabs, it skips when
+vision use, exact one-shot submit confirmation, post-approval snapshot
+revalidation, filled fields, accepted terms, structured form evidence, and
+submitted status. To avoid reading unrelated browser tabs, it skips when
 Safari is already running; close Safari first before running the proof.
 For deterministic `file://` submission, the test stages a temporary local copy
 with `method="get"` and `action="submitted.html"`; the committed fixture is not
@@ -102,6 +103,7 @@ swiftlint lint Packages/OsaurusCore/Tests/ComputerUse/ComputerUseEvidencePackTes
 | Custom-agent opt-in only; Default agent cannot use `computer_use` | `ComputerUseEvidencePackTests.testComputerUseToolIsCustomAgentOptInOnly` |
 | AX-first; no screenshot/cloud path when AX resolves the task | `ComputerUseEvidencePackTests.testAxResolvedRunStaysAxOnlyAndDoesNotUseScreenshots`, `PerceptionTests`, `ComputerUseLoopRunTests` empty-AX escalation cases |
 | Boring web-form loop plumbing in a deterministic mock AX scene: fill fields, accept terms, resolve the submit button, require consequential-action confirmation, and observe the submitted-state snapshot | `ComputerUseEvidencePackTests.testBrowserFormLoopFillsFieldsAndSubmitsDeterministically` |
+| Run-level stop-before-submit cannot be bypassed by autonomous mode or approve-remaining; plain Return/Enter and HID-risk newline typing are covered; secure values stay out of approval labels; stale approval and cancellation cause no driver action | `ComputerUseLoopRunTests` browser-submission cases, `ComputerUsePromptQueueTests.testOneShotSubmissionApprovalCannotEnableApproveRemaining` |
 | Local web-form proof lab: committed static pages, deterministic loop, AX-only perceive, trusted edit actions, consequential submit confirmation, verify counters, and command-log privacy scan | `Packages/OsaurusCore/Tests/ComputerUse/Fixtures/WebForm/`, `ComputerUseEvidencePackTests.testBrowserFormLoopFillsFieldsAndSubmitsDeterministically`, `ComputerUseEvidencePackTests.testWebFormFixtureIsLocalOnlyAndMatchesProofControls`, `scripts/evals/assert-computer-use-web-form-evidence-privacy.py` |
 | Dangerous-app confirm guardrail | `ComputerUseEvidencePackTests.testDangerousAppConfirmGuardrailCannotBeBypassedByAutonomousPreset`, `GateHardeningTests` |
 | Cloud vision requires consent and a `ScrubbedFrame` | `ComputerUseEvidencePackTests.testCloudVisionRequiresConsentAndScrubbedFrameRoute`, `CloudVisionScrubModeTests`, `PerceptionTests` |
@@ -161,10 +163,10 @@ The web-form lane is intentionally boring and local-only:
   and reference only same-directory files.
 - The proof test mirrors those controls into a `MockMacDriver` scene; no
   browser, server, network transport, or provider path is involved.
-- Scripted actions drive `ComputerUseLoop` through perceive, gate, act, and
-  verify. The edit actions run without confirmation under the trusted preset;
-  the submit button is still classified as consequential and approved by the
-  deterministic harness.
+- Scripted actions drive `ComputerUseLoop` through fill, verify,
+  ready-for-review, exact one-shot approval, snapshot revalidation, submit, and
+  post-submit verification. The edit actions run without confirmation under the
+  trusted preset; the submit boundary remains mandatory even under autonomous.
 - Command logs are written under `build/computer-use-evidence/` and scanned so
   typed form contents and image payload markers do not appear in generated
   evidence.

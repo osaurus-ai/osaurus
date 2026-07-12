@@ -101,7 +101,7 @@ struct ComputerUseConfirmOverlay: View {
                         .fixedSize(horizontal: false, vertical: true)
                 }
 
-                if let app = preview.appName, !app.isEmpty {
+                if preview.allowsApproveRemaining, let app = preview.appName, !app.isEmpty {
                     Toggle(isOn: $approveRemaining) {
                         Text(
                             String(
