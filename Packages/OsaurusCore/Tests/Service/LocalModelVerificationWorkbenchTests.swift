@@ -338,24 +338,30 @@ struct LocalModelVerificationWorkbenchTests {
         #expect(configEvidence.templateFallback == nil)
     }
 
-    @Test func runtimeOnlyJangTemplateSourceBlocksAllToolProof() async throws {
-        let engine = ScriptedVerificationEngine(transcripts: [transcript()])
-        try await withEnvironment(engine: engine, template: false) { service, model, _, _ in
-            try Data(
-                #"{"chat_template_source":"builtin_encoding_module","has_tokenizer_chat_template":false}"#.utf8
-            ).write(to: model.localDirectory.appendingPathComponent("jang_config.json"))
+    @Test func nestedRuntimeOnlyJangTemplateSourceBlocksAllToolProof() async throws {
+        for hasStaleTokenizerTemplate in [false, true] {
+            let engine = ScriptedVerificationEngine(transcripts: [transcript()])
+            try await withEnvironment(
+                engine: engine, template: hasStaleTokenizerTemplate
+            ) { service, model, _, _ in
+                try Data(
+                    #"{"chat":{"chat_template_source":"builtin_encoding_module","has_tokenizer_chat_template":false}}"#.utf8
+                ).write(to: model.localDirectory.appendingPathComponent("jang_config.json"))
 
-            let (artifact, _) = try await service.verify(model: model)
-            #expect(artifact.bundle.templateSource == "runtime:builtin_encoding_module")
-            #expect(artifact.bundle.templateFallback != nil)
-            for probe in [
-                LocalModelVerificationProbe.autoToolChoice, .schemaValidToolCall,
-                .toolResultContinuation, .secondToolCall,
-            ] {
-                #expect(artifact.probes.first { $0.probe == probe }?.status == .blocked)
+                let (artifact, _) = try await service.verify(model: model)
+                #expect(artifact.bundle.templateSource == "runtime:builtin_encoding_module")
+                #expect(artifact.bundle.templateFallback != nil)
+                for probe in [
+                    LocalModelVerificationProbe.autoToolChoice, .schemaValidToolCall,
+                    .toolResultContinuation, .secondToolCall,
+                ] {
+                    let row = artifact.probes.first { $0.probe == probe }
+                    #expect(row?.status == .blocked)
+                    #expect(row?.detail.contains("runtime-only chat-template source") == true)
+                }
+                #expect(artifact.classification != .proven)
+                #expect(await engine.capturedRequests().count == 1)
             }
-            #expect(artifact.classification != .proven)
-            #expect(await engine.capturedRequests().count == 1)
         }
     }
 
@@ -458,6 +464,10 @@ struct LocalModelVerificationWorkbenchTests {
             #expect(artifact.probes.first { $0.probe == .schemaValidToolCall }?.status == .blocked)
             #expect(artifact.probes.first { $0.probe == .toolResultContinuation }?.status == .blocked)
             #expect(artifact.probes.first { $0.probe == .secondToolCall }?.status == .blocked)
+            #expect(
+                artifact.probes.first { $0.probe == .autoToolChoice }?.detail
+                    .contains("contains no chat-template content") == true
+            )
             #expect(artifact.classification == .failed)
         }
     }

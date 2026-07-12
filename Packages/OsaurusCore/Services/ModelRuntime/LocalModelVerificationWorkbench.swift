@@ -473,6 +473,11 @@ enum LocalModelBundleInspector {
         let contentURL: URL
     }
 
+    private enum BooleanLookup {
+        case missing
+        case value(Bool)
+    }
+
     static func inspect(
         directory: URL,
         cancellationCheck: () throws -> Void = { try Task.checkCancellation() }
@@ -681,11 +686,32 @@ enum LocalModelBundleInspector {
         keys: [String], in roots: [[String: Any]?], default defaultValue: Bool
     ) -> Bool {
         for root in roots.compactMap({ $0 }) {
-            for key in keys {
-                if let value = root[key] as? Bool { return value }
+            if case .value(let value) = recursiveFirstBool(
+                keys: Set(keys), object: root
+            ) {
+                return value
             }
         }
         return defaultValue
+    }
+
+    private static func recursiveFirstBool(
+        keys: Set<String>, object: Any
+    ) -> BooleanLookup {
+        if let dictionary = object as? [String: Any] {
+            for key in dictionary.keys.sorted() {
+                guard let value = dictionary[key] else { continue }
+                if keys.contains(key), let boolean = value as? Bool { return .value(boolean) }
+                let nested = recursiveFirstBool(keys: keys, object: value)
+                if case .value = nested { return nested }
+            }
+        } else if let array = object as? [Any] {
+            for value in array {
+                let nested = recursiveFirstBool(keys: keys, object: value)
+                if case .value = nested { return nested }
+            }
+        }
+        return .missing
     }
 
     private static func recursiveFirstString(keys: Set<String>, object: Any) -> String? {
@@ -962,15 +988,14 @@ actor LocalModelVerificationService {
             transcript: LocalModelLiveProbeTranscript?, error: String?, errorCode: String?
         ) = (nil, nil, nil)
         if bundle.templateFallback != nil {
+            let detail = bundle.templateSource.hasPrefix("runtime:")
+                ? "The runtime-only chat-template source is not digest-bound or authoritatively pinned; dependent tool evidence remains unproven."
+                : "The bundle contains no chat-template content; dependent tool evidence remains unproven."
             for probe in [
                 LocalModelVerificationProbe.autoToolChoice, .schemaValidToolCall,
                 .toolResultContinuation, .secondToolCall,
             ] {
-                rows.append(row(
-                    probe,
-                    .blocked,
-                    "The bundle has no declared chat template; dependent tool evidence remains unproven."
-                ))
+                rows.append(row(probe, .blocked, detail))
             }
         } else {
             let tool = fixtureTool()
