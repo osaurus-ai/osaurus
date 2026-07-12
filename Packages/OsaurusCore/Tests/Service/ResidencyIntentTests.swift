@@ -178,6 +178,60 @@ struct ResidencyIntentTests {
         #expect(params.loadIntent == .background)
     }
 
+    // MARK: - The intent must survive the trip, and must expire
+
+    @Test("Copying a request keeps its background flag")
+    func copyHelpersPreserveBackgroundIntent() throws {
+        let src = try Self.source("Models/API/OpenAIAPI.swift")
+
+        // `withModel` and `withContext` rebuild the request field by field. Both
+        // already carry the other local-only flags. Omitting this one silently
+        // PROMOTES a background request to interactive — and interactive requests
+        // are the ones allowed to evict a model someone is using. A dropped flag
+        // here undoes the entire guard, quietly, with no failing test anywhere.
+        let copies = src.components(separatedBy: "copy.backgroundModelLoad = backgroundModelLoad")
+            .count - 1
+        let helpers = src.components(separatedBy: "copy.warmupPrefill = warmupPrefill").count - 1
+        #expect(helpers == 2, "expected withModel + withContext to copy local-only flags")
+        #expect(
+            copies == helpers,
+            """
+            \(helpers) request-copy helpers but only \(copies) copy \
+            `backgroundModelLoad`. A helper that drops it turns background \
+            housekeeping back into an eviction-entitled interactive request.
+            """
+        )
+    }
+
+    @Test("The user's warm-up privilege is one-shot, not permanent")
+    func userIntentGrantIsConsumed() throws {
+        let src = try Self.source("Services/Chat/ChatWarmupController.swift")
+
+        // `userIntentWarmupModel` records "the user just picked this by hand", which
+        // entitles the follow-up warm-up to displace a resident model. It used to be
+        // set and never cleared — so "the user picked A once" silently became "any
+        // warm-up of A, forever, may evict", and a re-warm minutes later, triggered
+        // by nothing the user did, could still unload an API client's model. The
+        // grant has to expire with the intent that created it.
+        #expect(
+            src.contains("private func consumeUserIntent(for model: String) -> Bool"),
+            "the user-intent grant must be consumed, not merely compared against"
+        )
+        #expect(
+            src.contains("userIntentWarmupModel = nil"),
+            "consuming the grant must clear it"
+        )
+
+        // And it must be resolved once and threaded, not re-derived at each use —
+        // two independent comparisons against a mutable field can disagree.
+        #expect(src.contains("let userIntent = consumeUserIntent(for: payload.model)"))
+        #expect(src.contains("request.backgroundModelLoad = !userIntent"))
+        #expect(
+            !src.contains("payload.model != userIntentWarmupModel"),
+            "no site may re-derive user intent by comparing the raw field"
+        )
+    }
+
     // MARK: - The refusal is legible
 
     @Test("A refusal says which model it protected and why")

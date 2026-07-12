@@ -842,7 +842,24 @@ public actor ModelRuntime {
     /// per-model `unload` call internally waits for the lease to drop before
     /// freeing buffers, so this method is safe to call with a stale `activeNames`
     /// snapshot — at worst the unload is briefly deferred, never a crash.
-    func unloadModelsNotIn(_ activeNames: Set<String>) async {
+    ///
+    /// - Parameter skipIfLoadInFlight: for housekeeping callers (residency-switch
+    ///   GC). A model that is *loading* is in `loadingTasks`, not yet in
+    ///   `modelCache`, and holds no lease — so it is invisible to both the
+    ///   `activeNames` snapshot and the lease check, and GC will happily tear
+    ///   down the runtime around it. Callers used to guard this by probing
+    ///   `hasLoadInFlight()` first, which is check-then-act: the probe returns,
+    ///   the actor yields, a load registers, and the GC proceeds anyway.
+    ///   Passing `true` moves that decision inside the actor, into the same
+    ///   synchronous segment as the `modelCache` read below.
+    func unloadModelsNotIn(
+        _ activeNames: Set<String>,
+        skipIfLoadInFlight: Bool = false
+    ) async {
+        if skipIfLoadInFlight, hasLoadInFlight() {
+            genLog.info("GC: skipping residency sweep — a model load is in flight")
+            return
+        }
         let leaseHeld = await ModelLease.shared.activeNames()
         let keep = activeNames.union(leaseHeld)
         let toUnload = modelCache.keys.filter { !keep.contains($0) }

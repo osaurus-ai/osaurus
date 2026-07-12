@@ -160,17 +160,16 @@ extension ChatSession: ChatWarmupSessionContext {
     /// previous local model should not stay resident just because the user
     /// moved off local models entirely.
     func performModelResidencySwitch(evictOthers: Bool) async {
-        // Guards the *eviction* below, which is an explicit unload and so isn't
-        // covered by the runtime's load-intent refusal. Still a best-effort
-        // check-then-act — it narrows the window rather than closing it — but
-        // tearing down residency while another window's or an API client's load
-        // is materializing is exactly the 94 GB HY3 death we saw live. The
-        // preload further down needs no probe: it passes `.background` and the
-        // runtime refuses atomically.
-        if await ModelRuntime.shared.hasLoadInFlight() { return }
+        // The GC below is an explicit unload, not a load, so the runtime's
+        // load-intent refusal can't cover it — but the decision still has to be
+        // made *inside* the actor. `skipIfLoadInFlight` does that: a model that
+        // is mid-load is in `loadingTasks`, not `modelCache`, and holds no lease,
+        // so it is invisible to both the window snapshot and the lease check, and
+        // a sweep would tear the runtime down around it. That is the 94 GB HY3
+        // load we watched die to a stale-selection warm-up.
         if evictOthers {
             let active = ChatWindowManager.shared.activeLocalModelNames()
-            await ModelRuntime.shared.unloadModelsNotIn(active)
+            await ModelRuntime.shared.unloadModelsNotIn(active, skipIfLoadInFlight: true)
         }
 
         guard !ChatConfigurationStore.load().warmModelsOnLoad else { return }

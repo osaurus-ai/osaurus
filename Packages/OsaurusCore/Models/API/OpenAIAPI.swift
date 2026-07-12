@@ -849,6 +849,10 @@ struct ChatCompletionRequest: Codable, Sendable {
         copy.remoteAgentProviderId = remoteAgentProviderId
         copy.suppressProgressUI = suppressProgressUI
         copy.warmupPrefill = warmupPrefill
+        // Must be copied with the other local-only flags. Dropping it silently
+        // promotes a background request back to interactive — and an interactive
+        // request is allowed to evict the model someone is using.
+        copy.backgroundModelLoad = backgroundModelLoad
         copy.logprobs = logprobs
         copy.top_logprobs = top_logprobs
         return copy
@@ -893,6 +897,10 @@ struct ChatCompletionRequest: Codable, Sendable {
         copy.remoteAgentProviderId = remoteAgentProviderId
         copy.suppressProgressUI = suppressProgressUI
         copy.warmupPrefill = warmupPrefill
+        // Must be copied with the other local-only flags. Dropping it silently
+        // promotes a background request back to interactive — and an interactive
+        // request is allowed to evict the model someone is using.
+        copy.backgroundModelLoad = backgroundModelLoad
         copy.logprobs = logprobs
         copy.top_logprobs = top_logprobs
         return copy
