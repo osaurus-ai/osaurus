@@ -23,9 +23,10 @@ public final class ProductHuntLaunchCampaign {
     /// local calendar date. Verified against ISO-8601 parses in tests.
     nonisolated public static let windowOpensAt = Date(timeIntervalSince1970: 1_783_926_060)
 
-    /// 2026-07-15T07:01:00Z — exactly 48 hours after open. The interval is
-    /// half-open (`open <= now < close`), so this instant itself is closed.
-    nonisolated public static let windowClosesAt = Date(timeIntervalSince1970: 1_784_098_860)
+    /// 2026-07-14T07:01:00Z — exactly 24 hours after open (Product Hunt
+    /// launches run for one day). The interval is half-open
+    /// (`open <= now < close`), so this instant itself is closed.
+    nonisolated public static let windowClosesAt = Date(timeIntervalSince1970: 1_784_012_460)
 
     /// Product Hunt launch page, opened by the dialog's primary button.
     nonisolated public static let launchURL = URL(string: "https://links.osaurus.ai/ph")!

@@ -39,9 +39,9 @@ struct ProductHuntLaunchCampaignTests {
     @Test func windowBounds_match_spec_utc_instants() {
         let iso = ISO8601DateFormatter()
         #expect(iso.date(from: "2026-07-13T07:01:00Z") == open)
-        #expect(iso.date(from: "2026-07-15T07:01:00Z") == close)
-        // 48-hour window.
-        #expect(close.timeIntervalSince(open) == 48 * 3600)
+        #expect(iso.date(from: "2026-07-14T07:01:00Z") == close)
+        // 24-hour window — Product Hunt launches run for one day.
+        #expect(close.timeIntervalSince(open) == 24 * 3600)
     }
 
     // MARK: - Time boundaries (half-open interval)
