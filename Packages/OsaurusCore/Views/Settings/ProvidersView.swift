@@ -1261,6 +1261,10 @@ private struct ProviderEditSheet: View {
 
     @State private var isTesting: Bool = false
     @State private var testResult: TestResult?
+    @State private var testResultFingerprint: String?
+    @State private var probeGate = MCPProviderProbeGate()
+    @State private var importedSetupRequiresProbe = false
+    @State private var showImportConfiguration = false
     @State private var showAdvanced: Bool = false
 
     @State private var isSigningIn: Bool = false
@@ -1357,6 +1361,16 @@ private struct ProviderEditSheet: View {
                 .stroke(themeManager.currentTheme.primaryBorder, lineWidth: 1)
         )
         .onAppear { loadProvider() }
+        .sheet(isPresented: $showImportConfiguration) {
+            MCPConfigurationImportSheet { imported in
+                applyImportedConfiguration(imported)
+            }
+        }
+        .onChange(of: currentProbeFingerprint) { _, fingerprint in
+            guard testResultFingerprint != fingerprint else { return }
+            testResult = nil
+            testResultFingerprint = nil
+        }
     }
 
     @ViewBuilder
@@ -1563,7 +1577,7 @@ private struct ProviderEditSheet: View {
                 Group {
                     if isTesting {
                         ProgressView().scaleEffect(0.6)
-                    } else if let result = testResult {
+                    } else if let result = currentTestResult {
                         switch result {
                         case .success:
                             Image(systemName: "checkmark.circle.fill")
@@ -1579,7 +1593,7 @@ private struct ProviderEditSheet: View {
                 }
                 .frame(width: 16, height: 16)
 
-                if let result = testResult {
+                if let result = currentTestResult {
                     switch result {
                     case .success(let probe):
                         Text(
@@ -2207,6 +2221,21 @@ private struct ProviderEditSheet: View {
 
     private var configureCustomBody: some View {
         VStack(alignment: .leading, spacing: 16) {
+            HStack {
+                Spacer()
+                Button {
+                    showImportConfiguration = true
+                } label: {
+                    Label {
+                        Text("Import Configuration", bundle: .module)
+                    } icon: {
+                        Image(systemName: "square.and.arrow.down")
+                    }
+                        .font(.system(size: 12, weight: .medium))
+                }
+                .buttonStyle(.borderless)
+            }
+
             EditorCard(title: "Connection", icon: "link") {
                 VStack(alignment: .leading, spacing: 14) {
                     MCPStyledTextField(
@@ -2260,9 +2289,25 @@ private struct ProviderEditSheet: View {
                 stdioEnvCard
             }
 
+            if importedSetupNeedsProbe {
+                HStack(alignment: .top, spacing: 8) {
+                    Image(systemName: "checkmark.shield.fill")
+                        .foregroundColor(themeManager.currentTheme.accentColor)
+                    Text(
+                        "Test this imported configuration before saving it.",
+                        bundle: .module
+                    )
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundColor(themeManager.currentTheme.secondaryText)
+                }
+                .padding(10)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(themeManager.currentTheme.accentColor.opacity(0.08))
+            }
+
             advancedCard
 
-            if let result = testResult {
+            if let result = currentTestResult {
                 probeResultCard(result.probeResult)
             }
         }
@@ -2858,7 +2903,7 @@ private struct ProviderEditSheet: View {
     }
 
     private var testResultColor: Color {
-        guard let result = testResult else { return themeManager.currentTheme.secondaryText }
+        guard let result = currentTestResult else { return themeManager.currentTheme.secondaryText }
         switch result {
         case .success: return themeManager.currentTheme.successColor
         case .failure: return themeManager.currentTheme.errorColor
@@ -2866,7 +2911,7 @@ private struct ProviderEditSheet: View {
     }
 
     private var testResultBackground: Color {
-        guard let result = testResult else { return themeManager.currentTheme.tertiaryBackground }
+        guard let result = currentTestResult else { return themeManager.currentTheme.tertiaryBackground }
         switch result {
         case .success: return themeManager.currentTheme.successColor.opacity(0.12)
         case .failure: return themeManager.currentTheme.errorColor.opacity(0.12)
@@ -2875,12 +2920,21 @@ private struct ProviderEditSheet: View {
 
     private var canSave: Bool {
         guard !name.trimmingCharacters(in: .whitespaces).isEmpty else { return false }
+        let hasRequiredFields: Bool
         switch transport {
         case .http:
-            return !url.trimmingCharacters(in: .whitespaces).isEmpty
+            hasRequiredFields = !url.trimmingCharacters(in: .whitespaces).isEmpty
         case .stdio:
-            return !command.trimmingCharacters(in: .whitespaces).isEmpty
+            hasRequiredFields = !command.trimmingCharacters(in: .whitespaces).isEmpty
         }
+        guard hasRequiredFields else { return false }
+        return !importedSetupRequiresProbe
+            || probeGate.hasCurrentSuccess(fingerprint: currentProbeFingerprint)
+    }
+
+    private var importedSetupNeedsProbe: Bool {
+        importedSetupRequiresProbe
+            && !probeGate.hasCurrentSuccess(fingerprint: currentProbeFingerprint)
     }
 
     private func loadProvider() {
@@ -2947,31 +3001,73 @@ private struct ProviderEditSheet: View {
         phase = .configureCustom
     }
 
+    private func applyImportedConfiguration(_ imported: MCPImportedServerConfiguration) {
+        name = imported.name
+        transport = imported.transport
+        url = imported.url
+        streamingEnabled = imported.streamingEnabled
+        command = imported.command
+        argsString = ShellArgs.join(imported.args)
+        workingDirectory = imported.workingDirectory ?? ""
+        executionHost = .sandbox
+        authType = .none
+        token = ""
+        clearBearerToken = false
+        oauthConfig = nil
+        customHeaders = imported.headers.map {
+            HeaderEntry(key: $0.key, value: $0.value, isSecret: $0.isSecret)
+        }
+        envEntries = imported.environment.map {
+            HeaderEntry(key: $0.key, value: $0.value, isSecret: $0.isSecret)
+        }
+        testResult = nil
+        testResultFingerprint = nil
+        probeGate.invalidate()
+        isTesting = false
+        importedSetupRequiresProbe = true
+        phase = .configureCustom
+    }
+
     private func testConnection() {
+        let context = makeProbeContext()
+        let attempt = probeGate.start(fingerprint: context.fingerprint)
         isTesting = true
         testResult = nil
+        testResultFingerprint = nil
 
         Task {
-            let provider = makeProbeProvider()
             let result: MCPProviderProbeResult
-            switch transport {
+            switch context.provider.transport {
             case .http:
                 result = await MCPProviderProbeService.probeHTTP(
-                    providerId: provider.id,
-                    name: provider.name,
-                    url: provider.url,
-                    token: httpTestToken(),
-                    headers: buildHeaders(),
-                    streamingEnabled: provider.streamingEnabled,
-                    discoveryTimeout: provider.discoveryTimeout
+                    providerId: context.provider.id,
+                    name: context.provider.name,
+                    url: context.provider.url,
+                    token: context.httpToken,
+                    headers: context.httpHeaders,
+                    streamingEnabled: context.provider.streamingEnabled,
+                    discoveryTimeout: context.provider.discoveryTimeout
                 )
             case .stdio:
-                result = await MCPProviderProbeService.probeStdio(provider: provider)
+                result = await MCPProviderProbeService.probeStdio(
+                    provider: context.provider,
+                    secretEnvOverrides: context.secretEnvironmentValues
+                )
             }
-            MCPProviderHealthSnapshotStore.record(result, for: provider)
 
             await MainActor.run {
+                guard attempt.generation == probeGate.generation else { return }
+                guard probeGate.accept(
+                    attempt,
+                    currentFingerprint: currentProbeFingerprint,
+                    succeeded: result.succeeded
+                ) else {
+                    isTesting = false
+                    return
+                }
+                MCPProviderHealthSnapshotStore.record(result, for: context.provider)
                 testResult = result.succeeded ? .success(result) : .failure(result)
+                testResultFingerprint = context.fingerprint
                 isTesting = false
             }
         }
@@ -3051,14 +3147,18 @@ private struct ProviderEditSheet: View {
     private func makeProbeProvider() -> MCPProvider {
         switch transport {
         case .http:
+            let normalized = MCPProviderOperationsFieldNormalizer.normalize(
+                customHeaders.map { ($0.key, $0.value, $0.isSecret) }
+            )
             return MCPProvider(
                 id: effectiveProviderId,
                 name: name.isEmpty ? "HTTP MCP probe" : name,
                 url: url.trimmingCharacters(in: .whitespaces),
-                customHeaders: buildHeaders(),
+                customHeaders: normalized.regular,
                 streamingEnabled: streamingEnabled,
                 discoveryTimeout: discoveryTimeout,
                 toolCallTimeout: toolCallTimeout,
+                secretHeaderKeys: normalized.secretKeys,
                 authType: authType,
                 transport: .http
             )
@@ -3067,7 +3167,70 @@ private struct ProviderEditSheet: View {
         }
     }
 
+    private struct ProbeContext {
+        let provider: MCPProvider
+        let fingerprint: String
+        let httpToken: String?
+        let httpHeaders: [String: String]
+        let secretEnvironmentValues: [String: String]
+    }
+
+    private var currentProbeFingerprint: String {
+        let provider = makeProbeProvider()
+        return MCPProviderSetupFingerprint.make(
+            provider: provider,
+            bearerToken: authType == .bearerToken ? token : nil,
+            secretHeaderValues: secretHeaderValues(),
+            secretEnvironmentValues: secretEnvironmentValues()
+        )
+    }
+
+    private var currentTestResult: TestResult? {
+        guard testResultFingerprint == currentProbeFingerprint else { return nil }
+        return testResult
+    }
+
+    private func makeProbeContext() -> ProbeContext {
+        let provider = makeProbeProvider()
+        let secretHeaders = secretHeaderValues()
+        let secretEnvironment = secretEnvironmentValues()
+        return ProbeContext(
+            provider: provider,
+            fingerprint: MCPProviderSetupFingerprint.make(
+                provider: provider,
+                bearerToken: authType == .bearerToken ? token : nil,
+                secretHeaderValues: secretHeaders,
+                secretEnvironmentValues: secretEnvironment
+            ),
+            httpToken: httpTestToken(),
+            httpHeaders: buildHeaders(),
+            secretEnvironmentValues: secretEnvironment
+        )
+    }
+
+    private func secretHeaderValues() -> [String: String] {
+        Dictionary(
+            customHeaders
+                .filter { $0.isSecret && !$0.key.isEmpty && !$0.value.isEmpty }
+                .map { ($0.key, $0.value) },
+            uniquingKeysWith: { _, latest in latest }
+        )
+    }
+
+    private func secretEnvironmentValues() -> [String: String] {
+        Dictionary(
+            envEntries
+                .filter { $0.isSecret && !$0.key.isEmpty && !$0.value.isEmpty }
+                .map { ($0.key, $0.value) },
+            uniquingKeysWith: { _, latest in latest }
+        )
+    }
+
     private func save() {
+        if importedSetupRequiresProbe
+            && !probeGate.hasCurrentSuccess(fingerprint: currentProbeFingerprint) {
+            return
+        }
         let trimmedName = name.trimmingCharacters(in: .whitespaces)
         let trimmedURL = url.trimmingCharacters(in: .whitespaces)
 

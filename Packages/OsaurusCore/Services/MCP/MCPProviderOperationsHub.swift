@@ -32,16 +32,16 @@ public struct MCPProviderLaunchPlan: Sendable, Equatable {
         var lines = [
             "Launch plan: \(title)",
             "Status: \(status.rawValue)",
-            "Detail: \(detail)",
+            "Detail: \(transport.rawValue) launch preflight is \(status.rawValue); review on-screen details in Osaurus.",
         ]
-        if let redactedCommandLine {
-            lines.append("Command: \(redactedCommandLine)")
+        if redactedCommandLine != nil {
+            lines.append("Command: configured")
         }
-        if let resolvedExecutablePath {
-            lines.append("Resolved executable: \(resolvedExecutablePath)")
+        if resolvedExecutablePath != nil {
+            lines.append("Resolved executable: present")
         }
         if let workingDirectory, !workingDirectory.isEmpty {
-            lines.append("Working directory: \(workingDirectory)")
+            lines.append("Working directory: configured")
         }
         if !configuredEnvironmentKeys.isEmpty {
             lines.append("Environment keys: \(configuredEnvironmentKeys.joined(separator: ", "))")
@@ -53,10 +53,11 @@ public struct MCPProviderLaunchPlan: Sendable, Equatable {
             lines.append("Missing secret env keys: \(missingSecretEnvironmentKeys.joined(separator: ", "))")
         }
         if let searchPath, !searchPath.isEmpty {
-            lines.append("PATH searched: \(searchPath)")
+            let entryCount = searchPath.split(separator: ":", omittingEmptySubsequences: true).count
+            lines.append("PATH entries searched: \(entryCount)")
         }
         if !warnings.isEmpty {
-            lines.append("Warnings: \(warnings.joined(separator: "; "))")
+            lines.append("Warning count: \(warnings.count)")
         }
         return lines.joined(separator: "\n")
     }

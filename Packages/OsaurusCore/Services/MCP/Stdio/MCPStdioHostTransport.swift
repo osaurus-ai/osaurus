@@ -49,7 +49,10 @@
         /// lifetime.
         public let transport: StdioTransport
 
-        public init(provider: MCPProvider) throws {
+        public init(
+            provider: MCPProvider,
+            secretEnvOverrides: [String: String] = [:]
+        ) throws {
             guard !provider.command.isEmpty else {
                 throw MCPStdioTransportError.missingCommand
             }
@@ -57,7 +60,10 @@
             self.command = provider.command
             self.args = provider.args
 
-            let mergedEnv = Self.buildEnv(provider: provider)
+            let mergedEnv = Self.buildEnv(
+                provider: provider,
+                secretEnvOverrides: secretEnvOverrides
+            )
             let executablePath = try Self.resolveExecutablePath(
                 command: Self.expandUserPath(provider.command),
                 env: mergedEnv
@@ -96,9 +102,15 @@
         /// Process env = inherited app env merged with the provider's
         /// own env (plain + Keychain-resolved secrets). Provider entries
         /// win on key conflicts.
-        private static func buildEnv(provider: MCPProvider) -> [String: String] {
+        private static func buildEnv(
+            provider: MCPProvider,
+            secretEnvOverrides: [String: String]
+        ) -> [String: String] {
             var env = ProcessInfo.processInfo.environment
-            for (key, value) in provider.resolvedEnv() {
+            for (key, value) in MCPStdioEnvironmentResolver.providerEnvironment(
+                provider: provider,
+                secretEnvOverrides: secretEnvOverrides
+            ) {
                 env[key] = value
             }
             return env

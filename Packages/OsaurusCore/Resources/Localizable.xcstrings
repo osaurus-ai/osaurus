@@ -13,6 +13,63 @@
     "Add HTTP/SSE or stdio MCP providers" : {
       "shouldTranslate" : false
     },
+    "Choose JSON" : {
+      "shouldTranslate" : false
+    },
+    "Check the provider configuration and process logs, then test again." : {
+      "shouldTranslate" : false
+    },
+    "Copy import summary" : {
+      "shouldTranslate" : false
+    },
+    "No stdio command is configured." : {
+      "shouldTranslate" : false
+    },
+    "The configured stdio command was not found." : {
+      "shouldTranslate" : false
+    },
+    "The configured stdio process could not be started." : {
+      "shouldTranslate" : false
+    },
+    "The sandbox runtime is unavailable." : {
+      "shouldTranslate" : false
+    },
+    "The stdio MCP server connection failed." : {
+      "shouldTranslate" : false
+    },
+    "The stdio MCP server rejected authentication." : {
+      "shouldTranslate" : false
+    },
+    "The stdio MCP server returned an invalid protocol response." : {
+      "shouldTranslate" : false
+    },
+    "Use an absolute executable path or select Sandbox." : {
+      "shouldTranslate" : false
+    },
+    "Headers" : {
+      "shouldTranslate" : false
+    },
+    "Host paths" : {
+      "shouldTranslate" : false
+    },
+    "Import Configuration" : {
+      "shouldTranslate" : false
+    },
+    "Import MCP Configuration" : {
+      "shouldTranslate" : false
+    },
+    "MCP JSON" : {
+      "shouldTranslate" : false
+    },
+    "Review a server before adding it" : {
+      "shouldTranslate" : false
+    },
+    "Test this imported configuration before saving it." : {
+      "shouldTranslate" : false
+    },
+    "Use Configuration" : {
+      "shouldTranslate" : false
+    },
     "Arguments present (invalid JSON redacted)" : {
       "shouldTranslate" : false
     },

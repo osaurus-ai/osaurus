@@ -23,6 +23,7 @@ public enum MCPProviderProbeReasonCode: String, Codable, Sendable, Equatable {
     case commandNotFound
     case sandboxUnavailable
     case spawnFailed
+    case processExited
     case timeout
     case authRequired
     case protocolError
@@ -237,6 +238,14 @@ enum MCPProviderProbeRedactor {
     }
 }
 
+private struct MCPStdioProbeProcessExitError: LocalizedError, Sendable {
+    let status: Int32
+
+    var errorDescription: String? {
+        "The stdio MCP process exited before setup completed (status \(status))."
+    }
+}
+
 public enum MCPProviderProbeService {
     public static func probeHTTP(
         providerId: UUID,
@@ -349,7 +358,10 @@ public enum MCPProviderProbeService {
         )
     }
 
-    public static func probeStdio(provider: MCPProvider) async -> MCPProviderProbeResult {
+    public static func probeStdio(
+        provider: MCPProvider,
+        secretEnvOverrides: [String: String] = [:]
+    ) async -> MCPProviderProbeResult {
         let startedAt = Date()
         guard !provider.command.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             return MCPProviderProbeResult.failure(
@@ -363,12 +375,16 @@ public enum MCPProviderProbeService {
         }
 
         do {
-            let (transport, cleanup) = try await makeStdioTransport(for: provider)
+            let (transport, cleanup, processExitSignal) = try await makeStdioTransport(
+                for: provider,
+                secretEnvOverrides: secretEnvOverrides
+            )
             return await runProbe(
                 provider: provider,
                 transport: transport,
                 startedAt: startedAt,
-                cleanup: cleanup
+                cleanup: cleanup,
+                processExitSignal: processExitSignal
             )
         } catch {
             return mapFailure(provider: provider, startedAt: startedAt, stage: .spawn, error: error)
@@ -381,9 +397,12 @@ public enum MCPProviderProbeService {
             let endpoint = MCPProviderProbeRedactor.safeHTTPURLForDiagnostics(provider.url)
             return provider.streamingEnabled ? "HTTP/SSE \(endpoint)" : "HTTP \(endpoint)"
         case .stdio:
-            let args = ShellArgs.join(provider.args)
-            let command = args.isEmpty ? provider.command : "\(provider.command) \(args)"
-            return "stdio \(provider.executionHost.rawValue) \(command)"
+            let pathValues = [provider.command] + provider.args + [provider.workingDirectory ?? ""]
+            let referencesHostPath = pathValues.contains {
+                $0.hasPrefix("/") || $0.hasPrefix("~/")
+            }
+            return "stdio \(provider.executionHost.rawValue) command=configured "
+                + "arguments=\(provider.args.count) host-path-reference=\(referencesHostPath)"
         }
     }
 
@@ -398,14 +417,28 @@ public enum MCPProviderProbeService {
         provider: MCPProvider,
         transport: any MCP.Transport,
         startedAt: Date,
-        cleanup: (@Sendable () async -> Void)? = nil
+        cleanup: (@Sendable () async -> Void)? = nil,
+        processExitSignal: MCPAsyncFailureSignal? = nil
     ) async -> MCPProviderProbeResult {
         let client = MCP.Client(name: "Osaurus", version: "1.0.0")
         do {
-            try await withTimeout(seconds: provider.discoveryTimeout) {
+            try await MCPAsyncTimeout.run(
+                seconds: provider.discoveryTimeout,
+                failureSignal: processExitSignal
+            ) {
                 _ = try await client.connect(transport: transport)
             }
-            let tools = try await withTimeout(seconds: provider.discoveryTimeout) {
+        } catch {
+            await client.disconnect()
+            if let cleanup { await cleanup() }
+            return mapFailure(provider: provider, startedAt: startedAt, stage: .connect, error: error)
+        }
+
+        do {
+            let tools = try await MCPAsyncTimeout.run(
+                seconds: provider.discoveryTimeout,
+                failureSignal: processExitSignal
+            ) {
                 try await client.listAllTools()
             }
             // Probes are short-lived by contract: disconnect the client so
@@ -425,19 +458,27 @@ public enum MCPProviderProbeService {
             if let cleanup {
                 await cleanup()
             }
-            return mapFailure(provider: provider, startedAt: startedAt, stage: .connect, error: error)
+            return mapFailure(provider: provider, startedAt: startedAt, stage: .listTools, error: error)
         }
     }
 
     private static func makeStdioTransport(
-        for provider: MCPProvider
-    ) async throws -> (any MCP.Transport, @Sendable () async -> Void) {
+        for provider: MCPProvider,
+        secretEnvOverrides: [String: String]
+    ) async throws -> (any MCP.Transport, @Sendable () async -> Void, MCPAsyncFailureSignal) {
+        let processExitSignal = MCPAsyncFailureSignal()
         switch provider.executionHost {
         case .host:
             #if canImport(Darwin)
-                let runner = try MCPStdioHostRunner(provider: provider)
+                let runner = try MCPStdioHostRunner(
+                    provider: provider,
+                    secretEnvOverrides: secretEnvOverrides
+                )
+                await runner.setProcessExitHandler { status in
+                    processExitSignal.fail(MCPStdioProbeProcessExitError(status: status))
+                }
                 try await runner.start()
-                return (runner.transport, { await runner.stop() })
+                return (runner.transport, { await runner.stop() }, processExitSignal)
             #else
                 throw MCPStdioTransportError.sandboxUnavailable
             #endif
@@ -464,9 +505,16 @@ public enum MCPProviderProbeService {
                     return (id, SandboxAgentProvisioner.linuxName(for: id.uuidString))
                 }
                 try await SandboxAgentProvisioner.shared.ensureProvisioned(agentId: agentId)
-                let runner = try SandboxStdioRunner(provider: provider, agentName: agentName)
+                let runner = try SandboxStdioRunner(
+                    provider: provider,
+                    agentName: agentName,
+                    secretEnvOverrides: secretEnvOverrides
+                )
+                await runner.setProcessExitHandler { status in
+                    processExitSignal.fail(MCPStdioProbeProcessExitError(status: status))
+                }
                 try await runner.start()
-                return (runner.transport, { await runner.stop() })
+                return (runner.transport, { await runner.stop() }, processExitSignal)
             #else
                 throw MCPStdioTransportError.sandboxUnavailable
             #endif
@@ -480,6 +528,17 @@ public enum MCPProviderProbeService {
         error: Error
     ) -> MCPProviderProbeResult {
         let message = error.localizedDescription
+
+        if error is MCPStdioProbeProcessExitError {
+            return failure(
+                provider: provider,
+                startedAt: startedAt,
+                stage: stage,
+                reasonCode: .processExited,
+                message: message,
+                action: L("Check the provider configuration and process logs, then test again.")
+            )
+        }
 
         if let mcpError = error as? MCPProviderError {
             switch mcpError {
@@ -514,7 +573,7 @@ public enum MCPProviderProbeService {
                     startedAt: startedAt,
                     stage: .configuration,
                     reasonCode: .missingCommand,
-                    message: message,
+                    message: L("No stdio command is configured."),
                     action: L("Enter a command before testing.")
                 )
             case .commandNotFound:
@@ -523,8 +582,8 @@ public enum MCPProviderProbeService {
                     startedAt: startedAt,
                     stage: .spawn,
                     reasonCode: .commandNotFound,
-                    message: message,
-                    action: L("Use a full executable path such as /opt/homebrew/bin/npx.")
+                    message: L("The configured stdio command was not found."),
+                    action: L("Use an absolute executable path or select Sandbox.")
                 )
             case .sandboxUnavailable:
                 return failure(
@@ -532,7 +591,7 @@ public enum MCPProviderProbeService {
                     startedAt: startedAt,
                     stage: .spawn,
                     reasonCode: .sandboxUnavailable,
-                    message: message,
+                    message: L("The sandbox runtime is unavailable."),
                     action: L("Switch to Host for trusted tools or start the sandbox runtime.")
                 )
             case .processSpawnFailed:
@@ -541,7 +600,7 @@ public enum MCPProviderProbeService {
                     startedAt: startedAt,
                     stage: .spawn,
                     reasonCode: .spawnFailed,
-                    message: message,
+                    message: L("The configured stdio process could not be started."),
                     action: L("Check the command, working directory, and environment.")
                 )
             }
@@ -569,7 +628,9 @@ public enum MCPProviderProbeService {
                 startedAt: startedAt,
                 stage: stage,
                 reasonCode: .authRequired,
-                message: message,
+                message: provider.transport == .stdio
+                    ? L("The stdio MCP server rejected authentication.")
+                    : message,
                 action: L("Sign in or save a token, then test again.")
             )
         }
@@ -584,7 +645,9 @@ public enum MCPProviderProbeService {
                 startedAt: startedAt,
                 stage: stage,
                 reasonCode: .protocolError,
-                message: message,
+                message: provider.transport == .stdio
+                    ? L("The stdio MCP server returned an invalid protocol response.")
+                    : message,
                 action: L("Verify the process speaks MCP JSON-RPC on stdin/stdout.")
             )
         }
@@ -594,7 +657,9 @@ public enum MCPProviderProbeService {
             startedAt: startedAt,
             stage: stage,
             reasonCode: .connectionFailed,
-            message: message,
+            message: provider.transport == .stdio
+                ? L("The stdio MCP server connection failed.")
+                : message,
             action: L("Copy the probe result and check the provider logs.")
         )
     }
@@ -617,23 +682,4 @@ public enum MCPProviderProbeService {
         )
     }
 
-    private static func withTimeout<T: Sendable>(
-        seconds: TimeInterval,
-        operation: @escaping @Sendable () async throws -> T
-    ) async throws -> T {
-        try await withThrowingTaskGroup(of: T.self) { group in
-            group.addTask {
-                try await operation()
-            }
-            group.addTask {
-                try await Task.sleep(nanoseconds: UInt64(seconds * 1_000_000_000))
-                throw MCPProviderError.timeout
-            }
-            guard let result = try await group.next() else {
-                throw MCPProviderError.timeout
-            }
-            group.cancelAll()
-            return result
-        }
-    }
 }

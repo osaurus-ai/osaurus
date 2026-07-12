@@ -44,6 +44,11 @@ struct MCPOperationsHubTests {
         #expect(plan.missingSecretEnvironmentKeys == ["MISSING_TOKEN"])
         #expect(plan.redactedCommandLine?.contains("secret-token") == false)
         #expect(plan.pasteboardText.contains("secret-value") == false)
+        #expect(!plan.pasteboardText.contains("/custom/bin"))
+        #expect(!plan.pasteboardText.contains("/Projects"))
+        #expect(!plan.pasteboardText.contains("server-filesystem"))
+        #expect(!plan.pasteboardText.contains("npx"))
+        #expect(plan.pasteboardText.contains("PATH entries searched: 1"))
     }
 
     @Test func duplicateHeaderAndEnvRowsNormalizeWithoutTrap() {

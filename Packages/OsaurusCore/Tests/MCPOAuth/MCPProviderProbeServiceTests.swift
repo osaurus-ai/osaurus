@@ -30,7 +30,8 @@ struct MCPProviderProbeServiceTests {
             authType: .none,
             transport: .stdio,
             executionHost: .host,
-            command: "fake-mcp"
+            command: "/Users/alice/private/fake-mcp",
+            args: ["--workspace", "/Users/alice/customer-data"]
         )
 
         let result = await MCPProviderProbeService.probeForTesting(
@@ -48,6 +49,10 @@ struct MCPProviderProbeServiceTests {
         let snapshot = MCPProviderHealthSnapshotStore.snapshot(providerId: provider.id)
         #expect(snapshot?.lastProbe.reasonCode == .succeeded)
         #expect(snapshot?.lastProbe.toolNames == ["fake_echo"])
+        #expect(!result.transportSummary.contains("/Users/alice"))
+        let persisted = try String(contentsOf: snapshotFile, encoding: .utf8)
+        #expect(!persisted.contains("/Users/alice"))
+        #expect(!persisted.contains("customer-data"))
         #expect(FileManager.default.fileExists(atPath: snapshotFile.path))
     }
 
@@ -68,6 +73,181 @@ struct MCPProviderProbeServiceTests {
         #expect(result.reasonCode == .missingCommand)
         #expect(result.stage == .configuration)
         #expect(result.action?.contains("command") == true)
+    }
+
+    @Test func failedStdioProbeDoesNotCopyOrPersistConfiguredPath() async throws {
+        let root = try makeTemporaryRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let snapshotFile = root.appendingPathComponent("mcp-health.json")
+        MCPProviderHealthSnapshotStore.overrideURL = snapshotFile
+        defer { MCPProviderHealthSnapshotStore.overrideURL = nil }
+        let privatePath = "/Users/alice/customer-work/missing-mcp"
+        let provider = MCPProvider(
+            name: "Missing fixture",
+            url: "",
+            authType: .none,
+            transport: .stdio,
+            executionHost: .host,
+            command: privatePath
+        )
+
+        let result = await MCPProviderProbeService.probeStdio(provider: provider)
+        MCPProviderHealthSnapshotStore.record(result, for: provider)
+        let persisted = try String(contentsOf: snapshotFile, encoding: .utf8)
+
+        #expect(result.reasonCode == .spawnFailed)
+        #expect(!result.pasteboardText.contains(privatePath))
+        #expect(!result.message.contains(privatePath))
+        #expect(!persisted.contains(privatePath))
+        #expect(!persisted.contains("customer-work"))
+    }
+
+    #if os(macOS)
+    @Test func hostStdioProbeReportsEarlyProcessExitWithoutWaitingForTimeout() async {
+        let provider = MCPProvider(
+            name: "Early exit fixture",
+            url: "",
+            discoveryTimeout: 5,
+            authType: .none,
+            transport: .stdio,
+            executionHost: .host,
+            command: "/bin/sh",
+            args: ["-c", "exit 42"]
+        )
+        let clock = ContinuousClock()
+        let started = clock.now
+
+        let result = await MCPProviderProbeService.probeStdio(provider: provider)
+
+        #expect(!result.succeeded)
+        #expect(result.reasonCode == .processExited)
+        #expect(result.stage == .connect)
+        #expect(result.message.contains("42"))
+        #expect(!result.pasteboardText.contains("exit 42"))
+        #expect(started.duration(to: clock.now) < .seconds(1))
+    }
+
+    @Test func hostStdioProbeUsesDraftSecretAndDiscoversFixtureTool() async {
+        let provider = MCPProvider(
+            name: "Host fixture",
+            url: "",
+            discoveryTimeout: 5,
+            authType: .none,
+            transport: .stdio,
+            executionHost: .host,
+            command: "/bin/sh",
+            args: ["-c", Self.hostFixtureScript],
+            secretEnvKeys: ["MCP_TEST_TOKEN"]
+        )
+
+        let result = await MCPProviderProbeService.probeStdio(
+            provider: provider,
+            secretEnvOverrides: ["MCP_TEST_TOKEN": "draft-secret"]
+        )
+
+        #expect(result.succeeded)
+        #expect(result.reasonCode == .succeeded)
+        #expect(result.toolNames == ["fixture_echo"])
+        #expect(!result.transportSummary.contains("/bin/sh"))
+        #expect(!result.transportSummary.contains(Self.hostFixtureScript))
+        #expect(!result.pasteboardText.contains("draft-secret"))
+    }
+
+    @Test func hostStdioFixtureExecutesToolAndTerminatesCleanly() async throws {
+        let provider = MCPProvider(
+            name: "Host fixture",
+            url: "",
+            discoveryTimeout: 5,
+            authType: .none,
+            transport: .stdio,
+            executionHost: .host,
+            command: "/bin/sh",
+            args: ["-c", Self.hostFixtureScript],
+            secretEnvKeys: ["MCP_TEST_TOKEN"]
+        )
+        let runner = try MCPStdioHostRunner(
+            provider: provider,
+            secretEnvOverrides: ["MCP_TEST_TOKEN": "draft-secret"]
+        )
+        try await runner.start()
+        let client = MCP.Client(name: "Osaurus fixture test", version: "1.0")
+
+        do {
+            _ = try await MCPAsyncTimeout.run(seconds: 5) {
+                try await client.connect(transport: runner.transport)
+            }
+            let result = try await MCPAsyncTimeout.run(seconds: 5) {
+                try await client.callTool(name: "fixture_echo", arguments: [:])
+            }
+            #expect(result.isError != true)
+            #expect(result.content == [.text(text: "fixture-ok", annotations: nil, _meta: nil)])
+            await client.disconnect()
+            await runner.stop()
+        } catch {
+            await client.disconnect()
+            await runner.stop()
+            throw error
+        }
+    }
+    #endif
+
+    @Test func timeoutReturnsWithoutWaitingForCancellationIgnoringOperation() async {
+        let clock = ContinuousClock()
+        let started = clock.now
+        do {
+            _ = try await MCPAsyncTimeout.run(seconds: 0.05) {
+                await withCheckedContinuation { continuation in
+                    DispatchQueue.global().asyncAfter(deadline: .now() + 1) {
+                        continuation.resume(returning: "late")
+                    }
+                }
+            }
+            Issue.record("Expected timeout")
+        } catch MCPProviderError.timeout {
+            // Expected.
+        } catch {
+            Issue.record("Unexpected error: \(error)")
+        }
+        #expect(started.duration(to: clock.now) < .milliseconds(500))
+    }
+
+    @Test func externalFailureSignalEndsOperationBeforeTimeout() async {
+        let signal = MCPAsyncFailureSignal()
+        let clock = ContinuousClock()
+        let started = clock.now
+        Task {
+            try? await Task.sleep(for: .milliseconds(25))
+            signal.fail(MCPProviderError.providerDisabled)
+        }
+
+        do {
+            _ = try await MCPAsyncTimeout.run(seconds: 5, failureSignal: signal) {
+                try await Task.sleep(for: .seconds(5))
+                return "late"
+            }
+            Issue.record("Expected process failure")
+        } catch MCPProviderError.providerDisabled {
+            // Expected.
+        } catch {
+            Issue.record("Unexpected error: \(error)")
+        }
+        #expect(started.duration(to: clock.now) < .milliseconds(500))
+    }
+
+    @Test func failureSignalLatchedBeforeObservationIsNotLost() async {
+        let signal = MCPAsyncFailureSignal()
+        signal.fail(MCPProviderError.providerDisabled)
+
+        do {
+            _ = try await MCPAsyncTimeout.run(seconds: 5, failureSignal: signal) {
+                "unexpected"
+            }
+            Issue.record("Expected the latched failure")
+        } catch MCPProviderError.providerDisabled {
+            // Expected.
+        } catch {
+            Issue.record("Unexpected error: \(error)")
+        }
     }
 
     @Test func capturePolicyRequiresExplicitOptInAndPermission() {
@@ -204,6 +384,26 @@ struct MCPProviderProbeServiceTests {
         }
         return found
     }
+
+    private static let hostFixtureScript = #"""
+    [ "$MCP_TEST_TOKEN" = "draft-secret" ] || exit 42
+    while IFS= read -r line; do
+      id=$(printf '%s' "$line" | sed -E 's/.*"id"[[:space:]]*:[[:space:]]*"([^"]+)".*/\1/')
+      case "$line" in
+        *notifications/initialized*)
+          ;;
+        *initialize*)
+          printf '{"jsonrpc":"2.0","id":"%s","result":{"protocolVersion":"2025-11-25","capabilities":{"tools":{}},"serverInfo":{"name":"fixture","version":"1.0"}}}\n' "$id"
+          ;;
+        *tools*list*)
+          printf '{"jsonrpc":"2.0","id":"%s","result":{"tools":[{"name":"fixture_echo","description":"Fixture echo","inputSchema":{"type":"object","properties":{}}}]}}\n' "$id"
+          ;;
+        *tools*call*)
+          printf '{"jsonrpc":"2.0","id":"%s","result":{"content":[{"type":"text","text":"fixture-ok"}],"isError":false}}\n' "$id"
+          ;;
+      esac
+    done
+    """#
 
     private func makeTemporaryRoot() throws -> URL {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(

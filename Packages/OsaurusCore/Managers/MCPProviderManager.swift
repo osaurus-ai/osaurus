@@ -267,7 +267,7 @@ public final class MCPProviderManager: ObservableObject {
             // stuck on "Connecting…" indefinitely. `discoverTools` already
             // uses `withTimeout` for the second leg of the handshake — we
             // mirror that for the first.
-            try await withTimeout(seconds: provider.discoveryTimeout) {
+            try await MCPAsyncTimeout.run(seconds: provider.discoveryTimeout) {
                 _ = try await client.connect(transport: transport)
             }
 
@@ -699,10 +699,10 @@ public final class MCPProviderManager: ObservableObject {
         let client = MCP.Client(name: "Osaurus", version: "1.0.0")
 
         do {
-            try await withTimeout(seconds: 10) {
+            try await MCPAsyncTimeout.run(seconds: 10) {
                 _ = try await client.connect(transport: transport)
             }
-            let tools = try await withTimeout(seconds: 10) {
+            let tools = try await MCPAsyncTimeout.run(seconds: 10) {
                 try await client.listAllTools()
             }
             stopStdioRunners(for: provider.id)
@@ -1138,7 +1138,7 @@ public final class MCPProviderManager: ObservableObject {
         // List tools with timeout, following pagination cursors so servers
         // that split tools/list across pages (e.g. Baserow, #1999) aren't
         // truncated to their first page.
-        let mcpTools = try await withTimeout(seconds: provider.discoveryTimeout) {
+        let mcpTools = try await MCPAsyncTimeout.run(seconds: provider.discoveryTimeout) {
             try await client.listAllTools()
         }
 
@@ -1185,26 +1185,6 @@ public final class MCPProviderManager: ObservableObject {
             ToolRegistry.shared.registerMCPTool(tool)
         }
         return tools
-    }
-
-    private func withTimeout<T: Sendable>(seconds: TimeInterval, operation: @escaping @Sendable () async throws -> T)
-        async throws -> T {
-        try await withThrowingTaskGroup(of: T.self) { group in
-            group.addTask {
-                try await operation()
-            }
-
-            group.addTask {
-                try await Task.sleep(nanoseconds: UInt64(seconds * 1_000_000_000))
-                throw MCPProviderError.timeout
-            }
-
-            guard let result = try await group.next() else {
-                throw MCPProviderError.timeout
-            }
-            group.cancelAll()
-            return result
-        }
     }
 
     private func notifyStatusChanged() {

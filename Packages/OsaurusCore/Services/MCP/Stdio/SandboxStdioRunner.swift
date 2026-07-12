@@ -54,7 +54,11 @@
         /// .linuxName`). The subprocess runs as `agent-<agentName>`.
         private let agentName: String
 
-        public init(provider: MCPProvider, agentName: String) throws {
+        public init(
+            provider: MCPProvider,
+            agentName: String,
+            secretEnvOverrides: [String: String] = [:]
+        ) throws {
             guard provider.transport == .stdio else {
                 throw MCPStdioTransportError.missingCommand
             }
@@ -73,7 +77,10 @@
                 command: provider.command,
                 args: provider.args
             )
-            self.env = provider.resolvedEnv()
+            self.env = MCPStdioEnvironmentResolver.providerEnvironment(
+                provider: provider,
+                secretEnvOverrides: secretEnvOverrides
+            )
             self.cwd = provider.workingDirectory
 
             let stdinBridge = SandboxStdioInputStream()
