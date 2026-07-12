@@ -14,6 +14,7 @@ import UniformTypeIdentifiers
 struct SkillsView: View {
     @ObservedObject private var themeManager = ThemeManager.shared
     private var skillManager = SkillManager.shared
+    private var projectSkillManager = ProjectSkillManager.shared
 
     private var theme: ThemeProtocol { themeManager.currentTheme }
 
@@ -37,6 +38,7 @@ struct SkillsView: View {
         case .all: return skillManager.skills
         case .installed: return skillManager.skills.filter { !$0.isBuiltIn }
         case .defaults: return skillManager.skills.filter { $0.isBuiltIn }
+        case .project: return []
         }
     }
 
@@ -45,6 +47,7 @@ struct SkillsView: View {
             .all: skillManager.skills.count,
             .installed: skillManager.skills.filter { !$0.isBuiltIn }.count,
             .defaults: skillManager.skills.filter { $0.isBuiltIn }.count,
+            .project: projectSkillManager.records.count,
         ]
     }
 
@@ -80,7 +83,13 @@ struct SkillsView: View {
 
             // Content
             ZStack {
-                if skillManager.skills.isEmpty && !skillManager.isRefreshing {
+                if selectedTab == .project {
+                    ProjectSkillsWorkbench(
+                        manager: projectSkillManager,
+                        searchText: searchText,
+                        hasAppeared: hasAppeared
+                    )
+                } else if skillManager.skills.isEmpty && !skillManager.isRefreshing {
                     SettingsEmptyState(
                         icon: "sparkles",
                         title: L("Create Your First Skill"),
@@ -397,21 +406,28 @@ struct SkillsView: View {
             title: L("Skills"),
             subtitle: L("Specialized knowledge and guidance for the AI")
         ) {
-            HeaderIconButton("arrow.clockwise", isLoading: skillManager.isRefreshing, help: "Refresh skills") {
+            HeaderIconButton(
+                "arrow.clockwise",
+                isLoading: skillManager.isRefreshing || projectSkillManager.isRefreshing,
+                help: "Refresh skills"
+            ) {
                 Task { @MainActor in
                     await skillManager.refresh()
+                    await projectSkillManager.refresh()
                 }
             }
 
-            HeaderIconButton("square.and.arrow.down", help: "Import skill") {
-                importSkill()
-            }
-            .disabled(isProcessing || skillManager.isRefreshing)
+            if selectedTab != .project {
+                HeaderIconButton("square.and.arrow.down", help: "Import skill") {
+                    importSkill()
+                }
+                .disabled(isProcessing || skillManager.isRefreshing)
 
-            HeaderPrimaryButton("Create Skill", icon: "plus") {
-                isCreating = true
+                HeaderPrimaryButton("Create Skill", icon: "plus") {
+                    isCreating = true
+                }
+                .disabled(isProcessing || skillManager.isRefreshing)
             }
-            .disabled(isProcessing || skillManager.isRefreshing)
         } tabsRow: {
             HeaderTabsRow(
                 selection: $selectedTab,
@@ -433,6 +449,326 @@ struct SkillsView: View {
             try? await Task.sleep(nanoseconds: UInt64((isError ? 3.5 : 2.5) * 1_000_000_000))
             withAnimation(theme.animationQuick()) {
                 toastMessage = nil
+            }
+        }
+    }
+}
+
+// MARK: - Project Skills Workbench
+
+private struct ProjectSkillsWorkbench: View {
+    @Environment(\.theme) private var theme
+    @ObservedObject private var agentManager = AgentManager.shared
+
+    let manager: ProjectSkillManager
+    let searchText: String
+    let hasAppeared: Bool
+
+    @State private var selectedAgentID: UUID?
+
+    private var editableAgents: [Agent] {
+        agentManager.agents
+            .filter { !$0.isBuiltIn && $0.id != Agent.defaultId }
+            .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+    }
+
+    private var filteredRecords: [ProjectSkillRecord] {
+        let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !query.isEmpty else { return manager.records }
+        return manager.records.filter { record in
+            [
+                record.name,
+                record.description,
+                record.id,
+                record.source.rawValue,
+                record.status.rejectionReason ?? "",
+                record.files.map(\.relativePath).joined(separator: " "),
+            ].joined(separator: " ").lowercased().contains(query)
+        }
+    }
+
+    var body: some View {
+        Group {
+            if manager.root == nil {
+                VStack(spacing: 10) {
+                    Image(systemName: "folder.badge.questionmark")
+                        .font(.system(size: 32, weight: .light))
+                        .foregroundColor(theme.tertiaryText)
+                    Text("Select a Working Directory", bundle: .module)
+                        .font(.system(size: 15, weight: .semibold))
+                    Text("Project skills appear here after you select a folder in chat.", bundle: .module)
+                        .font(.system(size: 12))
+                        .foregroundColor(theme.secondaryText)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .opacity(hasAppeared ? 1 : 0)
+            } else if manager.isRefreshing && manager.records.isEmpty {
+                VStack(spacing: 10) {
+                    ProgressView()
+                    Text("Inspecting project skills", bundle: .module)
+                        .font(.system(size: 13))
+                        .foregroundColor(theme.secondaryText)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
+                ScrollView {
+                    LazyVStack(alignment: .leading, spacing: 12) {
+                        projectHeader
+
+                        if filteredRecords.isEmpty {
+                            VStack(spacing: 8) {
+                                Image(systemName: searchText.isEmpty ? "folder" : "magnifyingglass")
+                                    .font(.system(size: 28, weight: .light))
+                                    .foregroundColor(theme.tertiaryText)
+                                Text(
+                                    searchText.isEmpty
+                                        ? "No project skills found"
+                                        : "No project skills match this search",
+                                    bundle: .module
+                                )
+                                .font(.system(size: 13))
+                                .foregroundColor(theme.secondaryText)
+                            }
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 42)
+                        }
+
+                        ForEach(filteredRecords) { record in
+                            ProjectSkillRow(
+                                record: record,
+                                trusted: manager.isEnabled(record.id),
+                                approvalStale: manager.staleApprovalIDs.contains(record.id),
+                                hasEditableAgents: !editableAgents.isEmpty,
+                                agentName: selectedAgentID.flatMap { agentManager.agent(for: $0)?.name },
+                                agentGranted: selectedAgentID.map {
+                                    manager.isAgentGranted(record.id, agentID: $0)
+                                } ?? false,
+                                onTrustToggle: { enabled in
+                                    Task { await manager.setEnabled(enabled, id: record.id) }
+                                },
+                                onAgentToggle: { granted in
+                                    guard let selectedAgentID else { return }
+                                    manager.setAgentGranted(granted, id: record.id, agentID: selectedAgentID)
+                                }
+                            )
+                        }
+
+                        if !manager.diagnostics.isEmpty {
+                            VStack(alignment: .leading, spacing: 6) {
+                                Label {
+                                    Text("Scan diagnostics", bundle: .module)
+                                } icon: {
+                                    Image(systemName: "exclamationmark.triangle")
+                                }
+                                    .font(.system(size: 12, weight: .semibold))
+                                ForEach(manager.diagnostics, id: \.self) { diagnostic in
+                                    Text(diagnostic)
+                                        .font(.system(size: 11, design: .monospaced))
+                                        .foregroundColor(theme.secondaryText)
+                                        .textSelection(.enabled)
+                                }
+                            }
+                            .padding(.top, 8)
+                        }
+                    }
+                    .padding(24)
+                }
+                .opacity(hasAppeared ? 1 : 0)
+            }
+        }
+    }
+
+    private var projectHeader: some View {
+        VStack(alignment: .leading, spacing: 5) {
+            HStack {
+                Label(manager.root?.lastPathComponent ?? "Project", systemImage: "folder")
+                    .font(.system(size: 14, weight: .semibold))
+                Spacer()
+                if !editableAgents.isEmpty {
+                    Picker("Agent", selection: $selectedAgentID) {
+                        Text("Select agent", bundle: .module).tag(Optional<UUID>.none)
+                        ForEach(editableAgents) { agent in
+                            Text(agent.name).tag(Optional(agent.id))
+                        }
+                    }
+                    .pickerStyle(.menu)
+                    .frame(maxWidth: 180)
+                }
+                Text("\(manager.enabledIDs.count) enabled", bundle: .module)
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundColor(theme.secondaryText)
+            }
+            Text(
+                "Project skills stay in this folder. Enable only skills you trust; loading lists helper files but never executes them.",
+                bundle: .module
+            )
+            .font(.system(size: 11))
+            .foregroundColor(theme.secondaryText)
+        }
+        .padding(.bottom, 4)
+    }
+}
+
+private struct ProjectSkillRow: View {
+    @Environment(\.theme) private var theme
+
+    let record: ProjectSkillRecord
+    let trusted: Bool
+    let approvalStale: Bool
+    let hasEditableAgents: Bool
+    let agentName: String?
+    let agentGranted: Bool
+    let onTrustToggle: (Bool) -> Void
+    let onAgentToggle: (Bool) -> Void
+
+    @State private var isExpanded = false
+
+    private var isAvailable: Bool { record.status == .available }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 12) {
+                Image(systemName: isAvailable ? "folder.badge.gearshape" : "exclamationmark.shield")
+                    .font(.system(size: 15, weight: .medium))
+                    .foregroundColor(isAvailable ? theme.accentColor : .orange)
+                    .frame(width: 34, height: 34)
+                    .background(theme.tertiaryBackground)
+                    .clipShape(RoundedRectangle(cornerRadius: 6))
+
+                Button {
+                    isExpanded.toggle()
+                } label: {
+                    HStack {
+                        VStack(alignment: .leading, spacing: 3) {
+                            HStack(spacing: 6) {
+                                Text(record.name)
+                                    .font(.system(size: 13, weight: .semibold))
+                                    .foregroundColor(theme.primaryText)
+                                Text(record.source.rawValue)
+                                    .font(.system(size: 9, weight: .medium))
+                                    .foregroundColor(theme.secondaryText)
+                                    .padding(.horizontal, 6)
+                                    .padding(.vertical, 2)
+                                    .background(theme.tertiaryBackground)
+                                    .clipShape(Capsule())
+                            }
+                            Text(record.description.isEmpty ? record.id : record.description)
+                                .font(.system(size: 11))
+                                .foregroundColor(theme.secondaryText)
+                                .lineLimit(1)
+                        }
+                        Spacer()
+                        Image(systemName: "chevron.right")
+                            .font(.system(size: 10, weight: .semibold))
+                            .foregroundColor(theme.tertiaryText)
+                            .rotationEffect(.degrees(isExpanded ? 90 : 0))
+                    }
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+
+                Toggle(
+                    "Trusted",
+                    isOn: Binding(get: { trusted }, set: { onTrustToggle($0) })
+                )
+                    .toggleStyle(.switch)
+                    .disabled(!isAvailable)
+            }
+
+            if approvalStale {
+                Label(
+                    "Skill content changed after approval. Review and trust it again.",
+                    systemImage: "arrow.triangle.2.circlepath"
+                )
+                .font(.system(size: 11))
+                .foregroundColor(.orange)
+            }
+
+            if let rejection = record.status.rejectionReason {
+                Label(rejection, systemImage: "xmark.octagon")
+                    .font(.system(size: 11))
+                    .foregroundColor(.orange)
+                    .textSelection(.enabled)
+            }
+
+            if isExpanded {
+                Divider()
+                detailRow("Capability ID", value: record.id)
+                detailRow("Source", value: record.source.rawValue)
+                detailRow("Trust", value: record.source.trustLabel)
+                detailRow("Instructions", value: record.instructionFile)
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Instruction preview", bundle: .module)
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundColor(theme.secondaryText)
+                    ScrollView {
+                        Text(record.instructions)
+                            .font(.system(size: 10, design: .monospaced))
+                            .foregroundColor(theme.primaryText)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .textSelection(.enabled)
+                    }
+                    .frame(maxHeight: 150)
+                    .padding(8)
+                    .background(theme.tertiaryBackground)
+                    .clipShape(RoundedRectangle(cornerRadius: 6))
+                }
+                if hasEditableAgents {
+                    Toggle(
+                        agentName.map { "Allow \($0) to load this skill" }
+                            ?? String(localized: "Select an agent before granting access", bundle: .module),
+                        isOn: Binding(get: { agentGranted }, set: { onAgentToggle($0) })
+                    )
+                    .toggleStyle(.switch)
+                    .disabled(agentName == nil || !trusted || !isAvailable)
+                } else {
+                    Text("Create a custom agent to grant project-skill access.", bundle: .module)
+                        .font(.system(size: 10))
+                        .foregroundColor(theme.secondaryText)
+                }
+                inventory("References", files: record.references)
+                inventory("Helpers", files: record.helpers)
+                inventory("Assets and templates", files: record.assets)
+                let other = record.files.filter { $0.kind == .other }
+                inventory("Other package files", files: other)
+            }
+        }
+        .padding(14)
+        .background(theme.cardBackground)
+        .clipShape(RoundedRectangle(cornerRadius: 8))
+        .overlay(
+            RoundedRectangle(cornerRadius: 8)
+                .stroke(theme.cardBorder.opacity(0.6), lineWidth: 1)
+        )
+    }
+
+    private func detailRow(_ label: String, value: String) -> some View {
+        HStack(alignment: .top, spacing: 8) {
+            Text(label)
+                .font(.system(size: 10, weight: .semibold))
+                .foregroundColor(theme.secondaryText)
+                .frame(width: 88, alignment: .leading)
+            Text(value)
+                .font(.system(size: 10, design: .monospaced))
+                .foregroundColor(theme.primaryText)
+                .textSelection(.enabled)
+            Spacer(minLength: 0)
+        }
+    }
+
+    @ViewBuilder
+    private func inventory(_ title: String, files: [ProjectSkillFile]) -> some View {
+        if !files.isEmpty {
+            VStack(alignment: .leading, spacing: 3) {
+                Text("\(title) (\(files.count))")
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundColor(theme.secondaryText)
+                ForEach(files) { file in
+                    Text(file.relativePath)
+                        .font(.system(size: 10, design: .monospaced))
+                        .foregroundColor(theme.primaryText)
+                        .textSelection(.enabled)
+                }
             }
         }
     }

@@ -148,7 +148,7 @@ final class CapabilitiesDiscoverTool: OsaurusTool, @unchecked Sendable {
         "Find additional tools or skills the current schema does not include. "
         + "Use this to discover or confirm any capability, including whether a named tool exists in the enabled set. "
         + "Your current tool list is a fixed subset, not the full set. "
-        + "Returns ranked IDs (e.g. `tool/sandbox_exec`, `skill/plot-data`) you then pass to `capabilities_load`. "
+        + "Returns ranked IDs (e.g. `tool/sandbox_exec`, `skill/plot-data`, `project-skill/.agents/skills/review`) you then pass to `capabilities_load`. "
         + "Example: `{\"query\": \"convert csv to json\"}`."
 
     let agentId: UUID?
@@ -279,6 +279,30 @@ final class CapabilitiesDiscoverTool: OsaurusTool, @unchecked Sendable {
         }
 
         let hits = Self.mergeHits(perQueryResults)
+        let projectSkillHits: [(record: ProjectSkillRecord, score: Float)]
+        let projectSkillSurfaceAllowed =
+            !ChatExecutionContext.isExternalSurface
+            && ChatExecutionContext.currentBackgroundId == nil
+        if isDefaultAgent || agentContextId == nil || !projectSkillSurfaceAllowed {
+            projectSkillHits = []
+        } else {
+            projectSkillHits = await MainActor.run {
+                var best: [String: (ProjectSkillRecord, Float)] = [:]
+                for query in queries {
+                    for hit in ProjectSkillManager.shared.search(
+                        query: query,
+                        limit: Self.perQueryTopK.skills,
+                        agentID: agentContextId
+                    ) {
+                        guard hit.score > (best[hit.record.id]?.1 ?? -.infinity) else { continue }
+                        best[hit.record.id] = hit
+                    }
+                }
+                return best.values.sorted { lhs, rhs in
+                    lhs.1 == rhs.1 ? lhs.0.id < rhs.0.id : lhs.1 > rhs.1
+                }
+            }
+        }
         let toolAvailabilityByName: [String: ToolAvailability] = await MainActor.run {
             var result: [String: ToolAvailability] = [:]
             result.reserveCapacity(hits.tools.count)
@@ -291,7 +315,7 @@ final class CapabilitiesDiscoverTool: OsaurusTool, @unchecked Sendable {
             return result
         }
 
-        if hits.isEmpty {
+        if hits.isEmpty && projectSkillHits.isEmpty {
             let queryList = queries.map { "'\($0)'" }.joined(separator: ", ")
             var text: String
             let pluginCreationAgentId = await Self.resolvePluginCreationAgentId(explicit: agentId)
@@ -356,6 +380,18 @@ final class CapabilitiesDiscoverTool: OsaurusTool, @unchecked Sendable {
                     description: "\($0.skill.name): \($0.skill.description)",
                     score: Double($0.searchScore),
                     extraLines: []
+                )
+            }
+            + projectSkillHits.map {
+                ScoredResult(
+                    id: $0.record.id,
+                    type: "project-skill",
+                    description: "\($0.record.name): \($0.record.description)",
+                    score: Double($0.score),
+                    extraLines: [
+                        "source: \($0.record.source.rawValue)",
+                        "trust: \($0.record.source.trustLabel)",
+                    ]
                 )
             }).sorted { $0.score > $1.score }
 
@@ -598,7 +634,8 @@ final class CapabilitiesLoadTool: OsaurusTool, @unchecked Sendable {
         + "or from `capabilities_discover` results — do not invent IDs. After loading, the named tools are "
         + "callable for the rest of the session; a named skill's instructions are returned in this tool's "
         + "result for you to follow. A `plugin/<id>` id loads that plugin's whole tool group (and any "
-        + "governing skill) in one call. Example: `{\"ids\": [\"plugin/calendar\", \"tool/sandbox_exec\", \"skill/plot-data\"]}`."
+        + "governing skill) in one call. Project skills must first be enabled for the selected folder. "
+        + "Example: `{\"ids\": [\"plugin/calendar\", \"tool/sandbox_exec\", \"skill/plot-data\", \"project-skill/.agents/skills/review\"]}`."
 
     let parameters: JSONValue? = .object([
         "type": .string("object"),
@@ -608,7 +645,7 @@ final class CapabilitiesLoadTool: OsaurusTool, @unchecked Sendable {
                 "type": .string("array"),
                 "items": .object(["type": .string("string")]),
                 "description": .string(
-                    "IDs from the Enabled capabilities list or capabilities_discover results (e.g. 'plugin/calendar', 'method/abc', 'tool/sandbox_exec', 'skill/swift-best-practices')"
+                    "IDs from the Enabled capabilities list or capabilities_discover results (e.g. 'plugin/calendar', 'method/abc', 'tool/sandbox_exec', 'skill/swift-best-practices', 'project-skill/.agents/skills/review')"
                 ),
             ])
         ]),
@@ -650,6 +687,8 @@ final class CapabilitiesLoadTool: OsaurusTool, @unchecked Sendable {
                 outcome = await loadTool(resolvedId.rawId)
             case "skill":
                 outcome = await loadSkill(resolvedId.rawId, budget: skillReferenceBudget)
+            case "project-skill":
+                outcome = await loadProjectSkill(resolvedId.canonical)
             case "plugin":
                 outcome = await loadPlugin(resolvedId.rawId, budget: skillReferenceBudget)
             default:
@@ -658,7 +697,7 @@ final class CapabilitiesLoadTool: OsaurusTool, @unchecked Sendable {
                         kind: .invalidArgs,
                         message:
                             "Unknown type '\(resolvedId.typePrefix)' in ID '\(id)' "
-                            + "(expected `tool`, `skill`, `plugin`, or `method`)."
+                            + "(expected `tool`, `skill`, `project-skill`, `plugin`, or `method`)."
                     )
                 )
             }
@@ -1199,6 +1238,59 @@ final class CapabilitiesLoadTool: OsaurusTool, @unchecked Sendable {
             output += await bufferPluginGroup(pluginId: pluginId)
         }
         return .success(output)
+    }
+
+    private func loadProjectSkill(_ capabilityID: String) async -> LoadOutcome {
+        guard
+            !ChatExecutionContext.isExternalSurface,
+            ChatExecutionContext.currentBackgroundId == nil
+        else {
+            return .failure(
+                LoadFailure(
+                    kind: .rejected,
+                    message: "Project skills are available only in foreground in-app chat sessions."
+                )
+            )
+        }
+        guard let agentID = ChatExecutionContext.currentAgentId else {
+            return .failure(
+                LoadFailure(
+                    kind: .rejected,
+                    message: "Project skills require an explicit agent execution context."
+                )
+            )
+        }
+        let canUseProjectSkills = await MainActor.run {
+            ProjectSkillManager.canUseProjectSkills(AgentManager.shared.agent(for: agentID))
+        }
+        if !canUseProjectSkills {
+            return .failure(
+                LoadFailure(
+                    kind: .rejected,
+                    message: "Project skill loading is disabled for built-in agents."
+                )
+            )
+        }
+        guard let sessionID = ChatExecutionContext.currentSessionId, !sessionID.isEmpty else {
+            return .failure(
+                LoadFailure(
+                    kind: .rejected,
+                    message: "Project skills require an active chat session."
+                )
+            )
+        }
+        let result = await ProjectSkillManager.shared.load(
+            id: capabilityID,
+            sessionID: sessionID,
+            agentID: agentID
+        )
+        switch result {
+        case .success(let text):
+            return .success(text)
+        case .failure(let error):
+            let kind: ToolEnvelope.Kind = error == .notFound ? .notFound : .rejected
+            return .failure(LoadFailure(kind: kind, message: error.message))
+        }
     }
 
     /// Buffer every agent-allowed dynamic tool in `pluginId`'s group, capped

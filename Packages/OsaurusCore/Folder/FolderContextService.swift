@@ -25,6 +25,17 @@ public final class FolderContextService: ObservableObject {
             _folderRootPathLock.withLock {
                 _folderCachedRootPath = currentContext?.rootPath
             }
+            // Project-local skills are scoped to exactly one selected folder.
+            // Clear the old snapshot synchronously before any async scan so a
+            // folder switch can never expose skills from the previous root.
+            let previousRoot = oldValue?.rootPath.standardizedFileURL
+            let nextRoot = currentContext?.rootPath.standardizedFileURL
+            if previousRoot != nextRoot {
+                ProjectSkillManager.shared.prepareForFolder(nextRoot)
+            }
+            if nextRoot != nil {
+                Task { await ProjectSkillManager.shared.refresh() }
+            }
         }
     }
     /// Derived from `currentContext` rather than stored as a second
