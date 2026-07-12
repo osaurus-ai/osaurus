@@ -666,7 +666,8 @@ public final class BackgroundTaskManager: ObservableObject {
             folderBookmark: request.folderBookmark,
             source: request.source,
             sourcePluginId: request.sourcePluginId,
-            externalSessionKey: request.externalSessionKey
+            externalSessionKey: request.externalSessionKey,
+            loadIntent: request.loadIntent
         )
     }
 

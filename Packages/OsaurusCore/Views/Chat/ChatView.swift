@@ -203,6 +203,19 @@ final class ChatSession: ObservableObject {
     /// (plugin / HTTP / scheduler / watcher) runs, defaults to `.chat` for
     /// user-driven UI sessions.
     var source: SessionSource = .chat
+    /// Whether this session's model loads may evict a model someone else is using.
+    ///
+    /// Set from `DispatchRequest.loadIntent` at the trigger boundary. Headless
+    /// autonomous runs (cron fire, watcher, agent self-wake) arrive `.background`
+    /// and will decline rather than take the GPU from an active chat; everything
+    /// a human is waiting on -- including the "Run Now" buttons that share those
+    /// same code paths -- stays `.interactive`.
+    ///
+    /// This exists because the engine's own `RequestSource` has only four cases
+    /// (chatUI / httpAPI / plugin / p2p) and every headless session was being
+    /// flattened into `.chatUI` on its way to the model, losing the distinction
+    /// entirely.
+    var loadIntent: ModelLoadIntent = .interactive
     var sourcePluginId: String?
     var externalSessionKey: String?
     var dispatchTaskId: UUID?
@@ -368,8 +381,12 @@ final class ChatSession: ObservableObject {
     /// run was cancelled by the user (or by `sendNowInterrupting`) and must
     /// not auto-flush a queued send. Reset to false at the top of `send(...)`.
     private var stopRequested: Bool = false
-    var chatEngineFactory: @MainActor () -> ChatEngineProtocol = {
-        ChatEngine(source: .chatUI)
+    /// Takes the session's own inference provenance. It used to hardcode
+    /// `.chatUI` and ignore `source` entirely, so every headless run -- cron
+    /// schedule, file watcher, agent self-wake -- reached the model claiming to
+    /// be the user typing in the chat window.
+    var chatEngineFactory: @MainActor (InferenceSource) -> ChatEngineProtocol = {
+        ChatEngine(source: $0)
     }
     // nonisolated(unsafe) allows deinit to access these for cleanup
     nonisolated(unsafe) private var remoteModelsObserver: NSObjectProtocol?
@@ -3920,7 +3937,7 @@ final class ChatSession: ObservableObject {
                     let ttftTrace: TTFTTrace? = nil
                 #endif
                 do {
-                    let engine = chatEngineFactory()
+                    let engine = chatEngineFactory(source.inferenceSource)
                     let chatCfg = ChatConfigurationStore.load()
 
                     // MARK: - Capability Setup
@@ -4860,6 +4877,7 @@ final class ChatSession: ObservableObject {
                                 ? self.windowState?.pinnedRemoteAgentEffectiveModel : nil
                             req.modelOptions =
                                 self.activeModelOptions.isEmpty ? nil : self.activeModelOptions
+                            req.backgroundModelLoad = (self.loadIntent == .background)
                             req.ttftTrace = ttftTrace
                             // Correlate the Insights log this send produces back to the
                             // assistant turn, so the per-message "Insights" button can
@@ -5134,6 +5152,7 @@ final class ChatSession: ObservableObject {
                                 isRemoteAgentTarget
                                 ? windowState?.pinnedRemoteAgentEffectiveModel : nil
                             finalReq.modelOptions = activeModelOptions.isEmpty ? nil : activeModelOptions
+                            finalReq.backgroundModelLoad = (loadIntent == .background)
                             finalReq.turnId = assistantTurn.id
                             // Distinct logical step (the post-cap summarizing
                             // call) so it bills once and dedupes on its own

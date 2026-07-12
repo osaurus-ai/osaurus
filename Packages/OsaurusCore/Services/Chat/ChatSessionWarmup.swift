@@ -9,7 +9,7 @@ import Foundation
 
 extension ChatSession: ChatWarmupSessionContext {
     func makeWarmupEngine() -> ChatEngineProtocol {
-        chatEngineFactory()
+        chatEngineFactory(source.inferenceSource)
     }
 
     func makeWarmupPayload() async -> ChatWarmupPayload? {

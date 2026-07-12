@@ -630,6 +630,7 @@ private struct SourceBadge: View {
         case .httpAPI: return .blue
         case .plugin: return .teal
         case .p2p: return .purple
+        case .scheduled: return .orange
         }
     }
 }
@@ -641,6 +642,7 @@ extension RequestSource {
         case .httpAPI: return "HTTP"
         case .plugin: return "Plugin"
         case .p2p: return "P2P"
+        case .scheduled: return "Scheduled"
         }
     }
 }

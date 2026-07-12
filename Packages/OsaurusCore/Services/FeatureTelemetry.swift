@@ -316,6 +316,7 @@ enum FeatureTelemetry {
         case .httpAPI: return "http_api"
         case .plugin: return "plugin"
         case .p2p: return "p2p"
+        case .scheduled: return "scheduled"
         }
     }
 

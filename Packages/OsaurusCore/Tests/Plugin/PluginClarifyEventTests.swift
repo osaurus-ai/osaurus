@@ -85,7 +85,7 @@ struct BackgroundTaskClarifyObserverTests {
         let context = ExecutionContext(agentId: Agent.defaultId)
         // Mock engine yields nothing so isStreaming only flips when the
         // test sets it explicitly. Mirrors `BackgroundTaskStreamingObserverTests`.
-        context.chatSession.chatEngineFactory = { MockChatEngine() }
+        context.chatSession.chatEngineFactory = { _ in MockChatEngine() }
 
         let state = BackgroundTaskState(
             id: UUID(),
@@ -260,7 +260,7 @@ struct PluginClarifyEmissionTests {
         pluginId: String
     ) -> (state: BackgroundTaskState, mgr: BackgroundTaskManager) {
         let context = ExecutionContext(agentId: Agent.defaultId)
-        context.chatSession.chatEngineFactory = { MockChatEngine() }
+        context.chatSession.chatEngineFactory = { _ in MockChatEngine() }
         let state = BackgroundTaskState(
             id: UUID(),
             taskTitle: "clarify-emit-test",

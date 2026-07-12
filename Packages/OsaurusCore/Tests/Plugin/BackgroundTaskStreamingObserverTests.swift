@@ -27,7 +27,7 @@ struct BackgroundTaskStreamingObserverTests {
         let context = ExecutionContext(agentId: Agent.defaultId)
         // Mock engine yields nothing — guarantees `isStreaming` only changes
         // when the test sets it explicitly, so we control the timeline.
-        context.chatSession.chatEngineFactory = { MockChatEngine() }
+        context.chatSession.chatEngineFactory = { _ in MockChatEngine() }
 
         let state = BackgroundTaskState(
             id: UUID(),
