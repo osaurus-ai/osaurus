@@ -2078,7 +2078,11 @@ struct RuntimePolicySourceTests {
             "Weight-size preflight must count known numbered shards and fall back to a shallow safetensors sum so unknown layouts cannot report 0 bytes."
         )
 
-        let loadStart = try #require(runtime.range(of: "func loadContainer(id: String, name: String)"))
+        // Anchor on the name only — the parameter list grows (it gained
+        // `intent:` for residency safety) and pinning the full signature makes
+        // this preflight-ordering test fail for reasons that have nothing to do
+        // with preflight ordering.
+        let loadStart = try #require(runtime.range(of: "func loadContainer("))
         let loadEnd = try #require(
             runtime.range(of: "let loadID = allocateLoadingTaskID()", range: loadStart.upperBound ..< runtime.endIndex)
         )

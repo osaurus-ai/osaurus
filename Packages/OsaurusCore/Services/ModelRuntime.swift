@@ -29,8 +29,56 @@ private let genLog = Logger(subsystem: "com.dinoki.osaurus", category: "Generati
 private let _vlmFactory = MLXVLM.VLMModelFactory.shared
 private let _llmFactory = MLXLLM.LLMModelFactory.shared
 
+/// Whether a load may disturb the model someone is already using.
+///
+/// The runtime is strictly single-model by default: loading B evicts resident A
+/// and cancels an in-flight load of A. That is fine when a human is waiting on
+/// B — they asked for it. It is never fine on behalf of housekeeping (memory
+/// distillation, greeting generation, voice-transcript cleanup, speculative
+/// warm-up, a cron-fired agent), which must fill an *empty* slot or step aside.
+///
+/// This has to be enforced inside the actor, at the moment of eviction. Callers
+/// used to probe `hasLoadInFlight()` / `hasResidentModelOther(than:)` and then
+/// load on a later actor hop — a check-then-act race that loses whatever arrived
+/// in between. `ModelRuntime` is reentrant across every `await`, so the only
+/// atomic place to refuse is the same synchronous segment that observed the
+/// conflict.
+public enum ModelLoadIntent: Sendable, Equatable {
+    /// A human is waiting on this load. May evict and cancel as needed.
+    case interactive
+    /// Housekeeping. Reuses a resident model or fills an empty slot; refuses
+    /// rather than disturb a model that is resident or already loading.
+    case background
+}
+
 public actor ModelRuntime {
     // MARK: - Types
+
+    /// Thrown when a `.background` load would have evicted a resident model or
+    /// cancelled an in-flight one. Callers are expected to treat this as "not
+    /// now" — skip the housekeeping, or retry later — never as a hard failure.
+    public struct ResidencyRefusedError: Error, LocalizedError, Sendable, Equatable {
+        public enum Conflict: Sendable, Equatable {
+            /// A different model is resident and would have been evicted.
+            case wouldEvictResident(String)
+            /// A different model is mid-load and would have been cancelled.
+            case wouldCancelLoadInFlight(String)
+        }
+
+        public let requestedModel: String
+        public let conflict: Conflict
+
+        public var errorDescription: String? {
+            switch conflict {
+            case .wouldEvictResident(let resident):
+                return
+                    "Skipped background load of '\(requestedModel)': it would evict '\(resident)', which is in use"
+            case .wouldCancelLoadInFlight(let loading):
+                return
+                    "Skipped background load of '\(requestedModel)': it would cancel the in-flight load of '\(loading)'"
+            }
+        }
+    }
 
     struct LoadRefusedError: Error, LocalizedError, Sendable {
         let modelName: String
@@ -221,7 +269,7 @@ public actor ModelRuntime {
     /// Warm-load an installed local model without starting generation. Used by
     /// delegated jobs that temporarily evict chat models for unified-memory
     /// headroom, then restore the prior resident set after the helper job.
-    func preload(name: String) async throws {
+    func preload(name: String, intent: ModelLoadIntent = .interactive) async throws {
         let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else {
             throw NSError(
@@ -239,7 +287,7 @@ public actor ModelRuntime {
             )
         }
         if modelCache[found.name] != nil { return }
-        _ = try await loadContainer(id: found.id, name: found.name)
+        _ = try await loadContainer(id: found.id, name: found.name, intent: intent)
         // A preload never acquires a generation lease, so without arming the
         // idle timer here the model would stay resident FOREVER if no
         // generation ever follows (the timer is otherwise only scheduled on
@@ -1551,12 +1599,37 @@ public actor ModelRuntime {
         }
     }
 
+    /// Refuse a `.background` load that is about to disturb someone else's model.
+    ///
+    /// This is deliberately **synchronous**. `ModelRuntime` is an actor, so an
+    /// actor-isolated segment with no `await` in it runs to completion without
+    /// interleaving. Callers must therefore observe the conflict (read
+    /// `loadingTasks` / `modelCache`) and call this in the *same* segment — no
+    /// suspension in between. That is what makes the refusal atomic with the
+    /// eviction it is preventing.
+    ///
+    /// Checking-then-awaiting from outside the actor (the old
+    /// `hasLoadInFlight()` + `preload()` shape) cannot work: whatever the probe
+    /// saw is already stale by the time the load runs.
+    private func refuseBackgroundLoadIfItWouldDisturb(
+        intent: ModelLoadIntent,
+        requested: String,
+        conflict: @autoclosure () -> ResidencyRefusedError.Conflict
+    ) throws {
+        guard intent == .background else { return }
+        let refusal = ResidencyRefusedError(requestedModel: requested, conflict: conflict())
+        genLog.info(
+            "loadContainer: refusing background load model=\(requested, privacy: .public) reason=\(refusal.errorDescription ?? "", privacy: .public)"
+        )
+        throw refusal
+    }
+
     /// True while any model load is registered or holds the cold-load slot.
-    /// Background housekeeping (chat warm-up, residency-switch preload/GC)
-    /// checks this before acting: under the strict single-model policy a
-    /// late-arriving background load cancels whatever is already loading, so
-    /// a stale-selection warm-up firing during an explicit API load evicts
-    /// the user's model mid-materialization.
+    ///
+    /// Diagnostics only. Do **not** gate a load on this: the answer is stale the
+    /// moment it returns, because the load you would then start runs on a later
+    /// actor hop. Pass `intent: .background` down into the load instead and let
+    /// `refuseBackgroundLoadIfItWouldDisturb` decide atomically.
     func hasLoadInFlight() -> Bool {
         !loadingTasks.isEmpty || coldLoadActive
     }
@@ -1581,8 +1654,9 @@ public actor ModelRuntime {
     /// Hy3-sized residents do not collide with the next load.
     private func unloadForFlexibleResidentBudget(
         targetName: String,
-        incomingWeightsSizeBytes: Int64
-    ) async {
+        incomingWeightsSizeBytes: Int64,
+        intent: ModelLoadIntent = .interactive
+    ) async throws {
         let limit = Self.flexibleResidentBudgetBytes()
         guard limit > 0 else { return }
 
@@ -1596,6 +1670,15 @@ public actor ModelRuntime {
                 return
             }
 
+            // Flexible mode evicts too, just for a different reason (RAM budget
+            // rather than strict single-model). Without this the "background
+            // never disturbs a resident model" contract would hold only under
+            // the default policy — a silent hole for anyone on manualMultiModel.
+            try refuseBackgroundLoadIfItWouldDisturb(
+                intent: intent,
+                requested: targetName,
+                conflict: .wouldEvictResident(candidate.key)
+            )
             genLog.info(
                 "loadContainer: flexible budget eviction of \(candidate.key, privacy: .public) before loading \(targetName, privacy: .public) residentBytes=\(self.residentWeightBytes(excluding: targetName), privacy: .public) incomingBytes=\(incomingWeightsSizeBytes, privacy: .public) limitBytes=\(limit, privacy: .public)"
             )
@@ -1603,7 +1686,11 @@ public actor ModelRuntime {
         }
     }
 
-    private func loadContainer(id: String, name: String) async throws -> SessionHolder {
+    private func loadContainer(
+        id: String,
+        name: String,
+        intent: ModelLoadIntent = .interactive
+    ) async throws -> SessionHolder {
         try Task.checkCancellation()
         let policy = await ServerConfigurationStore.load()?.modelEvictionPolicy ?? .strictSingleModel
         let loadStartedAt = CFAbsoluteTimeGetCurrent()
@@ -1651,6 +1738,13 @@ public actor ModelRuntime {
                 let otherName = otherLoading.key
                 let otherRecord = otherLoading.value
                 if policy == .strictSingleModel {
+                    // Same actor segment as the `loadingTasks` read above — no
+                    // `await` between observing the conflict and refusing.
+                    try refuseBackgroundLoadIfItWouldDisturb(
+                        intent: intent,
+                        requested: name,
+                        conflict: .wouldCancelLoadInFlight(otherName)
+                    )
                     genLog.info(
                         "loadContainer: strict drain of in-flight load \(otherName, privacy: .public)"
                     )
@@ -1676,6 +1770,15 @@ public actor ModelRuntime {
             if policy == .strictSingleModel,
                 let other = modelCache.keys.first(where: { $0 != name })
             {
+                // `strictEvict` suspends (it waits on the `ModelLease` actor)
+                // before it unloads, so a check placed *inside* it would not be
+                // atomic with the eviction. Refuse here, in the same segment
+                // that read `modelCache`.
+                try refuseBackgroundLoadIfItWouldDisturb(
+                    intent: intent,
+                    requested: name,
+                    conflict: .wouldEvictResident(other)
+                )
                 await strictEvict(other)
                 continue
             }
@@ -1723,6 +1826,14 @@ public actor ModelRuntime {
                 let otherName = otherLoading.key
                 let otherRecord = otherLoading.value
                 if policy == .strictSingleModel {
+                    // Re-checked after `acquireColdLoadSlot()`, which suspends —
+                    // the actor is reentrant across it, so the pre-slot check
+                    // above proves nothing about the state we see now.
+                    try refuseBackgroundLoadIfItWouldDisturb(
+                        intent: intent,
+                        requested: name,
+                        conflict: .wouldCancelLoadInFlight(otherName)
+                    )
                     genLog.info(
                         "loadContainer: strict drain of in-flight load \(otherName, privacy: .public) after cold-load wait"
                     )
@@ -1748,6 +1859,15 @@ public actor ModelRuntime {
             if policy == .strictSingleModel,
                 let other = modelCache.keys.first(where: { $0 != name })
             {
+                // `strictEvict` suspends (it waits on the `ModelLease` actor)
+                // before it unloads, so a check placed *inside* it would not be
+                // atomic with the eviction. Refuse here, in the same segment
+                // that read `modelCache`.
+                try refuseBackgroundLoadIfItWouldDisturb(
+                    intent: intent,
+                    requested: name,
+                    conflict: .wouldEvictResident(other)
+                )
                 await strictEvict(other)
                 continue
             }
@@ -1875,9 +1995,10 @@ public actor ModelRuntime {
         try Task.checkCancellation()
 
         if policy == .manualMultiModel {
-            await unloadForFlexibleResidentBudget(
+            try await unloadForFlexibleResidentBudget(
                 targetName: name,
-                incomingWeightsSizeBytes: loadFootprintBytes
+                incomingWeightsSizeBytes: loadFootprintBytes,
+                intent: intent
             )
         }
         try Task.checkCancellation()
@@ -2675,7 +2796,11 @@ public actor ModelRuntime {
         }
         let holder: SessionHolder
         do {
-            holder = try await loadContainer(id: modelId, name: modelName)
+            holder = try await loadContainer(
+                id: modelId,
+                name: modelName,
+                intent: parameters.loadIntent
+            )
         } catch {
             await ModelResidencyManager.shared.cancel(modelName: modelName)
             if shouldReportModelLoad {

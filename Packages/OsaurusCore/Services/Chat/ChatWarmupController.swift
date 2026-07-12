@@ -407,6 +407,13 @@ final class ChatWarmupController: ObservableObject {
         // sliding-window models like Gemma 4, whose caches cannot be
         // trimmed back to a boundary at store time).
         request.warmupPrefill = true
+        // A warm-up that follows the user's own model pick carries their intent
+        // and may displace a resident model. A speculative one (launch-time
+        // restore of the last UI selection, an idle re-warm) may not — that is
+        // the warm-up that was observed unloading a 94 GB model an API client
+        // had just finished loading. The runtime enforces this atomically, at
+        // the eviction itself; the early-outs above are only a fast path.
+        request.backgroundModelLoad = (payload.model != userIntentWarmupModel)
 
         let startedAt = Date()
         let engine = session.makeWarmupEngine()

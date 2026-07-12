@@ -181,7 +181,8 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
             runAsRemoteAgent: request.runAsRemoteAgent,
             suppressProgressUI: request.suppressProgressUI,
             warmupPrefill: request.warmupPrefill,
-            requestSource: inferenceSource
+            requestSource: inferenceSource,
+            loadIntent: request.backgroundModelLoad ? .background : .interactive
         )
 
         // Mode 2 (remote agent run): route to the *selected agent's provider*,

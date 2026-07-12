@@ -160,12 +160,13 @@ extension ChatSession: ChatWarmupSessionContext {
     /// previous local model should not stay resident just because the user
     /// moved off local models entirely.
     func performModelResidencySwitch(evictOthers: Bool) async {
-        // Background housekeeping must not preempt a load already in flight
-        // (an API request or another window's explicit switch): under the
-        // strict single-model policy the preload below cancels whatever is
-        // loading, and the eviction races its teardown — observed live as a
-        // 94 GB HY3 load dying to a stale-selection warm-up. The next real
-        // send re-runs this switch anyway.
+        // Guards the *eviction* below, which is an explicit unload and so isn't
+        // covered by the runtime's load-intent refusal. Still a best-effort
+        // check-then-act — it narrows the window rather than closing it — but
+        // tearing down residency while another window's or an API client's load
+        // is materializing is exactly the 94 GB HY3 death we saw live. The
+        // preload further down needs no probe: it passes `.background` and the
+        // runtime refuses atomically.
         if await ModelRuntime.shared.hasLoadInFlight() { return }
         if evictOthers {
             let active = ChatWindowManager.shared.activeLocalModelNames()
@@ -184,7 +185,10 @@ extension ChatSession: ChatWarmupSessionContext {
         {
             return
         }
-        try? await ModelRuntime.shared.preload(name: model)
+        // Speculative: it only exists to hide the load cost of a selection the
+        // user has not sent to yet. It must never be the reason someone else's
+        // model gets evicted, so it declines rather than disturb residency.
+        try? await ModelRuntime.shared.preload(name: model, intent: .background)
     }
 
     func notifySessionBecameActive() {

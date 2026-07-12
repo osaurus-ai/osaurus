@@ -129,9 +129,16 @@ public final class TranscriptionCleanupService {
             ChatMessage(role: "system", content: Self.systemPrompt),
             ChatMessage(role: "user", content: userPrompt),
         ]
+        // This fallback bypasses `CoreModelService` and calls `MLXService`
+        // directly, so it has to declare its own intent: tidying a voice
+        // transcript is never worth evicting the model someone is chatting with.
+        // `backgroundSafeModel` above still picks well (prefer resident, accept
+        // an idle runtime), but it is a heuristic on a stale snapshot — this is
+        // the guard the runtime actually enforces, at the eviction itself.
         let params = GenerationParameters(
             temperature: 0.1,
             maxTokens: max(256, trimmed.count),
+            loadIntent: .background
         )
 
         let start = Date()

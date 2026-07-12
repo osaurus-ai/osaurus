@@ -791,6 +791,15 @@ struct ChatCompletionRequest: Codable, Sendable {
     /// required for sliding-window models whose caches cannot be trimmed to
     /// a boundary at store time.
     var warmupPrefill: Bool = false
+    /// Local-only: when true, this request's model load must not disturb a model
+    /// that is already resident or already loading — the runtime refuses the load
+    /// instead of evicting. Set by housekeeping that nobody is waiting on
+    /// (speculative warm-up, greeting generation, transcript cleanup, memory
+    /// distillation). Never set for a request a human is waiting on: those are
+    /// entitled to the GPU.
+    ///
+    /// Not decoded from OpenAI JSON, not sent to providers.
+    var backgroundModelLoad: Bool = false
 
     /// Resolved max tokens, preferring max_tokens then max_completion_tokens.
     var resolvedMaxTokens: Int? { max_tokens ?? max_completion_tokens }

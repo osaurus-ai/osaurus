@@ -159,7 +159,13 @@ public actor CoreModelService {
         let params = GenerationParameters(
             temperature: Float(temperature),
             maxTokens: maxTokens,
-            modelOptions: modelOptions
+            modelOptions: modelOptions,
+            // Carried all the way into `ModelRuntime.loadContainer`, which refuses
+            // a background load *at the moment it would evict* — atomically, inside
+            // the actor. Probing residency from out here and then loading on a
+            // later actor hop is a check-then-act race: whatever the probe saw can
+            // change before the load runs.
+            loadIntent: intent == .background ? .background : .interactive
         )
 
         do {
@@ -481,40 +487,25 @@ public actor CoreModelService {
 
         switch route {
         case .service(let service, let effectiveModel):
-            if intent == .background, service.id == MLXService.shared.id {
-                try await Self.declineIfItWouldDisturbTheUsersModel(effectiveModel)
-            }
             let promptLen = messages.last?.content?.count ?? 0
             logger.debug(
                 "Routing to \(service.id) (model: \(effectiveModel), prompt: \(promptLen) chars)"
             )
-            return try await service.generateOneShot(
-                messages: messages,
-                parameters: params,
-                requestedModel: model
-            )
+            do {
+                return try await service.generateOneShot(
+                    messages: messages,
+                    parameters: params,
+                    requestedModel: model
+                )
+            } catch let refusal as ModelRuntime.ResidencyRefusedError {
+                // `params.loadIntent == .background` and the load would have
+                // disturbed the user's model. Not a backend fault — surface it as
+                // the existing skip error so the breaker stays out of it.
+                logger.info("\(refusal.errorDescription ?? "background load refused")")
+                throw CoreModelError.backgroundWouldEvictUserModel(effectiveModel)
+            }
         case .none:
             throw CoreModelError.modelUnavailable(model)
-        }
-    }
-
-    /// The MLX runtime is strictly single-model: loading `model` evicts whoever
-    /// is resident, and starting a load cancels one already in flight. Neither is
-    /// acceptable on behalf of a background caller — memory distillation must not
-    /// throw away the model the user is mid-conversation with, and voice-transcript
-    /// cleanup must not cancel the load the user is watching a spinner for.
-    ///
-    /// Same rule the warm-up and greeting paths already follow: filling an *empty*
-    /// slot is fine, disturbing an occupied one is not. Remote and Foundation
-    /// routes don't touch GPU residency, so this only gates the local MLX route.
-    private static func declineIfItWouldDisturbTheUsersModel(_ model: String) async throws {
-        if await ModelRuntime.shared.hasLoadInFlight() {
-            logger.info("Declining background call for '\(model)': a model load is in flight")
-            throw CoreModelError.backgroundWouldEvictUserModel(model)
-        }
-        if await ModelRuntime.shared.hasResidentModelOther(than: model) {
-            logger.info("Declining background call for '\(model)': another model is resident")
-            throw CoreModelError.backgroundWouldEvictUserModel(model)
         }
     }
 
