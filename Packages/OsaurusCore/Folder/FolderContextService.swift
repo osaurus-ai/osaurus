@@ -28,8 +28,8 @@ public final class FolderContextService: ObservableObject {
             // Project-local skills are scoped to exactly one selected folder.
             // Clear the old snapshot synchronously before any async scan so a
             // folder switch can never expose skills from the previous root.
-            let previousRoot = oldValue?.rootPath.standardizedFileURL
-            let nextRoot = currentContext?.rootPath.standardizedFileURL
+            let previousRoot = oldValue?.rootPath.standardizedFileURL.resolvingSymlinksInPath()
+            let nextRoot = currentContext?.rootPath.standardizedFileURL.resolvingSymlinksInPath()
             if previousRoot != nextRoot {
                 ProjectSkillManager.shared.prepareForFolder(nextRoot)
             }

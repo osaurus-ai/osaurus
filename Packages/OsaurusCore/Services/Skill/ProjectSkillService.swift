@@ -152,7 +152,9 @@ struct ProjectSkillScanner: Sendable {
         let sourceRoot = root.appendingPathComponent(record.source.rawValue, isDirectory: true)
         let skillDirectory = root.appendingPathComponent(record.skillDirectory, isDirectory: true)
         let instructionURL = skillDirectory.appendingPathComponent("SKILL.md")
-        let relativeDirectory = Self.relativePath(skillDirectory, under: sourceRoot)
+        guard let relativeDirectory = Self.relativePath(skillDirectory, under: sourceRoot) else {
+            return rejectedTarget(record, reason: "Project skill path resolves outside its source root")
+        }
         let depth = relativeDirectory.split(separator: "/").count
 
         guard
@@ -218,7 +220,11 @@ struct ProjectSkillScanner: Sendable {
                 break
             }
 
-            let relative = Self.relativePath(url, under: sourceRoot)
+            guard let relative = Self.relativePath(url, under: sourceRoot) else {
+                enumerator.skipDescendants()
+                diagnostics.append("Rejected project skill entry resolving outside \(source.rawValue)")
+                continue
+            }
             let values: URLResourceValues
             do {
                 values = try url.resourceValues(forKeys: [.isDirectoryKey, .isSymbolicLinkKey])
@@ -232,14 +238,14 @@ struct ProjectSkillScanner: Sendable {
                 diagnostics.append("Rejected symlinked project skill entry: \(source.rawValue)/\(relative)")
                 if url.lastPathComponent == "SKILL.md" {
                     let skillDirectory = url.deletingLastPathComponent()
-                    records.append(
-                        rejectedSymlinkRecord(
+                    if let rejected = rejectedSymlinkRecord(
                             source: source,
                             projectRoot: projectRoot,
                             skillDirectory: skillDirectory,
                             instructionURL: url
-                        )
-                    )
+                    ) {
+                        records.append(rejected)
+                    }
                 }
                 continue
             }
@@ -251,7 +257,11 @@ struct ProjectSkillScanner: Sendable {
             guard url.lastPathComponent == "SKILL.md" else { continue }
 
             let skillDirectory = url.deletingLastPathComponent()
-            let directoryRelative = Self.relativePath(skillDirectory, under: sourceRoot)
+            guard let directoryRelative = Self.relativePath(skillDirectory, under: sourceRoot) else {
+                diagnostics.append("Rejected project skill directory resolving outside \(source.rawValue)")
+                enumerator.skipDescendants()
+                continue
+            }
             let id = Self.capabilityID(source: source, skillDirectory: directoryRelative)
             records.append(
                 inspectSkill(
@@ -272,18 +282,18 @@ struct ProjectSkillScanner: Sendable {
         projectRoot: URL,
         skillDirectory: URL,
         instructionURL: URL
-    ) -> ProjectSkillRecord {
-        let directoryRelative = Self.relativePath(
+    ) -> ProjectSkillRecord? {
+        guard let directoryRelative = Self.relativePath(
             skillDirectory,
             under: projectRoot.appendingPathComponent(source.rawValue, isDirectory: true)
-        )
+        ) else { return nil }
         return ProjectSkillRecord(
             id: Self.capabilityID(source: source, skillDirectory: directoryRelative),
             name: skillDirectory.lastPathComponent,
             description: "",
             source: source,
-            skillDirectory: Self.relativePath(skillDirectory, under: projectRoot),
-            instructionFile: Self.relativePath(instructionURL, under: projectRoot),
+            skillDirectory: Self.relativePath(skillDirectory, under: projectRoot) ?? "",
+            instructionFile: Self.relativePath(instructionURL, under: projectRoot) ?? "",
             instructions: "",
             approvalHash: "",
             files: [],
@@ -304,8 +314,8 @@ struct ProjectSkillScanner: Sendable {
                 name: name ?? skillDirectory.lastPathComponent,
                 description: "",
                 source: source,
-                skillDirectory: Self.relativePath(skillDirectory, under: projectRoot),
-                instructionFile: Self.relativePath(instructionURL, under: projectRoot),
+                skillDirectory: Self.relativePath(skillDirectory, under: projectRoot) ?? "",
+                instructionFile: Self.relativePath(instructionURL, under: projectRoot) ?? "",
                 instructions: "",
                 approvalHash: "",
                 files: files,
@@ -361,13 +371,18 @@ struct ProjectSkillScanner: Sendable {
             return rejected(rejection, name: normalizedName, files: inventory.files)
         }
 
+        guard
+            let relativeSkillDirectory = Self.relativePath(skillDirectory, under: projectRoot),
+            let relativeInstruction = Self.relativePath(instructionURL, under: projectRoot)
+        else { return rejected("Skill package resolves outside the selected project") }
+
         return ProjectSkillRecord(
             id: id,
             name: normalizedName,
             description: parsed.description,
             source: source,
-            skillDirectory: Self.relativePath(skillDirectory, under: projectRoot),
-            instructionFile: Self.relativePath(instructionURL, under: projectRoot),
+            skillDirectory: relativeSkillDirectory,
+            instructionFile: relativeInstruction,
             instructions: parsed.instructions,
             approvalHash: Self.approvalHash(markdown: markdown, files: inventory.files),
             files: inventory.files,
@@ -392,7 +407,10 @@ struct ProjectSkillScanner: Sendable {
         var count = 0
         var totalBytes: Int64 = 0
         for case let url as URL in enumerator {
-            let relativeToSkill = Self.relativePath(url, under: skillDirectory)
+            guard let relativeToSkill = Self.relativePath(url, under: skillDirectory) else {
+                enumerator.skipDescendants()
+                return (files, "Package entry resolves outside the skill directory")
+            }
             let depth = relativeToSkill.split(separator: "/").count
             if depth > limits.maxPackageDepth {
                 return (files, "Skill package exceeds the \(limits.maxPackageDepth)-level depth limit")
@@ -434,9 +452,12 @@ struct ProjectSkillScanner: Sendable {
             guard data.count == size else {
                 return (files, "Package entry '\(relativeToSkill)' changed while being hashed")
             }
+            guard let relativeToProject = Self.relativePath(url, under: projectRoot) else {
+                return (files, "Package entry '\(relativeToSkill)' resolves outside the selected project")
+            }
             files.append(
                 ProjectSkillFile(
-                    relativePath: Self.relativePath(url, under: projectRoot),
+                    relativePath: relativeToProject,
                     kind: Self.fileKind(relativeToSkill),
                     size: size,
                     contentHash: Self.contentHash(data)
@@ -482,10 +503,10 @@ struct ProjectSkillScanner: Sendable {
         return contentHash(Data(material.utf8))
     }
 
-    static func relativePath(_ url: URL, under root: URL) -> String {
-        let rootComponents = root.standardizedFileURL.pathComponents
-        let components = url.standardizedFileURL.pathComponents
-        guard components.starts(with: rootComponents) else { return url.lastPathComponent }
+    static func relativePath(_ url: URL, under root: URL) -> String? {
+        let rootComponents = root.standardizedFileURL.resolvingSymlinksInPath().pathComponents
+        let components = url.standardizedFileURL.resolvingSymlinksInPath().pathComponents
+        guard components.starts(with: rootComponents) else { return nil }
         return components.dropFirst(rootComponents.count).joined(separator: "/")
     }
 
@@ -497,6 +518,11 @@ struct ProjectSkillScanner: Sendable {
 
     static func isLexicallyContained(_ url: URL, by root: URL) -> Bool {
         url.standardizedFileURL.pathComponents.starts(with: root.standardizedFileURL.pathComponents)
+    }
+
+    static func sameResolvedRoot(_ lhs: URL?, _ rhs: URL?) -> Bool {
+        lhs?.standardizedFileURL.resolvingSymlinksInPath()
+            == rhs?.standardizedFileURL.resolvingSymlinksInPath()
     }
 
     static func containsSymlink(from root: URL, through descendant: URL) -> Bool {
@@ -515,8 +541,8 @@ struct ProjectSkillScanner: Sendable {
         return false
     }
 
-    private static func readBoundedFile(_ url: URL, maximumBytes: Int64) throws -> Data {
-        let descriptor = Darwin.open(url.path, O_RDONLY | O_CLOEXEC | O_NOFOLLOW)
+    static func readBoundedFile(_ url: URL, maximumBytes: Int64) throws -> Data {
+        let descriptor = Darwin.open(url.path, O_RDONLY | O_CLOEXEC | O_NOFOLLOW | O_NONBLOCK)
         guard descriptor >= 0 else { throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO) }
         defer { Darwin.close(descriptor) }
 
@@ -557,7 +583,8 @@ struct ProjectSkillScanner: Sendable {
     }
 }
 
-actor ProjectSkillSessionStore {
+@MainActor
+final class ProjectSkillSessionStore {
     static let shared = ProjectSkillSessionStore()
 
     struct Grant: Equatable, Sendable {
@@ -647,14 +674,10 @@ final class ProjectSkillManager {
         enabledIDs = []
         staleApprovalIDs = []
         isRefreshing = newRoot != nil
-        let generation = scopeGeneration
-        let identity = rootIdentity
-        Task {
-            await ProjectSkillSessionStore.shared.activate(
-                generation: generation,
-                rootIdentity: identity
-            )
-        }
+        ProjectSkillSessionStore.shared.activate(
+            generation: scopeGeneration,
+            rootIdentity: rootIdentity
+        )
     }
 
     func activate(_ newRoot: URL?) async {
@@ -672,7 +695,7 @@ final class ProjectSkillManager {
         let result = await Task.detached(priority: .utility) { [scanner] in
             scanner.scan(root: root)
         }.value
-        guard generation == scanGeneration, self.root?.standardizedFileURL == root.standardizedFileURL else { return }
+        guard generation == scanGeneration, ProjectSkillScanner.sameResolvedRoot(self.root, root) else { return }
         rootIdentity = result.rootIdentity
         records = result.records
         diagnostics = result.diagnostics
@@ -720,7 +743,7 @@ final class ProjectSkillManager {
         }.value
         guard
             generation == scopeGeneration,
-            self.root?.standardizedFileURL == root.standardizedFileURL,
+            ProjectSkillScanner.sameResolvedRoot(self.root, root),
             self.rootIdentity == rootIdentity
         else { return false }
         guard liveRecord == record, liveRecord.status == .available else {
@@ -793,18 +816,6 @@ final class ProjectSkillManager {
         }
 
         let generation = scopeGeneration
-        await ProjectSkillSessionStore.shared.activate(
-            generation: generation,
-            rootIdentity: rootIdentity
-        )
-        let recorded = await ProjectSkillSessionStore.shared.record(
-            sessionID: sessionID,
-            generation: generation,
-            rootIdentity: rootIdentity,
-            skillID: id
-        )
-        guard recorded else { return .failure(.projectChanged) }
-
         // Re-read the bounded package after all actor hops and render only this
         // freshly hashed snapshot. A changed SKILL.md, helper, reference,
         // asset, inventory entry, or symlink therefore cannot be loaded under
@@ -814,7 +825,7 @@ final class ProjectSkillManager {
         }.value
         guard
             generation == scopeGeneration,
-            self.root?.standardizedFileURL == root.standardizedFileURL,
+            ProjectSkillScanner.sameResolvedRoot(self.root, root),
             self.rootIdentity == rootIdentity,
             enabledIDs.contains(id),
             isAgentGranted(id, agentID: agentID)
@@ -827,6 +838,13 @@ final class ProjectSkillManager {
             revokeApproval(id: id)
             return .failure(.approvalChanged)
         }
+        let recorded = ProjectSkillSessionStore.shared.record(
+            sessionID: sessionID,
+            generation: generation,
+            rootIdentity: rootIdentity,
+            skillID: id
+        )
+        guard recorded else { return .failure(.projectChanged) }
         return .success(Self.render(liveRecord))
     }
 
@@ -864,23 +882,41 @@ final class ProjectSkillManager {
         return agent.id != Agent.defaultId && !agent.isBuiltIn
     }
 
-    static func render(_ record: ProjectSkillRecord) -> String {
+    nonisolated static func render(_ record: ProjectSkillRecord) -> String {
         var lines = [
-            "## Project Skill: \(record.name)",
+            "## Project Skill: \(promptSafeMetadata(record.name))",
             "Source: \(record.source.rawValue)",
             "Capability ID: \(record.id)",
         ]
-        if !record.description.isEmpty { lines.append("\n*\(record.description)*") }
+        if !record.description.isEmpty {
+            lines.append("\n*\(promptSafeMetadata(record.description))*")
+        }
         lines.append("\n\(record.instructions)")
         lines.append("\nLoading a project skill never executes package files or bypasses workspace permissions.")
         if !record.files.isEmpty {
             lines.append("\n### Project-relative package inventory")
             lines.append("These paths are inventory only. Loading this skill never executes helpers. Read or run a path only through the existing workspace tools and their permission policy.")
             for file in record.files {
-                lines.append("- [\(file.kind.rawValue)] \(file.relativePath) (\(file.size) bytes)")
+                lines.append(
+                    "- [\(file.kind.rawValue)] \(promptSafeMetadata(file.relativePath)) (\(file.size) bytes)"
+                )
             }
         }
         return lines.joined(separator: "\n") + "\n\n"
+    }
+
+    nonisolated static func promptSafeMetadata(_ value: String) -> String {
+        let directionalFormattingControls = CharacterSet(
+            charactersIn: "\u{202A}\u{202B}\u{202C}\u{202D}\u{202E}\u{2066}\u{2067}\u{2068}\u{2069}"
+        )
+        var sanitized = String.UnicodeScalarView()
+        for scalar in value.unicodeScalars {
+            let shouldReplace = CharacterSet.controlCharacters.contains(scalar)
+                || CharacterSet.newlines.contains(scalar)
+                || directionalFormattingControls.contains(scalar)
+            sanitized.append(contentsOf: (shouldReplace ? "?" : String(scalar)).unicodeScalars)
+        }
+        return String(sanitized)
     }
 
     private func defaultsKey(_ rootIdentity: String) -> String {
@@ -900,9 +936,22 @@ final class ProjectSkillManager {
         approvedContentHashes.removeValue(forKey: id)
         enabledIDs.remove(id)
         staleApprovalIDs.insert(id)
+        clearAgentGrants(id: id)
         saveApprovals()
         let message = "Project skill content changed after approval; review and re-enable: \(id)"
         if !diagnostics.contains(message) { diagnostics.append(message) }
+    }
+
+    private func clearAgentGrants(id: String) {
+        guard let rootIdentity else { return }
+        let key = agentGrantKey(rootIdentity: rootIdentity, skillID: id)
+        for agent in AgentManager.shared.agents where Self.canUseProjectSkills(agent) {
+            guard var names = AgentManager.shared.effectiveEnabledSkillNames(for: agent.id),
+                names.contains(key)
+            else { continue }
+            names.removeAll { $0 == key }
+            AgentManager.shared.updateEnabledSkillNames(names, for: agent.id)
+        }
     }
 }
 

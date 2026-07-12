@@ -386,7 +386,8 @@ final class CapabilitiesDiscoverTool: OsaurusTool, @unchecked Sendable {
                 ScoredResult(
                     id: $0.record.id,
                     type: "project-skill",
-                    description: "\($0.record.name): \($0.record.description)",
+                    description: "\(ProjectSkillManager.promptSafeMetadata($0.record.name)): "
+                        + ProjectSkillManager.promptSafeMetadata($0.record.description),
                     score: Double($0.score),
                     extraLines: [
                         "source: \($0.record.source.rawValue)",
