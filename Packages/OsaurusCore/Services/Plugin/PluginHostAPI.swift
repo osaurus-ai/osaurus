@@ -1894,11 +1894,22 @@ final class PluginHostContext: @unchecked Sendable {
                                 if let stopReason = stats.stopReason {
                                     iterFinishReason = stopReason
                                 }
-                                let usage: [String: Any] = [
+                                var usage: [String: Any] = [
                                     "completion_tokens": stats.tokenCount,
                                     "tokens_per_second": stats.tokensPerSecond,
                                     "unclosed_reasoning": stats.unclosedReasoning,
                                 ]
+                                // Engine-path attribution, forwarded exactly
+                                // like the HTTP usage block (`engine`,
+                                // `native_mtp_fallback`): keys are absent
+                                // when the hint carries no flags (remote
+                                // providers, pre-upgrade wires).
+                                if let engine = stats.engine {
+                                    usage["engine"] = engine
+                                }
+                                if let mtpFallback = stats.mtpFallbackReason {
+                                    usage["native_mtp_fallback"] = mtpFallback
+                                }
                                 lastUsage = usage
                                 emit(Self.chunkPayload(id: cid, delta: ["usage": usage]))
                                 continue

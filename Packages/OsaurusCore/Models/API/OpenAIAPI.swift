@@ -956,17 +956,66 @@ struct Usage: Codable, Sendable {
     let completion_tokens: Int
     let total_tokens: Int
     let tokens_per_second: Double?
+    /// Osaurus extension (local MLX only): which engine code path the
+    /// step was SUBMITTED on — "solo_mtp" | "solo_ar" | "solo_diffusion"
+    /// | "batched". Mirrors the stats hint's `engine=` flag (see
+    /// `MLXBatchAdapter.engineAttribution` for the submitted-path
+    /// contract); absent (omitted from JSON) for remote providers and for
+    /// clients that never look, keeping the OpenAI usage schema valid for
+    /// parsers that ignore extra keys.
+    let engine: String?
+    /// Osaurus extension (local MLX only): why native MTP did not engage
+    /// for this step — "cold_warmup" | "explicit_sampling" |
+    /// "tiny_prompt" | "engine_sampling_gate" (engine demotes to plain AR
+    /// on its solo path) | "engine_iterator_gate" (engine cancels the
+    /// stream; nothing runs). Mirrors the stats hint's `mtp_off=` flag;
+    /// absent when MTP engaged or was never requested.
+    let native_mtp_fallback: String?
 
     init(
         prompt_tokens: Int,
         completion_tokens: Int,
         total_tokens: Int,
-        tokens_per_second: Double? = nil
+        tokens_per_second: Double? = nil,
+        engine: String? = nil,
+        native_mtp_fallback: String? = nil
     ) {
         self.prompt_tokens = prompt_tokens
         self.completion_tokens = completion_tokens
         self.total_tokens = total_tokens
         self.tokens_per_second = tokens_per_second
+        self.engine = engine
+        self.native_mtp_fallback = native_mtp_fallback
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case prompt_tokens
+        case completion_tokens
+        case total_tokens
+        case tokens_per_second
+        case engine
+        case native_mtp_fallback
+    }
+
+    /// Manual encode so a non-finite `tokens_per_second` is OMITTED from
+    /// the wire instead of serialized. JSON has no NaN/Infinity literal:
+    /// `JSONEncoder` throws `EncodingError.invalidValue` on a non-finite
+    /// Double, and the streaming path's `IkigaJSONEncoder` emits the bare
+    /// token `nan` — an invalid-JSON usage chunk strict parsers reject
+    /// (live-observed on the engine's cancelled zero-token path, where
+    /// `GenerateCompletionInfo.tokensPerSecond` is 0/0 = NaN). Finite
+    /// values (including a genuine 0) encode exactly as the synthesized
+    /// conformance did; decoding stays synthesized.
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(prompt_tokens, forKey: .prompt_tokens)
+        try container.encode(completion_tokens, forKey: .completion_tokens)
+        try container.encode(total_tokens, forKey: .total_tokens)
+        if let tokens_per_second, tokens_per_second.isFinite {
+            try container.encode(tokens_per_second, forKey: .tokens_per_second)
+        }
+        try container.encodeIfPresent(engine, forKey: .engine)
+        try container.encodeIfPresent(native_mtp_fallback, forKey: .native_mtp_fallback)
     }
 }
 

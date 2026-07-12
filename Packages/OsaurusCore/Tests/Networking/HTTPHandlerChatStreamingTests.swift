@@ -665,6 +665,190 @@ struct HTTPHandlerChatStreamingTests {
         #expect(!body.contains("\u{FFFE}"))
     }
 
+    @Test func sse_zeroTokenNaNStats_usageChunkIsValidJSONWithoutTokensPerSecond() async throws {
+        // Live-observed on the engine_iterator_gate path: a cancelled
+        // zero-token stream carries GenerateCompletionInfo.tokensPerSecond
+        // = 0/0 = NaN, and the usage chunk previously serialized as
+        // `"tokens_per_second":nan` — a bare `nan` token, invalid JSON
+        // that strict SSE parsers reject. Feed the raw pre-fix wire (the
+        // fixed encoder never emits "nan", but decode still parses it, so
+        // this exercises the usage-serialization boundary exactly as the
+        // live bug did) and require a parseable usage chunk with the key
+        // omitted and the attribution intact.
+        struct NaNStatsEngine: ChatEngineProtocol {
+            func streamChat(request: ChatCompletionRequest) async throws -> AsyncThrowingStream<
+                String, Error
+            > {
+                AsyncThrowingStream { continuation in
+                    continuation.yield(
+                        "\u{FFFE}stats:0;nan;stop=cancelled,engine=solo_mtp,mtp_off=engine_iterator_gate"
+                    )
+                    continuation.finish()
+                }
+            }
+            func completeChat(request: ChatCompletionRequest) async throws -> ChatCompletionResponse {
+                fatalError("not used")
+            }
+        }
+
+        let server = try await startTestServer(with: NaNStatsEngine())
+        defer { Task { await server.shutdown() } }
+
+        var request = URLRequest(
+            url: URL(string: "http://\(server.host):\(server.port)/chat/completions")!
+        )
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue("text/event-stream", forHTTPHeaderField: "Accept")
+        request.authenticate()
+        request.disablePersistenceForTests()
+        request.httpBody = #"""
+            {"model":"fake","stream":true,"stream_options":{"include_usage":true},"messages":[{"role":"user","content":"hi"}]}
+            """#.data(using: .utf8)
+
+        let (data, resp) = try await URLSession.shared.data(for: request)
+        let status = (resp as? HTTPURLResponse)?.statusCode ?? -1
+        let body = String(decoding: data, as: UTF8.self)
+        #expect(status == 200)
+        #expect(!body.contains("nan"))
+        #expect(!body.contains("tokens_per_second"))
+        #expect(body.contains("\"completion_tokens\":0"))
+        #expect(body.contains("\"engine\":\"solo_mtp\""))
+        #expect(body.contains("\"native_mtp_fallback\":\"engine_iterator_gate\""))
+        #expect(body.contains("\"finish_reason\":\"cancelled\""))
+        // Every data: line must be strict-parseable JSON (this is the
+        // regression: the pre-fix usage chunk was not).
+        for line in body.split(separator: "\n") where line.hasPrefix("data: ") {
+            let payload = line.dropFirst("data: ".count)
+            if payload == "[DONE]" { continue }
+            #expect(
+                (try? JSONSerialization.jsonObject(with: Data(payload.utf8))) != nil,
+                "invalid JSON SSE chunk: \(payload)"
+            )
+        }
+        #expect(!body.contains("\u{FFFE}"))
+    }
+
+    @Test func sse_toolCall_usageChunk_carriesEngineAttributionAndTokensPerSecond() async throws {
+        // The engine surfaces a tool call by THROWING ServiceToolInvocation
+        // after the stats hint has already been decoded. The tool-call
+        // finish path must thread the decoded engine/native_mtp_fallback
+        // (and tok/s) into its usage chunk — stream and non-stream must
+        // agree for the same step (ChatEngine.makeToolCallResponse already
+        // threads them on the non-streaming side).
+        struct StatsThenToolEngine: ChatEngineProtocol {
+            func streamChat(request: ChatCompletionRequest) async throws -> AsyncThrowingStream<
+                String, Error
+            > {
+                AsyncThrowingStream { continuation in
+                    continuation.yield(
+                        StreamingStatsHint.encode(
+                            tokenCount: 12,
+                            tokensPerSecond: 42.5,
+                            engine: "solo_mtp"
+                        )
+                    )
+                    continuation.finish(
+                        throwing: ServiceToolInvocation(
+                            toolName: "get_weather",
+                            jsonArguments: "{\"city\":\"SF\"}"
+                        )
+                    )
+                }
+            }
+            func completeChat(request: ChatCompletionRequest) async throws -> ChatCompletionResponse {
+                fatalError("not used")
+            }
+        }
+
+        let server = try await startTestServer(with: StatsThenToolEngine())
+        defer { Task { await server.shutdown() } }
+
+        var request = URLRequest(
+            url: URL(string: "http://\(server.host):\(server.port)/chat/completions")!
+        )
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue("text/event-stream", forHTTPHeaderField: "Accept")
+        request.authenticate()
+        request.disablePersistenceForTests()
+        request.httpBody = #"""
+            {"model":"fake","stream":true,"stream_options":{"include_usage":true},"messages":[{"role":"user","content":"hi"}]}
+            """#.data(using: .utf8)
+
+        let (data, resp) = try await URLSession.shared.data(for: request)
+        let status = (resp as? HTTPURLResponse)?.statusCode ?? -1
+        let body = String(decoding: data, as: UTF8.self)
+        #expect(status == 200)
+        #expect(body.contains("\"finish_reason\":\"tool_calls\""))
+        #expect(body.contains("\"engine\":\"solo_mtp\""))
+        #expect(body.contains("\"tokens_per_second\":42.5"))
+        #expect(!body.contains("\u{FFFE}"))
+    }
+
+    @Test func sse_multiToolBatch_usageChunk_carriesMTPFallbackAttribution() async throws {
+        // Multi-tool variant of the same contract, with the mtp_off flag:
+        // usage must carry native_mtp_fallback exactly as decoded.
+        struct StatsThenMultiToolEngine: ChatEngineProtocol {
+            func streamChat(request: ChatCompletionRequest) async throws -> AsyncThrowingStream<
+                String, Error
+            > {
+                AsyncThrowingStream { continuation in
+                    continuation.yield(
+                        StreamingStatsHint.encode(
+                            tokenCount: 9,
+                            tokensPerSecond: 17.25,
+                            engine: "solo_ar",
+                            mtpFallbackReason: "engine_sampling_gate"
+                        )
+                    )
+                    continuation.finish(
+                        throwing: ServiceToolInvocations(
+                            invocations: [
+                                ServiceToolInvocation(
+                                    toolName: "get_weather",
+                                    jsonArguments: "{\"city\":\"SF\"}"
+                                ),
+                                ServiceToolInvocation(
+                                    toolName: "get_time",
+                                    jsonArguments: "{\"tz\":\"PST\"}"
+                                ),
+                            ]
+                        )
+                    )
+                }
+            }
+            func completeChat(request: ChatCompletionRequest) async throws -> ChatCompletionResponse {
+                fatalError("not used")
+            }
+        }
+
+        let server = try await startTestServer(with: StatsThenMultiToolEngine())
+        defer { Task { await server.shutdown() } }
+
+        var request = URLRequest(
+            url: URL(string: "http://\(server.host):\(server.port)/chat/completions")!
+        )
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue("text/event-stream", forHTTPHeaderField: "Accept")
+        request.authenticate()
+        request.disablePersistenceForTests()
+        request.httpBody = #"""
+            {"model":"fake","stream":true,"stream_options":{"include_usage":true},"messages":[{"role":"user","content":"hi"}]}
+            """#.data(using: .utf8)
+
+        let (data, resp) = try await URLSession.shared.data(for: request)
+        let status = (resp as? HTTPURLResponse)?.statusCode ?? -1
+        let body = String(decoding: data, as: UTF8.self)
+        #expect(status == 200)
+        #expect(body.contains("\"finish_reason\":\"tool_calls\""))
+        #expect(body.contains("\"engine\":\"solo_ar\""))
+        #expect(body.contains("\"native_mtp_fallback\":\"engine_sampling_gate\""))
+        #expect(body.contains("\"tokens_per_second\":17.25"))
+        #expect(!body.contains("\u{FFFE}"))
+    }
+
     @Test func sse_path_emits_prefill_progress_diagnostic_chunks() async throws {
         struct PrefillEngine: ChatEngineProtocol {
             func streamChat(request: ChatCompletionRequest) async throws -> AsyncThrowingStream<

@@ -459,6 +459,8 @@ final class SSEResponseWriter: ResponseWriter {
         promptTokens: Int,
         completionTokens: Int,
         tokensPerSecond: Double? = nil,
+        engine: String? = nil,
+        nativeMTPFallback: String? = nil,
         model: String,
         responseId: String,
         created: Int,
@@ -475,7 +477,9 @@ final class SSEResponseWriter: ResponseWriter {
             prompt_tokens: promptTokens,
             completion_tokens: completionTokens,
             total_tokens: promptTokens + completionTokens,
-            tokens_per_second: tokensPerSecond
+            tokens_per_second: tokensPerSecond,
+            engine: engine,
+            native_mtp_fallback: nativeMTPFallback
         )
         writeSSEChunk(chunk, context: context)
     }

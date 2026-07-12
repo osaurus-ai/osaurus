@@ -9,7 +9,9 @@
 //
 
 import Foundation
+import MLX
 import MLXLMCommon
+import MLXNN
 import Testing
 
 @testable import OsaurusCore
@@ -428,6 +430,484 @@ struct MLXBatchAdapterTests {
                 draftStrategy: .nativeMTP(depth: 3)
             ) == nil
         )
+    }
+
+    // MARK: - Engine-path attribution
+
+    @Test func effectiveGenerationSettings_derivesEnginePathFromMaxBatchSizeByDefault() {
+        let generation = GenerationParameters(
+            temperature: 0,
+            maxTokens: 128,
+            maxTokensExplicit: true
+        )
+        let defaults = LocalGenerationDefaults.Defaults.empty
+
+        // The solo lease in `generate()` is acquired exactly when
+        // `maxBatchSize == 1`, so the derived default must match it.
+        let solo = MLXBatchAdapter.effectiveGenerationSettings(
+            modelName: "test/model",
+            generation: generation,
+            runtimeDefaults: VMLXServerGenerationDefaults(),
+            maxBatchSize: 1,
+            modelDefaults: defaults
+        )
+        #expect(solo.enginePath == "solo")
+        #expect(solo.nativeMTPRequested == false)
+        #expect(solo.nativeMTPEngaged == false)
+        #expect(solo.nativeMTPFallbackReason == nil)
+
+        let batched = MLXBatchAdapter.effectiveGenerationSettings(
+            modelName: "test/model",
+            generation: generation,
+            runtimeDefaults: VMLXServerGenerationDefaults(),
+            maxBatchSize: 4,
+            modelDefaults: defaults
+        )
+        #expect(batched.enginePath == "batched")
+    }
+
+    @Test func effectiveGenerationSettings_attributionFieldsAreMutableForSubmitOverwrite() {
+        // `generate()` overwrites the pre-submit derivation with the
+        // routing-derived `EngineAttribution` once the vmlx parameters are
+        // fully constructed; the record must accept that overwrite.
+        let generation = GenerationParameters(
+            temperature: 0,
+            maxTokens: 128,
+            maxTokensExplicit: true
+        )
+        var effective = MLXBatchAdapter.effectiveGenerationSettings(
+            modelName: "test/model",
+            generation: generation,
+            runtimeDefaults: VMLXServerGenerationDefaults(),
+            maxBatchSize: 4,
+            modelDefaults: .empty
+        )
+        #expect(effective.enginePath == "batched")
+
+        let attribution = MLXBatchAdapter.engineAttribution(
+            soloLeaseHeld: false,
+            requestedDraftStrategy: .nativeMTP(depth: 3),
+            submittedDraftStrategy: .nativeMTP(depth: 3),
+            engineNativeMTPEligible: true,
+            osaurusFallbackReason: nil
+        )
+        effective.enginePath = attribution.enginePath
+        effective.nativeMTPRequested = attribution.nativeMTPRequested
+        effective.nativeMTPEngaged = attribution.nativeMTPEngaged
+        effective.nativeMTPFallbackReason = attribution.nativeMTPFallbackReason
+
+        // A submitted native-MTP strategy routes vmlx's EXCLUSIVE solo
+        // path even under a multi-slot config, so the overwrite must be
+        // able to flip "batched" → "solo".
+        #expect(effective.enginePath == "solo")
+        #expect(effective.nativeMTPRequested == true)
+        #expect(effective.nativeMTPEngaged == true)
+        #expect(effective.nativeMTPFallbackReason == nil)
+    }
+
+    @Test func engineAttribution_engineGateVetoReportsSoloARWithEngineSamplingGate() {
+        // The reviewed defect: osaurus's request-level greedy gate passes
+        // (strategy submitted) but the EFFECTIVE parameters fail vmlx's
+        // own `isNativeMTPLosslessGreedyEligible` — e.g. a model-shipped
+        // topP=0.95 default the request never overrode. The engine then
+        // runs plain AR on its solo path, so attribution must report
+        // engaged=false / engine_sampling_gate / solo_ar, never solo_mtp.
+        let attribution = MLXBatchAdapter.engineAttribution(
+            soloLeaseHeld: true,
+            requestedDraftStrategy: .nativeMTP(depth: 3),
+            submittedDraftStrategy: .nativeMTP(depth: 3),
+            engineNativeMTPEligible: false,
+            osaurusFallbackReason: nil
+        )
+        #expect(attribution.enginePath == "solo")
+        #expect(attribution.nativeMTPRequested == true)
+        #expect(attribution.nativeMTPEngaged == false)
+        #expect(attribution.nativeMTPFallbackReason == "engine_sampling_gate")
+        #expect(attribution.engineFlag == "solo_ar")
+    }
+
+    @Test func engineAttribution_modelDefaultTopPVetoesEngineGateEndToEnd() {
+        // End-to-end version of the veto: explicit temperature=0 passes
+        // `effectiveDraftStrategy` (request-level gates look at overrides
+        // only), but the merged topP=0.95 model default flows into the
+        // vmlx `GenerateParameters`, whose own public gate must veto.
+        let greedyRequest = GenerationParameters(
+            temperature: 0,
+            maxTokens: 128,
+            maxTokensExplicit: true,
+            topPOverride: nil,
+            minPOverride: nil,
+            repetitionPenalty: nil
+        )
+        let mtpBundleDefaults = LocalGenerationDefaults.Defaults(
+            maxTokens: nil,
+            temperature: 1.0,
+            topP: 0.95,
+            topK: nil,
+            minP: nil,
+            repetitionPenalty: nil,
+            doSample: true
+        )
+        let submitted = MLXBatchAdapter.effectiveDraftStrategy(
+            generation: greedyRequest,
+            draftStrategy: .nativeMTP(depth: 3),
+            promptTokenCount: MLXBatchAdapter.nativeMTPTinyPromptMinimumTokens
+        )
+        #expect(
+            submitted?.usesNativeMTP == true,
+            "osaurus's request-level gate must pass — the request itself is explicit greedy"
+        )
+
+        let effective = MLXBatchAdapter.effectiveGenerationSettings(
+            modelName: "JANGQ/Qwen3.6-35B-A3B-MXFP4-MTP",
+            generation: greedyRequest,
+            runtimeDefaults: VMLXServerGenerationDefaults(topP: 1.0),
+            maxBatchSize: 1,
+            modelDefaults: mtpBundleDefaults,
+            draftStrategy: submitted
+        )
+        #expect(effective.topP == 0.95)
+        let mlxParams = ModelRuntime.makeGenerateParameters(
+            temperature: effective.temperature,
+            maxTokens: effective.maxTokens,
+            topP: effective.topP,
+            topK: effective.topK,
+            minP: effective.minP,
+            repetitionPenalty: effective.repetitionPenalty,
+            draftStrategy: submitted
+        )
+        // vmlx's OWN gate (Evaluate.swift `isNativeMTPLosslessGreedyEligible`)
+        // on the exact submitted values — not a reimplementation.
+        #expect(mlxParams.isNativeMTPLosslessGreedyEligible == false)
+
+        let attribution = MLXBatchAdapter.engineAttribution(
+            soloLeaseHeld: true,
+            requestedDraftStrategy: .nativeMTP(depth: 3),
+            submittedDraftStrategy: submitted,
+            engineNativeMTPEligible: mlxParams.isNativeMTPLosslessGreedyEligible,
+            osaurusFallbackReason: nil
+        )
+        #expect(attribution.nativeMTPEngaged == false)
+        #expect(attribution.nativeMTPFallbackReason == "engine_sampling_gate")
+        #expect(attribution.engineFlag == "solo_ar")
+    }
+
+    @Test func engineAttribution_multiSlotRoutingMirrorsBatchEngineBranches() {
+        // vmlx routing under maxBatchSize > 1 (no osaurus solo lease):
+        // a submitted native-MTP strategy still routes the EXCLUSIVE solo
+        // fast path (BatchEngine.generate soloes or hard-rejects it, never
+        // batches), so attribution must say "solo" even without the lease.
+        let mtpMultiSlot = MLXBatchAdapter.engineAttribution(
+            soloLeaseHeld: false,
+            requestedDraftStrategy: .nativeMTP(depth: 3),
+            submittedDraftStrategy: .nativeMTP(depth: 3),
+            engineNativeMTPEligible: true,
+            osaurusFallbackReason: nil
+        )
+        #expect(mtpMultiSlot.enginePath == "solo")
+        #expect(mtpMultiSlot.engineFlag == "solo_mtp")
+
+        // Engine-ineligible MTP under multi-slot: still the solo path
+        // (the engine routes on strategy PRESENCE and checks eligibility
+        // only inside the solo path), reported as solo_ar.
+        let mtpMultiSlotVetoed = MLXBatchAdapter.engineAttribution(
+            soloLeaseHeld: false,
+            requestedDraftStrategy: .nativeMTP(depth: 3),
+            submittedDraftStrategy: .nativeMTP(depth: 3),
+            engineNativeMTPEligible: false,
+            osaurusFallbackReason: nil
+        )
+        #expect(mtpMultiSlotVetoed.enginePath == "solo")
+        #expect(mtpMultiSlotVetoed.engineFlag == "solo_ar")
+        #expect(mtpMultiSlotVetoed.nativeMTPFallbackReason == "engine_sampling_gate")
+
+        // Non-MTP multi-slot requests enter the shared scheduler loop.
+        let plainMultiSlot = MLXBatchAdapter.engineAttribution(
+            soloLeaseHeld: false,
+            requestedDraftStrategy: nil,
+            submittedDraftStrategy: nil,
+            engineNativeMTPEligible: false,
+            osaurusFallbackReason: nil
+        )
+        #expect(plainMultiSlot.enginePath == "batched")
+        #expect(plainMultiSlot.engineFlag == "batched")
+
+        // Strategy dropped BEFORE submit (osaurus gates): the engine never
+        // sees a draft strategy, so routing follows the lease and the
+        // pre-submit fallback reason is preserved verbatim.
+        let droppedPreSubmit = MLXBatchAdapter.engineAttribution(
+            soloLeaseHeld: false,
+            requestedDraftStrategy: .nativeMTP(depth: 3),
+            submittedDraftStrategy: nil,
+            engineNativeMTPEligible: false,
+            osaurusFallbackReason: "explicit_sampling"
+        )
+        #expect(droppedPreSubmit.enginePath == "batched")
+        #expect(droppedPreSubmit.nativeMTPRequested == true)
+        #expect(droppedPreSubmit.nativeMTPEngaged == false)
+        #expect(droppedPreSubmit.nativeMTPFallbackReason == "explicit_sampling")
+    }
+
+    @Test func engineAttribution_engineFlagMapsPathAndMTPEngagement() {
+        // The four wire values consumers see in the stats hint's
+        // `engine=` flag and the usage block's `engine` key.
+        let soloMTP = MLXBatchAdapter.EngineAttribution(
+            enginePath: "solo",
+            nativeMTPRequested: true,
+            nativeMTPEngaged: true,
+            nativeMTPFallbackReason: nil
+        )
+        #expect(soloMTP.engineFlag == "solo_mtp")
+
+        let soloAR = MLXBatchAdapter.EngineAttribution(
+            enginePath: "solo",
+            nativeMTPRequested: true,
+            nativeMTPEngaged: false,
+            nativeMTPFallbackReason: "tiny_prompt"
+        )
+        #expect(soloAR.engineFlag == "solo_ar")
+
+        // Submitted-path taxonomy: engine_iterator_gate means the engine
+        // TAKES its solo-MTP branch (the sampling gate passed) and then
+        // cancels when the iterator constructor throws — plain AR never
+        // runs, so the flag stays solo_mtp with engaged=false. Contrast
+        // engine_sampling_gate, where the AR iterator actually runs and
+        // solo_ar is truthful.
+        let iteratorGated = MLXBatchAdapter.EngineAttribution(
+            enginePath: "solo",
+            nativeMTPRequested: true,
+            nativeMTPEngaged: false,
+            nativeMTPFallbackReason: "engine_iterator_gate"
+        )
+        #expect(iteratorGated.engineFlag == "solo_mtp")
+
+        let samplingGated = MLXBatchAdapter.EngineAttribution(
+            enginePath: "solo",
+            nativeMTPRequested: true,
+            nativeMTPEngaged: false,
+            nativeMTPFallbackReason: "engine_sampling_gate"
+        )
+        #expect(samplingGated.engineFlag == "solo_ar")
+
+        // Block-diffusion targets run vmlx's exclusive solo canvas path.
+        let soloDiffusion = MLXBatchAdapter.EngineAttribution(
+            enginePath: "solo",
+            blockDiffusion: true,
+            nativeMTPRequested: false,
+            nativeMTPEngaged: false,
+            nativeMTPFallbackReason: nil
+        )
+        #expect(soloDiffusion.engineFlag == "solo_diffusion")
+
+        // The batched scheduler loop never runs the native-MTP iterator,
+        // so "batched" wins regardless of the engagement bit.
+        let batched = MLXBatchAdapter.EngineAttribution(
+            enginePath: "batched",
+            nativeMTPRequested: false,
+            nativeMTPEngaged: false,
+            nativeMTPFallbackReason: nil
+        )
+        #expect(batched.engineFlag == "batched")
+    }
+
+    @Test func engineAttribution_blockDiffusionTargetIsAlwaysSoloDiffusion() {
+        // vmlx routes `context.model is any BlockDiffusionModel` to the
+        // EXCLUSIVE solo canvas path regardless of maxBatchSize
+        // (BatchEngine.swift:582-592), hard-rejecting with a cancelled
+        // stream when busy — same disclosure as MTP-busy: attribution
+        // reports the submitted path; the rejection shows as
+        // stop=cancelled.
+        let singleSlot = MLXBatchAdapter.engineAttribution(
+            soloLeaseHeld: true,
+            isBlockDiffusionModel: true,
+            requestedDraftStrategy: nil,
+            submittedDraftStrategy: nil,
+            engineNativeMTPEligible: false,
+            osaurusFallbackReason: nil
+        )
+        #expect(singleSlot.enginePath == "solo")
+        #expect(singleSlot.engineFlag == "solo_diffusion")
+        #expect(singleSlot.nativeMTPRequested == false)
+
+        // No lease (multi-slot config): the engine still soloes the
+        // diffusion canvas, never batches it.
+        let multiSlot = MLXBatchAdapter.engineAttribution(
+            soloLeaseHeld: false,
+            isBlockDiffusionModel: true,
+            requestedDraftStrategy: nil,
+            submittedDraftStrategy: nil,
+            engineNativeMTPEligible: false,
+            osaurusFallbackReason: nil
+        )
+        #expect(multiSlot.enginePath == "solo")
+        #expect(multiSlot.engineFlag == "solo_diffusion")
+    }
+
+    @Test func blockDiffusionDetection_isTheEngineConformancePredicate() {
+        // The `generate(...)` call site feeds `isBlockDiffusionModel:` from
+        // `context.model is any BlockDiffusionModel`, evaluated on the
+        // loaded model instance inside `prepareInput`'s existing
+        // `container.perform` closure — the EXACT predicate
+        // `BatchEngine.generate` dispatches on (BatchEngine.swift:581), so
+        // attribution is coextensive with the engine's routing by
+        // construction. A conforming model detects regardless of its model
+        // id (renamed fine-tunes included) …
+        #expect(MLXBatchAdapter.isBlockDiffusionModelInstance(StubBlockDiffusionModel()))
+        // … and a non-conforming model never detects, no matter how
+        // diffusion-like its folder name is — the name regex the call site
+        // previously used could both miss and false-positive here.
+        #expect(!MLXBatchAdapter.isBlockDiffusionModelInstance(StubAutoregressiveModel()))
+    }
+
+    @Test func engineAttribution_iteratorGateVetoesEngagementForMaxTokensOne() {
+        // `{"max_tokens": 1}` greedy logit probe on an MTP model: osaurus's
+        // gates and vmlx's sampling gate both pass, but
+        // `NativeMTPTokenIterator.init` throws on maxTokens <= 1 and the
+        // engine yields a CANCELLED stream (BatchEngine.swift:1114-1127).
+        // The truthful triple: flag=solo_mtp (the engine takes its MTP
+        // branch), engaged=false (it will not run), reason
+        // engine_iterator_gate.
+        let attribution = MLXBatchAdapter.engineAttribution(
+            soloLeaseHeld: true,
+            requestedDraftStrategy: .nativeMTP(depth: 3),
+            submittedDraftStrategy: .nativeMTP(depth: 3),
+            engineNativeMTPEligible: true,
+            submittedMaxTokens: 1,
+            promptTokenCount: 128,
+            osaurusFallbackReason: nil
+        )
+        #expect(attribution.enginePath == "solo")
+        #expect(attribution.nativeMTPRequested == true)
+        #expect(attribution.nativeMTPEngaged == false)
+        #expect(attribution.nativeMTPFallbackReason == "engine_iterator_gate")
+        #expect(attribution.engineFlag == "solo_mtp")
+
+        // maxTokens = 2 is the smallest value the iterator accepts.
+        let engaged = MLXBatchAdapter.engineAttribution(
+            soloLeaseHeld: true,
+            requestedDraftStrategy: .nativeMTP(depth: 3),
+            submittedDraftStrategy: .nativeMTP(depth: 3),
+            engineNativeMTPEligible: true,
+            submittedMaxTokens: 2,
+            promptTokenCount: 128,
+            osaurusFallbackReason: nil
+        )
+        #expect(engaged.nativeMTPEngaged == true)
+        #expect(engaged.nativeMTPFallbackReason == nil)
+        #expect(engaged.engineFlag == "solo_mtp")
+    }
+
+    @Test func engineAttribution_iteratorGateCoversEmptyPromptAndInvalidDepth() {
+        // The other host-checkable `NativeMTPTokenIterator.init`
+        // preconditions: empty prompt and depth < 1 also throw engine-side
+        // after the sampling gate passes.
+        let emptyPrompt = MLXBatchAdapter.engineAttribution(
+            soloLeaseHeld: true,
+            requestedDraftStrategy: .nativeMTP(depth: 3),
+            submittedDraftStrategy: .nativeMTP(depth: 3),
+            engineNativeMTPEligible: true,
+            submittedMaxTokens: 128,
+            promptTokenCount: 0,
+            osaurusFallbackReason: nil
+        )
+        #expect(emptyPrompt.nativeMTPEngaged == false)
+        #expect(emptyPrompt.nativeMTPFallbackReason == "engine_iterator_gate")
+        #expect(emptyPrompt.engineFlag == "solo_mtp")
+
+        let invalidDepth = MLXBatchAdapter.engineAttribution(
+            soloLeaseHeld: true,
+            requestedDraftStrategy: .nativeMTP(depth: 0),
+            submittedDraftStrategy: .nativeMTP(depth: 0),
+            engineNativeMTPEligible: true,
+            submittedMaxTokens: 128,
+            promptTokenCount: 128,
+            osaurusFallbackReason: nil
+        )
+        #expect(invalidDepth.nativeMTPEngaged == false)
+        #expect(invalidDepth.nativeMTPFallbackReason == "engine_iterator_gate")
+
+        // When BOTH gates would trip, the sampling-gate reason wins: the
+        // engine's `canUseNativeMTP` check fails BEFORE the iterator
+        // constructor runs, so the engine demotes to plain AR (which DOES
+        // run) — solo_ar is the truthful flag there.
+        let samplingWins = MLXBatchAdapter.engineAttribution(
+            soloLeaseHeld: true,
+            requestedDraftStrategy: .nativeMTP(depth: 3),
+            submittedDraftStrategy: .nativeMTP(depth: 3),
+            engineNativeMTPEligible: false,
+            submittedMaxTokens: 1,
+            promptTokenCount: 128,
+            osaurusFallbackReason: nil
+        )
+        #expect(samplingWins.nativeMTPFallbackReason == "engine_sampling_gate")
+        #expect(samplingWins.engineFlag == "solo_ar")
+    }
+
+    @Test func submitStage_defaultsToSubmittedAndHonorsLoadWarmupOverride() {
+        // N1: `warmupNativeMTPAtLoad`'s hidden 2-token generation must not
+        // masquerade as a user request in `/admin` — it threads the
+        // internal "load_warmup" stage through `generate()` so the row it
+        // records is distinguishable from real traffic.
+        let userRequest = GenerationParameters(
+            temperature: 0,
+            maxTokens: 128
+        )
+        #expect(userRequest.effectiveSettingsStage == nil)
+        #expect(MLXBatchAdapter.submitStage(for: userRequest) == "submitted_to_batch_engine")
+
+        let warmup = GenerationParameters(
+            temperature: 0,
+            maxTokens: 2,
+            effectiveSettingsStage: "load_warmup"
+        )
+        #expect(MLXBatchAdapter.submitStage(for: warmup) == "load_warmup")
+    }
+
+    @Test func engineAttribution_populationMirrorsEffectiveDraftStrategyGates() {
+        // Mirrors the population in `generate()`: engaged ⟺ the strategy
+        // survived `effectiveDraftStrategy` AND is native MTP.
+        let greedy = GenerationParameters(
+            temperature: 0,
+            maxTokens: 128,
+            maxTokensExplicit: true
+        )
+        let configured = MLXLMCommon.DraftStrategy.nativeMTP(depth: 3)
+
+        let engagedStrategy = MLXBatchAdapter.effectiveDraftStrategy(
+            generation: greedy,
+            draftStrategy: configured,
+            promptTokenCount: MLXBatchAdapter.nativeMTPTinyPromptMinimumTokens
+        )
+        let engaged = MLXBatchAdapter.EngineAttribution(
+            enginePath: "solo",
+            nativeMTPRequested: configured.usesNativeMTP,
+            nativeMTPEngaged: engagedStrategy?.usesNativeMTP == true,
+            nativeMTPFallbackReason: nil
+        )
+        #expect(engaged.nativeMTPRequested == true)
+        #expect(engaged.nativeMTPEngaged == true)
+        #expect(engaged.engineFlag == "solo_mtp")
+
+        let sampling = GenerationParameters(
+            temperature: 0.7,
+            maxTokens: 128,
+            maxTokensExplicit: true,
+            topPOverride: 0.95
+        )
+        let droppedStrategy = MLXBatchAdapter.effectiveDraftStrategy(
+            generation: sampling,
+            draftStrategy: configured,
+            promptTokenCount: MLXBatchAdapter.nativeMTPTinyPromptMinimumTokens
+        )
+        let fellBack = MLXBatchAdapter.EngineAttribution(
+            enginePath: "solo",
+            nativeMTPRequested: configured.usesNativeMTP,
+            nativeMTPEngaged: droppedStrategy?.usesNativeMTP == true,
+            nativeMTPFallbackReason: "explicit_sampling"
+        )
+        #expect(fellBack.nativeMTPRequested == true)
+        #expect(fellBack.nativeMTPEngaged == false)
+        #expect(fellBack.engineFlag == "solo_ar")
     }
 
     @Test func effectiveDraftStrategy_dropsNativeMTPForImplicitChatSampling() {
@@ -2500,4 +2980,39 @@ struct MLXBatchAdapterTests {
         #expect(other.repetitionPenalty == nil)
         #expect(other.repetitionContextSize == 20)
     }
+}
+
+// MARK: - Block-diffusion detection stubs
+
+/// Minimal `BlockDiffusionModel` conformer: proves the attribution signal
+/// keys on the protocol conformance (the engine's dispatch predicate), not
+/// on the model id. Deliberately named nothing like "diffusion_gemma".
+private final class StubBlockDiffusionModel: Module, BlockDiffusionModel {
+    var blockDiffusionDefaults: BlockDiffusionParameters {
+        BlockDiffusionParameters(canvasLength: 32)
+    }
+    var diffusionVocabularySize: Int { 8 }
+
+    func encoderForward(_ tokens: MLXArray, cache: [KVCache]) {}
+
+    func decoderForward(
+        canvas: MLXArray, cache: [KVCache], selfConditioningLogits: MLXArray?
+    ) -> MLXArray { canvas }
+
+    func prepare(_ input: LMInput, cache: [KVCache], windowSize: Int?) throws -> PrepareResult {
+        throw BlockDiffusionModelError.requiresBlockDiffusionEngine("stub")
+    }
+
+    func newCache(parameters: GenerateParameters?) -> [KVCache] { [] }
+}
+
+/// Plain autoregressive `LanguageModel` (no `BlockDiffusionModel`
+/// conformance): must never be attributed to the diffusion canvas path,
+/// whatever its name.
+private final class StubAutoregressiveModel: Module, LanguageModel {
+    func prepare(_ input: LMInput, cache: [KVCache], windowSize: Int?) throws -> PrepareResult {
+        .tokens(input.text)
+    }
+
+    func newCache(parameters: GenerateParameters?) -> [KVCache] { [] }
 }

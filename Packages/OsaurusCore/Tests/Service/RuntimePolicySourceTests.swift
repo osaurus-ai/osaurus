@@ -2282,7 +2282,12 @@ struct RuntimePolicySourceTests {
 
         #expect(adapter.contains("recordPendingEffectiveGenerationSettings("))
         #expect(adapter.contains("stage: \"pending_preload\""))
-        #expect(adapter.contains("stage: \"submitted_to_batch_engine\""))
+        // Submit-time stage rides `submitStage(for:)` so the load-time MTP
+        // warmup can label its hidden generation "load_warmup" instead of
+        // masquerading as user traffic (N1).
+        #expect(adapter.contains("stage: Self.submitStage(for: generation)"))
+        #expect(adapter.contains("generation.effectiveSettingsStage ?? \"submitted_to_batch_engine\""))
+        #expect(adapter.contains("effectiveSettingsStage: \"load_warmup\""))
         #expect(runtime.contains("MLXBatchAdapter.recordPendingEffectiveGenerationSettings("))
     }
 
