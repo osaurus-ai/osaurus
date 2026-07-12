@@ -73,6 +73,9 @@ public actor ModelRuntime {
         let name: String
         let container: ModelContainer
         let weightsSizeBytes: Int64
+        /// Identifies the *weights that are actually loaded*, so a prefix-cache
+        /// entry cannot outlive them. See `weightsFingerprint(for:)`.
+        let weightsFingerprint: String
         let isVLM: Bool
         let draftStrategy: MLXLMCommon.DraftStrategy?
         let nativeMTPStatus: String?
@@ -82,6 +85,7 @@ public actor ModelRuntime {
             name: String,
             container: ModelContainer,
             weightsSizeBytes: Int64,
+            weightsFingerprint: String,
             isVLM: Bool = false,
             draftStrategy: MLXLMCommon.DraftStrategy? = nil,
             nativeMTPStatus: String? = nil,
@@ -90,6 +94,7 @@ public actor ModelRuntime {
             self.name = name
             self.container = container
             self.weightsSizeBytes = weightsSizeBytes
+            self.weightsFingerprint = weightsFingerprint
             self.isVLM = isVLM
             self.draftStrategy = draftStrategy
             self.nativeMTPStatus = nativeMTPStatus
@@ -1971,6 +1976,7 @@ public actor ModelRuntime {
                 name: name,
                 container: container,
                 weightsSizeBytes: loadFootprintBytes,
+                weightsFingerprint: Self.weightsFingerprint(for: localURL),
                 isVLM: isVLM,
                 draftStrategy: mtpPlan.draftStrategy,
                 nativeMTPStatus: mtpPlan.statusLine,
@@ -2071,6 +2077,7 @@ public actor ModelRuntime {
     /// file-level comment for rationale on each knob.
     private nonisolated static func buildCacheCoordinatorConfig(
         modelName: String,
+        weightsFingerprint: String,
         cacheTopology: ModelCacheTopologySnapshot? = nil
     ) -> CacheCoordinatorConfig {
         let settings = ServerRuntimeSettingsStore.snapshot()
@@ -2126,6 +2133,7 @@ public actor ModelRuntime {
         let scopedKey = Self.cacheCoordinatorModelKey(
             modelName: modelName,
             kvModeTag: kvModeTag,
+            weightsFingerprint: weightsFingerprint,
             cacheTopology: cacheTopology
         )
 
@@ -2337,13 +2345,81 @@ public actor ModelRuntime {
         return false
     }
 
+    /// Identity of the weights on disk, cheap enough to recompute on every load.
+    ///
+    /// The prefix cache is keyed by model *name*, and a name is not an identity: a
+    /// re-quantized bundle installed over the old one (MXFP4 -> MXFP8, a re-bake,
+    /// any weight edit) keeps its name, its layer count, its head dims and its KV
+    /// mode — every tag the key carried. The key was therefore byte-identical
+    /// across the swap, and the new weights would restore the OLD weights' KV and
+    /// continue generating from activations that never came from them. Silent, and
+    /// exactly the kind of thing that reads as "the quant is bad".
+    ///
+    /// `stat` per shard, not a content hash: digesting 94 GB on every load is not
+    /// affordable, and (size, mtime) over the shard set already changes on any real
+    /// re-bake. This is a cache *invalidation* key, not a security boundary — the
+    /// cost of a false miss is one slow prefill, so erring toward missing is right.
+    nonisolated static func weightsFingerprint(for directory: URL) -> String {
+        let fm = FileManager.default
+        guard
+            let entries = try? fm.contentsOfDirectory(
+                at: directory,
+                includingPropertiesForKeys: [.fileSizeKey, .contentModificationDateKey],
+                options: [.skipsHiddenFiles])
+        else {
+            // Unreadable bundle: fall back to a value that never matches a previous
+            // load, so we take a cold prefill rather than risk a wrong-weights hit.
+            return "unknown-\(UUID().uuidString)"
+        }
+
+        // Weights and the files that change how they are interpreted. A tokenizer or
+        // config edit changes token ids / rope / quant metadata, which invalidates a
+        // stored KV just as surely as a weight edit does.
+        let interesting = entries.filter { url in
+            let name = url.lastPathComponent
+            return name.hasSuffix(".safetensors")
+                || name == "config.json"
+                || name == "tokenizer.json"
+                || name == "tokenizer_config.json"
+        }
+
+        let parts =
+            interesting
+            .map { url -> String in
+                let values = try? url.resourceValues(forKeys: [
+                    .fileSizeKey, .contentModificationDateKey,
+                ])
+                let size = values?.fileSize ?? -1
+                let mtime = values?.contentModificationDate?.timeIntervalSince1970 ?? -1
+                return "\(url.lastPathComponent):\(size):\(Int(mtime))"
+            }
+            .sorted()
+
+        guard !parts.isEmpty else { return "empty" }
+
+        // FNV-1a, not `hashValue`: Swift seeds `Hasher` per process, so a
+        // `hashValue`-derived key would differ on every launch and the prefix cache
+        // would never hit again — trading a correctness bug for a performance one.
+        // This must be stable across launches and across machines.
+        var hash: UInt64 = 0xcbf2_9ce4_8422_2325
+        for byte in parts.joined(separator: "|").utf8 {
+            hash ^= UInt64(byte)
+            hash = hash &* 0x0000_0100_0000_01b3
+        }
+        return String(format: "%016llx", hash)
+    }
+
     nonisolated static func cacheCoordinatorModelKey(
         modelName: String,
         kvModeTag: String,
+        weightsFingerprint: String,
         cacheTopology: ModelCacheTopologySnapshot? = nil
     ) -> String {
         var tags = [
             modelName,
+            // A name is not an identity — see `weightsFingerprint(for:)`. Without
+            // this, re-baking a pack under the same name serves the old pack's KV.
+            "weights=\(weightsFingerprint)",
             "kv=\(kvModeTag)",
             // vmlx `TQDiskSerializer.currentFormatVersion == 2` at the
             // pinned runtime. Keep this in the host key so older L2 records
@@ -2398,6 +2474,7 @@ public actor ModelRuntime {
         holder.cacheTopology = cacheTopology
         let cacheConfig = Self.buildCacheCoordinatorConfig(
             modelName: holder.name,
+            weightsFingerprint: holder.weightsFingerprint,
             cacheTopology: cacheTopology
         )
         await holder.container.enableCachingAsync(config: cacheConfig)
