@@ -277,6 +277,22 @@ enum FeatureTelemetry {
         service.track("agent_created")
     }
 
+    // MARK: - Product Hunt launch dialog (July 2026, one-shot)
+
+    /// The one-time Product Hunt launch dialog was presented. Count only.
+    static func productHuntLaunchDialogShown(service: TelemetryService = .shared) {
+        service.track("product_hunt_launch_dialog_shown")
+    }
+
+    /// The user dismissed the Product Hunt launch dialog. `action` is a
+    /// closed two-value enum token: `launch` (opened the PH page) or `later`.
+    static func productHuntLaunchDialogClicked(
+        action: String,
+        service: TelemetryService = .shared
+    ) {
+        service.track("product_hunt_launch_dialog_clicked", ["action": action])
+    }
+
     // MARK: - Derivation helpers
 
     /// Whether a chat request counts as a new top-level message for the

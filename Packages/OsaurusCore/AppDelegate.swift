@@ -575,6 +575,15 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
             // choice in onboarding, so this is gated to the no-onboarding path.
             if !keychainDisabledTestMode && !presentOnboarding {
                 maybePromptForTelemetryConsent()
+
+                // One-time Product Hunt launch dialog (July 2026). Delayed
+                // past the consent prompt's own 900ms settle so the two can
+                // never race for a scope; if consent is still pending the
+                // eligibility gate defers to the next activation.
+                Task { @MainActor [weak self] in
+                    try? await Task.sleep(for: .seconds(2))
+                    self?.presentProductHuntLaunchDialogIfEligible()
+                }
             }
 
             // tear down the Tahoe placeholder observers
@@ -1006,6 +1015,20 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
         return true
     }
 
+    /// Foreground activation. Many users leave the app running for days, so
+    /// time-window features (the one-time Product Hunt launch dialog) must
+    /// re-check here — a launch-only check would miss them. The dialog's own
+    /// gates make this a cheap no-op outside the campaign window and after
+    /// it has been seen.
+    public func applicationDidBecomeActive(_ notification: Notification) {
+        // Give the activation (window ordering, focus restoration) a beat to
+        // settle so the alert lands in the window the user actually sees.
+        Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: 500_000_000)  // 500ms
+            self?.presentProductHuntLaunchDialogIfEligible()
+        }
+    }
+
     // MARK: - Dock Menu
 
     public func applicationDockMenu(_ sender: NSApplication) -> NSMenu? {
@@ -1020,6 +1043,13 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
             )
             menu.addItem(
                 NSMenuItem(title: "Preview What's New", action: #selector(dockPreviewWhatsNew), keyEquivalent: "")
+            )
+            menu.addItem(
+                NSMenuItem(
+                    title: "Reset & Test Product Hunt Launch",
+                    action: #selector(dockResetProductHuntLaunch),
+                    keyEquivalent: ""
+                )
             )
         #endif
         return menu
@@ -1049,6 +1079,16 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
             // now force-returns every release's notes and presents the modal
             // regardless of the dev build's bundle version.
             ChatWindowManager.shared.createWindow()
+        }
+
+        /// Clear the campaign's seen flag, bypass only the UTC date window,
+        /// and run the normal eligibility/presentation path — including all
+        /// onboarding/modal/active-work deferrals — so the debug run
+        /// exercises the production coordination. Dismissing the dialog
+        /// re-persists seen; pick this item again to test another pass.
+        @objc private func dockResetProductHuntLaunch() {
+            ProductHuntLaunchCampaign.shared.resetForDebugTesting()
+            presentProductHuntLaunchDialogIfEligible()
         }
     #endif
 
@@ -2070,6 +2110,13 @@ extension AppDelegate {
                     ModelPickerItemCache.shared.invalidateCache()
                     // Open ChatView after onboarding completes
                     self?.showChatOverlay()
+                    // Fresh installs during the Product Hunt launch window
+                    // deferred the launch dialog behind onboarding; recheck
+                    // now that the chat window is up to host it.
+                    Task { @MainActor [weak self] in
+                        try? await Task.sleep(for: .seconds(1))
+                        self?.presentProductHuntLaunchDialogIfEligible()
+                    }
                 }
             )
             .environment(\.theme, themeManager.currentTheme)
@@ -2320,5 +2367,97 @@ extension AppDelegate {
         // Intentionally not shown — it stays registered and hidden until the
         // user opens Settings, at which point `showManagementWindow` reuses it.
         NSLog("[Management] Prewarmed hidden window")
+    }
+}
+
+// MARK: - Product Hunt Launch Dialog
+extension AppDelegate {
+    /// Present the one-time Product Hunt launch thank-you dialog when the
+    /// campaign's own gates pass (inside the UTC window, never seen) AND
+    /// nothing critical is in progress. A blocked attempt does NOT consume
+    /// eligibility — the next launch/foreground activation or onboarding
+    /// completion simply rechecks while the window remains open.
+    @MainActor
+    func presentProductHuntLaunchDialogIfEligible() {
+        guard !keychainDisabledTestMode else { return }
+
+        let campaign = ProductHuntLaunchCampaign.shared
+        guard campaign.isEligible else { return }
+
+        // Defer instead of stacking: onboarding flow (fresh installs see the
+        // dialog after it completes, via the onboarding-completion recheck),
+        // the pending telemetry-consent prompt, any AppKit modal or attached
+        // sheet, any themed alert anywhere, a blocking in-chat or Computer
+        // Use prompt awaiting the user, a streaming chat turn, or an active
+        // background agent task (the current Work Mode equivalent).
+        guard !OnboardingService.shared.shouldShowOnboarding else { return }
+        guard !TelemetryService.shared.needsConsentDecision else { return }
+        guard NSApp.modalWindow == nil else { return }
+        guard !NSApp.windows.contains(where: { $0.attachedSheet != nil }) else { return }
+        guard !ThemedAlertCenter.shared.hasAnyActiveAlert else { return }
+        guard ComputerUsePromptQueue.shared.pending.isEmpty,
+            ComputerUsePromptQueue.shared.pendingConsent.isEmpty
+        else { return }
+        guard !ChatWindowManager.shared.isAnySessionStreaming else { return }
+        guard !ChatWindowManager.shared.hasAnyBlockingPromptOverlay else { return }
+        guard !BackgroundTaskManager.shared.backgroundTasks.values.contains(where: { $0.status.isActive })
+        else { return }
+
+        // Host in the user's landing window (same routing as the telemetry
+        // consent prompt) so the dialog behaves like an app modal and recedes
+        // when Osaurus deactivates; the screen-level toast overlay is only a
+        // last-resort fallback when no app window is up.
+        let scope: ThemedAlertScope
+        if let chatId = ChatWindowManager.shared.lastFocusedWindowId,
+            ChatWindowManager.shared.windowExists(id: chatId) {
+            scope = .chat(chatId)
+        } else if WindowManager.shared.isVisible(.management) {
+            scope = .management
+        } else {
+            scope = .toastOverlay
+        }
+
+        // Seen is persisted at presentation time, so even a force-quit while
+        // the dialog is up can't make it reappear.
+        campaign.willPresent()
+        FeatureTelemetry.productHuntLaunchDialogShown()
+
+        let requestId = UUID()
+        ThemedAlertCenter.shared.present(
+            ThemedAlertRequest(
+                id: requestId,
+                title: L("We're live on Product Hunt"),
+                message: L(
+                    """
+                    Hey! After 10 months of building in public, today is our official launch on Product Hunt.
+
+                    Osaurus has been shaped by feedback from people like you. If it's been useful to you, come say hi and support the launch. It means a lot to us.
+
+                    Thank you for being here early.
+                    """
+                ),
+                headerImageName: "osaurus-thanks",
+                headerImageAccessibilityLabel: L("Osaurus dinosaur saying thank you"),
+                buttons: [
+                    // "Maybe later" carries the cancel role so Escape and an
+                    // outside click follow the same permanent-dismiss path.
+                    .cancel(L("Maybe later")) {
+                        campaign.markSeen()
+                        FeatureTelemetry.productHuntLaunchDialogClicked(action: "later")
+                    },
+                    .primary(L("Check out the launch")) {
+                        campaign.markSeen()
+                        FeatureTelemetry.productHuntLaunchDialogClicked(action: "launch")
+                        NSWorkspace.shared.open(ProductHuntLaunchCampaign.launchURL)
+                    },
+                ],
+                width: 400,
+                onDismiss: {
+                    campaign.didDismiss()
+                    ThemedAlertCenter.shared.dismiss(scope: scope, id: requestId)
+                }
+            ),
+            scope: scope
+        )
     }
 }

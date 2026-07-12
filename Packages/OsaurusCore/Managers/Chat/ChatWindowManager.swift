@@ -394,6 +394,15 @@ public final class ChatWindowManager: NSObject, ObservableObject {
         windowStates.values.contains { $0.session.isStreaming }
     }
 
+    /// True while any chat window has a blocking in-chat prompt (secret or
+    /// clarify card) mounted. Surfaces the otherwise-private per-window
+    /// `promptQueue` state so app-level announcement dialogs (e.g. the
+    /// Product Hunt launch dialog) can defer instead of stacking on top of
+    /// a deliberate pause that's waiting on the user.
+    public var hasAnyBlockingPromptOverlay: Bool {
+        windowStates.values.contains { $0.session.promptQueue.current != nil }
+    }
+
     /// True when a chat window OTHER than `excluding` is currently streaming a
     /// local model. Enforces one local generation at a time across windows: the
     /// shared inference context can only run one, and loading a second would
