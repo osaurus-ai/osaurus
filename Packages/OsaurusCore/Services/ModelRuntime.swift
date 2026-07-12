@@ -3010,6 +3010,11 @@ public actor ModelRuntime {
     ///    keeps MLX compile globally opt-in pending the PR #1173
     ///    model-switch corruption root cause; the per-request flag is set
     ///    in makeGenerateParameters)
+    ///  - memorySafety.mode -> CacheStoreBudget.policy (the prefix-cache store
+    ///    runs inside the decode loop and has no settings handle, so the user's
+    ///    safety level has to be pushed to it; without this the store gates
+    ///    against raw physical RAM and the Memory Safety section is decorative
+    ///    for that decision)
     nonisolated static func applyPerformancePolicy(_ settings: VMLXServerRuntimeSettings) {
         let perf = settings.effectivePerformance
         if let quant = perf.tiedHeadCodec.quantization {
@@ -3025,6 +3030,7 @@ public actor ModelRuntime {
         } else {
             unsetenv("VMLX_ENABLE_UNSAFE_COMPILE")
         }
+        CacheStoreBudget.policy = settings.memorySafety.mode.cacheStorePolicy
     }
 
     nonisolated static func makeGenerateParameters(
