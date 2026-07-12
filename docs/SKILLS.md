@@ -199,9 +199,10 @@ any symlinked root, file, or directory, excessive depth or file count, malformed
 metadata, or an oversized `SKILL.md`. Switching or clearing the working
 directory immediately removes the prior project's skills and session grants.
 Approval pins `SKILL.md` plus the bounded package inventory and every inventoried
-file hash. Osaurus revalidates that target package snapshot on each load; edits
-delete the persisted approval until the user reviews and explicitly trusts the
-changed package again. Loading
+file hash. Osaurus revalidates that target package snapshot during discovery and
+on each load; edits delete the persisted approval and all agent grants until the
+user reviews, explicitly trusts, and explicitly re-grants the changed package.
+Manually untrusting a package also clears its agent grants. Loading
 also requires the current foreground chat's explicit custom-agent identity and
 never falls back to whichever agent happens to be active in the UI.
 

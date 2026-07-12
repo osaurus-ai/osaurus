@@ -530,6 +530,7 @@ struct ProjectSkillServiceTests {
     }
 
     @Test @MainActor func contentChangeRevokesApprovalUntilUserReenables() async throws {
+        try await DynamicCatalogTestLock.shared.run {
         let root = try temporaryDirectory()
         let suite = "ProjectSkillContentPinTests.\(UUID().uuidString)"
         let defaults = try #require(UserDefaults(suiteName: suite))
@@ -548,6 +549,16 @@ struct ProjectSkillServiceTests {
         let id = try #require(manager.records.first?.id)
         await manager.setEnabled(true, id: id)
         #expect(manager.isEnabled(id))
+        let rootIdentity = try #require(manager.rootIdentity)
+        let defaultsKey = "ProjectSkillGrants.\(rootIdentity)"
+        let agent = Agent(
+            name: "ProjectSkillRefreshRevoke-\(UUID().uuidString.prefix(6))",
+            agentAddress: "project-skill-refresh-revoke-\(UUID().uuidString)"
+        )
+
+        try await withTemporaryAgent(agent) {
+        manager.setAgentGranted(true, id: id, agentID: agent.id)
+        #expect(manager.isAgentGranted(id, agentID: agent.id))
 
         let scripts = directory.appendingPathComponent("scripts", isDirectory: true)
         try FileManager.default.createDirectory(at: scripts, withIntermediateDirectories: true)
@@ -559,7 +570,11 @@ struct ProjectSkillServiceTests {
         await manager.refresh()
         #expect(!manager.isEnabled(id))
         #expect(manager.staleApprovalIDs.contains(id))
+        #expect((defaults.dictionary(forKey: defaultsKey) as? [String: String])?[id] == nil)
+        #expect(!manager.isAgentGranted(id, agentID: agent.id))
         await manager.setEnabled(true, id: id)
+        #expect(!manager.isAgentGranted(id, agentID: agent.id))
+        manager.setAgentGranted(true, id: id, agentID: agent.id)
 
         let changed = """
             ---
@@ -578,12 +593,59 @@ struct ProjectSkillServiceTests {
 
         #expect(!manager.isEnabled(id))
         #expect(manager.staleApprovalIDs.contains(id))
+        #expect((defaults.dictionary(forKey: defaultsKey) as? [String: String])?[id] == nil)
+        #expect(!manager.isAgentGranted(id, agentID: agent.id))
         #expect(
             await manager.load(id: id, sessionID: "session", agentID: nil)
                 == .failure(.notEnabled)
         )
         await manager.setEnabled(true, id: id)
         #expect(manager.isEnabled(id))
+        #expect(!manager.isAgentGranted(id, agentID: agent.id))
+        }
+        }
+    }
+
+    @Test @MainActor func explicitUntrustClearsAgentGrantsAndRequiresRegrant() async throws {
+        try await DynamicCatalogTestLock.shared.run {
+        let root = try temporaryDirectory()
+        let suite = "ProjectSkillExplicitUntrustTests.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        defer {
+            try? FileManager.default.removeItem(at: root)
+            defaults.removePersistentDomain(forName: suite)
+        }
+        _ = try writeSkill(root: root, source: .agents, directory: "review", name: "Review")
+        let manager = ProjectSkillManager(defaults: defaults)
+        await manager.activate(root)
+        let id = try #require(manager.records.first?.id)
+        let rootIdentity = try #require(manager.rootIdentity)
+        let defaultsKey = "ProjectSkillGrants.\(rootIdentity)"
+        #expect(await manager.setEnabled(true, id: id))
+
+        let agent = Agent(
+            name: "ProjectSkillExplicitUntrust-\(UUID().uuidString.prefix(6))",
+            agentAddress: "project-skill-explicit-untrust-\(UUID().uuidString)"
+        )
+        try await withTemporaryAgent(agent) {
+            manager.setAgentGranted(true, id: id, agentID: agent.id)
+            #expect(manager.isAgentGranted(id, agentID: agent.id))
+
+            #expect(await manager.setEnabled(false, id: id))
+            #expect(!manager.isEnabled(id))
+            #expect(!manager.staleApprovalIDs.contains(id))
+            #expect((defaults.dictionary(forKey: defaultsKey) as? [String: String])?[id] == nil)
+            #expect(!manager.isAgentGranted(id, agentID: agent.id))
+
+            #expect(await manager.setEnabled(true, id: id))
+            #expect(manager.isEnabled(id))
+            #expect(!manager.isAgentGranted(id, agentID: agent.id))
+            #expect(
+                await manager.load(id: id, sessionID: "explicit-untrust", agentID: agent.id)
+                    == .failure(.notGrantedToAgent)
+            )
+        }
+        }
     }
 
     @Test @MainActor func loadRevalidatesInstructionsInventoryAndSymlinksWithoutRefresh() async throws {

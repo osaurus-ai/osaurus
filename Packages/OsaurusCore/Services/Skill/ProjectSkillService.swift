@@ -703,22 +703,20 @@ final class ProjectSkillManager {
         let currentHashes = Dictionary(
             uniqueKeysWithValues: result.records.map { ($0.id, $0.approvalHash) }
         )
-        staleApprovalIDs = Set(
+        let staleIDs: Set<String> = Set(
             approvedContentHashes.compactMap { id, hash in
                 guard available.contains(id), currentHashes[id] != hash else { return nil }
                 return id
             }
         )
+        staleApprovalIDs = []
         enabledIDs = Set(
             approvedContentHashes.compactMap { id, hash in
                 currentHashes[id] == hash && available.contains(id) ? id : nil
             }
         )
-        if !staleApprovalIDs.isEmpty {
-            diagnostics.append(
-                "Project skill content changed after approval; review and re-enable: "
-                    + staleApprovalIDs.sorted().joined(separator: ", ")
-            )
+        for id in staleIDs.sorted() {
+            revokeApproval(id: id)
         }
         isRefreshing = false
     }
@@ -732,6 +730,7 @@ final class ProjectSkillManager {
             approvedContentHashes.removeValue(forKey: id)
             enabledIDs.remove(id)
             staleApprovalIDs.remove(id)
+            clearAgentGrants(id: id)
             saveApprovals()
             return true
         }
