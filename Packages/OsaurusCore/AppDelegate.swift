@@ -242,6 +242,12 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
         // Configure local notifications
         NotificationService.shared.configureOnLaunch()
 
+        // Welcome-credit auto-claim: instantiating the singleton installs its
+        // identity/app-activation observers, and the bootstrap retries a
+        // claim a previous (e.g. offline) session couldn't finish. The claim
+        // is wallet-signed and idempotent server-side.
+        WelcomeCreditService.shared.bootstrapAtLaunch()
+
         // If PocketTTS models are already on disk, preload them so the first
         // speaker tap plays immediately without routing to settings.
         TTSService.shared.refreshModelState()

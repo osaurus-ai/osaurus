@@ -47,6 +47,10 @@ public enum RemoteProviderError: LocalizedError {
 public final class RemoteProviderManager: ObservableObject {
     public static let shared = RemoteProviderManager()
     public static let osaurusRouterProviderId = UUID(uuidString: "2CFBD528-62FD-4EF0-A143-3FE532F03840")!
+    /// Product-selected temporary model for the first-run local-download
+    /// experience. Match by final path component because Router ids are
+    /// provider-prefixed (for example `osaurus/deepseek-ai/...`).
+    static let firstRunOsaurusModelSlug = "deepseek-v4-flash"
 
     /// Current configuration
     @Published public private(set) var configuration: RemoteProviderConfiguration
@@ -992,6 +996,23 @@ public final class RemoteProviderManager: ObservableObject {
         else { return nil }
         return entry.models.first { !ModelPickerItem.isLikelyEmbeddingOrRerankerID($0) }
             ?? entry.models.first
+    }
+
+    /// DeepSeek V4 Flash for first-run Cloud, with the normal chat-capable
+    /// provider fallback if the Router temporarily omits that model.
+    public func firstRunOsaurusRouterModelId() -> String? {
+        guard
+            let entry = cachedAvailableModels().first(where: {
+                $0.providerId == Self.osaurusRouterProviderId
+            })
+        else { return nil }
+        return entry.models.first(where: Self.isFirstRunOsaurusModelId)
+            ?? entry.models.first { !ModelPickerItem.isLikelyEmbeddingOrRerankerID($0) }
+            ?? entry.models.first
+    }
+
+    static func isFirstRunOsaurusModelId(_ id: String) -> Bool {
+        id.split(separator: "/").last?.lowercased() == firstRunOsaurusModelSlug
     }
 
     /// Metadata for an Osaurus Router model by its unprefixed id (the id as it

@@ -106,6 +106,12 @@ struct ModelPickerItem: Identifiable, Hashable {
     /// filter the Osaurus tab by context limit; `nil` when unknown.
     let contextLength: Int?
 
+    /// Whether Router metadata explicitly advertises tool calling. Nil for
+    /// non-Router models and older catalogs that do not publish the capability.
+    /// The first-run temporary Cloud selector uses this with price + context to
+    /// choose a lower-cost model that can still run the agent experience.
+    let supportsToolCalling: Bool?
+
     /// Catalog-driven reasoning-effort capabilities for remote models: the
     /// live ChatGPT/Codex catalog contract, or the documented official
     /// OpenAI GPT-5.6 API-key contract. Nil for models without a dynamic
@@ -132,6 +138,7 @@ struct ModelPickerItem: Identifiable, Hashable {
         inputPriceMicroPerMTok: Int64? = nil,
         outputPriceMicroPerMTok: Int64? = nil,
         contextLength: Int? = nil,
+        supportsToolCalling: Bool? = nil,
         reasoningCapabilities: ModelReasoningCapabilities? = nil,
         imageKind: String? = nil,
         imageCapabilities: ImageModelCapabilities? = nil,
@@ -151,6 +158,7 @@ struct ModelPickerItem: Identifiable, Hashable {
         self.inputPriceMicroPerMTok = inputPriceMicroPerMTok
         self.outputPriceMicroPerMTok = outputPriceMicroPerMTok
         self.contextLength = contextLength
+        self.supportsToolCalling = supportsToolCalling
         self.reasoningCapabilities = reasoningCapabilities
         self.imageKind = imageKind
         self.imageCapabilities = imageCapabilities
@@ -298,7 +306,8 @@ extension ModelPickerItem {
             outputPriceMicroPerMTok: Int64(
                 metadata.outputMicroPerMTok.trimmingCharacters(in: .whitespacesAndNewlines)
             ),
-            contextLength: metadata.contextLength > 0 ? metadata.contextLength : nil
+            contextLength: metadata.contextLength > 0 ? metadata.contextLength : nil,
+            supportsToolCalling: metadata.supportsToolCalling
         )
     }
 
@@ -349,6 +358,17 @@ extension OsaurusRouterModel {
         return capabilities.contains { key, value in
             value && visionKeys.contains(key.lowercased())
         }
+    }
+
+    /// Router catalogs currently use `tools`; accept common aliases so a
+    /// backend naming cleanup does not silently make first-run selection less
+    /// capable. Nil means the catalog did not make a claim either way.
+    var supportsToolCalling: Bool? {
+        guard let capabilities else { return nil }
+        let toolKeys: Set<String> = ["tools", "tool_calling", "function_calling"]
+        let matches = capabilities.filter { toolKeys.contains($0.key.lowercased()) }
+        guard !matches.isEmpty else { return nil }
+        return matches.contains { $0.value }
     }
 
     /// Human-friendly context window (e.g. 131072 -> "131K", 1048576 -> "1M").

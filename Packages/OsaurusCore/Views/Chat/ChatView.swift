@@ -789,6 +789,13 @@ final class ChatSession: ObservableObject {
         let effectiveModel = AgentManager.shared.effectiveModel(for: agentId ?? Agent.defaultId)
         if let model = effectiveModel, pickerItems.contains(where: { $0.id == model }) {
             selectedModel = model
+        } else if Self.pendingLocalDefaultModelId(for: agentId, in: pickerItems.map(\.id)) != nil {
+            // First-run local setup includes temporary Osaurus Cloud access:
+            // select the lower-cost capable Router model while the pinned
+            // private model downloads. This is session-only — the agent's
+            // durable default remains local, so the next picker rebuild
+            // switches over as soon as that bundle lands.
+            selectedModel = Self.osaurusRouterValueCandidate(in: pickerItems)?.id
         } else {
             selectedModel = pickerItems.firstChatCapable?.id
         }
@@ -796,6 +803,149 @@ final class ChatSession: ObservableObject {
         applyImageModelDefaults(for: selectedModel)
         isLoadingModel = false
         notifySessionBecameActive()
+    }
+
+    /// The agent's pinned default model when it's a local model that isn't
+    /// usable yet — absent from the picker with its download in flight,
+    /// paused, or failed. nil once the model lands (or was never in that
+    /// setup window).
+    static func pendingLocalDefaultModelId(for agentId: UUID?, in optionIds: [String]) -> String? {
+        guard
+            let model = AgentManager.shared.effectiveModel(for: agentId ?? Agent.defaultId),
+            !optionIds.contains(model)
+        else { return nil }
+        switch ModelManager.shared.downloadStates[model] {
+        case .downloading, .paused, .failed:
+            return model
+        case .completed, .notStarted, nil:
+            return nil
+        }
+    }
+
+    /// The pinned-but-still-downloading local default for this session. Stays
+    /// non-nil while the temporary Cloud model is selected so the chat empty
+    /// state can keep showing local download progress; becomes nil once the
+    /// local bundle lands.
+    var pendingLocalSetupModelId: String? {
+        Self.pendingLocalDefaultModelId(for: agentId, in: pickerItems.map(\.id))
+    }
+
+    /// The temporary first-run Cloud model used while a pinned local model is
+    /// downloading. DeepSeek V4 Flash is the product-selected experience;
+    /// Foundation, local, and BYOK models never qualify.
+    ///
+    /// "Lower-cost but capable" is catalog-driven rather than a hardcoded model
+    /// allowlist: prefer chat models that explicitly support tools, offer at
+    /// least 32K context, and publish pricing; then minimize the sum of input
+    /// and output rates. If the Router's older metadata lacks one of those
+    /// fields, progressively relax the metadata requirements while staying
+    /// Router-only and chat-capable.
+    static func osaurusRouterValueCandidate(in items: [ModelPickerItem]) -> ModelPickerItem? {
+        let routerItems = items.filter { item in
+            if case .remote(_, let providerId) = item.source {
+                return providerId == RemoteProviderManager.osaurusRouterProviderId
+                    && item.isLikelyChatCapable
+            }
+            return false
+        }
+        guard !routerItems.isEmpty else { return nil }
+        if let deepSeek = routerItems.first(where: {
+            RemoteProviderManager.isFirstRunOsaurusModelId($0.id)
+        }) {
+            return deepSeek
+        }
+
+        func pricedMinimum(in candidates: [ModelPickerItem]) -> ModelPickerItem? {
+            candidates
+                .filter {
+                    $0.inputPriceMicroPerMTok != nil && $0.outputPriceMicroPerMTok != nil
+                }
+                .min { lhs, rhs in
+                    let lhsCost =
+                        Double(lhs.inputPriceMicroPerMTok ?? 0)
+                        + Double(lhs.outputPriceMicroPerMTok ?? 0)
+                    let rhsCost =
+                        Double(rhs.inputPriceMicroPerMTok ?? 0)
+                        + Double(rhs.outputPriceMicroPerMTok ?? 0)
+                    if lhsCost != rhsCost { return lhsCost < rhsCost }
+                    // More context wins an exact price tie.
+                    let lhsContext = lhs.contextLength ?? 0
+                    let rhsContext = rhs.contextLength ?? 0
+                    if lhsContext != rhsContext { return lhsContext > rhsContext }
+                    return lhs.displayName < rhs.displayName
+                }
+        }
+
+        let capable = routerItems.filter {
+            $0.supportsToolCalling == true && ($0.contextLength ?? 0) >= 32_768
+        }
+        return pricedMinimum(in: capable)
+            ?? pricedMinimum(in: routerItems.filter { $0.supportsToolCalling == true })
+            ?? pricedMinimum(in: routerItems)
+            ?? routerItems.first
+    }
+
+    /// Session-scoped switch to an Osaurus Router model while the agent's
+    /// pinned local default is still downloading. First-run invokes this
+    /// automatically; the recovery UI can invoke it again after a connection
+    /// failure. Connects the Router on demand when its catalog isn't populated
+    /// yet, then selects *only* a Router model —
+    /// never Foundation, another local model, or a BYOK provider.
+    ///
+    /// Deliberately not persisted as the agent default and not recorded as a
+    /// manual pick: the moment the local download lands, the next picker
+    /// rebuild snaps the selection back to the model the user actually chose.
+    ///
+    /// Returns false when no Router model could be reached, leaving the
+    /// selection empty so the caller can surface a retry instead of silently
+    /// routing prompts elsewhere.
+    @discardableResult
+    func adoptOsaurusRouterModelWhileLocalSetupPending(
+        maxConnectAttempts: Int = 20,
+        connectIfNeeded: Bool = true
+    ) async -> Bool {
+        guard pendingLocalSetupModelId != nil else { return false }
+        if isOsaurusRouterSession { return true }
+        if selectOsaurusRouterBridgeModel() { return true }
+        guard connectIfNeeded else { return false }
+
+        // Router catalog not in the picker yet — (re-)enable and connect on
+        // demand. First-run setup explicitly includes temporary Cloud access.
+        let manager = RemoteProviderManager.shared
+        manager.setOsaurusRouterEnabled(true)
+        // Bounded poll (~10s at the default attempts): identity setup / the
+        // enable-task connect may still be in flight, and
+        // `connectOsaurusRouterIfPossible()` is a cheap no-op while connected
+        // or connecting.
+        let attempts = max(1, maxConnectAttempts)
+        for attempt in 1 ... attempts {
+            await manager.connectOsaurusRouterIfPossible()
+            if manager.firstRunOsaurusRouterModelId() != nil {
+                await refreshPickerItems()
+                // If the local download landed while we waited, normal picker
+                // reconciliation has completed the handoff. Otherwise only a
+                // Router selection counts as a successful bridge.
+                if pendingLocalSetupModelId == nil { return selectedModel != nil }
+                return isOsaurusRouterSession || selectOsaurusRouterBridgeModel()
+            }
+            if attempt < attempts {
+                try? await Task.sleep(nanoseconds: 500_000_000)
+            }
+        }
+        return false
+    }
+
+    /// Select the Router bridge candidate from the current picker items, if
+    /// one exists. Wrapped in `isLoadingModel` so the auto-persist sink does
+    /// not write it back as the agent default.
+    private func selectOsaurusRouterBridgeModel() -> Bool {
+        guard let item = Self.osaurusRouterValueCandidate(in: pickerItems) else { return false }
+        isLoadingModel = true
+        selectedModel = item.id
+        loadActiveModelOptions(for: item.id)
+        applyImageModelDefaults(for: item.id)
+        isLoadingModel = false
+        return true
     }
 
     func refreshPickerItems() async {
@@ -845,6 +995,11 @@ final class ChatSession: ObservableObject {
             newSelected = model
         } else if let prev = selectedModel, newOptionIds.contains(prev) {
             newSelected = prev
+        } else if Self.pendingLocalDefaultModelId(for: agentId, in: newOptionIds) != nil {
+            // Pinned local default still downloading: first-run includes
+            // temporary Osaurus Cloud access, so adopt the catalog-driven
+            // lower-cost capable Router model as soon as it appears.
+            newSelected = Self.osaurusRouterValueCandidate(in: newOptions)?.id
         } else {
             newSelected = newOptions.firstChatCapable?.id
         }
@@ -922,6 +1077,17 @@ final class ChatSession: ObservableObject {
             return providerId == RemoteProviderManager.osaurusRouterProviderId
         }
         return false
+    }
+
+    /// Friendly name for the temporary first-run Cloud status shown alongside
+    /// local download progress. Router ids are slug-like; preserve the product
+    /// spelling for DeepSeek V4 Flash.
+    var temporaryCloudModelDisplayName: String? {
+        guard isOsaurusRouterSession, let item = selectedPickerItem else { return nil }
+        if RemoteProviderManager.isFirstRunOsaurusModelId(item.id) {
+            return "DeepSeek V4 Flash"
+        }
+        return item.displayName
     }
 
     /// Total micro-USD billed by the Osaurus Router across this session's turns.
@@ -5823,6 +5989,15 @@ struct ChatView: View {
                                     // Show onboarding window
                                     AppDelegate.shared?.showOnboardingWindow()
                                 },
+                                onRetryConnection: {
+                                    // Reconnect the managed Osaurus Router and any
+                                    // enabled providers, then re-resolve the picker.
+                                    await RemoteProviderManager.shared.connectEnabledProviders()
+                                    await session.refreshPickerItems()
+                                },
+                                onOpenProviders: {
+                                    AppDelegate.shared?.showManagementWindow(initialTab: .providers)
+                                },
                             )
                         }
                     }
@@ -6280,6 +6455,11 @@ struct ChatView: View {
                 session.input = prompt
             },
             onOpenOnboarding: nil,
+            pendingLocalModelId: session.pendingLocalSetupModelId,
+            temporaryCloudModelName: session.temporaryCloudModelDisplayName,
+            // Automatic while local setup is pending: connects the Router on
+            // demand, with recovery UI if it cannot be reached.
+            onUseHostedWhilePending: { await session.adoptOsaurusRouterModelWhileLocalSetupPending() },
             activeDiscoveredAgent: windowState.selectedDiscoveredAgent,
             activeRelayAgent: windowState.selectedRelayAgent,
             remoteAgentAvatar: windowState.pinnedRemoteAgentAvatar,

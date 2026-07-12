@@ -176,6 +176,13 @@ The onboarding funnel events — `onboarding_started`, `onboarding_step_viewed`,
 name/index and a completion reason. They are defined in
 [`OnboardingTelemetry`](../Packages/OsaurusCore/Views/Onboarding/OnboardingTelemetry.swift).
 
+The Configure AI step adds `brain_source_selected` when the user chooses
+Osaurus Cloud, downloads a local model, or connects a provider. Its
+low-cardinality `source` is `hosted`, `local`, or `provider_key`; the provider
+path adds the closed-enum `provider` type and the local path adds boolean
+`download_started` — whether committing kicked off a background model
+download. No key, model id, or URL is ever attached.
+
 ## Remote identifiers
 
 For user-configured **remote** providers, the provider name and model id are
