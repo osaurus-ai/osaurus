@@ -14,15 +14,37 @@ public enum ChatSessionExporter {
     public enum ExportError: Error, LocalizedError {
         case sessionMissing
         case pdfRenderFailed
-        case writeFailed(String)
+        case writeFailed
 
         public var errorDescription: String? {
             switch self {
             case .sessionMissing: return "Chat session could not be loaded for export."
             case .pdfRenderFailed: return "Could not render the chat as a PDF."
-            case .writeFailed(let m): return "Export write failed: \(m)"
+            case .writeFailed: return "Chat export failed. Check destination permissions and try again."
             }
         }
+    }
+
+    public struct AttachmentProvenanceManifest: Codable, Equatable {
+        public let schemaVersion: Int
+        public let attachments: [AttachmentProvenanceEntry]
+    }
+
+    public struct AttachmentProvenanceEntry: Codable, Equatable {
+        public enum Availability: String, Codable {
+            case verified
+            case availableUnverified
+            case missing
+            case integrityFailed
+        }
+
+        public let turnIndex: Int
+        public let attachmentIndex: Int
+        public let filename: String
+        public let kind: String
+        public let exportedFilename: String?
+        public let availability: Availability
+        public let provenance: DocumentAttachmentProvenance?
     }
 
     // MARK: - Markdown
@@ -94,7 +116,7 @@ public enum ChatSessionExporter {
         do {
             try text.data(using: .utf8)?.write(to: url, options: .atomic)
         } catch {
-            throw ExportError.writeFailed(error.localizedDescription)
+            throw ExportError.writeFailed
         }
     }
 
@@ -156,19 +178,45 @@ public enum ChatSessionExporter {
             try markdown(for: session, options: options).data(using: .utf8)?.write(to: mdURL, options: .atomic)
 
             var writtenNames = Set<String>()
+            var provenanceEntries: [AttachmentProvenanceEntry] = []
             for (turnIdx, turn) in session.turns.enumerated() {
                 for (attIdx, att) in turn.attachments.enumerated() {
-                    guard let bytes = bytes(for: att) else { continue }
-                    let base = exportFilename(
-                        for: att,
-                        fallback: "turn\(turnIdx)-att\(attIdx)"
+                    let resolved = exportPayload(for: att)
+                    var exportedFilename: String?
+                    if let bytes = resolved.bytes {
+                        let base = exportFilename(
+                            for: att,
+                            fallback: "turn\(turnIdx)-att\(attIdx)"
+                        )
+                        let name = uniqueFilename(base, taken: &writtenNames)
+                        try bytes.write(to: attachmentsDir.appendingPathComponent(name), options: .atomic)
+                        exportedFilename = name
+                    }
+                    provenanceEntries.append(
+                        AttachmentProvenanceEntry(
+                            turnIndex: turnIdx,
+                            attachmentIndex: attIdx,
+                            filename: att.redactedFilename ?? "attachment",
+                            kind: attachmentKind(att),
+                            exportedFilename: exportedFilename,
+                            availability: resolved.availability,
+                            provenance: att.structuredDocumentMetadata?.provenance.flatMap {
+                                $0.isWellFormed ? $0 : nil
+                            }
+                        )
                     )
-                    let name = uniqueFilename(base, taken: &writtenNames)
-                    try bytes.write(to: attachmentsDir.appendingPathComponent(name), options: .atomic)
                 }
             }
+            let manifest = AttachmentProvenanceManifest(schemaVersion: 1, attachments: provenanceEntries)
+            let encoder = JSONEncoder()
+            encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+            encoder.dateEncodingStrategy = .iso8601
+            try encoder.encode(manifest).write(
+                to: bundleDir.appendingPathComponent("provenance.json"),
+                options: .atomic
+            )
         } catch {
-            throw ExportError.writeFailed(error.localizedDescription)
+            throw ExportError.writeFailed
         }
 
         let tempZip = workRoot.appendingPathComponent("\(bundleName).zip")
@@ -179,18 +227,44 @@ public enum ChatSessionExporter {
             }
             try fm.moveItem(at: tempZip, to: url)
         } catch {
-            throw ExportError.writeFailed(error.localizedDescription)
+            throw ExportError.writeFailed
         }
     }
 
     // MARK: - Helpers
 
-    private static func bytes(for attachment: Attachment) -> Data? {
-        if let data = attachment.loadImageData() { return data }
-        if let data = attachment.loadAudioData() { return data }
-        if let data = attachment.loadVideoData() { return data }
-        if let text = attachment.loadDocumentContent() { return Data(text.utf8) }
-        return nil
+    private static func exportPayload(for attachment: Attachment) -> (
+        bytes: Data?,
+        availability: AttachmentProvenanceEntry.Availability
+    ) {
+        if attachment.isDocument {
+            if attachment.structuredDocumentMetadata?.provenance != nil {
+                guard let verified = attachment.verifiedDocumentContent() else {
+                    return attachment.loadDocumentContent() == nil ? (nil, .missing) : (nil, .integrityFailed)
+                }
+                return (Data(verified.utf8), .verified)
+            }
+            guard let text = attachment.loadDocumentContent() else { return (nil, .missing) }
+            return (Data(text.utf8), .availableUnverified)
+        }
+        if attachment.isImage, attachment.structuredDocumentMetadata?.provenance != nil {
+            guard let verified = attachment.loadImageData() else {
+                return attachment.unverifiedImageData() == nil ? (nil, .missing) : (nil, .integrityFailed)
+            }
+            return (verified, .verified)
+        }
+        if let data = attachment.loadImageData() { return (data, .availableUnverified) }
+        if let data = attachment.loadAudioData() { return (data, .availableUnverified) }
+        if let data = attachment.loadVideoData() { return (data, .availableUnverified) }
+        return (nil, .missing)
+    }
+
+    private static func attachmentKind(_ attachment: Attachment) -> String {
+        if attachment.isDocument { return "document" }
+        if attachment.isImage { return "image" }
+        if attachment.isAudio { return "audio" }
+        if attachment.isVideo { return "video" }
+        return "attachment"
     }
 
     private static func describe(_ att: Attachment) -> String {

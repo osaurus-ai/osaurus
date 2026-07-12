@@ -407,6 +407,7 @@ struct FloatingInputCard: View {
     /// Set on chip tap; cleared on dismiss.
     @State private var pastedContentPreview: Attachment?
     @State private var pastedContentEdit: Attachment?
+    @StateObject private var documentIntake = DocumentIntakeCoordinator()
     /// Pending image attachment shown full-size when its thumbnail is tapped.
     @State private var imagePreview: PendingImagePreview?
     /// Character threshold above which clipboard text is converted to a
@@ -724,6 +725,12 @@ struct FloatingInputCard: View {
                     severity: ramPressureSeverity,
                     selectedModel: selectedModel,
                     refresh: refreshLoadFeasibility
+                )
+            )
+            .background(
+                DocumentIntakePresenter(
+                    coordinator: documentIntake,
+                    onAttach: appendAttachment
                 )
             )
             .onAppear {
@@ -3630,25 +3637,15 @@ extension FloatingInputCard {
                     guard let pngData else { return }
                     withAnimation(animation) {
                         pendingAttachments.append(.image(pngData))
-                        clipboardService.markAsRead()
+                        if clipboardService.currentContent == content {
+                            clipboardService.markAsRead()
+                        }
                     }
                 }
             } else if DocumentParser.canParse(url: url) {
-                let animation = theme.springAnimation()
-                Task.detached(priority: .userInitiated) {
-                    do {
-                        let attachments = try DocumentParser.parseAll(url: url)
-                        await MainActor.run {
-                            withAnimation(animation) {
-                                self.pendingAttachments.append(contentsOf: attachments)
-                                self.clipboardService.markAsRead()
-                            }
-                        }
-                    } catch {
-                        _ = await MainActor.run {
-                            ToastManager.shared.error(L("Could not attach file"), message: error.localizedDescription)
-                        }
-                    }
+                parseAndAttach(url: url) {
+                    guard clipboardService.currentContent == content else { return }
+                    clipboardService.markAsRead()
                 }
             }
         }
@@ -4064,12 +4061,31 @@ extension FloatingInputCard {
     // MARK: - Input Card
 
     private var inputCard: some View {
-        let hasChipRow = !pendingAttachments.isEmpty || pendingSkillId != nil || queuedSend != nil
+        let hasChipRow =
+            !pendingAttachments.isEmpty || pendingSkillId != nil || queuedSend != nil
+            || documentIntake.isPreparing
         return VStack(alignment: .leading, spacing: 0) {
             if hasChipRow {
                 HStack(alignment: .center, spacing: 6) {
                     queuedSendChipView
                     pendingSkillChipView
+                    if documentIntake.isPreparing {
+                        HStack(spacing: 6) {
+                            ProgressView()
+                                .controlSize(.small)
+                            Text("Reading a file", bundle: .module)
+                                .font(theme.font(size: 11, weight: .medium))
+                                .foregroundColor(theme.secondaryText)
+                            Button {
+                                documentIntake.cancelAll()
+                            } label: {
+                                Image(systemName: "xmark")
+                                    .font(.system(size: 8, weight: .bold))
+                            }
+                            .buttonStyle(.plain)
+                            .localizedHelp("Cancel")
+                        }
+                    }
                     if !pendingAttachments.isEmpty {
                         inlinePendingAttachmentsPreview
                     }
@@ -4151,26 +4167,17 @@ extension FloatingInputCard {
         }
     }
 
-    private func parseAndAttach(url: URL) {
-        let filename = url.lastPathComponent
+    private func parseAndAttach(url: URL, onAttached: (() -> Void)? = nil) {
         let animation = theme.springAnimation()
-        Task.detached(priority: .userInitiated) {
-            do {
-                let attachments = try DocumentParser.parseAll(url: url)
-                await MainActor.run {
-                    withAnimation(animation) {
-                        self.pendingAttachments.append(contentsOf: attachments)
-                    }
+        documentIntake.enqueue(
+            [url],
+            onImmediateAttachments: { attachments in
+                withAnimation(animation) {
+                    pendingAttachments.append(contentsOf: attachments)
                 }
-            } catch {
-                _ = await MainActor.run {
-                    ToastManager.shared.error(
-                        L("Could not attach \(filename)"),
-                        message: error.localizedDescription
-                    )
-                }
-            }
-        }
+            },
+            onAttached: onAttached
+        )
     }
 
     /// Capability-gated UTType allowlist for both the file picker and

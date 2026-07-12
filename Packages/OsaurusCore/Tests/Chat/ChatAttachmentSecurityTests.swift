@@ -230,6 +230,41 @@ struct ChatAttachmentSecurityTests {
         }
     }
 
+    @Test func buildUserChatMessageRejectsProvenanceMismatchedPageImage() {
+        let inspected = Data([0x89, 0x50, 0x4E, 0x47, 0x01])
+        let mutated = Data([0x89, 0x50, 0x4E, 0x47, 0x02])
+        let provenance = DocumentAttachmentProvenance(
+            sourceSHA256: Attachment.sha256(Data("source pdf".utf8)),
+            contentSHA256: Attachment.sha256(inspected),
+            sourceTrust: .userSelectedLocalFile,
+            inspectedAt: Date(timeIntervalSince1970: 1_700_000_000),
+            sourceModificationTime: nil,
+            stableSourceID: Attachment.sha256(Data("stable pdf".utf8))
+        )
+        let attachment = Attachment(
+            kind: .image(mutated),
+            structuredDocumentMetadata: StructuredDocumentAttachmentMetadata(
+                formatId: "pdf",
+                representationFormatId: "pdf-page-image",
+                filename: "scan.pdf",
+                fileSize: 512,
+                createdAt: Date(),
+                provenance: provenance
+            )
+        )
+
+        #expect(attachment.loadImageData() == nil)
+        let message = ChatSession.buildUserChatMessage(
+            content: "inspect",
+            attachments: [attachment],
+            supportsImages: true,
+            supportsAudio: false,
+            supportsVideo: false
+        )
+        #expect(message.imageUrls.isEmpty)
+        #expect(message.imageDataFromParts.isEmpty)
+    }
+
     @Test func buildUserMessageText_hydratesSpilledDocumentRefs() async throws {
         try await StoragePathsTestLock.shared.run {
             let root = FileManager.default.temporaryDirectory.appendingPathComponent(
@@ -279,6 +314,91 @@ struct ChatAttachmentSecurityTests {
         let message = ChatSession.buildUserMessageText(content: "Keep this prompt", attachments: [attachment])
 
         #expect(message == "Keep this prompt")
+    }
+
+    @Test func buildUserMessageText_rejectsProvenanceMismatchWithoutDroppingPrompt() {
+        let content = "tampered parsed content"
+        let provenance = DocumentAttachmentProvenance(
+            sourceSHA256: Attachment.sha256(Data("source".utf8)),
+            contentSHA256: Attachment.sha256(Data("expected parsed content".utf8)),
+            sourceTrust: .userSelectedLocalFile,
+            inspectedAt: Date(timeIntervalSince1970: 1_700_000_000),
+            sourceModificationTime: nil,
+            stableSourceID: Attachment.sha256(Data("stable".utf8))
+        )
+        let metadata = StructuredDocumentAttachmentMetadata(
+            formatId: "plaintext",
+            representationFormatId: "plaintext",
+            filename: "report.txt",
+            fileSize: Int64(content.utf8.count),
+            createdAt: Date(),
+            provenance: provenance
+        )
+        let attachment = Attachment(
+            kind: .document(filename: "report.txt", content: content, fileSize: content.utf8.count),
+            structuredDocumentMetadata: metadata
+        )
+
+        let message = ChatSession.buildUserMessageText(
+            content: "Keep this prompt",
+            attachments: [attachment]
+        )
+
+        #expect(message == "Keep this prompt")
+        #expect(message.contains("tampered") == false)
+    }
+
+    @Test func buildUserMessageText_rejectsCorruptEncryptedDocumentBlob() async throws {
+        try await StoragePathsTestLock.shared.run {
+            let root = FileManager.default.temporaryDirectory.appendingPathComponent(
+                "osaurus-chat-corrupt-document-\(UUID().uuidString)"
+            )
+            try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+            OsaurusPaths.overrideRoot = root
+            try StorageEncryptionPolicy.shared.setDesiredMode(.encrypted)
+            StorageKeyManager.shared._setKeyForTesting(
+                SymmetricKey(data: Data(repeating: 0x48, count: 32))
+            )
+            defer {
+                OsaurusPaths.overrideRoot = nil
+                try? FileManager.default.removeItem(at: root)
+                StorageKeyManager.shared.wipeCache()
+                StorageEncryptionPolicy.shared.invalidateCache()
+            }
+
+            let content = "verified document body"
+            let hash = try AttachmentBlobStore.write(Data(content.utf8))
+            let blobURL = try AttachmentBlobStore.blobURL(for: hash)
+            try Data("corrupt envelope".utf8).write(to: blobURL, options: .atomic)
+            let provenance = DocumentAttachmentProvenance(
+                sourceSHA256: Attachment.sha256(Data("source".utf8)),
+                contentSHA256: Attachment.sha256(Data(content.utf8)),
+                sourceTrust: .userSelectedLocalFile,
+                inspectedAt: Date(timeIntervalSince1970: 1_700_000_000),
+                sourceModificationTime: nil,
+                stableSourceID: Attachment.sha256(Data("stable".utf8))
+            )
+            let attachment = Attachment(
+                kind: .documentRef(filename: "report.txt", hash: hash, fileSize: content.utf8.count),
+                structuredDocumentMetadata: StructuredDocumentAttachmentMetadata(
+                    formatId: "plaintext",
+                    representationFormatId: "plaintext",
+                    filename: "report.txt",
+                    fileSize: Int64(content.utf8.count),
+                    createdAt: Date(),
+                    provenance: provenance
+                )
+            )
+
+            let message = await MainActor.run {
+                ChatSession.buildUserMessageText(
+                    content: "Keep this prompt",
+                    attachments: [attachment]
+                )
+            }
+            #expect(message == "Keep this prompt")
+            #expect(message.contains("verified document body") == false)
+        }
     }
 
     @Test func buildUserChatMessage_alignsLocalLiveAudioSamplesWithAudioInputs() {

@@ -120,15 +120,31 @@ struct AttachmentSpilloverTests {
                 textFallback: body,
                 createdAt: Date(timeIntervalSince1970: 1_783_939_200)
             )
-            let result = AttachmentBlobStore.spillIfNeeded([.structuredDocument(document)])
+            let contentDigest = Attachment.sha256(Data(body.utf8))
+            let provenance = DocumentAttachmentProvenance(
+                sourceSHA256: contentDigest,
+                contentSHA256: contentDigest,
+                sourceTrust: .userSelectedLocalFile,
+                inspectedAt: Date(timeIntervalSince1970: 1_783_939_200),
+                sourceModificationTime: Date(timeIntervalSince1970: 1_783_939_100),
+                stableSourceID: Attachment.sha256(Data("stable".utf8))
+            )
+            let result = AttachmentBlobStore.spillIfNeeded([
+                .structuredDocument(document, provenance: provenance)
+            ])
 
             #expect(result.count == 1)
             switch result[0].kind {
             case .documentRef(let filename, let hash, let fileSize):
                 #expect(filename == "large.csv")
                 #expect(fileSize == body.utf8.count)
-                #expect(result[0].structuredDocumentMetadata == StructuredDocumentAttachmentMetadata(document))
+                #expect(
+                    result[0].structuredDocumentMetadata
+                        == StructuredDocumentAttachmentMetadata(document, provenance: provenance)
+                )
                 #expect(result[0].loadDocumentContent() == body)
+                #expect(result[0].verifiedDocumentContent() == body)
+                #expect(result[0].structuredDocumentMetadata?.provenance == provenance)
 
                 let url = try AttachmentBlobStore.blobURL(for: hash)
                 let encrypted = try Data(contentsOf: url)

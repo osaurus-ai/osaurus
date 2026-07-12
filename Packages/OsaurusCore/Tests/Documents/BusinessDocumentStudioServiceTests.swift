@@ -232,6 +232,146 @@ struct BusinessDocumentStudioServiceTests {
         #expect(!FileManager.default.fileExists(atPath: missingOutside.path))
     }
 
+    @Test func noOverwritePreservesExistingFileAndRedactsErrorPath() async throws {
+        let service = BusinessDocumentStudioService(registry: DocumentFormatRegistry())
+        let root = try Self.temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let target = root.appendingPathComponent("private-existing.txt")
+        try Data("existing".utf8).write(to: target)
+
+        do {
+            _ = try await service.export(Self.plainTextDocument(), as: "txt", to: target)
+            Issue.record("Expected create-new export to reject the existing destination")
+        } catch BusinessDocumentStudioError.destinationAlreadyExists(let rejected) {
+            #expect(rejected == target)
+            let message = BusinessDocumentStudioError.destinationAlreadyExists(target).localizedDescription
+            #expect(message.contains(root.path) == false)
+            #expect(message.contains(target.lastPathComponent))
+        }
+        #expect(try String(contentsOf: target, encoding: .utf8) == "existing")
+    }
+
+    @Test func concurrentNoOverwriteExportsHaveExactlyOneWinner() async throws {
+        let service = BusinessDocumentStudioService(registry: DocumentFormatRegistry())
+        let root = try Self.temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let target = root.appendingPathComponent("race.txt")
+        let document = Self.plainTextDocument()
+
+        let outcomes = await withTaskGroup(of: String.self, returning: [String].self) { group in
+            for _ in 0..<12 {
+                group.addTask {
+                    do {
+                        _ = try await service.export(document, as: "txt", to: target)
+                        return "success"
+                    } catch BusinessDocumentStudioError.destinationAlreadyExists {
+                        return "exists"
+                    } catch {
+                        return "unexpected:\(type(of: error))"
+                    }
+                }
+            }
+            var values: [String] = []
+            for await value in group { values.append(value) }
+            return values
+        }
+
+        #expect(outcomes.filter { $0 == "success" }.count == 1)
+        #expect(outcomes.filter { $0 == "exists" }.count == 11)
+        #expect(outcomes.contains { $0.hasPrefix("unexpected:") } == false)
+        #expect(try String(contentsOf: target, encoding: .utf8) == "hello world")
+        let leftovers = try FileManager.default.contentsOfDirectory(atPath: root.path)
+            .filter { $0.contains("osaurus-export") }
+        #expect(leftovers.isEmpty)
+    }
+
+    @Test func publicErrorDescriptionsDoNotExposeSourceOrDestinationPaths() {
+        let secret = URL(fileURLWithPath: "/Users/alice/Top Secret/report.txt")
+        let messages = [
+            BusinessDocumentStudioError.destinationOutsideAllowedDirectory(secret).localizedDescription,
+            BusinessDocumentStudioError.destinationAlreadyExists(secret).localizedDescription,
+            BusinessDocumentStudioError.destinationIsNotFileURL(secret).localizedDescription,
+            BusinessDocumentStudioError.writeFailed.localizedDescription,
+        ]
+        #expect(messages.allSatisfy { !$0.contains("/Users/alice") })
+        #expect(messages.allSatisfy { !$0.contains("Permission denied") })
+    }
+
+    @Test func cancellationRemovesTemporaryExportAndDoesNotPublishDestination() async throws {
+        let registry = DocumentFormatRegistry()
+        registry.register(emitter: SlowTextEmitter())
+        let service = BusinessDocumentStudioService(registry: registry)
+        let root = try Self.temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let target = root.appendingPathComponent("cancelled.slowtext")
+
+        let task = Task {
+            try await service.export(Self.plainTextDocument(), as: "slowtext", to: target)
+        }
+        try await Task.sleep(for: .milliseconds(20))
+        task.cancel()
+
+        await #expect(throws: CancellationError.self) {
+            _ = try await task.value
+        }
+        #expect(FileManager.default.fileExists(atPath: target.path) == false)
+        let leftovers = try FileManager.default.contentsOfDirectory(atPath: root.path)
+            .filter { $0.contains("osaurus-export") }
+        #expect(leftovers.isEmpty)
+    }
+
+    @Test func cancelledOverwritePreservesExistingDestination() async throws {
+        let registry = DocumentFormatRegistry()
+        registry.register(emitter: SlowTextEmitter())
+        let service = BusinessDocumentStudioService(registry: registry)
+        let root = try Self.temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let target = root.appendingPathComponent("existing.slowtext")
+        try Data("original destination".utf8).write(to: target)
+
+        let task = Task {
+            try await service.export(
+                Self.plainTextDocument(),
+                as: "slowtext",
+                to: target,
+                policy: BusinessDocumentStudioExportPolicy(allowOverwrite: true)
+            )
+        }
+        try await Task.sleep(for: .milliseconds(20))
+        task.cancel()
+
+        await #expect(throws: CancellationError.self) {
+            _ = try await task.value
+        }
+        #expect(try String(contentsOf: target, encoding: .utf8) == "original destination")
+        let leftovers = try FileManager.default.contentsOfDirectory(atPath: root.path)
+            .filter { $0.contains("osaurus-export") }
+        #expect(leftovers.isEmpty)
+    }
+
+    @Test func failedOverwritePreservesExistingDestination() async throws {
+        let registry = DocumentFormatRegistry()
+        registry.register(emitter: PartialFailureEmitter())
+        let service = BusinessDocumentStudioService(registry: registry)
+        let root = try Self.temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let target = root.appendingPathComponent("existing.partial-failure")
+        try Data("original destination".utf8).write(to: target)
+
+        await #expect(throws: BusinessDocumentStudioError.self) {
+            _ = try await service.export(
+                Self.plainTextDocument(),
+                as: "partial-failure",
+                to: target,
+                policy: BusinessDocumentStudioExportPolicy(allowOverwrite: true)
+            )
+        }
+        #expect(try String(contentsOf: target, encoding: .utf8) == "original destination")
+        let leftovers = try FileManager.default.contentsOfDirectory(atPath: root.path)
+            .filter { $0.contains("osaurus-export") }
+        #expect(leftovers.isEmpty)
+    }
+
     @Test func inspectPDFWrapsPreviewAndMissingEmitterExportOption() throws {
         let service = BusinessDocumentStudioService(registry: DocumentFormatRegistry())
         let inspection = try service.inspect(Self.pdfDocument())
@@ -402,5 +542,27 @@ private struct StubPackageEmitter: DocumentFormatEmitter {
 
     func emit(_ document: StructuredDocument, to url: URL) async throws {
         try Data("emitted:\(formatId)".utf8).write(to: url, options: .atomic)
+    }
+}
+
+private struct SlowTextEmitter: DocumentFormatEmitter {
+    let formatId = "slowtext"
+
+    func canEmit(_ document: StructuredDocument) -> Bool { true }
+
+    func emit(_ document: StructuredDocument, to url: URL) async throws {
+        try await Task.sleep(for: .milliseconds(200))
+        try Data("should not publish".utf8).write(to: url, options: .atomic)
+    }
+}
+
+private struct PartialFailureEmitter: DocumentFormatEmitter {
+    let formatId = "partial-failure"
+
+    func canEmit(_ document: StructuredDocument) -> Bool { true }
+
+    func emit(_ document: StructuredDocument, to url: URL) async throws {
+        try Data("partial output".utf8).write(to: url, options: .atomic)
+        throw BusinessDocumentStudioError.writeFailed
     }
 }

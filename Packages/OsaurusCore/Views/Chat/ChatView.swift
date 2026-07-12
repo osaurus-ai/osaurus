@@ -1234,7 +1234,7 @@ final class ChatSession: ObservableObject {
 
         var parts: [String] = []
         for doc in docs {
-            if let text = doc.loadDocumentContent() {
+            if let text = doc.verifiedDocumentContent() {
                 let attributes = attachedDocumentAttributes(for: doc)
                 let safeText = xmlEscape(text)
                 parts.append("<attached_document \(attributes)>\n\(safeText)\n</attached_document>")
