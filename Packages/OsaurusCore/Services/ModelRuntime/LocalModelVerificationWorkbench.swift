@@ -561,7 +561,11 @@ enum LocalModelBundleInspector {
         let config = contentByRelativePath["config.json"].flatMap(jsonObject(at:))
         let generation = contentByRelativePath["generation_config.json"].flatMap(jsonObject(at:))
         let jang = contentByRelativePath["jang_config.json"].flatMap(jsonObject(at:))
-        let hasTokenizerTemplate = tokenizer?["chat_template"] != nil
+        let tokenizerTemplateEnabled = firstBool(
+            keys: ["has_tokenizer_chat_template"], in: [jang], default: true
+        )
+        let hasTokenizerTemplate = tokenizerTemplateEnabled
+            && tokenizer?["chat_template"] != nil
         let hasStandaloneTemplate = contentByRelativePath["chat_template.jinja"] != nil
         let templateSource: String
         let templateFallback: String?
@@ -576,8 +580,9 @@ enum LocalModelBundleInspector {
             templateSource = "bundle:config.json"
             templateFallback = nil
         } else if let declaredTemplateSource {
-            templateSource = "bundle:\(declaredTemplateSource)"
-            templateFallback = nil
+            templateSource = "runtime:\(declaredTemplateSource)"
+            templateFallback =
+                "The runtime declares a non-file chat-template source that is not digest-bound or authoritatively pinned."
         } else {
             templateSource = "runtime fallback"
             templateFallback = "The bundle does not declare a chat template; the runtime-selected fallback is unproven."
@@ -590,7 +595,9 @@ enum LocalModelBundleInspector {
         let standaloneTemplate = contentByRelativePath["chat_template.jinja"]
             .flatMap { try? Data(contentsOf: $0) }
             .flatMap { String(data: $0, encoding: .utf8) }
-        let tokenizerTemplate = tokenizer?["chat_template"] as? String
+        let tokenizerTemplate = tokenizerTemplateEnabled
+            ? tokenizer?["chat_template"] as? String
+            : nil
         let jangCapability = contentByRelativePath["jang_config.json"]
             .flatMap { try? Data(contentsOf: $0) }
             .flatMap(LocalReasoningCapability.analyzeJangConfig(data:))
@@ -668,6 +675,17 @@ enum LocalModelBundleInspector {
             if let found = recursiveFirstString(keys: Set(keys), object: root) { return found }
         }
         return nil
+    }
+
+    private static func firstBool(
+        keys: [String], in roots: [[String: Any]?], default defaultValue: Bool
+    ) -> Bool {
+        for root in roots.compactMap({ $0 }) {
+            for key in keys {
+                if let value = root[key] as? Bool { return value }
+            }
+        }
+        return defaultValue
     }
 
     private static func recursiveFirstString(keys: Set<String>, object: Any) -> String? {

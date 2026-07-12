@@ -301,6 +301,64 @@ struct LocalModelVerificationWorkbenchTests {
         }
     }
 
+    @Test func onlyOnDiskTemplateContentIsDigestBoundProvenance() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("template-provenance-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let tokenizerModel = try makeBundle(root: root.appendingPathComponent("tokenizer"))
+        let tokenizerEvidence = try LocalModelBundleInspector.inspect(
+            directory: tokenizerModel.localDirectory
+        )
+        #expect(tokenizerEvidence.templateSource == "bundle:tokenizer_config.json")
+        #expect(tokenizerEvidence.templateFallback == nil)
+
+        let standaloneModel = try makeBundle(
+            root: root.appendingPathComponent("standalone"), template: false
+        )
+        try Data("{{ messages }}".utf8).write(
+            to: standaloneModel.localDirectory.appendingPathComponent("chat_template.jinja")
+        )
+        let standaloneEvidence = try LocalModelBundleInspector.inspect(
+            directory: standaloneModel.localDirectory
+        )
+        #expect(standaloneEvidence.templateSource == "bundle:chat_template.jinja")
+        #expect(standaloneEvidence.templateFallback == nil)
+
+        let configModel = try makeBundle(
+            root: root.appendingPathComponent("config"), template: false
+        )
+        try Data(#"{"model_type":"fixture","chat_template":"{{ messages }}"}"#.utf8).write(
+            to: configModel.localDirectory.appendingPathComponent("config.json")
+        )
+        let configEvidence = try LocalModelBundleInspector.inspect(
+            directory: configModel.localDirectory
+        )
+        #expect(configEvidence.templateSource == "bundle:config.json")
+        #expect(configEvidence.templateFallback == nil)
+    }
+
+    @Test func runtimeOnlyJangTemplateSourceBlocksAllToolProof() async throws {
+        let engine = ScriptedVerificationEngine(transcripts: [transcript()])
+        try await withEnvironment(engine: engine, template: false) { service, model, _, _ in
+            try Data(
+                #"{"chat_template_source":"builtin_encoding_module","has_tokenizer_chat_template":false}"#.utf8
+            ).write(to: model.localDirectory.appendingPathComponent("jang_config.json"))
+
+            let (artifact, _) = try await service.verify(model: model)
+            #expect(artifact.bundle.templateSource == "runtime:builtin_encoding_module")
+            #expect(artifact.bundle.templateFallback != nil)
+            for probe in [
+                LocalModelVerificationProbe.autoToolChoice, .schemaValidToolCall,
+                .toolResultContinuation, .secondToolCall,
+            ] {
+                #expect(artifact.probes.first { $0.probe == probe }?.status == .blocked)
+            }
+            #expect(artifact.classification != .proven)
+            #expect(await engine.capturedRequests().count == 1)
+        }
+    }
+
     @Test func inspectorPinsResolvedHuggingFaceContentAgainstSymlinkRetarget() throws {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent("hf-retarget-\(UUID().uuidString)", isDirectory: true)
