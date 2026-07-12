@@ -28,6 +28,30 @@
 
 import Foundation
 
+enum AgentRunStartupReconciliationOutcome: Equatable {
+    case completed(changed: Int)
+    case alreadyCompleted
+    case failed(message: String)
+}
+
+@MainActor
+final class AgentRunStartupReconciliationGate {
+    private(set) var didSucceed = false
+
+    func run(
+        _ operation: () async throws -> Int
+    ) async -> AgentRunStartupReconciliationOutcome {
+        guard !didSucceed else { return .alreadyCompleted }
+        do {
+            let changed = try await operation()
+            didSucceed = true
+            return .completed(changed: changed)
+        } catch {
+            return .failed(message: error.localizedDescription)
+        }
+    }
+}
+
 @MainActor
 public final class NextRunScheduler {
     public static let shared = NextRunScheduler()
@@ -56,6 +80,8 @@ public final class NextRunScheduler {
     private var tickerTask: Task<Void, Never>?
     private var earlyWakeContinuation: CheckedContinuation<Void, Never>?
     private var storageUnlockObserver: NSObjectProtocol?
+
+    private var startupReconciliationGate = AgentRunStartupReconciliationGate()
 
     /// `(agent_id, trigger_kind) -> last dispatch wall time`. Used for
     /// coalescing. Lives in-process; not persisted because spec defines
@@ -169,8 +195,48 @@ public final class NextRunScheduler {
                 continue
             }
 
+            guard await reconcileInterruptedRunsIfNeeded() else {
+                try? await Task.sleep(nanoseconds: UInt64(Self.idleSleep * 1_000_000_000))
+                continue
+            }
             await dispatchDueRows()
             await sleepUntilNext()
+        }
+    }
+
+    /// Close out rows left `running` by an earlier Osaurus process before this
+    /// scheduler dispatches cold-start work. The strict timestamp boundary and
+    /// live-run exclusion protect current-process rows even if one appears after
+    /// the snapshot while the database operation is off the main actor.
+    private func reconcileInterruptedRunsIfNeeded() async -> Bool {
+        let manager = BackgroundTaskManager.shared
+        let processStartedAt = manager.processStartedAt
+        let liveRunIds = manager.liveAgentRunIds
+        let outcome = await startupReconciliationGate.run {
+            try await Task.detached(priority: .utility) {
+                try SchedulerDatabase.shared.open()
+                return try SchedulerDatabase.shared.reconcileInterruptedRuns(
+                    startedBefore: processStartedAt,
+                    excluding: liveRunIds,
+                    includingBoundary: false
+                )
+            }.value
+        }
+        switch outcome {
+        case .completed(let changed):
+            if changed > 0 {
+                print("[NextRunScheduler] reconciled \(changed) interrupted run(s)")
+            }
+            return true
+        case .alreadyCompleted:
+            return true
+        case .failed(let message):
+            // Keep the gate open so the scheduler's next iteration retries.
+            print(
+                "[NextRunScheduler] run reconciliation failed: "
+                    + message
+            )
+            return false
         }
     }
 

@@ -166,6 +166,80 @@ struct AgentRunContinuityTests {
         )
     }
 
+    @Test func schedulerReconcilesInterruptedRunsBeforeColdStartDispatch() throws {
+        let sourceURL = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .appendingPathComponent("Managers/NextRunScheduler.swift")
+        let source = try String(contentsOf: sourceURL, encoding: .utf8)
+
+        let reconciliation = try #require(
+            source.range(of: "guard await reconcileInterruptedRunsIfNeeded() else")
+        )
+        let dispatch = try #require(source.range(of: "await dispatchDueRows()"))
+        #expect(reconciliation.lowerBound < dispatch.lowerBound)
+        #expect(source.contains("startupReconciliationGate.run"))
+        #expect(source.contains("excluding: liveRunIds"))
+        #expect(source.contains("includingBoundary: false"))
+    }
+
+    @Test
+    @MainActor
+    func startupGateRetriesAfterFailureAndCompletesOnlyOnce() async {
+        let gate = AgentRunStartupReconciliationGate()
+
+        let failed = await gate.run {
+            throw StartupGateTestError.unavailable
+        }
+        #expect(failed == .failed(message: "temporarily unavailable"))
+        #expect(!gate.didSucceed)
+
+        let completed = await gate.run { 3 }
+        #expect(completed == .completed(changed: 3))
+        #expect(gate.didSucceed)
+
+        let duplicate = await gate.run {
+            Issue.record("completed reconciliation must not run twice")
+            return 99
+        }
+        #expect(duplicate == .alreadyCompleted)
+    }
+
+    @Test func strictStartupBoundaryLeavesCurrentLaunchSecondUntouched() throws {
+        let database = SchedulerDatabase()
+        try database.openInMemory()
+        defer { database.close() }
+
+        let agentId = UUID()
+        let processStartedAt = Date(timeIntervalSince1970: 20_000)
+        let orphan = try database.recordRunStart(
+            agentId: agentId,
+            triggerKind: .watcher,
+            instructions: "prior process",
+            startedAt: processStartedAt.addingTimeInterval(-1)
+        )
+        let launchSecond = try database.recordRunStart(
+            agentId: agentId,
+            triggerKind: .user,
+            instructions: "current process",
+            startedAt: processStartedAt
+        )
+
+        #expect(
+            try database.reconcileInterruptedRuns(
+                startedBefore: processStartedAt,
+                excluding: [],
+                includingBoundary: false
+            ) == 1
+        )
+        let byId = Dictionary(uniqueKeysWithValues: try database.runs(agentId: agentId).map {
+            ($0.id, $0)
+        })
+        #expect(byId[orphan]?.status == .interrupted)
+        #expect(byId[launchSecond]?.status == .running)
+    }
+
     @Test func skippedRunWithoutSessionDoesNotInventChatLink() throws {
         let database = SchedulerDatabase()
         try database.openInMemory()
@@ -262,6 +336,12 @@ struct AgentRunContinuityTests {
             startedAt: Date(),
             status: status
         )
+    }
+
+    private enum StartupGateTestError: LocalizedError {
+        case unavailable
+
+        var errorDescription: String? { "temporarily unavailable" }
     }
 
     private static func seedVersionOneDatabase(

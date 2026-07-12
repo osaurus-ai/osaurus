@@ -607,15 +607,19 @@ public final class SchedulerDatabase: @unchecked Sendable {
 
     /// Marks rows left running by an earlier process as interrupted. Timestamps are
     /// stored to the second, so current manager-owned rows are protected by `excluding`.
+    /// Startup callers use a strict boundary as additional protection against a run
+    /// created after their live-id snapshot during the same launch second.
     @discardableResult
     public func reconcileInterruptedRuns(
         startedBefore processStartedAt: Date,
         excluding activeRunIds: Set<UUID>,
+        includingBoundary: Bool = true,
         endedAt: Date = Date()
     ) throws -> Int {
+        let timestampComparison = includingBoundary ? "<=" : "<"
         var sql =
             "UPDATE agent_runs SET ended_at = ?1, status = ?2, error = NULL "
-            + "WHERE status = ?3 AND started_at <= ?4"
+            + "WHERE status = ?3 AND started_at \(timestampComparison) ?4"
         let sortedIds = activeRunIds.map(\.uuidString).sorted()
         if !sortedIds.isEmpty {
             let placeholders = (0..<sortedIds.count).map { "?\($0 + 5)" }.joined(separator: ",")
