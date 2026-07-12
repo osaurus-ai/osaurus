@@ -688,6 +688,14 @@ struct FloatingInputCard: View {
                     // "@" file menu popup — appears above the input card
                     atFileMenuPopupView
 
+                    if AppConfiguration.shared.chatConfig.enableClipboardMonitoring,
+                        capturedSelectionText != nil
+                    {
+                        selectionAssistantBar
+                            .padding(.horizontal, 20)
+                            .transition(.opacity.combined(with: .move(edge: .bottom)))
+                    }
+
                     inputCard
                         .padding(.horizontal, 20)
                         .padding(.bottom, 20)
@@ -2234,7 +2242,7 @@ extension FloatingInputCard {
                 if AppConfiguration.shared.chatConfig.enableClipboardMonitoring {
                     if clipboardService.lastSelectionGrabReport?.needsUserAttention == true {
                         selectionGrabStatusChip
-                    } else if clipboardService.hasNewContent {
+                    } else if clipboardService.hasNewContent && capturedSelectionText == nil {
                         clipboardToggleChip
                     }
                 }
@@ -3396,6 +3404,104 @@ extension FloatingInputCard {
     }
 
     // MARK: - Clipboard Chip
+
+    private var capturedSelectionText: String? {
+        guard clipboardService.hasNewContent,
+            case .capturedText = clipboardService.lastSelectionGrabReport?.outcome,
+            case .text(let text) = clipboardService.currentContent
+        else { return nil }
+        return text
+    }
+
+    private var selectionAssistantBar: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "text.cursor")
+                .font(.system(size: CGFloat(theme.captionSize), weight: .semibold))
+                .foregroundColor(theme.accentColor)
+
+            VStack(alignment: .leading, spacing: 1) {
+                Text("Selected text", bundle: .module)
+                    .font(theme.font(size: CGFloat(theme.captionSize), weight: .semibold))
+                    .foregroundColor(theme.primaryText)
+                    .lineLimit(1)
+                HStack(spacing: 4) {
+                    if let source = clipboardService.lastSourceApp {
+                        Text(source)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                    }
+                    if let text = capturedSelectionText {
+                        if clipboardService.lastSourceApp != nil { Text(verbatim: "·") }
+                        Text(String(format: L("%lld characters"), Int64(text.count)))
+                            .monospacedDigit()
+                    }
+                }
+                .font(theme.font(size: CGFloat(theme.captionSize) - 1, weight: .regular))
+                .foregroundColor(theme.secondaryText)
+            }
+            .frame(minWidth: 96, alignment: .leading)
+
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 5) {
+                    ForEach(SelectionAssistantAction.allCases) { action in
+                        Button {
+                            applySelectionAssistantAction(action)
+                        } label: {
+                            Label(action.title, systemImage: action.systemImage)
+                                .font(theme.font(size: CGFloat(theme.captionSize), weight: .medium))
+                                .lineLimit(1)
+                                .padding(.horizontal, 8)
+                                .padding(.vertical, 5)
+                                .background(
+                                    RoundedRectangle(cornerRadius: 6, style: .continuous)
+                                        .fill(theme.secondaryBackground.opacity(0.9))
+                                )
+                        }
+                        .buttonStyle(.plain)
+                        .pointingHandCursor()
+                        .help(action.title)
+                    }
+                }
+            }
+
+            Button {
+                clipboardService.markAsRead()
+            } label: {
+                Image(systemName: "xmark")
+                    .font(.system(size: CGFloat(theme.captionSize) - 1, weight: .semibold))
+                    .foregroundColor(theme.secondaryText)
+                    .frame(width: 24, height: 24)
+            }
+            .buttonStyle(.plain)
+            .pointingHandCursor()
+            .help(Text("Dismiss", bundle: .module))
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 7)
+        .background(theme.primaryBackground.opacity(0.72))
+        .overlay(alignment: .bottom) {
+            Rectangle()
+                .fill(theme.primaryBorder.opacity(0.35))
+                .frame(height: 1)
+        }
+    }
+
+    private func applySelectionAssistantAction(_ action: SelectionAssistantAction) {
+        guard let selection = capturedSelectionText else { return }
+        let instruction = action.instruction
+
+        withAnimation(theme.springAnimation()) {
+            pendingAttachments.append(.pastedContent(selection))
+            if localText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                localText = instruction
+            } else {
+                localText += localText.hasSuffix("\n") ? instruction : "\n\(instruction)"
+            }
+            text = localText
+            clipboardService.markAsRead()
+            isFocused = true
+        }
+    }
 
     /// SF Symbol representing the kind of content currently on the clipboard.
     /// The chip pairs this icon with a leading "Paste" label and the source app.

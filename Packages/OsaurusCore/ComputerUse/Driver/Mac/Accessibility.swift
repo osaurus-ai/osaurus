@@ -525,11 +525,7 @@ final class AccessibilityManager: @unchecked Sendable {
     /// Normalize a role name to the canonical short form (lowercase, no "ax" prefix).
     /// Accepts "AXButton", "Button", "button" - all become "button".
     static func normalizeRole(_ raw: String) -> String {
-        let lower = raw.lowercased()
-        if lower.hasPrefix("ax") {
-            return String(lower.dropFirst(2))
-        }
-        return lower
+        AccessibilityTextPolicy.normalizeRole(raw)
     }
 
     /// Interactive roles (canonical short form) that agents typically want to interact with.
@@ -566,15 +562,7 @@ final class AccessibilityManager: @unchecked Sendable {
 
     /// Text-bearing roles whose `kAXSelectedTextAttribute` is worth reading.
     /// Excludes `securetextfield` so a password selection is never captured.
-    static let textSelectionRoles: Set<String> = [
-        "textfield",
-        "textarea",
-        "searchfield",
-        "combobox",
-        "statictext",
-        "staticrtext",
-        "webarea",
-    ]
+    static let textSelectionRoles = AccessibilityTextPolicy.readableSelectionRoles
 
     // MARK: Traversal entry point
 

@@ -15,6 +15,11 @@ import OsaurusObjCSupport
 public final class ClipboardService: ObservableObject {
     public static let shared = ClipboardService()
 
+    struct SelectionSource: Equatable, Sendable {
+        let processIdentifier: pid_t
+        let displayName: String?
+    }
+
     /// Supported content types on the clipboard
     public enum ClipboardContent: Equatable, Sendable {
         case text(String)
@@ -40,6 +45,11 @@ public final class ClipboardService: ObservableObject {
     }
 
     public struct SelectionGrabReport: Equatable, Sendable {
+        public enum CaptureRoute: String, Equatable, Sendable {
+            case nativeAccessibility = "native_accessibility"
+            case syntheticCopy = "synthetic_copy"
+        }
+
         public enum NonTextKind: String, Equatable, Sendable {
             case image
             case file
@@ -61,16 +71,34 @@ public final class ClipboardService: ObservableObject {
             case pasteboardReadFailed
             case noReadableContent
             case pasteboardUnchanged
+            case secureFieldDenied
+            case unverifiedFieldDenied
+            case noSelection
+            case selectionTooLarge(byteLimit: Int)
         }
 
         public let outcome: Outcome
         public let sourceApp: String?
+        public let captureRoute: CaptureRoute?
+
+        public init(
+            outcome: Outcome,
+            sourceApp: String?,
+            captureRoute: CaptureRoute? = nil
+        ) {
+            self.outcome = outcome
+            self.sourceApp = sourceApp
+            self.captureRoute = captureRoute
+        }
 
         public var needsUserAttention: Bool {
             switch outcome {
             case .capturedText, .capturedNonText:
                 return false
-            case .accessibilityDenied, .pasteboardReadFailed, .noReadableContent, .pasteboardUnchanged:
+            case .accessibilityDenied, .pasteboardReadFailed, .noReadableContent, .pasteboardUnchanged,
+                .secureFieldDenied, .selectionTooLarge:
+                return true
+            case .unverifiedFieldDenied, .noSelection:
                 return true
             }
         }
@@ -95,6 +123,17 @@ public final class ClipboardService: ObservableObject {
             case .pasteboardUnchanged:
                 return L("Selection unavailable") + ". "
                     + L("No selection was copied. Select text in the frontmost app and try again.")
+            case .secureFieldDenied:
+                return L("Osaurus does not capture text from password or secure fields.")
+            case .unverifiedFieldDenied:
+                return L("Osaurus could not verify that this field is safe to capture.")
+            case .noSelection:
+                return L("No text is selected in the frontmost app.")
+            case .selectionTooLarge(let byteLimit):
+                return String(
+                    format: L("The selection is too large. Select less than %lld KB and try again."),
+                    Int64(byteLimit / 1024)
+                )
             }
         }
 
@@ -102,7 +141,8 @@ public final class ClipboardService: ObservableObject {
             let source = sourceApp ?? "unknown"
             switch outcome {
             case .capturedText(let count):
-                return "selection_grab(outcome: captured_text, characters: \(count), source: \(source))"
+                let route = captureRoute?.rawValue ?? "unknown"
+                return "selection_grab(outcome: captured_text, characters: \(count), source: \(source), route: \(route))"
             case .capturedNonText(let kind):
                 return "selection_grab(outcome: captured_non_text, kind: \(kind.diagnosticTag), source: \(source))"
             case .accessibilityDenied:
@@ -113,6 +153,14 @@ public final class ClipboardService: ObservableObject {
                 return "selection_grab(outcome: no_readable_content, source: \(source))"
             case .pasteboardUnchanged:
                 return "selection_grab(outcome: pasteboard_unchanged, source: \(source))"
+            case .secureFieldDenied:
+                return "selection_grab(outcome: secure_field_denied, source: \(source))"
+            case .unverifiedFieldDenied:
+                return "selection_grab(outcome: unverified_field_denied, source: \(source))"
+            case .noSelection:
+                return "selection_grab(outcome: no_selection, source: \(source))"
+            case .selectionTooLarge(let byteLimit):
+                return "selection_grab(outcome: selection_too_large, byte_limit: \(byteLimit), source: \(source))"
             }
         }
     }
@@ -141,6 +189,8 @@ public final class ClipboardService: ObservableObject {
     /// Guards against overlapping pasteboard reads if one outlives the poll interval.
     private var isChecking = false
     private let selectionCapture: SelectionCaptureTransaction
+    private let nativeSelectionCapture: NativeSelectionCapture
+    private let selectionSource: @MainActor () -> SelectionSource?
 
     /// Serializes every `NSPasteboard` access. `NSPasteboard` is not thread-safe:
     /// its internal type cache (`_updateTypeCacheIfNeeded`) is shared mutable state,
@@ -180,12 +230,30 @@ public final class ClipboardService: ObservableObject {
     }
 
     private convenience init() {
-        self.init(selectionCapture: SelectionCaptureTransaction.live())
+        self.init(
+            selectionCapture: SelectionCaptureTransaction.live(),
+            nativeSelectionCapture: NativeSelectionCapture.live(),
+            selectionSource: Self.liveSelectionSource
+        )
     }
 
-    init(selectionCapture: SelectionCaptureTransaction) {
+    init(
+        selectionCapture: SelectionCaptureTransaction,
+        nativeSelectionCapture: NativeSelectionCapture,
+        selectionSource: @escaping @MainActor () -> SelectionSource?
+    ) {
         self.selectionCapture = selectionCapture
+        self.nativeSelectionCapture = nativeSelectionCapture
+        self.selectionSource = selectionSource
         // monitoring is started/stopped by AppDelegate based on window visibility
+    }
+
+    convenience init(selectionCapture: SelectionCaptureTransaction) {
+        self.init(
+            selectionCapture: selectionCapture,
+            nativeSelectionCapture: .unsupported(),
+            selectionSource: ClipboardService.liveSelectionSource
+        )
     }
 
     /// Start polling the pasteboard for changes
@@ -347,24 +415,80 @@ public final class ClipboardService: ObservableObject {
         onCopyAttempted: (@MainActor () -> Void)? = nil
     ) async -> SelectionCaptureTransaction.Result {
         // Capture before Osaurus takes focus so diagnostics retain the real source app.
-        let sourceApp = Self.currentFrontmostApplicationName()
-        let result = await selectionCapture.capture(
-            sourceApp: sourceApp,
-            onCopyAttempted: onCopyAttempted
-        )
-        if let content = result.content, let changeCount = result.changeCount {
+        let source = selectionSource()
+        let sourceApp = source?.displayName
+        let result: SelectionCaptureTransaction.Result
+        if let source {
+            switch await nativeSelectionCapture.capture(pid: source.processIdentifier) {
+            case .captured(let text):
+                let content = ClipboardContent.text(text)
+                result = SelectionCaptureTransaction.Result(
+                    report: SelectionGrabReport(
+                        outcome: .capturedText(characterCount: text.count),
+                        sourceApp: sourceApp,
+                        captureRoute: .nativeAccessibility
+                    ),
+                    text: text,
+                    content: content,
+                    changeCount: nil
+                )
+            case .secureField:
+                result = SelectionCaptureTransaction.failureResult(
+                    .secureFieldDenied,
+                    sourceApp: sourceApp
+                )
+            case .unverifiedField:
+                result = SelectionCaptureTransaction.failureResult(
+                    .unverifiedFieldDenied,
+                    sourceApp: sourceApp
+                )
+            case .noSelection:
+                result = SelectionCaptureTransaction.failureResult(
+                    .noSelection,
+                    sourceApp: sourceApp
+                )
+            case .tooLarge(let byteLimit):
+                result = SelectionCaptureTransaction.failureResult(
+                    .selectionTooLarge(byteLimit: byteLimit),
+                    sourceApp: sourceApp
+                )
+            case .unavailable:
+                result = await selectionCapture.capture(
+                    sourceApp: sourceApp,
+                    onCopyAttempted: onCopyAttempted
+                )
+            }
+        } else {
+            result = await selectionCapture.capture(
+                sourceApp: nil,
+                onCopyAttempted: onCopyAttempted
+            )
+        }
+        if let content = result.content {
             currentContent = content
-            currentContentChangeCount = changeCount
-            lastChangeCount = changeCount
+            if let changeCount = result.changeCount {
+                currentContentChangeCount = changeCount
+                lastChangeCount = changeCount
+            } else {
+                currentContentChangeCount = nil
+            }
             hasNewContent = true
             lastSourceApp = sourceApp
+        } else {
+            // An explicit hotkey attempt owns the selection affordance. Do not
+            // leave an older unread clipboard item looking like the failed
+            // request succeeded.
+            hasNewContent = false
         }
         return finishSelectionGrab(result)
     }
 
-    private static func currentFrontmostApplicationName() -> String? {
-        NSWorkspace.shared.frontmostApplication?.localizedName
-            ?? NSWorkspace.shared.frontmostApplication?.bundleIdentifier
+    private static func liveSelectionSource() -> SelectionSource? {
+        guard let app = NSWorkspace.shared.frontmostApplication else { return nil }
+        return SelectionSource(
+            processIdentifier: app.processIdentifier,
+            displayName: app.localizedName ?? app.bundleIdentifier
+        )
     }
 
     private func finishSelectionGrab(
@@ -521,10 +645,18 @@ final class SelectionCaptureTransaction {
         }
         switch content {
         case .text(let text):
+            let byteCount = text.utf8.count
+            guard byteCount <= NativeSelectionCapture.maximumUTF8Bytes else {
+                return failure(
+                    .selectionTooLarge(byteLimit: NativeSelectionCapture.maximumUTF8Bytes),
+                    sourceApp: sourceApp
+                )
+            }
             return Result(
                 report: ClipboardService.SelectionGrabReport(
                     outcome: .capturedText(characterCount: text.count),
-                    sourceApp: sourceApp
+                    sourceApp: sourceApp,
+                    captureRoute: .syntheticCopy
                 ),
                 text: text,
                 content: content,
@@ -546,7 +678,8 @@ final class SelectionCaptureTransaction {
         Result(
             report: ClipboardService.SelectionGrabReport(
                 outcome: .capturedNonText(kind: kind),
-                sourceApp: sourceApp
+                sourceApp: sourceApp,
+                captureRoute: .syntheticCopy
             ),
             text: nil,
             content: content,
@@ -558,8 +691,20 @@ final class SelectionCaptureTransaction {
         _ outcome: ClipboardService.SelectionGrabReport.Outcome,
         sourceApp: String?
     ) -> Result {
+        Self.failureResult(outcome, sourceApp: sourceApp, captureRoute: .syntheticCopy)
+    }
+
+    static func failureResult(
+        _ outcome: ClipboardService.SelectionGrabReport.Outcome,
+        sourceApp: String?,
+        captureRoute: ClipboardService.SelectionGrabReport.CaptureRoute? = nil
+    ) -> Result {
         Result(
-            report: ClipboardService.SelectionGrabReport(outcome: outcome, sourceApp: sourceApp),
+            report: ClipboardService.SelectionGrabReport(
+                outcome: outcome,
+                sourceApp: sourceApp,
+                captureRoute: captureRoute
+            ),
             text: nil,
             content: nil,
             changeCount: nil

@@ -39261,6 +39261,36 @@
         }
       }
     },
+    "Extract actions" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Extract actions"
+          }
+        }
+      }
+    },
+    "Extract the concrete action items from the attached selection." : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Extract the concrete action items from the attached selection."
+          }
+        }
+      }
+    },
+    "Help me with the attached selection." : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Help me with the attached selection."
+          }
+        }
+      }
+    },
     "No selection was copied. Select text in the frontmost app and try again." : {
       "localizations" : {
         "en" : {
@@ -39281,6 +39311,56 @@
         }
       }
     },
+    "Osaurus does not capture text from password or secure fields." : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Osaurus does not capture text from password or secure fields."
+          }
+        }
+      }
+    },
+    "Osaurus could not verify that this field is safe to capture." : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Osaurus could not verify that this field is safe to capture."
+          }
+        }
+      }
+    },
+    "No text is selected in the frontmost app." : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "No text is selected in the frontmost app."
+          }
+        }
+      }
+    },
+    "Rewrite" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Rewrite"
+          }
+        }
+      }
+    },
+    "Rewrite the attached selection. Preserve its meaning and return only the revised text." : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Rewrite the attached selection. Preserve its meaning and return only the revised text."
+          }
+        }
+      }
+    },
     "Selection could not be captured" : {
       "localizations" : {
         "en" : {
@@ -39297,6 +39377,46 @@
           "stringUnit" : {
             "state" : "new",
             "value" : "Selection unavailable"
+          }
+        }
+      }
+    },
+    "Selected text" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Selected text"
+          }
+        }
+      }
+    },
+    "Summarize" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Summarize"
+          }
+        }
+      }
+    },
+    "Summarize the attached selection." : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Summarize the attached selection."
+          }
+        }
+      }
+    },
+    "The selection is too large. Select less than %lld KB and try again." : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "The selection is too large. Select less than %lld KB and try again."
           }
         }
       }

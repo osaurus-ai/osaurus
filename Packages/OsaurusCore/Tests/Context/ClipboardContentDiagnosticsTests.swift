@@ -325,6 +325,168 @@ struct ClipboardContentDiagnosticsTests {
         #expect(service.lastSelectionGrabReport == nil)
     }
 
+    @Test func nativeSelectionSecureRoleDetectionCoversRoleAndSubrole() {
+        #expect(NativeSelectionCapture.isSecure(role: "AXSecureTextField", subrole: nil))
+        #expect(NativeSelectionCapture.isSecure(role: "AXTextField", subrole: "AXPasswordField"))
+        #expect(
+            NativeSelectionCapture.isSecure(
+                role: "AXTextField",
+                subrole: nil,
+                roleDescription: "secure text field"
+            )
+        )
+        #expect(!NativeSelectionCapture.isSecure(role: "AXTextArea", subrole: nil))
+    }
+
+    @Test @MainActor func nativeSelectionCaptureAvoidsSyntheticCopy() async {
+        let secret = "selected quarterly plan"
+        let environment = ScriptedSelectionEnvironment(copyScripts: [])
+        let native = NativeSelectionCapture(
+            dependencies: .init(read: { _ in .captured(secret) })
+        )
+        let service = ClipboardService(
+            selectionCapture: makeTransaction(environment),
+            nativeSelectionCapture: native,
+            selectionSource: { .init(processIdentifier: 42, displayName: "Pages") }
+        )
+
+        let report = await service.grabSelectionReport()
+
+        #expect(report.outcome == .capturedText(characterCount: secret.count))
+        #expect(report.captureRoute == .nativeAccessibility)
+        #expect(environment.copyCount == 0)
+        #expect(service.currentContent == .text(secret))
+        #expect(service.hasNewContent)
+        #expect(!report.redactedDiagnosticDescription.contains("quarterly"))
+    }
+
+    @Test @MainActor func secureNativeSelectionNeverInvokesCopyFallback() async {
+        let environment = ScriptedSelectionEnvironment(
+            copyScripts: [[.init(afterPolls: 1, content: .text("must not be copied"))]]
+        )
+        let native = NativeSelectionCapture(
+            dependencies: .init(read: { _ in .secureField })
+        )
+        let service = ClipboardService(
+            selectionCapture: makeTransaction(environment),
+            nativeSelectionCapture: native,
+            selectionSource: { .init(processIdentifier: 42, displayName: "Passwords") }
+        )
+
+        let report = await service.grabSelectionReport()
+
+        #expect(report.outcome == .secureFieldDenied)
+        #expect(report.needsUserAttention)
+        #expect(environment.copyCount == 0)
+        #expect(service.currentContent == nil)
+    }
+
+    @Test @MainActor func unsupportedNativeSelectionUsesBoundedCopyFallback() async {
+        let environment = ScriptedSelectionEnvironment(
+            copyScripts: [[.init(afterPolls: 1, content: .text("fallback selection"))]]
+        )
+        let service = ClipboardService(
+            selectionCapture: makeTransaction(environment),
+            nativeSelectionCapture: .unsupported(),
+            selectionSource: { .init(processIdentifier: 42, displayName: "Notes") }
+        )
+
+        let report = await service.grabSelectionReport()
+
+        #expect(report.outcome == .capturedText(characterCount: 18))
+        #expect(report.captureRoute == .syntheticCopy)
+        #expect(environment.copyCount == 1)
+        #expect(service.currentContent == .text("fallback selection"))
+    }
+
+    @Test @MainActor func oversizedNativeSelectionDoesNotBypassLimitThroughCopyFallback() async {
+        let environment = ScriptedSelectionEnvironment(
+            copyScripts: [[.init(afterPolls: 1, content: .text("copy bypass"))]]
+        )
+        let native = NativeSelectionCapture(
+            dependencies: .init(read: { _ in .tooLarge(byteLimit: 1024) })
+        )
+        let service = ClipboardService(
+            selectionCapture: makeTransaction(environment),
+            nativeSelectionCapture: native,
+            selectionSource: { .init(processIdentifier: 42, displayName: "Pages") }
+        )
+
+        let report = await service.grabSelectionReport()
+
+        #expect(report.outcome == .selectionTooLarge(byteLimit: 1024))
+        #expect(environment.copyCount == 0)
+        #expect(!service.hasNewContent)
+    }
+
+    @Test @MainActor func emptyNativeSelectionNeverInvokesCopyFallback() async {
+        let environment = ScriptedSelectionEnvironment(
+            copyScripts: [[.init(afterPolls: 1, content: .text("stale clipboard secret"))]]
+        )
+        let native = NativeSelectionCapture(
+            dependencies: .init(read: { _ in .noSelection })
+        )
+        let service = ClipboardService(
+            selectionCapture: makeTransaction(environment),
+            nativeSelectionCapture: native,
+            selectionSource: { .init(processIdentifier: 42, displayName: "Pages") }
+        )
+
+        let report = await service.grabSelectionReport()
+
+        #expect(report.outcome == .noSelection)
+        #expect(environment.copyCount == 0)
+        #expect(!service.hasNewContent)
+    }
+
+    @Test @MainActor func unverifiedNativeFieldNeverInvokesCopyFallback() async {
+        let environment = ScriptedSelectionEnvironment(
+            copyScripts: [[.init(afterPolls: 1, content: .text("must stay private"))]]
+        )
+        let native = NativeSelectionCapture(
+            dependencies: .init(read: { _ in .unverifiedField })
+        )
+        let service = ClipboardService(
+            selectionCapture: makeTransaction(environment),
+            nativeSelectionCapture: native,
+            selectionSource: { .init(processIdentifier: 42, displayName: "Unknown") }
+        )
+
+        let report = await service.grabSelectionReport()
+
+        #expect(report.outcome == .unverifiedFieldDenied)
+        #expect(environment.copyCount == 0)
+        #expect(!service.hasNewContent)
+    }
+
+    @Test @MainActor func syntheticCaptureEnforcesSharedSelectionSizeLimit() async {
+        let oversized = String(
+            repeating: "x",
+            count: NativeSelectionCapture.maximumUTF8Bytes + 1
+        )
+        let environment = ScriptedSelectionEnvironment(
+            copyScripts: [[.init(afterPolls: 1, content: .text(oversized))]]
+        )
+        let result = await makeTransaction(environment).capture(sourceApp: "Browser")
+
+        #expect(
+            result.report.outcome
+                == .selectionTooLarge(byteLimit: NativeSelectionCapture.maximumUTF8Bytes)
+        )
+        #expect(result.content == nil)
+        #expect(result.text == nil)
+    }
+
+    @Test func selectionAssistantActionsAreExplicitAndDoNotContainCapturedText() {
+        let capturedCanary = "private-client-canary"
+        let instructions = SelectionAssistantAction.allCases.map(\.instruction)
+
+        #expect(instructions.count == 4)
+        #expect(instructions.allSatisfy { !$0.isEmpty })
+        #expect(instructions.allSatisfy { !$0.contains(capturedCanary) })
+        #expect(SelectionAssistantAction.rewrite.instruction.contains("return only"))
+    }
+
     @MainActor
     private func makeTransaction(
         _ environment: ScriptedSelectionEnvironment
