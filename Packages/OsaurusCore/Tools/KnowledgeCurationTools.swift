@@ -424,9 +424,32 @@ final class ProposeKnowledgeUpdateTool: OsaurusTool, PermissionedTool, @unchecke
         let argsReq = requireArgumentsDictionary(argumentsJSON, tool: name)
         guard case .value(let args) = argsReq else { return argsReq.failureEnvelope ?? "" }
 
-        let pathReq = requireString(args, "path", expected: "collection-relative markdown path", tool: name)
-        guard case .value(let pathRaw) = pathReq else { return pathReq.failureEnvelope ?? "" }
-        let relPath = pathRaw.trimmingCharacters(in: .whitespacesAndNewlines)
+        // Resolve an optional linked ticket up front. It is the authoritative
+        // source for the target path (and a usable rationale) when a weak model
+        // fumbles those arguments but still passes the `ticket_id` it is
+        // answering — a common failure mode with small local models that mangle
+        // tool-call JSON.
+        let ticketArg = ArgumentCoercion.int(args["ticket_id"])
+        var linkedTicket: KnowledgeTicket?
+        if let ticketArg {
+            try? KnowledgeDatabase.shared.open()
+            linkedTicket = try? KnowledgeDatabase.shared.getTicket(id: ticketArg)
+        }
+
+        // `path`: prefer the argument; fall back to the linked ticket's target.
+        let pathArg = (args["path"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let relPath = (pathArg?.isEmpty == false ? pathArg : linkedTicket?.relPath) ?? ""
+        guard !relPath.isEmpty else {
+            return ToolEnvelope.failure(
+                kind: .invalidArgs,
+                message:
+                    "Missing required property: path. Pass the collection-relative .md path, "
+                    + "or a `ticket_id` whose document should be updated.",
+                field: "path",
+                expected: "a collection-relative .md path",
+                tool: name
+            )
+        }
         if let envelope = KnowledgeCurationToolSupport.validateRelPath(relPath, tool: name) {
             return envelope
         }
@@ -460,8 +483,26 @@ final class ProposeKnowledgeUpdateTool: OsaurusTool, PermissionedTool, @unchecke
             )
         }
 
-        let rationaleReq = requireString(args, "rationale", expected: "why this update is needed", tool: name)
-        guard case .value(let rationale) = rationaleReq else { return rationaleReq.failureEnvelope ?? "" }
+        // `rationale`: prefer the argument; fall back to the ticket's reason so a
+        // proposal answering a ticket still records why, even when the model
+        // dropped the field.
+        let rationaleArg = (args["rationale"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let rationale: String
+        if let rationaleArg, !rationaleArg.isEmpty {
+            rationale = rationaleArg
+        } else if let linkedTicket {
+            rationale = "Addresses ticket #\(linkedTicket.id): \(linkedTicket.reason)"
+        } else {
+            return ToolEnvelope.failure(
+                kind: .invalidArgs,
+                message:
+                    "Missing required property: rationale. Explain why this update is needed, "
+                    + "or pass a `ticket_id` to inherit its reason.",
+                field: "rationale",
+                expected: "why this update is needed",
+                tool: name
+            )
+        }
 
         // Curator gate at execution time — the schema strip is not the boundary.
         guard let agentId = ChatExecutionContext.currentAgentId else {
@@ -570,20 +611,20 @@ final class ProposeKnowledgeUpdateTool: OsaurusTool, PermissionedTool, @unchecke
             }
         }
 
-        // Optional ticket link: must exist and belong to the same collection.
+        // Optional ticket link: must exist and belong to the resolved
+        // collection. Reuses the ticket fetched up front for the path/rationale
+        // fallback.
         var ticketId: Int?
-        if let rawTicket = ArgumentCoercion.int(args["ticket_id"]) {
-            guard let ticket = try? KnowledgeDatabase.shared.getTicket(id: rawTicket),
-                ticket.collectionId == collectionId
-            else {
+        if let ticketArg {
+            guard let ticket = linkedTicket, ticket.collectionId == collectionId else {
                 return ToolEnvelope.failure(
                     kind: .notFound,
-                    message: "No ticket #\(rawTicket) in collection `\(collectionName)`.",
+                    message: "No ticket #\(ticketArg) in collection `\(collectionName)`.",
                     field: "ticket_id",
                     tool: name
                 )
             }
-            ticketId = rawTicket
+            ticketId = ticketArg
         }
 
         do {
