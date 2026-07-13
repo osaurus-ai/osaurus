@@ -281,7 +281,18 @@ struct AppleScriptExecutorMappingTests {
     @Test("heartbeat: armed during a run, disarmed after it completes")
     func heartbeatLifecycleAroundRun() async {
         _ = await AppleScriptExecutor.run(source: "return 1", timeout: 15)
+        await Self.waitForHeartbeatDisarm()
         #expect(AppleScriptExecutor.isHeartbeatActiveForTesting == false)
+    }
+
+    /// The worker releases its heartbeat ref in a `defer` *after* resuming
+    /// the awaiting caller, so an immediate read races that queue hop (seen
+    /// flaking on slow CI runners). Poll briefly; a leaked ref still fails
+    /// the follow-up expectation after the deadline.
+    static func waitForHeartbeatDisarm(attempts: Int = 100) async {
+        for _ in 0..<attempts where AppleScriptExecutor.isHeartbeatActiveForTesting {
+            try? await Task.sleep(nanoseconds: 20_000_000)
+        }
     }
 
     @Test("heartbeat: a watchdog-abandoned run still disarms once the worker finishes")
@@ -298,12 +309,14 @@ struct AppleScriptExecutorMappingTests {
         #expect(AppleScriptExecutor.isHeartbeatActiveForTesting == true)
         // After the abandoned worker completes, the ref drains to zero.
         try? await Task.sleep(nanoseconds: 2_500_000_000)
+        await Self.waitForHeartbeatDisarm()
         #expect(AppleScriptExecutor.isHeartbeatActiveForTesting == false)
     }
 
     @Test("heartbeat: compileCheck arms and disarms it too")
     func heartbeatLifecycleAroundCompileCheck() async {
         _ = await AppleScriptExecutor.compileCheck(source: "return 1 + 1", timeout: 15)
+        await Self.waitForHeartbeatDisarm()
         #expect(AppleScriptExecutor.isHeartbeatActiveForTesting == false)
     }
 }
