@@ -4096,6 +4096,14 @@ final class ChatSession: ObservableObject {
                     let isManualTools = liveToolMode == .manual
                     cachedContext = context
 
+                    // What this run may EXECUTE, seeded from what it actually EXPOSED.
+                    //
+                    // The model can name a tool it was never shown (the parser records any name
+                    // once a schema exists) and the registry used to run it. One object for the
+                    // whole run: `capabilities_load` legitimately GROWS this set mid-run while
+                    // `toolSpecs` stays frozen, so an immutable snapshot would kill that feature.
+                    let toolScope = ToolExecutionScope(exposed: toolSpecs)
+
                     // Persist the always-loaded snapshot back onto the session
                     // so the next send freezes the schema against tools that
                     // register mid-session. Preserves any capabilities_load
@@ -4395,6 +4403,11 @@ final class ChatSession: ObservableObject {
                             // unrelated run; persist only in auto mode (manual
                             // mode keeps the user's explicit tool set fixed).
                             let newTools = await CapabilityLoadBuffer.shared.drain()
+                            // These tools were just made callable to the model — their schemas ride
+                            // in the tool result — while `toolSpecs` stays frozen. Authorize them
+                            // for the rest of THIS run, or the allowlist above would refuse the very
+                            // tools the model was just handed.
+                            toolScope.activate(newTools.map { $0.function.name })
                             if !newTools.isEmpty, !isManualTools, let sid = self.sessionId {
                                 let names = newTools.map { $0.function.name }
                                 let snapshot = context.alwaysLoadedNames
@@ -4511,22 +4524,27 @@ final class ChatSession: ObservableObject {
                             // `currentAgentId` is already pinned by the
                             // outer turn-level binding; we only need to
                             // layer per-tool-call session/turn/call ids.
-                            let resultText = try await ChatExecutionContext.$currentSessionId.withValue(
-                                sessionIdForTools
-                            ) {
-                                try await ChatExecutionContext.$currentAssistantTurnId.withValue(assistantTurn.id) {
-                                    try await ChatExecutionContext.$currentToolCallId.withValue(callId) {
-                                        // The combined-mode host-read scope +
-                                        // secret-read policy are bound centrally
-                                        // inside ToolRegistry.execute, so every
-                                        // entrypoint inherits them uniformly.
-                                        try await ToolRegistry.shared.execute(
-                                            name: inv.toolName,
-                                            argumentsJSON: inv.jsonArguments
-                                        )
+                            let resultText = try await ChatExecutionContext.$toolExecutionScope
+                                .withValue(toolScope) {
+                                    try await ChatExecutionContext.$currentSessionId.withValue(
+                                        sessionIdForTools
+                                    ) {
+                                        try await ChatExecutionContext.$currentAssistantTurnId
+                                            .withValue(assistantTurn.id) {
+                                                try await ChatExecutionContext.$currentToolCallId
+                                                    .withValue(callId) {
+                                                        // The combined-mode host-read scope +
+                                                        // secret-read policy are bound centrally
+                                                        // inside ToolRegistry.execute, so every
+                                                        // entrypoint inherits them uniformly.
+                                                        try await ToolRegistry.shared.execute(
+                                                            name: inv.toolName,
+                                                            argumentsJSON: inv.jsonArguments
+                                                        )
+                                                    }
+                                            }
                                     }
                                 }
-                            }
                             return await postProcessToolResult(inv, callId: callId, resultText: resultText)
                         } catch {
                             // Store rejection/error as the result so UI shows "Rejected" instead of hanging.
@@ -4667,14 +4685,16 @@ final class ChatSession: ObservableObject {
                             let results = await AgentToolLoop.runBatchInParallel(
                                 approved.map { ($0.invocation, $0.callId) }
                             ) { inv, callId in
-                                try await ChatExecutionContext.$currentSessionId.withValue(sessionIdForTools) {
-                                    try await ChatExecutionContext.$currentAssistantTurnId.withValue(turnIdForTools) {
-                                        try await ChatExecutionContext.$currentToolCallId.withValue(callId) {
-                                            try await ToolRegistry.shared.execute(
-                                                name: inv.toolName,
-                                                argumentsJSON: inv.jsonArguments,
-                                                permissionGateResolved: true
-                                            )
+                                try await ChatExecutionContext.$toolExecutionScope.withValue(toolScope) {
+                                    try await ChatExecutionContext.$currentSessionId.withValue(sessionIdForTools) {
+                                        try await ChatExecutionContext.$currentAssistantTurnId.withValue(turnIdForTools) {
+                                            try await ChatExecutionContext.$currentToolCallId.withValue(callId) {
+                                                try await ToolRegistry.shared.execute(
+                                                    name: inv.toolName,
+                                                    argumentsJSON: inv.jsonArguments,
+                                                    permissionGateResolved: true
+                                                )
+                                            }
                                         }
                                     }
                                 }
