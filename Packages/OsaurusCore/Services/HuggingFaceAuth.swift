@@ -54,6 +54,19 @@ enum HuggingFaceAuth {
 
     static var hasToken: Bool { token != nil }
 
+    /// Non-blocking presence check for the render path: returns the cached
+    /// answer when the keychain has already been read, or `nil` while the
+    /// cache is still cold — WITHOUT performing a synchronous
+    /// `SecItemCopyMatching`, which can block the main thread for seconds
+    /// under securityd/first-unlock contention. UI seeds from this and then
+    /// resolves the cold case off-main (see `HuggingFaceTokenCard`).
+    static var cachedTokenPresence: Bool? {
+        cachedToken.withLock { (state: inout String??) -> Bool? in
+            if case .some(let loaded) = state { return loaded != nil }
+            return nil
+        }
+    }
+
     /// Warm the token cache off the main thread so the first authorized
     /// request doesn't pay a synchronous keychain read.
     static func preloadInBackground() {

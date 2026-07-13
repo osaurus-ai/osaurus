@@ -191,6 +191,11 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
         // (and so an in-app token authenticates the very first request).
         GitHubAuth.preloadInBackground()
 
+        // Same for the Hugging Face token: the Models → Catalog card reads its
+        // presence synchronously at view-init (on the main thread), so warm the
+        // cache here rather than racing that read from `ModelDownloadService`.
+        HuggingFaceAuth.preloadInBackground()
+
         // Bring up analytics early so the launch + onboarding funnel is
         // captured. No-ops silently when no Aptabase key is configured.
         TelemetryService.shared.configure()
