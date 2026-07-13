@@ -481,18 +481,25 @@ final class ProposeKnowledgeUpdateTool: OsaurusTool, PermissionedTool, @unchecke
             )
         }
 
-        let scope = await KnowledgeToolScope.resolve(
-            tool: name,
-            collectionName: args["collection"] as? String
-        )
+        // Resolve to the FULL granted set. The `collection` argument is not
+        // applied at this stage: for an existing document the `path` pins the
+        // collection, so a mismatched hint — e.g. the model passing the doc's
+        // human title ("Acme Knowledge Base") instead of the collection name
+        // ("Sample Knowledge") — must not hard-fail the call and cost a wasted
+        // approval + retry. The hint is validated below, only where it can
+        // actually disambiguate (a new or path-ambiguous document).
+        let scope = await KnowledgeToolScope.resolve(tool: name, collectionName: nil)
         guard case .granted(let collections) = scope else {
             if case .failure(let envelope) = scope { return envelope }
             return ""
         }
         if let envelope = KnowledgeToolScope.ensureDatabaseOpen(tool: name) { return envelope }
 
+        let collectionHint = (args["collection"] as? String)?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+
         // Resolve the target collection: an existing document pins it; a
-        // new path needs an unambiguous scope.
+        // new or ambiguous path falls back to the `collection` hint.
         let collectionId: String
         let collectionName: String
         switch KnowledgeCurationToolSupport.locateDocument(relPath: relPath, in: collections, tool: name) {
@@ -500,14 +507,37 @@ final class ProposeKnowledgeUpdateTool: OsaurusTool, PermissionedTool, @unchecke
             collectionId = match.collection.id.uuidString
             collectionName = match.collection.name
         case .failure(let envelope):
-            if collections.count == 1 {
-                // New document in the single granted/named collection.
-                collectionId = collections[0].id.uuidString
-                collectionName = collections[0].name
+            // Not a single existing doc. Narrow by the hint when given; an
+            // unknown hint is a real error here since it can't pin anything.
+            let candidates: [KnowledgeCollection]
+            if let collectionHint, !collectionHint.isEmpty {
+                guard
+                    let match = collections.first(where: {
+                        $0.name.caseInsensitiveCompare(collectionHint) == .orderedSame
+                    })
+                else {
+                    let names = collections.map(\.name).joined(separator: ", ")
+                    return ToolEnvelope.failure(
+                        kind: .invalidArgs,
+                        message: "Unknown collection `\(collectionHint)`. Granted collections: \(names).",
+                        field: "collection",
+                        expected: "one of the agent's granted collection names",
+                        tool: name
+                    )
+                }
+                candidates = [match]
+            } else {
+                candidates = collections
+            }
+
+            if candidates.count == 1 {
+                // New document in the single resolved collection.
+                collectionId = candidates[0].id.uuidString
+                collectionName = candidates[0].name
             } else if envelope.contains("multiple collections") {
                 return envelope
             } else {
-                let names = collections.map(\.name).joined(separator: ", ")
+                let names = candidates.map(\.name).joined(separator: ", ")
                 return ToolEnvelope.failure(
                     kind: .invalidArgs,
                     message:
