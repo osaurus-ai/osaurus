@@ -208,7 +208,14 @@ struct KnowledgeView: View {
                                 proposalId: proposal.id,
                                 overrideContent: editedContent
                             )
-                            await MainActor.run { showSuccess("Approved proposal #\(proposal.id)") }
+                            // Refresh the list explicitly rather than relying only
+                            // on the `.knowledgeCurationChanged` notification, which
+                            // approve posts after re-index/git and can be delayed or
+                            // missed — leaving the approved card on screen.
+                            await MainActor.run {
+                                reloadCuration()
+                                showSuccess("Approved proposal #\(proposal.id)")
+                            }
                         } catch {
                             await MainActor.run { showSuccess("Approve failed: \(error.localizedDescription)") }
                         }
@@ -218,7 +225,10 @@ struct KnowledgeView: View {
                     reviewingProposal = nil
                     Task.detached(priority: .userInitiated) {
                         try? await KnowledgeCurationService.shared.dismissProposal(proposalId: proposal.id)
-                        await MainActor.run { showSuccess("Dismissed proposal #\(proposal.id)") }
+                        await MainActor.run {
+                            reloadCuration()
+                            showSuccess("Dismissed proposal #\(proposal.id)")
+                        }
                     }
                 },
                 onCancel: { reviewingProposal = nil }

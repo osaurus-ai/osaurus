@@ -89,6 +89,11 @@ public actor KnowledgeCurationService {
             try? KnowledgeDatabase.shared.updateTicketStatus(id: ticketId, status: .resolved)
         }
 
+        // Announce the user-visible state change NOW — before the (potentially
+        // slow) re-index and git commit/push — so the Knowledge tab drops the
+        // approved proposal immediately instead of lingering until those finish.
+        Self.postCurationChanged()
+
         // Incremental pass picks up exactly the changed file (hash skip
         // covers the rest). The folder watcher would get there too; doing
         // it here makes the approval immediately searchable.
