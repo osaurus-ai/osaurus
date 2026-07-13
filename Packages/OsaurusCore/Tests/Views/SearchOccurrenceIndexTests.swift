@@ -65,7 +65,13 @@ struct SearchOccurrenceIndexTests {
             Issue.record("rectOfSearchOccurrence not found")
             return
         }
-        let body = String(src[start.lowerBound...].prefix(1600))
+        // Slice to the end of the function (the next member declaration) rather
+        // than a fixed-length prefix — comment growth inside the function must
+        // not silently shrink what this test inspects.
+        let tail = src[start.lowerBound...]
+        let body =
+            tail.range(of: "\n    var searchOccurrenceTotal").map { String(tail[..<$0.lowerBound]) }
+            ?? String(tail)
 
         // The shipped producer of the negative index: when `index - consumed`
         // fell inside a child's range but that child returned nil for the rect,
