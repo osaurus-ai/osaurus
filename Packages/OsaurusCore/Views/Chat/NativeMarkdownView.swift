@@ -301,9 +301,16 @@ final class NativeMarkdownView: NSView {
         for entry in segmentViews {
             guard let child = entry.view as? NativeMarkdownView else { continue }
             let childCount = child.searchOccurrenceTotal
-            if index - consumed < childCount,
-                let rect = child.rectOfSearchOccurrence(index - consumed)
-            {
+            if index - consumed < childCount {
+                // This child owns the occurrence: return its answer, even when
+                // that answer is nil (text view not in a window yet, zero-height
+                // rect). Falling through here handed later siblings an
+                // already-consumed index — negative after the next `consumed`
+                // bump — which passed their upper-bound-only check and trapped
+                // in Array.subscript (Sentry APPLE-MACOS-10V).
+                guard let rect = child.rectOfSearchOccurrence(index - consumed) else {
+                    return nil
+                }
                 return child.convert(rect, to: self)
             }
             consumed += childCount
