@@ -489,6 +489,12 @@ public final class ChatWindowManager: NSObject, ObservableObject {
         sessionCallbacks[windowId] = callback
     }
 
+    /// Sync a window's native full-screen state into its `ChatWindowState`
+    /// so the content can swap the NSToolbar for the themed in-content header.
+    fileprivate func windowFullScreenChanged(id: UUID, isFullScreen: Bool) {
+        windowStates[id]?.isFullScreen = isFullScreen
+    }
+
     /// Set window pinned (float on top) state
     public func setWindowPinned(id: UUID, pinned: Bool) {
         guard let window = nsWindows[id] else { return }
@@ -634,7 +640,10 @@ public final class ChatWindowManager: NSObject, ObservableObject {
         )
 
         panel.isOpaque = true
-        panel.backgroundColor = .windowBackgroundColor
+        // Use the theme's background rather than the system color: in native
+        // full screen the content view no longer extends under the toolbar,
+        // so the titlebar strip exposes the window background directly.
+        panel.backgroundColor = NSColor(windowState.theme.primaryBackground)
         panel.hasShadow = true
         panel.animationBehavior = .none
         panel.becomesKeyOnlyIfNeeded = false
@@ -644,10 +653,13 @@ public final class ChatWindowManager: NSObject, ObservableObject {
         // No AppKit snapshot restoration. Frame autosave (below, via
         // `applyWindowFramePersistence`) handles position persistence.
         panel.isRestorable = false
-        panel.collectionBehavior = [.fullScreenAuxiliary, .managed]
+        panel.collectionBehavior = [.fullScreenPrimary, .managed]
 
         panel.titleVisibility = .hidden
         panel.titlebarAppearsTransparent = true
+        // No hairline under the toolbar in full screen, where the transparent
+        // titlebar look otherwise breaks down.
+        panel.titlebarSeparatorStyle = .none
         panel.isMovableByWindowBackground = false
         panel.acceptsMouseMovedEvents = true
         panel.appearance = NSAppearance(named: windowState.theme.isDark ? .darkAqua : .aqua)
@@ -846,9 +858,36 @@ private struct ChatWindowRootView: View {
     @ObservedObject var windowState: ChatWindowState
 
     var body: some View {
-        ChatView(windowState: windowState)
-            .id(ObjectIdentifier(windowState.session))
-            .environment(\.theme, windowState.theme)
+        VStack(spacing: 0) {
+            if windowState.isFullScreen {
+                ChatFullScreenHeaderView(windowState: windowState)
+            }
+            ChatView(windowState: windowState)
+                .id(ObjectIdentifier(windowState.session))
+        }
+        .environment(\.theme, windowState.theme)
+    }
+}
+
+/// Themed replacement for the NSToolbar while in native full screen, where
+/// AppKit's toolbar backdrop can't be themed. Mirrors the toolbar layout:
+/// sidebar toggle leading, agent pill centered, action + pin trailing.
+private struct ChatFullScreenHeaderView: View {
+    @ObservedObject var windowState: ChatWindowState
+
+    var body: some View {
+        ZStack {
+            HStack(spacing: 8) {
+                ChatToolbarSidebarView(windowState: windowState)
+                Spacer()
+                ChatToolbarActionView(windowState: windowState)
+                ChatToolbarPinView(windowState: windowState)
+            }
+            ChatToolbarAgentView(windowState: windowState)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .background(windowState.theme.primaryBackground)
     }
 }
 
@@ -1122,5 +1161,42 @@ private final class ChatWindowDelegate: NSObject, NSWindowDelegate {
 
     func windowWillClose(_ notification: Notification) {
         manager?.windowWillClose(id: windowId)
+    }
+
+    // MARK: Full screen
+
+    /// AppKit draws the full-screen toolbar with an opaque system backdrop
+    /// that can't be tinted or removed via public API and clashes with custom
+    /// themes. Hide the NSToolbar in full screen; the SwiftUI content shows
+    /// its own themed header row (`ChatFullScreenHeaderView`) instead.
+    /// Toolbar detached during full screen, reattached on exit. Detaching
+    /// (rather than `isVisible = false`) is deliberate: AppKit manages
+    /// toolbar visibility itself across the full-screen transition and can
+    /// override a manual `isVisible` toggle, leaving the toolbar lost.
+    private var stashedToolbar: NSToolbar?
+
+    func windowWillEnterFullScreen(_ notification: Notification) {
+        guard let window = notification.object as? NSWindow else { return }
+        stashedToolbar = window.toolbar
+        window.toolbar = nil
+        manager?.windowFullScreenChanged(id: windowId, isFullScreen: true)
+    }
+
+    func windowDidExitFullScreen(_ notification: Notification) {
+        guard let window = notification.object as? NSWindow else { return }
+        if let toolbar = stashedToolbar {
+            window.toolbar = toolbar
+            stashedToolbar = nil
+        }
+        manager?.windowFullScreenChanged(id: windowId, isFullScreen: false)
+    }
+
+    /// If the exit transition is interrupted the window stays in full
+    /// screen; keep the stashed toolbar for the next successful exit.
+    func windowDidEnterFullScreen(_ notification: Notification) {
+        guard let window = notification.object as? NSWindow, window.toolbar != nil else { return }
+        // Defensive: if AppKit restored a toolbar while entering, drop the
+        // stash so we don't attach a second one later.
+        stashedToolbar = nil
     }
 }

@@ -119,6 +119,12 @@ final class ChatWindowState: ObservableObject {
     /// with later disconnects via the `.remoteProviderStatusChanged` observer.
     @Published var remoteAgentConnectionPhase: RemoteAgentConnectionPhase = .idle
 
+    /// True while the window is in native full screen. AppKit draws the
+    /// full-screen toolbar with an opaque system backdrop that clashes with
+    /// custom themes, so the NSToolbar is hidden in full screen and the
+    /// content renders its own themed header row instead.
+    @Published var isFullScreen: Bool = false
+
     // MARK: - Theme State
 
     @Published private(set) var theme: ThemeProtocol
