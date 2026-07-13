@@ -126,7 +126,8 @@ public struct MCPProviderProbeResult: Codable, Identifiable, Sendable, Equatable
             stage: .listTools,
             reasonCode: .succeeded,
             toolCount: tools.count,
-            toolNames: tools.map(\.name).sorted(),
+            // Server order, which for a paginated tools/list is page order.
+            toolNames: tools.map(\.name),
             message: L("Probe completed initialize/listTools and found \(tools.count) tool(s)."),
             action: nil
         )
