@@ -94,6 +94,7 @@ struct KnowledgeView: View {
                                         knowledgeManager.scheduleIndex(of: collection, force: true)
                                         showSuccess("Re-indexing \"\(collection.name)\"")
                                     },
+                                    isIndexing: knowledgeManager.indexingCollectionIds.contains(collection.id),
                                     onSync: {
                                         showSuccess("Syncing \"\(collection.name)\"…")
                                         Task {
@@ -406,6 +407,7 @@ private struct KnowledgeCollectionCard: View {
     let hasAppeared: Bool
     let onToggle: (Bool) -> Void
     let onReindex: () -> Void
+    let isIndexing: Bool
     let onSync: () -> Void
     let onValidateOKF: () -> Void
     let onEdit: () -> Void
@@ -531,6 +533,11 @@ private struct KnowledgeCollectionCard: View {
             .buttonStyle(.plain)
             .help(okfHelp)
             .task(id: collection.updatedAt) { await refreshOKFStatus() }
+            .onChange(of: isIndexing) { indexing in
+                // Recompute the category badge once the pass completes and
+                // the index reflects the folder on disk.
+                if !indexing { Task { await refreshOKFStatus() } }
+            }
             if !collection.folderExists {
                 Text("Folder not found. Search serves the last indexed state.", bundle: .module)
                     .font(.system(size: 10))
@@ -541,7 +548,11 @@ private struct KnowledgeCollectionCard: View {
                 if collection.isGitRepository {
                     cardButton("Sync", icon: "arrow.triangle.2.circlepath.circle", action: onSync)
                 }
-                cardButton("Re-index", icon: "arrow.triangle.2.circlepath", action: onReindex)
+                if isIndexing {
+                    indexingIndicator
+                } else {
+                    cardButton("Re-index", icon: "arrow.triangle.2.circlepath", action: onReindex)
+                }
                 cardButton("Edit", icon: "pencil", action: onEdit)
                 Spacer()
                 cardButton("Delete", icon: "trash", destructive: true, action: onDelete)
@@ -562,6 +573,27 @@ private struct KnowledgeCollectionCard: View {
             .spring(response: 0.4, dampingFraction: 0.8).delay(animationDelay),
             value: hasAppeared
         )
+    }
+
+    /// Non-interactive counterpart to the Re-index button, shown while a
+    /// pass is in flight so the action reads as busy rather than tappable.
+    private var indexingIndicator: some View {
+        HStack(spacing: 4) {
+            ProgressView()
+                .controlSize(.mini)
+            Text("Indexing…", bundle: .module)
+                .font(.system(size: 11, weight: .medium))
+                .lineLimit(1)
+                .fixedSize(horizontal: true, vertical: false)
+        }
+        .foregroundColor(theme.secondaryText)
+        .padding(.horizontal, 8)
+        .padding(.vertical, 5)
+        .background(
+            RoundedRectangle(cornerRadius: 6)
+                .fill(theme.tertiaryBackground)
+        )
+        .help(Text("Indexing in progress", bundle: .module))
     }
 
     private func cardButton(

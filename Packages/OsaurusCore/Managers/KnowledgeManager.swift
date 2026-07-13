@@ -23,6 +23,10 @@ public final class KnowledgeManager: ObservableObject {
     /// All registered collections, sorted by name.
     @Published public private(set) var collections: [KnowledgeCollection] = []
 
+    /// Ids of collections with an indexing pass in flight, so the UI can
+    /// show a live "Indexing…" state instead of a fire-and-forget toast.
+    @Published public private(set) var indexingCollectionIds: Set<UUID> = []
+
     private init() {
         collections = KnowledgeCollectionStore.loadAll()
     }
@@ -140,8 +144,16 @@ public final class KnowledgeManager: ObservableObject {
     /// the content-hash skip for a manual full rebuild.
     public func scheduleIndex(of collection: KnowledgeCollection, force: Bool = false) {
         guard collection.isEnabled else { return }
+        let id = collection.id
+        indexingCollectionIds.insert(id)
         Task.detached(priority: .utility) {
             await KnowledgeIndexService.shared.indexCollection(collection, force: force)
+            await MainActor.run {
+                KnowledgeManager.shared.indexingCollectionIds.remove(id)
+                // Nudge views (e.g. the OKF category badge) to recompute now
+                // that the pass finished and the index reflects the folder.
+                NotificationCenter.default.post(name: .knowledgeCollectionsChanged, object: id)
+            }
         }
     }
 
@@ -149,8 +161,16 @@ public final class KnowledgeManager: ObservableObject {
     /// (app startup, deferred off the launch path).
     public func scheduleIndexAll() {
         let snapshot = collections
+        let ids = Set(snapshot.filter(\.isEnabled).map(\.id))
+        indexingCollectionIds.formUnion(ids)
         Task.detached(priority: .utility) {
             await KnowledgeIndexService.shared.indexAll(snapshot)
+            await MainActor.run {
+                KnowledgeManager.shared.indexingCollectionIds.subtract(ids)
+                for id in ids {
+                    NotificationCenter.default.post(name: .knowledgeCollectionsChanged, object: id)
+                }
+            }
         }
     }
 }
