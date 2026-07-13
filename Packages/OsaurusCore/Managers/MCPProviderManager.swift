@@ -571,8 +571,8 @@ public final class MCPProviderManager: ObservableObject {
             try await withTimeout(seconds: 10) {
                 _ = try await client.connect(transport: transport)
             }
-            let (tools, _) = try await withTimeout(seconds: 10) {
-                try await client.listTools()
+            let tools = try await withTimeout(seconds: 10) {
+                try await client.listAllTools()
             }
             stopStdioRunners(for: provider.id)
             return tools.count
@@ -626,7 +626,7 @@ public final class MCPProviderManager: ObservableObject {
             _ = try await client.connect(transport: transport)
 
             // List tools to verify connection
-            let (tools, _) = try await client.listTools()
+            let tools = try await client.listAllTools()
 
             await client.disconnect()
             return tools.count
@@ -986,9 +986,11 @@ public final class MCPProviderManager: ObservableObject {
     }
 
     private func discoverTools(for providerId: UUID, client: MCP.Client, provider: MCPProvider) async throws {
-        // List tools with timeout
-        let (mcpTools, _) = try await withTimeout(seconds: provider.discoveryTimeout) {
-            try await client.listTools()
+        // List tools with timeout, following pagination cursors so servers
+        // that split tools/list across pages (e.g. Baserow, #1999) aren't
+        // truncated to their first page.
+        let mcpTools = try await withTimeout(seconds: provider.discoveryTimeout) {
+            try await client.listAllTools()
         }
 
         // Store discovered tools

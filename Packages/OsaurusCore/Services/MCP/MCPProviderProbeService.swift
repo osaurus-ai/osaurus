@@ -299,8 +299,8 @@ public enum MCPProviderProbeService {
             try await withTimeout(seconds: provider.discoveryTimeout) {
                 _ = try await client.connect(transport: transport)
             }
-            let (tools, _) = try await withTimeout(seconds: provider.discoveryTimeout) {
-                try await client.listTools()
+            let tools = try await withTimeout(seconds: provider.discoveryTimeout) {
+                try await client.listAllTools()
             }
             // Probes are short-lived by contract: disconnect the client so
             // HTTP transports invalidate their URLSession (and stop any SSE
