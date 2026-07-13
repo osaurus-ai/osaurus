@@ -25,15 +25,29 @@ enum HuggingFaceAuth {
     /// reads the keychain synchronously; call `preloadInBackground()` early
     /// so that read never lands on the main thread.
     static var token: String? {
-        cachedToken.withLock { (state: inout String??) -> String? in
-            if case .some(let loaded) = state { return loaded }
-            let raw = Keychain.read(service: keychainService, account: keychainAccount)
-                .flatMap { String(data: $0, encoding: .utf8) }?
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-            let value = (raw?.isEmpty == false) ? raw : nil
-            state = .some(value)
-            return value
+        // Fast path: return the already-resolved value. Only the in-memory
+        // state is touched under the lock — never I/O.
+        if case .some(let loaded) = cachedToken.withLock({ $0 }) { return loaded }
+
+        // Cold path: perform the (potentially slow) keychain read OUTSIDE the
+        // lock. Holding an `OSAllocatedUnfairLock` across a synchronous
+        // `SecItemCopyMatching` — which can block for seconds, or hang, under
+        // securityd/first-unlock contention — would wedge every other accessor
+        // of this lock, including the non-blocking `cachedTokenPresence` that
+        // the catalog card reads on the main thread at view-init. That is the
+        // deadlock behind the Catalog-tab hang: the main thread blocks on the
+        // lock held by a background keychain read.
+        let raw = Keychain.read(service: keychainService, account: keychainAccount)
+            .flatMap { String(data: $0, encoding: .utf8) }?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let value = (raw?.isEmpty == false) ? raw : nil
+
+        // Publish once; a racing reader that resolved the same value first
+        // wins (the keychain read is idempotent, so a double read is benign).
+        cachedToken.withLock { state in
+            if case .none = state { state = .some(value) }
         }
+        return value
     }
 
     /// Store (or clear, when empty/nil) the token. The in-memory cache is
