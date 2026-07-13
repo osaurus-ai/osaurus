@@ -1669,6 +1669,11 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
         // ensure popover window can join all spaces and appear over full screen apps
         if let popoverWindow = popover.contentViewController?.view.window {
             popoverWindow.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
+            // Key the popover's own window instead of activating the app:
+            // `NSApp.activate` while another app owns a full-screen space
+            // deactivates that app, the auto-revealed menu bar retracts, and
+            // the transient popover closes with it.
+            popoverWindow.makeKey()
         }
 
         // Close the popover when the user clicks in another app or on the
@@ -1680,8 +1685,6 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
         ) { [weak self] _ in
             self?.popover?.performClose(nil)
         }
-
-        NSApp.activate(ignoringOtherApps: true)
     }
 
     // MARK: - NSPopoverDelegate
