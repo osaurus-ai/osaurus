@@ -499,11 +499,23 @@ public final class BackgroundTaskManager: ObservableObject {
         // widened, never narrowed: an inherited external context stays
         // external for loopback/plugin/schedule requests too.
         let externalSurface = Self.resolvedExternalSurface(for: request)
-        await ChatExecutionContext.$isExternalSurface.withValue(externalSurface) {
-            await ChatExecutionContext.$currentRunId.withValue(boundRunId) {
-                await ChatExecutionContext.$currentRunActor.withValue(boundActor) {
-                    await ChatExecutionContext.$currentBackgroundId.withValue(context.id) {
-                        await context.start(prompt: request.prompt)
+        // An unattended, app-authored trigger (recurring schedule, self-
+        // scheduled wake-up, or watcher) fires with no interactive user to
+        // answer an approval card. Marked only when NOT external, so the
+        // narrow `.ask` auto-approval it unlocks can never be reached from a
+        // loopback/HTTP/MCP/plugin dispatch.
+        let unattended =
+            !externalSurface
+            && (request.source == .schedule
+                || request.source == .selfSchedule
+                || request.source == .watcher)
+        await ChatExecutionContext.$isUnattendedDispatch.withValue(unattended) {
+            await ChatExecutionContext.$isExternalSurface.withValue(externalSurface) {
+                await ChatExecutionContext.$currentRunId.withValue(boundRunId) {
+                    await ChatExecutionContext.$currentRunActor.withValue(boundActor) {
+                        await ChatExecutionContext.$currentBackgroundId.withValue(context.id) {
+                            await context.start(prompt: request.prompt)
+                        }
                     }
                 }
             }

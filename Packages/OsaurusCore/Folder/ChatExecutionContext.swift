@@ -154,4 +154,20 @@ public enum ChatExecutionContext {
     /// relaxation can't be reached from an untrusted surface. Module-internal
     /// so out-of-module callers cannot bind it.
     @TaskLocal static var authenticatedHostFolderRoot: URL?
+
+    /// True when the current execution is an UNATTENDED, app-authored
+    /// background dispatch — a recurring schedule, a self-scheduled
+    /// wake-up, or a file-system watcher trigger — fired with no
+    /// interactive user present to answer an approval card. Bound `true`
+    /// by `BackgroundTaskManager.dispatchChat` for those sources only, and
+    /// only when the run is NOT an external surface (loopback/HTTP/MCP/
+    /// plugin dispatches never set it). `ToolRegistry.runPermissionGate`
+    /// consults it to auto-approve the narrow set of `.ask` tools in
+    /// `ToolRegistry.unattendedAutoApprovableToolNames` — today only the
+    /// curator's `propose_knowledge_update`, whose output is an inert
+    /// draft that still requires a separate human diff-approval in the
+    /// Knowledge tab before anything is written. Every other `.ask` tool
+    /// is unaffected. Module-internal so out-of-module callers cannot bind
+    /// it.
+    @TaskLocal static var isUnattendedDispatch: Bool = false
 }

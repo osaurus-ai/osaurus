@@ -470,6 +470,19 @@ public final class ToolRegistry: ObservableObject {
         "file_write", "file_edit",
     ]
 
+    /// `.ask` tools that may run without an approval card on an UNATTENDED,
+    /// app-authored background dispatch (`ChatExecutionContext.isUnattendedDispatch`
+    /// — schedule / self-schedule / watcher, never external). Membership is
+    /// justified per tool by a SEPARATE human gate downstream: the curator's
+    /// `propose_knowledge_update` only queues an inert draft that the user must
+    /// still review and approve (with a diff) in the Knowledge tab before any
+    /// document is written. Without this, a scheduled Knowledge/Curator agent
+    /// stalls forever on an approval card nobody is present to click. The
+    /// interactive chat surface is unaffected — it still shows the card.
+    nonisolated static let unattendedAutoApprovableToolNames: Set<String> = [
+        "propose_knowledge_update",
+    ]
+
     /// Whether `name` is blocked for the current execution because an
     /// external surface (`ChatExecutionContext.isExternalSurface`) is
     /// driving the call. An authenticated, folder-bounded remote agent run
@@ -574,6 +587,13 @@ public final class ToolRegistry: ObservableObject {
                 } else if ChatExecutionContext.isExternalSurface {
                     // External MCP/HTTP callers cannot interact with GUI prompts.
                     approved = false
+                } else if ChatExecutionContext.isUnattendedDispatch
+                    && Self.unattendedAutoApprovableToolNames.contains(name)
+                {
+                    // Unattended schedule/watcher run with no user to click the
+                    // card. Approved only for tools whose real human gate is
+                    // downstream (see `unattendedAutoApprovableToolNames`).
+                    approved = true
                 } else {
                     approved = await ToolPermissionPromptService.requestApproval(
                         toolName: name,

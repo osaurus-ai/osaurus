@@ -252,6 +252,36 @@ struct MCPHTTPHandlerTests {
         #expect(remoteHostWrite)
     }
 
+    @Test func unattended_curation_auto_approval_is_scoped_and_still_externally_denied() {
+        // The curator draft tool is the only member today.
+        #expect(
+            ToolRegistry.unattendedAutoApprovableToolNames.contains("propose_knowledge_update"))
+
+        // Defense in depth: unattended auto-approval never relaxes the external
+        // deny. Every auto-approvable tool must still be blocked for external
+        // callers, and binding `isUnattendedDispatch` under an external surface
+        // must NOT clear that denial.
+        for name in ToolRegistry.unattendedAutoApprovableToolNames {
+            #expect(ToolRegistry.externallyDeniedToolNames.contains(name))
+            let deniedUnderExternal = ChatExecutionContext.$isExternalSurface.withValue(true) {
+                ChatExecutionContext.$isUnattendedDispatch.withValue(true) {
+                    ToolRegistry.isDeniedForCurrentSurface(name)
+                }
+            }
+            #expect(deniedUnderExternal, "\(name) must stay denied on external surfaces")
+        }
+
+        // Only the schedule / self-schedule / watcher sources mark a run
+        // unattended, and only when not external.
+        for source in [SessionSource.schedule, .selfSchedule, .watcher] {
+            let req = DispatchRequest(prompt: "p", source: source, externalSurface: false)
+            #expect(!BackgroundTaskManager.resolvedExternalSurface(for: req))
+        }
+        // An interactive chat or an external HTTP dispatch is never unattended.
+        #expect(BackgroundTaskManager.resolvedExternalSurface(
+            for: DispatchRequest(prompt: "p", source: .http, externalSurface: true)))
+    }
+
     @Test func remote_dispatch_surface_binding_propagates_to_unstructured_tasks() async {
         for toolName in Self.agentChannelToolNames {
             let inherited = await ChatExecutionContext.$isExternalSurface.withValue(
