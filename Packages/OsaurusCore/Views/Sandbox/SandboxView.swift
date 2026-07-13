@@ -1283,10 +1283,16 @@ private extension SandboxView {
     func applyResourceChanges() {
         SandboxConfigurationStore.save(pendingConfig)
         config = pendingConfig
+        actionError = nil
         Task {
-            try? await SandboxManager.shared.resetContainer()
-            refreshInfo()
-            runProvisioningPreflight()
+            do {
+                try await SandboxManager.shared.restartContainer()
+                refreshInfo()
+                runProvisioningPreflight()
+            } catch {
+                actionError = error.localizedDescription
+                runProvisioningPreflight()
+            }
         }
     }
 

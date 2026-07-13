@@ -1279,6 +1279,16 @@
         }
 
         public func stopContainer() async throws {
+            try await stopContainer(publishStoppedStatus: true)
+        }
+
+        /// Stop the VM and release its transient resources while preserving
+        /// the on-disk rootfs, base template, and per-agent environments.
+        ///
+        /// `publishStoppedStatus` is false during an in-place restart so the
+        /// UI moves directly from running to starting instead of briefly
+        /// rendering the stopped dashboard between lifecycle phases.
+        private func stopContainer(publishStoppedStatus: Bool) async throws {
             if let container = linuxContainer {
                 try await container.stop()
             }
@@ -1311,12 +1321,33 @@
             // mints fresh ones. Leaving stale tokens in memory could falsely
             // authenticate a request to a guest that no longer exists.
             await SandboxBridgeTokenStore.shared.revokeAll()
-            _status = .stopped
-            syncStatus()
+            if publishStoppedStatus {
+                _status = .stopped
+                syncStatus()
+            }
             // Drop the cached metrics so the UI doesn't keep showing
             // stale CPU/memory/uptime numbers for a container that's no
             // longer running.
             await MainActor.run { State.shared.containerInfo = nil }
+        }
+
+        /// Apply boot-time configuration without invoking the destructive
+        /// reset path. Runtime downloads, the shared warm rootfs, the
+        /// immutable CoW template, and existing agent environments all
+        /// survive; switching into per-agent mode can therefore clone the
+        /// existing template instead of unpacking the image again.
+        public func restartContainer() async throws {
+            try await stopContainer(publishStoppedStatus: false)
+            _removedByUser = false
+            _status = .starting
+            syncStatus()
+            do {
+                try await provision()
+            } catch {
+                _status = .stopped
+                syncStatus()
+                throw Self.friendlyError(from: error)
+            }
         }
 
         public func removeContainer() async throws {
