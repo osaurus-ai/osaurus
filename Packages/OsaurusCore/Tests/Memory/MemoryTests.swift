@@ -637,6 +637,39 @@ struct MemoryRelevanceGateTests {
         )
         #expect(verdict == .none)
     }
+
+    @Test func possessiveReferenceReturnsPinned() {
+        // "my X" is a direct memory signal: only the store knows what the
+        // user's own things are called.
+        let verdict = MemoryRelevanceGate.decide(
+            query: "What is the name of my boat?",
+            identity: nil,
+            knownEntities: [],
+            mode: .heuristic
+        )
+        #expect(verdict == .pinned)
+    }
+
+    @Test func possessiveReferenceMidSentenceReturnsPinned() {
+        let verdict = MemoryRelevanceGate.decide(
+            query: "Draft an invitation that names my favorite restaurant.",
+            identity: nil,
+            knownEntities: [],
+            mode: .heuristic
+        )
+        #expect(verdict == .pinned)
+    }
+
+    @Test func bareMyWithoutNounDoesNotTrigger() {
+        // Trailing "my" with no referent shouldn't open the gate.
+        let verdict = MemoryRelevanceGate.decide(
+            query: "oh my",
+            identity: nil,
+            knownEntities: [],
+            mode: .heuristic
+        )
+        #expect(verdict == .none)
+    }
 }
 
 // MARK: - Distill response parsing

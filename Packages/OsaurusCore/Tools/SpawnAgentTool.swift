@@ -16,9 +16,11 @@ public final class SpawnAgentTool: OsaurusTool, @unchecked Sendable {
     public let name = SubagentCapabilityRegistry.spawnAgentToolName
     public let description =
         "Delegate a bounded subtask to a user-configured agent (runs on the target agent's own "
-        + "system prompt + model, local or remote) and get back only a compact result digest — the "
-        + "subagent transcript is not returned. The target agent must be in this agent's spawnable list. "
-        + "Use `spawn_model` instead to hand a task to a bare model with no agent attached."
+        + "system prompt + model + its enabled tools, local or remote) and get back only a compact "
+        + "result digest — the subagent transcript is not returned. The delegated agent can execute "
+        + "its own tools (e.g. a calendar agent can create events). The target agent must be in this "
+        + "agent's spawnable list. Use `spawn_model` instead to hand a task to a bare model with no "
+        + "agent attached."
 
     public let parameters: JSONValue? = .object([
         "type": .string("object"),

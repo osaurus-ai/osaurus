@@ -58,6 +58,12 @@ public struct RunEnvironment: Codable, Sendable, Equatable {
     /// Providing power source at capture time: "AC" / "battery" / "UPS".
     /// Apple Silicon throttles harder on battery under sustained load.
     public let powerSource: String?
+    /// Who ran this contribution — a GitHub handle (or name) self-declared
+    /// via `OSAURUS_EVALS_CONTRIBUTOR` (the contribute flow resolves it from
+    /// `gh` / git config). Feeds attribution + the contributor ranking on the
+    /// crowdsourced leaderboard. nil for pre-schema contributions (the compat
+    /// CLI falls back to the git author who added the file).
+    public let contributor: String?
 
     public init(
         chip: String? = nil,
@@ -73,7 +79,8 @@ public struct RunEnvironment: Codable, Sendable, Equatable {
         caseCount: Int? = nil,
         thermalState: String? = nil,
         lowPowerMode: Bool? = nil,
-        powerSource: String? = nil
+        powerSource: String? = nil,
+        contributor: String? = nil
     ) {
         self.chip = chip
         self.totalRamMb = totalRamMb
@@ -89,6 +96,7 @@ public struct RunEnvironment: Codable, Sendable, Equatable {
         self.thermalState = thermalState
         self.lowPowerMode = lowPowerMode
         self.powerSource = powerSource
+        self.contributor = contributor
     }
 
     /// Capture the live environment for a run over `caseIDs` against
@@ -116,7 +124,8 @@ public struct RunEnvironment: Codable, Sendable, Equatable {
             caseCount: caseIDs.isEmpty ? nil : Set(caseIDs).count,
             thermalState: thermalStateLabel(ProcessInfo.processInfo.thermalState),
             lowPowerMode: ProcessInfo.processInfo.isLowPowerModeEnabled,
-            powerSource: providingPowerSource()
+            powerSource: providingPowerSource(),
+            contributor: nonEmpty(environment["OSAURUS_EVALS_CONTRIBUTOR"])
         )
     }
 
@@ -170,6 +179,7 @@ public struct RunEnvironment: Codable, Sendable, Equatable {
         if let kvRegime { parts.append("kv=\(kvRegime)") }
         if let judge { parts.append("judge=\(judge)") }
         if let catalogHash { parts.append("catalog=\(catalogHash)") }
+        if let contributor { parts.append("by \(contributor)") }
         // Perf-comparability caveats: only shown when they'd actually skew
         // numbers (nominal/AC is the assumed baseline, so it stays quiet).
         if let thermalState, thermalState != "nominal" {

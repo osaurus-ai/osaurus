@@ -108,6 +108,36 @@ struct OnboardingTelemetryEventTests {
         #expect(event.props["source"] as? String == "local")
     }
 
+    /// The local path distinguishes "kicked off a background download" from
+    /// "model was already on disk" via the boolean `download_started` prop.
+    @Test func brainSourceSelected_local_carries_download_started_when_provided() {
+        let (service, rec, cleanup) = makeRecordingService()
+        defer { cleanup() }
+
+        OnboardingTelemetry.brainSourceSelected(.local, downloadStarted: true, service: service)
+
+        let event = rec.events[0]
+        #expect(event.name == "brain_source_selected")
+        #expect(business(event.props).count == 2)
+        #expect(event.props["source"] as? String == "local")
+        #expect(event.props["download_started"] as? Bool == true)
+    }
+
+    /// The managed Osaurus default reports the documented `hosted` token and,
+    /// like local, never a provider property.
+    @Test func brainSourceSelected_osaurus_carries_hosted_source_only() {
+        let (service, rec, cleanup) = makeRecordingService()
+        defer { cleanup() }
+
+        OnboardingTelemetry.brainSourceSelected(.osaurus, service: service)
+
+        let event = rec.events[0]
+        #expect(event.name == "brain_source_selected")
+        #expect(business(event.props).count == 1)
+        #expect(event.props["source"] as? String == "hosted")
+        #expect(event.props["provider"] == nil)
+    }
+
     @Test func stepSkipped_emits_step_name_only() {
         let (service, rec, cleanup) = makeRecordingService()
         defer { cleanup() }

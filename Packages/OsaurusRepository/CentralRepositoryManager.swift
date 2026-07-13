@@ -43,6 +43,8 @@ public struct CentralRepositoryRefreshFailure: Equatable, LocalizedError, Sendab
         case tlsTrust
         case cancelled
         case malformedArchive
+        case unsafeArchive
+        case archiveResourceLimit
         case unzipFailed
         case fileSystem
         case unknown
@@ -102,6 +104,10 @@ public struct CentralRepositoryRefreshFailure: Equatable, LocalizedError, Sendab
             return "Plugin repository refresh was cancelled.\(cacheSuffix)\(retrySuffix)"
         case .malformedArchive:
             return "Plugin repository downloaded an invalid registry archive.\(cacheSuffix)\(retrySuffix)"
+        case .unsafeArchive:
+            return "Plugin repository archive contains unsafe entries and was rejected.\(cacheSuffix)"
+        case .archiveResourceLimit:
+            return "Plugin repository archive exceeds extraction safety limits and was rejected.\(cacheSuffix)"
         case .unzipFailed:
             return "Plugin repository archive could not be unpacked.\(cacheSuffix)\(retrySuffix)"
         case .fileSystem:
@@ -229,8 +235,7 @@ public final class CentralRepositoryManager: @unchecked Sendable {
 
         let extractDir = stagingDir.appendingPathComponent(Path.extracted, isDirectory: true)
         do {
-            try fm.createDirectory(at: extractDir, withIntermediateDirectories: true)
-            try unzip(zipURL: zipURL, to: extractDir)
+            try BoundedArchiveExtractor.extract(archive: zipURL, to: extractDir, policy: .registry)
         } catch {
             throw RefreshAttemptError(underlying: error, attemptedURLs: attemptedURLs, failedURL: nil)
         }
@@ -296,7 +301,7 @@ public final class CentralRepositoryManager: @unchecked Sendable {
         return urls
     }
 
-    // MARK: - Download / unzip
+    // MARK: - Download / extraction
 
     /// Synchronously downloads `url` to `destination`. Callers invoke `refresh()`
     /// from a background thread (e.g. `Task.detached`) so blocking is acceptable.
@@ -333,22 +338,6 @@ public final class CentralRepositoryManager: @unchecked Sendable {
         }.resume()
         semaphore.wait()
         if let error = outcome.error { throw error }
-    }
-
-    private func unzip(zipURL: URL, to destination: URL) throws {
-        let task = Process()
-        task.executableURL = URL(fileURLWithPath: "/usr/bin/unzip")
-        task.arguments = ["-o", "-q", zipURL.path, "-d", destination.path]
-        let pipe = Pipe()
-        task.standardOutput = pipe
-        task.standardError = pipe
-        try task.run()
-        task.waitUntilExit()
-        guard task.terminationStatus == 0 else {
-            let stderr = pipe.fileHandleForReading.readDataToEndOfFile()
-            let message = String(data: stderr, encoding: .utf8) ?? "unknown error"
-            throw RefreshError.unzipFailed(Int(task.terminationStatus), message)
-        }
     }
 
     /// Finds the single top-level directory inside an extracted GitHub source archive.
@@ -457,6 +446,18 @@ public final class CentralRepositoryManager: @unchecked Sendable {
         message: String,
         retryable: Bool
     ) {
+        if let archiveError = error as? ArchiveExtractionError {
+            switch archiveError {
+            case .unsafePath, .unsafeEntry:
+                return (.unsafeArchive, archiveError.localizedDescription, false)
+            case .resourceLimit:
+                return (.archiveResourceLimit, archiveError.localizedDescription, false)
+            case .malformed, .unsupported, .extractionFailed, .verificationFailed:
+                return (.malformedArchive, archiveError.localizedDescription, false)
+            case .publicationFailed:
+                return (.fileSystem, "registry archive could not be published", false)
+            }
+        }
         if let refreshError = error as? RefreshError {
             switch refreshError {
             case .unsupportedURL:
@@ -472,8 +473,6 @@ public final class CentralRepositoryManager: @unchecked Sendable {
                     return (.serverError, refreshError.description, true)
                 }
                 return (.unknown, refreshError.description, false)
-            case .unzipFailed:
-                return (.unzipFailed, refreshError.description, false)
             case .malformedArchive:
                 return (.malformedArchive, refreshError.description, false)
             }
@@ -555,7 +554,6 @@ private struct RefreshAttemptError: Error {
 enum RefreshError: Error, CustomStringConvertible {
     case unsupportedURL(String)
     case httpStatus(Int)
-    case unzipFailed(Int, String)
     case malformedArchive(String)
 
     var description: String {
@@ -564,8 +562,6 @@ enum RefreshError: Error, CustomStringConvertible {
             return "unsupported central registry URL: \(url) (only github.com is supported)"
         case .httpStatus(let code):
             return "registry archive download returned HTTP \(code)"
-        case .unzipFailed(let code, let msg):
-            return "unzip exited with code \(code): \(msg)"
         case .malformedArchive(let detail):
             return "malformed archive: \(detail)"
         }

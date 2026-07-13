@@ -287,6 +287,32 @@ public enum ProviderNetworkDiagnostics {
         }
     }
 
+    /// Detail line for the ChatGPT/Codex model-discovery row. Before the first
+    /// live fetch this documents the static-fallback behavior; afterwards it
+    /// attributes every filtered live-catalog entry so "N models" reports can
+    /// be debugged from a copied diagnostics block.
+    static func codexModelDiscoveryDetail(
+        summary: OpenAICodexOAuthService.ModelDiscoverySummary? = OpenAICodexOAuthService.lastModelDiscoverySummary
+    ) -> String {
+        guard let summary else {
+            return L(
+                "Uses the live ChatGPT model catalog after sign-in, with the static Codex fallback before sign-in."
+            )
+        }
+
+        var detail = L("Live catalog: \(summary.rawEntryCount) entries, \(summary.compatibleCount) Codex-compatible.")
+        if !summary.filteredModels.isEmpty {
+            let maxListed = 12
+            var parts = summary.filteredModels.prefix(maxListed).map { "\($0.slug) (\($0.reason.label))" }
+            let overflow = summary.filteredModels.count - maxListed
+            if overflow > 0 {
+                parts.append(L("+\(overflow) more"))
+            }
+            detail += " " + L("Filtered: \(parts.joined(separator: ", ")).")
+        }
+        return detail
+    }
+
     private static func remoteModelDiscoveryRow(provider: RemoteProvider) -> ProviderDiagnosticRow {
         guard let modelsURL = provider.url(for: provider.providerType.modelsEndpoint) else {
             return ProviderDiagnosticRow(
@@ -306,10 +332,7 @@ public enum ProviderNetworkDiagnostics {
                 title: L("Model discovery"),
                 value: L("ChatGPT/Codex catalog"),
                 severity: .info,
-                detail:
-                    L(
-                        "Uses the live ChatGPT model catalog after sign-in, with the static Codex fallback before sign-in."
-                    )
+                detail: codexModelDiscoveryDetail()
             )
         case .azureOpenAI:
             let hasManual = !provider.mergedModelIds(discovered: []).isEmpty

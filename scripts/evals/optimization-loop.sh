@@ -75,15 +75,13 @@ set -uo pipefail
 #   PARALLEL_REMOTE "1" (default) → when MODELS mixes local and remote-provider
 #                  ids, run the remote models' LLM pass in a background lane
 #                  concurrent with the local lane (remote decode is
-#                  network-bound — no GPU contention). The remote lane runs
-#                  with config storage force-isolated so it can never race the
-#                  local lane on the real ~/.osaurus chat config. The
-#                  sandbox-VM suite is the one exception: it is serialized
-#                  across lanes with a lock (Apple Containerization is
-#                  host-global) and runs WITHOUT forced isolation — the host's
-#                  provisioned sandbox.json lives in the real root, and an
-#                  isolated root would read setupComplete=false and skip every
-#                  case. "0" restores the fully sequential order.
+#                  network-bound — no GPU contention). Every eval process runs
+#                  in its own hermetic throwaway storage root (with copied
+#                  chat/sandbox config snapshots), so concurrent lanes can
+#                  never race each other — or the developer's live app — on
+#                  the real ~/.osaurus. The sandbox-VM suite is still
+#                  serialized across lanes with a lock (Apple Containerization
+#                  is host-global). "0" restores the fully sequential order.
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
@@ -351,16 +349,12 @@ run_model_lane() {
   done
   run_suites_batch "${model}" "llm-${label}" "batch" ${batch_suites[@]+"${batch_suites[@]}"}
   for s in ${vm_suites[@]+"${vm_suites[@]}"}; do
-    # VM suites must NOT inherit forced config isolation (the remote lane
-    # sets OSAURUS_EVALS_ISOLATE_CONFIG=1 for its whole model pass): an
-    # isolated root hides the host's provisioned sandbox.json, so
-    # setupComplete reads false and every case silently skips with
-    # "sandbox setup incomplete on this host". The sandbox VM and its
-    # provisioning config are host-global by design, and cross-lane
-    # contention is already serialized by with_sandbox_lock — the same
-    # real-root regime the local lane always used for this suite.
-    OSAURUS_EVALS_ISOLATE_CONFIG=0 with_sandbox_lock \
-      run_suite "${model}" "llm-${label}" "${s}"
+    # VM suites run hermetically like every other suite: the eval process's
+    # isolated root carries a COPY of the host's provisioned sandbox.json
+    # (so setupComplete reads true) and a `container/` symlink to the real
+    # host-global VM runtime. Cross-lane contention on that shared VM is
+    # serialized by with_sandbox_lock.
+    with_sandbox_lock run_suite "${model}" "llm-${label}" "${s}"
   done
 }
 
@@ -403,15 +397,14 @@ for model in ${MODELS}; do
 done
 
 remote_lane() {
-  # Remote models never need the real ~/.osaurus chat config (the model id is
-  # explicit and the provider is bootstrapped from env keys), so force config
-  # isolation: the lane cannot race the local lane — or the developer's live
-  # app — on shared config state.
+  # Each eval process already runs in its own hermetic storage root, so the
+  # remote lane cannot race the local lane — or the developer's live app —
+  # on shared config state.
   local model label
   for model in ${REMOTE_MODELS[@]+"${REMOTE_MODELS[@]}"}; do
     label="$(label_for "${model}")"
     log "LLM suites for model=${model} (label=${label}) [remote lane]:"
-    OSAURUS_EVALS_ISOLATE_CONFIG=1 run_model_lane "${model}" "${label}"
+    run_model_lane "${model}" "${label}"
   done
 }
 

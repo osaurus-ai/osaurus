@@ -1,0 +1,16 @@
+{
+  "id": "http_api.typed-error-n-unsupported",
+  "domain": "http_api",
+  "label": "http api • n > 1 returns a typed 400, never a 200 or garbage",
+  "query": "Say hello.",
+  "notes": "Typed-error contract pinned at the validator boundary: RequestValidator declares n > 1 unsupported, so the server must answer 400 with a JSON error body that names the parameter — before any engine work happens. Deterministic and model-free (the request is rejected pre-generation), but still needs the live server.",
+  "fixtures": {},
+  "expect": {
+    "httpAPI": {
+      "scenario": "typed_error",
+      "body": { "n": 4 },
+      "expectStatus": 400,
+      "errorContains": ["'n'"]
+    }
+  }
+}

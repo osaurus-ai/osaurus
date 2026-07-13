@@ -1,3 +1,8 @@
+<h3 align="center">🚀 We're live on Product Hunt!</h3>
+
+> [!IMPORTANT]
+> **Osaurus is live on [Product Hunt](https://www.producthunt.com/products/osaurus) today — come check out the launch and join the conversation.** We'd love your support and honest feedback!
+
 <p align="center">
 <img width="1920" height="1080" alt="osaurus-techcrunch-1" src="https://github.com/user-attachments/assets/d7905005-71fe-41ba-b69f-e8968af29b5c" />
 </p>
@@ -340,7 +345,7 @@ Osaurus is actively developed and we welcome contributions: bug fixes, new plugi
 Check out [Good First Issues](https://github.com/osaurus-ai/osaurus/issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22), read the [Contributing Guide](CONTRIBUTING.md), or join [Discord](https://discord.gg/osaurus). See [docs/FEATURES.md](docs/FEATURES.md) for the full feature inventory.
 
 > [!NOTE]
-> **🌐 Help translate Osaurus.** We're looking for contributors to localize the app into **Spanish**, **Japanese**, and **Traditional Chinese** -- these locales are already wired up in Xcode, so you can start translating right away. See [docs/TRANSLATORS.md](docs/TRANSLATORS.md) for how to contribute and the contributor leaderboard.
+> **🌐 Help translate Osaurus.** We're looking for contributors to localize the app into **Spanish** and **Japanese** -- these locales are already wired up in Xcode, so you can start translating right away. See [docs/TRANSLATORS.md](docs/TRANSLATORS.md) for how to contribute and the contributor leaderboard.
 
 ## Community
 

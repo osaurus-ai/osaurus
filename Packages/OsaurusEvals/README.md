@@ -11,7 +11,7 @@ Packages/OsaurusEvals/
   Package.swift
   README.md (this file)
   Config/
-    recall_floors.json  — opt-in `--fail-on-floor` gate config
+    floors.json         — `--fail-on-floor` gate config (suite pass rates + case recall floors)
   Sources/
     OsaurusEvalsKit/    — library (case schema, runner, scorers, model override)
     OsaurusEvalsCLI/    — `osaurus-evals` executable
@@ -32,12 +32,10 @@ Packages/OsaurusEvals/
     MicroPerf/          — fixed-shape decode/TTFT/prefill micro-benchmarks, median ± stdev (LLM)
     PrefixHash/         — KV-cache prefix-hash stability
     PromptInjection/    — indirect-injection resistance over seeded agent_loop fixtures (LLM)
-    RequestValidation/  — RequestValidator.unsupportedSamplerReason
     SandboxDiagnostics/ — sandbox self-heal hint layer over canned stderr (no LLM, no VM)
     SandboxFrontier/    — live Linux-VM sandbox tools; skips without Apple Containerization (LLM)
     ScreenContext/      — deterministic AX-text screen-context distillation (no LLM)
     Schema/             — SchemaValidator.validate pinning
-    StreamingHint/      — StreamingToolHint encode/decode round-trips
     Subagent/           — SubagentSession host: scripted model-free + live spawn/image/computer_use
     ToolEnvelope/       — ToolEnvelope.{success,failure} JSON shape
     ToolResultGrounding/ — transcript fixtures checking final-answer grounding against tool results
@@ -199,9 +197,11 @@ The loop batches each model's suites into ONE process (the model loads and
 warms once, not once per suite), and when `MODELS` mixes local and
 remote-provider ids it runs the remote models in a parallel background lane —
 remote decode is network-bound, so it doesn't contend with local MLX GPU work.
-The remote lane runs config-isolated (it can't race the local lane on
-`~/.osaurus`) and the sandbox-VM suite is serialized across lanes with a lock.
-Set `PARALLEL_REMOTE=0` to restore the fully sequential order.
+Every eval process runs in its own hermetic throwaway storage root (see
+"Hermetic run storage" below), so parallel lanes can never race each other —
+or a live Osaurus app — on `~/.osaurus`; the sandbox-VM suite is serialized
+across lanes with a lock (the VM itself is host-global). Set
+`PARALLEL_REMOTE=0` to restore the fully sequential order.
 
 Each run lands in `build/evals/loop/<timestamp>/` (also symlinked as
 `build/evals/loop/latest`) with:
@@ -263,10 +263,17 @@ underlying primitive.
 Anyone can contribute a model-compatibility result from their own Mac — the
 long tail of models/quants/hardware no single maintainer can cover. Each
 contribution is one conflict-free file under `reports/community/`; a maintainer
-folds them into `reports/COMPATIBILITY.md`. See `reports/community/README.md`.
+folds them into `reports/COMPATIBILITY.md`, which also tracks **device
+coverage** (every chip × RAM shape that has reported). The end-to-end
+contributor guide — written for humans and coding agents — is
+[`COMMUNITY_EVALS.md`](../../COMMUNITY_EVALS.md) at the repo root; format
+details live in `reports/community/README.md`.
 
 ```bash
-# Contributor: run ONE model on your hardware, then PR the single file it writes.
+# Contributor: run ONE model on your hardware and auto-open the PR (gh).
+PR=1 MODEL=mlx-community/Qwen3-4B-4bit make evals-contribute
+
+# Same, but stop after writing the file (PR/issue it yourself).
 MODEL=mlx-community/Qwen3-4B-4bit make evals-contribute
 
 # Maintainer: rebuild the leaderboard (or gate a PR's contributions).
@@ -304,11 +311,29 @@ requests `stream_options.include_usage` and surfaces the provider's `usage` as
 the same in-band stats hint the local runtime emits (decode tok/s stays nil when
 the provider omits it, rather than being fabricated).
 
+**Hermetic run storage.** Every `osaurus-evals run` (and `agent-loop-lab`)
+process — pure data suites included — runs against a disposable
+`$TMPDIR/osaurus-evals-<uuid>/` storage root
+(`EvalBootstrap.configureIsolatedRunStorage`). Fixture agents, providers,
+schedules, memory rows, methods, skills, chat state, and KV caches an eval
+creates all land in that throwaway root and **can never touch the user's real
+`~/.osaurus` contexts**. The isolated root is seeded with the few host
+resources a run must still see: read-only symlinks for `Tools/` (installed
+plugins, only when the plan loads them), `cache/external-models.json`
+(HF-cache / LM-Studio model resolution), and `container/` (the host-global
+sandbox VM runtime — boot costs minutes and the container is shared with the
+host app, so it is the one deliberate exception); plus **copies** of
+`config/chat.json` (keeps `--model auto` resolvable) and `config/sandbox.json`
+(keeps provisioned-sandbox detection) so any write a run triggers mutates the
+copy, not the user's file. On normal exit the process deletes its root; roots
+leaked by watchdog `_exit` / crashes are collected by the next run's orphan
+sweep (dead `.owner.pid`).
+
 Startup bootstrap is domain-aware. Suites that require installed native plugins
 load them and rebuild search indices so they mirror the host app. `capability_search`
 suites initialize only the selected tool / method / skill index lanes without
-loading native plugins; those index-only runs use isolated temporary storage so
-fixtures never touch the user's real databases. Debug builds also use
+loading native plugins; index fixtures build fresh inside the isolated root so
+they never touch the user's real databases. Debug builds also use
 a deterministic in-process storage key; release builds still use OsaurusCore's
 normal noninteractive storage-key path against the isolated database files
 (used only when a run opts in to encrypted fixtures; plaintext fixtures need no key).
@@ -343,10 +368,8 @@ Every case file shares a top-level shape: `id`, `domain`, optional `label` and `
 | `schema` | no | `runSchemaCase` | `expect.schema` |
 | `tool_envelope` | no | `runToolEnvelopeCase` | `expect.toolEnvelope` |
 | `tool_result_grounding` | no | `runToolResultGroundingCase` | `expect.toolResultGrounding` |
-| `streaming_hint` | no | `runStreamingHintCase` | `expect.streamingHint` |
 | `prefix_hash` | no | `runPrefixHashCase` | `expect.prefixHash` |
 | `argument_coercion` | no | `runArgumentCoercionCase` | `expect.argumentCoercion` |
-| `request_validation` | no | `runRequestValidationCase` | `expect.requestValidation` |
 | `sandbox_diagnostics` | no | `runSandboxDiagnosticsCase` | `expect.sandboxDiagnostics` |
 
 ¹ `computer_use_loop` drives a live model by default, but a case that supplies `scriptedActions` runs **model-free** (deterministic, CI-safe) via the loop's `AgentStepProvider` seam.
@@ -742,20 +765,21 @@ The design rule that makes these cases trustworthy: **the deterministic guard ta
 
 ### Other domains
 
-The pure-data domains (`schema`, `tool_envelope`, `streaming_hint`, `prefix_hash`, `argument_coercion`, `request_validation`) follow the same shape — pick one of the existing `Suites/<domain>/*.json` cases as a template and copy it.
+The pure-data domains (`schema`, `tool_envelope`, `prefix_hash`, `argument_coercion`) follow the same shape — pick one of the existing `Suites/<domain>/*.json` cases as a template and copy it.
 
-## Recall floors gate
+## Floors gate
 
-`Config/recall_floors.json` lists per-case `minMatches` floors for `--fail-on-floor`. The flag is opt-in (not yet wired into CI) and lets contributors dry-run a stricter recall gate locally before it becomes authoritative. Cases intentionally omitted from the floor map are documented in the file's `_comment` (today: indexer-side exclusions, abstain cases blocked by RRF saturation, and embedder-miss cases that need a description audit).
+`Config/floors.json` carries two floor families for `--fail-on-floor` (which the `make evals*` targets now pass by default; disable with `EVALS_FLOOR_FLAG=`):
 
-When a case in the floor map's accepted-hit count drops below `minMatches`, the run exits non-zero even if the case itself "passes" by softer criteria. The gate is independent of pass/fail outcome so it can catch silent recall slippage that the case-level matcher wouldn't.
+- **`suitePassRates`** — per-suite minimum pass rate over scoreable rows (skipped rows excluded). The deterministic token-free suites are pinned at `1.0`: any failing row there is a code regression, never model flake. Suites not listed are unaffected, which is what makes the default-on flag safe for LLM suites. CI runs these suites with the gate via `make evals-deterministic` (the `test-evals` job).
+- **`caseFloors`** — per-case `minMatches` recall floors (today: `capability_search`). When a floored case's accepted-hit count drops below `minMatches`, the run exits non-zero even if the case itself "passes" by softer criteria — the gate is independent of pass/fail outcome so it catches silent recall slippage the case-level matcher wouldn't. A `caseFloors` domain is skipped when the running suite has no cases of that domain; within a matching suite, a missing floored id still breaches (typo guard). Cases intentionally omitted from the floor map are documented in the file's `_comment`.
 
 ## Adding a new case
 
 1. Drop `Suites/<Domain>/my-case.json` with the schema above (pick a sibling case as a template).
 2. `swift run osaurus-evals run --suite Suites/<Domain> --filter my-case` to iterate.
 3. Once green, run the whole suite to make sure you didn't break a sibling.
-4. If your case asserts a recall floor, add it to `Config/recall_floors.json` so `--fail-on-floor` covers it.
+4. If your case asserts a recall floor, add it to `caseFloors` in `Config/floors.json` so `--fail-on-floor` covers it. New deterministic suites should also be listed under `suitePassRates` (and in the Makefile's `EVALS_DETERMINISTIC_SUITES` if CI-safe).
 
 ## Adding a new domain
 

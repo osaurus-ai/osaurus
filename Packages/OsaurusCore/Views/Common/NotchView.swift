@@ -141,9 +141,11 @@ struct NotchView: View {
     private var accentColor: Color {
         guard let task = activeTask else { return theme.accentColorLight }
         switch task.status {
+        case .queued: return notchTertiaryText
         case .running: return theme.accentColorLight
-        case .awaitingClarification: return theme.warningColor
-        case .completed(let success, _): return success ? theme.successColor : theme.errorColor
+        case .waitingForInput: return theme.warningColor
+        case .completed: return theme.successColor
+        case .failed: return theme.errorColor
         case .cancelled: return notchTertiaryText
         }
     }
@@ -156,6 +158,20 @@ struct NotchView: View {
         case .compact: return metrics.notchWidth + 60
         case .expanded: return max(340, metrics.notchWidth + 140)
         }
+    }
+
+    /// Extra top inset for the expanded card when the overlay is anchored on
+    /// the menu bar and the display has a physical notch. The panel's top edge
+    /// then sits at the very top of the screen, so the hardware notch cutout
+    /// overlaps the card's header; push the content down past it (issue #1951).
+    /// Zero for below-the-menu-bar placement, non-notch displays, and the
+    /// compact pill (whose icons are meant to straddle the cutout).
+    private var hardwareNotchTopInset: CGFloat {
+        guard expansion == .expanded,
+            metrics.hasHardwareNotch,
+            NotchOverlayPlacement.current == .onMenuBar
+        else { return 0 }
+        return metrics.notchHeight
     }
 
     /// Compact: flush with bezel. Expanded: content-driven via fixedSize.
@@ -389,16 +405,23 @@ struct NotchView: View {
     private var compactTrailing: some View {
         if let task = activeTask {
             switch task.status {
-            case .running, .awaitingClarification:
+            case .queued, .running, .waitingForInput:
                 // Chat tasks don't expose structured progress — show
                 // indeterminate ring (passing -1 makes NotchProgressRing
                 // animate continuously).
                 NotchProgressRing(progress: -1, color: accentColor, size: 14, lineWidth: 1.5)
                     .transition(.opacity.combined(with: .scale(scale: 0.5)))
-            case .completed(let success, _):
+            case .completed:
                 MorphingStatusIcon(
-                    state: success ? .completed : .failed,
-                    accentColor: success ? theme.successColor : theme.errorColor,
+                    state: .completed,
+                    accentColor: theme.successColor,
+                    size: 14
+                )
+                .transition(.opacity.combined(with: .scale(scale: 0.5)))
+            case .failed:
+                MorphingStatusIcon(
+                    state: .failed,
+                    accentColor: theme.errorColor,
                     size: 14
                 )
                 .transition(.opacity.combined(with: .scale(scale: 0.5)))
@@ -421,9 +444,9 @@ struct NotchView: View {
 
                 if let task = activeTask {
                     switch task.status {
-                    case .running, .awaitingClarification:
+                    case .queued, .running, .waitingForInput:
                         expandedRunningBody(task: task)
-                    case .completed(_, let summary):
+                    case .completed(let summary), .failed(let summary):
                         expandedCompletedBody(summary: summary, task: task)
                     case .cancelled:
                         expandedCancelledBody(task: task)
@@ -435,7 +458,7 @@ struct NotchView: View {
                 if sortedTasks.count > 1 { taskDotIndicators }
             }
             .padding(.horizontal, 16)
-            .padding(.top, 6)
+            .padding(.top, 6 + hardwareNotchTopInset)
             .padding(.bottom, 14)
             .opacity(contentRevealed ? 1 : 0)
             .offset(y: contentRevealed ? 0 : 8)

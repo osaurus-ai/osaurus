@@ -200,6 +200,12 @@ public enum AgentLoopEvaluator {
     ///     `autonomousExec.enabled == true` (the runner's eval agent) —
     ///     tool registration reads the agent record. Builtin sandbox
     ///     tools are unregistered on exit; the container is NOT stopped.
+    ///   - cancelAfterToolCalls: interruption lever for cancellation evals.
+    ///     When set, the loop's `isCancelled` hook flips true once this many
+    ///     tool calls have been processed, so the run ends with the
+    ///     production `.cancelled` exit at the next cancellation checkpoint
+    ///     — the same path a user's stop button drives. nil (default)
+    ///     never cancels.
     public static func run(
         task: String,
         workspace: URL,
@@ -210,7 +216,8 @@ public enum AgentLoopEvaluator {
         streaming: Bool = true,
         maxTokens: Int? = nil,
         stopOnToolRejection: Bool = false,
-        sandbox: AgentLoopSandboxMode? = nil
+        sandbox: AgentLoopSandboxMode? = nil,
+        cancelAfterToolCalls: Int? = nil
     ) async -> AgentLoopTranscript {
         // The Default agent's schema is hard-restricted to the 8-tool
         // configure baseline (folder write tools enter only via
@@ -583,6 +590,13 @@ public enum AgentLoopEvaluator {
         }
 
         let hooks = AgentLoopHooks(
+            isCancelled: {
+                // Cancellation evals: flip cancelled once the processed-call
+                // budget is reached. Reads the same transcript array the
+                // executors append to (all on the main actor, so no race).
+                guard let cancelAfterToolCalls else { return false }
+                return transcriptCalls.count >= cancelAfterToolCalls
+            },
             buildMessages: { notices in
                 // Canonical notice contract: trim with the system prefix
                 // kept byte-stable, then notices ride transiently. Notices

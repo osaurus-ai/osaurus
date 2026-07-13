@@ -30,6 +30,8 @@ public struct BenchCommand: Command {
     private static let defaultMaxTokens = 128
     private static let defaultRuns = 3
 
+    private static let defaultTuneCandidates = [512, 1_024, 2_048, 4_096]
+
     struct Options {
         var model: String?
         var promptTokens: [Int] = BenchCommand.defaultPromptTokens
@@ -37,6 +39,8 @@ public struct BenchCommand: Command {
         var runs: Int = BenchCommand.defaultRuns
         var jsonPath: String?
         var port: Int
+        var tunePrefill: Bool = false
+        var tuneCandidates: [Int] = BenchCommand.defaultTuneCandidates
     }
 
     public static func execute(args: [String]) async {
@@ -58,6 +62,11 @@ public struct BenchCommand: Command {
         guard let model = options.model else {
             fputs("No model specified and none installed. Use --model <id>.\n", stderr)
             exit(EXIT_FAILURE)
+        }
+
+        if options.tunePrefill {
+            await tunePrefill(options: options, model: model, base: base, health: health)
+            // tunePrefill exits the process itself.
         }
 
         fputs("Benchmarking \(model) (\(options.runs) runs × prompt sizes \(options.promptTokens))…\n", stderr)
@@ -142,6 +151,204 @@ public struct BenchCommand: Command {
             print(String(bytes: data, encoding: .utf8) ?? "{}")
         }
         exit(EXIT_SUCCESS)
+    }
+
+    // MARK: - Prefill tuning (`--tune-prefill`)
+
+    /// Measures the model's uncached TTFT at each candidate prefill step size
+    /// and persists the winner to `~/.osaurus/config/prefill-tuning.json`,
+    /// which the server re-reads per request (mtime-checked) — no restart
+    /// needed, which is also what makes this sweep possible over HTTP.
+    ///
+    /// The optimal step is model-architecture-dependent: measured on one
+    /// M5 Max, a small dense model was fastest at 512 while a 35B MoE was
+    /// 22–24% faster at 2048. Hence a measured per-model value instead of a
+    /// global setting.
+    static func tunePrefill(
+        options: Options, model: String, base: URL, health: [String: Any]
+    ) async -> Never {
+        // Chunking matters most on long prompts; tune at the largest
+        // requested size.
+        let target = options.promptTokens.max() ?? 8_192
+        let file = tuningFileURL()
+        let previous = readTuningRecords(at: file)[model]
+        let backup = URL(fileURLWithPath: file.path + ".tune-backup")
+
+        // The sweep mutates the LIVE tuning file before each measurement, so
+        // an interruption would otherwise leave a probe candidate installed
+        // permanently. Before the first mutation: (1) write a sidecar backup
+        // of the pre-sweep file so even SIGKILL is hand-recoverable, and
+        // (2) install SIGINT/SIGTERM handlers that restore the pre-sweep
+        // record (or remove the key when none existed) and exit non-zero.
+        do {
+            try FileManager.default.createDirectory(
+                at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
+            let originalData = (try? Data(contentsOf: file)) ?? Data("{}".utf8)
+            try originalData.write(to: backup, options: .atomic)
+        } catch {
+            fputs("Cannot write backup \(backup.path): \(error.localizedDescription)\n", stderr)
+            exit(EXIT_FAILURE)
+        }
+        tuneSweepRestore = (file: file, model: model, previous: previous, backup: backup)
+        signal(SIGINT) { _ in
+            BenchCommand.tuneSweepAbortRestore()
+            _Exit(EXIT_FAILURE)
+        }
+        signal(SIGTERM) { _ in
+            BenchCommand.tuneSweepAbortRestore()
+            _Exit(EXIT_FAILURE)
+        }
+
+        fputs("Tuning prefill step for \(model) at ~\(target) prompt tokens (candidates \(options.tuneCandidates), \(options.runs) run(s) each; backup: \(backup.path))…\n", stderr)
+
+        // Warm the model (and its engine) so the first candidate doesn't
+        // absorb the cold model load.
+        _ = try? await measureOnce(
+            base: base, model: model,
+            prompt: makePrompt(targetTokens: 256, nonce: "tune-warm-\(UUID().uuidString)"),
+            maxTokens: 8)
+
+        var results: [(step: Int, medianTTFTMs: Double)] = []
+        for step in options.tuneCandidates {
+            do {
+                try writeTuningRecord(
+                    at: file, model: model,
+                    record: ["prefillStepSize": step, "note": "candidate under test"])
+            } catch {
+                // Leave no half-tuned candidate behind on this exit either.
+                tuneSweepAbortRestore()
+                fputs("Cannot write \(file.path): \(error.localizedDescription)\n", stderr)
+                exit(EXIT_FAILURE)
+            }
+            var ttfts: [Double] = []
+            for run in 0..<options.runs {
+                do {
+                    let sample = try await measureOnce(
+                        base: base, model: model,
+                        prompt: makePrompt(
+                            targetTokens: target, nonce: "tune-\(step)-\(run)-\(UUID().uuidString)"),
+                        maxTokens: 32)
+                    ttfts.append(sample.ttftMs)
+                } catch {
+                    fputs("  step \(step) run \(run + 1) failed: \(error.localizedDescription)\n", stderr)
+                }
+            }
+            guard !ttfts.isEmpty else { continue }
+            let med = median(ttfts)
+            results.append((step, med))
+            fputs(String(format: "  step %4d: median uncached TTFT %.0f ms %@\n", step, med,
+                         ttfts.map { String(format: "%.0f", $0) }.joined(separator: "/")), stderr)
+        }
+
+        guard let winner = selectTuneWinner(results) else {
+            // Leave no half-tuned candidate behind.
+            tuneSweepAbortRestore()
+            fputs("All candidates failed; nothing persisted.\n", stderr)
+            exit(EXIT_FAILURE)
+        }
+
+        let chip = (health["hardware"] as? [String: Any])?["chip"] as? String
+        var record: [String: Any] = [
+            "prefillStepSize": winner.step,
+            "measuredAt": ISO8601DateFormatter().string(from: Date()),
+            "benchTTFTMs": winner.medianTTFTMs,
+        ]
+        if let chip { record["chip"] = chip }
+        do {
+            try writeTuningRecord(at: file, model: model, record: record)
+        } catch {
+            tuneSweepAbortRestore()
+            fputs("Cannot persist result: \(error.localizedDescription)\n", stderr)
+            exit(EXIT_FAILURE)
+        }
+        // Clean completion: the winner is persisted, so the interruption
+        // safety net (sidecar backup + signal restore) is no longer wanted.
+        tuneSweepRestore = nil
+        signal(SIGINT, SIG_DFL)
+        signal(SIGTERM, SIG_DFL)
+        try? FileManager.default.removeItem(at: backup)
+        fputs(String(
+            format: "Winner: prefillStepSize=%d (median TTFT %.0f ms). Persisted to %@ — applies to the next request, no restart needed.\n",
+            winner.step, winner.medianTTFTMs, file.path), stderr)
+        exit(EXIT_SUCCESS)
+    }
+
+    // MARK: - Sweep interruption safety
+
+    /// State the SIGINT/SIGTERM handlers need to undo a half-finished sweep.
+    /// A C signal handler cannot capture context, so it lives in static
+    /// storage that the (non-capturing) handler closures read.
+    nonisolated(unsafe) static var tuneSweepRestore:
+        (file: URL, model: String, previous: [String: Any]?, backup: URL)?
+
+    /// Restores the pre-sweep tuning record (or removes the key when none
+    /// existed) and deletes the sidecar backup. Called from every early-exit
+    /// path of `tunePrefill` and from the SIGINT/SIGTERM handlers; a no-op
+    /// once the sweep has completed cleanly.
+    static func tuneSweepAbortRestore() {
+        guard let state = tuneSweepRestore else { return }
+        tuneSweepRestore = nil
+        restoreTuningRecord(at: state.file, model: state.model, previous: state.previous)
+        try? FileManager.default.removeItem(at: state.backup)
+    }
+
+    /// Winner selection with a noise-floor tie-break: among candidates whose
+    /// median TTFT is within `tuneNoiseTolerance` of the best, pick the
+    /// SMALLEST step. Near-ties resolve toward vmlx's default-adjacent value;
+    /// 3% is under the tool's observed run-to-run noise, so a "win" inside
+    /// that band is not evidence the larger step is actually faster.
+    static let tuneNoiseTolerance = 0.03
+
+    static func selectTuneWinner(
+        _ results: [(step: Int, medianTTFTMs: Double)]
+    ) -> (step: Int, medianTTFTMs: Double)? {
+        guard let best = results.min(by: { $0.medianTTFTMs < $1.medianTTFTMs }) else {
+            return nil
+        }
+        let cutoff = best.medianTTFTMs * (1 + tuneNoiseTolerance)
+        return results.filter { $0.medianTTFTMs <= cutoff }.min { $0.step < $1.step }
+    }
+
+    /// The server-side reader is `ModelPrefillTuningStore` (OsaurusCore);
+    /// the CLI writes the same JSON contract without linking OsaurusCore.
+    static func tuningFileURL() -> URL {
+        Configuration.root()
+            .appendingPathComponent("config", isDirectory: true)
+            .appendingPathComponent("prefill-tuning.json")
+    }
+
+    static func readTuningRecords(at url: URL) -> [String: [String: Any]] {
+        guard let data = try? Data(contentsOf: url),
+            let obj = try? JSONSerialization.jsonObject(with: data) as? [String: [String: Any]]
+        else { return [:] }
+        return obj
+    }
+
+    static func writeTuningRecord(
+        at url: URL, model: String, record: [String: Any]
+    ) throws {
+        var records = readTuningRecords(at: url)
+        records[model] = record
+        try FileManager.default.createDirectory(
+            at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        let data = try JSONSerialization.data(
+            withJSONObject: records, options: [.prettyPrinted, .sortedKeys])
+        try data.write(to: url, options: .atomic)
+    }
+
+    static func restoreTuningRecord(
+        at url: URL, model: String, previous: [String: Any]?
+    ) {
+        var records = readTuningRecords(at: url)
+        if let previous {
+            records[model] = previous
+        } else {
+            records.removeValue(forKey: model)
+        }
+        if let data = try? JSONSerialization.data(
+            withJSONObject: records, options: [.prettyPrinted, .sortedKeys]) {
+            try? data.write(to: url, options: .atomic)
+        }
     }
 
     // MARK: - Single measurement
@@ -327,6 +534,13 @@ public struct BenchCommand: Command {
             case "--port":
                 guard let v = value(), let n = Int(v), n > 0 else { return nil }
                 options.port = n
+            case "--tune-prefill":
+                options.tunePrefill = true
+            case "--candidates":
+                guard let v = value() else { return nil }
+                let parsed = v.split(separator: ",").compactMap { Int($0) }.filter { $0 > 0 }
+                guard !parsed.isEmpty else { return nil }
+                options.tuneCandidates = parsed
             default:
                 fputs("Unknown option: \(arg)\n", stderr)
                 return nil
@@ -341,9 +555,15 @@ public struct BenchCommand: Command {
             """
             Usage: osaurus bench [--model <id>] [--prompt-tokens 1024,8192]
                                  [--max-tokens 128] [--runs 3] [--json <path>] [--port N]
+                   osaurus bench --tune-prefill [--model <id>] [--candidates 512,1024,2048,4096]
+                                 [--prompt-tokens 8192] [--runs 3]
 
             Requires a running server (`osaurus serve`). Reports uncached/cached
             TTFT, prefill tok/s, and decode tok/s per prompt size as JSON.
+
+            --tune-prefill measures the model's TTFT at each candidate prefill
+            step size and persists the per-model winner (the optimum is
+            model-architecture-dependent); the server applies it immediately.
 
             """, stderr)
     }

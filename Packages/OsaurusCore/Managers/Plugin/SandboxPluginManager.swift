@@ -42,6 +42,16 @@ public final class SandboxPluginManager: ObservableObject {
             throw SandboxPluginError.invalidPlugin(errors.joined(separator: "; "))
         }
 
+        // Same URL policy as agent registration. `install` is the single
+        // funnel for library imports, `ensureReady` on-demand installs,
+        // `reinstall`, and post-start `repairPlugin` — validating here
+        // closes the gap where a library-imported plugin reached the VM
+        // without the setup/run/daemon commands ever being checked.
+        let urlViolations = SandboxNetworkPolicy.validatePluginCommands(plugin)
+        guard urlViolations.isEmpty else {
+            throw SandboxPluginError.invalidPlugin(urlViolations.joined(separator: "; "))
+        }
+
         let agentName = SandboxAgentProvisioner.linuxName(for: agentId)
         let key = progressKey(plugin: plugin.id, agent: agentId)
 

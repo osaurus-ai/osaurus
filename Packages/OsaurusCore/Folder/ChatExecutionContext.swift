@@ -33,6 +33,15 @@ public enum ChatExecutionContext {
     /// can swap its check for a spinner while its audio plays
     @TaskLocal public static var currentToolCallId: String?
 
+    /// What this request is allowed to EXECUTE, as opposed to what it merely exposed.
+    ///
+    /// See ``ToolExecutionScope``. `nil` means no scope was published — the surface gates its own
+    /// tools and the registry behaves exactly as it did before. That is deliberately permissive:
+    /// binding it on every entrypoint at once would risk breaking a surface we cannot gate live,
+    /// and a guard that breaks working features is not an improvement. The chat/agent loop — where
+    /// an unexposed tool was actually observed executing — publishes one.
+    @TaskLocal static var toolExecutionScope: ToolExecutionScope?
+
     /// The current `agent_runs.id` row (`SchedulerDatabase`) so every
     /// mutation done by `db.*` tools or scheduling tools can stamp its
     /// originating run on the `_changelog` audit trail (spec §1.4,

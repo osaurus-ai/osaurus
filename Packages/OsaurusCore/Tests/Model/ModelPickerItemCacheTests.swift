@@ -186,4 +186,143 @@ struct ModelPickerItemCacheTests {
             #expect(!ids.contains("fixture/potion-base-4M"))
         }
     }
+
+    // MARK: - Provider-scoped reasoning enrichment
+
+    private static func providerEntry(
+        name: String,
+        type: RemoteProviderType,
+        host: String,
+        models: [String]
+    ) -> RemoteProviderManager.CachedProviderModels {
+        RemoteProviderManager.CachedProviderModels(
+            providerId: UUID(),
+            providerName: name,
+            providerType: type,
+            host: host,
+            models: models
+        )
+    }
+
+    /// Codex items take the live catalog's display name + capability set;
+    /// official `api.openai.com` API-key GPT-5.6 models take the documented
+    /// public profile; custom OpenAI-compatible providers get neither, even
+    /// for identical slugs. The returned capability map is keyed by the full
+    /// provider-prefixed id so the two routes never cross-contaminate.
+    @Test func remoteModelItems_appliesProviderScopedReasoningEnrichment() throws {
+        let codexMetadata = CodexModelMetadata(
+            slug: "gpt-5.6-terra",
+            displayName: "GPT-5.6 Terra",
+            defaultReasoningLevel: "medium",
+            supportedReasoningLevels: ["low", "medium", "high", "xhigh", "max", "ultra"].map {
+                CodexReasoningLevel(effort: $0)
+            },
+            usesResponsesLite: true
+        )
+        let providers = [
+            Self.providerEntry(
+                name: "OpenAI ChatGPT",
+                type: .openAICodex,
+                host: "chatgpt.com",
+                models: ["openai-chatgpt/gpt-5.6-terra", "openai-chatgpt/gpt-5.5"]
+            ),
+            Self.providerEntry(
+                name: "OpenAI",
+                type: .openResponses,
+                host: "api.openai.com",
+                models: ["openai/gpt-5.6-sol", "openai/gpt-4.1"]
+            ),
+            Self.providerEntry(
+                name: "Proxy",
+                type: .openResponses,
+                host: "my-proxy.example.com",
+                models: ["proxy/gpt-5.6-sol"]
+            ),
+        ]
+
+        let result = ModelPickerItemCache.remoteModelItems(
+            providers: providers,
+            codexMetadata: ["gpt-5.6-terra": codexMetadata],
+            osaurusRouterProviderId: RemoteProviderManager.osaurusRouterProviderId,
+            routerMetadata: { _ in nil }
+        )
+        let byId = Dictionary(uniqueKeysWithValues: result.items.map { ($0.id, $0) })
+
+        // Codex + catalog metadata: display name and full level set (ultra).
+        let terra = try #require(byId["openai-chatgpt/gpt-5.6-terra"])
+        #expect(terra.displayName == "GPT-5.6 Terra")
+        #expect(
+            terra.reasoningCapabilities?.levels.map(\.id)
+                == ["low", "medium", "high", "xhigh", "max", "ultra"]
+        )
+        #expect(terra.reasoningCapabilities?.defaultLevelId == "medium")
+
+        // Codex without catalog metadata: plain remote behavior.
+        let legacyCodex = try #require(byId["openai-chatgpt/gpt-5.5"])
+        #expect(legacyCodex.displayName == "gpt-5.5")
+        #expect(legacyCodex.reasoningCapabilities == nil)
+
+        // Official API key route: documented public GPT-5.6 profile, id/display
+        // preserved, and never Codex-only ultra.
+        let sol = try #require(byId["openai/gpt-5.6-sol"])
+        #expect(sol.displayName == "gpt-5.6-sol")
+        #expect(sol.reasoningCapabilities == .officialOpenAIGPT56)
+        #expect(sol.reasoningCapabilities?.levels.map(\.id).contains("ultra") == false)
+
+        // Official route, non-GPT-5.6 id: no documented profile.
+        let gpt41 = try #require(byId["openai/gpt-4.1"])
+        #expect(gpt41.reasoningCapabilities == nil)
+
+        // Custom OpenAI-compatible provider: never assumed to support the
+        // official contract, even for a GPT-5.6 slug.
+        let proxySol = try #require(byId["proxy/gpt-5.6-sol"])
+        #expect(proxySol.reasoningCapabilities == nil)
+
+        // Capability map holds exactly the enriched full ids.
+        #expect(
+            Set(result.reasoningCapabilities.keys)
+                == ["openai-chatgpt/gpt-5.6-terra", "openai/gpt-5.6-sol"]
+        )
+    }
+
+    /// A catalog refetch that changes metadata while model ids stay identical
+    /// must still produce different items (so `ChatView.applyPickerItems`
+    /// re-normalizes options) and an updated capability map.
+    @Test func remoteModelItems_sameIds_reflectMetadataRefresh() throws {
+        let provider = Self.providerEntry(
+            name: "OpenAI ChatGPT",
+            type: .openAICodex,
+            host: "chatgpt.com",
+            models: ["openai-chatgpt/gpt-5.6-terra"]
+        )
+        func metadata(levels: [String]) -> CodexModelMetadata {
+            CodexModelMetadata(
+                slug: "gpt-5.6-terra",
+                displayName: "GPT-5.6 Terra",
+                defaultReasoningLevel: "medium",
+                supportedReasoningLevels: levels.map { CodexReasoningLevel(effort: $0) },
+                usesResponsesLite: true
+            )
+        }
+
+        let before = ModelPickerItemCache.remoteModelItems(
+            providers: [provider],
+            codexMetadata: ["gpt-5.6-terra": metadata(levels: ["low", "medium", "high", "ultra"])],
+            osaurusRouterProviderId: RemoteProviderManager.osaurusRouterProviderId,
+            routerMetadata: { _ in nil }
+        )
+        let after = ModelPickerItemCache.remoteModelItems(
+            providers: [provider],
+            codexMetadata: ["gpt-5.6-terra": metadata(levels: ["low", "medium", "high"])],
+            osaurusRouterProviderId: RemoteProviderManager.osaurusRouterProviderId,
+            routerMetadata: { _ in nil }
+        )
+
+        #expect(before.items.map(\.id) == after.items.map(\.id))
+        #expect(before.items != after.items, "metadata-only changes must be observable")
+        #expect(
+            after.reasoningCapabilities["openai-chatgpt/gpt-5.6-terra"]?.levels.map(\.id)
+                == ["low", "medium", "high"]
+        )
+    }
 }

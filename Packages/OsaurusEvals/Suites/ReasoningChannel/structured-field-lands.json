@@ -1,0 +1,15 @@
+{
+  "id": "reasoning_channel.structured-field-lands",
+  "domain": "reasoning_channel",
+  "label": "reasoning channel • reasoning rides the structured field, not visible text",
+  "query": "A train leaves at 9:40 and the trip takes 2 hours 35 minutes. What time does it arrive? Think it through carefully, then answer.",
+  "notes": "The positive channel-boundary pin: on a reasoning-capable model the structured reasoning field must be non-empty on at least one turn while the visible channel stays marker-free. SKIPs (not fails) on instruct-only models via LocalReasoningCapability detection, so the suite runs honestly everywhere. Off-CI (needs a model).",
+  "fixtures": {},
+  "expect": {
+    "reasoning": {
+      "maxTokens": 2048,
+      "reasoningFieldExpected": "yes",
+      "visibleContains": ["12:15"]
+    }
+  }
+}

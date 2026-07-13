@@ -1,0 +1,17 @@
+{
+  "id": "agent_channels.unauthorized-sender-denied",
+  "domain": "agent_channels",
+  "label": "agent channels • sender allowlist: allowed sender stores, denied sender stores nothing",
+  "query": "deterministic policy pin — no model involved",
+  "notes": "Sender-allowlist contract: one inbound event from the allowlisted sender must be authorized and produce a stored snapshot; one from a different sender must come back sender_not_allowlisted with zero store rows. Runs on Telegram to spread provider coverage across the suite (the room case runs on Slack). CI-safe: fake clients, isolated stores, no network, no model.",
+  "fixtures": {},
+  "expect": {
+    "agentChannels": {
+      "scenario": "sender_allowlist",
+      "provider": "telegram",
+      "allowedRoomIds": ["7700123456"],
+      "allowedSenderId": "5551000",
+      "deniedSenderId": "5559999"
+    }
+  }
+}

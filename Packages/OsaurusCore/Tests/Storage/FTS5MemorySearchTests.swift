@@ -81,6 +81,79 @@ struct FTS5MemorySearchTests {
     }
 
     @Test
+    func pinnedFactSearchFallsBackToLooseNaturalRecallTerms() throws {
+        let db = try openInMemory()
+        defer { db.close() }
+
+        let now = ISO8601DateFormatter().string(from: Date())
+        try db.insertPinnedFact(
+            PinnedFact(
+                agentId: "a",
+                content: "The user's sailboat is named Peregrine Dusk.",
+                salience: 0.9,
+                lastUsed: now,
+                createdAt: now
+            )
+        )
+        try db.insertPinnedFact(
+            PinnedFact(
+                agentId: "a",
+                content: "The user has a dermatology appointment on the 14th.",
+                salience: 0.9,
+                lastUsed: now,
+                createdAt: now
+            )
+        )
+
+        // Full natural-language question: the FTS AND-match finds nothing,
+        // so the loose-term pass must surface the boat fact (and only it).
+        let hits = try db.searchPinnedFactsText(
+            query: "What is the name of my boat?",
+            agentId: "a",
+            limit: 5
+        )
+        #expect(hits.count == 1)
+        #expect(hits.first?.content.contains("Peregrine Dusk") == true)
+    }
+
+    @Test
+    func episodeSearchFallsBackToLooseNaturalRecallTerms() throws {
+        let db = try openInMemory()
+        defer { db.close() }
+
+        let now = ISO8601DateFormatter().string(from: Date())
+        _ = try db.insertEpisode(
+            Episode(
+                agentId: "a",
+                conversationId: "c1",
+                summary: "Discussed the greenhouse project: cedar frame, $900 budget.",
+                topicsCSV: "greenhouse,woodworking",
+                entitiesCSV: "greenhouse,cedar",
+                salience: 0.9,
+                conversationAt: now
+            )
+        )
+        _ = try db.insertEpisode(
+            Episode(
+                agentId: "a",
+                conversationId: "c2",
+                summary: "Talked about tax filing deadlines.",
+                topicsCSV: "taxes",
+                entitiesCSV: "taxes",
+                salience: 0.9,
+                conversationAt: now
+            )
+        )
+
+        let hits = try db.searchEpisodesText(
+            query: "What did we decide about the greenhouse project last time we talked?",
+            agentId: "a",
+            limit: 5
+        )
+        #expect(hits.first?.summary.contains("greenhouse") == true)
+    }
+
+    @Test
     func emptyQueryReturnsNoHits() throws {
         let db = try openInMemory()
         defer { db.close() }

@@ -55,9 +55,13 @@ public final class FrontmostAppTracker: ObservableObject {
         ) { note in
             let app =
                 note.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication
-            // `queue: .main` guarantees this runs on the main thread, so the
-            // hop into MainActor state is safe and synchronous.
-            MainActor.assumeIsolated {
+            // `queue: .main` already runs this on the main thread, but
+            // `MainActor.assumeIsolated`'s executor check has crashed in the
+            // Swift runtime (null deref in isMainExecutor) when LaunchServices
+            // delivers this notification outside any task context on macOS 27
+            // betas. Hop with a Task instead — record() only tracks the last
+            // activation, so the async delivery doesn't change behavior.
+            Task { @MainActor in
                 FrontmostAppTracker.shared.record(app)
             }
         }

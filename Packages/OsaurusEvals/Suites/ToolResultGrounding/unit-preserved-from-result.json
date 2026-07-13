@@ -1,0 +1,38 @@
+{
+  "id": "tool_result_grounding.unit-preserved-from-result",
+  "domain": "tool_result_grounding",
+  "label": "tool result grounding: the answer preserves the result's unit, not a converted guess",
+  "query": "How much disk is free on the data volume?",
+  "fixtures": {},
+  "notes": "Unit-fidelity pin: the tool reports free space in GB. A common grounding failure is silently 'converting' to a different unit or rounding to a wrong figure. The answer must carry the exact value and unit from the result; the fabricated TB figure is banned.",
+  "expect": {
+    "toolResultGrounding": {
+      "events": [
+        {
+          "kind": "toolCall",
+          "callId": "df-1",
+          "tool": "disk_free",
+          "arguments": "{\"volume\":\"data\"}"
+        },
+        {
+          "kind": "toolResult",
+          "callId": "df-1",
+          "tool": "disk_free",
+          "content": "{\"volume\":\"data\",\"free\":\"128 GB\"}"
+        },
+        {
+          "kind": "assistant",
+          "content": "The data volume has 128 GB free."
+        }
+      ],
+      "assertions": [
+        {
+          "callId": "df-1",
+          "answerMustContain": ["128 GB"],
+          "answerMustNotContain": ["TB"],
+          "resultMustContain": ["\"free\":\"128 GB\""]
+        }
+      ]
+    }
+  }
+}

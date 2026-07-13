@@ -402,7 +402,13 @@ public struct EvalCaseReport: Sendable, Codable {
     ///     trial (first trial matching the merged outcome), prefixed with a
     ///     `trials:` summary line plus a per-trial outcome map when trials
     ///     disagreed, so flaky rows keep full forensics.
-    public static func mergedTrials(_ rows: [EvalCaseReport]) -> EvalCaseReport {
+    /// `passThreshold` (case-declared, 0…1] — see `EvalCase.passThreshold`)
+    /// replaces the default strict-majority rule: the merged row passes
+    /// when `passed/scored ≥ passThreshold`. nil → strict majority.
+    public static func mergedTrials(
+        _ rows: [EvalCaseReport],
+        passThreshold: Double? = nil
+    ) -> EvalCaseReport {
         guard let first = rows.first else {
             preconditionFailure("mergedTrials requires at least one trial row")
         }
@@ -412,8 +418,15 @@ public struct EvalCaseReport: Sendable, Codable {
         guard !scored.isEmpty else { return first }
 
         let passedCount = scored.filter { $0.outcome == .passed }.count
+        let passes: Bool
+        if let passThreshold {
+            let clamped = min(1.0, max(0.0, passThreshold))
+            passes = Double(passedCount) / Double(scored.count) >= clamped
+        } else {
+            passes = passedCount * 2 > scored.count
+        }
         let outcome: EvalCaseOutcome
-        if passedCount * 2 > scored.count {
+        if passes {
             outcome = .passed
         } else if scored.allSatisfy({ $0.outcome == .errored }) {
             outcome = .errored

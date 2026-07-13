@@ -1,0 +1,21 @@
+{
+  "id": "memory.pinned-fact-recall",
+  "domain": "memory",
+  "label": "memory • pinned fact surfaces in the answer on the first ask",
+  "query": "What is the name of my boat?",
+  "notes": "The core recall row: a pinned fact carrying a fixture-unique codeword is seeded into the isolated memory store; the model can only answer by using the injected memory section (requireMemoryInjected also pins that injection actually happened, independent of model quality). Off-CI (needs a model).",
+  "fixtures": {
+    "seedMemory": {
+      "pinnedFacts": [
+        "The user's sailboat is named Peregrine Dusk and is moored at slip 14."
+      ]
+    }
+  },
+  "expect": {
+    "memory": {
+      "maxTokens": 256,
+      "answerContains": ["Peregrine Dusk"],
+      "requireMemoryInjected": true
+    }
+  }
+}

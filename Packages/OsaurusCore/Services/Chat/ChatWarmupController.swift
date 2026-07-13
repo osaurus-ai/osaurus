@@ -76,6 +76,10 @@ final class ChatWarmupController: ObservableObject {
     private var scheduleTask: Task<Void, Never>?
     private var inFlightWarmup: Task<Void, Never>?
     private var inFlightWarmupID: UUID?
+    /// The model of the most recent user-driven selection change. A warm-up
+    /// for this model may displace a resident model; all other (speculative)
+    /// warm-ups may only fill an empty slot — see `performWarmup`.
+    private var userIntentWarmupModel: String?
     /// The immediate switch operation in flight (cancel stale warm-up →
     /// evict per policy → schedule the new model's warm-up). Tracked so the
     /// pre-send handshake can wait for the eviction to settle and so rapid
@@ -180,6 +184,19 @@ final class ChatWarmupController: ObservableObject {
         }
 
         guard let newModel, !newModel.isEmpty else { return }
+
+        // The user just picked this model by hand — the follow-up warm-up is
+        // allowed to displace whatever is resident. Speculative warm-ups
+        // (session became active, post-run re-warm) are not; see
+        // `performWarmup`'s resident-model guard.
+        //
+        // This is a ONE-SHOT grant, consumed by the warm-up it authorizes (see
+        // `consumeUserIntent(for:)`). It used to be set here and never cleared,
+        // which quietly turned "the user just picked A" into "any warm-up of A,
+        // forever, may evict" — so a re-warm of A minutes later, triggered by
+        // nothing the user did, could still unload the model an API client was
+        // using. The privilege has to expire with the intent that created it.
+        userIntentWarmupModel = newModel
 
         let policy =
             ServerConfigurationStore.load()?.modelEvictionPolicy ?? .strictSingleModel
@@ -320,10 +337,46 @@ final class ChatWarmupController: ObservableObject {
         guard !Task.isCancelled else { return }
         guard shouldAttemptWarmup(session: session) else { return }
 
+        // Never warm up over a load already in flight: under strict
+        // single-model residency this warm-up's own load would cancel the
+        // in-flight one (an explicit API request, or another window), and
+        // its prefill can be torn down mid-encode by the reciprocal
+        // eviction — a Metal command-buffer abort, not a graceful skip.
+        if await ModelRuntime.shared.hasLoadInFlight() {
+            state = .cold
+            debugLog(
+                "[ChatWarmup] skipped model=\(payload.model): another model load is in flight"
+            )
+            return
+        }
+
+        // Speculative warm-ups must not evict. Loading a non-resident model
+        // under strict single-model residency evicts whoever IS resident —
+        // observed live as a launch-time warm-up for the restored UI
+        // selection unloading the 94 GB model an API client had just
+        // loaded. Only the warm-up that follows the user's own model pick
+        // may displace a resident model.
+        //
+        // Resolved ONCE here and threaded down, so the early gate below and the
+        // load intent in `runWarmupGeneration` can never disagree about whether
+        // this warm-up carries the user's intent.
+        let userIntent = consumeUserIntent(for: payload.model)
+
+        if !userIntent,
+            await ModelRuntime.shared.hasResidentModelOther(than: payload.model)
+        {
+            state = .cold
+            debugLog(
+                "[ChatWarmup] skipped model=\(payload.model): a different model is resident and this warm-up lacks user intent"
+            )
+            return
+        }
+
         state = .warming
         let id = UUID()
         let task = Task { @MainActor in
-            await runWarmupGeneration(session: session, payload: payload, id: id)
+            await runWarmupGeneration(
+                session: session, payload: payload, id: id, userIntent: userIntent)
         }
         inFlightWarmup = task
         inFlightWarmupID = id
@@ -334,10 +387,25 @@ final class ChatWarmupController: ObservableObject {
         }
     }
 
+    /// Claim the one-shot "the user picked this model by hand" grant, if this
+    /// warm-up is the one it was issued for. Returns `true` at most once per
+    /// pick: the grant authorizes a single warm-up to displace a resident model,
+    /// and every later re-warm of the same model is speculative again.
+    ///
+    /// Only consumed on the path that actually proceeds to warm up. A warm-up
+    /// refused for lacking intent never had the grant, so there is nothing to
+    /// consume and nothing is lost.
+    private func consumeUserIntent(for model: String) -> Bool {
+        guard userIntentWarmupModel == model else { return false }
+        userIntentWarmupModel = nil
+        return true
+    }
+
     private func runWarmupGeneration(
         session: ChatWarmupSessionContext,
         payload: ChatWarmupPayload,
-        id: UUID
+        id: UUID,
+        userIntent: Bool
     ) async {
         // `.auto` renders the same tokenizer tool specs as a real send's
         // resolved tool choice (`.auto`/`.required` are byte-identical in
@@ -368,6 +436,13 @@ final class ChatWarmupController: ObservableObject {
         // sliding-window models like Gemma 4, whose caches cannot be
         // trimmed back to a boundary at store time).
         request.warmupPrefill = true
+        // A warm-up that follows the user's own model pick carries their intent
+        // and may displace a resident model. A speculative one (launch-time
+        // restore of the last UI selection, an idle re-warm) may not — that is
+        // the warm-up that was observed unloading a 94 GB model an API client
+        // had just finished loading. The runtime enforces this atomically, at
+        // the eviction itself; the early-outs above are only a fast path.
+        request.backgroundModelLoad = !userIntent
 
         let startedAt = Date()
         let engine = session.makeWarmupEngine()

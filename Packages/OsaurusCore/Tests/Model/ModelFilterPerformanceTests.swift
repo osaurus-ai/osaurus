@@ -34,20 +34,21 @@ struct ModelFilterPerformanceTests {
 
     /// Sanity-check the fixtures: at 16 GB of RAM, our three sample
     /// models end up in the three compatibility buckets we want to
-    /// exercise. If MLXModel's overhead multiplier or the 0.75 / 0.95
-    /// ratio thresholds ever change and the fixtures drift, this test
-    /// catches it before any filter assertion fails mysteriously.
+    /// exercise. If MLXModel's overhead multiplier or the 0.85 / 1.10
+    /// budget-ratio thresholds ever change and the fixtures drift, this
+    /// test catches it before any filter assertion fails mysteriously.
     @Test("Fixture buckets land in compatible / tight / tooLarge at 16 GB total")
     func fixtureBucketsCorrect() {
-        // MLXModel applies a 1.25× overhead multiplier to disk-bytes.
-        // compatibility thresholds: <0.75 ratio → compatible,
-        // <0.95 → tight, ≥0.95 → tooLarge. At total=16 GB:
-        //   gbOnDisk=2  → 2.5 GB resident (ratio 0.156) → compatible
-        //   gbOnDisk=11 → 13.75 GB resident (ratio 0.859) → tight
-        //   gbOnDisk=14 → 17.5 GB resident (ratio 1.094) → tooLarge
+        // MLXModel applies a 1.25× overhead multiplier to disk-bytes, and
+        // compares the result against the GPU working set rather than RAM.
+        // A 16 GB Mac budgets 2/3 of that = 10.67 GB. Thresholds: ≤0.85 of
+        // budget → compatible, ≤1.10 → tight, above → tooLarge.
+        //   gbOnDisk=2  → 2.5 GB resident  (ratio 0.234) → compatible
+        //   gbOnDisk=8  → 10.0 GB resident (ratio 0.938) → tight
+        //   gbOnDisk=14 → 17.5 GB resident (ratio 1.641) → tooLarge
         let total = 16.0
         let small = Self.model("small", gbOnDisk: 2.0)
-        let mid = Self.model("mid", gbOnDisk: 11.0)
+        let mid = Self.model("mid", gbOnDisk: 8.0)
         let big = Self.model("big", gbOnDisk: 14.0)
         #expect(small.compatibility(totalMemoryGB: total) == .compatible)
         #expect(mid.compatibility(totalMemoryGB: total) == .tight)
@@ -61,7 +62,7 @@ struct ModelFilterPerformanceTests {
         let total = 16.0
         let models = [
             Self.model("small", gbOnDisk: 2.0),
-            Self.model("mid", gbOnDisk: 11.0),
+            Self.model("mid", gbOnDisk: 8.0),
             Self.model("big", gbOnDisk: 14.0),
         ]
         var state = ModelManager.ModelFilterState()
@@ -94,7 +95,7 @@ struct ModelFilterPerformanceTests {
         let total = 16.0
         let models = [
             Self.model("small", gbOnDisk: 2.0),
-            Self.model("mid", gbOnDisk: 11.0),
+            Self.model("mid", gbOnDisk: 8.0),
             Self.model("big", gbOnDisk: 14.0),
         ]
         var state = ModelManager.ModelFilterState()

@@ -61,6 +61,54 @@ struct ProviderNetworkDiagnosticsTests {
         #expect(!report.pasteboardText.contains("secret-code"))
     }
 
+    @Test func codexModelDiscoveryDetailDocumentsFallbackBeforeFirstLiveFetch() {
+        let detail = ProviderNetworkDiagnostics.codexModelDiscoveryDetail(summary: nil)
+
+        #expect(detail.contains("static Codex fallback"))
+    }
+
+    @Test func codexModelDiscoveryDetailAttributesFilteredSlugs() {
+        let summary = OpenAICodexOAuthService.ModelDiscoverySummary(
+            rawEntryCount: 15,
+            compatibleCount: 2,
+            filteredModels: [
+                .init(slug: "gpt-5-4-thinking", reason: .shellToolDisabled),
+                .init(slug: "gpt-4o", reason: .nonCodexSlug),
+                .init(slug: "gpt-5.5-internal", reason: .hiddenVisibility),
+            ],
+            fetchedAt: Date()
+        )
+
+        let detail = ProviderNetworkDiagnostics.codexModelDiscoveryDetail(summary: summary)
+
+        #expect(detail.contains("15"))
+        #expect(detail.contains("2"))
+        #expect(detail.contains("gpt-5-4-thinking (\(L("shell tool disabled")))"))
+        #expect(detail.contains("gpt-4o (\(L("chat-only slug")))"))
+        #expect(detail.contains("gpt-5.5-internal (\(L("hidden from picker")))"))
+    }
+
+    @Test func codexModelDiscoveryDetailCapsLongFilteredLists() {
+        let filtered = (1 ... 15).map {
+            OpenAICodexOAuthService.ModelDiscoverySummary.FilteredModel(
+                slug: "gpt-chat-\($0)",
+                reason: .nonCodexSlug
+            )
+        }
+        let summary = OpenAICodexOAuthService.ModelDiscoverySummary(
+            rawEntryCount: 17,
+            compatibleCount: 2,
+            filteredModels: filtered,
+            fetchedAt: Date()
+        )
+
+        let detail = ProviderNetworkDiagnostics.codexModelDiscoveryDetail(summary: summary)
+
+        #expect(detail.contains("gpt-chat-12"))
+        #expect(!detail.contains("gpt-chat-13"))
+        #expect(detail.contains("+3"))
+    }
+
     @Test func xaiOAuthReportFlagsMissingTokensWithoutLeakingSecrets() {
         let provider = XAIOAuthService.makeProvider(id: UUID())
         var state = RemoteProviderState(providerId: provider.id)

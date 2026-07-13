@@ -1,0 +1,38 @@
+{
+  "id": "tool_result_grounding.pick-right-record-from-list",
+  "domain": "tool_result_grounding",
+  "label": "tool result grounding: answer selects the correct row from a multi-row result",
+  "query": "From the users list, what is Priya's email?",
+  "fixtures": {},
+  "notes": "Selection grounding: the result carries several records and the answer must pick the RIGHT one. answerMustContain binds Priya's email; answerMustNotContain bans a sibling record's email — catching the model that grabs the wrong row or blends fields across rows.",
+  "expect": {
+    "toolResultGrounding": {
+      "events": [
+        {
+          "kind": "toolCall",
+          "callId": "users-1",
+          "tool": "list_users",
+          "arguments": "{\"team\":\"runtime\"}"
+        },
+        {
+          "kind": "toolResult",
+          "callId": "users-1",
+          "tool": "list_users",
+          "content": "{\"users\":[{\"name\":\"Priya\",\"email\":\"priya@osaurus.dev\"},{\"name\":\"Marco\",\"email\":\"marco@osaurus.dev\"}]}"
+        },
+        {
+          "kind": "assistant",
+          "content": "Priya's email is priya@osaurus.dev."
+        }
+      ],
+      "assertions": [
+        {
+          "callId": "users-1",
+          "answerMustContain": ["priya@osaurus.dev"],
+          "answerMustNotContain": ["marco@osaurus.dev"],
+          "resultMustContain": ["priya@osaurus.dev"]
+        }
+      ]
+    }
+  }
+}

@@ -119,8 +119,9 @@ struct ModelPickerTableRepresentable: NSViewRepresentable {
     let rows: [ModelPickerRow]
     let theme: ThemeProtocol
     var selectedModelId: String?
-    /// True while the Favorites tab is active: the trailing control becomes an
-    /// always-visible filled heart (remove) instead of a hover-only heart (toggle).
+    /// True while the Favorites tab is active: the inline heart next to the
+    /// name becomes an always-visible filled heart (remove) instead of a
+    /// hover-only heart (toggle).
     var isFavoritesTab: Bool = false
     var onSelectModel: ((String) -> Void)?
     var onSwitchTab: ((Int) -> Void)?
@@ -327,7 +328,7 @@ private enum RowAccessoryKind: Equatable {
     case none
     case heart  // not yet favourited — outline, shown on hover
     case heartFill  // favourited — filled, shown persistently
-    case favoritesRemove  // Favorites tab — filled heart, removes, always shown
+    case favoritesRemove  // Favorites tab — filled heart inline after the name, removes, always shown
 }
 
 /// Model row cell with hover/selection background.
@@ -352,9 +353,6 @@ private final class ModelRowCellView: NSTableCellView, NSGestureRecognizerDelega
     private var onSelect: (() -> Void)?
     private var onAccessory: (() -> Void)?
 
-    /// Fixed side of the trailing accessory hit target. Kept in sync between
-    /// `configure`/`layout` so provider-badge space is carved correctly.
-    private static let accessorySide: CGFloat = 22
     private var accessoryKind: RowAccessoryKind = .none
 
     // structural flags from the last configure, compared against incoming
@@ -577,7 +575,7 @@ private final class ModelRowCellView: NSTableCellView, NSGestureRecognizerDelega
         cachedIsHovered = isHovered
         cachedIsHighlighted = isHighlighted
 
-        // Trailing favourite control. In the Favorites tab it's an
+        // Inline favourite control. In the Favorites tab it's an
         // always-visible filled heart (remove); elsewhere it's a heart — shown
         // filled and persistent once favourited, and as an outline on hover so
         // an un-favourited row can be bookmarked. `RowAccessoryKind` is compared
@@ -664,19 +662,6 @@ private final class ModelRowCellView: NSTableCellView, NSGestureRecognizerDelega
         let contentX = pad + 14 + 6
 
         var trailingX = w - pad
-        // Only the always-visible remove heart (Favorites tab) lives at the
-        // trailing edge. The hover heart is placed inline after the name below,
-        // so its appearance never shifts the right-aligned Vision/provider badges.
-        if accessoryKind == .favoritesRemove {
-            let side = Self.accessorySide
-            accessoryButton.frame = CGRect(
-                x: trailingX - side,
-                y: (h - side) / 2,
-                width: side,
-                height: side
-            )
-            trailingX -= (side + 6)
-        }
         if !providerBadge.isHidden {
             providerBadge.sizeToFitContent()
             trailingX -= providerBadge.frame.width
@@ -705,7 +690,9 @@ private final class ModelRowCellView: NSTableCellView, NSGestureRecognizerDelega
         // framed at the symbol's natural size with its baseline (encoded in
         // the image's alignment insets) placed on the title's baseline, so the
         // glyph sits exactly on the text line instead of being box-centred.
-        if accessoryKind == .heart || accessoryKind == .heartFill {
+        // The Favorites tab's always-visible remove heart shares this inline
+        // placement so both tabs read the same.
+        if accessoryKind != .none {
             let imgSize = accessoryButton.image?.size ?? .zero
             let baselineInset = accessoryButton.image?.alignmentRect.origin.y ?? 0
             let font = nameLabel.font ?? NSFont.systemFont(ofSize: 12, weight: .medium)
@@ -714,9 +701,12 @@ private final class ModelRowCellView: NSTableCellView, NSGestureRecognizerDelega
             let nameTextW = min(nameLabel.intrinsicContentSize.width, nameLabel.frame.width)
             let limit = (vlmBadge.isHidden ? trailingX : vlmBadge.frame.minX) - imgSize.width - 4
             let x = min(nameLabel.frame.minX + nameTextW + 6, limit)
+            // Lift the glyph slightly off the baseline so it reads as
+            // vertically centred against the name text.
+            let bottomPadding: CGFloat = 3.2
             accessoryButton.frame = CGRect(
                 x: max(contentX, x),
-                y: nameY + baselineFromTop - (imgSize.height - baselineInset) - 1,
+                y: nameY + baselineFromTop - (imgSize.height - baselineInset) - bottomPadding,
                 width: imgSize.width,
                 height: imgSize.height
             )

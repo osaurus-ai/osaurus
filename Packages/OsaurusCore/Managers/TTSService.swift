@@ -8,8 +8,15 @@
 
 import AVFoundation
 import Combine
+import OSLog
 @preconcurrency import FluidAudio
 import Foundation
+
+/// TTS diagnostics. A synthesis failure used to be a bare `print`, which meant a user whose
+/// audio silently died had nothing to send us and nothing to read.
+enum TTSLogger {
+    static let service = Logger(subsystem: "ai.osaurus", category: "tts.service")
+}
 
 /// Errors mapped onto tool error envelopes by the `speak` tool.
 public enum TTSPlaybackError: Error {
@@ -83,6 +90,12 @@ public final class TTSService: ObservableObject {
     private var engineConfigured = false
     private var pendingBufferCount = 0
     private var streamFinished = false
+
+    /// Set when AVAudioEngine tells us its graph was torn down (an output-route change).
+    /// The engine keeps claiming `isRunning` afterwards, so this is the only honest signal
+    /// that the next playback must re-establish the connections.
+    private var engineNeedsRebuild = false
+    private var engineChangeObserver: NSObjectProtocol?
 
     private init() {}
 
@@ -318,7 +331,13 @@ public final class TTSService: ObservableObject {
     }
 
     private func handleStreamError(_ error: Error, for messageId: UUID) {
-        print("[TTSService] synthesis error: \(error)")
+        // A `print` is not a user-facing error. When synthesis fails, playback ends, the
+        // Stop control flips back on its own, and the user is left with silence and no
+        // explanation — indistinguishable from the app simply ignoring them. Say what
+        // happened, in the one place they are already looking at TTS.
+        TTSLogger.service.error(
+            "TTS synthesis failed: \(error.localizedDescription, privacy: .public)")
+        modelState = .failed(error.localizedDescription)
         if playingMessageId == messageId {
             stop()
         }
@@ -344,14 +363,59 @@ public final class TTSService: ObservableObject {
     }
 
     private func configureEngineIfNeeded() throws {
+        // Do NOT trust `isRunning` alone.
+        //
+        // When the output device changes — AirPods connecting, the user switching to the
+        // built-in speakers, the default device changing — AVAudioEngine tears its graph
+        // down and posts `.AVAudioEngineConfigurationChange`, but it keeps reporting
+        // `isRunning == true`. Returning early on that would leave the player node wired to
+        // a device that no longer exists: buffers are still consumed, their completion
+        // handlers still fire, the Stop control still flips back on its own — and not a
+        // single sample is audible, with no error anywhere. That is exactly what a silent
+        // TTS looks like from the outside.
+        //
+        // `engineNeedsRebuild` is set by the configuration-change observer, so the next
+        // playback re-establishes the graph instead of politely doing nothing.
+        if engineNeedsRebuild {
+            if audioEngine.isRunning { audioEngine.stop() }
+            engineConfigured = false
+            engineNeedsRebuild = false
+        }
+
         if engineConfigured, audioEngine.isRunning { return }
         if !engineConfigured {
             audioEngine.attach(playerNode)
             audioEngine.connect(playerNode, to: audioEngine.mainMixerNode, format: sourceFormat)
             engineConfigured = true
+            // Registered against the engine we just built, and only once.
+            observeEngineConfigurationChanges()
         }
         if !audioEngine.isRunning {
             try audioEngine.start()
+        }
+    }
+
+    /// Rebuild the audio graph on the next playback.
+    ///
+    /// Set from `.AVAudioEngineConfigurationChange`, which fires on every output-route
+    /// change. The notification arrives on an arbitrary thread and we only ever flip a
+    /// flag, so the rebuild happens on the main actor inside `configureEngineIfNeeded`,
+    /// where the rest of the engine lives.
+    private func observeEngineConfigurationChanges() {
+        guard engineChangeObserver == nil else { return }
+        engineChangeObserver = NotificationCenter.default.addObserver(
+            forName: .AVAudioEngineConfigurationChange,
+            object: audioEngine,
+            queue: nil
+        ) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                self.engineNeedsRebuild = true
+                // A route change mid-utterance drops the rest of the audio on the floor.
+                // End the playback honestly rather than leaving a Stop control the user has
+                // to press to silence something they cannot hear.
+                if self.playingMessageId != nil { self.stop() }
+            }
         }
     }
 }

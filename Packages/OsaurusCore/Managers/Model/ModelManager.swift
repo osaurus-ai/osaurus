@@ -116,15 +116,16 @@ final class ModelManager: NSObject, ObservableObject {
         /// hardware info and we let everything through until we know.
         enum PerformanceFilter: String, CaseIterable, Identifiable {
             /// Only include models whose `compatibility` is `.compatible`
-            /// (memory usage below the 75 % ratio threshold).
+            /// (working set at or below 85 % of the GPU memory budget).
             case runsWell = "Runs Well"
             /// Only include models whose `compatibility` is `.tight`
-            /// (memory usage between 75 % and 95 % of total RAM)
+            /// (working set between 85 % and 110 % of the GPU memory budget).
             case tightFit = "Tight Fit"
             /// Exclude models whose advisory `compatibility` is `.tooLarge`
-            /// (memory usage above the 95 % ratio threshold). This filter is
-            /// user-selected catalog triage only; runtime load/download does
-            /// not block RAM pressure from this estimate.
+            /// (working set above 110 % of the GPU memory budget — macOS would
+            /// page the weights). This filter is user-selected catalog triage
+            /// only; runtime load/download does not block RAM pressure from
+            /// this estimate.
             case hideTooLarge = "Hide Too Large"
 
             var id: String { rawValue }
@@ -531,7 +532,12 @@ final class ModelManager: NSObject, ObservableObject {
         downloadService.download(model)
     }
 
-    func downloadModel(_ model: MLXModel) { downloadService.download(model) }
+    func downloadModel(
+        _ model: MLXModel,
+        route: ModelDownloadService.DownloadRoute = .direct
+    ) {
+        downloadService.download(model, route: route)
+    }
     func cancelDownload(_ modelId: String) { downloadService.cancel(modelId) }
     func pauseDownload(_ modelId: String) { downloadService.pause(modelId) }
     func resumeDownload(_ modelId: String) {
@@ -1309,9 +1315,23 @@ extension ModelManager {
     /// Find an installed model by user-provided name.
     /// Accepts repo name (case-insensitive) or full id (case-insensitive).
     nonisolated static func findInstalledMLXModel(named name: String) -> MLXModel? {
+        matchInstalledMLXModel(named: name, in: discoverLocalModels())
+    }
+
+    /// Non-blocking variant of `findInstalledMLXModel(named:)` backed by
+    /// `localModelsSnapshotNonBlocking()`. View bodies and per-render getters
+    /// must use this: with a cold cache `discoverLocalModels()` parks on the
+    /// scan condition (up to ~10s) and beachballs the main thread.
+    nonisolated static func findInstalledMLXModelFromCache(named name: String) -> MLXModel? {
+        matchInstalledMLXModel(named: name, in: localModelsSnapshotNonBlocking())
+    }
+
+    private nonisolated static func matchInstalledMLXModel(
+        named name: String,
+        in models: [MLXModel]
+    ) -> MLXModel? {
         let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return nil }
-        let models = discoverLocalModels()
 
         // Try repo component first
         if let match = models.first(where: { m in
@@ -1769,6 +1789,36 @@ extension ModelManager {
 
         let waitLimit = localModelsScanWaitLimitOverrideForTests ?? localModelsScanWaitLimit
         let deadline = Date().addingTimeInterval(waitLimit)
+        startLocalModelsScanLocked()
+
+        if let cached = waitForLocalModelsScan(until: deadline) {
+            localModelsCacheCondition.unlock()
+            return mergeExternalModels(into: cached)
+        } else {
+            let cached = cachedLocalModels ?? []
+            localModelsCacheCondition.unlock()
+            return mergeExternalModels(into: cached)
+        }
+    }
+
+    /// Local models from the warm cache, never waiting on a scan. On a cold
+    /// cache this kicks off the background scan and returns the (possibly
+    /// empty) current state immediately — callers re-render once the scan
+    /// lands via their normal refresh ticks. This is the only local-models
+    /// entry point safe to call from a view body on the main thread.
+    nonisolated static func localModelsSnapshotNonBlocking() -> [MLXModel] {
+        localModelsCacheCondition.lock()
+        let cached = cachedLocalModels
+        if cached == nil && !localModelsScanInFlight {
+            startLocalModelsScanLocked()
+        }
+        localModelsCacheCondition.unlock()
+        return mergeExternalModels(into: cached ?? [])
+    }
+
+    /// Kick off the background disk scan. Caller must hold
+    /// `localModelsCacheCondition` with `localModelsScanInFlight == false`.
+    private nonisolated static func startLocalModelsScanLocked() {
         localModelsScanInFlight = true
         DispatchQueue.global(qos: .utility).async {
             let scanned = scanLocalModels()
@@ -1778,15 +1828,6 @@ extension ModelManager {
             localModelsScanInFlight = false
             localModelsCacheCondition.broadcast()
             localModelsCacheCondition.unlock()
-        }
-
-        if let cached = waitForLocalModelsScan(until: deadline) {
-            localModelsCacheCondition.unlock()
-            return mergeExternalModels(into: cached)
-        } else {
-            let cached = cachedLocalModels ?? []
-            localModelsCacheCondition.unlock()
-            return mergeExternalModels(into: cached)
         }
     }
 

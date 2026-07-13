@@ -7,6 +7,7 @@
 //
 
 import Foundation
+import os
 
 /// Manages MLX model file downloads, cancellation, deletion, and progress tracking.
 @MainActor
@@ -172,7 +173,26 @@ final class ModelDownloadService: ObservableObject {
         ".gitattributes",
     ]
 
+    /// How a download's file URLs are obtained. `.direct` is the plain
+    /// anonymous `huggingface.co/resolve` URL. `.onboardingProxy` resolves
+    /// presigned CDN URLs through the Osaurus model download proxy — used only for the
+    /// onboarding flow, where the user hasn't had a chance to add their own
+    /// HF token yet and anonymous throttling drives drop-off.
+    enum DownloadRoute {
+        case direct
+        case onboardingProxy
+    }
+
     private var activeDownloadTasks: [String: Task<Void, Never>] = [:]
+    /// Route chosen when the download started; survives pause/resume so a
+    /// paused onboarding download keeps its fast path.
+    private var downloadRoutes: [String: DownloadRoute] = [:]
+    /// Commit each proxy-routed model was pinned to by its first resolve, so
+    /// a mid-download repo update can't mix shards from different revisions.
+    private var proxyPinnedCommits: [String: String] = [:]
+    /// Models whose proxy route failed; their remaining files silently fall
+    /// back to the direct anonymous URL — slow beats failed in onboarding.
+    private var proxyDisabledModels: Set<String> = []
     /// Live downloaders keyed by model id, then by remote file path — one
     /// per in-flight file, since several files transfer concurrently.
     private var activeDownloaders: [String: [String: DirectDownloader]] = [:]
@@ -228,7 +248,10 @@ final class ModelDownloadService: ObservableObject {
 
     // MARK: - Download Methods
 
-    func download(_ model: MLXModel) {
+    func download(_ model: MLXModel, route: DownloadRoute = .direct) {
+        downloadRoutes[model.id] = route
+        proxyPinnedCommits[model.id] = nil
+        proxyDisabledModels.remove(model.id)
         startOrchestration(model: model, resuming: nil)
     }
 
@@ -309,6 +332,30 @@ final class ModelDownloadService: ObservableObject {
             defer {
                 Task { @MainActor [weak self] in
                     self?.activeDownloadTasks[model.id] = nil
+                }
+            }
+
+            // Proxy route: signing needs the wallet identity, which onboarding
+            // normally creates only at completion. On a fresh install
+            // `OsaurusIdentity.setup()` is silent (no biometric prompt); the
+            // later `configureImplicitDefaults` gates on `exists()` and no-ops.
+            // If the identity still isn't available, disable the proxy up
+            // front so every file takes the anonymous fallback.
+            if await MainActor.run(body: { self.downloadRoutes[model.id] }) == .onboardingProxy {
+                // `exists()` is a synchronous keychain query (blocks on
+                // securityd's mutex) and `setup()` does key generation plus
+                // iCloud keychain writes — keep the whole probe off the main
+                // actor, which this orchestration Task otherwise inherits.
+                // The probe races a 10s timeout: a wedged securityd or slow
+                // attestation must degrade to the anonymous route, never
+                // stall the download itself.
+                let identityReady = await Self.firstResult(timeoutSeconds: 10, fallback: false) {
+                    if OsaurusIdentity.exists() { return true }
+                    _ = try? await OsaurusIdentity.setup()
+                    return OsaurusIdentity.exists()
+                }
+                if !identityReady {
+                    await MainActor.run { _ = self.proxyDisabledModels.insert(model.id) }
                 }
             }
 
@@ -609,7 +656,7 @@ final class ModelDownloadService: ObservableObject {
                 forRemotePath: file.path,
                 under: model.localDirectory
             ),
-            let downloadURL = Self.resolveURL(repoId: model.id, path: file.path)
+            let directURL = Self.resolveURL(repoId: model.id, path: file.path)
         else {
             // Unresolvable path: skip; the manifest completion check reports it.
             return .completed
@@ -642,6 +689,35 @@ final class ModelDownloadService: ObservableObject {
             guard downloadTokens[model.id] == token else {
                 return .failed(path: file.path, error: CancellationError())
             }
+            let proxyRoute =
+                downloadRoutes[model.id] == .onboardingProxy
+                && !proxyDisabledModels.contains(model.id)
+            var downloadURL = directURL
+            // Resume data continues the previous attempt's URL, so a fresh
+            // resolve is only needed when starting the file from scratch.
+            if proxyRoute, resumeDataForAttempt == nil {
+                // Same orphaning timeout as the identity probe: the signing
+                // step reads the master key, and a keychain wedged behind a
+                // pending ACL dialog must degrade to the anonymous URL, not
+                // freeze the transfer.
+                let revision = proxyPinnedCommits[model.id] ?? "main"
+                let repoId = model.id
+                let filePath = file.path
+                if let resolved = await Self.firstResult(timeoutSeconds: 15, fallback: nil, operation: {
+                    await OnboardingModelsProxy.shared.resolve(
+                        repoId: repoId,
+                        revision: revision,
+                        path: filePath
+                    )
+                }) {
+                    downloadURL = resolved.url
+                    if proxyPinnedCommits[model.id] == nil, let commit = resolved.commit {
+                        proxyPinnedCommits[model.id] = commit
+                    }
+                } else {
+                    proxyDisabledModels.insert(model.id)
+                }
+            }
             do {
                 try await downloader.download(
                     from: downloadURL,
@@ -664,8 +740,25 @@ final class ModelDownloadService: ObservableObject {
                 // A failed attempt's URLSession temp file is gone; any retry
                 // restarts this file from byte zero.
                 resumeDataForAttempt = nil
-                guard attempt < Self.maxTransferAttempts, Self.isRetryableTransferError(error)
+                // Presigned proxy URLs expire after hours; a CDN 403 on the
+                // proxy route just means "re-resolve on the next attempt",
+                // not a real failure.
+                let isExpiredProxyURL =
+                    proxyRoute
+                    && (error as? DirectDownloader.HTTPStatusError)?.statusCode == 403
+                guard
+                    attempt < Self.maxTransferAttempts,
+                    isExpiredProxyURL || Self.isRetryableTransferError(error)
                 else {
+                    // The proxy is an accelerator, not a gatekeeper: never
+                    // surface a proxy-routed failure. Disable the proxy for
+                    // this model and restart the file on the plain anonymous
+                    // HF URL with a fresh retry budget.
+                    if proxyRoute {
+                        proxyDisabledModels.insert(model.id)
+                        attempt = 1
+                        continue
+                    }
                     return .failed(path: file.path, error: error)
                 }
                 let delay = Self.transferRetryDelay(attempt: attempt, error: error)
@@ -1071,6 +1164,36 @@ final class ModelDownloadService: ObservableObject {
         return min(pow(2.0, Double(attempt - 1)), 15)
     }
 
+    /// Run `operation` detached and return its result, or `fallback` if it
+    /// hasn't finished within `timeoutSeconds`. Unlike a task group, this
+    /// never waits on the operation after the deadline: a child stuck in an
+    /// uncancellable syscall (e.g. a keychain read blocked behind a pending
+    /// ACL permission dialog) is simply orphaned, and the caller moves on.
+    nonisolated static func firstResult<T: Sendable>(
+        timeoutSeconds: UInt64,
+        fallback: T,
+        operation: @escaping @Sendable () async -> T
+    ) async -> T {
+        await withCheckedContinuation { continuation in
+            let resumed = OSAllocatedUnfairLock(initialState: false)
+            @Sendable func resumeOnce(_ value: T) {
+                let shouldResume = resumed.withLock { alreadyResumed -> Bool in
+                    if alreadyResumed { return false }
+                    alreadyResumed = true
+                    return true
+                }
+                if shouldResume { continuation.resume(returning: value) }
+            }
+            Task.detached(priority: .userInitiated) {
+                resumeOnce(await operation())
+            }
+            Task.detached(priority: .userInitiated) {
+                try? await Task.sleep(nanoseconds: timeoutSeconds * 1_000_000_000)
+                resumeOnce(fallback)
+            }
+        }
+    }
+
     nonisolated static func resolveURL(repoId: String, path: String) -> URL? {
         guard let safePath = HuggingFaceService.normalizedRemoteFilePath(path) else { return nil }
         var comps = URLComponents()
@@ -1385,6 +1508,12 @@ final class DirectDownloader: NSObject, URLSessionDownloadDelegate, @unchecked S
     /// `cancelByProducingResumeData` callback owns the continuation
     /// resumption with `PauseInfo`.
     private var pauseRequested = false
+    /// Set under `lock` before `invalidateAndCancel()`. Creating a task on an
+    /// invalidated `URLSession` raises an uncatchable NSGenericException, and
+    /// orchestration teardown (`invalidate()` in a `defer` / pause + cancel)
+    /// races with the next `download(...)` call; the flag turns that race
+    /// into a thrown `URLError(.cancelled)` instead of a crash.
+    private var isInvalidated = false
     private static let progressInterval: CFAbsoluteTime = 0.25
 
     private lazy var session: URLSession = {
@@ -1405,6 +1534,11 @@ final class DirectDownloader: NSObject, URLSessionDownloadDelegate, @unchecked S
         )
         try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
             lock.lock()
+            if self.isInvalidated {
+                lock.unlock()
+                continuation.resume(throwing: URLError(.cancelled))
+                return
+            }
             self.currentContinuation = continuation
             self.currentDestination = destination
             self.currentExpectedSize = expectedSize
@@ -1417,7 +1551,13 @@ final class DirectDownloader: NSObject, URLSessionDownloadDelegate, @unchecked S
                 task = session.downloadTask(withResumeData: resumeData)
             } else {
                 var request = URLRequest(url: url)
-                HuggingFaceAuth.authorize(&request)
+                // Presigned CDN URLs (the onboarding proxy route) carry their
+                // auth in the query string; same token-hygiene rule as the
+                // redirect handler below — the user's HF token only ever
+                // travels to huggingface.co itself.
+                if url.host == "huggingface.co" {
+                    HuggingFaceAuth.authorize(&request)
+                }
                 task = session.downloadTask(with: request)
             }
             self.currentDownloadTask = task
@@ -1463,7 +1603,30 @@ final class DirectDownloader: NSObject, URLSessionDownloadDelegate, @unchecked S
         continuation.resume(throwing: PauseInfo(resumeData: resumeData, bytesDownloaded: bytes))
     }
 
-    func invalidate() { session.invalidateAndCancel() }
+    func invalidate() {
+        lock.lock()
+        isInvalidated = true
+        lock.unlock()
+        session.invalidateAndCancel()
+    }
+
+    /// Terminal session teardown. Flush any continuation the per-task
+    /// callbacks didn't get to (e.g. a task cancelled by
+    /// `invalidateAndCancel()` racing the flag set above) so the awaiting
+    /// downloader never deadlocks.
+    func urlSession(_: URLSession, didBecomeInvalidWithError error: Error?) {
+        lock.lock()
+        isInvalidated = true
+        let continuation = currentContinuation
+        currentContinuation = nil
+        currentDownloadTask = nil
+        currentDestination = nil
+        currentExpectedSize = nil
+        onProgress = nil
+        pauseRequested = false
+        lock.unlock()
+        continuation?.resume(throwing: error ?? URLError(.cancelled))
+    }
 
     /// `resolve/main` URLs 302-redirect to Hugging Face's CDN. Don't leak the
     /// user's access token to that (or any other) third-party host: the

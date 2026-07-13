@@ -107,6 +107,24 @@ struct ProviderCredentialPromptSheet: View {
         value.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
+    /// Seed `extraFieldValues` from a tool-supplied host override (or any
+    /// other prefilled extra field) exactly once, when the sheet appears.
+    /// This makes a tool-driven `host` visible and editable in the field —
+    /// and, crucially, part of what the inline "Test Connection" hits — so
+    /// the user approves the real endpoint their credentials will reach
+    /// instead of a preset host that gets swapped out after the sheet
+    /// closes.
+    private func seedPrefilledExtraFieldsIfNeeded() {
+        guard extraFieldValues.isEmpty, !request.prefilledExtraFields.isEmpty else { return }
+        for field in request.instructions.extraFields {
+            if let value = request.prefilledExtraFields[field.key],
+                !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            {
+                extraFieldValues[field.key] = value
+            }
+        }
+    }
+
     var body: some View {
         ZStack {
             RoundedRectangle(cornerRadius: 16, style: .continuous)
@@ -168,6 +186,7 @@ struct ProviderCredentialPromptSheet: View {
             x: 0,
             y: 6
         )
+        .onAppear { seedPrefilledExtraFieldsIfNeeded() }
     }
 
     /// Hairline divider under the header. Matches the rule

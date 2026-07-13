@@ -530,6 +530,168 @@ struct TelegramConnectionTests {
         }
     }
 
+    @Test func diagnosticsAreReadOnlyAndDoNotAdvanceTelegramReceiveState() async throws {
+        try await withIsolatedTelegramStores { credentials in
+            let store = AgentChannelMessageStore()
+            try store.openInMemory()
+            defer { store.close() }
+            try store.upsertCursor(
+                connectionId: "telegram",
+                roomId: "__telegram_updates__",
+                cursor: "77"
+            )
+
+            let token = "123456:telegram-bot-token-super-secret"
+            let fake = FakeTelegramAPIClient()
+            await fake.setWebhookInfo(
+                TelegramWebhookInfo(url: "https://hooks.example.test/telegram/\(token)")
+            )
+            await fake.setUpdates([
+                .fixture(updateId: 77, messageId: 77, chatId: -100111222333, text: "pending")
+            ])
+            let service = TelegramConnectionService(
+                client: fake,
+                credentialStore: credentials,
+                messageStore: store,
+                recordMessageSnapshotsInline: true
+            )
+            try service.saveBotToken(token)
+            try service.saveConfiguration(
+                TelegramConnectionConfiguration(
+                    readableChatIds: ["-100111222333"],
+                    senderAllowlist: ["7"],
+                    receiveStorageEnabled: true,
+                    longPollingEnabled: true
+                )
+            )
+
+            let diagnostics = await service.diagnostics()
+            let diagnosticsData = try JSONSerialization.data(withJSONObject: diagnostics.dictionary)
+            let diagnosticsText = String(decoding: diagnosticsData, as: UTF8.self)
+
+            #expect(diagnostics.status == "connected_long_poll_webhook_conflict")
+            #expect(await fake.getMeCallCount() == 1)
+            #expect(await fake.getWebhookInfoCallCount() == 1)
+            #expect(await fake.getUpdatesCallCount() == 0)
+            #expect(await fake.deleteWebhookCallCount() == 0)
+            #expect(await fake.lastUpdateOffset() == nil)
+            #expect(try store.cursor(connectionId: "telegram", roomId: "__telegram_updates__") == "77")
+            #expect(try store.messageCount(connectionId: "telegram") == 0)
+            #expect(!diagnosticsText.contains(token))
+            #expect(!diagnosticsText.contains("pending"))
+        }
+    }
+
+    @Test func diagnosticsReportConfiguredAndStoredDiscoveredChatsWithoutMessageContent() async throws {
+        try await withIsolatedTelegramStores { credentials in
+            let store = AgentChannelMessageStore()
+            try store.openInMemory()
+            defer { store.close() }
+
+            let service = TelegramConnectionService(
+                client: FakeTelegramAPIClient(),
+                credentialStore: credentials,
+                messageStore: store,
+                recordMessageSnapshotsInline: true
+            )
+            try service.saveBotToken("123456:telegram-bot-token-super-secret")
+            try service.saveConfiguration(
+                TelegramConnectionConfiguration(
+                    readableChatIds: ["-100111222333"],
+                    writableChatIds: ["-100444555666"],
+                    senderAllowlist: ["7"],
+                    writeEnabled: true,
+                    receiveStorageEnabled: true,
+                    longPollingEnabled: false
+                )
+            )
+            _ = try await service.processUpdates(
+                [.fixture(updateId: 88, messageId: 88, chatId: -100111222333, text: "private stored text")],
+                source: "fixture"
+            )
+
+            let diagnostics = await service.diagnostics()
+            let configured = try #require(diagnostics.dictionary["configured_chats"] as? [[String: Any]])
+            let stored = try #require(diagnostics.dictionary["stored_discovered_chats"] as? [[String: Any]])
+            let diagnosticsData = try JSONSerialization.data(withJSONObject: diagnostics.dictionary)
+            let diagnosticsText = String(decoding: diagnosticsData, as: UTF8.self)
+
+            #expect(diagnostics.dictionary["chat_discovery_source"] as? String == "configuration_and_local_message_store_only")
+            #expect(configured.map { $0["id"] as? String }.contains("-100111222333"))
+            #expect(configured.map { $0["id"] as? String }.contains("-100444555666"))
+            let configuredReadable = try #require(configured.first { $0["id"] as? String == "-100111222333" })
+            #expect(configuredReadable["stored_message_count"] as? Int == 1)
+            let storedRoom = try #require(stored.first { $0["id"] as? String == "-100111222333" })
+            #expect(storedRoom["source"] as? String == "local_message_store")
+            #expect(storedRoom["stored_message_count"] as? Int == 1)
+            #expect(storedRoom["read_allowed"] as? Bool == true)
+            #expect(!diagnosticsText.contains("private stored text"))
+        }
+    }
+
+    @Test func diagnosticsOpenColdMessageStoreBeforeReportingStoredChats() async throws {
+        try await StoragePathsTestLock.shared.run {
+            try await withIsolatedTelegramStores { credentials in
+                let previousRoot = OsaurusPaths.overrideRoot
+                let root = FileManager.default.temporaryDirectory.appendingPathComponent(
+                    "osaurus-telegram-store-\(UUID().uuidString)",
+                    isDirectory: true
+                )
+                OsaurusPaths.overrideRoot = root
+                defer {
+                    OsaurusPaths.overrideRoot = previousRoot
+                    try? FileManager.default.removeItem(at: root)
+                }
+
+                let writer = AgentChannelMessageStore()
+                try writer.open()
+                try writer.recordMessages([
+                    AgentChannelStoredMessage(
+                        connectionId: "telegram",
+                        roomId: "-100111222333",
+                        providerMessageId: "88",
+                        direction: .inbound,
+                        authorId: "7",
+                        authorName: "Mika",
+                        content: "stored text must stay private",
+                        payloadJSON: #"{"message":"stored text must stay private"}"#
+                    )
+                ])
+                writer.close()
+
+                let coldStore = AgentChannelMessageStore()
+                defer { coldStore.close() }
+                let service = TelegramConnectionService(
+                    client: FakeTelegramAPIClient(),
+                    credentialStore: credentials,
+                    messageStore: coldStore,
+                    recordMessageSnapshotsInline: true
+                )
+                try service.saveBotToken("123456:telegram-bot-token-super-secret")
+                try service.saveConfiguration(
+                    TelegramConnectionConfiguration(
+                        readableChatIds: ["-100111222333"],
+                        senderAllowlist: ["7"],
+                        receiveStorageEnabled: true
+                    )
+                )
+
+                let diagnostics = await service.diagnostics()
+                let configured = try #require(diagnostics.dictionary["configured_chats"] as? [[String: Any]])
+                let stored = try #require(diagnostics.dictionary["stored_discovered_chats"] as? [[String: Any]])
+                let configuredRoom = try #require(configured.first { $0["id"] as? String == "-100111222333" })
+                let storedRoom = try #require(stored.first { $0["id"] as? String == "-100111222333" })
+                let diagnosticsData = try JSONSerialization.data(withJSONObject: diagnostics.dictionary)
+                let diagnosticsText = String(decoding: diagnosticsData, as: UTF8.self)
+
+                #expect(coldStore.isOpen)
+                #expect(configuredRoom["stored_message_count"] as? Int == 1)
+                #expect(storedRoom["stored_message_count"] as? Int == 1)
+                #expect(!diagnosticsText.contains("stored text must stay private"))
+            }
+        }
+    }
+
     @Test func diagnosticsOmitEmptyReadsNoteWhenLongPollingEnabled() async throws {
         try await withIsolatedTelegramStores { credentials in
             let fake = FakeTelegramAPIClient()
@@ -1385,6 +1547,80 @@ struct TelegramConnectionTests {
         }
     }
 
+    @Test func processUpdatesPreservesBatchOrderForInterleavedTelegramChats() async throws {
+        try await withIsolatedTelegramStores { credentials in
+            let store = AgentChannelMessageStore()
+            try store.openInMemory()
+            defer { store.close() }
+
+            let service = TelegramConnectionService(
+                client: FakeTelegramAPIClient(),
+                credentialStore: credentials,
+                messageStore: store,
+                recordMessageSnapshotsInline: true
+            )
+            try service.saveConfiguration(
+                TelegramConnectionConfiguration(
+                    readableChatIds: ["-100111222333", "-100444555666"],
+                    senderAllowlist: ["7"]
+                )
+            )
+
+            let result = try await service.processUpdates(
+                [
+                    .fixture(updateId: 101, messageId: 1, chatId: -100111222333, text: "a1"),
+                    .fixture(updateId: 102, messageId: 1, chatId: -100444555666, text: "b1"),
+                    .fixture(updateId: 103, messageId: 2, chatId: -100111222333, text: "a2"),
+                    .fixture(updateId: 104, messageId: 2, chatId: -100444555666, text: "b2"),
+                ],
+                source: "fixture"
+            )
+
+            #expect(result.results.map(\.providerEventId) == ["101", "102", "103", "104"])
+            #expect(result.results.map(\.status) == [.accepted, .accepted, .accepted, .accepted])
+            #expect(try store.messageCount(connectionId: "telegram", roomId: "-100111222333") == 2)
+            #expect(try store.messageCount(connectionId: "telegram", roomId: "-100444555666") == 2)
+        }
+    }
+
+    @Test func recentTelegramMessagesHaveDeterministicOrderWhenTimestampsTie() async throws {
+        let store = AgentChannelMessageStore()
+        try store.openInMemory()
+        defer { store.close() }
+        let receivedAt = Date(timeIntervalSince1970: 1_800_000_900)
+
+        _ = try store.recordMessages([
+            AgentChannelStoredMessage(
+                connectionId: "telegram",
+                roomId: "-100111222333",
+                providerMessageId: "1",
+                direction: .inbound,
+                authorId: "7",
+                authorName: "Mika",
+                content: "first",
+                receivedAt: receivedAt
+            ),
+            AgentChannelStoredMessage(
+                connectionId: "telegram",
+                roomId: "-100111222333",
+                providerMessageId: "2",
+                direction: .inbound,
+                authorId: "7",
+                authorName: "Mika",
+                content: "second",
+                receivedAt: receivedAt
+            ),
+        ])
+
+        let rows = try store.recentMessages(
+            connectionId: "telegram",
+            roomId: "-100111222333",
+            limit: 2
+        )
+
+        #expect(rows.map(\.providerMessageId) == ["2", "1"])
+    }
+
     @Test func usernameAllowlistStoresAndReadsByConfiguredHandle() async throws {
         try await withIsolatedTelegramStores { credentials in
             let store = AgentChannelMessageStore()
@@ -1514,6 +1750,111 @@ struct TelegramConnectionTests {
             #expect(row.direction == .outbound)
             #expect(row.content == "ship it")
             #expect(!row.payloadJSON.localizedCaseInsensitiveContains("telegram-bot-token-super-secret"))
+        }
+    }
+
+    @Test func sendMessageReportsExplicitBackpressureForConcurrentSameChatSend() async throws {
+        try await withIsolatedTelegramStores { credentials in
+            let store = AgentChannelMessageStore()
+            try store.openInMemory()
+            defer { store.close() }
+
+            let fake = FakeTelegramAPIClient()
+            await fake.delaySends(nanoseconds: 250_000_000)
+            let service = TelegramConnectionService(
+                client: fake,
+                credentialStore: credentials,
+                messageStore: store,
+                recordMessageSnapshotsInline: true
+            )
+            try service.saveBotToken("123456:telegram-bot-token-super-secret")
+            try service.saveConfiguration(
+                TelegramConnectionConfiguration(
+                    writableChatIds: ["-100111222333"],
+                    writeEnabled: true
+                )
+            )
+
+            let firstSend = Task<Void, Error> {
+                _ = try await service.sendMessage(
+                    TelegramWriteRequest(
+                        chatId: "-100111222333",
+                        text: "first",
+                        replyToMessageId: nil,
+                        confirmSend: true
+                    )
+                )
+            }
+            let firstStarted = await waitForTransportCondition {
+                await fake.sendMessageCallCount() == 1
+            }
+            #expect(firstStarted)
+
+            await #expect(throws: TelegramConnectionServiceError.sendBackpressure("-100111222333")) {
+                _ = try await service.sendMessage(
+                    TelegramWriteRequest(
+                        chatId: "-100111222333",
+                        text: "second",
+                        replyToMessageId: nil,
+                        confirmSend: true
+                    )
+                )
+            }
+
+            try await firstSend.value
+            #expect(await fake.sendMessageCallCount() == 1)
+            #expect(try store.messageCount(connectionId: "telegram", roomId: "-100111222333") == 1)
+        }
+    }
+
+    @Test func agentChannelSendToolReportsTelegramBackpressureAsRetryable() async throws {
+        try await withIsolatedTelegramStores { credentials in
+            let store = AgentChannelMessageStore()
+            try store.openInMemory()
+            defer { store.close() }
+
+            let fake = FakeTelegramAPIClient()
+            await fake.delaySends(nanoseconds: 250_000_000)
+            let telegram = TelegramConnectionService(
+                client: fake,
+                credentialStore: credentials,
+                messageStore: store,
+                recordMessageSnapshotsInline: true
+            )
+            try telegram.saveBotToken("123456:telegram-bot-token-super-secret")
+            try telegram.saveConfiguration(
+                TelegramConnectionConfiguration(
+                    writableChatIds: ["-100111222333"],
+                    writeEnabled: true
+                )
+            )
+            let service = AgentChannelConnectionService(
+                discordService: DiscordConnectionService(
+                    client: FakeDiscordAPIClientForTelegramTests(),
+                    credentialStore: FakeDiscordCredentialStoreForTelegramTests()
+                ),
+                telegramService: telegram
+            )
+            let tool = AgentChannelSendMessageTool(service: service)
+            let firstSend = Task<String, Error> {
+                try await tool.execute(
+                    argumentsJSON:
+                        #"{"connection_id":"telegram","room_id":"-100111222333","content":"first","confirm_send":true}"#
+                )
+            }
+            let firstStarted = await waitForTransportCondition {
+                await fake.sendMessageCallCount() == 1
+            }
+            #expect(firstStarted)
+
+            let result = try await tool.execute(
+                argumentsJSON:
+                    #"{"connection_id":"telegram","room_id":"-100111222333","content":"second","confirm_send":true}"#
+            )
+
+            #expect(EnvelopeAssertions.failureKind(result) == "unavailable")
+            #expect(EnvelopeAssertions.failureRetryable(result) == true)
+            _ = try await firstSend.value
         }
     }
 
@@ -1697,9 +2038,12 @@ private actor FakeTelegramAPIClient: TelegramAPIClientProtocol {
     private var getUpdatesRateLimit: (message: String, retryAfter: Int?)?
     private var persistentGetUpdatesError: TelegramAPIError?
     private var hangGetUpdates = false
+    private var getMeCalls = 0
     private var getUpdatesCalls = 0
+    private var getWebhookInfoCalls = 0
     private var webhookInfo = TelegramWebhookInfo(url: "")
     private var deleteWebhookCalls = 0
+    private var sendDelayNanoseconds: UInt64 = 0
 
     func setUpdates(_ updates: [TelegramUpdate]) {
         self.updates = updates
@@ -1731,6 +2075,14 @@ private actor FakeTelegramAPIClient: TelegramAPIClientProtocol {
         getUpdatesCalls
     }
 
+    func getMeCallCount() -> Int {
+        getMeCalls
+    }
+
+    func getWebhookInfoCallCount() -> Int {
+        getWebhookInfoCalls
+    }
+
     func failNextGetMe() {
         getMeFailuresRemaining += 1
     }
@@ -1759,11 +2111,20 @@ private actor FakeTelegramAPIClient: TelegramAPIClientProtocol {
         sentMessages.last?.text
     }
 
+    func sendMessageCallCount() -> Int {
+        sentMessages.count
+    }
+
+    func delaySends(nanoseconds: UInt64) {
+        sendDelayNanoseconds = nanoseconds
+    }
+
     func lastReplyToMessageId() -> Int? {
         sentMessages.last?.replyToMessageId
     }
 
     func getMe(token: String) async throws -> TelegramUser {
+        getMeCalls += 1
         if getMeFailuresRemaining > 0 {
             getMeFailuresRemaining -= 1
             throw TelegramAPIError.requestFailed("temporary getMe failure")
@@ -1783,7 +2144,8 @@ private actor FakeTelegramAPIClient: TelegramAPIClientProtocol {
     }
 
     func getWebhookInfo(token: String) async throws -> TelegramWebhookInfo {
-        webhookInfo
+        getWebhookInfoCalls += 1
+        return webhookInfo
     }
 
     func deleteWebhook(token: String) async throws -> Bool {
@@ -1823,6 +2185,9 @@ private actor FakeTelegramAPIClient: TelegramAPIClientProtocol {
         token: String
     ) async throws -> TelegramMessage {
         sentMessages.append((chatId: chatId, text: text, replyToMessageId: replyToMessageId))
+        if sendDelayNanoseconds > 0 {
+            try await Task.sleep(nanoseconds: sendDelayNanoseconds)
+        }
         return TelegramMessage.fixture(
             messageId: 800 + sentMessages.count,
             chatId: Int64(chatId) ?? -100111222333,

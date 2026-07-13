@@ -193,10 +193,13 @@ the `LayerKind.deepseekV4` disk serializer instead of generic paged KV blocks.
 ## Residency policy
 
 Settings > Local Inference > Model Management includes **Keep model loaded
-after use**. The default remains `Immediately` for compatibility with older
-window-close GC behavior. Users can choose 5, 15, 30, or 60 minutes, or
-`Never`, to keep weights resident after the last stream releases its
-`ModelLease`.
+after use**. The default is **15 minutes**
+(`ModelIdleResidencyPolicy.defaultWarm = .afterSeconds(900)`) so follow-up
+turns don't pay a full cold load and per-model cache/coordinator state
+survives between nearby requests. Users can choose 5, 15, 30, or 60 minutes,
+`Immediately` (the old window-close GC behavior, still useful on low-memory
+machines), or `Never`, to keep weights resident after the last stream
+releases its `ModelLease`.
 
 This is an Osaurus memory-residency policy around `ModelRuntime.unload(name:)`.
 It unloads model weights and runtime buffers only; it does not delete
@@ -211,7 +214,7 @@ fields and adds `resident_models[]` with per-model `idle_unload_at` and
 A single `defaults` knob remains:
 
 ```bash
-defaults write ai.osaurus ai.osaurus.scheduler.mlxBatchEngineMaxBatchSize -int 8
+defaults write com.dinoki.osaurus ai.osaurus.scheduler.mlxBatchEngineMaxBatchSize -int 8
 ```
 
 Defaults to `1`, clamped to `[1, 32]`. The default preserves vmlx's

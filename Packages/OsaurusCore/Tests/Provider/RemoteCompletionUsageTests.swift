@@ -117,10 +117,11 @@ struct RemoteCompletionUsageTests {
             yield: { _ in }
         )
 
-        guard case .finishWithToolCall(let inv) = finish else {
+        guard case .finishWithToolCall(let invs) = finish, let inv = invs.first else {
             Issue.record("non-deferred tool-call finish should dispatch, got \(finish)")
             return
         }
+        #expect(invs.count == 1)
         #expect(inv.toolName == "file_read")
     }
 

@@ -182,6 +182,22 @@ struct ContentBlock: Identifiable, Equatable, Hashable {
         ContentBlock(id: id, turnId: turnId, kind: kind, position: newPosition)
     }
 
+    /// Raw text the find bar (Cmd+F) highlighter scans for this block, or
+    /// nil for block kinds that never paint search matches. Must stay in
+    /// sync with the cell layer's `setSearchHighlight` call sites so the
+    /// per-turn occurrence indices computed from turn content line up with
+    /// the blocks that render them.
+    var searchableText: String? {
+        switch kind {
+        case let .paragraph(_, text, _, role) where role == .user || role == .assistant:
+            return text
+        case let .userMessage(text, _, _, _):
+            return text
+        default:
+            return nil
+        }
+    }
+
     // MARK: - Factory Methods
 
     static func header(

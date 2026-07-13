@@ -38,8 +38,11 @@ struct FloatingInputCard: View {
     var contextBreakdown: ContextBreakdown = .zero
     /// Total micro-USD spent on the Osaurus Router this session.
     var sessionSpendMicro: Int = 0
-    /// Whether to show the session spend chip (true only for Osaurus Router sessions).
-    var showSessionSpend: Bool = false
+    /// True when this session's spend is billed via the Osaurus Router (the
+    /// managed cloud provider is the selected model). Drives the credits chip's
+    /// low/empty escalation and the wallet panel's session-spend row; the chip
+    /// itself is shown in every session where the router is usable.
+    var isRouterBilledSession: Bool = false
     @Binding var imageComposerSettings: ImageComposerSettings
     let onSend: (String?) -> Void
     let onStop: () -> Void
@@ -77,7 +80,7 @@ struct FloatingInputCard: View {
     var onSendNow: (() -> Void)?
     /// Discard the queued send without sending it. Called by the chip's ×.
     var onCancelQueued: (() -> Void)?
-    /// Invoked when the user taps the credits chip (opens the top-up sheet).
+    /// Invoked by the wallet panel's "Add credits" button (opens the top-up sheet).
     var onAddCredits: (() -> Void)?
     /// Mode 2 (remote agent run): the model is pinned to the remote agent's own
     /// model and the user must not change it. Renders the model chip as a
@@ -128,7 +131,7 @@ struct FloatingInputCard: View {
         estimatedContextTokens: Int,
         contextBreakdown: ContextBreakdown = .zero,
         sessionSpendMicro: Int = 0,
-        showSessionSpend: Bool = false,
+        isRouterBilledSession: Bool = false,
         imageComposerSettings: Binding<ImageComposerSettings> = .constant(ImageComposerSettings()),
         onSend: @escaping (String?) -> Void,
         onStop: @escaping () -> Void,
@@ -169,7 +172,7 @@ struct FloatingInputCard: View {
         self.estimatedContextTokens = estimatedContextTokens
         self.contextBreakdown = contextBreakdown
         self.sessionSpendMicro = sessionSpendMicro
-        self.showSessionSpend = showSessionSpend
+        self.isRouterBilledSession = isRouterBilledSession
         self._imageComposerSettings = imageComposerSettings
         self.onSend = onSend
         self.onStop = onStop
@@ -203,9 +206,12 @@ struct FloatingInputCard: View {
     @ObservedObject private var sandboxState = SandboxManager.State.shared
     @ObservedObject private var clipboardService = ClipboardService.shared
     @ObservedObject private var appConfig = AppConfiguration.shared
-    /// Drives the composer credits chip (balance + low-balance tinting) for
-    /// Osaurus Router sessions.
+    /// Drives the composer credits chip (balance + low-balance tinting) and the
+    /// wallet panel's recent-activity list.
     @ObservedObject private var accountService = OsaurusRouterAccountService.shared
+    /// Master-switch mirror for the Osaurus Router; the credits chip shows in
+    /// every session while the router is usable (switch on + identity present).
+    @ObservedObject private var remoteProviders = RemoteProviderManager.shared
     /// Frontmost-app source + Accessibility status for the read-only
     /// screen-context chip (shown only on the empty/welcome screen). The opt-in
     /// gate is now per-agent (a child of Computer Use), read via `agentManager`.
@@ -218,6 +224,24 @@ struct FloatingInputCard: View {
 
     private var slashRegistry = SlashCommandRegistry.shared
     @State private var slashSelectedIndex: Int = 0
+
+    // MARK: - "@" File Menu State
+
+    /// Highlighted row in the "@" file completion popup.
+    @State private var atSelectedIndex: Int = 0
+    /// Filesystem entries for the current "@" query. Populated off the main
+    /// actor by `atMenuTask` so directory enumeration never blocks the UI.
+    @State private var atMenuItems: [AtFileItem] = []
+    /// Outcome of the latest listing; `.denied` drives the recovery affordance.
+    @State private var atMenuStatus: AtFileMenuStatus = .ok
+    /// Resolved directory for the latest listing; used to label + re-grant a
+    /// denied folder.
+    @State private var atMenuDirectory: String = ""
+    /// True while a listing is in flight for a brand-new query (no prior items
+    /// to keep showing). Suppresses an empty-state flash before results arrive.
+    @State private var atMenuLoading: Bool = false
+    /// In-flight listing task; cancelled and replaced on every query change.
+    @State private var atMenuTask: Task<Void, Never>?
 
     // MARK: - Input History State
 
@@ -253,6 +277,47 @@ struct FloatingInputCard: View {
         activeSlashQuery != nil && !slashFilteredCommands.isEmpty
     }
 
+    /// Non-nil when the cursor is inside an "@" file token (e.g. "@src/ma" or
+    /// "look at @src/ma"). The "@" must start the text or follow whitespace.
+    /// Unlike the slash token, the query may contain "/" (a path); it ends only
+    /// at a space or newline. Returns nil once the token is completed/dismissed.
+    private var activeAtQuery: String? {
+        guard let atRange = localText.range(of: "@", options: .backwards) else { return nil }
+
+        // The "@" must be at the start of the text or preceded by whitespace,
+        // so email-style "name@host" tokens don't trigger the menu.
+        let before = localText[..<atRange.lowerBound]
+        if let lastChar = before.last, !lastChar.isWhitespace { return nil }
+
+        // Everything after "@" is the path query; a space or newline ends it.
+        let afterAt = String(localText[atRange.upperBound...])
+        guard !afterAt.contains(" ") && !afterAt.contains("\n") else { return nil }
+
+        return afterAt
+    }
+
+    /// Show the "@" menu when a query is active and there's something useful to
+    /// display: entries, a denied-folder recovery row, or an empty-folder
+    /// notice. Hidden for a not-found path (still being typed) and while the
+    /// first results for a new query are loading (avoids an empty flash).
+    /// Never shown at the same time as the slash popup.
+    private var showAtPopup: Bool {
+        guard activeAtQuery != nil, !showSlashPopup else { return false }
+        if !atMenuItems.isEmpty { return true }
+        switch atMenuStatus {
+        case .denied: return true
+        case .notFound: return false
+        case .ok: return !atMenuLoading  // empty folder / no matches, once loaded
+        }
+    }
+
+    /// Whether the current "@" query is narrowing by a partial name (vs. listing
+    /// a whole directory), used to pick the right empty-state wording.
+    private var atMenuIsFiltering: Bool {
+        guard let query = activeAtQuery else { return false }
+        return !query.isEmpty && !query.hasSuffix("/")
+    }
+
     // Local state for text input to prevent parent re-renders on every keystroke
     @State private var localText: String = ""
     @State private var isFocused: Bool = false
@@ -265,7 +330,6 @@ struct FloatingInputCard: View {
     @Environment(\.colorScheme) private var colorScheme
     @State private var isDragOver = false
     @State private var showModelPicker = false
-    @State private var showModelOptionsPicker = false
     @State private var showImageSizePicker = false
     @State private var showContextBreakdown = false
     @State private var contextHoverTask: Task<Void, Never>?
@@ -273,8 +337,19 @@ struct FloatingInputCard: View {
     /// period to travel from the trigger into the popover (which lives in its
     /// own window, so hovering it doesn't keep the trigger "hovered").
     @State private var contextDismissTask: Task<Void, Never>?
-    @State private var showBalanceBreakdown = false
+    /// Wallet panel presentation. Hovering the credits chip opens it as a
+    /// passive preview (dismissed on hover exit); clicking pins it so its
+    /// actions (Add credits, View all) are reachable.
+    @State private var showWalletPanel = false
+    /// True when the wallet panel was opened by click; hover exit no longer
+    /// dismisses it, only outside-click / an action does.
+    @State private var walletPanelPinned = false
     @State private var balanceHoverTask: Task<Void, Never>?
+    /// Delayed dismiss for the hover-opened wallet panel. Gives the cursor a
+    /// grace period to travel from the chip into the panel (which lives in its
+    /// own window, so hovering it doesn't keep the chip "hovered"); the panel's
+    /// own hover cancels it so its buttons stay clickable.
+    @State private var walletDismissTask: Task<Void, Never>?
     @State private var isSandboxHovered = false
     @State private var sandboxPulseAmount: CGFloat = 1.0
     @State private var sandboxPulseTask: Task<Void, Never>? = nil
@@ -525,7 +600,16 @@ struct FloatingInputCard: View {
             || isSandboxAvailable
             || isDefaultConfigAgent
             || (appConfig.chatConfig.enableClipboardMonitoring && clipboardService.hasNewContent)
-            || showSessionSpend
+            || showCreditsChip
+    }
+
+    /// Whether the credits chip (and its wallet panel) is available at all:
+    /// the router master switch is on and a signing identity exists — the same
+    /// gate `RemoteProviderManager` uses for the managed router provider. Shown
+    /// in every session (not just router-billed ones) because credits are the
+    /// account-level wallet other routed services will draw from too.
+    private var showCreditsChip: Bool {
+        remoteProviders.isOsaurusRouterEnabled && OsaurusIdentity.existsCached()
     }
 
     private var mainContent: some View {
@@ -598,6 +682,9 @@ struct FloatingInputCard: View {
                             )
                         )
                     }
+
+                    // "@" file menu popup — appears above the input card
+                    atFileMenuPopupView
 
                     inputCard
                         .padding(.horizontal, 20)
@@ -755,13 +842,19 @@ struct FloatingInputCard: View {
             .onChange(of: localText) { _, _ in
                 // Reset popup selection whenever the typed query changes
                 slashSelectedIndex = 0
+                atSelectedIndex = 0
+                // Re-list the "@" menu off the main actor for the new query.
+                // (folds in the registry sync so it costs no extra body chain
+                // link — the whole chain is at the type-checker's limit.)
+                refreshAtMenu()
             }
-            .onChange(of: showSlashPopup) { _, isVisible in
+            .onChange(of: showSlashPopup) { _, _ in
                 // Keep registry in sync so the global key monitor can suppress
-                // Escape from closing the window while the popup is open.
-                SlashCommandRegistry.shared.isPopupVisible = isVisible
+                // Escape from closing the window while either popup is open.
+                syncPopupVisibility()
             }
             .onDisappear {
+                atMenuTask?.cancel()
                 SlashCommandRegistry.shared.isPopupVisible = false
             }
             .onChange(of: focusTrigger) { _, _ in
@@ -1651,6 +1744,152 @@ extension FloatingInputCard {
         }
     }
 
+    // MARK: - "@" File Menu
+
+    /// Replace the trailing "@…" token with `replacement`, preserving the text
+    /// before the "@".
+    private func replacingAtToken(with replacement: String) -> String {
+        guard let atRange = localText.range(of: "@", options: .backwards) else {
+            return replacement
+        }
+        return String(localText[..<atRange.lowerBound]) + replacement
+    }
+
+    /// Apply a selected file/folder to the input. Folders keep the popup open
+    /// with a trailing "/" so the user can drill deeper CLI-style; files insert
+    /// the path followed by a space, which closes the token.
+    private func applyAtItem(_ item: AtFileItem) {
+        let inserted = item.isDirectory ? "@\(item.path)/" : "@\(item.path) "
+        let newText = replacingAtToken(with: inserted)
+        localText = newText
+        text = newText
+        isFocused = true
+    }
+
+    /// Refresh `atMenuItems` for the current "@" query off the main actor.
+    /// Cancels any prior listing so fast typing can't pile up work. A nil query
+    /// (token dismissed) clears the list synchronously.
+    private func refreshAtMenu() {
+        atMenuTask?.cancel()
+        guard let query = activeAtQuery else {
+            atMenuItems = []
+            atMenuStatus = .ok
+            atMenuLoading = false
+            syncPopupVisibility()
+            return
+        }
+        // Only treat this as a blocking "load" when we have nothing to show yet;
+        // when refining an existing list we keep the current rows visible.
+        atMenuLoading = atMenuItems.isEmpty
+        // Snapshot the folder root here (main actor); the enumeration itself
+        // runs detached so filesystem I/O never blocks the UI.
+        let rootPath = FolderContextService.cachedRootPath
+        atMenuTask = Task {
+            let result = await Task.detached(priority: .userInitiated) {
+                AtFileMenu.list(query: query, rootPath: rootPath)
+            }.value
+            if Task.isCancelled { return }
+            atMenuItems = result.items
+            atMenuStatus = result.status
+            atMenuDirectory = result.directory
+            atMenuLoading = false
+            syncPopupVisibility()
+        }
+    }
+
+    /// Recover from a denied folder. macOS won't re-prompt after a denial, but
+    /// because the app is non-sandboxed, the user explicitly picking the folder
+    /// in an open panel re-grants TCC access. On success we re-list so browsing
+    /// resumes in place. The panel is a main-actor modal (user interaction);
+    /// the listing it triggers stays off the main thread.
+    private func grantAtMenuAccess() {
+        let directory = atMenuDirectory
+        guard !directory.isEmpty else { return }
+        Task {
+            let panel = NSOpenPanel()
+            panel.canChooseFiles = false
+            panel.canChooseDirectories = true
+            panel.canCreateDirectories = false
+            panel.allowsMultipleSelection = false
+            panel.directoryURL = URL(fileURLWithPath: directory)
+            panel.prompt = L("Grant Access")
+            panel.message = L("Grant osaurus access to this folder")
+            guard await panel.beginModal() == .OK else { return }
+            isFocused = true
+            refreshAtMenu()
+        }
+    }
+
+    /// Mirror whether either completion popup is showing into the shared
+    /// registry so the global key monitor can suppress Escape (which would
+    /// otherwise close the window) while a popup is open. Folded into
+    /// `refreshAtMenu` and the slash `onChange` so it adds no body chain link.
+    private func syncPopupVisibility() {
+        SlashCommandRegistry.shared.isPopupVisible = showSlashPopup || showAtPopup
+    }
+
+    // MARK: - Input Key Handling
+
+    /// Return/Enter in the text field: apply the highlighted popup entry when a
+    /// popup is open, otherwise send the message.
+    private func handleInputCommit() {
+        if showSlashPopup {
+            let cmds = slashFilteredCommands
+            if slashSelectedIndex < cmds.count {
+                applySlashCommand(cmds[slashSelectedIndex])
+            }
+        } else if showAtPopup {
+            if atSelectedIndex < atMenuItems.count {
+                applyAtItem(atMenuItems[atSelectedIndex])
+            }
+        } else {
+            syncAndSend()
+        }
+    }
+
+    /// Up arrow: move the open popup's selection, else navigate input history.
+    private func handleInputArrowUp() -> Bool {
+        if showSlashPopup {
+            slashSelectedIndex = max(0, slashSelectedIndex - 1)
+            return true
+        }
+        if showAtPopup {
+            atSelectedIndex = max(0, atSelectedIndex - 1)
+            return true
+        }
+        return handleHistoryArrowUp()
+    }
+
+    /// Down arrow: move the open popup's selection, else navigate input history.
+    private func handleInputArrowDown() -> Bool {
+        if showSlashPopup {
+            slashSelectedIndex = min(slashFilteredCommands.count - 1, slashSelectedIndex + 1)
+            return true
+        }
+        if showAtPopup {
+            atSelectedIndex = min(atMenuItems.count - 1, atSelectedIndex + 1)
+            return true
+        }
+        return handleHistoryArrowDown()
+    }
+
+    /// Escape while a popup is open: dismiss it. The slash popup clears the
+    /// prefix; the "@" menu removes just its token so surrounding text survives.
+    private func handlePopupEscape() -> Bool {
+        if showSlashPopup {
+            localText = ""
+            text = ""
+            return true
+        }
+        if showAtPopup {
+            let newText = replacingAtToken(with: "")
+            localText = newText
+            text = newText
+            return true
+        }
+        return false
+    }
+
     private func handleBuiltInSlashAction(_ name: String) {
         switch name {
         case "clear":
@@ -1926,9 +2165,28 @@ extension FloatingInputCard {
         return ModelProfileRegistry.options(for: model)
     }
 
-    private var hasNonThinkingOptions: Bool {
-        let thinkingId = selectedModel.flatMap { ModelProfileRegistry.profile(for: $0)?.thinkingOption?.id }
-        return activeProfileOptions.contains { $0.id != thinkingId }
+    /// Catalog-driven reasoning capabilities for the selected model (Codex
+    /// live catalog / official OpenAI GPT-5.6 contract). When present, the
+    /// effort control renders inline with the model chip instead of the
+    /// separate options chip.
+    private var inlineEffortCapabilities: ModelReasoningCapabilities? {
+        guard let capabilities = selectedPickerItem?.reasoningCapabilities,
+            !capabilities.isEmpty
+        else { return nil }
+        return capabilities
+    }
+
+    /// The reasoning suffix the model chip should display ("· Extra High",
+    /// "· Instruct"): the explicit persisted choice, otherwise the
+    /// catalog/profile default (display-only; an unset option sends no
+    /// override on the wire). Covers both capability-enriched remote models
+    /// and static profiles with a segmented reasoning option.
+    private var inlineReasoningSuffix: String? {
+        guard let model = selectedModel else { return nil }
+        return ModelProfileRegistry.inlineReasoningSuffixLabel(
+            for: model,
+            values: activeModelOptions
+        )
     }
 
     private var selectorRow: some View {
@@ -1966,10 +2224,6 @@ extension FloatingInputCard {
 
                 if autoSpeakAssistant {
                     autoSpeakToggleChip
-                }
-
-                if hasNonThinkingOptions, !isRemoteAgentRun {
-                    modelOptionsSelectorChip
                 }
 
                 // Sandbox toggle: visible whenever the sandbox is available on
@@ -2011,7 +2265,7 @@ extension FloatingInputCard {
     private var metaCluster: some View {
         // Hide the balance/credits chip while a remote agent is connecting —
         // it's not actionable yet and competes with the connect affordance.
-        let showCredits = showSessionSpend && !remoteConnectionPending
+        let showCredits = showCreditsChip && !remoteConnectionPending
         // Mode 2 hides the context-budget chip + popover entirely: a remote
         // agent composes its own system prompt / tools server-side, so a local
         // token breakdown (system prompt, tools, history) doesn't reflect what
@@ -2040,7 +2294,8 @@ extension FloatingInputCard {
     /// text that blends into the meta cluster); low and empty escalate to an
     /// amber pill so a top-up is easy to notice. Empty/frozen reads as an "Add
     /// credits" call to action — deliberately amber, never error-red, so it
-    /// invites action instead of looking like a failure.
+    /// invites action instead of looking like a failure. The escalation only
+    /// applies to router-billed sessions; see `creditsStyle(for:)`.
     private enum BalanceLevel {
         case healthy
         case low
@@ -2074,6 +2329,20 @@ extension FloatingInputCard {
 
     private func creditsStyle(for level: BalanceLevel) -> CreditsChipStyle {
         let amber = theme.warningColor
+        // Outside router-billed sessions the chip never escalates: the balance
+        // doesn't block the current session, so a $0/unknown wallet reads as
+        // quiet muted "Add credits" text instead of an amber call to action.
+        guard isRouterBilledSession else {
+            return CreditsChipStyle(
+                iconName: "creditcard",
+                iconColor: theme.tertiaryText,
+                textColor: theme.secondaryText,
+                weight: .medium,
+                pill: nil,
+                glow: .clear,
+                showsAmount: level != .empty
+            )
+        }
         switch level {
         case .healthy:
             return CreditsChipStyle(
@@ -2118,18 +2387,20 @@ extension FloatingInputCard {
     }
 
     /// Accessibility text for the credits chip. Describes the router balance the
-    /// chip shows and the tap action; session spend lives in the popover.
+    /// chip shows and the tap action; session spend lives in the wallet panel.
     private var creditsHelpText: Text {
         if accountService.isFrozen {
             return Text("Account paused - add credits to resume.", bundle: .module)
         }
-        return Text("\(accountService.formattedBalance) router balance. Click to add credits.", bundle: .module)
+        return Text("\(accountService.formattedBalance) router balance. Click to open the wallet.", bundle: .module)
     }
 
-    /// Balance indicator for Osaurus Router sessions. Tapping opens the top-up
-    /// sheet; the balance best-effort refreshes on appear so it isn't blank.
-    /// Quiet plain text when funded, escalating to an amber pill / "Add credits"
-    /// CTA as the balance runs low or hits zero (see `BalanceLevel`).
+    /// Balance indicator shown in every session where the router is usable.
+    /// Hovering previews the wallet panel; clicking pins it so its actions
+    /// (Add credits → top-up sheet, View all → Credits tab) are reachable.
+    /// Quiet plain text normally, escalating to an amber pill / "Add credits"
+    /// CTA as the balance runs low or hits zero — router-billed sessions only
+    /// (see `BalanceLevel` / `creditsStyle(for:)`).
     @ViewBuilder
     private var creditsChip: some View {
         let level = balanceLevel
@@ -2140,7 +2411,18 @@ extension FloatingInputCard {
         let showIcon = !isCompact || level == .empty
 
         Button {
-            onAddCredits?()
+            // Click pins the wallet panel (rather than jumping straight to the
+            // top-up sheet) so its actions stay reachable; a second click while
+            // pinned closes it.
+            balanceHoverTask?.cancel()
+            walletDismissTask?.cancel()
+            if showWalletPanel && walletPanelPinned {
+                showWalletPanel = false
+                walletPanelPinned = false
+            } else {
+                walletPanelPinned = true
+                showWalletPanel = true
+            }
         } label: {
             HStack(spacing: 4) {
                 if showIcon {
@@ -2187,28 +2469,68 @@ extension FloatingInputCard {
         .onHover { hovering in
             balanceHoverTask?.cancel()
             if hovering {
+                walletDismissTask?.cancel()
                 balanceHoverTask = Task { @MainActor in
                     try? await Task.sleep(nanoseconds: 300_000_000)
                     guard !Task.isCancelled else { return }
-                    showBalanceBreakdown = true
+                    showWalletPanel = true
                 }
-            } else {
-                showBalanceBreakdown = false
+            } else if !walletPanelPinned {
+                scheduleWalletDismiss()
             }
         }
-        .popover(isPresented: $showBalanceBreakdown, arrowEdge: .top) {
-            BalanceBreakdownPopover(
-                sessionSpend: sessionSpendDisplay,
-                balance: accountService.formattedBalance,
-                isAttention: level != .healthy,
-                isFrozen: accountService.isFrozen
+        .popover(isPresented: $showWalletPanel, arrowEdge: .top) {
+            WalletPopover(
+                sessionSpend: isRouterBilledSession ? sessionSpendDisplay : nil,
+                isAttention: isRouterBilledSession && level != .healthy,
+                onAddCredits: {
+                    closeWalletPanel()
+                    onAddCredits?()
+                },
+                onViewAll: {
+                    closeWalletPanel()
+                    AppDelegate.shared?.showManagementWindow(initialTab: .credits)
+                }
             )
+            // Keep the panel alive while the cursor is over it, so the user
+            // can travel from the chip and click Add credits / View all.
+            .onHover { hovering in
+                if hovering {
+                    walletDismissTask?.cancel()
+                } else if !walletPanelPinned {
+                    scheduleWalletDismiss()
+                }
+            }
         }
-        .task(id: showSessionSpend) {
-            if showSessionSpend {
+        .onChange(of: showWalletPanel) { _, isShown in
+            // Outside-click dismissal flips the binding directly; unpin so the
+            // next hover preview behaves normally.
+            if !isShown { walletPanelPinned = false }
+        }
+        .task(id: showCreditsChip) {
+            if showCreditsChip {
                 await accountService.refreshBalance()
             }
         }
+    }
+
+    /// Dismiss the hover-opened wallet panel after a grace period, giving the
+    /// cursor time to cross the gap into the panel window.
+    private func scheduleWalletDismiss() {
+        balanceHoverTask?.cancel()
+        walletDismissTask?.cancel()
+        walletDismissTask = Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 250_000_000)
+            guard !Task.isCancelled else { return }
+            showWalletPanel = false
+        }
+    }
+
+    private func closeWalletPanel() {
+        walletDismissTask?.cancel()
+        balanceHoverTask?.cancel()
+        showWalletPanel = false
+        walletPanelPinned = false
     }
 
     // MARK: - Context Indicator
@@ -2347,7 +2669,11 @@ extension FloatingInputCard {
 
     private var isSelectedModelLocal: Bool {
         guard let id = selectedModel else { return false }
-        return ModelManager.findInstalledModel(named: id) != nil
+        // Cache-only lookup: this getter runs in view-body context (and on
+        // every 2s memory tick via `refreshLoadFeasibility`), where the
+        // blocking `findInstalledModel(named:)` can park on a cold-cache
+        // disk scan for seconds and hang the app.
+        return ModelManager.findInstalledMLXModelFromCache(named: id) != nil
     }
 
     private var modelWarmupDotColor: Color {
@@ -2441,6 +2767,19 @@ extension FloatingInputCard {
                             .foregroundColor(isSelectedModelDeprecated ? .orange : theme.secondaryText)
                             .lineLimit(1)
 
+                        // Effective reasoning effort/mode for models with a
+                        // segmented reasoning option (Codex catalog, official
+                        // OpenAI GPT-5.6, DSV4/Mistral/Hy3 profiles),
+                        // matching ChatGPT's "model · effort" hierarchy.
+                        // Shows the catalog/profile default when no explicit
+                        // choice exists.
+                        if let suffix = inlineReasoningSuffix {
+                            Text(verbatim: "· \(suffix)")
+                                .font(theme.font(size: CGFloat(theme.captionSize) - 1, weight: .regular))
+                                .foregroundColor(theme.tertiaryText)
+                                .lineLimit(1)
+                        }
+
                         // Show VLM indicator
                         if option.isVLM {
                             Image(systemName: "eye")
@@ -2482,6 +2821,7 @@ extension FloatingInputCard {
                 options: cachedPickerItems,
                 selectedModel: $selectedModel,
                 agentId: agentId,
+                optionsControl: modelPickerOptionsControl,
                 onDismiss: dismissModelPicker
             )
         }
@@ -2497,6 +2837,60 @@ extension FloatingInputCard {
                 cachedPickerItems = newItems
             }
         }
+    }
+
+    /// Inline options section for the model popover: every non-thinking
+    /// option the selected model exposes (catalog-driven effort, static
+    /// profile segments, toggles). Selecting persists an explicit value;
+    /// resetting removes it so the default shows while the backend applies
+    /// it naturally (nothing is sent on the wire).
+    private var modelPickerOptionsControl: ModelPickerOptionsControl? {
+        guard let model = selectedModel else { return nil }
+        let capabilities = inlineEffortCapabilities
+        let thinkingId = ModelProfileRegistry.profile(for: model)?.thinkingOption?.id
+        // The standalone Thinking chip owns the thinking toggle; the picker
+        // section renders everything else.
+        let options = activeProfileOptions.filter { $0.id != thinkingId }
+        guard !options.isEmpty else { return nil }
+
+        // Display-only defaults: the catalog default for capability-enriched
+        // effort, otherwise the static profile's defaults.
+        let defaults: [String: ModelOptionValue]
+        if let capabilities {
+            if let defaultLevel = capabilities.defaultLevelId {
+                defaults = ["reasoningEffort": .string(defaultLevel)]
+            } else {
+                defaults = [:]
+            }
+        } else {
+            defaults = ModelProfileRegistry.defaults(for: model)
+        }
+
+        return ModelPickerOptionsControl(
+            capabilities: capabilities,
+            options: options,
+            values: activeModelOptions,
+            defaults: defaults,
+            onChange: { optionId, newValue in
+                // Deferred write for the same reason as `toggleThinking`'s
+                // saved options: the popover's anchor (the model chip)
+                // renders the effort label from `activeModelOptions`, and
+                // resizing the anchor during the popover's own update
+                // crashes NSPopover.
+                DispatchQueue.main.async {
+                    var updated = activeModelOptions
+                    if let newValue {
+                        updated[optionId] = newValue
+                    } else {
+                        updated.removeValue(forKey: optionId)
+                    }
+                    activeModelOptions = updated
+                    if let model = selectedModel {
+                        ModelOptionsStore.shared.saveOptions(updated, for: model)
+                    }
+                }
+            }
+        )
     }
 
     // MARK: - Thinking Toggle
@@ -2571,74 +2965,6 @@ extension FloatingInputCard {
         if let model = selectedModel {
             ModelOptionsStore.shared.saveOptions(activeModelOptions, for: model)
         }
-    }
-
-    // MARK: - Model Options Chip
-
-    private var modelOptionsSummary: String {
-        guard let model = selectedModel,
-            ModelProfileRegistry.profile(for: model) != nil
-        else { return "" }
-        let nonDefault = activeProfileOptions.compactMap { option -> String? in
-            guard let current = activeModelOptions[option.id] else { return nil }
-            if case .segmented(let segments) = option.kind {
-                return segments.first(where: { $0.id == current.stringValue })?.label
-            }
-            if case .bool(let v) = current { return v ? option.label : nil }
-            return nil
-        }
-        if nonDefault.isEmpty { return "Default" }
-        return nonDefault.joined(separator: ", ")
-    }
-
-    private var modelOptionsSelectorChip: some View {
-        SelectorChip(isActive: showModelOptionsPicker) {
-            showModelOptionsPicker.toggle()
-        } content: {
-            HStack(spacing: 5) {
-                Image(systemName: "slider.horizontal.3")
-                    .font(theme.font(size: CGFloat(theme.captionSize) - 2, weight: .medium))
-                    .foregroundColor(theme.tertiaryText)
-
-                Text(modelOptionsSummary)
-                    .font(theme.font(size: CGFloat(theme.captionSize), weight: .medium))
-                    .foregroundColor(theme.secondaryText)
-                    .lineLimit(1)
-
-                Image(systemName: "chevron.up.chevron.down")
-                    .font(theme.font(size: CGFloat(theme.captionSize) - 3, weight: .semibold))
-                    .foregroundColor(theme.tertiaryText)
-            }
-        }
-        .popover(isPresented: $showModelOptionsPicker, arrowEdge: .top) {
-            ModelOptionsSelectorView(
-                options: activeProfileOptions,
-                values: modelOptionsBinding,
-                profileName: selectedModel.flatMap { ModelProfileRegistry.profile(for: $0)?.displayName } ?? "",
-                thinkingOptionId: selectedModel.flatMap { ModelProfileRegistry.profile(for: $0)?.thinkingOption?.id }
-            )
-        }
-    }
-
-    private var modelOptionsBinding: Binding<[String: ModelOptionValue]> {
-        Binding(
-            get: { activeModelOptions },
-            set: { newValues in
-                // Defer the write off the popover's synchronous update. The
-                // selector popover is anchored to a chip whose label reads
-                // `activeModelOptions` (`modelOptionsSummary`); mutating it
-                // inline resizes/replaces that anchor while the popover is
-                // presenting, which makes NSPopover dereference a freed
-                // positioning view (EXC_BAD_ACCESS). Hopping to the next
-                // runloop tick lets the current update finish first.
-                DispatchQueue.main.async {
-                    activeModelOptions = newValues
-                    if let model = selectedModel {
-                        ModelOptionsStore.shared.saveOptions(newValues, for: model)
-                    }
-                }
-            }
-        )
     }
 
     // MARK: - Sandbox Toggle Chip
@@ -3481,16 +3807,27 @@ extension FloatingInputCard {
         let usage = "\(ramBannerUsagePercent)"
         let total = "\(ramBannerTotalGB)"
 
-        let message: Text =
-            blocked
-            ? Text(
+        // Over the GPU budget, no amount of freed RAM helps: the working set is
+        // a fixed fraction of installed memory. Say so instead of offering
+        // advice that cannot work.
+        let message: Text
+        if feasibility.exceedsGPUBudget {
+            let budgetGB = Self.formatGigabytes(feasibility.gpuBudgetBytes)
+            message = Text(
+                "This model needs ~\(neededGB) GB, but this Mac can only keep ~\(budgetGB) GB on the GPU. macOS will page the weights and generation will be extremely slow — pick a smaller model or a lower-precision build.",
+                bundle: .module
+            )
+        } else if blocked {
+            message = Text(
                 "This model needs ~\(neededGB) GB to load, but memory is at \(usage)% of \(total) GB. Sending is paused until memory frees — close other apps or pick a smaller model.",
                 bundle: .module
             )
-            : Text(
+        } else {
+            message = Text(
                 "This model needs ~\(neededGB) GB to load and memory is at \(usage)% of \(total) GB. Close other apps for best performance.",
                 bundle: .module
             )
+        }
 
         // One continuous popover silhouette: the rounded rect and the pointer
         // triangle are a single shape, so the fill and the border flow around
@@ -4484,6 +4821,30 @@ extension FloatingInputCard {
         }
     }
 
+    /// The "@" file completion popup, extracted from `mainContent` to keep that
+    /// view builder within the Swift type-checker's reach.
+    @ViewBuilder
+    private var atFileMenuPopupView: some View {
+        if showAtPopup {
+            AtFileMenuPopup(
+                items: atMenuItems,
+                status: atMenuStatus,
+                deniedDirectoryName: (atMenuDirectory as NSString).lastPathComponent,
+                emptyMessage: atMenuIsFiltering ? L("No matching files") : L("This folder is empty"),
+                selectedIndex: $atSelectedIndex,
+                onSelect: applyAtItem,
+                onGrantAccess: grantAtMenuAccess
+            )
+            .padding(.horizontal, 20)
+            .transition(
+                .asymmetric(
+                    insertion: .opacity.combined(with: .scale(scale: 0.98, anchor: .bottom)),
+                    removal: .opacity.combined(with: .scale(scale: 0.98, anchor: .bottom))
+                )
+            )
+        }
+    }
+
     private var textInputArea: some View {
         EditableTextView(
             text: $localText,
@@ -4494,35 +4855,11 @@ extension FloatingInputCard {
             isComposing: $isComposing,
             maxHeight: maxHeight,
             focusController: textViewFocusController,
-            onCommit: {
-                if showSlashPopup {
-                    let cmds = slashFilteredCommands
-                    if slashSelectedIndex < cmds.count {
-                        applySlashCommand(cmds[slashSelectedIndex])
-                    }
-                } else {
-                    syncAndSend()
-                }
-            },
+            onCommit: { handleInputCommit() },
             onShiftCommit: nil,
-            onArrowUp: showSlashPopup
-                ? {
-                    slashSelectedIndex = max(0, slashSelectedIndex - 1)
-                    return true
-                } : { handleHistoryArrowUp() },
-            onArrowDown: showSlashPopup
-                ? {
-                    let maxIndex = slashFilteredCommands.count - 1
-                    slashSelectedIndex = min(maxIndex, slashSelectedIndex + 1)
-                    return true
-                } : { handleHistoryArrowDown() },
-            onEscape: showSlashPopup
-                ? {
-                    // Dismiss popup by clearing the slash prefix
-                    localText = ""
-                    text = ""
-                    return true
-                } : nil,
+            onArrowUp: { handleInputArrowUp() },
+            onArrowDown: { handleInputArrowDown() },
+            onEscape: (showSlashPopup || showAtPopup) ? { handlePopupEscape() } : nil,
             onPasteText: { pasted in
                 guard pasted.utf8.count >= Self.pastedContentThreshold else { return false }
                 withAnimation(theme.springAnimation()) {
@@ -5464,78 +5801,286 @@ private struct ContextBreakdownPopover: View {
 
 }
 
-// MARK: - Balance Breakdown Popover
+// MARK: - Wallet Popover
 
-/// Hover card for the composer balance chip, styled to match
-/// `ContextBreakdownPopover` (rounded glass card, 11pt header, hairline
-/// dividers, monospaced values). Replaces the plain OS tooltip so the router
-/// balance reads like the Context Budget breakdown beside it. The balance is
-/// the hero figure (paralleling the budget bar) and tints amber when low/empty.
-private struct BalanceBreakdownPopover: View {
-    let sessionSpend: String
-    let balance: String
+/// The composer wallet panel, styled to match `ContextBreakdownPopover`
+/// (rounded glass card, 11pt headers, hairline dividers, monospaced values).
+/// Opens from the credits chip as a hover preview or a pinned click-through
+/// panel: balance hero, per-session router spend, recent account activity
+/// (model requests + ledger transactions), and Add credits / View all actions.
+/// This is the surface agent-initiated credit transactions will land in — new
+/// ledger `entry_type`s render here via `WalletActivityProjector` without UI
+/// rework.
+private struct WalletPopover: View {
+    /// This session's router spend; nil outside router-billed sessions.
+    let sessionSpend: String?
+    /// True when a low/empty balance should tint amber (router-billed sessions
+    /// only — a $0 wallet doesn't block a local-model chat).
     let isAttention: Bool
-    let isFrozen: Bool
+    let onAddCredits: () -> Void
+    let onViewAll: () -> Void
 
+    @ObservedObject private var accountService = OsaurusRouterAccountService.shared
     @Environment(\.theme) private var theme
 
-    private var accent: Color { theme.accentColor }
+    /// Shared so each row doesn't allocate a formatter; relative labels like
+    /// "3h ago" only need minute resolution.
+    private static let relativeFormatter: RelativeDateTimeFormatter = {
+        let formatter = RelativeDateTimeFormatter()
+        formatter.unitsStyle = .abbreviated
+        return formatter
+    }()
 
-    private var footerText: Text {
-        isFrozen
-            ? Text("Account paused - add credits to resume.", bundle: .module)
-            : Text("Click to add credits", bundle: .module)
+    private var rows: [WalletActivityRow] {
+        WalletActivityProjector().rows(
+            usageItems: accountService.usage,
+            transactions: accountService.transactions
+        )
     }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
+            header
+            if let sessionSpend {
+                divider
+                sessionSpendRow(sessionSpend)
+            }
+            divider
+            activitySection
+            divider
+            footerActions
+        }
+        .frame(width: 272)
+        .popoverCard()
+        .task {
+            await accountService.refreshBalance()
+            await accountService.refreshUsage(reset: true)
+            await accountService.refreshTransactions(reset: true)
+        }
+    }
+
+    // MARK: Sections
+
+    /// Hero balance over a soft accent wash — the "card face" of the wallet.
+    private var header: some View {
+        VStack(alignment: .leading, spacing: 3) {
             HStack(spacing: 6) {
-                Image(systemName: "chart.bar.fill")
+                Image(systemName: "creditcard.fill")
+                    .font(.system(size: 9, weight: .semibold))
+                    .foregroundColor(theme.accentColor.opacity(0.85))
+                Text("Wallet", bundle: .module)
                     .font(.system(size: 10, weight: .semibold))
                     .foregroundColor(theme.secondaryText)
-                Text("This Session", bundle: .module)
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundColor(theme.secondaryText)
-            }
-            .padding(.horizontal, 12)
-            .padding(.top, 10)
-            .padding(.bottom, 8)
-
-            HStack(spacing: 8) {
-                RoundedRectangle(cornerRadius: 2)
-                    .fill(accent.opacity(0.85))
-                    .frame(width: 3, height: 16)
-                Text(verbatim: sessionSpend)
-                    .font(.system(size: 15, weight: .semibold, design: .monospaced))
-                    .foregroundColor(theme.primaryText)
+                    .textCase(.uppercase)
+                    .kerning(0.8)
                 Spacer(minLength: 0)
+                if accountService.isFrozen {
+                    Text("Paused", bundle: .module)
+                        .font(.system(size: 9, weight: .semibold))
+                        .foregroundColor(theme.warningColor)
+                        .padding(.horizontal, 7)
+                        .padding(.vertical, 2)
+                        .background(
+                            Capsule()
+                                .fill(theme.warningColor.opacity(0.14))
+                                .overlay(
+                                    Capsule().strokeBorder(
+                                        theme.warningColor.opacity(0.35), lineWidth: 1)
+                                )
+                        )
+                }
             }
-            .padding(.horizontal, 12)
-            .padding(.bottom, 10)
+            .padding(.bottom, 5)
 
-            divider
-            HStack(spacing: 0) {
-                Text("Router balance", bundle: .module)
-                    .font(.system(size: 11))
-                    .foregroundColor(theme.secondaryText)
-                Spacer()
-                Text(verbatim: balance)
-                    .font(.system(size: 11, weight: .medium, design: .monospaced))
-                    .foregroundColor(isAttention ? theme.warningColor : theme.primaryText)
+            Text(verbatim: accountService.formattedBalance)
+                .font(.system(size: 24, weight: .semibold, design: .monospaced))
+                .foregroundColor(
+                    (isAttention || accountService.isFrozen)
+                        ? theme.warningColor : theme.primaryText
+                )
+                .contentTransition(.numericText())
+
+            if accountService.isFrozen {
+                Text("Account paused - add credits to resume.", bundle: .module)
+                    .font(.system(size: 10))
+                    .foregroundColor(theme.tertiaryText)
+                    .fixedSize(horizontal: false, vertical: true)
+            } else {
+                Text("Available balance", bundle: .module)
+                    .font(.system(size: 10))
+                    .foregroundColor(theme.tertiaryText)
             }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 8)
-
-            divider
-            footerText
-                .font(.system(size: 10))
-                .foregroundColor(theme.tertiaryText)
-                .fixedSize(horizontal: false, vertical: true)
-                .padding(.horizontal, 12)
-                .padding(.vertical, 8)
         }
-        .frame(width: 200)
-        .popoverCard()
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 14)
+        .padding(.top, 12)
+        .padding(.bottom, 11)
+        .background(
+            LinearGradient(
+                colors: [theme.accentColor.opacity(0.10), theme.accentColor.opacity(0.02)],
+                startPoint: .top,
+                endPoint: .bottom
+            )
+        )
+    }
+
+    private func sessionSpendRow(_ spend: String) -> some View {
+        HStack(spacing: 6) {
+            Image(systemName: "chart.bar.fill")
+                .font(.system(size: 8))
+                .foregroundColor(theme.tertiaryText)
+            Text("This session", bundle: .module)
+                .font(.system(size: 11))
+                .foregroundColor(theme.secondaryText)
+            Spacer()
+            Text(verbatim: spend)
+                .font(.system(size: 11, weight: .medium, design: .monospaced))
+                .foregroundColor(theme.primaryText)
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 8)
+    }
+
+    private var activitySection: some View {
+        VStack(alignment: .leading, spacing: 9) {
+            Text("Recent activity", bundle: .module)
+                .font(.system(size: 9, weight: .semibold))
+                .foregroundColor(theme.tertiaryText)
+                .textCase(.uppercase)
+                .kerning(0.8)
+
+            if rows.isEmpty {
+                emptyActivity
+            } else {
+                VStack(alignment: .leading, spacing: 9) {
+                    ForEach(rows) { row in
+                        activityRow(row)
+                    }
+                }
+            }
+        }
+        .padding(.horizontal, 14)
+        .padding(.top, 10)
+        .padding(.bottom, 11)
+    }
+
+    private var emptyActivity: some View {
+        HStack(spacing: 7) {
+            Image(systemName: "moon.zzz")
+                .font(.system(size: 11))
+                .foregroundColor(theme.tertiaryText.opacity(0.7))
+            Text("No activity yet", bundle: .module)
+                .font(.system(size: 11))
+                .foregroundColor(theme.tertiaryText)
+        }
+        .frame(maxWidth: .infinity, alignment: .center)
+        .padding(.vertical, 6)
+    }
+
+    private func activityRow(_ row: WalletActivityRow) -> some View {
+        HStack(alignment: .center, spacing: 8) {
+            ZStack {
+                Circle()
+                    .fill(badgeTint(for: row).opacity(0.13))
+                Image(systemName: iconName(for: row))
+                    .font(.system(size: 8, weight: .semibold))
+                    .foregroundColor(badgeTint(for: row))
+            }
+            .frame(width: 20, height: 20)
+
+            VStack(alignment: .leading, spacing: 1) {
+                // Transaction titles are the projector's fixed vocabulary
+                // ("Credits added", ...) and localize via key lookup. Usage
+                // titles are model/provider ids and must render verbatim —
+                // LocalizedStringKey would treat underscores in ids as
+                // markdown emphasis.
+                Group {
+                    if row.kind == .transaction {
+                        Text(LocalizedStringKey(row.title), bundle: .module)
+                    } else {
+                        Text(verbatim: row.title)
+                    }
+                }
+                .font(.system(size: 11, weight: .medium))
+                .foregroundColor(theme.primaryText)
+                .lineLimit(1)
+                .truncationMode(.middle)
+                if let timeLabel = timeLabel(for: row) {
+                    Text(verbatim: timeLabel)
+                        .font(.system(size: 9))
+                        .foregroundColor(theme.tertiaryText)
+                }
+            }
+
+            Spacer(minLength: 8)
+
+            Text(verbatim: row.amountLabel)
+                .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                .foregroundColor(row.isCredit ? theme.successColor : theme.secondaryText)
+        }
+    }
+
+    private var footerActions: some View {
+        HStack(spacing: 8) {
+            Button(action: onAddCredits) {
+                HStack(spacing: 4) {
+                    Image(systemName: "plus")
+                        .font(.system(size: 9, weight: .bold))
+                    Text("Add credits", bundle: .module)
+                        .font(.system(size: 11, weight: .semibold))
+                }
+                .foregroundColor(.white)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 6)
+                .background(Capsule().fill(theme.accentColor))
+            }
+            .buttonStyle(.plain)
+            .pointingHandCursor()
+
+            Spacer(minLength: 0)
+
+            Button(action: onViewAll) {
+                HStack(spacing: 3) {
+                    Text("View all", bundle: .module)
+                        .font(.system(size: 11, weight: .medium))
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 7, weight: .semibold))
+                }
+                .foregroundColor(theme.secondaryText)
+            }
+            .buttonStyle(.plain)
+            .pointingHandCursor()
+            .localizedHelp("Open the Credits tab for full usage and transaction history.")
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 10)
+    }
+
+    // MARK: Row styling
+
+    private func iconName(for row: WalletActivityRow) -> String {
+        switch row.kind {
+        case .transaction:
+            return row.isCredit ? "arrow.down.left" : "arrow.up.right"
+        case .usage:
+            return "sparkles"
+        }
+    }
+
+    /// Badge + icon tint. Money-in reads green; spends stay neutral unless the
+    /// request itself needs attention (stopped/error states from the ledger).
+    private func badgeTint(for row: WalletActivityRow) -> Color {
+        if row.isCredit { return theme.successColor }
+        switch row.stateKind {
+        case .warning: return theme.warningColor
+        case .error: return theme.errorColor
+        case .success, .secondary: return theme.secondaryText
+        }
+    }
+
+    private func timeLabel(for row: WalletActivityRow) -> String? {
+        guard let date = row.date else { return nil }
+        return Self.relativeFormatter.localizedString(for: date, relativeTo: Date())
     }
 
     private var divider: some View {
@@ -5678,191 +6223,6 @@ private struct SelectorChip<Content: View>: View {
                 lineWidth: 1
             )
     }
-}
-
-// MARK: - Model Options Selector View
-
-/// Popover that groups all model-specific options into a single panel.
-private struct ModelOptionsSelectorView: View {
-    let options: [ModelOptionDefinition]
-    @Binding var values: [String: ModelOptionValue]
-    let profileName: String
-    let thinkingOptionId: String?
-
-    @Environment(\.theme) private var theme
-
-    private var hasExplicitOptions: Bool { !values.isEmpty }
-
-    var body: some View {
-        VStack(spacing: 0) {
-            header
-            Divider().background(theme.primaryBorder.opacity(0.3))
-            optionRows
-        }
-        .frame(width: 300)
-        .popoverCard(
-            cornerRadius: 12,
-            accentOpacity: (0.06, 0.04),
-            borderOpacity: 0.15,
-            shadowOpacity: 0.25,
-            shadowRadius: 20,
-            shadowOffsetY: 10
-        )
-    }
-
-    // MARK: - Header
-
-    private var header: some View {
-        HStack {
-            Image(systemName: "slider.horizontal.3")
-                .font(.system(size: 12, weight: .semibold))
-                .foregroundColor(theme.secondaryText)
-
-            Text(profileName)
-                .font(.system(size: 13, weight: .semibold))
-                .foregroundColor(theme.primaryText)
-
-            Spacer()
-
-            if hasExplicitOptions {
-                Button {
-                    values = [:]
-                } label: {
-                    HStack(spacing: 3) {
-                        Image(systemName: "arrow.uturn.backward")
-                            .font(.system(size: 9))
-                        Text("Reset", bundle: .module)
-                            .font(.system(size: 11, weight: .medium))
-                    }
-                    .foregroundColor(theme.secondaryText)
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 4)
-                    .background(
-                        RoundedRectangle(cornerRadius: 6, style: .continuous)
-                            .fill(theme.secondaryBackground.opacity(0.8))
-                    )
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 6, style: .continuous)
-                            .strokeBorder(theme.primaryBorder.opacity(0.12), lineWidth: 1)
-                    )
-                }
-                .buttonStyle(.plain)
-                .pointingHandCursor()
-            }
-        }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 12)
-    }
-
-    // MARK: - Option Rows
-
-    private var optionRows: some View {
-        let filteredOptions = options.filter { $0.id != thinkingOptionId }
-
-        return VStack(spacing: 0) {
-            ForEach(Array(filteredOptions.enumerated()), id: \.element.id) { index, option in
-                if index > 0 {
-                    Divider().background(theme.primaryBorder.opacity(0.15)).padding(.horizontal, 14)
-                }
-                switch option.kind {
-                case .segmented(let segments):
-                    segmentedRow(option: option, segments: segments)
-                case .toggle(let defaultValue):
-                    toggleRow(option: option, defaultValue: defaultValue)
-                }
-            }
-        }
-        .padding(.vertical, 4)
-    }
-
-    private func segmentedRow(option: ModelOptionDefinition, segments: [ModelOptionSegment]) -> some View {
-        let currentId = values[option.id]?.stringValue ?? segments.first?.id ?? ""
-        let isExplicit = values[option.id] != nil
-
-        return VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 6) {
-                if let icon = option.icon {
-                    Image(systemName: icon)
-                        .font(.system(size: 11, weight: .medium))
-                        .foregroundColor(isExplicit ? theme.accentColor : theme.tertiaryText)
-                }
-                Text(option.label)
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundColor(theme.primaryText)
-            }
-
-            wrappedSegments(segments: segments, currentId: currentId, optionId: option.id)
-        }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 10)
-    }
-
-    private func wrappedSegments(segments: [ModelOptionSegment], currentId: String, optionId: String) -> some View {
-        FlowLayout(spacing: 6) {
-            ForEach(segments) { segment in
-                let isSelected = segment.id == currentId
-                Button {
-                    values[optionId] = .string(segment.id)
-                } label: {
-                    Text(segment.label)
-                        .font(.system(size: 11, weight: isSelected ? .semibold : .medium))
-                        .foregroundColor(isSelected ? theme.accentColor : theme.secondaryText)
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 5)
-                        .background(
-                            RoundedRectangle(cornerRadius: 6, style: .continuous)
-                                .fill(
-                                    isSelected
-                                        ? theme.accentColor.opacity(theme.isDark ? 0.15 : 0.1)
-                                        : theme.secondaryBackground.opacity(0.6)
-                                )
-                        )
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 6, style: .continuous)
-                                .strokeBorder(
-                                    isSelected
-                                        ? theme.accentColor.opacity(0.3)
-                                        : theme.primaryBorder.opacity(0.12),
-                                    lineWidth: 1
-                                )
-                        )
-                }
-                .buttonStyle(.plain)
-                .pointingHandCursor()
-            }
-        }
-    }
-
-    private func toggleRow(option: ModelOptionDefinition, defaultValue: Bool) -> some View {
-        let isOn = values[option.id]?.boolValue ?? defaultValue
-        let isExplicit = values[option.id] != nil
-
-        return HStack(spacing: 6) {
-            if let icon = option.icon {
-                Image(systemName: icon)
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundColor(isExplicit ? theme.accentColor : theme.tertiaryText)
-            }
-            Text(option.label)
-                .font(.system(size: 12, weight: .semibold))
-                .foregroundColor(theme.primaryText)
-
-            Spacer()
-
-            Toggle(
-                "",
-                isOn: Binding(
-                    get: { isOn },
-                    set: { values[option.id] = .bool($0) }
-                )
-            )
-            .toggleStyle(.switch)
-            .controlSize(.mini)
-        }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 10)
-    }
-
 }
 
 // MARK: - Input Action Button

@@ -205,4 +205,33 @@ final class OsaurusRouterAccountService: ObservableObject {
         balance = OsaurusRouterBalanceResponse(balanceMicro: String(updated), frozen: current.frozen)
         Task { await refreshUsage(reset: true) }
     }
+
+    // MARK: - Missing-summary reconciliation
+
+    /// Debounce window before the server-truth refresh fires. Long enough to
+    /// collapse a burst of failing streams (e.g. brief offline window, agent
+    /// loop erroring repeatedly) into one refresh pass, short enough that the
+    /// Credits UI catches up while the user is still looking at it.
+    nonisolated static let missingSummaryReconcileDebounce: TimeInterval = 5
+
+    private var missingSummaryReconcileTask: Task<Void, Never>?
+
+    /// A Router stream reached the wire but terminated without its billing
+    /// summary frame (mid-stream error, user cancel, truncation). The server
+    /// may still have charged for the partial generation, and the optimistic
+    /// local decrement (`noteRouterSummary`) never ran — so the cached
+    /// balance/usage can drift from server truth. Schedule a debounced
+    /// balance + usage refresh as reconciliation; the server is authoritative.
+    func reconcileAfterStreamWithoutSummary() {
+        guard OsaurusRouter.isEnabled else { return }
+        missingSummaryReconcileTask?.cancel()
+        missingSummaryReconcileTask = Task { [weak self] in
+            try? await Task.sleep(
+                nanoseconds: UInt64(Self.missingSummaryReconcileDebounce * 1_000_000_000)
+            )
+            guard !Task.isCancelled else { return }
+            await self?.refreshBalance()
+            await self?.refreshUsage(reset: true)
+        }
+    }
 }

@@ -473,6 +473,39 @@ extension InsightsService {
         )
     }()
 
+    /// Upstream-provider credential regexes. The log ring buffer can capture
+    /// chat bodies forwarded to remote providers, and the request/response
+    /// detail pane echoes headers, so an Authorization/x-api-key header or an
+    /// `sk-`/JWT-shaped value could otherwise land in the buffer verbatim.
+    /// These mirror `ProviderDiagnosticRedactor` so the local log holds to the
+    /// same "no third-party secrets at rest" bar as the provider diagnostics.
+    private nonisolated static let upstreamRedactors: [(regex: NSRegularExpression, template: String)] = {
+        let specs: [(String, String)] = [
+            // Any Bearer token (not just Osaurus `osk-`): OpenAI/Anthropic/etc.
+            (#"(?i)(bearer\s+)[A-Za-z0-9._~+/=-]{8,}"#, "$1<redacted>"),
+            // `sk-…` / `sk-ant-…` style keys (JSON value, header, prose). The
+            // lookbehind keeps this from matching *inside* other token shapes
+            // — notably the `sk-` tail of Osaurus `osk-v1.…` keys, whose bare
+            // prose form is deliberately left alone (see redactor contract).
+            (#"(?<![A-Za-z0-9])sk-[A-Za-z0-9._-]{8,}"#, "<redacted>"),
+            // JSON-Web-Token shaped values (id/access tokens).
+            (#"eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+"#, "<redacted>"),
+            // Header-style secret carriers: `x-api-key: v`, `api-key=v`,
+            // `x-goog-api-key: v`, and stringified `"authorization": "v"`.
+            // `Bearer …` authorization values are excluded: the Bearer regex
+            // above already scrubbed the token and must keep the scheme word
+            // visible (`Bearer <redacted>`), so redacting the first token of
+            // the value here would just eat the word "Bearer".
+            (
+                #"(?i)("?(?:x-api-key|x-goog-api-key|api-key|authorization)"?\s*[:=]\s*"?)(?!bearer\b)[^"\s,;}]+"#,
+                "$1<redacted>"
+            ),
+        ]
+        return specs.compactMap { pattern, template in
+            (try? NSRegularExpression(pattern: pattern, options: [])).map { ($0, template) }
+        }
+    }()
+
     /// Internal so tests can verify the redactor's surface independent of
     /// the ring buffer plumbing.
     nonisolated static func redactCredentials(_ body: String) -> String {
@@ -492,6 +525,14 @@ extension InsightsService {
                 options: [],
                 range: nsRange(redacted),
                 withTemplate: "\"<redacted>\""
+            )
+        }
+        for (regex, template) in upstreamRedactors {
+            redacted = regex.stringByReplacingMatches(
+                in: redacted,
+                options: [],
+                range: nsRange(redacted),
+                withTemplate: template
             )
         }
         return redacted

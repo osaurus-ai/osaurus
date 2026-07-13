@@ -619,6 +619,18 @@ jobs:
           OSAURUS_TEST_ROOT: /tmp/osaurus-evals-test
         run: swift test --package-path Packages/OsaurusEvals
 
+      - name: Run deterministic eval suites (floors gate)
+        # The token-free suites (pure-data scorers — no model load, no
+        # embedder, no network) with `--fail-on-floor`: Config/floors.json
+        # pins their pass rate at 1.0, so any failing row is a code
+        # regression that fails the job. The build is warm from the test
+        # step above, so this adds only the suite runtime.
+        env:
+          DEVELOPER_DIR: /Applications/Xcode_${{ env.XCODE_VERSION }}.app/Contents/Developer
+          OSAURUS_DISABLE_KEYCHAIN_FOR_TESTS: "1"
+          OSAURUS_TEST_ROOT: /tmp/osaurus-evals-test
+        run: make evals-deterministic
+
       - name: Annotate timing
         if: always()
         run: echo "::notice title=test-evals duration::$SECONDS seconds"

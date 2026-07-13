@@ -140,7 +140,7 @@ final class ChatSession: ObservableObject {
     /// for a clarify question. Cleared by `send(...)` before the next
     /// user turn so the loop can resume cleanly. Observed by
     /// `BackgroundTaskManager.observeChatTask` to flip the task status to
-    /// `.awaitingClarification`, emit the type-3 CLARIFICATION event with
+    /// `.waitingForInput`, emit the type-3 CLARIFICATION event with
     /// the parsed payload to the source plugin, and suppress the spurious
     /// COMPLETED that would otherwise fire when `isStreaming` goes false
     /// on the intercept.
@@ -203,6 +203,19 @@ final class ChatSession: ObservableObject {
     /// (plugin / HTTP / scheduler / watcher) runs, defaults to `.chat` for
     /// user-driven UI sessions.
     var source: SessionSource = .chat
+    /// Whether this session's model loads may evict a model someone else is using.
+    ///
+    /// Set from `DispatchRequest.loadIntent` at the trigger boundary. Headless
+    /// autonomous runs (cron fire, watcher, agent self-wake) arrive `.background`
+    /// and will decline rather than take the GPU from an active chat; everything
+    /// a human is waiting on -- including the "Run Now" buttons that share those
+    /// same code paths -- stays `.interactive`.
+    ///
+    /// This exists because the engine's own `RequestSource` has only four cases
+    /// (chatUI / httpAPI / plugin / p2p) and every headless session was being
+    /// flattened into `.chatUI` on its way to the model, losing the distinction
+    /// entirely.
+    var loadIntent: ModelLoadIntent = .interactive
     var sourcePluginId: String?
     var externalSessionKey: String?
     var dispatchTaskId: UUID?
@@ -368,8 +381,12 @@ final class ChatSession: ObservableObject {
     /// run was cancelled by the user (or by `sendNowInterrupting`) and must
     /// not auto-flush a queued send. Reset to false at the top of `send(...)`.
     private var stopRequested: Bool = false
-    var chatEngineFactory: @MainActor () -> ChatEngineProtocol = {
-        ChatEngine(source: .chatUI)
+    /// Takes the session's own inference provenance. It used to hardcode
+    /// `.chatUI` and ignore `source` entirely, so every headless run -- cron
+    /// schedule, file watcher, agent self-wake -- reached the model claiming to
+    /// be the user typing in the chat window.
+    var chatEngineFactory: @MainActor (InferenceSource) -> ChatEngineProtocol = {
+        ChatEngine(source: $0)
     }
     // nonisolated(unsafe) allows deinit to access these for cleanup
     nonisolated(unsafe) private var remoteModelsObserver: NSObjectProtocol?
@@ -385,6 +402,14 @@ final class ChatSession: ObservableObject {
     nonisolated(unsafe) private var modelCacheCancellable: AnyCancellable?
     /// Flag to prevent auto-persist during initial load or programmatic resets
     private var isLoadingModel: Bool = false
+    /// The model the user last picked by hand this session. Picker-list
+    /// rebuilds (`applyPickerItems`) fire whenever runtime state changes —
+    /// including the load the pick itself triggered — and previously let the
+    /// agent's saved default snap the selection back (stale chip: pick HY3,
+    /// chip reverts to Qwen, and the follow-up warm-up loads the WRONG model
+    /// over the user's in-flight load). A manual pick outranks the agent
+    /// default for as long as it remains a valid option.
+    private var lastManualModelSelection: String?
 
     nonisolated(unsafe) private var localModelsObserver: NSObjectProtocol?
     /// Observer for `.privacyFilterRedactionsApproved`. Folds every
@@ -577,6 +602,7 @@ final class ChatSession: ObservableObject {
             .sink { [weak self] newModel in
                 guard let self = self, !self.isLoadingModel else { return }
                 guard let model = newModel else { return }
+                self.lastManualModelSelection = model
                 let pid = self.agentId ?? Agent.defaultId
                 // Mode 2 (remote agent run): the model is pinned to the remote
                 // agent's own model. Don't write that pin into the LOCAL agent's
@@ -780,6 +806,13 @@ final class ChatSession: ObservableObject {
         let effectiveModel = AgentManager.shared.effectiveModel(for: agentId ?? Agent.defaultId)
         if let model = effectiveModel, pickerItems.contains(where: { $0.id == model }) {
             selectedModel = model
+        } else if Self.pendingLocalDefaultModelId(for: agentId, in: pickerItems.map(\.id)) != nil {
+            // First-run local setup includes temporary Osaurus Cloud access:
+            // select the lower-cost capable Router model while the pinned
+            // private model downloads. This is session-only — the agent's
+            // durable default remains local, so the next picker rebuild
+            // switches over as soon as that bundle lands.
+            selectedModel = Self.osaurusRouterValueCandidate(in: pickerItems)?.id
         } else {
             selectedModel = pickerItems.firstChatCapable?.id
         }
@@ -787,6 +820,149 @@ final class ChatSession: ObservableObject {
         applyImageModelDefaults(for: selectedModel)
         isLoadingModel = false
         notifySessionBecameActive()
+    }
+
+    /// The agent's pinned default model when it's a local model that isn't
+    /// usable yet — absent from the picker with its download in flight,
+    /// paused, or failed. nil once the model lands (or was never in that
+    /// setup window).
+    static func pendingLocalDefaultModelId(for agentId: UUID?, in optionIds: [String]) -> String? {
+        guard
+            let model = AgentManager.shared.effectiveModel(for: agentId ?? Agent.defaultId),
+            !optionIds.contains(model)
+        else { return nil }
+        switch ModelManager.shared.downloadStates[model] {
+        case .downloading, .paused, .failed:
+            return model
+        case .completed, .notStarted, nil:
+            return nil
+        }
+    }
+
+    /// The pinned-but-still-downloading local default for this session. Stays
+    /// non-nil while the temporary Cloud model is selected so the chat empty
+    /// state can keep showing local download progress; becomes nil once the
+    /// local bundle lands.
+    var pendingLocalSetupModelId: String? {
+        Self.pendingLocalDefaultModelId(for: agentId, in: pickerItems.map(\.id))
+    }
+
+    /// The temporary first-run Cloud model used while a pinned local model is
+    /// downloading. DeepSeek V4 Flash is the product-selected experience;
+    /// Foundation, local, and BYOK models never qualify.
+    ///
+    /// "Lower-cost but capable" is catalog-driven rather than a hardcoded model
+    /// allowlist: prefer chat models that explicitly support tools, offer at
+    /// least 32K context, and publish pricing; then minimize the sum of input
+    /// and output rates. If the Router's older metadata lacks one of those
+    /// fields, progressively relax the metadata requirements while staying
+    /// Router-only and chat-capable.
+    static func osaurusRouterValueCandidate(in items: [ModelPickerItem]) -> ModelPickerItem? {
+        let routerItems = items.filter { item in
+            if case .remote(_, let providerId) = item.source {
+                return providerId == RemoteProviderManager.osaurusRouterProviderId
+                    && item.isLikelyChatCapable
+            }
+            return false
+        }
+        guard !routerItems.isEmpty else { return nil }
+        if let deepSeek = routerItems.first(where: {
+            RemoteProviderManager.isFirstRunOsaurusModelId($0.id)
+        }) {
+            return deepSeek
+        }
+
+        func pricedMinimum(in candidates: [ModelPickerItem]) -> ModelPickerItem? {
+            candidates
+                .filter {
+                    $0.inputPriceMicroPerMTok != nil && $0.outputPriceMicroPerMTok != nil
+                }
+                .min { lhs, rhs in
+                    let lhsCost =
+                        Double(lhs.inputPriceMicroPerMTok ?? 0)
+                        + Double(lhs.outputPriceMicroPerMTok ?? 0)
+                    let rhsCost =
+                        Double(rhs.inputPriceMicroPerMTok ?? 0)
+                        + Double(rhs.outputPriceMicroPerMTok ?? 0)
+                    if lhsCost != rhsCost { return lhsCost < rhsCost }
+                    // More context wins an exact price tie.
+                    let lhsContext = lhs.contextLength ?? 0
+                    let rhsContext = rhs.contextLength ?? 0
+                    if lhsContext != rhsContext { return lhsContext > rhsContext }
+                    return lhs.displayName < rhs.displayName
+                }
+        }
+
+        let capable = routerItems.filter {
+            $0.supportsToolCalling == true && ($0.contextLength ?? 0) >= 32_768
+        }
+        return pricedMinimum(in: capable)
+            ?? pricedMinimum(in: routerItems.filter { $0.supportsToolCalling == true })
+            ?? pricedMinimum(in: routerItems)
+            ?? routerItems.first
+    }
+
+    /// Session-scoped switch to an Osaurus Router model while the agent's
+    /// pinned local default is still downloading. First-run invokes this
+    /// automatically; the recovery UI can invoke it again after a connection
+    /// failure. Connects the Router on demand when its catalog isn't populated
+    /// yet, then selects *only* a Router model —
+    /// never Foundation, another local model, or a BYOK provider.
+    ///
+    /// Deliberately not persisted as the agent default and not recorded as a
+    /// manual pick: the moment the local download lands, the next picker
+    /// rebuild snaps the selection back to the model the user actually chose.
+    ///
+    /// Returns false when no Router model could be reached, leaving the
+    /// selection empty so the caller can surface a retry instead of silently
+    /// routing prompts elsewhere.
+    @discardableResult
+    func adoptOsaurusRouterModelWhileLocalSetupPending(
+        maxConnectAttempts: Int = 20,
+        connectIfNeeded: Bool = true
+    ) async -> Bool {
+        guard pendingLocalSetupModelId != nil else { return false }
+        if isOsaurusRouterSession { return true }
+        if selectOsaurusRouterBridgeModel() { return true }
+        guard connectIfNeeded else { return false }
+
+        // Router catalog not in the picker yet — (re-)enable and connect on
+        // demand. First-run setup explicitly includes temporary Cloud access.
+        let manager = RemoteProviderManager.shared
+        manager.setOsaurusRouterEnabled(true)
+        // Bounded poll (~10s at the default attempts): identity setup / the
+        // enable-task connect may still be in flight, and
+        // `connectOsaurusRouterIfPossible()` is a cheap no-op while connected
+        // or connecting.
+        let attempts = max(1, maxConnectAttempts)
+        for attempt in 1 ... attempts {
+            await manager.connectOsaurusRouterIfPossible()
+            if manager.firstRunOsaurusRouterModelId() != nil {
+                await refreshPickerItems()
+                // If the local download landed while we waited, normal picker
+                // reconciliation has completed the handoff. Otherwise only a
+                // Router selection counts as a successful bridge.
+                if pendingLocalSetupModelId == nil { return selectedModel != nil }
+                return isOsaurusRouterSession || selectOsaurusRouterBridgeModel()
+            }
+            if attempt < attempts {
+                try? await Task.sleep(nanoseconds: 500_000_000)
+            }
+        }
+        return false
+    }
+
+    /// Select the Router bridge candidate from the current picker items, if
+    /// one exists. Wrapped in `isLoadingModel` so the auto-persist sink does
+    /// not write it back as the agent default.
+    private func selectOsaurusRouterBridgeModel() -> Bool {
+        guard let item = Self.osaurusRouterValueCandidate(in: pickerItems) else { return false }
+        isLoadingModel = true
+        selectedModel = item.id
+        loadActiveModelOptions(for: item.id)
+        applyImageModelDefaults(for: item.id)
+        isLoadingModel = false
+        return true
     }
 
     func refreshPickerItems() async {
@@ -797,24 +973,50 @@ final class ChatSession: ObservableObject {
     /// Reconcile the session against a fresh picker list. Shared by the
     /// explicit `refreshPickerItems()` (which first triggers a rebuild) and
     /// the `$items` subscription (which receives the cache's already-rebuilt
-    /// list). Idempotent: a no-op when the option ids are unchanged.
+    /// list). Idempotent: a no-op when nothing (ids or metadata) changed.
     func applyPickerItems(_ newOptions: [ModelPickerItem]) {
         let newOptionIds = newOptions.map { $0.id }
         let optionsChanged = pickerItems.map({ $0.id }) != newOptionIds
 
         isDiscoveringModels = false
 
-        guard optionsChanged else { return }
+        guard optionsChanged else {
+            // Same model set, but the item metadata may have changed — e.g. a
+            // Codex catalog refetch that updates reasoning capabilities or
+            // default effort labels while ids stay identical. Republish the
+            // items and re-normalize the active options against the refreshed
+            // dynamic capability set so a stale effort level (Terra `ultra`
+            // after a catalog narrowing) is dropped instead of hitting the
+            // wire, without disturbing the model selection.
+            if pickerItems != newOptions {
+                pickerItems = newOptions
+                loadActiveModelOptions(for: selectedModel)
+            }
+            return
+        }
 
         // Options changed (e.g., remote models loaded) - re-check agent's preferred model.
         // This corrects the initial fallback to "foundation" when remote models weren't yet available.
+        // A model the user picked by hand outranks the agent's saved default:
+        // rebuilds fire on runtime state changes (including the load that the
+        // pick itself started), and letting the default win here snapped the
+        // chip back to the old model and warm-loaded it over the user's pick.
         let effectiveModel = AgentManager.shared.effectiveModel(for: agentId ?? Agent.defaultId)
         let newSelected: String?
 
-        if let model = effectiveModel, newOptionIds.contains(model) {
+        if let manual = lastManualModelSelection, selectedModel == manual,
+            newOptionIds.contains(manual)
+        {
+            newSelected = manual
+        } else if let model = effectiveModel, newOptionIds.contains(model) {
             newSelected = model
         } else if let prev = selectedModel, newOptionIds.contains(prev) {
             newSelected = prev
+        } else if Self.pendingLocalDefaultModelId(for: agentId, in: newOptionIds) != nil {
+            // Pinned local default still downloading: first-run includes
+            // temporary Osaurus Cloud access, so adopt the catalog-driven
+            // lower-cost capable Router model as soon as it appears.
+            newSelected = Self.osaurusRouterValueCandidate(in: newOptions)?.id
         } else {
             newSelected = newOptions.firstChatCapable?.id
         }
@@ -892,6 +1094,17 @@ final class ChatSession: ObservableObject {
             return providerId == RemoteProviderManager.osaurusRouterProviderId
         }
         return false
+    }
+
+    /// Friendly name for the temporary first-run Cloud status shown alongside
+    /// local download progress. Router ids are slug-like; preserve the product
+    /// spelling for DeepSeek V4 Flash.
+    var temporaryCloudModelDisplayName: String? {
+        guard isOsaurusRouterSession, let item = selectedPickerItem else { return nil }
+        if RemoteProviderManager.isFirstRunOsaurusModelId(item.id) {
+            return "DeepSeek V4 Flash"
+        }
+        return item.displayName
     }
 
     /// Total micro-USD billed by the Osaurus Router across this session's turns.
@@ -2875,6 +3088,10 @@ final class ChatSession: ObservableObject {
         // invariant across {thinking on/off, tools yes/no, local/remote}.
         // See `RollingTokenRate` doc for the window-choice rationale.
         var rollingRate = RollingTokenRate()
+        // The engine's own decode rate: generated tokens over the real decode
+        // wall-clock, measured from the end of prefill. Used when the rolling
+        // window never converges (short replies) — see the final stamp below.
+        var engineTokensPerSecond: Double? = nil
         // Throttle UI updates of the live rolling rate. The stream may
         // produce 100+ deltas/sec; clamping rate refreshes to ~5Hz keeps
         // SwiftUI repaints cheap without losing visible smoothness.
@@ -3064,14 +3281,18 @@ final class ChatSession: ObservableObject {
                     }
                 } else if let stats = StreamingStatsHint.decode(delta) {
                     uiStatsHintCount += 1
-                    // Final stats from vmlx — captured for the post-loop
-                    // stamp. We DELIBERATELY do NOT overwrite the rolling
-                    // rate here: vmlx's `tokensPerSecond` is the full-
-                    // generation average, which has the same first-token-
-                    // amortisation problem the rolling rate was added to
-                    // fix. The rolling rate's steady-state value is used
-                    // for the visible bubble after the stream ends; vmlx's
-                    // tokenCount is preserved as the authoritative count.
+                    // Final stats from vmlx — captured for the post-loop stamp.
+                    // We do NOT overwrite the live rolling rate here: while the
+                    // window has converged it is the better steady-state read.
+                    // But we no longer THROW THIS AWAY either. It is a real
+                    // measurement (tokens over the decode wall-clock, timed from
+                    // the end of prefill), and it is the only honest number
+                    // available for replies too short for the window to converge
+                    // — the case that used to be filled in with an average over
+                    // the delivery burst and render as `2397.3 tok/s • 7 tokens`.
+                    if stats.tokensPerSecond.isFinite, stats.tokensPerSecond > 0 {
+                        engineTokensPerSecond = stats.tokensPerSecond
+                    }
                     currentTurn.generationTokenCount = stats.tokenCount
                     // Vmlx tells us the model never closed `</think>` before
                     // EOS / max_tokens. Persist on the turn so the bubble
@@ -3175,12 +3396,23 @@ final class ChatSession: ObservableObject {
         if let first = firstDeltaTime {
             currentTurn.timeToFirstToken = first.timeIntervalSince(streamStartTime)
             // Stamp the steady-state tok/s. Single source of truth across
-            // local-MLX, remote-API, with-tools, and thinking-on/off paths
-            // — the rolling rate observed every text-bearing delta during
-            // the loop above. Falls back to full-generation average if the
-            // response was too short for the warm-up to elapse (see
-            // `RollingTokenRate.finalRate`).
-            currentTurn.generationTokensPerSecond = rollingRate.finalRate()
+            // local-MLX, remote-API, with-tools, and thinking-on/off paths.
+            //
+            // Order matters, and every rung is a real measurement:
+            //   1. the converged rolling window — best steady-state read, and
+            //      immune to first-token amortisation;
+            //   2. the engine's decode rate — a true tokens-over-decode-wall
+            //      figure for replies too short for the window to converge;
+            //   3. nothing.
+            //
+            // Rung 3 is the point. There is no fourth rung that guesses. The old
+            // fallback divided the token count by the span between the first and
+            // last *arrival*, which for a short reply delivered in one coalesced
+            // burst is a few milliseconds — hence the impossible thousands of
+            // tok/s on a 7-token answer. A blank cell is honest; that number was
+            // not.
+            currentTurn.generationTokensPerSecond =
+                rollingRate.finalRate() ?? engineTokensPerSecond
             // Token count: prefer vmlx's authoritative count (already
             // assigned in the stats sentinel branch above) — only fall back
             // to our chars/4 estimate if the stats sentinel never fired
@@ -3601,7 +3833,7 @@ final class ChatSession: ObservableObject {
             promptQueue.drainAll()
         }
         // Resume from any prior clarify pause BEFORE the new run starts so
-        // the BTM streaming-state sink sees `.awaitingClarification`
+        // the BTM streaming-state sink sees `.waitingForInput`
         // cleared and the next streaming tick transitions the task back
         // to `.running` cleanly. Redundant nil → nil writes are
         // collapsed downstream by `removeDuplicates`.
@@ -3724,7 +3956,7 @@ final class ChatSession: ObservableObject {
                     let ttftTrace: TTFTTrace? = nil
                 #endif
                 do {
-                    let engine = chatEngineFactory()
+                    let engine = chatEngineFactory(source.inferenceSource)
                     let chatCfg = ChatConfigurationStore.load()
 
                     // MARK: - Capability Setup
@@ -3863,6 +4095,14 @@ final class ChatSession: ObservableObject {
                     let toolSpecs = isRemoteAgentTarget ? [] : context.tools
                     let isManualTools = liveToolMode == .manual
                     cachedContext = context
+
+                    // What this run may EXECUTE, seeded from what it actually EXPOSED.
+                    //
+                    // The model can name a tool it was never shown (the parser records any name
+                    // once a schema exists) and the registry used to run it. One object for the
+                    // whole run: `capabilities_load` legitimately GROWS this set mid-run while
+                    // `toolSpecs` stays frozen, so an immutable snapshot would kill that feature.
+                    let toolScope = ToolExecutionScope(exposed: toolSpecs)
 
                     // Persist the always-loaded snapshot back onto the session
                     // so the next send freezes the schema against tools that
@@ -4163,6 +4403,11 @@ final class ChatSession: ObservableObject {
                             // unrelated run; persist only in auto mode (manual
                             // mode keeps the user's explicit tool set fixed).
                             let newTools = await CapabilityLoadBuffer.shared.drain()
+                            // These tools were just made callable to the model — their schemas ride
+                            // in the tool result — while `toolSpecs` stays frozen. Authorize them
+                            // for the rest of THIS run, or the allowlist above would refuse the very
+                            // tools the model was just handed.
+                            toolScope.activate(newTools.map { $0.function.name })
                             if !newTools.isEmpty, !isManualTools, let sid = self.sessionId {
                                 let names = newTools.map { $0.function.name }
                                 let snapshot = context.alwaysLoadedNames
@@ -4279,22 +4524,27 @@ final class ChatSession: ObservableObject {
                             // `currentAgentId` is already pinned by the
                             // outer turn-level binding; we only need to
                             // layer per-tool-call session/turn/call ids.
-                            let resultText = try await ChatExecutionContext.$currentSessionId.withValue(
-                                sessionIdForTools
-                            ) {
-                                try await ChatExecutionContext.$currentAssistantTurnId.withValue(assistantTurn.id) {
-                                    try await ChatExecutionContext.$currentToolCallId.withValue(callId) {
-                                        // The combined-mode host-read scope +
-                                        // secret-read policy are bound centrally
-                                        // inside ToolRegistry.execute, so every
-                                        // entrypoint inherits them uniformly.
-                                        try await ToolRegistry.shared.execute(
-                                            name: inv.toolName,
-                                            argumentsJSON: inv.jsonArguments
-                                        )
+                            let resultText = try await ChatExecutionContext.$toolExecutionScope
+                                .withValue(toolScope) {
+                                    try await ChatExecutionContext.$currentSessionId.withValue(
+                                        sessionIdForTools
+                                    ) {
+                                        try await ChatExecutionContext.$currentAssistantTurnId
+                                            .withValue(assistantTurn.id) {
+                                                try await ChatExecutionContext.$currentToolCallId
+                                                    .withValue(callId) {
+                                                        // The combined-mode host-read scope +
+                                                        // secret-read policy are bound centrally
+                                                        // inside ToolRegistry.execute, so every
+                                                        // entrypoint inherits them uniformly.
+                                                        try await ToolRegistry.shared.execute(
+                                                            name: inv.toolName,
+                                                            argumentsJSON: inv.jsonArguments
+                                                        )
+                                                    }
+                                            }
                                     }
                                 }
-                            }
                             return await postProcessToolResult(inv, callId: callId, resultText: resultText)
                         } catch {
                             // Store rejection/error as the result so UI shows "Rejected" instead of hanging.
@@ -4435,14 +4685,16 @@ final class ChatSession: ObservableObject {
                             let results = await AgentToolLoop.runBatchInParallel(
                                 approved.map { ($0.invocation, $0.callId) }
                             ) { inv, callId in
-                                try await ChatExecutionContext.$currentSessionId.withValue(sessionIdForTools) {
-                                    try await ChatExecutionContext.$currentAssistantTurnId.withValue(turnIdForTools) {
-                                        try await ChatExecutionContext.$currentToolCallId.withValue(callId) {
-                                            try await ToolRegistry.shared.execute(
-                                                name: inv.toolName,
-                                                argumentsJSON: inv.jsonArguments,
-                                                permissionGateResolved: true
-                                            )
+                                try await ChatExecutionContext.$toolExecutionScope.withValue(toolScope) {
+                                    try await ChatExecutionContext.$currentSessionId.withValue(sessionIdForTools) {
+                                        try await ChatExecutionContext.$currentAssistantTurnId.withValue(turnIdForTools) {
+                                            try await ChatExecutionContext.$currentToolCallId.withValue(callId) {
+                                                try await ToolRegistry.shared.execute(
+                                                    name: inv.toolName,
+                                                    argumentsJSON: inv.jsonArguments,
+                                                    permissionGateResolved: true
+                                                )
+                                            }
                                         }
                                     }
                                 }
@@ -4664,6 +4916,7 @@ final class ChatSession: ObservableObject {
                                 ? self.windowState?.pinnedRemoteAgentEffectiveModel : nil
                             req.modelOptions =
                                 self.activeModelOptions.isEmpty ? nil : self.activeModelOptions
+                            req.backgroundModelLoad = (self.loadIntent == .background)
                             req.ttftTrace = ttftTrace
                             // Correlate the Insights log this send produces back to the
                             // assistant turn, so the per-message "Insights" button can
@@ -4676,8 +4929,16 @@ final class ChatSession: ObservableObject {
                             // and the router dedupes the charge; a genuinely new
                             // step gets a fresh key and bills normally. A user
                             // Retry starts a new run (new runId) and re-bills by
-                            // design.
-                            req.idempotencyKey = "\(runId.uuidString):\(attempt)"
+                            // design. `attempt` alone is not collision-safe:
+                            // budget-refunded iterations (data-movement relief,
+                            // empty-turn nudges) also reuse the counter but with
+                            // a CHANGED body, which the router 409s as
+                            // IDEMPOTENCY_CONFLICT — the body fingerprint suffix
+                            // keys those as distinct requests while identical
+                            // retryWithoutCharge re-POSTs still dedupe.
+                            req.idempotencyKey =
+                                "\(runId.uuidString):\(attempt):"
+                                + AgentToolLoop.stepIdempotencyFingerprint(messages: msgs)
                             debugLog(
                                 "send: attempt=\(attempt) model=\(req.model) tools=\(req.tools?.count ?? 0) sessionId=\(req.session_id ?? "nil")"
                             )
@@ -4930,6 +5191,7 @@ final class ChatSession: ObservableObject {
                                 isRemoteAgentTarget
                                 ? windowState?.pinnedRemoteAgentEffectiveModel : nil
                             finalReq.modelOptions = activeModelOptions.isEmpty ? nil : activeModelOptions
+                            finalReq.backgroundModelLoad = (loadIntent == .background)
                             finalReq.turnId = assistantTurn.id
                             // Distinct logical step (the post-cap summarizing
                             // call) so it bills once and dedupes on its own
@@ -5163,9 +5425,24 @@ struct ChatView: View {
     // In-conversation find (Cmd+F). Visibility lives on `windowState` so the
     // window-level key monitor can toggle it; query/matches are view state.
     @State private var findQuery: String = ""
-    /// Ordered turn ids whose content matches `findQuery`.
-    @State private var findMatchTurnIds: [UUID] = []
+    /// `findQuery` as of the last settled debounce. Everything downstream —
+    /// match recompute, cell highlighting, the first-match jump — keys off
+    /// this so nothing churns (or scrolls) on every keystroke.
+    @State private var debouncedFindQuery: String = ""
+    @State private var findDebounceTask: Task<Void, Never>?
+    /// Arms the spinner: fires if a recompute is still pending (user typing
+    /// continuously) beyond a grace period, so the field shows progress
+    /// instead of jumping on stale results.
+    @State private var findSpinnerTask: Task<Void, Never>?
+    @State private var isFindSearchPending: Bool = false
+    /// Off-main match scan in flight; superseded scans are cancelled.
+    @State private var findComputeTask: Task<Void, Never>?
+    /// Every `debouncedFindQuery` occurrence in the conversation, in order.
+    @State private var findMatches: [ChatFindMatch] = []
     @State private var findMatchIndex: Int = 0
+    /// Occurrence (within the turn) the last find jump targeted; nil when the
+    /// pending scroll request came from the minimap instead of the find bar.
+    @State private var scrollToFindOccurrence: Int?
     // What's New modal
     @State private var pendingWhatsNew: WhatsNewRelease? = nil
     @State private var showAutoSpeakPrompt: Bool = false
@@ -5444,19 +5721,6 @@ struct ChatView: View {
                 secondaryButton: .cancel(L("No"))
             )
             .themedAlert(
-                L("Keep this chat running?"),
-                isPresented: $windowState.showCloseConfirmation,
-                message:
-                    L(
-                        "The model is still generating a reply. Continue in the background and track progress in the menu-bar notch, or stop now."
-                    ),
-                buttons: [
-                    .primary(L("Continue in Background")) { windowState.confirmCloseInBackground() },
-                    .destructive(L("Stop and Close")) { windowState.confirmCloseAndStop() },
-                    .cancel(L("Cancel")),
-                ]
-            )
-            .themedAlert(
                 L("A local model is already running"),
                 isPresented: $windowState.showLocalModelBusyAlert,
                 message:
@@ -5576,6 +5840,13 @@ struct ChatView: View {
                                 windowState.startNewChat()
                             },
                             onDelete: { id in
+                                // Deleting a chat is an explicit destructive
+                                // action: cancel any registry-owned run still
+                                // driving it so a background completion can't
+                                // resurrect the deleted row on save.
+                                if let liveTask = BackgroundTaskManager.shared.liveTask(forSessionId: id) {
+                                    BackgroundTaskManager.shared.cancelTask(liveTask.id)
+                                }
                                 if session.sessionId == id {
                                     session.reset()
                                 }
@@ -5687,7 +5958,7 @@ struct ChatView: View {
                                 estimatedContextTokens: observedSession.estimatedContextTokens,
                                 contextBreakdown: observedSession.estimatedContextBreakdown,
                                 sessionSpendMicro: observedSession.sessionRouterSpendMicro,
-                                showSessionSpend: observedSession.isOsaurusRouterSession,
+                                isRouterBilledSession: observedSession.isOsaurusRouterSession,
                                 imageComposerSettings: $observedSession.imageComposerSettings,
                                 onSend: { manualText in
                                     if let manualText = manualText {
@@ -5769,6 +6040,15 @@ struct ChatView: View {
                                     ChatWindowManager.shared.closeWindow(id: windowState.windowId)
                                     // Show onboarding window
                                     AppDelegate.shared?.showOnboardingWindow()
+                                },
+                                onRetryConnection: {
+                                    // Reconnect the managed Osaurus Router and any
+                                    // enabled providers, then re-resolve the picker.
+                                    await RemoteProviderManager.shared.connectEnabledProviders()
+                                    await session.refreshPickerItems()
+                                },
+                                onOpenProviders: {
+                                    AppDelegate.shared?.showManagementWindow(initialTab: .providers)
                                 },
                             )
                         }
@@ -6227,6 +6507,11 @@ struct ChatView: View {
                 session.input = prompt
             },
             onOpenOnboarding: nil,
+            pendingLocalModelId: session.pendingLocalSetupModelId,
+            temporaryCloudModelName: session.temporaryCloudModelDisplayName,
+            // Automatic while local setup is pending: connects the Router on
+            // demand, with recovery UI if it cannot be reached.
+            onUseHostedWhilePending: { await session.adoptOsaurusRouterModelWhileLocalSetupPending() },
             activeDiscoveredAgent: windowState.selectedDiscoveredAgent,
             activeRelayAgent: windowState.selectedRelayAgent,
             remoteAgentAvatar: windowState.pinnedRemoteAgentAvatar,
@@ -6352,7 +6637,10 @@ struct ChatView: View {
                 scrollToTurnTrigger: scrollToTurnTrigger,
                 sessionRedactions: session.sessionRedactions,
                 searchHighlightQuery: windowState.isFindBarVisible
-                    ? findQuery.trimmingCharacters(in: .whitespacesAndNewlines) : ""
+                    ? debouncedFindQuery.trimmingCharacters(in: .whitespacesAndNewlines) : "",
+                searchCurrentTurnId: currentFindMatch?.turnId,
+                searchCurrentOccurrence: currentFindMatch?.occurrence ?? 0,
+                scrollToFindOccurrence: scrollToFindOccurrence
             )
             .safeAreaInset(edge: .top, spacing: 0) {
                 Color.clear
@@ -6378,8 +6666,10 @@ struct ChatView: View {
                         Spacer()
                         ChatFindBar(
                             query: $findQuery,
+                            focusTrigger: windowState.findBarFocusRequestID,
+                            isSearching: isFindSearchPending,
                             matchIndex: findMatchIndex,
-                            matchCount: findMatchTurnIds.count,
+                            matchCount: findMatches.count,
                             onPrevious: { advanceFindMatch(by: -1) },
                             onNext: { advanceFindMatch(by: 1) },
                             onClose: { windowState.isFindBarVisible = false }
@@ -6391,13 +6681,23 @@ struct ChatView: View {
                 }
                 .transition(.move(edge: .top).combined(with: .opacity))
                 .onChange(of: findQuery) { _, query in
-                    recomputeFindMatches(query: query, jumpToFirst: true)
+                    scheduleFindRecompute(query: query)
                 }
                 .onChange(of: session.turns.count) { _, _ in
-                    recomputeFindMatches(query: findQuery, jumpToFirst: false)
+                    recomputeFindMatches(query: debouncedFindQuery, jumpToFirst: false)
                 }
                 .onAppear {
+                    debouncedFindQuery = findQuery
                     recomputeFindMatches(query: findQuery, jumpToFirst: false)
+                }
+                .onDisappear {
+                    findDebounceTask?.cancel()
+                    findDebounceTask = nil
+                    findSpinnerTask?.cancel()
+                    findSpinnerTask = nil
+                    findComputeTask?.cancel()
+                    findComputeTask = nil
+                    isFindSearchPending = false
                 }
             }
 
@@ -6410,6 +6710,7 @@ struct ChatView: View {
                         activeMarkerId: activeMinimapTurnId,
                         onSelect: { turnId in
                             scrollToTurnId = turnId
+                            scrollToFindOccurrence = nil
                             scrollToTurnTrigger &+= 1
                         }
                     )
@@ -6558,6 +6859,13 @@ private struct IsolatedThreadView: View {
     var sessionRedactions: [String: String] = [:]
     /// Active in-conversation find query (Cmd+F); empty when the bar is closed.
     var searchHighlightQuery: String = ""
+    /// Turn owning the find bar's current match, nil when none is current.
+    var searchCurrentTurnId: UUID? = nil
+    /// Occurrence index of the current match within its turn's content.
+    var searchCurrentOccurrence: Int = 0
+    /// Occurrence the pending `scrollToTurnId` request targets; nil for
+    /// turn-level scrolls (minimap).
+    var scrollToFindOccurrence: Int? = nil
 
     var body: some View {
         let _ = ChatPerfTrace.shared.count("body.IsolatedThreadView")
@@ -6589,7 +6897,10 @@ private struct IsolatedThreadView: View {
             scrollToTurnId: scrollToTurnId,
             scrollToTurnTrigger: scrollToTurnTrigger,
             sessionRedactions: sessionRedactions,
-            searchHighlightQuery: searchHighlightQuery
+            searchHighlightQuery: searchHighlightQuery,
+            searchCurrentTurnId: searchCurrentTurnId,
+            searchCurrentOccurrence: searchCurrentOccurrence,
+            scrollToFindOccurrence: scrollToFindOccurrence
         )
     }
 }
@@ -6777,33 +7088,101 @@ extension ChatView {
     /// typing); otherwise the current match is preserved when it survives the
     /// recompute (used when streaming appends turns). Logic lives in
     /// `ChatFindMatcher` so the invariants are unit-tested.
-    private func recomputeFindMatches(query: String, jumpToFirst: Bool) {
-        let (state, jumpTo) = ChatFindMatcher.recompute(
-            query: query,
-            turns: session.turns,
-            previous: ChatFindState(matchTurnIds: findMatchTurnIds, matchIndex: findMatchIndex),
-            preserveCurrentMatch: !jumpToFirst
-        )
-        findMatchTurnIds = state.matchTurnIds
-        findMatchIndex = state.matchIndex
-        if let jumpTo {
-            scrollToTurnId = jumpTo
-            scrollToTurnTrigger &+= 1
+    /// Debounce find-query changes: recompute (and the first-match jump,
+    /// cell repaints, and scrolling that follow) runs only after a typing
+    /// pause, never per keystroke. If the user types continuously past a
+    /// grace period, a small spinner appears in the find field instead of
+    /// the view jumping around on stale results.
+    private func scheduleFindRecompute(query: String) {
+        findDebounceTask?.cancel()
+        findDebounceTask = Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(300))
+            guard !Task.isCancelled else { return }
+            debouncedFindQuery = query
+            // Spinner state clears when the (off-main) scan delivers, not
+            // here — a slow scan should keep showing progress.
+            recomputeFindMatches(query: query, jumpToFirst: true)
+            findDebounceTask = nil
+        }
+        // Arm the spinner once per typing burst; it fires only when the
+        // debounce hasn't settled within the grace period.
+        if findSpinnerTask == nil {
+            findSpinnerTask = Task { @MainActor in
+                try? await Task.sleep(for: .seconds(1))
+                guard !Task.isCancelled else { return }
+                isFindSearchPending = true
+            }
         }
     }
 
-    /// Step to the next/previous match, wrapping at both ends.
+    private func recomputeFindMatches(query: String, jumpToFirst: Bool) {
+        findComputeTask?.cancel()
+        // Snapshot on the main thread (O(turn count) — strings are CoW),
+        // scan off it: the scan is O(total conversation text) and must
+        // never block the main thread (Sentry app-hang).
+        let snapshot = session.turns.map {
+            ChatFindTurnSnapshot(id: $0.id, role: $0.role, content: $0.content)
+        }
+        let previous = ChatFindState(matches: findMatches, matchIndex: findMatchIndex)
+        findComputeTask = Task { @MainActor in
+            let (state, jumpTo) = await ChatFindMatcher.recomputeDetached(
+                query: query,
+                turns: snapshot,
+                previous: previous,
+                preserveCurrentMatch: !jumpToFirst
+            )
+            guard !Task.isCancelled else { return }
+            findMatches = state.matches
+            findMatchIndex = state.matchIndex
+            findSpinnerTask?.cancel()
+            findSpinnerTask = nil
+            isFindSearchPending = false
+            findComputeTask = nil
+            if let jumpTo {
+                scrollToFindMatch(jumpTo)
+            }
+        }
+    }
+
+    /// Step to the next/previous occurrence, wrapping at both ends. A
+    /// pending debounce is flushed first — Enter or an arrow key mid-typing
+    /// should search for what's in the field now, not navigate stale
+    /// matches from the previous query.
     private func advanceFindMatch(by delta: Int) {
+        if findDebounceTask != nil {
+            findDebounceTask?.cancel()
+            findDebounceTask = nil
+            findSpinnerTask?.cancel()
+            findSpinnerTask = nil
+            isFindSearchPending = false
+            debouncedFindQuery = findQuery
+            recomputeFindMatches(query: findQuery, jumpToFirst: true)
+            return
+        }
         let (state, jumpTo) = ChatFindMatcher.advance(
-            ChatFindState(matchTurnIds: findMatchTurnIds, matchIndex: findMatchIndex),
+            ChatFindState(matches: findMatches, matchIndex: findMatchIndex),
             by: delta
         )
-        findMatchTurnIds = state.matchTurnIds
+        findMatches = state.matches
         findMatchIndex = state.matchIndex
         if let jumpTo {
-            scrollToTurnId = jumpTo
-            scrollToTurnTrigger &+= 1
+            scrollToFindMatch(jumpTo)
         }
+    }
+
+    /// The occurrence the find bar currently points at; nil when the bar is
+    /// closed or there are no matches. Threaded into the thread view so the
+    /// current occurrence gets distinct highlighting.
+    private var currentFindMatch: ChatFindMatch? {
+        guard windowState.isFindBarVisible, findMatches.indices.contains(findMatchIndex)
+        else { return nil }
+        return findMatches[findMatchIndex]
+    }
+
+    private func scrollToFindMatch(_ match: ChatFindMatch) {
+        scrollToTurnId = match.turnId
+        scrollToFindOccurrence = match.occurrence
+        scrollToTurnTrigger &+= 1
     }
 
     // Key monitor for Esc. Dismisses transient UI in priority order
@@ -6829,6 +7208,9 @@ extension ChatView {
                     let windowState
                 else { return event }
                 windowState.isFindBarVisible = true
+                // Also fires when the bar is already open so Cmd+F always
+                // returns keyboard focus to the search field.
+                windowState.findBarFocusRequestID &+= 1
                 return nil
             }
 

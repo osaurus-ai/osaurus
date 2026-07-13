@@ -42,8 +42,9 @@ struct DeclarativeSearchBackendTests {
         )
         #expect(built.url == "https://api.tavily.com/search")
         #expect(built.headers["Content-Type"] == "application/json")
+        #expect(built.headers["Authorization"] == "Bearer tvly-test")
         let body = try Self.bodyJSON(built)
-        #expect(body["api_key"] as? String == "tvly-test")
+        #expect(body["api_key"] == nil, "key travels in the Authorization header, not the body")
         #expect(body["query"] as? String == "swift")
         #expect(body["max_results"] as? Int == 5)
         #expect(body["search_depth"] as? String == "basic")
@@ -108,15 +109,47 @@ struct DeclarativeSearchBackendTests {
         #expect(built.url.contains("start=11"), "start is 1-based offset")
     }
 
-    @Test func kagiUsesBotAuthorizationHeader() throws {
+    @Test func kagiBuildsV1POSTWithBearerAuth() throws {
         let built = try DeclarativeSearchBackend.buildRequest(
             endpoint: Self.webEndpoint("kagi"),
+            request: SearchRequest(query: "swift", maxResults: 5),
+            secrets: ["api_key": "kagi-token"],
+            providerName: "Kagi"
+        )
+        #expect(built.url == "https://kagi.com/api/v1/search")
+        #expect(built.headers["Authorization"] == "Bearer kagi-token")
+        let body = try Self.bodyJSON(built)
+        #expect(body["query"] as? String == "swift")
+        #expect(body["workflow"] as? String == "search")
+        #expect(body["limit"] as? Int == 5)
+        #expect(body["page"] as? Int == 1)
+    }
+
+    @Test func kagiNewsEndpointUsesNewsWorkflow() throws {
+        let built = try DeclarativeSearchBackend.buildRequest(
+            endpoint: Self.newsEndpoint("kagi"),
             request: SearchRequest(query: "swift"),
             secrets: ["api_key": "kagi-token"],
             providerName: "Kagi"
         )
-        #expect(built.headers["Authorization"] == "Bot kagi-token")
-        #expect(built.url.contains("q=swift"))
+        let body = try Self.bodyJSON(built)
+        #expect(body["workflow"] as? String == "news")
+    }
+
+    @Test func youBuildsUnifiedV1SearchRequest() throws {
+        let request = SearchRequest(query: "swift", maxResults: 6, timeRange: "d")
+        let built = try DeclarativeSearchBackend.buildRequest(
+            endpoint: Self.webEndpoint("you"),
+            request: request,
+            secrets: ["api_key": "you-key"],
+            providerName: "You.com"
+        )
+        #expect(built.headers["X-API-Key"] == "you-key")
+        #expect(built.url.hasPrefix("https://ydc-index.io/v1/search?"))
+        #expect(built.url.contains("query=swift"))
+        #expect(built.url.contains("count=6"))
+        #expect(built.url.contains("freshness=day"))
+        #expect(built.body == nil)
     }
 
     @Test func siteAndFiletypeAugmentTheQuery() throws {
@@ -127,8 +160,8 @@ struct DeclarativeSearchBackendTests {
             secrets: ["api_key": "kagi-token"],
             providerName: "Kagi"
         )
-        let encoded = SearchHTML.urlEncode("swift site:arxiv.org filetype:pdf")
-        #expect(built.url.contains("q=\(encoded)"))
+        let body = try Self.bodyJSON(built)
+        #expect(body["query"] as? String == "swift site:arxiv.org filetype:pdf")
     }
 
     @Test func unresolvedSecretPlaceholderBecomesEmpty() {
@@ -244,12 +277,18 @@ struct DeclarativeSearchBackendTests {
         #expect(hits[0].engine == "brave_api")
     }
 
-    @Test func kagiResponseFiltersToOrganicResults() throws {
+    @Test func kagiResponseMapsBucketedResults() throws {
+        // v1 buckets results by type under `data`; the web endpoint reads
+        // only the `search` bucket.
         let fixture: [String: Any] = [
             "data": [
-                ["t": 0, "title": "Organic", "url": "https://a.example", "snippet": "s"],
-                ["t": 1, "title": "Related searches", "url": "", "snippet": ""],
-                ["t": 0, "title": "Organic 2", "url": "https://b.example", "snippet": "s2"],
+                "search": [
+                    ["title": "Organic", "url": "https://a.example", "snippet": "s", "time": "2026-01-01"],
+                    ["title": "Organic 2", "url": "https://b.example", "snippet": "s2"],
+                ],
+                "related_search": [
+                    ["title": "Related searches", "url": "https://kagi.com/related"]
+                ],
             ]
         ]
         let hits = DeclarativeSearchBackend.mapResponse(
@@ -259,15 +298,33 @@ struct DeclarativeSearchBackendTests {
             maxResults: 10
         )
         #expect(hits.map(\.title) == ["Organic", "Organic 2"])
+        #expect(hits[0].publishedDate == "2026-01-01")
+
+        let newsHits = DeclarativeSearchBackend.mapResponse(
+            ["data": ["news": [["title": "Headline", "url": "https://n.example", "snippet": "n"]]]],
+            mapping: Self.newsEndpoint("kagi").response,
+            engine: "kagi",
+            maxResults: 10
+        )
+        #expect(newsHits.map(\.title) == ["Headline"])
     }
 
     @Test func youResponseUsesFallbackFieldPaths() throws {
         let fixture: [String: Any] = [
-            "hits": [
-                // First item has `description`, second only `snippet` — the
-                // "description|snippet" fallback must catch both.
-                ["title": "A", "url": "https://a.example", "description": "desc"],
-                ["title": "B", "url": "https://b.example", "snippet": "snip"],
+            "results": [
+                "web": [
+                    // First item has `description`, second only `snippets` —
+                    // the "description|snippets" fallback must catch both.
+                    ["title": "A", "url": "https://a.example", "description": "desc"],
+                    [
+                        "title": "B", "url": "https://b.example",
+                        "snippets": ["First snippet.", "Second snippet."],
+                        "page_age": "2026-03-01",
+                    ],
+                ],
+                "news": [
+                    ["title": "N", "url": "https://n.example", "description": "news desc"]
+                ],
             ]
         ]
         let hits = DeclarativeSearchBackend.mapResponse(
@@ -276,7 +333,18 @@ struct DeclarativeSearchBackendTests {
             engine: "you",
             maxResults: 10
         )
-        #expect(hits.map(\.snippet) == ["desc", "snip"])
+        #expect(hits.map(\.title) == ["A", "B"])
+        #expect(hits[0].snippet == "desc")
+        #expect(hits[1].snippet == "First snippet. … Second snippet.")
+        #expect(hits[1].publishedDate == "2026-03-01")
+
+        let newsHits = DeclarativeSearchBackend.mapResponse(
+            fixture,
+            mapping: Self.newsEndpoint("you").response,
+            engine: "you",
+            maxResults: 10
+        )
+        #expect(newsHits.map(\.snippet) == ["news desc"])
     }
 
     @Test func serperNewsResponseParsesSourceDomain() throws {

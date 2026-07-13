@@ -202,7 +202,13 @@ public enum MemoryConfigurationStore: Sendable {
         // storage-migration recovery race showed this pattern can
         // permanently destroy user data.
         guard FileManager.default.fileExists(atPath: url.path) else {
-            return MemoryConfiguration()
+            // Cache the default so repeat loads skip the fileExists stat —
+            // view bodies call load() every render and the uncached
+            // missing-file path was a main-thread disk hit each time.
+            // save() replaces the cache when a config is first persisted.
+            let defaults = MemoryConfiguration()
+            lock.withLock { $0 = defaults }
+            return defaults
         }
         do {
             let data = try Data(contentsOf: url)

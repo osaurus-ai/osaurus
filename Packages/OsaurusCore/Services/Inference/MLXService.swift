@@ -284,6 +284,17 @@ actor MLXService: ToolCapableService {
         {
             issues.append("Model capability detection reports tool calling as unsupported.")
         }
+        // Production-serving block consults the capability ledger: the seed
+        // rule reproduces the old hardcoded ZAYA1-VL JANGTQ_K check exactly,
+        // and a measured `productionServing: pass` record (e.g. a future
+        // gauntlet run proving a fixed bundle) can clear it without a
+        // release. See `ModelCapabilityLedger`.
+        if let blockReason = ModelCapabilityLedger.productionServingBlockReason(
+            modelName: modelName, modelId: modelId)
+        {
+            issues.append(blockReason)
+        }
+
         if !issues.isEmpty {
             throw RuntimePolicyError(modelName: modelName, issues: issues)
         }

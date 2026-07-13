@@ -685,7 +685,22 @@ struct RuntimePolicySourceTests {
         // SSM/hybrid mixer (vmlx-swift#126), and the ZAYA tool-aware template
         // activation from source_model.architecture (vmlx-swift#127) that
         // stops JANGTQ ZAYA bundles leaking raw tool-call XML.
-        let expectedRuntimeHardenedRevision = "0d3444cad48f658103789cbf8fc9b13f4b7a80d4"
+        //
+        // Now also carries the cache-store memory budget on all four KV store
+        // paths and the Hunyuan bare-marker aliases (vmlx-swift#139), the
+        // host-scaled store margin plus the Hy3 reasoning-stamp demotion pin
+        // (#140), and the memory-safety level actually reaching the prefix-cache
+        // store (#141) -- the "Safety Level" slider used to be a stored field no
+        // resolver read, so it moved nothing.
+        //
+        // This assertion is a repin tripwire, and it earned its keep: PR #1986
+        // shipped titled "(+ vmlx repin)" carrying no repin at all, and the live
+        // gate run against that build proved only the osaurus-side change while
+        // appearing to bless the engine work too. Note the pin lives in FOUR
+        // files -- Package.swift, Packages/OsaurusCore/Package.resolved, and both
+        // xcworkspace Package.resolved files. Miss one and the app resolves a
+        // revision nobody proved.
+        let expectedRuntimeHardenedRevision = "8f731c2388daeab1c257303bf653a00218ee51dd"
         let manifestRevision = try Self.vmlxPinRevision(in: manifest)
         let workspaceRevision = try Self.vmlxPinRevision(in: workspaceResolved)
         let appRevision = try Self.vmlxPinRevision(in: appResolved)
@@ -2063,7 +2078,11 @@ struct RuntimePolicySourceTests {
             "Weight-size preflight must count known numbered shards and fall back to a shallow safetensors sum so unknown layouts cannot report 0 bytes."
         )
 
-        let loadStart = try #require(runtime.range(of: "func loadContainer(id: String, name: String)"))
+        // Anchor on the name only — the parameter list grows (it gained
+        // `intent:` for residency safety) and pinning the full signature makes
+        // this preflight-ordering test fail for reasons that have nothing to do
+        // with preflight ordering.
+        let loadStart = try #require(runtime.range(of: "func loadContainer("))
         let loadEnd = try #require(
             runtime.range(of: "let loadID = allocateLoadingTaskID()", range: loadStart.upperBound ..< runtime.endIndex)
         )
@@ -2078,8 +2097,14 @@ struct RuntimePolicySourceTests {
             loadPreflight.contains("let weightsBytes = Self.computeWeightsSizeBytes(at: localURL, modelName: name)")
         )
         #expect(
-            loadPreflight.contains("let loadFootprintBytes = Self.effectiveLoadFootprintBytes("),
-            "Routed mmap/JANGTQ loads must feed the RAM gate with vMLX's effective hot working set, not the whole safetensors shard total."
+            loadPreflight.contains("? weightsBytes")
+                && loadPreflight.contains(": Self.effectiveLoadFootprintBytes("),
+            "Routed mmap/JANGTQ loads must feed the RAM gate with vMLX's effective hot working set; materialized near-RAM-scale loads must budget the full weight size instead."
+        )
+        #expect(
+            loadPreflight.contains("!Self.resolveMemorySafetyLoadPlan(")
+                && loadPreflight.contains("refuseOnShortfall: willMaterialize"),
+            "Whether a load materializes must come from the resolved memory-safety plan (single source of truth with vmlx), and materialized loads must make the RAM verdict authoritative — proceeding into a shortfall aborts in a Metal completion handler instead of degrading."
         )
         // Feasibility gate + concurrent-load reservation must run before the
         // load task is allocated, so a cold load can't bypass RAM accounting.

@@ -1,0 +1,14 @@
+{
+  "id": "reasoning_channel.single-turn-clean-answer",
+  "domain": "reasoning_channel",
+  "label": "reasoning channel • single turn, clean visible answer, no marker leak",
+  "query": "What is 17 multiplied by 23? Give the number and one short sentence explaining how you computed it.",
+  "notes": "The baseline row for the domain: one reasoning-tempting turn (mental arithmetic) that must produce a non-empty visible answer with zero raw parser markers and a closed reasoning span. Works on both reasoning and instruct-only models (reasoningFieldExpected omitted → not scored). Off-CI (needs a model).",
+  "fixtures": {},
+  "expect": {
+    "reasoning": {
+      "maxTokens": 1024,
+      "visibleContains": ["391"]
+    }
+  }
+}

@@ -658,12 +658,6 @@ final class PluginManager {
     ) {
         let pluginId = loaded.plugin.id
 
-        if let url {
-            ToolSecretsKeychain.saveSecret(url, id: "tunnel_url", for: pluginId, agentId: agentId)
-        } else {
-            ToolSecretsKeychain.deleteSecret(id: "tunnel_url", for: pluginId, agentId: agentId)
-        }
-
         // Record the value we pushed so `handleTunnelStatusChange` can
         // dedup. Setting `[agentId] = nil` removes the entry; that's
         // intentional — an absent entry is treated as "last pushed = nil"
@@ -677,18 +671,39 @@ final class PluginManager {
         )
 
         if sync {
+            Self.persistTunnelURLSecret(url, pluginId: pluginId, agentId: agentId)
             loaded.plugin.notifyConfigBatchSync(
                 [(key: "tunnel_url", value: url ?? "")],
                 agentId: agentId,
                 force: force
             )
         } else {
-            loaded.plugin.notifyConfigChanged(
-                key: "tunnel_url",
-                value: url ?? "",
-                agentId: agentId,
-                force: force
-            )
+            // The keychain write blocks on security-daemon XPC and has
+            // hung the main thread for seconds on relay reconnects, so the
+            // fire-and-forget path persists and notifies off the main
+            // actor. The write lands before the notify so plugins that
+            // read the secret back see the new value.
+            Task.detached(priority: .userInitiated) {
+                Self.persistTunnelURLSecret(url, pluginId: pluginId, agentId: agentId)
+                loaded.plugin.notifyConfigChanged(
+                    key: "tunnel_url",
+                    value: url ?? "",
+                    agentId: agentId,
+                    force: force
+                )
+            }
+        }
+    }
+
+    private nonisolated static func persistTunnelURLSecret(
+        _ url: String?,
+        pluginId: String,
+        agentId: UUID
+    ) {
+        if let url {
+            ToolSecretsKeychain.saveSecret(url, id: "tunnel_url", for: pluginId, agentId: agentId)
+        } else {
+            ToolSecretsKeychain.deleteSecret(id: "tunnel_url", for: pluginId, agentId: agentId)
         }
     }
 

@@ -67,6 +67,52 @@ public actor HostAPIBridgeServer {
     }
 }
 
+// MARK: - Per-agent plugin config store
+
+/// File layout + precedence rules for `GET/POST /api/config/{key}`.
+/// Configuration is namespaced by the TOKEN-BOUND agent plus the plugin
+/// so two agents sharing a plugin can't read or overwrite each other's
+/// values. Reads fall back to the legacy shared `config.json` (written
+/// before per-agent scoping existed); writes only ever land in the
+/// agent-scoped file. Split out of the connection handler so the
+/// scoping contract is unit-testable without a socket.
+enum HostAPIBridgeConfigStore {
+    struct Files: Sendable {
+        /// Per-(agent, plugin) store — the only file writes ever land in.
+        let scoped: URL
+        /// Pre-scoping shared store — read-only fallback.
+        let legacy: URL
+    }
+
+    static func files(pluginName: String, agentId: UUID) -> Files {
+        let configDir = OsaurusPaths.pluginDataDirectory(for: pluginName)
+        return Files(
+            scoped: configDir.appendingPathComponent("config-\(agentId.uuidString).json"),
+            legacy: configDir.appendingPathComponent("config.json")
+        )
+    }
+
+    private static func readDict(_ url: URL) -> [String: String]? {
+        guard let data = try? Data(contentsOf: url) else { return nil }
+        return (try? JSONSerialization.jsonObject(with: data)) as? [String: String]
+    }
+
+    /// Agent-scoped value wins; the legacy shared file only fills gaps.
+    static func value(key: String, files: Files) -> String? {
+        readDict(files.scoped)?[key] ?? readDict(files.legacy)?[key]
+    }
+
+    /// Writes only ever touch the agent-scoped file.
+    static func write(key: String, value: String, files: Files) {
+        OsaurusPaths.ensureExistsSilent(files.scoped.deletingLastPathComponent())
+        var dict = readDict(files.scoped) ?? [:]
+        dict[key] = value
+        if let data = try? JSONSerialization.data(withJSONObject: dict, options: .osaurusCanonical) {
+            try? data.write(to: files.scoped, options: .atomic)
+        }
+    }
+}
+
 // MARK: - HTTP Handler
 
 /// Wraps a non-Sendable NIO context so it can cross Task boundaries.
@@ -274,12 +320,11 @@ private final class HostAPIBridgeHandler: ChannelInboundHandler, RemovableChanne
                 pluginName: pluginName
             )
         case "config":
-            // Config is keyed by plugin name only — no per-agent scoping
-            // today, so identity is intentionally not threaded through.
             return await handleConfig(
                 method: method,
                 remaining: remaining,
                 body: body,
+                identity: identity,
                 pluginName: pluginName
             )
         case "inference":
@@ -325,37 +370,29 @@ private final class HostAPIBridgeHandler: ChannelInboundHandler, RemovableChanne
         method: HTTPMethod,
         remaining: [String],
         body: String,
+        identity: SandboxBridgeTokenStore.Identity,
         pluginName: String?
     ) async -> BridgeResponse {
         guard let key = remaining.first, let pluginName = pluginName else {
             return .error(400, "Plugin and key required")
         }
 
-        // Plugin config is non-sensitive -- use a file-based JSON store, not Keychain
-        let configDir = OsaurusPaths.pluginDataDirectory(for: pluginName)
-        let configFile = configDir.appendingPathComponent("config.json")
+        // Plugin config is non-sensitive -- use a file-based JSON store, not
+        // Keychain. Namespaced by the TOKEN-BOUND agent plus the plugin so
+        // two agents sharing a plugin can't read or overwrite each other's
+        // configuration. Reads fall back to the legacy shared `config.json`
+        // so values written before per-agent scoping keep resolving; writes
+        // only ever land in the agent-scoped file.
+        let files = HostAPIBridgeConfigStore.files(pluginName: pluginName, agentId: identity.agentId)
 
         if method == .GET {
-            guard let data = try? Data(contentsOf: configFile),
-                let dict = try? JSONSerialization.jsonObject(with: data) as? [String: String],
-                let value = dict[key]
-            else {
-                return .error(404, "Config key not found")
+            if let value = HostAPIBridgeConfigStore.value(key: key, files: files) {
+                return .ok("{\"value\":\(jsonEscape(value))}")
             }
-            return .ok("{\"value\":\(jsonEscape(value))}")
+            return .error(404, "Config key not found")
         } else if method == .POST {
             if let parsed = parseJSON(body), let value = parsed["value"] as? String {
-                OsaurusPaths.ensureExistsSilent(configDir)
-                var dict: [String: String] = [:]
-                if let data = try? Data(contentsOf: configFile),
-                    let existing = try? JSONSerialization.jsonObject(with: data) as? [String: String]
-                {
-                    dict = existing
-                }
-                dict[key] = value
-                if let data = try? JSONSerialization.data(withJSONObject: dict, options: .osaurusCanonical) {
-                    try? data.write(to: configFile, options: .atomic)
-                }
+                HostAPIBridgeConfigStore.write(key: key, value: value, files: files)
                 return .ok()
             }
             return .error(400, "Body must contain {\"value\": \"...\"}")

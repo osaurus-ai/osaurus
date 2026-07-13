@@ -565,12 +565,34 @@ struct MLXModel: Identifiable, Codable {
             : String(format: "~%.1f GB", gb)
     }
 
-    /// Assess whether this model can run on the given hardware.
+    /// Comfortably inside the GPU working set, with room for a long-context KV
+    /// cache to grow.
+    private static let comfortableBudgetRatio: Double = 0.85
+    /// The most a working set may overshoot the budget and still be offered.
+    /// `GPUMemoryBudget.defaultBudgetGB` is the conservative split rather than
+    /// the larger one modern macOS advertises, and the recommended working set
+    /// is a recommendation rather than a cliff, so a small overshoot is
+    /// survivable — it just leaves nothing for other apps. Past this the
+    /// weights get paged.
+    private static let maxBudgetRatio: Double = 1.10
+
+    /// Assess whether this model can run on a Mac with `totalMemoryGB` of
+    /// unified memory.
+    ///
+    /// Sized against `GPUMemoryBudget`, not raw RAM. MLX loads weights into
+    /// Metal buffers and macOS silently pages anything past the GPU working
+    /// set, so a model measured against `physicalMemory` can look like it has
+    /// headroom to spare, load without a single error, and then decode at a
+    /// character every few seconds. A 35B MXFP8 bundle needs ~42 GB and a
+    /// 48 GB Mac budgets only ~36 GB to the GPU: 89% of RAM, but 119% of what
+    /// it can actually hold.
     func compatibility(totalMemoryGB: Double) -> ModelCompatibility {
         guard let required = estimatedMemoryGB, totalMemoryGB > 0 else { return .unknown }
-        let ratio = required / totalMemoryGB
-        if ratio < 0.75 { return .compatible }
-        if ratio < 0.95 { return .tight }
+        let budget = GPUMemoryBudget.budgetGB(physicalMemoryGB: totalMemoryGB)
+        guard budget > 0 else { return .unknown }
+        let ratio = required / budget
+        if ratio <= Self.comfortableBudgetRatio { return .compatible }
+        if ratio <= Self.maxBudgetRatio { return .tight }
         return .tooLarge
     }
 
