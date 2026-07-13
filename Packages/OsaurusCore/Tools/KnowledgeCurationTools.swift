@@ -376,7 +376,8 @@ final class ProposeKnowledgeUpdateTool: OsaurusTool, PermissionedTool, @unchecke
         + "document) as a PENDING proposal. The collection is never "
         + "modified directly — the user reviews and approves proposals in "
         + "the Knowledge tab. Curator agents only. Pass the complete new "
-        + "markdown, not a diff."
+        + "markdown, not a diff. Keep the document's existing frontmatter "
+        + "(type, title, tags) unless the change is specifically about it."
 
     /// Proposals are drafts, but they queue a corpus mutation for
     /// approval — keep the human in the loop at call time too.
@@ -502,10 +503,30 @@ final class ProposeKnowledgeUpdateTool: OsaurusTool, PermissionedTool, @unchecke
         // new or ambiguous path falls back to the `collection` hint.
         let collectionId: String
         let collectionName: String
+        var proposalContent = newContent
         switch KnowledgeCurationToolSupport.locateDocument(relPath: relPath, in: collections, tool: name) {
         case .success(let match):
             collectionId = match.collection.id.uuidString
             collectionName = match.collection.name
+            // Guard against a rewrite silently dropping the document's
+            // frontmatter (type/title/tags): if the draft carries none but the
+            // existing document has it, re-attach the original block so an
+            // approved curation can't degrade the doc's OKF classification. A
+            // draft that DOES carry frontmatter is left as-is, so an intentional
+            // metadata change still applies.
+            let draftHasFrontmatter =
+                Skill.splitFrontmatter(newContent)?.frontmatterLines.isEmpty == false
+            if !draftHasFrontmatter {
+                let fileURL = match.collection.folderURL.appendingPathComponent(relPath)
+                if let existing = try? String(contentsOf: fileURL, encoding: .utf8),
+                    let split = Skill.splitFrontmatter(existing),
+                    !split.frontmatterLines.isEmpty
+                {
+                    proposalContent =
+                        "---\n" + split.frontmatterLines.joined(separator: "\n") + "\n---\n\n"
+                        + newContent
+                }
+            }
         case .failure(let envelope):
             // Not a single existing doc. Narrow by the hint when given; an
             // unknown hint is a real error here since it can't pin anything.
@@ -570,7 +591,7 @@ final class ProposeKnowledgeUpdateTool: OsaurusTool, PermissionedTool, @unchecke
                 ticketId: ticketId,
                 collectionId: collectionId,
                 relPath: relPath,
-                newContent: newContent,
+                newContent: proposalContent,
                 rationale: rationale,
                 createdBy: agentId.uuidString
             )
