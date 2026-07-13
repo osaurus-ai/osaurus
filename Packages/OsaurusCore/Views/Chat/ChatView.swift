@@ -140,7 +140,7 @@ final class ChatSession: ObservableObject {
     /// for a clarify question. Cleared by `send(...)` before the next
     /// user turn so the loop can resume cleanly. Observed by
     /// `BackgroundTaskManager.observeChatTask` to flip the task status to
-    /// `.awaitingClarification`, emit the type-3 CLARIFICATION event with
+    /// `.waitingForInput`, emit the type-3 CLARIFICATION event with
     /// the parsed payload to the source plugin, and suppress the spurious
     /// COMPLETED that would otherwise fire when `isStreaming` goes false
     /// on the intercept.
@@ -3833,7 +3833,7 @@ final class ChatSession: ObservableObject {
             promptQueue.drainAll()
         }
         // Resume from any prior clarify pause BEFORE the new run starts so
-        // the BTM streaming-state sink sees `.awaitingClarification`
+        // the BTM streaming-state sink sees `.waitingForInput`
         // cleared and the next streaming tick transitions the task back
         // to `.running` cleanly. Redundant nil → nil writes are
         // collapsed downstream by `removeDuplicates`.
@@ -5721,19 +5721,6 @@ struct ChatView: View {
                 secondaryButton: .cancel(L("No"))
             )
             .themedAlert(
-                L("Keep this chat running?"),
-                isPresented: $windowState.showCloseConfirmation,
-                message:
-                    L(
-                        "The model is still generating a reply. Continue in the background and track progress in the menu-bar notch, or stop now."
-                    ),
-                buttons: [
-                    .primary(L("Continue in Background")) { windowState.confirmCloseInBackground() },
-                    .destructive(L("Stop and Close")) { windowState.confirmCloseAndStop() },
-                    .cancel(L("Cancel")),
-                ]
-            )
-            .themedAlert(
                 L("A local model is already running"),
                 isPresented: $windowState.showLocalModelBusyAlert,
                 message:
@@ -5853,6 +5840,13 @@ struct ChatView: View {
                                 windowState.startNewChat()
                             },
                             onDelete: { id in
+                                // Deleting a chat is an explicit destructive
+                                // action: cancel any registry-owned run still
+                                // driving it so a background completion can't
+                                // resurrect the deleted row on save.
+                                if let liveTask = BackgroundTaskManager.shared.liveTask(forSessionId: id) {
+                                    BackgroundTaskManager.shared.cancelTask(liveTask.id)
+                                }
                                 if session.sessionId == id {
                                     session.reset()
                                 }

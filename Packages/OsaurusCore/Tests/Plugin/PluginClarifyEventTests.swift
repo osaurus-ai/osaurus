@@ -7,7 +7,7 @@
 //   1. `serializeClarificationEvent` (pure) — payload shape, options-key
 //      omission for free-form questions, allow_multiple round-trip.
 //   2. `BackgroundTaskManager` bridge — `ChatSession.awaitingClarify`
-//      transitions the task to `.awaitingClarification` and SUPPRESSES
+//      transitions the task to `.waitingForInput` and SUPPRESSES
 //      the spurious COMPLETED event that previously fired the moment
 //      the chat-layer intercept yielded the iteration loop.
 //   3. End-to-end emission through a fake `LoadedPlugin` — the plugin
@@ -103,7 +103,7 @@ struct BackgroundTaskClarifyObserverTests {
     }
 
     /// Setting `awaitingClarify` while streaming flips the task to
-    /// `.awaitingClarification`. The status carries through to the
+    /// `.waitingForInput`. The status carries through to the
     /// streaming-end branch so `markCompleted` is skipped.
     @Test
     func awaitingClarifySet_transitionsStatus() async throws {
@@ -116,10 +116,10 @@ struct BackgroundTaskClarifyObserverTests {
             ClarifyPayload(question: "Use Postgres or SQLite?", options: [], allowMultiple: false)
         try await Task.sleep(for: .milliseconds(10))
 
-        #expect(state.status == .awaitingClarification)
+        #expect(state.status == .waitingForInput)
     }
 
-    /// Streaming-end while `state.status == .awaitingClarification` MUST
+    /// Streaming-end while `state.status == .waitingForInput` MUST
     /// NOT mark the task completed. This is the regression guard for the
     /// Telegram-bot bug where COMPLETED was firing with the clarify
     /// envelope as `output`.
@@ -137,14 +137,14 @@ struct BackgroundTaskClarifyObserverTests {
         state.chatSession?.isStreaming = false
         try await Task.sleep(for: .milliseconds(10))
 
-        #expect(state.status == .awaitingClarification)
+        #expect(state.status == .waitingForInput)
     }
 
     /// After the user answers (clearing `awaitingClarify`) the loop
     /// resumes, isStreaming flips back to true, and a subsequent
     /// streaming-end DOES mark the task completed normally. Guards
     /// against an over-broad fix that would leave the task stuck in
-    /// `.awaitingClarification` forever.
+    /// `.waitingForInput` forever.
     @Test
     func resumeAfterClarify_thenStreamingEnd_marksCompleted() async throws {
         let (state, mgr) = makeObservedState()
@@ -162,7 +162,7 @@ struct BackgroundTaskClarifyObserverTests {
         state.chatSession?.isStreaming = false
         try await Task.sleep(for: .milliseconds(10))
 
-        #expect(state.status == .completed(success: true, summary: "Chat completed"))
+        #expect(state.status == .completed(summary: "Chat completed"))
     }
 }
 

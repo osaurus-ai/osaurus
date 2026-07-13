@@ -45,18 +45,17 @@ final class ChatWindowState: ObservableObject {
     // MARK: - Identity & Session
 
     let windowId: UUID
-    let session: ChatSession
+    /// The session this window currently displays. Replaceable: switching
+    /// chats while a run is in flight detaches the running session into the
+    /// `BackgroundTaskManager` registry (execution continues) and installs a
+    /// different `ChatSession` here. `@Published` so the window root view can
+    /// rebuild `ChatView` around the new instance.
+    @Published private(set) var session: ChatSession
     let foundationModelAvailable: Bool
 
     // MARK: - View State
 
     @Published var showSidebar: Bool = false
-
-    /// Drives the in-chat "Keep this chat running?" confirmation overlay
-    /// that intercepts a close while `session.isStreaming` is true. Set
-    /// from `ChatWindowManager.shouldAllowClose`; cleared by the alert's
-    /// button actions in `ChatView`.
-    @Published var showCloseConfirmation: Bool = false
 
     /// Drives the "a local model is already running in another window" alert
     /// raised when the user tries to start a second local generation. Only one
@@ -193,6 +192,9 @@ final class ChatWindowState: ObservableObject {
         self.cachedAgentDisplayName = Self.displayName(for: cachedActiveAgent)
         decodeBackgroundImageAsync(themeConfig: theme.customThemeConfig)
 
+        // Re-link the adopted session to this window so busy alerts and
+        // Mode 2 routing reach the view that now displays it.
+        self.session.windowState = self
         self.session.onSessionChanged = { [weak self] in
             self?.refreshSessionsDebounced()
         }
@@ -223,21 +225,6 @@ final class ChatWindowState: ObservableObject {
         session.onSessionChanged = nil
     }
 
-    // MARK: - Close-Confirmation Actions
-
-    /// "Continue in Background" — adopt the live session as a background
-    /// task (visible in the notch) and dismiss the window.
-    func confirmCloseInBackground() {
-        BackgroundTaskManager.shared.detachChatWindow(windowId: windowId)
-        ChatWindowManager.shared.closeWindow(id: windowId)
-    }
-
-    /// "Stop and Close" — cancel the in-flight stream, then dismiss.
-    func confirmCloseAndStop() {
-        session.stop()
-        ChatWindowManager.shared.closeWindow(id: windowId)
-    }
-
     // MARK: - API
 
     var activeAgent: Agent { cachedActiveAgent }
@@ -250,7 +237,11 @@ final class ChatWindowState: ObservableObject {
         TTSService.shared.stop()
         if !session.turns.isEmpty { session.save() }
         adoptAgent(newAgentId)
-        session.reset(for: newAgentId)
+        if detachRunningSessionIfNeeded() {
+            installFreshSession(agentId: newAgentId)
+        } else {
+            session.reset(for: newAgentId)
+        }
         refreshSessions()
     }
 
@@ -258,7 +249,11 @@ final class ChatWindowState: ObservableObject {
         TTSService.shared.stop()
         if !session.turns.isEmpty { session.save() }
         flushCurrentSession()
-        session.reset(for: agentId)
+        if detachRunningSessionIfNeeded() {
+            installFreshSession(agentId: agentId)
+        } else {
+            session.reset(for: agentId)
+        }
         refreshSessions()
         // KPI: user started a new chat conversation. Count only.
         FeatureTelemetry.chatSessionStarted()
@@ -282,8 +277,74 @@ final class ChatWindowState: ObservableObject {
             adoptAgent(targetAgentId)
         }
 
-        session.load(from: resolvedData)
+        // Reopening a chat the registry is still running: attach the live
+        // in-memory session instead of hydrating a stale copy from disk —
+        // the stream keeps rendering into the reopened view, and disk state
+        // lags behind the in-flight turns.
+        if let liveTask = BackgroundTaskManager.shared.liveTask(forSessionId: sessionData.id),
+            let liveSession = liveTask.chatSession
+        {
+            detachRunningSessionIfNeeded()
+            attachSession(liveSession, registryTaskId: liveTask.id)
+        } else if detachRunningSessionIfNeeded() {
+            // The chat we're leaving keeps running in the background; the
+            // target loads into a brand-new session so the two never share
+            // transcript state.
+            installFreshSession(agentId: targetAgentId, loading: resolvedData)
+        } else {
+            session.load(from: resolvedData)
+        }
         refreshSessions()
+    }
+
+    // MARK: - Detach / Attach
+
+    /// Hand a mid-run session over to the `BackgroundTaskManager` registry so
+    /// its execution lifecycle survives this window moving to another chat
+    /// (or closing). Returns true when a handoff happened — the caller must
+    /// then install a replacement session rather than reuse (and thereby
+    /// stop) the detached one.
+    @discardableResult
+    private func detachRunningSessionIfNeeded() -> Bool {
+        guard session.isStreaming || session.awaitingClarify != nil else { return false }
+        guard BackgroundTaskManager.shared.adoptSession(session) != nil else { return false }
+        // The detached run no longer belongs to this window: break the weak
+        // window link so it can't push alerts into a view showing a
+        // different conversation, and stop routing its saves into this
+        // window's sidebar refresh.
+        session.windowState = nil
+        session.onSessionChanged = nil
+        BackgroundTaskManager.shared.unbindWindow(windowId)
+        return true
+    }
+
+    /// Install a brand-new `ChatSession` for this window (optionally loading
+    /// persisted turns), used after the previous one was detached to the
+    /// registry.
+    private func installFreshSession(agentId: UUID, loading data: ChatSessionData? = nil) {
+        let fresh = ChatSession()
+        fresh.windowState = self
+        fresh.agentId = agentId
+        fresh.applyInitialModelSelection()
+        if let data { fresh.load(from: data) }
+        fresh.onSessionChanged = { [weak self] in
+            self?.refreshSessionsDebounced()
+        }
+        session = fresh
+    }
+
+    /// Attach an existing (registry-owned) live session to this window so
+    /// the user sees the in-flight stream. Execution ownership stays with
+    /// the registry; the window is only a view. The window→task binding
+    /// makes close/switch detach instead of stop, and suppresses the
+    /// duplicate notch/toast surface while the chat is visible.
+    private func attachSession(_ liveSession: ChatSession, registryTaskId: UUID) {
+        liveSession.windowState = self
+        liveSession.onSessionChanged = { [weak self] in
+            self?.refreshSessionsDebounced()
+        }
+        session = liveSession
+        BackgroundTaskManager.shared.bindWindow(windowId, toTask: registryTaskId)
     }
 
     /// Switch every per-agent piece of window state (`agentId`,

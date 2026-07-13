@@ -118,6 +118,18 @@ public final class ChatWindowManager: NSObject, ObservableObject {
         sessionData: ChatSessionData?,
         showImmediately: Bool
     ) -> UUID {
+        // Reopening a chat the registry is still running: attach the live
+        // in-memory session (same `ChatSession` instance, stream keeps
+        // rendering) instead of hydrating a stale copy from disk.
+        if let sessionId = sessionData?.id,
+            let liveTask = BackgroundTaskManager.shared.liveTask(forSessionId: sessionId),
+            let context = liveTask.executionContext
+        {
+            let windowId = createWindowForContext(context, showImmediately: showImmediately)
+            BackgroundTaskManager.shared.bindWindow(windowId, toTask: liveTask.id)
+            return windowId
+        }
+
         let windowId = UUID()
         let effectiveAgentId = agentId ?? AgentManager.shared.activeAgentId
 
@@ -212,35 +224,17 @@ public final class ChatWindowManager: NSObject, ObservableObject {
         }
     }
 
-    /// Close a chat window by ID
+    /// Close a chat window by ID. Closing never stops execution: a mid-run
+    /// session is auto-detached into the `BackgroundTaskManager` registry by
+    /// `windowWillClose`, so there is no confirmation gate.
     public func closeWindow(id: UUID) {
         guard let window = nsWindows[id] else {
             print("[ChatWindowManager] No window found for ID \(id)")
             return
         }
 
-        // Check if we should allow the close (may show background task dialog)
-        guard shouldAllowClose(id: id) else {
-            return
-        }
-
         // Close will trigger the delegate which handles cleanup
         window.close()
-    }
-
-    /// Gate the close: if the session is mid-stream and not already
-    /// detached to a background task, surface the in-chat confirmation
-    /// overlay and tell AppKit to keep the window open. The user's pick
-    /// (Continue in Background / Stop and Close) re-enters via
-    /// `closeWindow(id:)`, which now passes this gate.
-    private func shouldAllowClose(id: UUID) -> Bool {
-        guard let state = windowStates[id] else { return true }
-        if BackgroundTaskManager.shared.isWindowDetachedToBackground(windowId: id) {
-            return true
-        }
-        guard state.session.isStreaming else { return true }
-        state.showCloseConfirmation = true
-        return false
     }
 
     /// Show/focus a window by ID
@@ -375,9 +369,15 @@ public final class ChatWindowManager: NSObject, ObservableObject {
         windows.values.filter { $0.agentId == agentId }
     }
 
-    /// Find a window by session ID
+    /// Find a window by session ID. Consults the live per-window state
+    /// (sessions are replaceable — a window can switch chats after
+    /// creation), falling back to the creation-time info for windows whose
+    /// state hasn't been registered yet.
     public func findWindow(bySessionId sessionId: UUID) -> ChatWindowInfo? {
-        windows.values.first { $0.sessionId == sessionId }
+        if let (windowId, _) = windowStates.first(where: { $0.value.session.sessionId == sessionId }) {
+            return windows[windowId]
+        }
+        return windows.values.first { $0.sessionId == sessionId }
     }
 
     /// Check if any windows are visible
@@ -385,13 +385,16 @@ public final class ChatWindowManager: NSObject, ObservableObject {
         nsWindows.values.contains { $0.isVisible }
     }
 
-    /// True when any open chat session is currently streaming a model
-    /// response. Read by `GenerativeGreetingPool` to defer background
-    /// refills while an interactive turn is in flight — both calls
-    /// share the same MLX context and unboxing them concurrently
-    /// degrades token-per-second on the user's active conversation.
+    /// True when any open chat session — or any active registry-owned
+    /// background run — is currently streaming a model response. Read by
+    /// `GenerativeGreetingPool` to defer background refills while a turn is
+    /// in flight — both calls share the same MLX context and unboxing them
+    /// concurrently degrades token-per-second on the user's active
+    /// conversation. Detached runs count too: their stream is just as
+    /// sensitive to contention as a windowed one.
     public var isAnySessionStreaming: Bool {
         windowStates.values.contains { $0.session.isStreaming }
+            || BackgroundTaskManager.shared.activeTaskSessions().contains { $0.isStreaming }
     }
 
     /// True while any chat window has a blocking in-chat prompt (secret or
@@ -404,20 +407,26 @@ public final class ChatWindowManager: NSObject, ObservableObject {
     }
 
     /// True when a chat window OTHER than `excluding` is currently streaming a
-    /// local model. Enforces one local generation at a time across windows: the
-    /// shared inference context can only run one, and loading a second would
-    /// evict the first and cancel its in-flight stream.
+    /// local model, or a detached registry task is. Enforces one local
+    /// generation at a time across windows AND background runs: the shared
+    /// inference context can only run one, and loading a second would evict
+    /// the first and cancel its in-flight stream.
     func isOtherWindowStreamingLocalModel(excluding windowId: UUID?) -> Bool {
-        windowStates.contains { id, state in
+        let excludedSession = windowId.flatMap { windowStates[$0]?.session }
+        return windowStates.contains { id, state in
             id != windowId && state.session.isStreamingLocalModel
         }
+            || BackgroundTaskManager.shared.isAnyDetachedTaskStreamingLocalModel(
+                excludingSession: excludedSession
+            )
     }
 
-    /// True when ANY chat window is currently streaming a local model. Used to
-    /// defer local empty-state greeting generation while a user stream is in
-    /// flight.
+    /// True when ANY chat window or detached registry task is currently
+    /// streaming a local model. Used to defer local empty-state greeting
+    /// generation while a user stream is in flight.
     var isAnyWindowStreamingLocalModel: Bool {
         windowStates.values.contains { $0.session.isStreamingLocalModel }
+            || BackgroundTaskManager.shared.isAnyDetachedTaskStreamingLocalModel()
     }
 
     /// Get the count of active windows
@@ -454,16 +463,20 @@ public final class ChatWindowManager: NSObject, ObservableObject {
     }
 
     /// Returns the set of local model names selected by currently-open chat
-    /// windows. Used as a "keep loaded for next interaction" hint for GC.
+    /// windows plus any active registry-owned (detached) background tasks.
+    /// Used as a "keep loaded for next interaction" hint for GC.
     ///
     /// Safety against unloading a model mid-stream is enforced by `ModelLease`
     /// inside `ModelRuntime.unloadModelsNotIn` — this set only needs to cover
-    /// the UX heuristic of "the user still has a window open with this model
-    /// selected, don't pay reload cost on their next keystroke".
+    /// the UX heuristic of "the user still has a window (or live background
+    /// run) with this model selected, don't pay reload cost on their next
+    /// keystroke".
     func activeLocalModelNames() -> Set<String> {
-        Set(
-            windowStates.values.compactMap { state in
-                guard let model = state.session.selectedModel,
+        let windowSessions = windowStates.values.map { $0.session }
+        let detachedSessions = BackgroundTaskManager.shared.activeTaskSessions()
+        return Set(
+            (windowSessions + detachedSessions).compactMap { session in
+                guard let model = session.selectedModel,
                     let found = ModelManager.findInstalledModel(named: model)
                 else { return nil }
                 return found.name
@@ -541,11 +554,9 @@ public final class ChatWindowManager: NSObject, ObservableObject {
         windowId: UUID,
         windowState: ChatWindowState
     ) -> NSWindow {
-        // Create ChatView with the existing window state
-        let chatView = ChatView(windowState: windowState)
-            .environment(\.theme, windowState.theme)
-
-        let hostingController = NSHostingController(rootView: chatView)
+        let hostingController = NSHostingController(
+            rootView: ChatWindowRootView(windowState: windowState)
+        )
 
         let panel = createChatPanel(windowId: windowId, windowState: windowState)
         panel.contentViewController = hostingController
@@ -570,11 +581,9 @@ public final class ChatWindowManager: NSObject, ObservableObject {
         )
         windowStates[windowId] = windowState
 
-        // Create ChatView with window state
-        let chatView = ChatView(windowState: windowState)
-            .environment(\.theme, windowState.theme)
-
-        let hostingController = NSHostingController(rootView: chatView)
+        let hostingController = NSHostingController(
+            rootView: ChatWindowRootView(windowState: windowState)
+        )
 
         let panel = createChatPanel(windowId: windowId, windowState: windowState)
         panel.contentViewController = hostingController
@@ -651,7 +660,7 @@ public final class ChatWindowManager: NSObject, ObservableObject {
         // items and the traffic-light area.
         toolbar.centeredItemIdentifier = ChatToolbarDelegate.agentItem
 
-        let toolbarDelegate = ChatToolbarDelegate(windowState: windowState, session: windowState.session)
+        let toolbarDelegate = ChatToolbarDelegate(windowState: windowState)
         toolbar.delegate = toolbarDelegate
         panel.chatToolbarDelegate = toolbarDelegate
         panel.toolbar = toolbar
@@ -713,13 +722,21 @@ public final class ChatWindowManager: NSObject, ObservableObject {
     }
 
     // Called by delegate to determine if window should close (for Cmd+W, etc.)
+    // Always true: closing a window only detaches the view — a mid-run
+    // session is handed to the BackgroundTaskManager registry below.
     fileprivate func windowShouldClose(id: UUID) -> Bool {
-        return shouldAllowClose(id: id)
+        return true
     }
 
     // Called by delegate when window will close
     fileprivate func windowWillClose(id: UUID) {
         print("[ChatWindowManager] Window \(id) will close")
+
+        // A window closing over a live run automatically detaches the
+        // session into the registry (execution continues; progress surfaces
+        // in the notch). No-op when idle or when the session is already
+        // registry-owned.
+        BackgroundTaskManager.shared.detachChatWindow(windowId: id)
 
         let isDetachedToBackground = BackgroundTaskManager.shared.isWindowDetachedToBackground(windowId: id)
 
@@ -730,10 +747,18 @@ public final class ChatWindowManager: NSObject, ObservableObject {
                 callback()
             }
             windowStates[id]?.cleanup()
+        } else if let state = windowStates[id] {
+            // The run survives the window: break only the view links so the
+            // detached session can't push alerts or sidebar refreshes into a
+            // dead window state. Execution is untouched.
+            if state.session.windowState === state {
+                state.session.windowState = nil
+            }
+            state.session.onSessionChanged = nil
         }
 
         // Clean up all local references. BackgroundTaskState independently retains
-        // the ChatWindowState it needs, so removing it here is always safe.
+        // the ChatSession/ExecutionContext it needs, so removing it here is always safe.
         sessionCallbacks.removeValue(forKey: id)
         windowDelegates.removeValue(forKey: id)
         windowStates.removeValue(forKey: id)
@@ -798,8 +823,32 @@ public final class ChatWindowManager: NSObject, ObservableObject {
         // Post notification for VAD resume
         NotificationCenter.default.post(name: .chatViewClosed, object: id)
 
+        // Now that no view shows the task, drop the window→task binding so
+        // the still-running work (and its eventual completion/failure)
+        // surfaces in the notch/toast.
+        BackgroundTaskManager.shared.unbindWindow(id)
+
         let msg = isDetachedToBackground ? " (detached to background)" : ""
         print("[ChatWindowManager] Window \(id) cleanup complete\(msg), remaining: \(windows.count)")
+    }
+}
+
+// MARK: - Window Root View
+
+/// Hosting-root wrapper that rebuilds `ChatView` whenever the window's
+/// `session` is swapped out (chat switch while a run keeps executing in the
+/// registry, or re-attaching a live background session). `ChatView` binds
+/// `@ObservedObject` to the session captured at struct construction, so it
+/// must be reconstructed — and `.id` keyed on session identity resets its
+/// per-conversation `@State` (scroll position, editing, find matches) the
+/// same way a fresh window would.
+private struct ChatWindowRootView: View {
+    @ObservedObject var windowState: ChatWindowState
+
+    var body: some View {
+        ChatView(windowState: windowState)
+            .id(ObjectIdentifier(windowState.session))
+            .environment(\.theme, windowState.theme)
     }
 }
 
@@ -836,11 +885,9 @@ private final class ChatToolbarDelegate: NSObject, NSToolbarDelegate {
     ]
 
     private weak var windowState: ChatWindowState?
-    private weak var session: ChatSession?
 
-    init(windowState: ChatWindowState, session: ChatSession) {
+    init(windowState: ChatWindowState) {
         self.windowState = windowState
-        self.session = session
         super.init()
     }
 
@@ -857,7 +904,7 @@ private final class ChatToolbarDelegate: NSObject, NSToolbarDelegate {
         itemForItemIdentifier itemIdentifier: NSToolbarItem.Identifier,
         willBeInsertedIntoToolbar flag: Bool
     ) -> NSToolbarItem? {
-        guard let windowState, let session else { return nil }
+        guard let windowState else { return nil }
 
         switch itemIdentifier {
         case Self.sidebarItem:
@@ -871,14 +918,14 @@ private final class ChatToolbarDelegate: NSObject, NSToolbarDelegate {
             return makeHostingItem(
                 identifier: itemIdentifier,
                 rootView:
-                    ChatToolbarAgentView(windowState: windowState, session: session)
+                    ChatToolbarAgentView(windowState: windowState)
             )
 
         case Self.actionItem:
             return makeHostingItem(
                 identifier: itemIdentifier,
                 rootView:
-                    ChatToolbarActionView(windowState: windowState, session: session)
+                    ChatToolbarActionView(windowState: windowState)
             )
 
         case Self.pinItem:
@@ -931,7 +978,6 @@ private struct ChatToolbarSidebarView: View {
 /// Agent selector pill that lives in the toolbar's centered slot.
 private struct ChatToolbarAgentView: View {
     @ObservedObject var windowState: ChatWindowState
-    @ObservedObject var session: ChatSession
 
     /// Incremented by the `/agent` slash command notification to pop the
     /// agent picker open from the input card.
@@ -1011,8 +1057,20 @@ extension Notification.Name {
 }
 
 /// Contextual action button: new-chat plus once a conversation exists.
+/// Split into an outer view (observing `windowState`, which republishes when
+/// the window's session is replaced) and an inner content view holding the
+/// `@ObservedObject` session, so the button tracks the CURRENT session's
+/// turns after a chat switch instead of a stale instance.
 private struct ChatToolbarActionView: View {
     @ObservedObject var windowState: ChatWindowState
+
+    var body: some View {
+        ChatToolbarActionContent(windowState: windowState, session: windowState.session)
+    }
+}
+
+private struct ChatToolbarActionContent: View {
+    let windowState: ChatWindowState
     @ObservedObject var session: ChatSession
 
     var body: some View {
