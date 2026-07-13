@@ -237,6 +237,26 @@ enum FeatureTelemetry {
         service.track("server_started")
     }
 
+    /// A sandbox VM boot reached `.running`. `kind` is the closed
+    /// `SandboxBootSample.BootKind` token (`cold` | `warm` |
+    /// `warmFallback`); `durationBucket` is a coarse
+    /// `SandboxStartupMetricsStore.latencyBucket` value. Raw durations,
+    /// image digests, and agent identity are never attached — full
+    /// fidelity stays in the local startup-metrics file.
+    static func sandboxBoot(
+        kind: String,
+        durationBucket: String,
+        service: TelemetryService = .shared
+    ) {
+        service.track(
+            "sandbox_boot",
+            [
+                "kind": kind,
+                "duration_bucket": durationBucket,
+            ]
+        )
+    }
+
     // MARK: - Feature adoption / scope
 
     /// A model finished downloading. The model id comes from the curated

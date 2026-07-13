@@ -724,9 +724,15 @@ extension AgentManager {
         // effect on the next provision, not mid-session.
         if let config {
             var sandboxConfig = SandboxConfigurationStore.load()
-            let desired = config.sandboxNetworkEnabled ? "outbound" : "none"
-            if sandboxConfig.network != desired {
-                sandboxConfig.network = desired
+            let desired = SandboxManager.reconciledNetworkSettings(
+                agentNetworkEnabled: config.sandboxNetworkEnabled,
+                allowedDomains: config.sandboxAllowedDomains
+            )
+            if sandboxConfig.network != desired.network
+                || sandboxConfig.allowedDomains != desired.allowedDomains
+            {
+                sandboxConfig.network = desired.network
+                sandboxConfig.allowedDomains = desired.allowedDomains
                 SandboxConfigurationStore.save(sandboxConfig)
             }
         }

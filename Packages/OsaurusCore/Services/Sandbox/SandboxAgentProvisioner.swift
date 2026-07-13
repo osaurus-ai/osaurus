@@ -97,24 +97,19 @@ public final class SandboxAgentProvisioner {
             let linuxName = "agent-\(agentName)"
             Self.ensureHostWorkspace(for: agentName)
             try await SandboxManager.shared.startContainer()
-            try await SandboxManager.shared.ensureAgentUser(agentName)
+            // One idempotent guest script covers what used to be four to
+            // six sequential vsock execs: agent user + home, plugins dir,
+            // bridge-token dir + token file (the shim reads it to
+            // authenticate to the host bridge — without it plugin calls
+            // fail closed), and the first-run `~/SOUL.md` seed (guarded
+            // by `test -f` so accumulated agent edits are never
+            // overwritten).
+            try await SandboxManager.shared.bootstrapAgent(
+                agentName: agentName,
+                agentId: UUID(uuidString: agentId),
+                soulSeedBody: Self.soulSeedBody
+            )
             SandboxAgentMap.register(linuxName: linuxName, agentId: agentId)
-            // Mint and write the per-agent bridge token now that the Linux
-            // user exists. The shim inside the guest reads this file to
-            // authenticate to the host bridge — without it, plugin calls
-            // fail closed instead of falling back to a default identity.
-            if let uuid = UUID(uuidString: agentId) {
-                try await SandboxManager.shared.provisionBridgeToken(
-                    linuxName: linuxName,
-                    agentId: uuid
-                )
-            }
-            // Materialise `~/SOUL.md` so the system prompt's SOUL section
-            // has something to render on the first turn. See
-            // `seedSoulIfMissing` for the idempotency + non-throwing
-            // contract — both matter here, after `provisionBridgeToken`
-            // already established the agent user.
-            await Self.seedSoulIfMissing(agentName: agentName)
             // Lazy reconcile: one cheap pip/npm listing per provision so the
             // installed-packages prompt line reflects real container state
             // (including packages a previous session added). Non-throwing —
@@ -124,6 +119,14 @@ public final class SandboxAgentProvisioner {
         inFlight[agentId] = task
         defer { inFlight[agentId] = nil }
         try await task.value
+        // Stamp boot → first-agent-ready on the current boot's local
+        // metrics sample. The store only accepts the first stamp per
+        // sample, so later agents (or re-provisions) are no-ops.
+        if let readyAt = await SandboxManager.shared.lastBootReadyAt {
+            SandboxStartupMetricsStore.recordFirstAgentReady(
+                seconds: Date().timeIntervalSince(readyAt)
+            )
+        }
     }
 
     public func unprovision(agentId: UUID) async -> SandboxAgentCleanupResult {
@@ -207,50 +210,10 @@ public final class SandboxAgentProvisioner {
         next session.
         """
 
-    /// Build the `test -f ... || cat > ... <<'SOUL_EOF' ... SOUL_EOF`
-    /// script that guards the seed write. Exposed (instead of inlined
-    /// in `seedSoulIfMissing`) so unit tests can pin the script shape
-    /// without needing a real container — the integration test boots
-    /// a container to verify behaviour, but the unit test catches
-    /// regressions in the heredoc / guard wording on every CI run.
-    ///
-    /// Single-quoted heredoc (`'SOUL_EOF'`) disables `$` / backtick /
-    /// `\` expansion inside the body, so the seed text lands byte-exact.
-    nonisolated static func soulSeedScript() -> String {
-        """
-        test -f "$HOME/SOUL.md" || cat > "$HOME/SOUL.md" <<'SOUL_EOF'
-        \(soulSeedBody)
-        SOUL_EOF
-        """
-    }
-
-    /// Idempotently seed `~/SOUL.md` for the agent. Runs inside the
-    /// container as `agent-<agentName>` so the file ends up owned by
-    /// the agent user without a separate `chown` hop.
-    ///
-    /// - Idempotency: shell `test -f "$HOME/SOUL.md" ||` guards the
-    ///   heredoc, so a soul the agent has accumulated edits to is
-    ///   never overwritten on subsequent provisions.
-    /// - Failure handling: log + return. A failed seed is recoverable
-    ///   (the read path simply emits no section); we must not block
-    ///   agent provisioning on it.
-    nonisolated static func seedSoulIfMissing(agentName: String) async {
-        do {
-            let result = try await SandboxManager.shared.execAsAgent(
-                agentName,
-                command: soulSeedScript()
-            )
-            if !result.succeeded {
-                debugLog(
-                    "[Soul] seed write for agent-\(agentName) failed: \(result.stderr)"
-                )
-            }
-        } catch {
-            debugLog(
-                "[Soul] seed exec for agent-\(agentName) threw: \(error.localizedDescription)"
-            )
-        }
-    }
+    // The seed write itself lives in the batched per-agent bootstrap —
+    // see `SandboxManager.agentBootstrapScript`, which guards it with
+    // `[ ! -f .../SOUL.md ]` and a single-quoted heredoc so the body
+    // lands byte-exact and accumulated edits are never overwritten.
 
     // MARK: - Installed-package manifest reconcile
 
@@ -274,13 +237,21 @@ public final class SandboxAgentProvisioner {
         let venv = "\(home)/.venv"
         let nodeWorkdir = "\(home)/.osaurus/node_workspace"
 
+        // The two probes are independent — run them concurrently so the
+        // provision path pays one exec round-trip of latency, not two.
+        async let pipFuture = try? await SandboxManager.shared.execAsAgent(
+            agentName,
+            command: "'\(venv)/bin/pip' list --format=freeze"
+        )
+        async let npmFuture = try? await SandboxManager.shared.execAsAgent(
+            agentName,
+            command: "cat '\(nodeWorkdir)/package.json'"
+        )
+
         var pip: [String]? = nil
         // No `|| true`: when the venv doesn't exist the command exits
         // non-zero, so we leave `pip` nil and don't clobber prior records.
-        if let result = try? await SandboxManager.shared.execAsAgent(
-            agentName,
-            command: "'\(venv)/bin/pip' list --format=freeze"
-        ), result.succeeded {
+        if let result = await pipFuture, result.succeeded {
             pip = result.stdout
                 .split(separator: "\n")
                 .compactMap { line -> String? in
@@ -298,10 +269,7 @@ public final class SandboxAgentProvisioner {
         }
 
         var npm: [String]? = nil
-        if let result = try? await SandboxManager.shared.execAsAgent(
-            agentName,
-            command: "cat '\(nodeWorkdir)/package.json'"
-        ), result.succeeded,
+        if let result = await npmFuture, result.succeeded,
             let data = result.stdout.data(using: .utf8),
             let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
         {

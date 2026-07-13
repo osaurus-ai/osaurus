@@ -132,6 +132,18 @@ Emitted once when an agent run is initiated.
 Emitted when the local server transitions to running. No properties. (No port
 or bind address is attached.)
 
+### `sandbox_boot`
+
+Emitted once per successful sandbox VM boot, when provisioning reaches the
+running state. Full-fidelity phase timings stay in a local file
+(`~/.osaurus/container/startup-metrics.json`); only the coarse dimensions
+below are sent.
+
+| Property | Type | Values / meaning |
+|----------|------|------------------|
+| `kind` | string | `cold` (full image unpack), `warm` (reused rootfs), `warmFallback` (warm attempt failed, cold rebuild succeeded), or `template` (rootfs cloned copy-on-write from the immutable base template) |
+| `duration_bucket` | string | Coarse total-boot latency bucket: `lt_1s`, `1_5s`, `5_15s`, `15_60s`, `1_5m`, `gte_5m` |
+
 ### `app_launched`
 
 Emitted once at launch. No properties. Baseline signal for retention.

@@ -774,7 +774,22 @@ public final class MCPProviderManager: ObservableObject {
                         )
                     }
                 }
-                let runner = try SandboxStdioRunner(provider: provider)
+                // Scope the MCP subprocess to the calling agent (execution
+                // context when connect happens mid-turn, else the active
+                // agent) — never the shared "default" namespace. Provision
+                // first so the Linux user + bridge token exist; in
+                // allowlist egress mode the token is also the subprocess's
+                // proxy credential.
+                let agentId = ChatExecutionContext.currentAgentId ?? AgentManager.shared.activeAgent.id
+                let agentName = SandboxAgentProvisioner.linuxName(for: agentId.uuidString)
+                do {
+                    try await SandboxAgentProvisioner.shared.ensureProvisioned(agentId: agentId)
+                } catch {
+                    throw MCPStdioTransportError.processSpawnFailed(
+                        "Could not provision the sandbox agent: " + error.localizedDescription
+                    )
+                }
+                let runner = try SandboxStdioRunner(provider: provider, agentName: agentName)
                 let providerId = provider.id
                 await runner.setProcessExitHandler { [weak self] exitCode in
                     Task { @MainActor in

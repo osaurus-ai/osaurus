@@ -1,5 +1,5 @@
 {
-  "originHash" : "29f653794f5164794a13690a9003ab16c2d5c6eb5a3ddffb674fe834356bf6a3",
+  "originHash" : "daa9f42c6190a9220e7596b93afb04d84866bf25efb7709ba51e38d6d20980bd",
   "pins" : [
     {
       "identity" : "aachartkit-swift",
@@ -33,8 +33,8 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/apple/containerization.git",
       "state" : {
-        "revision" : "f1ee6f8b737ab8dffbd620bfa47283f6f0bc1822",
-        "version" : "0.31.0"
+        "revision" : "44bec8b9933bc491d0cbf44abac90a1f6aaebf6b",
+        "version" : "0.35.0"
       }
     },
     {

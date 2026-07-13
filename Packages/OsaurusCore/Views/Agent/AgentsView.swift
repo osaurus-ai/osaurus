@@ -1092,6 +1092,9 @@ struct AgentDetailView: View {
     /// it (the persisted bookmark on `Agent.hostWorkspaceBookmark` is the real
     /// grant). `nil` means no host folder is granted.
     @State private var hostWorkspacePath: String? = nil
+    /// Editable mirror of `AutonomousExecConfig.sandboxAllowedDomains`
+    /// (comma-joined). Committed (normalized + persisted) on submit.
+    @State private var sandboxAllowedDomainsText: String = ""
     /// Per-agent on/off for the chat empty-state generative greeting.
     /// Default off, like the other capability flags; the agent opts in
     /// from the Features tab. Drives whether the Empty State section
@@ -5173,6 +5176,10 @@ struct AgentDetailView: View {
                 updateAutonomousExec(from: execConfig) { $0.sandboxNetworkEnabled = networkOn }
             }
 
+            if execConfig?.sandboxNetworkEnabled ?? true {
+                sandboxAllowedDomainsField(execConfig: execConfig, interactive: interactive)
+            }
+
             featureCard(
                 title: "Background Processes",
                 subtitle:
@@ -5213,6 +5220,57 @@ struct AgentDetailView: View {
                 "Start the sandbox container from the Sandbox status bar to enable these."
             )
         }
+    }
+
+    /// Egress domain allowlist editor. Empty keeps unrestricted outbound
+    /// (today's default); a non-empty comma-separated list switches the
+    /// sandbox to host-only networking with the filtering proxy on the
+    /// next boot, limiting outbound connections to the listed domains
+    /// (`example.com` exact, `*.example.com` subdomains) plus domains the
+    /// agent's plugins declare.
+    @ViewBuilder
+    private func sandboxAllowedDomainsField(
+        execConfig: AutonomousExecConfig?,
+        interactive: Bool
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("Allowed Domains", bundle: .module)
+                .font(.system(size: 12, weight: .medium))
+                .foregroundColor(theme.primaryText)
+            TextField(
+                "Leave empty for unrestricted outbound",
+                text: $sandboxAllowedDomainsText
+            )
+            .textFieldStyle(.roundedBorder)
+            .font(.system(size: 12))
+            .disabled(!interactive)
+            .onSubmit { commitSandboxAllowedDomains(execConfig: execConfig) }
+            .onAppear {
+                sandboxAllowedDomainsText =
+                    execConfig?.sandboxAllowedDomains?.joined(separator: ", ") ?? ""
+            }
+            Text(
+                "Comma-separated (e.g. api.github.com, *.example.com). When set, sandbox traffic goes through a host proxy that only permits these domains. Takes effect on next sandbox start.",
+                bundle: .module
+            )
+            .font(.system(size: 11))
+            .foregroundColor(theme.tertiaryText)
+            .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(.leading, 2)
+        .opacity(interactive ? 1 : 0.5)
+    }
+
+    private func commitSandboxAllowedDomains(execConfig: AutonomousExecConfig?) {
+        let raw = sandboxAllowedDomainsText
+            .split(separator: ",")
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+        let normalized = SandboxEgressPolicy.normalizedAllowlist(raw)
+        updateAutonomousExec(from: execConfig) {
+            $0.sandboxAllowedDomains = normalized.isEmpty ? nil : normalized
+        }
+        sandboxAllowedDomainsText = normalized.joined(separator: ", ")
     }
 
     /// Small explanatory line shown under the sandbox toggles when they're

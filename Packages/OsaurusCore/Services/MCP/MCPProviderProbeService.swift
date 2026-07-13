@@ -351,7 +351,15 @@ public enum MCPProviderProbeService {
                         )
                     }
                 }
-                let runner = try SandboxStdioRunner(provider: provider)
+                // Probe runs under the same agent scoping as production
+                // connects: the calling agent's Linux user, provisioned
+                // first so user + bridge token exist.
+                let (agentId, agentName): (UUID, String) = await MainActor.run {
+                    let id = ChatExecutionContext.currentAgentId ?? AgentManager.shared.activeAgent.id
+                    return (id, SandboxAgentProvisioner.linuxName(for: id.uuidString))
+                }
+                try await SandboxAgentProvisioner.shared.ensureProvisioned(agentId: agentId)
+                let runner = try SandboxStdioRunner(provider: provider, agentName: agentName)
                 try await runner.start()
                 return (runner.transport, { await runner.stop() })
             #else

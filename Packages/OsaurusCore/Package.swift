@@ -10,10 +10,12 @@ let package = Package(
     ],
     dependencies: [
         .package(url: "https://github.com/apple/swift-nio.git", from: "2.88.0"),
-        // Keep package-local SwiftPM builds aligned with the workspace
-        // lockfiles. Containerization 0.32.x changed Process.kill's signal
-        // parameter type while the app CI graph is still pinned to 0.31.x.
-        .package(url: "https://github.com/apple/containerization.git", .upToNextMinor(from: "0.31.0")),
+        // Pinned to the 0.35 line — the same Containerization release Apple
+        // Container 1.1.0 ships — for the OCI `initfsReference` provisioning
+        // path, configurable VM overhead, filesystem freeze/thaw/trim, and
+        // the hardened mount/vmnet work. Keep the app workspace lockfiles in
+        // step when bumping.
+        .package(url: "https://github.com/apple/containerization.git", .upToNextMinor(from: "0.35.0")),
         .package(url: "https://github.com/modelcontextprotocol/swift-sdk.git", from: "0.12.0"),
         // MCP pulls EventSource transitively. Enable its AsyncHTTPClient
         // trait at the root so the target's conditional AsyncHTTPClient
