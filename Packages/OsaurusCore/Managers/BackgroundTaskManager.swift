@@ -978,6 +978,20 @@ public final class BackgroundTaskManager: ObservableObject {
             outputText: outputText
         )
         emitPluginEvent(state, type: eventType, json: json)
+        // Evict the finished task the same way the cancel path does
+        // (`cancelTask` -> `scheduleAutoFinalize`). Without this a completed
+        // *headless* run (schedule / plugin / HTTP — no window) is never
+        // removed from `backgroundTasks`, its observers are never cancelled,
+        // and its id lingers in `streamingObserved`. The next dispatch that
+        // reattaches by `externalSessionKey` (schedules reuse `schedule.id`)
+        // then collides with the zombie state: `awaitCompletion` short-
+        // circuits on the stale `.completed`, stacked observers double-fire
+        // streaming transitions, and leaked runs eventually saturate the
+        // execution slots so later fires queue and never start. Interactive
+        // runs avoid the leak via `openTaskWindow` -> `finalizeTask`; the
+        // 15s auto-finalize is the headless equivalent (and is cancelled by
+        // `finalizeTask` if a window opens the chat first).
+        scheduleAutoFinalize(state.id)
         recomputeSortedToastTasks()
         pumpQueue()
     }
