@@ -388,6 +388,41 @@ final class ProposeKnowledgeUpdateTool: OsaurusTool, PermissionedTool, @unchecke
     /// oversized-file skip so an approved proposal stays indexable.
     private static let maxContentBytes = 2 * 1024 * 1024
 
+    /// A curator that *read* the document first received it wrapped in
+    /// `read_knowledge`'s framing header — a `[Collection] path` line followed
+    /// by optional `title:`/`type:`/`tags:` lines and a blank separator. Weaker
+    /// models copy that header verbatim into their replacement content, which an
+    /// approval would then persist above the real body. Strip a leading framing
+    /// block so the leaked preamble never reaches disk. Conservative: only fires
+    /// when the first non-blank line is a bracketed name followed by ` ` (real
+    /// document bodies open with `#`, `---`, or prose, not `[name] …`).
+    static func strippingReadPreamble(_ content: String) -> String {
+        var lines = content.components(separatedBy: "\n")
+        var start = 0
+        while start < lines.count, lines[start].trimmingCharacters(in: .whitespaces).isEmpty {
+            start += 1
+        }
+        guard start < lines.count else { return content }
+        let header = lines[start]
+        guard header.hasPrefix("["), let close = header.firstIndex(of: "]") else { return content }
+        let inside = header[header.index(after: header.startIndex)..<close]
+        let afterClose = header.index(after: close)
+        guard !inside.trimmingCharacters(in: .whitespaces).isEmpty,
+            afterClose < header.endIndex, header[afterClose] == " "
+        else { return content }
+        var i = start + 1
+        while i < lines.count,
+            lines[i].hasPrefix("title: ") || lines[i].hasPrefix("type: ") || lines[i].hasPrefix("tags: ")
+        {
+            i += 1
+        }
+        if i < lines.count, lines[i].trimmingCharacters(in: .whitespaces).isEmpty {
+            i += 1
+        }
+        lines.removeSubrange(0..<i)
+        return lines.joined(separator: "\n")
+    }
+
     let parameters: JSONValue? = .object([
         "type": .string("object"),
         "additionalProperties": .bool(false),
@@ -542,9 +577,12 @@ final class ProposeKnowledgeUpdateTool: OsaurusTool, PermissionedTool, @unchecke
 
         // Resolve the target collection: an existing document pins it; a
         // new or ambiguous path falls back to the `collection` hint.
+        // Drop any read_knowledge framing header the model copied into the
+        // draft before it becomes the proposal body.
+        let cleanContent = Self.strippingReadPreamble(newContent)
         let collectionId: String
         let collectionName: String
-        var proposalContent = newContent
+        var proposalContent = cleanContent
         switch KnowledgeCurationToolSupport.locateDocument(relPath: relPath, in: collections, tool: name) {
         case .success(let match):
             collectionId = match.collection.id.uuidString
@@ -556,7 +594,7 @@ final class ProposeKnowledgeUpdateTool: OsaurusTool, PermissionedTool, @unchecke
             // draft that DOES carry frontmatter is left as-is, so an intentional
             // metadata change still applies.
             let draftHasFrontmatter =
-                Skill.splitFrontmatter(newContent)?.frontmatterLines.isEmpty == false
+                Skill.splitFrontmatter(cleanContent)?.frontmatterLines.isEmpty == false
             if !draftHasFrontmatter {
                 let fileURL = match.collection.folderURL.appendingPathComponent(relPath)
                 if let existing = try? String(contentsOf: fileURL, encoding: .utf8),
@@ -565,7 +603,7 @@ final class ProposeKnowledgeUpdateTool: OsaurusTool, PermissionedTool, @unchecke
                 {
                     proposalContent =
                         "---\n" + split.frontmatterLines.joined(separator: "\n") + "\n---\n\n"
-                        + newContent
+                        + cleanContent
                 }
             }
         case .failure(let envelope):
@@ -625,6 +663,14 @@ final class ProposeKnowledgeUpdateTool: OsaurusTool, PermissionedTool, @unchecke
                 )
             }
             ticketId = ticketArg
+        } else if let openMatch = (try? KnowledgeDatabase.shared.listTickets(
+            collectionIds: [collectionId], status: .open))?
+            .first(where: { $0.relPath == relPath })
+        {
+            // Model omitted `ticket_id` (a common local-model miss): auto-link an
+            // open ticket targeting this same document so approving the proposal
+            // resolves the drift report instead of leaving it stranded.
+            ticketId = openMatch.id
         }
 
         do {
