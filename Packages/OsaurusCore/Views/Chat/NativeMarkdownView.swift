@@ -764,7 +764,7 @@ final class NativeMarkdownView: NSView {
         isStreaming: Bool
     ) {
         // Traced: this runs per streaming tick and is the entry point of the
-        // markdown app-hang cluster (Sentry APPLE-MACOS-12B/124).
+        // markdown streaming app-hang cluster.
         ChatPerfTrace.shared.time("markdown.applySegments") {
             applySegmentsImpl(
                 segments,
@@ -823,8 +823,8 @@ final class NativeMarkdownView: NSView {
         isStreaming: Bool
     ) {
         // Traced separately from the enclosing `markdown.applySegments`
-        // window so the report splits the pure-text path (Sentry
-        // APPLE-MACOS-12B) out of the segment total.
+        // window so the report splits the pure-text path out of the
+        // segment total.
         ChatPerfTrace.shared.time("markdown.applyPureTextBlocks") {
             applyPureTextBlocksImpl(
                 blocks,

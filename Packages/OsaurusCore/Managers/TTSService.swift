@@ -34,9 +34,9 @@ public enum TTSModelState: Equatable {
 
 /// Owns the AVAudioEngine + player node and serializes every call to them on a
 /// private queue. Engine construction and `start()` make synchronous XPC
-/// round-trips to coreaudiod that stalled the main thread for seconds (Sentry
-/// APPLE-MACOS-11W, APPLE-MACOS-11N), so none of this may run on the main
-/// actor. `@unchecked Sendable`: all mutable state is confined to `queue`.
+/// round-trips to coreaudiod that stalled the main thread for seconds in
+/// production, so none of this may run on the main actor.
+/// `@unchecked Sendable`: all mutable state is confined to `queue`.
 final class TTSAudioPipeline: @unchecked Sendable {
     private let queue = DispatchQueue(label: "ai.osaurus.tts.audio", qos: .userInitiated)
     private let sourceFormat: AVAudioFormat
@@ -207,8 +207,8 @@ public final class TTSService: ObservableObject {
 
     /// All AVAudioEngine work lives here, serialized on the pipeline's own
     /// queue, because engine construction and `start()` block on coreaudiod
-    /// XPC (Sentry APPLE-MACOS-11W/11N). This class keeps only the published
-    /// UI state and the pending-buffer accounting on the main actor.
+    /// XPC. This class keeps only the published UI state and the
+    /// pending-buffer accounting on the main actor.
     private let pipeline = TTSAudioPipeline(
         format: AVAudioFormat(
             commonFormat: .pcmFormatFloat32,

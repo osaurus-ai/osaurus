@@ -317,10 +317,10 @@ final class StreamingDeltaProcessor {
     /// update — and that work is O(content length), so a fixed 16ms cadence
     /// makes the whole stream O(n²): ChatPerfTrace measured ~21s of
     /// main-thread work over a 259s markdown stream at ~25 syncs/s, with
-    /// 100ms single-sync peaks (the fleet-hardware app-hang cluster, Sentry
-    /// APPLE-MACOS-12B/123/124). Short responses — the common case — keep
-    /// the full-rate typewriter; long ones trade imperceptible reveal
-    /// granularity for a bounded per-second cost.
+    /// 100ms single-sync peaks (the fleet-hardware app-hang cluster). Short
+    /// responses — the common case — keep the full-rate typewriter; long
+    /// ones trade imperceptible reveal granularity for a bounded per-second
+    /// cost.
     private var syncIntervalMs: Double {
         switch contentLength + thinkingLength {
         case ..<2_000: return 16

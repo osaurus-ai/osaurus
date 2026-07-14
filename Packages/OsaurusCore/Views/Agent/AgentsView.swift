@@ -6215,8 +6215,8 @@ struct AgentDetailView: View {
 
     private func loadAgentSecrets() {
         // Keychain reads are securityd IPC round-trips (one per secret) and
-        // hung the appear path for 2+ seconds on slow machines (Sentry
-        // APPLE-MACOS-ZZ). Fetch off the main actor, publish the result back.
+        // hung the appear path for 2+ seconds on slow machines. Fetch off
+        // the main actor, publish the result back.
         let agentId = agent.id
         Task {
             let stored = await Task.detached(priority: .userInitiated) {

@@ -166,8 +166,7 @@ enum ChatSessionStore {
     /// path (`presentInitialWindow` → `ChatWindowState.init` →
     /// `ChatSessionsManager.shared` → `loadAll`) otherwise pays the encrypted
     /// SQLite open (Keychain read + WAL open + migrations) on the main
-    /// thread and trips the app-hang watchdog on slow disks
-    /// (Sentry APPLE-MACOS-11Y).
+    /// thread and trips the app-hang watchdog on slow disks.
     ///
     /// `ChatHistoryDatabase.open()` is idempotent and serialized on its own
     /// queue, so racing the main-thread `ensureOpen()` is safe — whichever

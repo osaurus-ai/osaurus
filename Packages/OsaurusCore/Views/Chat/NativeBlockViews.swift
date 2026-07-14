@@ -1107,8 +1107,8 @@ final class NativeMarkdownTableView: NSView {
         // tick triggers a layout pass on the cell, and unconditionally
         // re-measuring every cell of every visible table per tick was the
         // dominant markdown streaming cost (ChatPerfTrace: 4,536 relayouts /
-        // 7.8s over one stream; Sentry APPLE-MACOS-123). Content changes
-        // route through `configure`, which calls `relayout` directly.
+        // 7.8s over one stream). Content changes route through `configure`,
+        // which calls `relayout` directly.
         if bounds.width > 0.5, abs(bounds.width - lastRelayoutWidth) > 0.5 {
             relayout(width: bounds.width)
         }
@@ -1257,7 +1257,7 @@ final class NativeMarkdownTableView: NSView {
 
     private func relayout(width: CGFloat) {
         // Traced: table relayout during streaming is a suspected
-        // O(whole-table)-per-tick cost (Sentry APPLE-MACOS-123).
+        // O(whole-table)-per-tick cost.
         ChatPerfTrace.shared.time("markdown.tableRelayout") {
             relayoutImpl(width: width)
         }

@@ -603,9 +603,9 @@ public enum RemoteProviderConfigurationStore {
             encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
             let data = try encoder.encode(configuration)
             // Persist off the main thread — this store is @MainActor and the
-            // synchronous write hung the UI under disk pressure (Sentry
-            // APPLE-MACOS-12D). Tests using a path override read the file
-            // back immediately, so they write synchronously.
+            // synchronous write hung the UI under disk pressure. Tests using
+            // a path override read the file back immediately, so they write
+            // synchronously.
             ConfigDiskWriter.write(
                 data,
                 to: url,

@@ -1628,10 +1628,10 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
         }
         // Memory-starved machines hit the same multi-second SwiftUI
         // realizations the low-power/thermal guards exist for — the launch
-        // prewarms hung on devices with ~200MB free that were neither
-        // (Sentry APPLE-MACOS-11F/11Q). Available here counts free +
-        // inactive + speculative + purgeable, so a healthy machine with a
-        // big file cache still prewarm as before.
+        // prewarms hung in production on devices with ~200MB free that were
+        // neither. Available here counts free + inactive + speculative +
+        // purgeable, so a healthy machine with a big file cache still
+        // prewarms as before.
         return ChatResidencyHandoff.availableMemoryBytes() < 2 * 1024 * 1024 * 1024
     }
 
@@ -2474,7 +2474,7 @@ extension AppDelegate {
                         FeatureTelemetry.productHuntLaunchDialogClicked(action: "launch")
                         // `open` makes a synchronous XPC round-trip to
                         // LaunchServices that can block for seconds while the
-                        // browser cold-launches (Sentry APPLE-MACOS-11X);
+                        // browser cold-launches and hang the main thread;
                         // NSWorkspace is thread-safe, so fire it off main.
                         DispatchQueue.global(qos: .userInitiated).async {
                             NSWorkspace.shared.open(ProductHuntLaunchCampaign.launchURL)

@@ -146,9 +146,8 @@ enum ModelSizeCache {
         guard let data = try? JSONEncoder().encode(payload) else { return }
         // Off-main atomic write: `record` fires from model-list refreshes on
         // the main thread, and the synchronous write hung the UI under disk
-        // pressure (Sentry APPLE-MACOS-12C). Tests point `OsaurusPaths` at a
-        // fixture root and read the file back immediately, so they stay
-        // synchronous.
+        // pressure. Tests point `OsaurusPaths` at a fixture root and read
+        // the file back immediately, so they stay synchronous.
         ConfigDiskWriter.write(data, to: url, synchronous: OsaurusPaths.overrideRoot != nil)
     }
 }

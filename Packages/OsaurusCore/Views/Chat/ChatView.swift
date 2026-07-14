@@ -1327,8 +1327,8 @@ final class ChatSession: ObservableObject {
     /// Otherwise derives from the cached `ComposedContext` or a preview manifest.
     var estimatedContextBreakdown: ContextBreakdown {
         // Traced: computed inside ChatView body evaluation, so the report's
-        // call count reveals per-render recomputation (Sentry
-        // APPLE-MACOS-11P/126 both hung inside this path).
+        // call count reveals per-render recomputation (production app hangs
+        // have landed inside this path).
         ChatPerfTrace.shared.time("chat.estimatedContextBreakdown") {
             estimatedContextBreakdownImpl
         }

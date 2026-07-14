@@ -1376,8 +1376,8 @@ final class PluginManager {
 
     /// Serializes loading-marker file operations. Clearing is fire-and-forget
     /// off the caller's thread — the `unlink` stalled for 3+ seconds on slow
-    /// disks and hung the UI when the sweep ran on the main actor (Sentry
-    /// APPLE-MACOS-11Z) — while writes stay synchronous for crash durability.
+    /// disks and hung the UI when the sweep ran on the main actor — while
+    /// writes stay synchronous for crash durability.
     private nonisolated static let markerQueue = DispatchQueue(
         label: "ai.osaurus.plugin-loading-marker", qos: .utility)
 
