@@ -1624,8 +1624,15 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
         if info.isLowPowerModeEnabled { return true }
         switch info.thermalState {
         case .serious, .critical: return true
-        default: return false
+        default: break
         }
+        // Memory-starved machines hit the same multi-second SwiftUI
+        // realizations the low-power/thermal guards exist for — the launch
+        // prewarms hung on devices with ~200MB free that were neither
+        // (Sentry APPLE-MACOS-11F/11Q). Available here counts free +
+        // inactive + speculative + purgeable, so a healthy machine with a
+        // big file cache still prewarm as before.
+        return ChatResidencyHandoff.availableMemoryBytes() < 2 * 1024 * 1024 * 1024
     }
 
     @MainActor func prewarmStatusPanel() {
