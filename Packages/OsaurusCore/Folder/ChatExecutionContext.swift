@@ -179,4 +179,20 @@ public enum ChatExecutionContext {
     /// is unaffected. Module-internal so out-of-module callers cannot bind
     /// it.
     @TaskLocal static var isUnattendedDispatch: Bool = false
+
+    /// Identity a spawned subagent's KNOWLEDGE tools resolve grants and the
+    /// curator role against. A spawned worker keeps `currentAgentId` inherited
+    /// from its launcher (so budget/limiter/sandbox routing bill the launcher),
+    /// but knowledge is an access-control boundary that must follow the agent
+    /// actually running — otherwise a spawned helper would silently inherit its
+    /// launcher's collection grants and curator role. `TextSubagentKind` binds
+    /// this to the target agent's id for the duration of the child run; knowledge
+    /// tools read `knowledgeAgentId` (this when set, else `currentAgentId`).
+    /// Module-internal so out-of-module callers cannot rebind the boundary.
+    @TaskLocal static var knowledgeGrantAgentIdOverride: UUID? = nil
+
+    /// The agent identity knowledge tools use for grant / curator-role
+    /// resolution: the subagent override when a spawned worker is running, else
+    /// the normal `currentAgentId`.
+    static var knowledgeAgentId: UUID? { knowledgeGrantAgentIdOverride ?? currentAgentId }
 }

@@ -37,7 +37,7 @@ enum KnowledgeToolScope {
         tool: String,
         collectionName: String?
     ) async -> Resolution {
-        guard let agentId = ChatExecutionContext.currentAgentId else {
+        guard let agentId = ChatExecutionContext.knowledgeAgentId else {
             return .failure(
                 envelope: ToolEnvelope.failure(
                     kind: .rejected,

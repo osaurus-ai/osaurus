@@ -331,26 +331,34 @@ final class TextSubagentKind: SubagentKind, @unchecked Sendable {
             agentSpecs: agentToolSpecs
         )
 
-        let result = try await AgentSubagentRunner.run(
-            modelName: resolved.name,
-            seedMessages: seed,
-            maxTokens: budgets.maxDelegateTokens,
-            maxIterations: budgets.maxDelegateTurns,
-            deadline: deadline,
-            sessionId: sessionId,
-            temperature: temperature,
-            isInterrupted: { interrupt.isInterrupted },
-            toolset: toolset,
-            onProgress: { [feed] tokens, tokensPerSecond in
-                // Live "generating" row: coalesced in place by the feed, so
-                // long generations show advancing tokens + tok/s.
-                var detail = "\(tokens) tokens"
-                if let tokensPerSecond {
-                    detail += String(format: " · %.1f tok/s", tokensPerSecond)
+        // Knowledge tools inside the child resolve grants + curator role against
+        // the TARGET agent (isolation), not the inherited launcher identity that
+        // keeps billing budget/limiter to the launcher. `nil` for `spawn_model`
+        // (no agent, no knowledge tools) simply falls back to `currentAgentId`.
+        let result = try await ChatExecutionContext.$knowledgeGrantAgentIdOverride
+            .withValue(resolvedAgentId)
+        {
+            try await AgentSubagentRunner.run(
+                modelName: resolved.name,
+                seedMessages: seed,
+                maxTokens: budgets.maxDelegateTokens,
+                maxIterations: budgets.maxDelegateTurns,
+                deadline: deadline,
+                sessionId: sessionId,
+                temperature: temperature,
+                isInterrupted: { interrupt.isInterrupted },
+                toolset: toolset,
+                onProgress: { [feed] tokens, tokensPerSecond in
+                    // Live "generating" row: coalesced in place by the feed, so
+                    // long generations show advancing tokens + tok/s.
+                    var detail = "\(tokens) tokens"
+                    if let tokensPerSecond {
+                        detail += String(format: " · %.1f tok/s", tokensPerSecond)
+                    }
+                    feed.emitProgress("generating", step: tokens, detail: detail)
                 }
-                feed.emitProgress("generating", step: tokens, detail: detail)
-            }
-        )
+            )
+        }
         let elapsed = Date().timeIntervalSince(started)
 
         switch result.exit {

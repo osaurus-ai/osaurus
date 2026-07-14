@@ -127,7 +127,7 @@ final class FlagKnowledgeStaleTool: OsaurusTool, @unchecked Sendable {
         }
 
         let evidence = ((args["evidence"] as? String) ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-        let createdBy = ChatExecutionContext.currentAgentId?.uuidString ?? ""
+        let createdBy = ChatExecutionContext.knowledgeAgentId?.uuidString ?? ""
         do {
             let ticketId = try KnowledgeDatabase.shared.createTicket(
                 collectionId: collectionId,
@@ -301,7 +301,7 @@ final class UpdateKnowledgeTicketTool: OsaurusTool, @unchecked Sendable {
         }
 
         // Curator gate at execution time, same as propose.
-        guard let agentId = ChatExecutionContext.currentAgentId else {
+        guard let agentId = ChatExecutionContext.knowledgeAgentId else {
             return ToolEnvelope.failure(
                 kind: .rejected,
                 message: "Knowledge tools require an active agent context.",
@@ -540,7 +540,7 @@ final class ProposeKnowledgeUpdateTool: OsaurusTool, PermissionedTool, @unchecke
         }
 
         // Curator gate at execution time — the schema strip is not the boundary.
-        guard let agentId = ChatExecutionContext.currentAgentId else {
+        guard let agentId = ChatExecutionContext.knowledgeAgentId else {
             return ToolEnvelope.failure(
                 kind: .rejected,
                 message: "Knowledge tools require an active agent context.",

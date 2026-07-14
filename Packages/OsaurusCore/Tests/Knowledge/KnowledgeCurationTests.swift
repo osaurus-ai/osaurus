@@ -230,6 +230,25 @@ struct KnowledgeCurationToolsTests {
         #expect(result.contains("agent"))
     }
 
+    /// A spawned subagent keeps `currentAgentId` inherited from its launcher
+    /// (budget/limiter accounting), but its knowledge tools must resolve grants
+    /// and the curator role against the TARGET agent — otherwise a spawned
+    /// helper silently inherits its launcher's collection grants. The override
+    /// wins when set; otherwise resolution falls back to the running identity.
+    @Test
+    func knowledgeAgentIdPrefersSubagentOverride() {
+        let launcher = UUID()
+        let target = UUID()
+        ChatExecutionContext.$currentAgentId.withValue(launcher) {
+            #expect(ChatExecutionContext.knowledgeAgentId == launcher)
+            ChatExecutionContext.$knowledgeGrantAgentIdOverride.withValue(target) {
+                #expect(ChatExecutionContext.knowledgeAgentId == target)
+            }
+            // Override cleared → back to the running identity.
+            #expect(ChatExecutionContext.knowledgeAgentId == launcher)
+        }
+    }
+
     @Test
     func proposeIsDeniedOnExternalSurfaces() {
         #expect(ToolRegistry.externallyDeniedToolNames.contains("propose_knowledge_update"))
