@@ -105,15 +105,17 @@ struct FTS5MemorySearchTests {
             )
         )
 
-        // Full natural-language question: the FTS AND-match finds nothing,
-        // so the loose-term pass must surface the boat fact (and only it).
+        // Full natural-language question: the OR-with-prefix FTS recall
+        // (see `ftsMatchQuery`) surfaces the boat fact. A broad question may
+        // also pull in tangential facts that share common words, so assert
+        // the boat fact is recalled rather than a strict count (mirrors
+        // `transcriptSearchFindsKeywordsViaFTS`).
         let hits = try db.searchPinnedFactsText(
             query: "What is the name of my boat?",
             agentId: "a",
             limit: 5
         )
-        #expect(hits.count == 1)
-        #expect(hits.first?.content.contains("Peregrine Dusk") == true)
+        #expect(hits.contains { $0.content.contains("Peregrine Dusk") })
     }
 
     @Test
