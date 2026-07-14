@@ -468,9 +468,39 @@ final class TextSubagentKind: SubagentKind, @unchecked Sendable {
     /// only ever sees live tools.
     @MainActor
     static func agentChildToolSpecs(agentId: UUID) -> [Tool] {
-        let names = AgentManager.shared.effectiveEnabledToolNames(for: agentId) ?? []
+        let caps = AgentManager.shared.effectiveCapabilities(for: agentId)
+        let names = childToolNames(
+            manual: AgentManager.shared.effectiveEnabledToolNames(for: agentId) ?? [],
+            knowledgeEnabled: caps.knowledgeEnabled,
+            knowledgeCuratorEnabled: caps.knowledgeCuratorEnabled
+        )
         guard !names.isEmpty else { return [] }
-        return ToolRegistry.shared.specs(forTools: names.filter { !isExcludedChildTool($0) })
+        return ToolRegistry.shared.specs(forTools: names)
+    }
+
+    /// The tool NAMES a spawned child carries: the target agent's manual
+    /// allowlist plus the feature-gated knowledge/curator built-ins it has
+    /// enabled. Those built-ins are controlled by the Knowledge / Curator
+    /// toggles (not the tools list) so they never appear in `manualToolNames`;
+    /// folding them here mirrors the chat resolver, otherwise a spawned
+    /// knowledge/curator agent is silently tool-less. The grant boundary is
+    /// unchanged — collections resolve per-agent via `currentAgentId` at
+    /// execution, so the child sees only its OWN granted collections (and is
+    /// denied when it has none). Pure, so it is unit-testable without the
+    /// registry. Spawn-capability tools and `clarify` are dropped for children.
+    static func childToolNames(
+        manual: [String],
+        knowledgeEnabled: Bool,
+        knowledgeCuratorEnabled: Bool
+    ) -> [String] {
+        var names = manual
+        if knowledgeEnabled {
+            names.append(contentsOf: SystemPromptComposer.knowledgeToolNames)
+            if knowledgeCuratorEnabled {
+                names.append(contentsOf: SystemPromptComposer.knowledgeCuratorToolNames)
+            }
+        }
+        return Array(Set(names.filter { !isExcludedChildTool($0) }))
     }
 
     /// Build the child's toolset: the target agent's own tools (agent mode,
