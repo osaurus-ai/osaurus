@@ -146,7 +146,7 @@ public final class KnowledgeManager: ObservableObject {
     /// forever. If a pass hasn't returned within this window the id is
     /// dropped anyway; a genuinely slow (not wedged) pass just clears its
     /// indicator a little early.
-    private static let indexWatchdogSeconds: UInt64 = 120
+    nonisolated private static let indexWatchdogSeconds: UInt64 = 120
 
     public func scheduleIndex(of collection: KnowledgeCollection, force: Bool = false) {
         guard collection.isEnabled else { return }
@@ -174,7 +174,7 @@ public final class KnowledgeManager: ObservableObject {
     /// Await `pass`, but return after `indexWatchdogSeconds` regardless so a
     /// wedged pass can't hold the indexing indicator on indefinitely. The
     /// underlying pass is not cancellable; the watchdog only frees the caller.
-    private static func runIndexWithWatchdog(_ pass: @escaping () async -> Void) async {
+    nonisolated private static func runIndexWithWatchdog(_ pass: @escaping @Sendable () async -> Void) async {
         await withTaskGroup(of: Void.self) { group in
             group.addTask { await pass() }
             group.addTask { try? await Task.sleep(nanoseconds: indexWatchdogSeconds * 1_000_000_000) }
