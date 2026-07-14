@@ -112,6 +112,40 @@ struct KnowledgeCurationDatabaseTests {
         )
         #expect(try db.getProposal(id: id)?.ticketId == nil)
     }
+
+    /// C2: dismissing the sole proposal reopens its ticket. This covers the
+    /// state machine `KnowledgeCurationService.dismissProposal` drives — a
+    /// ticket that went `open → proposed` when a proposal was drafted must be
+    /// able to return to `open` (and re-match the flag-dedupe lookup) so the
+    /// drift report isn't lost when the reviewer rejects the fix.
+    @Test
+    func dismissedProposalReopensItsTicket() throws {
+        guard let db = makeDBOrSkip() else { return }
+        let ticketId = try db.createTicket(
+            collectionId: "c1", relPath: "wp.md", reason: "stale", evidence: "", createdBy: ""
+        )
+        let proposalId = try db.createProposal(
+            ticketId: ticketId,
+            collectionId: "c1",
+            relPath: "wp.md",
+            newContent: "# Updated",
+            rationale: "fix",
+            createdBy: "curator-1"
+        )
+        // Proposing moves the ticket out of the open-dedupe pool.
+        try db.updateTicketStatus(id: ticketId, status: .proposed)
+        #expect(try db.openTicket(collectionId: "c1", relPath: "wp.md") == nil)
+
+        // Dismiss + reopen (the service only reopens a still-`proposed` ticket).
+        try db.updateProposalStatus(id: proposalId, status: .dismissed)
+        #expect(try db.getTicket(id: ticketId)?.status == .proposed)
+        try db.updateTicketStatus(id: ticketId, status: .open)
+
+        // Reopened: visible to the UI and to flag dedupe again.
+        #expect(try db.getTicket(id: ticketId)?.status == .open)
+        #expect(try db.openTicket(collectionId: "c1", relPath: "wp.md")?.id == ticketId)
+        #expect(try db.getProposal(id: proposalId)?.status == .dismissed)
+    }
 }
 
 // MARK: - Tool validation
@@ -202,5 +236,46 @@ struct KnowledgeCurationToolsTests {
         // The annotation tools stay allowed externally.
         #expect(!ToolRegistry.externallyDeniedToolNames.contains("flag_knowledge_stale"))
         #expect(!ToolRegistry.externallyDeniedToolNames.contains("list_knowledge_tickets"))
+    }
+
+    /// A curator that read the document first receives it wrapped in
+    /// `read_knowledge`'s `[Collection] path` + `title:/type:/tags:` framing.
+    /// Weaker models copy that header verbatim into their replacement content;
+    /// `strippingReadPreamble` removes a leaked block so an approval never
+    /// persists it above the real body.
+    @Test
+    func strippingReadPreambleRemovesLeakedHeaderOnly() {
+        // Full leaked framing (header + metadata + blank) is dropped; the
+        // real body (and any real frontmatter below it) survives.
+        let leaked =
+            "[Sample Knowledge] deploy-runbook.md\n"
+            + "title: Production Deploy Runbook\n"
+            + "type: guide\n"
+            + "tags: engineering,ops,deploy\n"
+            + "\n"
+            + "# Production Deploy Runbook\n\nBody."
+        #expect(
+            ProposeKnowledgeUpdateTool.strippingReadPreamble(leaked)
+                == "# Production Deploy Runbook\n\nBody."
+        )
+
+        // Header with no metadata lines, just the bracket line + blank.
+        #expect(
+            ProposeKnowledgeUpdateTool.strippingReadPreamble("[Coll] path.md\n\nBody.") == "Body."
+        )
+
+        // Normal markdown is untouched.
+        let plain = "# Title\n\nSome text."
+        #expect(ProposeKnowledgeUpdateTool.strippingReadPreamble(plain) == plain)
+
+        // A document that legitimately opens with frontmatter is untouched
+        // (first non-blank line is `---`, not `[name] …`).
+        let withFrontmatter = "---\ntype: guide\n---\n\n# Title"
+        #expect(ProposeKnowledgeUpdateTool.strippingReadPreamble(withFrontmatter) == withFrontmatter)
+
+        // A markdown reference definition (`[id]: url`) is NOT a framing header
+        // (`]:` not `] `), so it survives.
+        let refDef = "[docs]: https://example.com\n\nSee the docs."
+        #expect(ProposeKnowledgeUpdateTool.strippingReadPreamble(refDef) == refDef)
     }
 }
