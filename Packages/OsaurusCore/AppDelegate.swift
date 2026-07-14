@@ -196,6 +196,11 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
         // cache here rather than racing that read from `ModelDownloadService`.
         HuggingFaceAuth.preloadInBackground()
 
+        // Warm the chat-history database too: the first chat window's
+        // synchronous session load otherwise pays the encrypted SQLite open
+        // on the main thread during launch.
+        ChatSessionStore.preloadInBackground()
+
         // Bring up analytics early so the launch + onboarding funnel is
         // captured. No-ops silently when no Aptabase key is configured.
         TelemetryService.shared.configure()
