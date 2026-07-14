@@ -954,10 +954,13 @@ final class ComputerUseEvidencePackTests: XCTestCase {
     @MainActor
     func testOpenVerbLaunchesForegroundSoTheWindowIsVisibleAndVerifiable() async {
         let pid: Int32 = 7420
-        let window = CUWindow(id: 1, title: "Untitled", x: 0, y: 0, w: 600, h: 400)
+        let window = CUWindowSummary(id: 1, title: "Untitled", focused: true, x: 0, y: 0, w: 600, h: 400)
         let snapshot = CUSnapshot(
-            tier: .ax,
+            snapshotId: 1,
             pid: pid,
+            app: "TextEdit",
+            focusedWindow: "Untitled",
+            tier: .ax,
             truncated: false,
             windows: [window],
             elements: [CUElement(id: "doc", role: "textarea", label: "Document", value: "", windowId: 1)],
