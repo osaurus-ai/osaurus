@@ -240,6 +240,15 @@ struct KnowledgeView: View {
         .onReceive(NotificationCenter.default.publisher(for: .knowledgeCollectionsChanged)) { _ in
             reloadCuration()
         }
+        // A curation notification posted while this view wasn't mounted (e.g. a
+        // ticket filed from a chat window with Settings closed) is missed —
+        // NotificationCenter doesn't replay, and switching Settings tabs won't
+        // re-fire `.onAppear` on this kept-alive view. Reloading whenever a
+        // window becomes key self-heals that stale state the moment the user
+        // brings Settings forward. The reload is a cheap off-main DB read.
+        .onReceive(NotificationCenter.default.publisher(for: NSWindow.didBecomeKeyNotification)) { _ in
+            reloadCuration()
+        }
         .onAppear {
             withAnimation(.easeOut(duration: 0.25).delay(0.05)) {
                 hasAppeared = true
