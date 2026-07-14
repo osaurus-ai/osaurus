@@ -142,18 +142,44 @@ public final class KnowledgeManager: ObservableObject {
 
     /// Kick a background (re-)index of one collection. `force` bypasses
     /// the content-hash skip for a manual full rebuild.
+    /// Safety cap: never let a wedged index pass pin the "Indexing…" UI
+    /// forever. If a pass hasn't returned within this window the id is
+    /// dropped anyway; a genuinely slow (not wedged) pass just clears its
+    /// indicator a little early.
+    private static let indexWatchdogSeconds: UInt64 = 120
+
     public func scheduleIndex(of collection: KnowledgeCollection, force: Bool = false) {
         guard collection.isEnabled else { return }
         let id = collection.id
+        // Coalesce overlapping passes: a folder event that lands while a pass
+        // is already running for this collection is covered by that pass's
+        // content-hash scan, so starting a second, overlapping pass over the
+        // same vector store only risks contention. A user-driven `force`
+        // rebuild is rare and still proceeds.
+        guard force || !indexingCollectionIds.contains(id) else { return }
         indexingCollectionIds.insert(id)
         Task.detached(priority: .utility) {
-            await KnowledgeIndexService.shared.indexCollection(collection, force: force)
+            await Self.runIndexWithWatchdog {
+                await KnowledgeIndexService.shared.indexCollection(collection, force: force)
+            }
             await MainActor.run {
                 KnowledgeManager.shared.indexingCollectionIds.remove(id)
                 // Nudge views (e.g. the OKF category badge) to recompute now
                 // that the pass finished and the index reflects the folder.
                 NotificationCenter.default.post(name: .knowledgeCollectionsChanged, object: id)
             }
+        }
+    }
+
+    /// Await `pass`, but return after `indexWatchdogSeconds` regardless so a
+    /// wedged pass can't hold the indexing indicator on indefinitely. The
+    /// underlying pass is not cancellable; the watchdog only frees the caller.
+    private static func runIndexWithWatchdog(_ pass: @escaping () async -> Void) async {
+        await withTaskGroup(of: Void.self) { group in
+            group.addTask { await pass() }
+            group.addTask { try? await Task.sleep(nanoseconds: indexWatchdogSeconds * 1_000_000_000) }
+            _ = await group.next()
+            group.cancelAll()
         }
     }
 
@@ -164,7 +190,9 @@ public final class KnowledgeManager: ObservableObject {
         let ids = Set(snapshot.filter(\.isEnabled).map(\.id))
         indexingCollectionIds.formUnion(ids)
         Task.detached(priority: .utility) {
-            await KnowledgeIndexService.shared.indexAll(snapshot)
+            await Self.runIndexWithWatchdog {
+                await KnowledgeIndexService.shared.indexAll(snapshot)
+            }
             await MainActor.run {
                 KnowledgeManager.shared.indexingCollectionIds.subtract(ids)
                 for id in ids {
