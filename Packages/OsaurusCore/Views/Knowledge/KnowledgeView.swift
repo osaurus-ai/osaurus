@@ -761,6 +761,12 @@ private struct KnowledgeCollectionEditorSheet: View {
                 .fixedSize(horizontal: false, vertical: true)
             }
 
+            // Git sync is temporarily disabled for the initial Knowledge
+            // Collections ship — the clone-from-URL entry point is hidden so no
+            // remote-backed collection can be created. `onSave` already passes a
+            // nil `remoteURL` whenever this field is empty, so the create path
+            // stays local-only. Restore this block to re-enable git sync.
+            /*
             if collection == nil {
                 VStack(alignment: .leading, spacing: 6) {
                     Text("Or clone from a git URL", bundle: .module)
@@ -778,6 +784,7 @@ private struct KnowledgeCollectionEditorSheet: View {
                     .fixedSize(horizontal: false, vertical: true)
                 }
             }
+            */
 
             HStack {
                 Spacer()
