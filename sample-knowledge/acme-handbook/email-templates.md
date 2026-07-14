@@ -1,4 +1,5 @@
 ---
+type: template
 title: Support Email Templates
 description: Canned replies for common Acme support situations.
 tags: [support, templates]
