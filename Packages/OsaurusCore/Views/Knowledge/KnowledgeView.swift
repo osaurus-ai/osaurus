@@ -255,6 +255,20 @@ struct KnowledgeView: View {
             }
             reloadCuration()
         }
+        // Self-healing refresh. The curation list is otherwise driven by
+        // notifications + appear/window-key hooks, all of which are unreliable
+        // for this kept-alive Settings view: a `.knowledgeCurationChanged`
+        // posted (e.g. a ticket filed from a chat window) while this view isn't
+        // mounted is lost, and SwiftUI won't re-fire `.onAppear` when the user
+        // returns. A light poll keeps tickets/proposals current regardless; the
+        // reload is id-diffed (see `reloadCuration`) so an unchanged list never
+        // re-renders. `.task` is cancelled when the view goes away.
+        .task {
+            while !Task.isCancelled {
+                reloadCuration()
+                try? await Task.sleep(nanoseconds: 3_000_000_000)
+            }
+        }
     }
 
     // MARK: - Curation
@@ -396,8 +410,11 @@ struct KnowledgeView: View {
             let tickets = (try? KnowledgeDatabase.shared.listTickets(collectionIds: nil, status: .open)) ?? []
             let proposals = (try? KnowledgeDatabase.shared.listProposals(status: .pending)) ?? []
             await MainActor.run {
-                openTickets = tickets
-                pendingProposals = proposals
+                // Assign only on a real change so the periodic poll can't churn
+                // the view every tick. Both lists are single-status queries, so
+                // comparing ids is sufficient to detect add/remove/status moves.
+                if tickets.map(\.id) != openTickets.map(\.id) { openTickets = tickets }
+                if proposals.map(\.id) != pendingProposals.map(\.id) { pendingProposals = proposals }
             }
         }
     }
