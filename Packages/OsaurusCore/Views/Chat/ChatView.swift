@@ -6065,7 +6065,14 @@ struct ChatView: View {
             idealHeight: 610,
             maxHeight: .infinity
         )
-        .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
+        // Matches the window's rounded corners; in full screen the window is
+        // square, so rounding would cut visible notches into the content.
+        .clipShape(
+            RoundedRectangle(
+                cornerRadius: windowState.isFullScreen ? 0 : 24,
+                style: .continuous
+            )
+        )
         .ignoresSafeArea()
         .onReceive(NotificationCenter.default.publisher(for: .chatOverlayActivated)) { _ in
             // Lightweight state updates only - refreshAll() removed to prevent excessive re-renders
@@ -6534,12 +6541,13 @@ struct ChatView: View {
         ZStack {
             ThemedBackgroundLayer(
                 cachedBackgroundImage: windowState.cachedBackgroundImage,
-                showSidebar: windowState.showSidebar
+                showSidebar: windowState.showSidebar,
+                isFullScreen: windowState.isFullScreen
             )
 
             if theme.glassEnabled {
                 ThemedGlassSurface(
-                    cornerRadius: 24,
+                    cornerRadius: windowState.isFullScreen ? 0 : 24,
                     topLeadingRadius: windowState.showSidebar ? 0 : nil,
                     bottomLeadingRadius: windowState.showSidebar ? 0 : nil
                 )
@@ -6558,10 +6566,10 @@ struct ChatView: View {
                 )
                 .clipShape(
                     UnevenRoundedRectangle(
-                        topLeadingRadius: windowState.showSidebar ? 0 : 24,
-                        bottomLeadingRadius: windowState.showSidebar ? 0 : 24,
-                        bottomTrailingRadius: 24,
-                        topTrailingRadius: 24,
+                        topLeadingRadius: (windowState.showSidebar || windowState.isFullScreen) ? 0 : 24,
+                        bottomLeadingRadius: (windowState.showSidebar || windowState.isFullScreen) ? 0 : 24,
+                        bottomTrailingRadius: windowState.isFullScreen ? 0 : 24,
+                        topTrailingRadius: windowState.isFullScreen ? 0 : 24,
                         style: .continuous
                     )
                 )

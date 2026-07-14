@@ -1,8 +1,3 @@
-<h3 align="center">🚀 We're live on Product Hunt!</h3>
-
-> [!IMPORTANT]
-> **Osaurus is live on [Product Hunt](https://www.producthunt.com/products/osaurus) today — come check out the launch and join the conversation.** We'd love your support and honest feedback!
-
 <p align="center">
 <img width="1920" height="1080" alt="osaurus-techcrunch-1" src="https://github.com/user-attachments/assets/d7905005-71fe-41ba-b69f-e8968af29b5c" />
 </p>
