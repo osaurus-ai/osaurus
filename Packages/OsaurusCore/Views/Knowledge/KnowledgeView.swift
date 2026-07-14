@@ -294,7 +294,7 @@ struct KnowledgeView: View {
                             .font(.system(size: 13))
                             .foregroundColor(theme.accentColor)
                         VStack(alignment: .leading, spacing: 1) {
-                            Text("Proposal #\(proposal.id): \(proposal.relPath)")
+                            Text(String(format: L("Proposal #%lld: %@"), proposal.id, proposal.relPath))
                                 .font(.system(size: 12, weight: .medium))
                                 .foregroundColor(theme.primaryText)
                             Text(proposal.rationale)
@@ -320,7 +320,7 @@ struct KnowledgeView: View {
                             .font(.system(size: 13))
                             .foregroundColor(.orange)
                         VStack(alignment: .leading, spacing: 1) {
-                            Text("Ticket #\(ticket.id): \(ticket.relPath)")
+                            Text(String(format: L("Ticket #%lld: %@"), ticket.id, ticket.relPath))
                                 .font(.system(size: 12, weight: .medium))
                                 .foregroundColor(theme.primaryText)
                             Text(ticket.reason)
@@ -819,7 +819,7 @@ private struct KnowledgeCollectionEditorSheet: View {
         panel.canChooseDirectories = true
         panel.canChooseFiles = false
         panel.allowsMultipleSelection = false
-        panel.prompt = "Choose"
+        panel.prompt = L("Choose")
         if panel.runModal() == .OK, let url = panel.url {
             folderPath = url.path
         }
@@ -871,7 +871,7 @@ private struct KnowledgeProposalReviewSheet: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack(alignment: .firstTextBaseline) {
-                Text("Proposal #\(proposal.id)")
+                Text(String(format: L("Proposal #%lld"), proposal.id))
                     .font(.system(size: 15, weight: .semibold))
                     .foregroundColor(theme.primaryText)
                 Spacer()
@@ -890,7 +890,7 @@ private struct KnowledgeProposalReviewSheet: View {
                     .font(.system(size: 12, design: .monospaced))
                     .foregroundColor(theme.secondaryText)
                 if let ticketId = proposal.ticketId {
-                    Text("Answers ticket #\(ticketId)")
+                    Text(String(format: L("Answers ticket #%lld"), ticketId))
                         .font(.system(size: 11))
                         .foregroundColor(theme.tertiaryText)
                 }
