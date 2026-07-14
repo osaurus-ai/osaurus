@@ -10893,10 +10893,22 @@
             "value" : "컬렉션 추가"
           }
         },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Добавить коллекцию"
+          }
+        },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "添加集合"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "新增集合"
           }
         }
       }
@@ -11262,10 +11274,22 @@
             "value" : "지식 컬렉션 추가"
           }
         },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Добавить коллекцию знаний"
+          }
+        },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "添加知识集合"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "新增知識集合"
           }
         }
       }
@@ -11698,10 +11722,22 @@
             "value" : "첫 지식 컬렉션을 추가하세요"
           }
         },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Добавьте свою первую коллекцию знаний"
+          }
+        },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "添加你的第一个知识集合"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "新增你的第一個知識集合"
           }
         }
       }
@@ -12945,7 +12981,38 @@
       }
     },
     "Agents flag documents that look out of date. A Curator agent proposes a fix here for you to approve — nothing changes until you do." : {
-
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Agenten markieren Dokumente, die veraltet wirken. Ein Kurator-Agent schlägt hier eine Korrektur zur Freigabe vor — nichts ändert sich, bis Sie zustimmen."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "에이전트는 오래된 것으로 보이는 문서를 표시합니다. 큐레이터 에이전트가 여기에서 승인할 수정안을 제안하며, 승인하기 전까지는 아무것도 변경되지 않습니다."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Агенты помечают документы, которые выглядят устаревшими. Агент-куратор предлагает здесь исправление на ваше утверждение — ничего не изменится, пока вы его не одобрите."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "代理会标记看起来过期的文档。维护者代理会在此提出修复建议供你批准——在你批准之前不会有任何更改。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "代理會標記看起來過期的文件。維護者代理會在此提出修復建議供你批准——在你批准之前不會有任何變更。"
+          }
+        }
+      }
     },
     "Agents may send messages to write-allowlisted destinations." : {
       "localizations" : {
@@ -15849,10 +15916,22 @@
             "value" : "티켓 #%lld에 대한 답변"
           }
         },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Отвечает на тикет #%lld"
+          }
+        },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "回应工单 #%lld"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "回應工單 #%lld"
           }
         }
       }
@@ -17519,10 +17598,22 @@
             "value" : "승인하면 이 내용이 컬렉션 폴더에 기록되고 다시 색인됩니다. 기각하면 연결된 티켓이 다시 열립니다."
           }
         },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Утверждение записывает это содержимое в папку коллекции и переиндексирует её. Отклонение снова открывает связанный тикет."
+          }
+        },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "批准后，此内容将写入集合文件夹并重新建立索引。驳回则会重新打开关联的工单。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "批准後，此內容將寫入集合資料夾並重新建立索引。駁回則會重新開啟關聯的工單。"
           }
         }
       }
@@ -17541,10 +17632,22 @@
             "value" : "승인하면 이 내용이 컬렉션 폴더에 기록되고 다시 색인됩니다. 편집 탭에서 수정한 내용이 기록됩니다. 기각하면 연결된 티켓이 다시 열립니다."
           }
         },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Утверждение записывает это содержимое в папку коллекции и переиндексирует её. Записывается именно то, что вы отредактировали на вкладке «Правка». Отклонение снова открывает связанный тикет."
+          }
+        },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "批准后，此内容将写入集合文件夹并重新建立索引。实际写入的是你在编辑标签页中的内容。驳回则会重新打开关联的工单。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "批准後，此內容將寫入集合資料夾並重新建立索引。實際寫入的是你在編輯分頁中的內容。駁回則會重新開啟關聯的工單。"
           }
         }
       }
@@ -42628,10 +42731,22 @@
             "value" : "에이전트가 필요할 때 참조할 수 있는 선별된 자료입니다."
           }
         },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Тщательно отобранные справочные материалы, к которым агент может обращаться по запросу."
+          }
+        },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "代理可按需查阅的精选参考资料。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "代理可按需查閱的精選參考資料。"
           }
         }
       }
@@ -42684,10 +42799,22 @@
             "value" : "큐레이터"
           }
         },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Куратор"
+          }
+        },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "维护者"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "維護者"
           }
         }
       }
@@ -52729,10 +52856,22 @@
             "value" : "지식 컬렉션 편집"
           }
         },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Редактировать коллекцию знаний"
+          }
+        },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "编辑知识集合"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "編輯知識集合"
           }
         }
       }
@@ -62068,10 +62207,22 @@
             "value" : "에이전트가 필요할 때 검색하고 읽을 수 있는 마크다운 폴더"
           }
         },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Папки с Markdown, которые ваши агенты могут искать и читать по запросу"
+          }
+        },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "供代理按需搜索和阅读的 Markdown 文件夹"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "供代理按需搜尋和閱讀的 Markdown 資料夾"
           }
         }
       }
@@ -67049,7 +67200,38 @@
       }
     },
     "Guides & Policies" : {
-
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Leitfäden & Richtlinien"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "가이드 및 정책"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Руководства и политики"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "指南与规范"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "指南與規範"
+          }
+        }
+      }
     },
     "Hard caps on incoming request bodies. Requests larger than these are rejected with HTTP 413." : {
       "localizations" : {
@@ -69155,7 +69337,38 @@
       }
     },
     "How your team does things, written down" : {
-
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Wie Ihr Team arbeitet, schriftlich festgehalten"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "팀의 업무 방식을 문서로 정리한 것"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Как ваша команда делает дела, записанное"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "把团队的做事方式写下来"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "把團隊的做事方式寫下來"
+          }
+        }
+      }
     },
     "How-to Guides" : {
       "extractionState" : "stale",
@@ -69181,7 +69394,38 @@
       }
     },
     "How-To Steps" : {
-
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Anleitungsschritte"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "실행 단계"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Пошаговые инструкции"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "操作步骤"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "操作步驟"
+          }
+        }
+      }
     },
     "HTTP" : {
       "localizations" : {
@@ -76858,10 +77102,22 @@
             "value" : "지식"
           }
         },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Знания"
+          }
+        },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "知识"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "知識"
           }
         }
       }
@@ -78715,10 +78971,22 @@
             "value" : "아래에서 허용한 지식 컬렉션(선별된 가이드, 템플릿, 표준)을 에이전트가 검색하고 읽을 수 있게 합니다. 메모리와 달리 지식은 사용자가 직접 편집하며 에이전트는 절대 수정하지 않습니다."
           }
         },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Разрешите агенту искать и читать предоставленные ниже коллекции знаний: подобранные руководства, шаблоны и стандарты. В отличие от памяти, знания редактируете вы, и агент их никогда не изменяет."
+          }
+        },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "允许代理搜索和阅读下方授权的知识集合：精选指南、模板和规范。与记忆不同，知识由你编辑，代理绝不会改写。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "允許代理搜尋和閱讀下方授權的知識集合：精選指南、範本和規範。與記憶不同，知識由你編輯，代理絕不會改寫。"
           }
         }
       }
@@ -78974,10 +79242,22 @@
             "value" : "이 에이전트가 문서 업데이트를 대기 중인 제안으로 작성할 수 있게 합니다(오래된 문서 티켓을 등록하고 처리할 수도 있습니다). 지식 섹션에서 제안을 승인하기 전에는 컬렉션이 변경되지 않습니다."
           }
         },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Разрешите этому агенту готовить обновления документов в виде ожидающих предложений (он также может создавать и обрабатывать тикеты об устаревании). В коллекции ничего не изменится, пока вы не утвердите предложение в разделе «Знания»."
+          }
+        },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "允许此代理将文档更新起草为待审提案（它也可以提交和处理过期工单）。在你于知识板块批准提案之前，集合不会有任何变化。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "允許此代理將文件更新起草為待審提案（它也可以提交和處理過期工單）。在你於知識區塊批准提案之前，集合不會有任何變更。"
           }
         }
       }
@@ -83938,10 +84218,22 @@
             "value" : "이 폴더의 마크다운 파일은 제자리에서 색인되며 절대 수정되지 않습니다. YAML 프런트매터(`type`, `tags` 등)는 필터링에 사용됩니다."
           }
         },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Файлы Markdown в этой папке индексируются на месте и никогда не изменяются. YAML-заголовок (`type`, `tags`, …) используется для фильтрации."
+          }
+        },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "此文件夹中的 Markdown 文件将就地建立索引，绝不会被修改。YAML frontmatter（`type`、`tags` 等）用于筛选。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "此資料夾中的 Markdown 檔案會就地建立索引，絕不會被修改。YAML frontmatter（`type`、`tags` 等）用於篩選。"
           }
         }
       }
@@ -93415,10 +93707,22 @@
             "value" : "아직 지식 컬렉션이 없습니다. 이 창의 지식 섹션에서 추가하세요."
           }
         },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Коллекций знаний пока нет. Добавьте одну в разделе «Знания» этого окна."
+          }
+        },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "还没有知识集合。请在此窗口的知识板块中添加。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "還沒有知識集合。請在此視窗的知識區塊中新增。"
           }
         }
       }
@@ -110801,10 +111105,22 @@
             "value" : "마크다운 폴더(가이드, 템플릿, 표준)를 Osaurus에 지정하고 에이전트에 허용하면 필요할 때 참조할 수 있습니다."
           }
         },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Укажите Osaurus папку с Markdown (руководства, шаблоны, стандарты) и предоставьте её агентам, чтобы они могли обращаться к ней по мере необходимости."
+          }
+        },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "让 Osaurus 指向一个 Markdown 文件夹（指南、模板、规范），并授权给代理，让它们可以按需查阅。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "讓 Osaurus 指向一個 Markdown 資料夾（指南、範本、規範），並授權給代理，讓它們可以按需查閱。"
           }
         }
       }
@@ -116774,7 +117090,19 @@
             "value" : "제안 #%lld"
           }
         },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Предложение #%lld"
+          }
+        },
         "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "提案 #%lld"
+          }
+        },
+        "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "提案 #%lld"
@@ -116802,7 +117130,19 @@
             "value" : "제안 #%lld: %@"
           }
         },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Предложение #%lld: %@"
+          }
+        },
         "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "提案 #%lld：%@"
+          }
+        },
+        "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "提案 #%lld：%@"
@@ -118602,7 +118942,19 @@
             "value" : "다시 색인"
           }
         },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Переиндексировать"
+          }
+        },
         "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "重建索引"
+          }
+        },
+        "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "重建索引"
@@ -143351,7 +143703,38 @@
       }
     },
     "Simple instructions for everyday tasks" : {
-
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Einfache Anleitungen für alltägliche Aufgaben"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "일상적인 작업을 위한 간단한 안내"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Простые инструкции для повседневных задач"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "日常任务的简单说明"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "日常任務的簡單說明"
+          }
+        }
+      }
     },
     "Simple mode builds the pattern for you. Regex mode lets you write your own pattern; it's checked before you can save." : {
       "comment" : "Description of the \"Simple\" and \"Regex\" modes in the PrivacyCustomRuleEditor.",
@@ -151712,10 +152095,22 @@
             "value" : "템플릿"
           }
         },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Шаблоны"
+          }
+        },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "模板"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "範本"
           }
         }
       }
@@ -158412,10 +158807,22 @@
             "value" : "티켓 #%lld: %@"
           }
         },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Тикет #%lld: %@"
+          }
+        },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "工单 #%lld：%@"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "工單 #%lld：%@"
           }
         }
       }
@@ -170714,10 +171121,22 @@
             "value" : "이 자료의 내용 설명, 에이전트에게 표시됩니다"
           }
         },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Что содержит этот корпус, показывается агентам"
+          }
+        },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "描述该资料库的内容，会展示给代理"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "描述此資料庫的內容，會顯示給代理"
           }
         }
       }
@@ -171960,7 +172379,38 @@
       }
     },
     "Wording you reuse, like email replies" : {
-
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Formulierungen, die Sie wiederverwenden, z. B. E-Mail-Antworten"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "이메일 답장처럼 재사용하는 문구"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Формулировки для повторного использования, например ответы на письма"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "可复用的措辞，例如邮件回复"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "可重複使用的措辭，例如電子郵件回覆"
+          }
+        }
+      }
     },
     "WordPress Development" : {
       "shouldTranslate" : false
