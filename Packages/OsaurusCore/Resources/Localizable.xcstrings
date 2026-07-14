@@ -17544,10 +17544,22 @@
             "value" : "편집본 승인"
           }
         },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Утвердить с правками"
+          }
+        },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "批准已编辑版本"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "批准已編輯版本"
           }
         }
       }
@@ -28182,10 +28194,22 @@
             "value" : "변경 사항"
           }
         },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Изменения"
+          }
+        },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "变更"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "變更"
           }
         }
       }
@@ -28238,10 +28262,22 @@
             "value" : "현재 문서와의 변경 사항"
           }
         },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Изменения относительно текущего документа"
+          }
+        },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "与当前文档的差异"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "與目前文件的差異"
           }
         }
       }
@@ -32377,10 +32413,22 @@
             "value" : "Osaurus가 관리하는 저장소로 클론하고 동기화를 위한 git 연결을 유지합니다. 기존 git 자격 증명(credential helper 또는 SSH 에이전트)을 사용합니다. 위의 폴더를 사용하려면 비워 두세요."
           }
         },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Клонирует в хранилище под управлением Osaurus и сохраняет ссылку git для синхронизации. Использует ваши существующие учётные данные git (credential helper или SSH-агент). Оставьте пустым, чтобы использовать папку выше."
+          }
+        },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "克隆到 Osaurus 管理的存储中，并保留 git 关联用于同步。使用你现有的 git 凭据（credential helper 或 SSH agent）。留空则使用上面的文件夹。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "複製到 Osaurus 管理的儲存空間，並保留 git 連結用於同步。使用你現有的 git 憑證（credential helper 或 SSH agent）。留空則使用上面的資料夾。"
           }
         }
       }
@@ -33023,10 +33071,22 @@
             "value" : "에이전트가 따라야 하는 코딩 및 테스트 지침"
           }
         },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Правила написания кода и тестирования, которым должны следовать агенты"
+          }
+        },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "代理必须遵循的编码与测试规范"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "代理必須遵循的編碼與測試規範"
           }
         }
       }
@@ -69385,7 +69445,19 @@
             "value" : "사용 가이드"
           }
         },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Инструкции"
+          }
+        },
         "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "操作指南"
+          }
+        },
+        "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "操作指南"
@@ -84425,10 +84497,22 @@
             "value" : "작업 시 참조하는 마스터 템플릿"
           }
         },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Эталонные шаблоны, используемые при сборке"
+          }
+        },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "构建时参考的主模板"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "建構時參考的主範本"
           }
         }
       }
@@ -91257,10 +91341,22 @@
             "value" : "새 문서"
           }
         },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Новый документ"
+          }
+        },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "新文档"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "新文件"
           }
         }
       }
@@ -117165,10 +117261,22 @@
             "value" : "제안된 내용"
           }
         },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Предлагаемое содержимое"
+          }
+        },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "提议的内容"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "提議的內容"
           }
         }
       }
@@ -145943,10 +146051,22 @@
             "value" : "반복 작업을 위한 SOP 및 런북"
           }
         },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Стандартные процедуры и руководства для повторяющихся задач"
+          }
+        },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "用于重复任务的操作规程与手册"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "用於重複任務的標準作業程序與手冊"
           }
         }
       }
@@ -151793,10 +151913,22 @@
             "value" : "팀 표준"
           }
         },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Стандарты команды"
+          }
+        },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "团队规范"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "團隊規範"
           }
         }
       }
