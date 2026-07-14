@@ -1247,6 +1247,14 @@ final class NativeMarkdownTableView: NSView {
     // MARK: - Private: Layout
 
     private func relayout(width: CGFloat) {
+        // Traced: table relayout during streaming is a suspected
+        // O(whole-table)-per-tick cost (Sentry APPLE-MACOS-123).
+        ChatPerfTrace.shared.time("markdown.tableRelayout") {
+            relayoutImpl(width: width)
+        }
+    }
+
+    private func relayoutImpl(width: CGFloat) {
         let columnCount = cellFields.first?.count ?? 0
         guard columnCount > 0, width > 1 else {
             heightConstraint?.constant = 1
