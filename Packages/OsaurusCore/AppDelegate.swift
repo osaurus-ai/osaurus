@@ -2472,7 +2472,13 @@ extension AppDelegate {
                     .primary(L("Check out the launch")) {
                         campaign.markSeen()
                         FeatureTelemetry.productHuntLaunchDialogClicked(action: "launch")
-                        NSWorkspace.shared.open(ProductHuntLaunchCampaign.launchURL)
+                        // `open` makes a synchronous XPC round-trip to
+                        // LaunchServices that can block for seconds while the
+                        // browser cold-launches (Sentry APPLE-MACOS-11X);
+                        // NSWorkspace is thread-safe, so fire it off main.
+                        DispatchQueue.global(qos: .userInitiated).async {
+                            NSWorkspace.shared.open(ProductHuntLaunchCampaign.launchURL)
+                        }
                     },
                 ],
                 width: 400,
