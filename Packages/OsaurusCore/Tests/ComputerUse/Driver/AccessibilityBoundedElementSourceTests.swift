@@ -44,6 +44,7 @@ final class AccessibilityBoundedElementSourceTests: XCTestCase {
             .deletingLastPathComponent()  // Driver
             .deletingLastPathComponent()  // ComputerUse
             .deletingLastPathComponent()  // Tests
+            .deletingLastPathComponent()  // OsaurusCore (source lives outside Tests/)
         let source = packageRoot
             .appendingPathComponent("ComputerUse/Driver/Mac/Accessibility.swift")
         return try String(contentsOf: source, encoding: .utf8)
