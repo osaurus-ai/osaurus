@@ -346,9 +346,10 @@ struct KnowledgeView: View {
     }
 
     /// Give the user a forward action beyond Dismiss: open a chat with a
-    /// curator agent, pre-briefed (via the toast) to work this ticket. The
-    /// curator does the proposing through the normal chat + tool path; the
-    /// proposal then returns here for approval.
+    /// curator agent whose composer is pre-filled with a briefing for this
+    /// ticket, so the user lands with the request ready to send instead of a
+    /// blank window. The curator does the proposing through the normal chat +
+    /// tool path; the proposal then returns here for approval.
     private func startCurator(for ticket: KnowledgeTicket) {
         guard let agent = curatorAgent(forCollectionId: ticket.collectionId) else {
             showSuccess(
@@ -356,10 +357,23 @@ struct KnowledgeView: View {
             )
             return
         }
-        ChatWindowManager.shared.createWindow(agentId: agent.id)
-        showSuccess(
-            "Opened a chat with \(agent.name). Ask it to work knowledge ticket #\(ticket.id) for \(ticket.relPath)."
-        )
+        let windowId = ChatWindowManager.shared.createWindow(agentId: agent.id)
+        // Seed the composer so the window isn't a blank prompt. The reviewer
+        // can edit or send as-is; the curator uses propose_knowledge_update,
+        // which lands back here as a pending proposal for approval.
+        let collectionName =
+            (UUID(uuidString: ticket.collectionId)
+            .flatMap { KnowledgeManager.shared.collection(for: $0)?.name }) ?? ""
+        let collectionClause = collectionName.isEmpty ? "" : " in the \"\(collectionName)\" collection"
+        let briefing =
+            "Please work knowledge ticket #\(ticket.id) for `\(ticket.relPath)`\(collectionClause).\n"
+            + "Reported issue: \(ticket.reason)\n\n"
+            + "Read the current document, and if it is out of date, use "
+            + "propose_knowledge_update to draft a corrected version for my "
+            + "approval. Keep the existing frontmatter. Do not change anything "
+            + "until I approve the proposal."
+        ChatWindowManager.shared.windowState(id: windowId)?.session.input = briefing
+        showSuccess("Opened \(agent.name) with a briefing for ticket #\(ticket.id). Review it and hit send.")
     }
 
     /// Load open tickets + pending proposals off the main thread (the
