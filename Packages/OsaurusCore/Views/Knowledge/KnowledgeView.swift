@@ -108,7 +108,7 @@ struct KnowledgeView: View {
                                                 .okfNonconformingDocuments(collectionId: collection.id.uuidString)
                                             await MainActor.run {
                                                 if failing.isEmpty {
-                                                    showSuccess("Every document has a category (type)")
+                                                    showSuccess(L("Every document has a category (type)"))
                                                 } else {
                                                     let sample = failing.prefix(3).joined(separator: ", ")
                                                     showSuccess(
@@ -214,7 +214,7 @@ struct KnowledgeView: View {
                             // missed — leaving the approved card on screen.
                             await MainActor.run {
                                 reloadCuration()
-                                showSuccess("Approved proposal #\(proposal.id)")
+                                showSuccess(L("Approved proposal #\(proposal.id)"))
                             }
                         } catch {
                             await MainActor.run { showSuccess("Approve failed: \(error.localizedDescription)") }
@@ -227,7 +227,7 @@ struct KnowledgeView: View {
                         try? await KnowledgeCurationService.shared.dismissProposal(proposalId: proposal.id)
                         await MainActor.run {
                             reloadCuration()
-                            showSuccess("Dismissed proposal #\(proposal.id)")
+                            showSuccess(L("Dismissed proposal #\(proposal.id)"))
                         }
                     }
                 },
@@ -353,7 +353,7 @@ struct KnowledgeView: View {
     private func startCurator(for ticket: KnowledgeTicket) {
         guard let agent = curatorAgent(forCollectionId: ticket.collectionId) else {
             showSuccess(
-                "No curator yet — turn on Features → Knowledge → Curator for an agent that can use this collection."
+                L("No curator yet — turn on Features → Knowledge → Curator for an agent that can use this collection.")
             )
             return
         }
@@ -373,7 +373,7 @@ struct KnowledgeView: View {
             + "approval. Keep the existing frontmatter. Do not change anything "
             + "until I approve the proposal."
         ChatWindowManager.shared.windowState(id: windowId)?.session.input = briefing
-        showSuccess("Opened \(agent.name) with a briefing for ticket #\(ticket.id). Review it and hit send.")
+        showSuccess(L("Opened \(agent.name) with a briefing for ticket #\(ticket.id). Review it and hit send."))
     }
 
     /// Load open tickets + pending proposals off the main thread (the
