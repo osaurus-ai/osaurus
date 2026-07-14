@@ -74,6 +74,26 @@ struct BackgroundTaskStreamingObserverTests {
         #expect(state.status == .completed(summary: "Chat completed"))
     }
 
+    /// A completed headless task must schedule its own eviction (mirroring
+    /// the cancel path) so it doesn't linger in the registry. Without this a
+    /// later schedule reattaching by `externalSessionKey` collides with the
+    /// stale `.completed` state: `awaitCompletion` short-circuits on old data
+    /// and leaked runs eventually saturate the execution slots — the "runs
+    /// forever" bug.
+    @Test
+    func observeChatTask_schedulesAutoFinalizeAfterCompletion() async throws {
+        let (state, mgr) = makeObservedState()
+        defer { mgr.finalizeTask(state.id) }
+
+        state.chatSession?.isStreaming = true
+        try await Task.sleep(for: .milliseconds(10))
+        state.chatSession?.isStreaming = false
+        try await Task.sleep(for: .milliseconds(10))
+
+        #expect(state.status == .completed(summary: "Chat completed"))
+        #expect(mgr.hasPendingAutoFinalizeForTesting(state.id))
+    }
+
     /// A stream error before completion must transition the task to
     /// `.failed(summary: <error>)`.
     @Test
