@@ -50,7 +50,8 @@ final class TTSAudioPipeline: @unchecked Sendable {
     private var changeObserver: NSObjectProtocol?
 
     /// Invoked (on an arbitrary thread) when the engine reports its graph was
-    /// torn down by an output-route change. The owner ends playback honestly.
+    /// torn down by an output-route change. The owner rebuilds the graph on
+    /// the new device and resumes playback (or ends it if the rebuild fails).
     var onConfigurationChange: (@Sendable () -> Void)?
 
     init(format: AVAudioFormat) {
@@ -219,15 +220,17 @@ public final class TTSService: ObservableObject {
     private var pendingBufferCount = 0
     private var streamFinished = false
 
+    /// Bumped whenever the buffer accounting is reset (stop, route-change
+    /// rebuild). Completion handlers from buffers scheduled under an older
+    /// generation — including ones wired to a disconnected output device,
+    /// whose callbacks may fire late or not at all — are ignored so they
+    /// can't corrupt the count for the rebuilt node.
+    private var bufferGeneration = 0
+
     private init() {
         pipeline.onConfigurationChange = {
             Task { @MainActor in
-                // A route change mid-utterance drops the rest of the audio on
-                // the floor. End the playback honestly rather than leaving a
-                // Stop control the user has to press to silence something
-                // they cannot hear.
-                let service = TTSService.shared
-                if service.playingMessageId != nil { service.stop() }
+                TTSService.shared.handleRouteChange()
             }
         }
     }
@@ -293,8 +296,32 @@ public final class TTSService: ObservableObject {
         playbackTask = nil
         streamFinished = true
         pendingBufferCount = 0
+        bufferGeneration += 1
         pipeline.stopPlayer()
         playingMessageId = nil
+    }
+
+    /// The output device changed mid-utterance (e.g. a Bluetooth speaker
+    /// disconnected). The engine graph is dead, but the synthesis stream is
+    /// still producing frames — so rebuild the engine on the new default
+    /// device and keep playing instead of stopping. Buffers already scheduled
+    /// on the old device are lost (a sub-second gap), and their late/missing
+    /// completions are excluded from accounting via `bufferGeneration`.
+    private func handleRouteChange() {
+        guard playingMessageId != nil else { return }
+        bufferGeneration += 1
+        pendingBufferCount = 0
+        Task { [weak self] in
+            do {
+                // `needsRebuild` was already flagged on the pipeline queue
+                // ahead of this call, so this re-establishes the graph.
+                try await self?.pipeline.prepareAndPlay()
+            } catch {
+                // Couldn't rebuild on the new device: end playback honestly
+                // rather than leaving a Stop control over silence.
+                self?.stop()
+            }
+        }
     }
 
     /// Begin a background download/initialize. Safe to call multiple times.
@@ -439,14 +466,16 @@ public final class TTSService: ObservableObject {
         // Incremented before handing off; the pipeline guarantees the
         // completion fires exactly once even when the buffer can't be built.
         pendingBufferCount += 1
+        let generation = bufferGeneration
         pipeline.schedule(samples: samples) { [weak self] in
             Task { @MainActor [weak self] in
-                self?.bufferDidFinish()
+                self?.bufferDidFinish(generation: generation)
             }
         }
     }
 
-    private func bufferDidFinish() {
+    private func bufferDidFinish(generation: Int) {
+        guard generation == bufferGeneration else { return }
         pendingBufferCount = max(0, pendingBufferCount - 1)
         if streamFinished, pendingBufferCount == 0 {
             playingMessageId = nil
