@@ -194,7 +194,8 @@ public enum InstallationDiagnostics {
     public static func collect(
         requestedPort: Int? = nil,
         includeSignatureChecks: Bool = true,
-        startupAttempted: Bool = false
+        startupAttempted: Bool = false,
+        includeModelInventory: Bool = true
     ) async -> InstallationDiagnosticReport {
         let configuredPort = Configuration.resolveConfiguredPort()
         let port = requestedPort ?? configuredPort ?? 1337
@@ -204,9 +205,9 @@ public enum InstallationDiagnostics {
         let cli = CLIVersionResolver.resolve(
             executablePath: cliPath
         )
-        let discoveredPaths = await Task.detached(priority: .utility) {
-            AppControl.findAppBundlePaths()
-        }.value
+        // NSWorkspace is main-thread-bound. Keep discovery on this MainActor
+        // entry point, then move filesystem-only work off actor below.
+        let discoveredPaths = AppControl.findAppBundlePaths()
         let appPaths = await Task.detached(priority: .utility) {
             AppControl.deduplicatedBundlePaths(
                 discoveredPaths + [runningPath, cli.companionAppPath].compactMap { $0 }
@@ -247,6 +248,9 @@ public enum InstallationDiagnostics {
         let modelResolution = Configuration.resolveModelsDirectoryWithSource()
         let modelSnapshot = await Task.detached(priority: .utility) {
             let readable = FileManager.default.isReadableFile(atPath: modelResolution.url.path)
+            guard includeModelInventory else {
+                return (readable, (count: 0, complete: false))
+            }
             let count = countModelBundles(in: modelResolution.url)
             return (readable, count)
         }.value
@@ -292,11 +296,12 @@ public enum InstallationDiagnostics {
             compareVersions(appBuild, cliBuild) != .orderedSame {
             return compareVersions(appBuild, cliBuild) == .orderedAscending ? .appStale : .appNewer
         }
+        if let portOwner {
+            if !isOsaurusPortOwner(portOwner) { return .portBusy }
+            if !healthy { return .serverUnhealthy }
+        }
         if healthy { return .healthy }
         if apps.isEmpty { return .appAbsent }
-        if let portOwner {
-            return isOsaurusPortOwner(portOwner) ? .serverUnhealthy : .portBusy
-        }
         return startupAttempted ? .startupTimeout : .serverNotRunning
     }
 

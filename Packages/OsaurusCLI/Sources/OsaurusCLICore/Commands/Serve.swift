@@ -133,7 +133,8 @@ public struct ServeCommand: Command {
         let diagnostic = await InstallationDiagnostics.collect(
             requestedPort: portToCheck,
             includeSignatureChecks: false,
-            startupAttempted: true
+            startupAttempted: true,
+            includeModelInventory: false
         )
         if diagnostic.serverHealthy {
             print("listening on http://127.0.0.1:\(portToCheck)")

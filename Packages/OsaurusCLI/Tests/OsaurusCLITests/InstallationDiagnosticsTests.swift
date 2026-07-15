@@ -82,6 +82,18 @@ struct InstallationDiagnosticsTests {
     @Test(arguments: [
         (apps: [], cli: "0.22.3", healthy: false, owner: nil, expected: StartupDiagnosticKind.appAbsent),
         (
+            apps: [], cli: "0.22.3", healthy: false, owner: "python pid 7",
+            expected: StartupDiagnosticKind.portBusy
+        ),
+        (
+            apps: [], cli: "0.22.3", healthy: false, owner: "osaurus pid 8",
+            expected: StartupDiagnosticKind.serverUnhealthy
+        ),
+        (
+            apps: [], cli: "0.22.3", healthy: true, owner: "python pid 7",
+            expected: StartupDiagnosticKind.portBusy
+        ),
+        (
             apps: [app(version: "0.18.4")], cli: "0.22.3", healthy: false, owner: nil,
             expected: StartupDiagnosticKind.appStale
         ),
