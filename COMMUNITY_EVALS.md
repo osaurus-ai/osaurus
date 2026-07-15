@@ -87,6 +87,24 @@ API keys. Failure transcripts stay in the git-ignored `build/` dir on your
 machine. The auto-PR commits exactly one new file and never touches shared
 files, so parallel contributions can't conflict.
 
+## Your Osaurus data is untouched
+
+Every eval process runs against a **disposable storage root** under your
+system temp dir (`osaurus-evals-<uuid>`), never your real `~/.osaurus`. The
+dummy agents, providers, schedules, memories, and chat state the suites seed
+all land in that throwaway root — your chats, agents, memories, and settings
+are exactly as you left them after the run. The run only *reads* a few host
+resources: your installed models/plugins (read-only), plus one-shot copies of
+your chat and sandbox config so model resolution and sandbox detection work.
+The one shared resource is the sandbox VM itself (it takes minutes to boot and
+is shared with the app); per-case cleanup unprovisions the temporary eval
+agents it creates inside the VM.
+
+On normal completion the disposable root is deleted automatically. If a run
+crashes or is killed, the leftover root under `$TMPDIR` is swept by the next
+eval run (or can be removed manually — `rm -rf "$TMPDIR"/osaurus-evals-*`
+while no eval is running).
+
 ## Instructions for coding agents
 
 If you are an AI agent asked to contribute a run, follow these steps exactly:

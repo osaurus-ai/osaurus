@@ -25,6 +25,7 @@ import SwiftUI
 
 struct ChatSettingsView: View {
     @ObservedObject private var themeManager = ThemeManager.shared
+    @ObservedObject private var taskManager = BackgroundTaskManager.shared
 
     private var theme: ThemeProtocol { themeManager.currentTheme }
 
@@ -57,15 +58,20 @@ struct ChatSettingsView: View {
     /// `AgentSettings.greetingPersona`.
     @State private var tempGreetingPersona: String = ""
 
-    /// Placement of the task-progress notch overlay. Off (default) keeps it
-    /// below the menu bar so it never covers the clock / battery / status
-    /// controls; on anchors it to the top of the display so it sits on the
-    /// menu bar (issue #1951). Bound to `UserDefaults` key
+    /// Placement of the task-progress notch overlay. With no saved preference,
+    /// it defaults on for hardware-notch displays and off elsewhere. Off keeps
+    /// it below the menu bar; on anchors it to the top of the display. Bound
+    /// to `UserDefaults` key
     /// `NotchOverlayPlacement.defaultsKey`, stored as the enum raw value and
     /// read by `NotchWindowController` when it repositions the panel. Applied
     /// immediately, so it's excluded from the debounced save baseline.
     @AppStorage(NotchOverlayPlacement.defaultsKey) private var notchPlacementRaw: String =
-        NotchOverlayPlacement.belowMenuBar.rawValue
+        NotchOverlayPlacement.current.rawValue
+
+    /// Prevent idle system sleep while agent sessions are actively running
+    /// or queued. Display sleep and explicit system sleep remain available.
+    @AppStorage(AgentRunPowerManager.keepAwakeDefaultsKey)
+    private var keepMacAwakeForAgentRuns: Bool = true
 
     @State private var hasAppeared = false
     @State private var successMessage: String?
@@ -94,6 +100,8 @@ struct ChatSettingsView: View {
                 ScrollViewReader { proxy in
                     ScrollView {
                         VStack(alignment: .leading, spacing: 24) {
+                            agentPowerSection
+
                             chatSection
 
                             generationSection
@@ -137,6 +145,9 @@ struct ChatSettingsView: View {
         }
         // Any edit to a save-relevant field reschedules the debounced save.
         .onChange(of: currentFormState) { _, _ in scheduleAutoSave() }
+        .onChange(of: keepMacAwakeForAgentRuns) { _, _ in
+            taskManager.refreshPowerAssertion()
+        }
         // Persist a pending edit if the user leaves before the debounce fires.
         .onDisappear { flushPendingSave() }
     }
@@ -154,6 +165,54 @@ struct ChatSettingsView: View {
                 NotchWindowController.shared.refreshPlacement()
             }
         )
+    }
+
+    // MARK: - Agent Power Section
+
+    @ViewBuilder private var agentPowerSection: some View {
+        SettingsSection(title: L("Agent Sessions"), icon: "bolt.horizontal.circle.fill") {
+            VStack(alignment: .leading, spacing: 14) {
+                SettingsToggle(
+                    title: L("Keep Mac Awake While Agents Run"),
+                    description: L(
+                        "Prevent idle system sleep while agent sessions are running or queued, so long tasks can finish. The display may still sleep, and closing a MacBook lid or choosing Sleep always takes priority."
+                    ),
+                    isOn: $keepMacAwakeForAgentRuns
+                )
+                .settingsLandingAnchor("settings.chat.keepAwakeForAgentRuns")
+
+                if keepMacAwakeForAgentRuns {
+                    HStack(spacing: 9) {
+                        Image(
+                            systemName: taskManager.isPreventingIdleSystemSleep
+                                ? "bolt.fill"
+                                : "moon.stars.fill"
+                        )
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundColor(
+                            taskManager.isPreventingIdleSystemSleep
+                                ? Color.accentColor
+                                : theme.tertiaryText
+                        )
+
+                        Text(
+                            taskManager.isPreventingIdleSystemSleep
+                                ? L("Keeping this Mac awake while agents work")
+                                : L("Ready — activates automatically with the next agent run")
+                        )
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundColor(theme.secondaryText)
+                    }
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 10)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(
+                        RoundedRectangle(cornerRadius: 10, style: .continuous)
+                            .fill(theme.tertiaryBackground.opacity(0.45))
+                    )
+                }
+            }
+        }
     }
 
     // MARK: - Header

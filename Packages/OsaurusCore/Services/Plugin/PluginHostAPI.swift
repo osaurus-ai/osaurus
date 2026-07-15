@@ -3061,9 +3061,13 @@ extension PluginHostContext {
         }
 
         switch state.status {
-        case .running, .awaitingClarification:
+        case .queued:
+            result["status"] = "queued"
+            if let step = state.currentStep { result["current_step"] = step }
+
+        case .running, .waitingForInput:
             // v3: chat tasks always serialize as "running". The
-            // `.awaitingClarification` enum case is still used internally
+            // `.waitingForInput` enum case is still used internally
             // for UI hints (toast, notch) but never exposed via task_status,
             // because clarification is handled inline through the `clarify`
             // agent intercept rather than as an out-of-band state.
@@ -3081,9 +3085,17 @@ extension PluginHostContext {
             }
             if !activity.isEmpty { result["activity"] = activity }
 
-        case .completed(let success, let summary):
-            result["status"] = success ? "completed" : "failed"
-            result["success"] = success
+        case .completed(let summary):
+            result["status"] = "completed"
+            result["success"] = true
+            result["summary"] = summary
+            if let execCtx = state.executionContext {
+                result["session_id"] = execCtx.id.uuidString
+            }
+
+        case .failed(let summary):
+            result["status"] = "failed"
+            result["success"] = false
             result["summary"] = summary
             if let execCtx = state.executionContext {
                 result["session_id"] = execCtx.id.uuidString

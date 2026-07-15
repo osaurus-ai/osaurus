@@ -161,6 +161,28 @@ enum ChatSessionStore {
 
     private static var didOpen = false
 
+    /// Warm the chat-history database off the main thread so the first
+    /// window's synchronous `loadAll()` finds it already open. The launch
+    /// path (`presentInitialWindow` → `ChatWindowState.init` →
+    /// `ChatSessionsManager.shared` → `loadAll`) otherwise pays the encrypted
+    /// SQLite open (Keychain read + WAL open + migrations) on the main
+    /// thread and trips the app-hang watchdog on slow disks.
+    ///
+    /// `ChatHistoryDatabase.open()` is idempotent and serialized on its own
+    /// queue, so racing the main-thread `ensureOpen()` is safe — whichever
+    /// runs second no-ops.
+    nonisolated static func preloadInBackground() {
+        Task.detached(priority: .userInitiated) {
+            guard StorageKeyManager.shared.isStorageReadyForWrites else { return }
+            StorageMutationGate.blockingAwaitNotMutating()
+            do {
+                try ChatHistoryDatabase.shared.open()
+            } catch {
+                print("[ChatSessionStore] Background chat-history prewarm failed: \(error)")
+            }
+        }
+    }
+
     /// Open the database (idempotent) on first call. Safe to invoke from any
     /// session-touching code path.
     ///

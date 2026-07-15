@@ -623,6 +623,14 @@ private extension SandboxView {
                     }
                 }
 
+                if let boot = SandboxStartupMetricsStore.load().last {
+                    Text(lastBootSummary(boot))
+                        .font(.system(size: 11, design: .monospaced))
+                        .foregroundColor(theme.tertiaryText)
+                        .lineLimit(2)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+
                 if let error = actionError {
                     Text(error)
                         .font(.system(size: 11))
@@ -630,6 +638,19 @@ private extension SandboxView {
                 }
             }
         }
+    }
+
+    /// One-line digest of the most recent boot's phase timings (local
+    /// metrics file; full samples in startup-metrics.json).
+    private func lastBootSummary(_ boot: SandboxBootSample) -> String {
+        func fmt(_ v: Double?) -> String {
+            guard let v else { return "—" }
+            return String(format: "%.1fs", v)
+        }
+        return
+            "Last boot: \(boot.kind.rawValue) · assets \(fmt(boot.assetResolution)) · "
+            + "create \(fmt(boot.containerCreate)) · vm \(fmt(boot.vmBoot)) · "
+            + "total \(fmt(boot.totalToRunning))"
     }
 
     func metricTile(icon: String, label: String, value: String) -> some View {
@@ -1061,11 +1082,31 @@ private extension SandboxView {
 
                 toggleRow(
                     title: L("Network Access"),
-                    description: L("Allow outbound network from container"),
+                    description: pendingConfig.network == "proxy"
+                        ? L("Outbound limited to the provisioning agent's allowed domains")
+                        : L("Allow outbound network from container"),
                     isOn: Binding(
-                        get: { pendingConfig.network == "outbound" },
-                        set: { pendingConfig.network = $0 ? "outbound" : "none" }
+                        get: { pendingConfig.network != "none" },
+                        set: { on in
+                            // Re-enabling restores proxy mode when a domain
+                            // allowlist is still configured; a bare toggle
+                            // must not silently widen "proxy" to "outbound".
+                            if on {
+                                let domains = pendingConfig.allowedDomains ?? []
+                                pendingConfig.network = domains.isEmpty ? "outbound" : "proxy"
+                            } else {
+                                pendingConfig.network = "none"
+                            }
+                        }
                     )
+                )
+
+                toggleRow(
+                    title: L("Per-Agent Environments"),
+                    description: L(
+                        "Experimental: boot from each agent's own copy-on-write clone of the base image so system packages persist per agent"
+                    ),
+                    isOn: $pendingConfig.perAgentEnvironments
                 )
 
                 toggleRow(
@@ -1242,10 +1283,16 @@ private extension SandboxView {
     func applyResourceChanges() {
         SandboxConfigurationStore.save(pendingConfig)
         config = pendingConfig
+        actionError = nil
         Task {
-            try? await SandboxManager.shared.resetContainer()
-            refreshInfo()
-            runProvisioningPreflight()
+            do {
+                try await SandboxManager.shared.restartContainer()
+                refreshInfo()
+                runProvisioningPreflight()
+            } catch {
+                actionError = error.localizedDescription
+                runProvisioningPreflight()
+            }
         }
     }
 

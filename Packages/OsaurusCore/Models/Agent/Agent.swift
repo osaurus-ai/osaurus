@@ -393,6 +393,14 @@ public struct AutonomousExecConfig: Codable, Sendable, Equatable {
     /// leg of the agent-as-bridge exfiltration path — pairs naturally with
     /// combined mode (read-only host + no egress). Honored at VM boot.
     public var sandboxNetworkEnabled: Bool
+    /// Optional egress domain allowlist. When non-empty (and
+    /// `sandboxNetworkEnabled` is on), the sandbox boots on a host-only
+    /// network and outbound traffic is forced through the host's
+    /// filtering proxy — only these exact / `*.wildcard` domains (plus
+    /// domains declared by the agent's installed plugins) may connect.
+    /// Empty / `nil` keeps today's explicit unrestricted mode. Resolved
+    /// at VM boot by `SandboxEgressPolicy.mode`.
+    public var sandboxAllowedDomains: [String]?
     /// Whether the agent may run detached background jobs. Gates both
     /// `sandbox_exec(background:true)` and the `sandbox_process` tool
     /// (poll/wait/kill). Defaults `false` to keep the sandbox tool surface
@@ -415,6 +423,7 @@ public struct AutonomousExecConfig: Codable, Sendable, Equatable {
         pluginCreate: Bool = true,
         allowHostSecretReads: Bool = false,
         sandboxNetworkEnabled: Bool = true,
+        sandboxAllowedDomains: [String]? = nil,
         backgroundProcessEnabled: Bool = false
     ) {
         self.enabled = enabled
@@ -422,12 +431,14 @@ public struct AutonomousExecConfig: Codable, Sendable, Equatable {
         self.pluginCreate = pluginCreate
         self.allowHostSecretReads = allowHostSecretReads
         self.sandboxNetworkEnabled = sandboxNetworkEnabled
+        self.sandboxAllowedDomains = sandboxAllowedDomains
         self.backgroundProcessEnabled = backgroundProcessEnabled
     }
 
     private enum CodingKeys: String, CodingKey {
         case enabled, maxCommandsPerTurn, pluginCreate
         case allowHostSecretReads, sandboxNetworkEnabled
+        case sandboxAllowedDomains
         case backgroundProcessEnabled
     }
 
@@ -443,6 +454,7 @@ public struct AutonomousExecConfig: Codable, Sendable, Equatable {
         pluginCreate = try c.decodeIfPresent(Bool.self, forKey: .pluginCreate) ?? true
         allowHostSecretReads = try c.decodeIfPresent(Bool.self, forKey: .allowHostSecretReads) ?? false
         sandboxNetworkEnabled = try c.decodeIfPresent(Bool.self, forKey: .sandboxNetworkEnabled) ?? true
+        sandboxAllowedDomains = try c.decodeIfPresent([String].self, forKey: .sandboxAllowedDomains)
         backgroundProcessEnabled =
             try c.decodeIfPresent(Bool.self, forKey: .backgroundProcessEnabled) ?? false
     }

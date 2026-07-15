@@ -8,6 +8,7 @@
 //
 
 import Foundation
+import os
 
 // MARK: - Option Value
 
@@ -54,6 +55,122 @@ struct ModelOptionDefinition: Identifiable, Sendable {
     }
 }
 
+// MARK: - Remote Reasoning Capabilities (catalog-driven)
+
+/// Ordered reasoning-effort capability set for a remote model, sourced from a
+/// live provider catalog (the ChatGPT/Codex `/models` response) or a
+/// documented API contract (official OpenAI GPT-5.6). Level ids are exact
+/// wire values (`low`, `xhigh`, `ultra`, ...); only presentation labels are
+/// mapped locally, so the original id always passes through unchanged.
+struct ModelReasoningCapabilities: Sendable, Equatable, Hashable {
+    struct Level: Sendable, Equatable, Hashable, Identifiable {
+        /// Wire effort id, e.g. "xhigh".
+        let id: String
+        /// Catalog-provided copy for the level (secondary text in the picker).
+        let description: String?
+
+        init(id: String, description: String? = nil) {
+            self.id = id
+            self.description = description
+        }
+    }
+
+    /// Supported levels in catalog order.
+    let levels: [Level]
+    /// Catalog default effort id. Display-only: shown when the user made no
+    /// explicit choice, never synthesized into requests.
+    let defaultLevelId: String?
+
+    var isEmpty: Bool { levels.isEmpty }
+
+    /// Human label for a wire effort id, matching ChatGPT's own naming.
+    /// Unknown ids fall back to a capitalized form so a new catalog level
+    /// still renders sensibly before Osaurus learns its label.
+    static func displayLabel(forEffort effort: String) -> String {
+        switch effort.lowercased() {
+        case "none": return L("None")
+        case "minimal": return L("Minimal")
+        case "low": return L("Light")
+        case "medium": return L("Medium")
+        case "high": return L("High")
+        case "xhigh": return L("Extra High")
+        case "max": return L("Max")
+        case "ultra": return L("Ultra")
+        default: return effort.capitalized
+        }
+    }
+
+    /// The dynamic `reasoningEffort` option definition for this capability
+    /// set, used by both the option normalizer (segment validation) and the
+    /// UI (segment rendering).
+    var reasoningOptionDefinition: ModelOptionDefinition {
+        ModelOptionDefinition(
+            id: "reasoningEffort",
+            label: L("Effort"),
+            icon: "brain",
+            kind: .segmented(
+                levels.map { ModelOptionSegment(id: $0.id, label: Self.displayLabel(forEffort: $0.id)) }
+            )
+        )
+    }
+
+    /// Documented reasoning contract for GPT-5.6 (Sol/Terra/Luna) on the
+    /// official `api.openai.com` API-key route: `none` through `max`,
+    /// defaulting to `medium`. The public API does NOT expose Codex's
+    /// `ultra`; this profile must never grow it, and it applies only to the
+    /// official host — custom OpenAI-compatible providers keep the generic
+    /// fallback behavior.
+    static let officialOpenAIGPT56 = ModelReasoningCapabilities(
+        levels: ["none", "low", "medium", "high", "xhigh", "max"].map { Level(id: $0) },
+        defaultLevelId: "medium"
+    )
+
+    init(levels: [Level], defaultLevelId: String?) {
+        self.levels = levels
+        self.defaultLevelId = defaultLevelId
+    }
+
+    /// Build from live Codex catalog metadata; nil when the catalog exposes
+    /// no reasoning levels for the model (older slugs keep the generic
+    /// static profile).
+    init?(codex metadata: CodexModelMetadata) {
+        let levels = metadata.supportedReasoningLevels.map {
+            Level(id: $0.effort, description: $0.description)
+        }
+        guard !levels.isEmpty else { return nil }
+        self.init(levels: levels, defaultLevelId: metadata.defaultReasoningLevel)
+    }
+}
+
+/// Process-global dynamic reasoning capability catalog, keyed by the FULL
+/// provider-prefixed model id (e.g. "openai-chatgpt/gpt-5.6-terra") so the
+/// same slug offered by two routes (Codex OAuth vs official API key) never
+/// receives the wrong provider's effort set.
+///
+/// Lock-backed because `ChatEngine` re-normalizes request options off the
+/// SwiftUI layer; without a globally readable resolver, valid `xhigh`/`max`/
+/// `ultra` selections would be dropped by the static four-tier profile.
+/// `ModelPickerItemCache` atomically replaces the whole catalog on every
+/// rebuild, which also clears entries for removed/disconnected providers.
+enum RemoteReasoningCapabilityCatalog {
+    private static let box = OSAllocatedUnfairLock<[String: ModelReasoningCapabilities]>(
+        initialState: [:]
+    )
+
+    static func replaceAll(_ capabilities: [String: ModelReasoningCapabilities]) {
+        box.withLock { $0 = capabilities }
+    }
+
+    static func capabilities(for modelId: String) -> ModelReasoningCapabilities? {
+        box.withLock { $0[modelId] }
+    }
+
+    /// Current contents, for save/restore around tests.
+    static func snapshot() -> [String: ModelReasoningCapabilities] {
+        box.withLock { $0 }
+    }
+}
+
 // MARK: - Model Profile Protocol
 
 protocol ModelProfile: Sendable {
@@ -77,6 +194,11 @@ extension ModelProfile {
 enum ModelProfileRegistry {
     static let profiles: [any ModelProfile.Type] = [
         VeniceModelProfile.self,
+        // Version-specific OpenAI profiles must precede the generic
+        // `OpenAIReasoningProfile` fallback: first match wins.
+        OpenAIOSeriesReasoningProfile.self,
+        OpenAIGPT51ReasoningProfile.self,
+        OpenAIGPT52PlusReasoningProfile.self,
         OpenAIReasoningProfile.self,
         MistralReasoningProfile.self,
         QwenThinkingProfile.self,
@@ -101,8 +223,61 @@ enum ModelProfileRegistry {
         profile(for: modelId)?.defaults ?? [:]
     }
 
+    /// Catalog-driven reasoning capabilities for a (full, provider-prefixed)
+    /// model id, when a connected provider published them.
+    static func reasoningCapabilities(for modelId: String) -> ModelReasoningCapabilities? {
+        RemoteReasoningCapabilityCatalog.capabilities(for: modelId)
+    }
+
+    /// The effort id the UI should display as active: the explicit persisted
+    /// choice when present, otherwise the catalog default. Display-only —
+    /// the default is never synthesized into `modelOptions`/requests, so the
+    /// backend still applies it naturally.
+    static func effectiveReasoningEffort(
+        for modelId: String,
+        values: [String: ModelOptionValue]
+    ) -> String? {
+        if let explicit = values["reasoningEffort"]?.stringValue { return explicit }
+        return reasoningCapabilities(for: modelId)?.defaultLevelId
+    }
+
+    /// Display label for the model chip's inline reasoning suffix
+    /// ("Terra · Extra High", "deepseek-v4 · Instruct"): the effective
+    /// effort's presentation label from the model's segmented reasoning
+    /// option — dynamic catalog first (ChatGPT-style labels), then the
+    /// static profile's own segment labels. Nil when the model has no
+    /// segmented `reasoningEffort` option or no effective value to show.
+    static func inlineReasoningSuffixLabel(
+        for modelId: String,
+        values: [String: ModelOptionValue]
+    ) -> String? {
+        if let capabilities = reasoningCapabilities(for: modelId), !capabilities.isEmpty {
+            let effective =
+                values["reasoningEffort"]?.stringValue ?? capabilities.defaultLevelId
+            return effective.map { ModelReasoningCapabilities.displayLabel(forEffort: $0) }
+        }
+        guard
+            let option = profile(for: modelId)?.options
+                .first(where: { $0.id == "reasoningEffort" }),
+            case .segmented(let segments) = option.kind
+        else { return nil }
+        let effective =
+            values["reasoningEffort"]?.stringValue
+            ?? defaults(for: modelId)["reasoningEffort"]?.stringValue
+        guard let effective else { return nil }
+        return segments.first(where: { $0.id == effective })?.label
+            ?? ModelReasoningCapabilities.displayLabel(forEffort: effective)
+    }
+
     static func options(for modelId: String) -> [ModelOptionDefinition] {
-        profile(for: modelId)?.options ?? []
+        // Provider-scoped live capabilities win over the static profiles:
+        // the catalog is authoritative for which efforts a model accepts
+        // (Terra offers `ultra`, Luna stops at `max`). Static profiles remain
+        // the fallback for older models and pre-catalog states.
+        if let capabilities = reasoningCapabilities(for: modelId), !capabilities.isEmpty {
+            return [capabilities.reasoningOptionDefinition]
+        }
+        return profile(for: modelId)?.options ?? []
     }
 
     static func normalizedOptions(
@@ -215,18 +390,142 @@ struct DSV4ReasoningProfile: ModelProfile {
     }
 }
 
-// MARK: - OpenAI Reasoning Profile
+// MARK: - OpenAI Reasoning Profiles
 
-/// OpenAI reasoning models (o-series, gpt-5+) — supports reasoning effort control.
+/// Shared helpers for the OpenAI static profiles. The documented
+/// `reasoning_effort` contract is version-specific (audited against the
+/// OpenAI reasoning guide + Azure compatibility matrix, 2026-07):
+/// - o1/o3/o4: `low`/`medium`/`high` only — `minimal` and `none` are
+///   rejected.
+/// - Original gpt-5 family (gpt-5, -mini, -nano, -codex): `minimal` through
+///   `high`; no `none`. (`gpt-5-pro` accepts only `high`; not modeled
+///   separately — the picker still offers the shared set for it.)
+/// - gpt-5.1: replaces `minimal` with `none`; no `xhigh`.
+/// - gpt-5.2 through gpt-5.5: `none` through `xhigh`.
+/// - gpt-5.6: `none` through `max` — carried by the documented public
+///   capability profile on the official route (`ModelReasoningCapabilities
+///   .officialOpenAIGPT56`) and the live Codex catalog; on custom
+///   OpenAI-compatible hosts it falls through to the 5.2+ static set, which
+///   is never assumed to include `max`.
+private enum OpenAIModelVersion {
+    static func bare(_ modelId: String) -> String {
+        modelId.lowercased().split(separator: "/").last.map(String.init)
+            ?? modelId.lowercased()
+    }
+
+    /// The minor version N for a "gpt-5.N…" id; nil for the original gpt-5
+    /// family and non-gpt-5 ids.
+    static func gpt5Minor(_ modelId: String) -> Int? {
+        let bare = Self.bare(modelId)
+        guard bare.hasPrefix("gpt-5.") else { return nil }
+        let digits = bare.dropFirst("gpt-5.".count).prefix(while: \.isNumber)
+        return Int(digits)
+    }
+}
+
+/// OpenAI o-series reasoning models (o1/o3/o4, including -mini/-pro
+/// variants) — `low`/`medium`/`high` only. `minimal` is rejected by the
+/// API for these ids.
+struct OpenAIOSeriesReasoningProfile: ModelProfile {
+    static let displayName = "Reasoning"
+
+    static func matches(modelId: String) -> Bool {
+        let bare = OpenAIModelVersion.bare(modelId)
+        return ["o1", "o3", "o4"].contains { bare.hasPrefix($0) }
+    }
+
+    static let options: [ModelOptionDefinition] = [
+        ModelOptionDefinition(
+            id: "reasoningEffort",
+            label: L("Reasoning Effort"),
+            icon: "brain",
+            kind: .segmented([
+                ModelOptionSegment(id: "low", label: L("Low")),
+                ModelOptionSegment(id: "medium", label: L("Medium")),
+                ModelOptionSegment(id: "high", label: L("High")),
+            ])
+        )
+    ]
+
+    static let defaults: [String: ModelOptionValue] = [
+        "reasoningEffort": .string("medium")
+    ]
+}
+
+/// GPT-5.1 — `none`/`low`/`medium`/`high`. 5.1 dropped `minimal` in favor
+/// of `none` and does not accept `xhigh` (only the codex-max slug did).
+/// The API default is `none`.
+struct OpenAIGPT51ReasoningProfile: ModelProfile {
+    static let displayName = "Reasoning"
+
+    static func matches(modelId: String) -> Bool {
+        OpenAIModelVersion.gpt5Minor(modelId) == 1
+    }
+
+    static let options: [ModelOptionDefinition] = [
+        ModelOptionDefinition(
+            id: "reasoningEffort",
+            label: L("Reasoning Effort"),
+            icon: "brain",
+            kind: .segmented([
+                ModelOptionSegment(id: "none", label: L("None")),
+                ModelOptionSegment(id: "low", label: L("Low")),
+                ModelOptionSegment(id: "medium", label: L("Medium")),
+                ModelOptionSegment(id: "high", label: L("High")),
+            ])
+        )
+    ]
+
+    static let defaults: [String: ModelOptionValue] = [
+        "reasoningEffort": .string("none")
+    ]
+}
+
+/// GPT-5.2 and later minors (5.2–5.5, and 5.6+ on custom hosts where the
+/// documented public capability profile doesn't apply) — `none` through
+/// `xhigh`, defaulting to `medium`. `max` is never offered statically; it
+/// requires the documented 5.6 public profile or live Codex catalog.
+struct OpenAIGPT52PlusReasoningProfile: ModelProfile {
+    static let displayName = "Reasoning"
+
+    static func matches(modelId: String) -> Bool {
+        guard let minor = OpenAIModelVersion.gpt5Minor(modelId) else { return false }
+        return minor >= 2
+    }
+
+    static let options: [ModelOptionDefinition] = [
+        ModelOptionDefinition(
+            id: "reasoningEffort",
+            label: L("Reasoning Effort"),
+            icon: "brain",
+            kind: .segmented([
+                ModelOptionSegment(id: "none", label: L("None")),
+                ModelOptionSegment(id: "low", label: L("Low")),
+                ModelOptionSegment(id: "medium", label: L("Medium")),
+                ModelOptionSegment(id: "high", label: L("High")),
+                ModelOptionSegment(id: "xhigh", label: L("Extra High")),
+            ])
+        )
+    ]
+
+    static let defaults: [String: ModelOptionValue] = [
+        "reasoningEffort": .string("medium")
+    ]
+}
+
+/// Generic OpenAI reasoning fallback. Registered after the version-specific
+/// profiles above, so in practice it resolves only for the original gpt-5
+/// family (gpt-5, -mini, -nano, -codex), which accepts `minimal` through
+/// `high`. Its broad `matches` (any o1/o3/o4/gpt-5* id) is intentionally
+/// kept: `RemoteProviderService` uses it as the "OpenAI reasoning model"
+/// wire predicate (max_completion_tokens, temperature/top_p stripping).
 struct OpenAIReasoningProfile: ModelProfile {
     static let displayName = "Reasoning"
 
     private static let reasoningModelPrefixes = ["o1", "o3", "o4", "gpt-5"]
 
     static func matches(modelId: String) -> Bool {
-        let bare =
-            modelId.lowercased().split(separator: "/").last.map(String.init)
-            ?? modelId.lowercased()
+        let bare = OpenAIModelVersion.bare(modelId)
         return reasoningModelPrefixes.contains { bare.hasPrefix($0) }
     }
 
@@ -251,8 +550,13 @@ struct OpenAIReasoningProfile: ModelProfile {
 
 // MARK: - Mistral Reasoning Profile
 
-/// Mistral's adjustable-reasoning models (mistral-small, mistral-medium-3.5+) —
-/// supports reasoning effort control via the `reasoning_effort` request field.
+/// Mistral's adjustable-reasoning models — supports reasoning effort control
+/// via the `reasoning_effort` request field. Per Mistral's reasoning docs
+/// (audited 2026-07), adjustable reasoning exists ONLY on `mistral-small-*`
+/// and `mistral-medium-3-5`/`3.5`; plain `mistral-medium-latest`,
+/// `mistral-large-*`, and the always-reasoning `magistral-*` family all
+/// reject the parameter with HTTP 400, so the match must not widen to the
+/// whole `mistral-medium` prefix.
 struct MistralReasoningProfile: ModelProfile {
     static let displayName = "Reasoning Effort"
 
@@ -260,7 +564,7 @@ struct MistralReasoningProfile: ModelProfile {
         let bare =
             modelId.lowercased().split(separator: "/").last.map(String.init)
             ?? modelId.lowercased()
-        return bare.hasPrefix("mistral-small") || bare.hasPrefix("mistral-medium")
+        return bare.hasPrefix("mistral-small") || bare.hasPrefix("mistral-medium-3")
     }
 
     // Mistral's chat-completions `reasoning_effort` accepts only `none` and
@@ -590,13 +894,19 @@ private let geminiOutputTypeSegments: [ModelOptionSegment] = [
 
 // MARK: - Gemini 3.1 Flash Image Profile (Nano Banana 2)
 
-/// Gemini 3.1 Flash Image Preview — supports extended aspect ratios, resolution (512px/1K/2K/4K), and output type.
+/// Gemini 3.1 Flash Image Preview — supports extended aspect ratios
+/// (including 1:4/4:1/1:8/8:1), resolution (512px/1K/2K/4K), and output
+/// type. Excludes the Lite variant: per the Gemini image docs (audited
+/// 2026-07) `gemini-3.1-flash-lite-image` supports only 1K output, so
+/// offering it this resolution set would send values the API rejects; Lite
+/// intentionally matches no profile and runs on API defaults.
 struct Gemini31FlashImageProfile: ModelProfile {
     static let displayName = "Image Generation (3.1 Flash)"
 
     static func matches(modelId: String) -> Bool {
         let lower = modelId.lowercased()
         return lower.contains("gemini-3.1") && lower.contains("flash") && lower.contains("image")
+            && !lower.contains("lite")
     }
 
     static let options: [ModelOptionDefinition] = [
@@ -714,6 +1024,13 @@ struct GeminiFlashImageProfile: ModelProfile {
 
 /// Venice AI models — supports web search, thinking control, and Venice system prompt toggle.
 /// See https://docs.venice.ai/api-reference/api-spec for venice_parameters details.
+///
+/// Match caveat: picker model ids are prefixed with a slug of the
+/// user-visible provider NAME (`RemoteProviderManager.cachedAvailableModels`),
+/// so `venice-ai/` relies on the provider keeping its preset name
+/// "Venice AI". A renamed Venice provider loses these options in the UI;
+/// the wire side is unaffected because `buildVeniceParameters` gates on the
+/// venice.ai host, not this prefix.
 struct VeniceModelProfile: ModelProfile {
     static let displayName = "Venice AI"
 

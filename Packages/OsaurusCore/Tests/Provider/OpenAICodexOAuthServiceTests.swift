@@ -177,6 +177,68 @@ struct OpenAICodexOAuthServiceTests {
         #expect(!summary.responsesLiteModels.contains("gpt-5.5"))
     }
 
+    @Test func decodeModelCatalog_preservesReasoningMetadataPerModel() throws {
+        // Model-specific reasoning contracts from the live catalog: Terra
+        // carries six levels through `ultra`, Luna stops at `max`, and an
+        // older slug exposes none. Sets must come from the catalog verbatim
+        // (order included) — never inferred from model names.
+        let payload = """
+            {"models":[
+                {"slug":"gpt-5.6-terra","visibility":"list","priority":1,"shell_type":"shell_command",
+                 "use_responses_lite":true,"display_name":"GPT-5.6 Terra",
+                 "default_reasoning_level":"medium",
+                 "supported_reasoning_levels":[
+                    {"effort":"low","description":"Fastest"},
+                    {"effort":"medium","description":"Balanced"},
+                    {"effort":"high"},
+                    {"effort":"xhigh"},
+                    {"effort":"max"},
+                    {"effort":"ultra","description":"Deepest reasoning"}
+                 ]},
+                {"slug":"gpt-5.6-luna","visibility":"list","priority":2,"shell_type":"shell_command",
+                 "use_responses_lite":true,"display_name":"GPT-5.6 Luna",
+                 "default_reasoning_level":"medium",
+                 "supported_reasoning_levels":[
+                    {"effort":"low"},{"effort":"medium"},{"effort":"high"},
+                    {"effort":"xhigh"},{"effort":"max"},
+                    {"effort":"","description":"malformed level must be dropped"}
+                 ]},
+                {"slug":"gpt-5.5","visibility":"list","priority":3,"shell_type":"shell_command"},
+                {"slug":"gpt-5.5-internal","visibility":"hidden","priority":4,
+                 "supported_reasoning_levels":[{"effort":"low"}]}
+            ]}
+            """
+        let (models, summary) = try OpenAICodexOAuthService.decodeModelCatalog(Data(payload.utf8))
+
+        #expect(models == ["gpt-5.6-terra", "gpt-5.6-luna", "gpt-5.5"])
+
+        let terra = try #require(summary.modelMetadata["gpt-5.6-terra"])
+        #expect(terra.displayName == "GPT-5.6 Terra")
+        #expect(terra.defaultReasoningLevel == "medium")
+        #expect(
+            terra.supportedReasoningLevels.map(\.effort)
+                == ["low", "medium", "high", "xhigh", "max", "ultra"]
+        )
+        #expect(terra.supportedReasoningLevels.first?.description == "Fastest")
+        #expect(terra.supportedReasoningLevels.last?.description == "Deepest reasoning")
+        #expect(terra.usesResponsesLite)
+
+        let luna = try #require(summary.modelMetadata["gpt-5.6-luna"])
+        #expect(
+            luna.supportedReasoningLevels.map(\.effort)
+                == ["low", "medium", "high", "xhigh", "max"],
+            "Luna must not gain ultra, and the effort-less level must be dropped"
+        )
+
+        let legacy = try #require(summary.modelMetadata["gpt-5.5"])
+        #expect(legacy.supportedReasoningLevels.isEmpty)
+        #expect(legacy.defaultReasoningLevel == nil)
+        #expect(!legacy.usesResponsesLite)
+
+        // Filtered (hidden) entries never publish capability metadata.
+        #expect(summary.modelMetadata["gpt-5.5-internal"] == nil)
+    }
+
     @Test func decodeModelCatalog_throwsTypedErrorForUnreadablePayload() {
         #expect(throws: OpenAICodexOAuthError.self) {
             _ = try OpenAICodexOAuthService.decodeModelCatalog(Data(#"{"models":"unexpected"}"#.utf8))

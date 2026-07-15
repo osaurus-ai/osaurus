@@ -1036,6 +1036,9 @@ final class NativeMarkdownTableView: NSView {
     private var rows: [[String]] = []
     private var lastWidth: CGFloat = 0
     private var lastThemeFingerprint: String = ""
+    /// Width used by the most recent `relayoutImpl` pass; `layout()` skips
+    /// re-measuring when it would run with the same width again.
+    private var lastRelayoutWidth: CGFloat = -1
     private var heightConstraint: NSLayoutConstraint?
 
     // [row][col]; row 0 is headers
@@ -1100,7 +1103,13 @@ final class NativeMarkdownTableView: NSView {
 
     override func layout() {
         super.layout()
-        if bounds.width > 0.5 {
+        // Only re-measure when the width actually changed. Every streaming
+        // tick triggers a layout pass on the cell, and unconditionally
+        // re-measuring every cell of every visible table per tick was the
+        // dominant markdown streaming cost (ChatPerfTrace: 4,536 relayouts /
+        // 7.8s over one stream). Content changes route through `configure`,
+        // which calls `relayout` directly.
+        if bounds.width > 0.5, abs(bounds.width - lastRelayoutWidth) > 0.5 {
             relayout(width: bounds.width)
         }
     }
@@ -1247,6 +1256,15 @@ final class NativeMarkdownTableView: NSView {
     // MARK: - Private: Layout
 
     private func relayout(width: CGFloat) {
+        // Traced: table relayout during streaming is a suspected
+        // O(whole-table)-per-tick cost.
+        ChatPerfTrace.shared.time("markdown.tableRelayout") {
+            relayoutImpl(width: width)
+        }
+    }
+
+    private func relayoutImpl(width: CGFloat) {
+        lastRelayoutWidth = width
         let columnCount = cellFields.first?.count ?? 0
         guard columnCount > 0, width > 1 else {
             heightConstraint?.constant = 1
