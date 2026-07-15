@@ -347,9 +347,16 @@
             if SandboxBackend.current == .seatbelt {
                 // No VM or on-disk assets to inspect — the Seatbelt backend
                 // is "running" purely by virtue of having been provisioned
-                // this session, and "stopped" otherwise (starting it is
-                // instant, so there is no notProvisioned cold state).
-                _status = _status.isRunning ? .running : .stopped
+                // this session. `notProvisioned` is still meaningful:
+                // it's what drives the first-run "Set Up Sandbox" flow and
+                // keeps a user-removed sandbox removed until re-setup.
+                if _status.isRunning {
+                    _status = .running
+                } else if _removedByUser || !SandboxConfigurationStore.load().setupComplete {
+                    _status = .notProvisioned
+                } else {
+                    _status = .stopped
+                }
                 syncStatus()
                 return _status
             }
@@ -2046,7 +2053,46 @@
                 )
             }
 
+            if SandboxBackend.current == .seatbelt {
+                return await collectSeatbeltInfo(status: currentStatus)
+            }
             return await collectRunningContainerInfo(status: currentStatus)
+        }
+
+        /// Seatbelt backend metrics. There is no guest `/proc` to read and
+        /// no VM to have an uptime, CPU, or memory budget — the meaningful
+        /// numbers are the host-side ones: agent homes under
+        /// `workspace/agents`, workspace disk usage, and time since the
+        /// backend was marked ready. The VM-only fields stay `nil` so the
+        /// dashboard simply omits those tiles.
+        private func collectSeatbeltInfo(status: ContainerStatus) async -> ContainerInfo {
+            let fm = FileManager.default
+            let agentsDir = OsaurusPaths.containerAgentsDir()
+            let users =
+                ((try? fm.contentsOfDirectory(atPath: agentsDir.path)) ?? [])
+                .filter { !$0.hasPrefix(".") }
+                .sorted()
+
+            var uptime: String? = nil
+            if let ready = _lastBootReadyAt {
+                uptime = "\(Int(Date().timeIntervalSince(ready))) seconds"
+            }
+
+            var disk: String? = nil
+            if let r = try? await exec(command: "du -sh /workspace 2>/dev/null | cut -f1", timeout: 5) {
+                let out = r.stdout.trimmingCharacters(in: .whitespacesAndNewlines)
+                if !out.isEmpty { disk = out }
+            }
+
+            return ContainerInfo(
+                status: status,
+                agentUsers: users,
+                diskUsage: disk,
+                uptime: uptime,
+                memoryUsage: nil,
+                cpuLoad: nil,
+                processCount: nil
+            )
         }
 
         /// Single round-trip metric collection for the running container.
@@ -2151,6 +2197,9 @@
         /// concurrent checks still overlap with the sequential pair. The
         /// returned array preserves the UI ordering.
         public func runDiagnostics() async -> [DiagnosticResult] {
+            if SandboxBackend.current == .seatbelt {
+                return await runSeatbeltDiagnostics()
+            }
             async let execD = diagnose("exec") {
                 let r = try await self.exec(command: "echo hello from sandbox")
                 let out = r.stdout.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -2253,6 +2302,81 @@
             ]
 
             return results
+        }
+
+        /// Seatbelt diagnostics. The VM suite's NAT / apk / agent-user /
+        /// vsock-bridge checks have no equivalent here — instead verify the
+        /// properties this backend actually promises: commands execute,
+        /// the workspace is read-write, the profile blocks writes OUTSIDE
+        /// the workspace, and network access matches the configured mode.
+        private func runSeatbeltDiagnostics() async -> [DiagnosticResult] {
+            let execResult = await diagnose("exec") {
+                let r = try await self.exec(command: "echo hello from sandbox")
+                let out = r.stdout.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard out == "hello from sandbox" else {
+                    throw SandboxError.execFailed("expected 'hello from sandbox', got '\(out)'")
+                }
+                return out
+            }
+
+            let writeResult = await diagnose("workspace-rw") {
+                let r = try await self.exec(
+                    command: "f=/workspace/.osaurus-diag-$$; echo ok > \"$f\" && cat \"$f\" && rm -f \"$f\""
+                )
+                guard r.succeeded, r.stdout.contains("ok") else {
+                    throw SandboxError.execFailed(
+                        "workspace write failed (exit \(r.exitCode)): \(r.stderr)")
+                }
+                return "workspace read/write OK"
+            }
+
+            let confinementResult = await diagnose("confinement") {
+                // A write outside the workspace MUST be denied by the
+                // profile. The app itself is not confined, so checking the
+                // host filesystem afterwards is authoritative.
+                let escapePath = "/private/tmp/osaurus-seatbelt-escape"
+                _ = try await self.exec(command: "touch \(escapePath) 2>/dev/null")
+                if FileManager.default.fileExists(atPath: escapePath) {
+                    try? FileManager.default.removeItem(atPath: escapePath)
+                    throw SandboxError.execFailed(
+                        "a write outside the workspace succeeded — the sandbox profile is not being enforced"
+                    )
+                }
+                return "writes outside the workspace are blocked"
+            }
+
+            let networkAllowed =
+                SeatbeltSandbox.NetworkPolicy.from(
+                    configNetwork: SandboxConfigurationStore.load().network
+                ) == .allowed
+            let networkResult = await diagnose("network") {
+                let r = try await self.exec(
+                    command: "curl -s -m 10 https://example.com | head -5",
+                    timeout: 15
+                )
+                let gotResponse = !r.stdout.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                if networkAllowed {
+                    guard gotResponse else {
+                        throw SandboxError.execFailed(
+                            Self.sandboxDiagnosticHint(
+                                check: "nat-networking",
+                                exitCode: r.exitCode,
+                                stderr: r.stderr
+                            )
+                        )
+                    }
+                    return "outbound network OK"
+                } else {
+                    guard !gotResponse else {
+                        throw SandboxError.execFailed(
+                            "network is configured off but an outbound request succeeded — the sandbox profile is not being enforced"
+                        )
+                    }
+                    return "outbound network blocked as configured"
+                }
+            }
+
+            return [execResult, writeResult, confinementResult, networkResult]
         }
 
         private func diagnose(_ name: String, _ block: () async throws -> String) async -> DiagnosticResult {
