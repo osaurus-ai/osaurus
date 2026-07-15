@@ -52,6 +52,27 @@ struct EvalReviewReportTests {
         #expect(bundle.formatMarkdown().contains("Verdict: NO EVIDENCE"))
     }
 
+    @Test func passingSiblingSuiteDoesNotMaskAllSkippedSuite() {
+        let bundle = EvalReviewReportBuilder.build(
+            manifest: manifest(),
+            reports: [
+                input(
+                    role: .local,
+                    suite: "AgentLoop",
+                    report: report(modelId: "foundation", rows: [("pass", .passed, [])])
+                ),
+                input(
+                    role: .local,
+                    suite: "AgentLoopFrontier",
+                    report: report(modelId: "foundation", rows: [("skip", .skipped, ["unavailable"])])
+                ),
+            ]
+        )
+
+        #expect(bundle.hasRunFailures)
+        #expect(bundle.formatMarkdown().contains("Verdict: NO EVIDENCE"))
+    }
+
     @Test func aggregateSummaryCountsOutcomesAcrossModelsAndSuites() throws {
         let bundle = EvalReviewReportBuilder.build(
             manifest: manifest(commands: [
@@ -320,6 +341,30 @@ struct EvalReviewReportTests {
         #expect(throws: EvalReviewReportError.self) {
             _ = try EvalReviewReportBuilder.loadReportsRecursively(from: root)
         }
+    }
+
+    @Test func nonOverlappingBaselineFailsClosed() throws {
+        let baseline = input(
+            role: .local,
+            suite: "AgentLoop",
+            report: report(modelId: "foundation", rows: [("baseline-only", .passed, [])])
+        )
+        let current = input(
+            role: .local,
+            suite: "AgentLoop",
+            report: report(modelId: "different-model", rows: [("current-only", .passed, [])])
+        )
+        let bundle = EvalReviewReportBuilder.build(
+            manifest: manifest(baselinePath: "build/evals/baseline"),
+            reports: [current],
+            baselineReports: [baseline]
+        )
+        let comparison = try #require(bundle.comparison)
+
+        #expect(!comparison.hasComparableCases)
+        #expect(comparison.hasBlockingRegressions)
+        #expect(comparison.warnings.contains(EvalReviewComparisonSummary.noSharedCasesWarning))
+        #expect(bundle.hasBlockingRegressions)
     }
 
     private func input(

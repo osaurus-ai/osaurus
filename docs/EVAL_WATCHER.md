@@ -100,6 +100,13 @@ The scoreboard includes:
 - Cross-run model and suite pass-rate tables.
 - Baseline comparison totals and no-regression threshold status.
 
+Main and release-candidate watcher runs fail closed unless their selected
+baseline shares at least one case with the current report. A missing baseline
+or a zero-overlap comparison is reported as `NO COMPARABLE BASELINE`; it is
+never rendered as a passing release verdict. Fixture smoke runs exercise the
+artifact pipeline but are not release evidence unless they also provide a
+comparable baseline.
+
 ## Fixture Smoke
 
 The watcher supports a no-provider path for script and artifact validation:

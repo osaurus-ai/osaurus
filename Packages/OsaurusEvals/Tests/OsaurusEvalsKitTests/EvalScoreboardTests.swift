@@ -370,6 +370,67 @@ struct EvalScoreboardTests {
         #expect(scoreboard.evidenceReportDescriptor(scoreboardPath: "scoreboard.json").status == .failed)
     }
 
+    @Test func passingSiblingSuiteDoesNotMaskReleaseCandidateWithoutEvidence() {
+        let bundle = EvalReviewReportBuilder.build(
+            manifest: manifest(
+                generatedAt: "2026-07-11T00:00:00Z",
+                commit: "partial-evidence",
+                artifactPath: "build/evals/watcher/main/partial/report",
+                artifactId: "partial-evidence"
+            ),
+            reports: [
+                input(
+                    suite: "AgentLoop",
+                    reportPath: "AgentLoop.json",
+                    report: passingFixtureReport()
+                ),
+                input(
+                    suite: "AgentLoopFrontier",
+                    reportPath: "AgentLoopFrontier.json",
+                    report: EvalReport(
+                        modelId: "foundation",
+                        startedAt: "2026-07-11T00:00:00Z",
+                        cases: []
+                    )
+                ),
+            ]
+        )
+
+        let scoreboard = EvalScoreboardBuilder.build(
+            sourceRoots: [URL(fileURLWithPath: "build/evals/watcher/main")],
+            bundles: [EvalScoreboardInput(summaryPath: "summary.json", bundle: bundle)]
+        )
+
+        #expect(scoreboard.releaseCandidate?.hasRunFailures == true)
+        #expect(scoreboard.releaseCandidate?.verdict == "EVAL FAILURES PRESENT")
+        #expect(scoreboard.hasRunFailures)
+        #expect(scoreboard.evidenceReportDescriptor(scoreboardPath: "scoreboard.json").status == .failed)
+    }
+
+    @Test func latestPassingRunWithoutBaselineFailsNoRegressionGate() {
+        let report = passingFixtureReport()
+        let bundle = EvalReviewReportBuilder.build(
+            manifest: manifest(
+                generatedAt: "2026-06-19T00:00:00Z",
+                commit: "head-without-baseline",
+                artifactPath: "build/evals/watcher/release-candidate/current/report",
+                artifactId: "missing-baseline"
+            ),
+            reports: [input(suite: "AgentLoop", reportPath: "AgentLoop.json", report: report)]
+        )
+        let scoreboard = EvalScoreboardBuilder.build(
+            sourceRoots: [URL(fileURLWithPath: "build/evals/watcher/release-candidate")],
+            bundles: [EvalScoreboardInput(summaryPath: "summary.json", bundle: bundle)]
+        )
+
+        #expect(scoreboard.noRegression.observedRegressions == 0)
+        #expect(!scoreboard.noRegression.passed)
+        #expect(scoreboard.releaseCandidate?.noRegressionPassed == false)
+        #expect(scoreboard.releaseCandidate?.verdict == "NO COMPARABLE BASELINE")
+        #expect(scoreboard.runs.first?.verdict == "NO COMPARABLE BASELINE")
+        #expect(scoreboard.hasBlockingRegressions)
+    }
+
     private func fixtureReport(_ name: String) throws -> EvalReport {
         let url = try #require(
             Bundle.module.url(

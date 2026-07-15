@@ -273,6 +273,8 @@ public struct EvalReviewCaseDelta: Sendable, Codable, Equatable {
 }
 
 public struct EvalReviewComparisonSummary: Sendable, Codable, Equatable {
+    public static let noSharedCasesWarning =
+        "Baseline comparison is invalid because the baseline and current reports share no model, suite, and case identity."
     public let baselinePath: String
     public let regressions: [EvalReviewCaseDelta]
     public let newFailures: [EvalReviewCaseDelta]
@@ -284,7 +286,11 @@ public struct EvalReviewComparisonSummary: Sendable, Codable, Equatable {
     public let warnings: [String]
 
     public var hasBlockingRegressions: Bool {
-        !regressions.isEmpty || !newFailures.isEmpty
+        !regressions.isEmpty || !newFailures.isEmpty || !hasComparableCases
+    }
+
+    public var hasComparableCases: Bool {
+        !warnings.contains(Self.noSharedCasesWarning)
     }
 }
 
@@ -299,9 +305,11 @@ public struct EvalReviewReportBundle: Sendable, Codable, Equatable {
     public let comparison: EvalReviewComparisonSummary?
 
     public var hasRunFailures: Bool {
-        models.isEmpty || models.contains {
-            ($0.counts.passed + $0.counts.failed + $0.counts.errored == 0)
-                || $0.counts.failed > 0 || $0.counts.errored > 0
+        models.isEmpty || models.contains { model in
+            model.suites.isEmpty || model.suites.contains { suite in
+                (suite.counts.passed + suite.counts.failed + suite.counts.errored == 0)
+                    || suite.counts.failed > 0 || suite.counts.errored > 0
+            }
         }
     }
 
@@ -494,8 +502,10 @@ public struct EvalReviewReportBundle: Sendable, Codable, Equatable {
 
     private func verdictLabel() -> String {
         if hasBlockingRegressions { return "REGRESSED" }
-        if models.isEmpty || models.contains(where: {
-            $0.counts.passed + $0.counts.failed + $0.counts.errored == 0
+        if models.isEmpty || models.contains(where: { model in
+            model.suites.isEmpty || model.suites.contains {
+                $0.counts.passed + $0.counts.failed + $0.counts.errored == 0
+            }
         }) {
             return "NO EVIDENCE"
         }
@@ -811,7 +821,8 @@ public enum EvalReviewReportBuilder {
         var newCases: [EvalReviewCaseDelta] = []
         var removedCases: [EvalReviewCaseDelta] = []
 
-        for key in baselineKeys.intersection(currentKeys).sorted() {
+        let sharedKeys = baselineKeys.intersection(currentKeys)
+        for key in sharedKeys.sorted() {
             let lhs = baseline.byKey[key]
             let rhs = current.byKey[key]
             let delta = EvalReviewCaseDelta(baseline: lhs, current: rhs)
@@ -852,7 +863,10 @@ public enum EvalReviewReportBuilder {
             changedSkips: changedSkips,
             newCases: newCases,
             removedCases: removedCases,
-            warnings: (baseline.warnings + current.warnings).sorted()
+            warnings: (
+                baseline.warnings + current.warnings
+                    + (sharedKeys.isEmpty ? [EvalReviewComparisonSummary.noSharedCasesWarning] : [])
+            ).sorted()
         )
     }
 

@@ -33,6 +33,9 @@ public struct EvalScoreboardBundle: Sendable, Codable, Equatable {
                     || $0.counts.failed > 0 || $0.counts.errored > 0
             }
         }
+        if let suiteDerivedFailure = releaseCandidate.hasRunFailures {
+            return suiteDerivedFailure
+        }
         let candidates = releaseCandidate.local + releaseCandidate.frontier
         return candidates.isEmpty || candidates.contains {
             ($0.counts.passed + $0.counts.failed + $0.counts.errored == 0)
@@ -290,10 +293,12 @@ public struct EvalScoreboardRunSummary: Sendable, Codable, Equatable {
         baselinePath = bundle.manifest.baselinePath
         let observedRegressions = (bundle.comparison?.regressions.count ?? 0)
             + (bundle.comparison?.newFailures.count ?? 0)
-        if observedRegressions > allowedRegressions {
-            verdict = "REGRESSED"
-        } else if bundle.hasRunFailures {
+        if bundle.hasRunFailures {
             verdict = "EVAL FAILURES PRESENT"
+        } else if bundle.comparison?.hasComparableCases != true {
+            verdict = "NO COMPARABLE BASELINE"
+        } else if observedRegressions > allowedRegressions {
+            verdict = "REGRESSED"
         } else {
             verdict = "PASS"
         }
@@ -344,6 +349,9 @@ public struct EvalReleaseCandidateScoreSummary: Sendable, Codable, Equatable {
     public let artifactPath: String
     public let baselinePath: String?
     public let verdict: String
+    /// Suite-derived run failure state. Optional so previously written
+    /// scoreboard artifacts remain decodable.
+    public let hasRunFailures: Bool?
     public let noRegressionAllowed: Int
     public let noRegressionObserved: Int
     public let noRegressionPassed: Bool
@@ -439,12 +447,14 @@ public enum EvalScoreboardBuilder {
         let suiteSummaries = suiteScoreboard(from: sortedInputs)
         let comparison = comparisonScoreboard(from: sortedInputs)
         let latestNoRegression = noRegressionCounts(for: sortedInputs.last)
+        let latestComparison = sortedInputs.last?.bundle.comparison
         let noRegression = EvalScoreboardNoRegressionSummary(
             allowedRegressions: allowedRegressions,
             observedRegressions: latestNoRegression.blockingRegressions + latestNoRegression.newFailures,
             blockingRegressions: latestNoRegression.blockingRegressions,
             newFailures: latestNoRegression.newFailures,
-            passed: latestNoRegression.blockingRegressions + latestNoRegression.newFailures <= allowedRegressions
+            passed: latestComparison?.hasComparableCases == true
+                && latestNoRegression.blockingRegressions + latestNoRegression.newFailures <= allowedRegressions
         )
 
         return EvalScoreboardBundle(
@@ -760,8 +770,9 @@ public enum EvalScoreboardBuilder {
         allowedRegressions: Int
     ) -> EvalReleaseCandidateScoreSummary? {
         guard let input, let run else { return nil }
-        let observedRegressions = (input.bundle.comparison?.regressions.count ?? 0)
-            + (input.bundle.comparison?.newFailures.count ?? 0)
+        let comparison = input.bundle.comparison
+        let observedRegressions = (comparison?.regressions.count ?? 0)
+            + (comparison?.newFailures.count ?? 0)
         let scores = input.bundle.models.map { model in
             EvalScoreboardReleaseModelScore(
                 role: model.role,
@@ -779,9 +790,11 @@ public enum EvalScoreboardBuilder {
             artifactPath: run.artifactPath,
             baselinePath: run.baselinePath,
             verdict: run.verdict,
+            hasRunFailures: input.bundle.hasRunFailures,
             noRegressionAllowed: allowedRegressions,
             noRegressionObserved: observedRegressions,
-            noRegressionPassed: observedRegressions <= allowedRegressions,
+            noRegressionPassed: comparison?.hasComparableCases == true
+                && observedRegressions <= allowedRegressions,
             local: scores.filter { $0.role == .local }.sorted { $0.modelId < $1.modelId },
             frontier: scores.filter { $0.role == .frontier }.sorted { $0.modelId < $1.modelId }
         )

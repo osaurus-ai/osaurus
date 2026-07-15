@@ -126,7 +126,7 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-stamp="$(date -u +%Y%m%dT%H%M%SZ)"
+stamp="$(date -u +%Y%m%dT%H%M%SZ)-$$"
 
 validate_id() {
   local label="$1"
@@ -244,6 +244,11 @@ if [[ "$plan_only" == "1" ]]; then
 fi
 
 cd "$repo_root" || exit
+mkdir -p "$lane_root"
+if ! mkdir "$run_root"; then
+  echo "eval watcher run directory already exists: ${run_root}" >&2
+  exit 2
+fi
 mkdir -p "$report_dir" "$scoreboard_dir"
 report_dir_absolute="$(cd "$report_dir" && pwd -P)"
 
@@ -287,12 +292,18 @@ echo "eval watcher scoreboard: ${scoreboard_dir}"
 # The report command treats every comparison regression as blocking. The
 # scoreboard owns the configurable regression threshold, while report
 # execution failures (including zero evidence) always remain blocking.
-report_has_run_failures="$(jq -r '
+if ! report_has_run_failures="$(jq -r '
   (.models | length == 0) or
   any(.models[];
-    ((.counts.passed + .counts.failed + .counts.errored) == 0) or
-    (.counts.failed > 0) or (.counts.errored > 0))
-' "${report_dir}/summary.json")"
+    (.suites | length == 0) or
+    any(.suites[];
+      ((.counts.passed + .counts.failed + .counts.errored) == 0) or
+      (.counts.failed > 0) or (.counts.errored > 0)))
+' "${report_dir}/summary.json")"; then
+  write_status "invalid_report_summary" 2
+  echo "eval watcher report summary is missing or invalid" >&2
+  exit 2
+fi
 if [[ "$report_rc" -ge 2 ]]; then
   final_rc="$report_rc"
 elif [[ "$report_has_run_failures" == "true" ]]; then
