@@ -570,8 +570,6 @@ final class AccessibilityManager: @unchecked Sendable {
 
     /// Text-bearing roles whose `kAXSelectedTextAttribute` is worth reading.
     /// Excludes `securetextfield` so a password selection is never captured.
-    static let textSelectionRoles = AccessibilityTextPolicy.readableSelectionRoles
-
     // MARK: Traversal entry point
 
     /// Traverse the accessibility tree for a given PID with filtering and optional search.
@@ -805,14 +803,24 @@ final class AccessibilityManager: @unchecked Sendable {
             ?? nonEmpty(pairedTitleValue) ?? nonEmpty(help)
 
         let roleDescription = nonEmpty(getAttribute(element, kAXRoleDescriptionAttribute) as? String)
-        let value = stringifyValue(getAttribute(element, kAXValueAttribute))
+        let subrole = getAttribute(element, kAXSubroleAttribute) as? String
+        let isSecureText = AccessibilityTextPolicy.isSecure(
+            role: rawRole,
+            subrole: subrole,
+            roleDescription: roleDescription
+        )
+        let value = isSecureText ? nil : stringifyValue(getAttribute(element, kAXValueAttribute))
         let placeholder = nonEmpty(getAttribute(element, kAXPlaceholderValueAttribute) as? String)
         // Selection only exists on text-bearing roles; gate the extra AX read
         // to those so a 200-element traversal doesn't pay an IPC per button for
         // an attribute it can't have. Secure fields are excluded so a password
         // selection is never captured.
         let selectedText =
-            Self.textSelectionRoles.contains(normalizedRole)
+            AccessibilityTextPolicy.canReadSelection(
+                role: rawRole,
+                subrole: subrole,
+                roleDescription: roleDescription
+            )
             ? nonEmpty(getAttribute(element, kAXSelectedTextAttribute) as? String)
             : nil
 
@@ -1137,6 +1145,8 @@ func computeFocusedContent(
 
     let rawRole = (attr(kAXRoleAttribute) as? String) ?? "unknown"
     let role = AccessibilityManager.normalizeRole(rawRole)
+    let subrole = attr(kAXSubroleAttribute) as? String
+    let roleDescription = attr(kAXRoleDescriptionAttribute) as? String
 
     // Label cascade mirrors the traversal's (title -> description -> paired UI).
     let label =
@@ -1158,7 +1168,11 @@ func computeFocusedContent(
 
     // Never read the contents (value/selection/viewport) of a secure field —
     // that's a password.
-    if role == "securetextfield" {
+    if AccessibilityTextPolicy.isSecure(
+        role: rawRole,
+        subrole: subrole,
+        roleDescription: roleDescription
+    ) {
         if role == "unknown", label == nil, placeholder == nil { return nil }
         return FocusedContentInfo(
             role: role,

@@ -288,11 +288,16 @@ struct ClipboardContentDiagnosticsTests {
 
     @Test @MainActor func deniedAccessibilityIsReportedWithoutPolling() async {
         let environment = ScriptedSelectionEnvironment(copyAllowed: false)
-        let result = await makeTransaction(environment).capture(sourceApp: "Preview")
+        var copyPostedCallbacks = 0
+        let result = await makeTransaction(environment).capture(
+            sourceApp: "Preview",
+            onCopyAttempted: { copyPostedCallbacks += 1 }
+        )
 
         #expect(result.report.outcome == .accessibilityDenied)
         #expect(result.report.needsUserAttention)
         #expect(environment.pollCount == 0)
+        #expect(copyPostedCallbacks == 0)
     }
 
     @Test @MainActor func changedPasteboardWithoutReadableContentIsReported() async {
@@ -336,6 +341,19 @@ struct ClipboardContentDiagnosticsTests {
             )
         )
         #expect(!NativeSelectionCapture.isSecure(role: "AXTextArea", subrole: nil))
+        #expect(
+            !AccessibilityTextPolicy.canReadSelection(
+                role: "AXTextField",
+                subrole: "AXPasswordField"
+            )
+        )
+        #expect(
+            !AccessibilityTextPolicy.canReadSelection(
+                role: "AXTextField",
+                subrole: nil,
+                roleDescription: "secure text field"
+            )
+        )
     }
 
     @Test @MainActor func nativeSelectionCaptureAvoidsSyntheticCopy() async {
@@ -475,6 +493,7 @@ struct ClipboardContentDiagnosticsTests {
         )
         #expect(result.content == nil)
         #expect(result.text == nil)
+        #expect(result.changeCount != nil)
     }
 
     @Test func selectionAssistantActionsAreExplicitAndDoNotContainCapturedText() {

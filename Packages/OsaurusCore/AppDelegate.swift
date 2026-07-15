@@ -1973,15 +1973,15 @@ final class SelectionHotkeyIntentController {
 extension AppDelegate {
     func applyChatHotkey() {
         let cfg = ChatConfigurationStore.load()
-        let clipboardMonitoringEnabled = cfg.enableClipboardMonitoring
         HotKeyManager.shared.register(hotkey: cfg.hotkey) { [weak self] in
             Task { @MainActor [weak self] in
-                self?.handleChatHotkey(clipboardMonitoringEnabled: clipboardMonitoringEnabled)
+                self?.handleChatHotkey()
             }
         }
     }
 
-    private func handleChatHotkey(clipboardMonitoringEnabled: Bool) {
+    private func handleChatHotkey() {
+        let clipboardMonitoringEnabled = ChatConfigurationStore.load().enableClipboardMonitoring
         let captureSelection: SelectionHotkeyIntentController.CaptureSelection?
         if !ChatWindowManager.shared.hasVisibleWindows && clipboardMonitoringEnabled {
             captureSelection = { onCopyAttempted in

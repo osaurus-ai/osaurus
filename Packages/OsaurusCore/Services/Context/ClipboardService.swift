@@ -422,6 +422,10 @@ public final class ClipboardService: ObservableObject {
             switch await nativeSelectionCapture.capture(pid: source.processIdentifier) {
             case .captured(let text):
                 let content = ClipboardContent.text(text)
+                // Native AX capture does not mutate the pasteboard. Record its
+                // current generation so the overlay's immediate monitor poll
+                // cannot replace this selection with an older clipboard item.
+                let changeCount = await Self.onPasteboardQueue { $0.changeCount }
                 result = SelectionCaptureTransaction.Result(
                     report: SelectionGrabReport(
                         outcome: .capturedText(characterCount: text.count),
@@ -430,7 +434,7 @@ public final class ClipboardService: ObservableObject {
                     ),
                     text: text,
                     content: content,
-                    changeCount: nil
+                    changeCount: changeCount
                 )
             case .secureField:
                 result = SelectionCaptureTransaction.failureResult(
@@ -464,12 +468,13 @@ public final class ClipboardService: ObservableObject {
                 onCopyAttempted: onCopyAttempted
             )
         }
+        if let changeCount = result.changeCount {
+            currentContentChangeCount = changeCount
+            lastChangeCount = changeCount
+        }
         if let content = result.content {
             currentContent = content
-            if let changeCount = result.changeCount {
-                currentContentChangeCount = changeCount
-                lastChangeCount = changeCount
-            } else {
+            if result.changeCount == nil {
                 currentContentChangeCount = nil
             }
             hasNewContent = true
@@ -585,20 +590,18 @@ final class SelectionCaptureTransaction {
 
         if requiresQuietDrain {
             guard await drainLateResponse() else {
-                onCopyAttempted?()
                 return failure(.pasteboardUnchanged, sourceApp: sourceApp)
             }
         }
 
         guard let baseline = await dependencies.snapshot() else {
-            onCopyAttempted?()
             return failure(.pasteboardReadFailed, sourceApp: sourceApp)
         }
         let copyPosted = dependencies.postCopy()
-        onCopyAttempted?()
         guard copyPosted else {
             return failure(.accessibilityDenied, sourceApp: sourceApp)
         }
+        onCopyAttempted?()
 
         var elapsed: UInt64 = 0
         while elapsed < timing.captureTimeoutNanos {
@@ -641,7 +644,11 @@ final class SelectionCaptureTransaction {
 
     private func result(for snapshot: Snapshot, sourceApp: String?) -> Result {
         guard let content = snapshot.content else {
-            return failure(.noReadableContent, sourceApp: sourceApp)
+            return failure(
+                .noReadableContent,
+                sourceApp: sourceApp,
+                changeCount: snapshot.changeCount
+            )
         }
         switch content {
         case .text(let text):
@@ -649,7 +656,8 @@ final class SelectionCaptureTransaction {
             guard byteCount <= NativeSelectionCapture.maximumUTF8Bytes else {
                 return failure(
                     .selectionTooLarge(byteLimit: NativeSelectionCapture.maximumUTF8Bytes),
-                    sourceApp: sourceApp
+                    sourceApp: sourceApp,
+                    changeCount: snapshot.changeCount
                 )
             }
             return Result(
@@ -689,15 +697,22 @@ final class SelectionCaptureTransaction {
 
     private func failure(
         _ outcome: ClipboardService.SelectionGrabReport.Outcome,
-        sourceApp: String?
+        sourceApp: String?,
+        changeCount: Int? = nil
     ) -> Result {
-        Self.failureResult(outcome, sourceApp: sourceApp, captureRoute: .syntheticCopy)
+        Self.failureResult(
+            outcome,
+            sourceApp: sourceApp,
+            captureRoute: .syntheticCopy,
+            changeCount: changeCount
+        )
     }
 
     static func failureResult(
         _ outcome: ClipboardService.SelectionGrabReport.Outcome,
         sourceApp: String?,
-        captureRoute: ClipboardService.SelectionGrabReport.CaptureRoute? = nil
+        captureRoute: ClipboardService.SelectionGrabReport.CaptureRoute? = nil,
+        changeCount: Int? = nil
     ) -> Result {
         Result(
             report: ClipboardService.SelectionGrabReport(
@@ -707,7 +722,7 @@ final class SelectionCaptureTransaction {
             ),
             text: nil,
             content: nil,
-            changeCount: nil
+            changeCount: changeCount
         )
     }
 }
