@@ -256,7 +256,7 @@ struct NotchSessionRail: View {
             Button {
                 onRename(task)
             } label: {
-                Label("Rename…", systemImage: "pencil")
+                Label(L("Rename…"), systemImage: "pencil")
             }
         }
         .accessibilityLabel(Text("\(task.taskTitle), \(task.status.displayName)"))
