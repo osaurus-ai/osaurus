@@ -9,7 +9,7 @@ import Foundation
 
 extension ChatSession: ChatWarmupSessionContext {
     func makeWarmupEngine() -> ChatEngineProtocol {
-        chatEngineFactory()
+        chatEngineFactory(source.inferenceSource)
     }
 
     func makeWarmupPayload() async -> ChatWarmupPayload? {
@@ -160,16 +160,16 @@ extension ChatSession: ChatWarmupSessionContext {
     /// previous local model should not stay resident just because the user
     /// moved off local models entirely.
     func performModelResidencySwitch(evictOthers: Bool) async {
-        // Background housekeeping must not preempt a load already in flight
-        // (an API request or another window's explicit switch): under the
-        // strict single-model policy the preload below cancels whatever is
-        // loading, and the eviction races its teardown — observed live as a
-        // 94 GB HY3 load dying to a stale-selection warm-up. The next real
-        // send re-runs this switch anyway.
-        if await ModelRuntime.shared.hasLoadInFlight() { return }
+        // The GC below is an explicit unload, not a load, so the runtime's
+        // load-intent refusal can't cover it — but the decision still has to be
+        // made *inside* the actor. `skipIfLoadInFlight` does that: a model that
+        // is mid-load is in `loadingTasks`, not `modelCache`, and holds no lease,
+        // so it is invisible to both the window snapshot and the lease check, and
+        // a sweep would tear the runtime down around it. That is the 94 GB HY3
+        // load we watched die to a stale-selection warm-up.
         if evictOthers {
             let active = ChatWindowManager.shared.activeLocalModelNames()
-            await ModelRuntime.shared.unloadModelsNotIn(active)
+            await ModelRuntime.shared.unloadModelsNotIn(active, skipIfLoadInFlight: true)
         }
 
         guard !ChatConfigurationStore.load().warmModelsOnLoad else { return }
@@ -184,7 +184,10 @@ extension ChatSession: ChatWarmupSessionContext {
         {
             return
         }
-        try? await ModelRuntime.shared.preload(name: model)
+        // Speculative: it only exists to hide the load cost of a selection the
+        // user has not sent to yet. It must never be the reason someone else's
+        // model gets evicted, so it declines rather than disturb residency.
+        try? await ModelRuntime.shared.preload(name: model, intent: .background)
     }
 
     func notifySessionBecameActive() {

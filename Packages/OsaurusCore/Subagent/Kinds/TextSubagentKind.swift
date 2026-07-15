@@ -262,16 +262,27 @@ final class TextSubagentKind: SubagentKind, @unchecked Sendable {
         settings: AgentSettings?
     ) async throws -> ResolvedModel {
         let perAgentModelTargets = settings?.spawnableModelNames ?? []
+        let allowedModelTargets = SubagentToolVisibility.effectiveSpawnableModels(
+            isDefault: isDefault,
+            config: config,
+            perAgentEnabled: settings?.spawnDelegationEnabled ?? false,
+            perAgentModelTargets: perAgentModelTargets
+        )
         guard
             SubagentToolVisibility.spawnModelAllowed(
                 modelId,
                 isDefault: isDefault,
                 config: config,
-                perAgentModelTargets: perAgentModelTargets
+                perAgentModelTargets: allowedModelTargets
             )
         else {
             throw SubagentError.denied(
-                Self.notSpawnableMessage(kind: "Model", name: modelId, isDefault: isDefault)
+                Self.notSpawnableMessage(
+                    kind: "Model",
+                    name: modelId,
+                    isDefault: isDefault,
+                    allowedNames: allowedModelTargets
+                )
             )
         }
 
@@ -580,10 +591,18 @@ final class TextSubagentKind: SubagentKind, @unchecked Sendable {
     /// Shared "not spawnable" denial copy for both targets, so the agent and
     /// model messages can't drift. `kind` is the capitalized noun ("Agent" /
     /// "Model"); the tab pointer differs for the main chat vs a custom agent.
-    private static func notSpawnableMessage(kind: String, name: String, isDefault: Bool) -> String {
-        isDefault
+    private static func notSpawnableMessage(
+        kind: String,
+        name: String,
+        isDefault: Bool,
+        allowedNames: [String] = []
+    ) -> String {
+        let base = isDefault
             ? "\(kind) '\(name)' is not spawnable. Add it in the main chat's Subagents tab."
             : "\(kind) '\(name)' is not spawnable from this agent. Add it in the agent's Subagents tab."
+        guard !allowedNames.isEmpty else { return base }
+        let exact = allowedNames.map { "'\($0)'" }.joined(separator: ", ")
+        return base + " Use exactly one configured id: \(exact)."
     }
 
     private func seedMessages(systemPrompt: String, input: String) -> [ChatMessage] {

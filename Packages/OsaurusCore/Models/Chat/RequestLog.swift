@@ -82,6 +82,16 @@ enum RequestSource: String, Sendable, CaseIterable {
     /// Inbound traffic from another Osaurus peer over the Secure Channel
     /// (remote chat completions and remote agent runs).
     case p2p = "P2P"
+    /// Autonomous, headless runs that nobody is waiting on: cron schedules,
+    /// file-system watchers, agent self-wakes.
+    ///
+    /// These used to be flattened into `.chatUI` on the way to the model,
+    /// because `ChatSession` built its engine as `ChatEngine(source: .chatUI)`
+    /// unconditionally and dropped its own `SessionSource`. That mislabel had
+    /// teeth: `accelerateIdleUnloadAfterChatClose` only shortens residency for
+    /// `.chatUI`-sourced models, so closing an unrelated chat window could
+    /// accelerate the unload of the model a scheduled job was mid-run with.
+    case scheduled = "Scheduled"
 
     var displayName: String {
         switch self {
@@ -89,6 +99,7 @@ enum RequestSource: String, Sendable, CaseIterable {
         case .httpAPI: return L("HTTP API")
         case .plugin: return L("Plugin")
         case .p2p: return L("P2P")
+        case .scheduled: return L("Scheduled")
         }
     }
 }

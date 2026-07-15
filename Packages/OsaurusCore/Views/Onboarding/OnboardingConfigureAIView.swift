@@ -2,10 +2,16 @@
 //  OnboardingConfigureAIView.swift
 //  osaurus
 //
-//  Onboarding step 3 — "Give your dino a brain". Local-first: a single home
-//  screen leads with "Run on your Mac" (the recommended default — a curated
-//  MLX model that runs locally) and tucks bring-your-own-key behind a quiet
-//  drill-in row.
+//  Onboarding step 3 — "Give your dino a brain". One path, no fork: the home
+//  screen features the local model Osaurus picked for this Mac (name, use
+//  case, download size) with a single "Download model" CTA. Pressing it starts
+//  the background download and advances immediately; the dedicated chat setup
+//  state owns progress feedback later. Quiet supporting text explains that
+//  Osaurus Cloud is included automatically with the free welcome credit, so
+//  they can chat immediately while the model lands. The footer keeps the two
+//  outcomes together: download the recommended model, or skip it and use Cloud.
+//  Bring-your-own-provider stays available as a tertiary path, and "Change
+//  model" opens the chooser.
 //
 //  Apple Intelligence was removed from this step: it's too limited (no tools,
 //  no web, no agent work) to be a first-class first-run option. Users with
@@ -14,12 +20,12 @@
 //
 //  Split into:
 //   - `ConfigureAIState`: ObservableObject holding the committed brain source,
-//     the drilled-in screen (download / bring-your-own-key), connection-test
+//     the bring-your-own-provider drill-in, connection-test
 //     progress, and the slide direction (lives at the OnboardingView level so
 //     it survives step transitions).
 //   - `ConfigureAIBody`: the body slot — a two-column shell whose right column
-//     is the home screen, sliding direction-aware into the download and
-//     bring-your-own-key sub-screens.
+//     shows the recommended local model, included Cloud bridge, and the
+//     bring-your-own-provider drill-in.
 //   - `ConfigureAICTA`: the footer primary action, dispatched per screen.
 //
 
@@ -27,12 +33,10 @@ import SwiftUI
 
 // MARK: - Screen / substates
 
-/// The top-level screen within the Configure AI step. `home` shows the local
-/// "Run on your Mac" card and the bring-your-own-key entry row; the other two
-/// are drilled-in sub-screens reached from home.
+/// The top-level screen within the Configure AI step. `home` recommends a
+/// local model with Cloud included; `byok` is the tertiary provider drill-in.
 enum ConfigureScreen: Equatable {
     case home
-    case downloading
     case byok
 }
 
@@ -106,8 +110,8 @@ struct CustomProviderForm {
 
 @MainActor
 final class ConfigureAIState: ObservableObject {
-    /// The screen currently shown. Starts at `home` (the recommended local card
-    /// plus the bring-your-own-key entry row).
+    /// The screen currently shown. Starts at `home` with the recommended local
+    /// model, included Cloud bridge, and explicit Cloud-only escape hatch.
     @Published var screen: ConfigureScreen = .home
 
     /// Bring-your-own-key drill-in depth. Only meaningful while
@@ -164,6 +168,12 @@ final class ConfigureAIState: ObservableObject {
     /// passing preflight, so it never sticks to a different selection.
     @Published var diskSpaceWarning: String? = nil
 
+    /// Set the moment the home CTA starts the background download. The flow
+    /// advances immediately, but this durable latch keeps the card safe if the
+    /// user navigates back: no model swap, duplicate download, or Cloud-only
+    /// recommit while bytes are already moving.
+    @Published var hasStartedLocalDownload = false
+
     // API
     @Published var apiKey: String = ""
     /// The connection method pinned for the selected provider, set from the
@@ -208,62 +218,6 @@ final class ConfigureAIState: ObservableObject {
     }
 
     // MARK: Local
-
-    var localDownloadState: DownloadState {
-        guard let model = selectedModel else { return .notStarted }
-        return ModelManager.shared.downloadStates[model.id] ?? .notStarted
-    }
-
-    var isLocalDownloading: Bool {
-        if case .downloading = localDownloadState { return true }
-        return false
-    }
-
-    var isLocalPaused: Bool {
-        if case .paused = localDownloadState { return true }
-        return false
-    }
-
-    var isLocalCompleted: Bool {
-        if case .completed = localDownloadState { return true }
-        return false
-    }
-
-    var isLocalFailed: Bool {
-        if case .failed = localDownloadState { return true }
-        return false
-    }
-
-    var localFailedError: String? {
-        if case .failed(let e) = localDownloadState { return e }
-        return nil
-    }
-
-    /// A download refusal that never flipped the state machine: the service's
-    /// upfront preflight (e.g. not enough disk space) sets only
-    /// `downloadAlert` and returns while the state is still `.notStarted`.
-    /// Attributed by model id so an alert for some other download can't
-    /// hijack this step. Read by both the downloading screen (renders the
-    /// failed card inline) and the CTA (flips to "Try Again") so the two
-    /// surfaces can't disagree.
-    var localDownloadRefusal: ModelDownloadService.DownloadAlertInfo? {
-        guard let alert = ModelManager.shared.downloadAlert,
-            alert.modelId == selectedModel?.id,
-            case .notStarted = localDownloadState
-        else { return nil }
-        return alert
-    }
-
-    /// Progress fraction (0…1) of the latest download attempt regardless
-    /// of whether it's currently in flight or paused. Used by the shimmer
-    /// bar so the rendering site doesn't have to branch on the state case.
-    var localBarProgress: Double {
-        switch localDownloadState {
-        case .downloading(let p), .paused(let p): return p
-        case .completed: return 1
-        case .notStarted, .failed: return 0
-        }
-    }
 
     /// Auto-selects the recommended local pick — the best model this Mac can
     /// run — so the home screen lands on a sensible default the user can just
@@ -453,49 +407,7 @@ final class ConfigureAIState: ObservableObject {
         return OsaurusPaths.volumeFreeBytes(forPath: probe.path)
     }
 
-    /// Whether `selected` is exactly the model `recommendedLocalPick` would
-    /// choose for this machine — the condition for the "picked for your Mac's
-    /// specs" line on the home card. Pure so the render rule is unit-testable.
-    static func isRecommendedSelection(
-        _ selected: MLXModel?,
-        candidates: [MLXModel],
-        totalMemoryGB: Double
-    ) -> Bool {
-        guard let selected else { return false }
-        return recommendedLocalPick(from: candidates, totalMemoryGB: totalMemoryGB)?.id
-            == selected.id
-    }
-
     // MARK: Resource stat formatting
-
-    /// Home-card memory stat: the model's runtime RAM cost read against the
-    /// Mac's own total, so cost and capacity land in one glance. `nil` when
-    /// the model has no RAM estimate (hide the line rather than show "~—").
-    static func memoryStatText(for model: MLXModel, totalMemoryGB: Double) -> String? {
-        guard let memory = model.formattedEstimatedMemory else { return nil }
-        guard totalMemoryGB > 0 else {
-            return L("Uses \(memory) of memory while it runs")
-        }
-        return L(
-            "Uses \(memory) of your \(Int(totalMemoryGB.rounded())) GB memory while it runs"
-        )
-    }
-
-    /// Home-card disk stat: download cost against the Mac's free space, or
-    /// the on-disk footprint once downloaded. `nil` when the size is unknown;
-    /// an unknown free-space query drops the "you have N free" suffix rather
-    /// than showing 0.
-    static func diskStatText(for model: MLXModel, freeDiskBytes: Int64?) -> String? {
-        guard let size = model.formattedDownloadSize else { return nil }
-        if model.isDownloaded {
-            return L("\(size) on disk")
-        }
-        guard let free = freeDiskBytes else {
-            return L("\(size) download")
-        }
-        let freeText = free.formatted(.byteCount(style: .file, allowedUnits: [.gb, .mb]))
-        return L("\(size) download — you have \(freeText) free")
-    }
 
     /// Chooser-row stat line ("7.5 GB download · needs ~9.4 GB memory") —
     /// the size moved out of the badge cluster into a labeled, scannable
@@ -557,34 +469,25 @@ final class ConfigureAIState: ObservableObject {
         )
     }
 
-    // MARK: Model chooser (centered modal)
+    // MARK: Model chooser state
 
-    /// Whether the centered "Choose your model" dialog is open. It's hosted at
-    /// the OnboardingView window root so it can dim the whole step and center
-    /// over it — a popover trapped in the small, clipped body region overflowed
-    /// the window and covered the footer CTA.
+    // Draft-then-confirm state for `ConfigureModelChooserModal`, opened by
+    // the featured model card's "Change" button (only before a download has
+    // started — switching models mid-download would orphan the bytes in
+    // flight).
     @Published var isChoosingModel: Bool = false
-
-    /// The model highlighted inside the chooser before the user confirms. The
-    /// draft lets brand-new users browse without committing: `commitModelChooser`
-    /// applies it, Cancel discards it.
     @Published var draftModel: MLXModel? = nil
 
-    /// Open the chooser, seeding the highlight from the current selection.
-    /// Refreshes the free-storage snapshot so the footer's machine-spec line
-    /// is current when the dialog appears.
     func openModelChooser() {
         refreshFreeDiskSpace()
         draftModel = selectedModel
         isChoosingModel = true
     }
 
-    /// Highlight a model inside the chooser (no commit yet).
     func selectDraftModel(_ model: MLXModel) {
         draftModel = model
     }
 
-    /// Apply the highlighted model as the active local brain and close.
     func commitModelChooser() {
         if let model = draftModel {
             selectLocalModel(model)
@@ -592,17 +495,25 @@ final class ConfigureAIState: ObservableObject {
         isChoosingModel = false
     }
 
-    /// Close the chooser without changing the selection.
     func cancelModelChooser() {
         isChoosingModel = false
     }
 
-    func startLocalDownloadOrContinue(onComplete: () -> Void) {
-        // Disk preflight before committing anything: without it, the download
-        // service's own refusal only sets `downloadAlert` (presented by the
-        // Models tab, not onboarding) and the user would land on a permanent
-        // "Preparing download..." screen. Refusing here keeps them on home
-        // with an inline banner and a clear way forward.
+    /// "Skip download": start on Osaurus Cloud (with the free welcome credit)
+    /// instead of downloading anything. There is nothing to download or
+    /// connect here — identity + router connect are prepared in the
+    /// background by `OnboardingView` and finalized at finish.
+    func chooseOsaurusAndContinue(onComplete: () -> Void) {
+        selectedBrainSource = .osaurus
+        OnboardingTelemetry.brainSourceSelected(.osaurus)
+        onComplete()
+    }
+
+    /// Commit the local brain and advance immediately. If the model is not on
+    /// disk, start its background download first; chat owns the visible
+    /// progress state, so onboarding never asks for a redundant second press.
+    /// The disk preflight is the only refusal and remains inline on this step.
+    func chooseLocalAndContinue(onComplete: () -> Void) {
         if selectedModel?.isDownloaded != true, let warning = evaluateDiskShortfall() {
             diskSpaceWarning = warning
             return
@@ -612,48 +523,26 @@ final class ConfigureAIState: ObservableObject {
         // Committing to a local model — record the brain source for the funnel
         // (no payment, no network).
         selectedBrainSource = .local
-        OnboardingTelemetry.brainSourceSelected(.local)
-        if selectedModel?.isDownloaded == true {
-            onComplete()
-            return
+        let needsDownload = selectedModel?.isDownloaded != true
+        OnboardingTelemetry.brainSourceSelected(.local, downloadStarted: needsDownload)
+        if needsDownload {
+            startLocalDownload()
+            hasStartedLocalDownload = true
         }
-        substateDirection = .forward
-        screen = .downloading
-        startLocalDownload()
+        onComplete()
     }
 
     func startLocalDownload() {
         guard let model = selectedModel else { return }
-        // Consume any stale refusal for this model before retrying, so the
-        // downloading screen's inline failed card doesn't resurrect it while
-        // the fresh attempt is spinning up. A repeat refusal sets a new alert.
+        // Consume any stale refusal for this model before retrying so a prior
+        // alert can't re-present later in the Models tab. A repeat refusal
+        // sets a new alert.
         clearDownloadAlertForSelectedModel()
         // Route through the onboarding-only Osaurus model download proxy: the user
         // has no HF token yet, and anonymous throttling here is a measured
         // onboarding drop-off driver. Any proxy failure silently falls back
         // to the plain anonymous HF path.
         ModelManager.shared.downloadModel(model, route: .onboardingProxy)
-    }
-
-    func pauseLocalDownload() {
-        guard let model = selectedModel else { return }
-        ModelManager.shared.pauseDownload(model.id)
-    }
-
-    func resumeLocalDownload() {
-        guard let model = selectedModel else { return }
-        ModelManager.shared.resumeDownload(model.id)
-    }
-
-    /// Cancels an in-flight or paused download and returns the user to the home
-    /// screen. Used by the inline Cancel control on the downloading screen so
-    /// the user has a clear escape route — the previous version only had the
-    /// small back chevron at the top of the section.
-    func cancelLocalDownload() {
-        if let model = selectedModel {
-            ModelManager.shared.cancelDownload(model.id)
-        }
-        popToHome()
     }
 
     /// Drops a pending `downloadAlert` that belongs to the current selection.
@@ -669,26 +558,16 @@ final class ConfigureAIState: ObservableObject {
 
     // MARK: Navigation
 
-    /// Any drilled-in sub-screen → home (backward slide). Consumes a pending
-    /// refusal alert for the selection — it was already shown inline on the
-    /// downloading screen.
-    func popToHome() {
-        clearDownloadAlertForSelectedModel()
-        substateDirection = .backward
-        screen = .home
-        isChoosingModel = false
-    }
-
-    /// Home → bring-your-own-key flow (forward slide).
+    /// Home → bring-your-own-provider flow (forward slide).
     func showBYOK() {
         substateDirection = .forward
         apiSubstate = .picker
         screen = .byok
-        isChoosingModel = false
     }
 
-    /// BYOK top-level picker → home (backward slide). Clears any entered
-    /// credentials so a stale secret never leaks across selections.
+    /// BYOK top-level picker → the recommended local setup (backward slide).
+    /// Clears any entered credentials so a stale secret never leaks across
+    /// selections.
     func popBYOKToHome() {
         resetAPIState(direction: .backward)
         screen = .home
@@ -938,11 +817,9 @@ struct ConfigureAIBody: View {
     @ObservedObject var state: ConfigureAIState
 
     @Environment(\.theme) private var theme
-    @ObservedObject private var modelManager = ModelManager.shared
-    /// Drives the capability filter on the local model popover. `totalMemoryGB`
-    /// is populated synchronously in `SystemMonitorService.init`, so the first
-    /// onboarding frame already has a real value to classify curated top
-    /// suggestions against.
+    /// `totalMemoryGB` is populated synchronously in
+    /// `SystemMonitorService.init`, so the first onboarding frame can select a
+    /// hardware-appropriate local default.
     /// Non-observing on purpose. We only ever read `totalMemoryGB` — total
     /// physical RAM, a runtime constant. Observing via `@ObservedObject`
     /// subscribed this deep onboarding tree to the service's 2s CPU/memory
@@ -954,10 +831,9 @@ struct ConfigureAIBody: View {
     var body: some View {
         OnboardingTwoColumnBody(
             illustrationAsset: "osaurus-brain",
-            leftHeadline: "Pick a brain",
+            leftHeadline: "A brain that runs on your Mac",
             leftBody:
-                "Run a brain on your Mac, or plug in one you already pay for. You can swap brains any time, and your chats come along.",
-            subtitle: "Your dino runs on your Mac. Add more power whenever you want.",
+                "Your chats stay private and work offline. We picked the best fit for this Mac — all you have to do is download it.",
             // We manage our own inner scroll: each screen owns its scrolling so
             // the slide transition stays crisp.
             useScrollView: false
@@ -986,7 +862,6 @@ struct ConfigureAIBody: View {
     private var substateID: String {
         switch state.screen {
         case .home: return "home"
-        case .downloading: return "downloading"
         case .byok:
             switch state.apiSubstate {
             case .picker: return "byok-picker"
@@ -1012,16 +887,12 @@ struct ConfigureAIBody: View {
     }
 
     /// Screen container — owns its own scrolling and in-section back row when
-    /// the user has drilled into a sub-screen (download, bring-your-own-key).
+    /// the user has drilled into bring-your-own-provider.
     @ViewBuilder
     private var screenContainer: some View {
         switch state.screen {
         case .home:
             OnboardingScrollContainer { homeView }
-        case .downloading:
-            substateWithBackBar(onBack: { state.popToHome() }) {
-                localDownloadingView
-            }
         case .byok:
             byokContainer
         }
@@ -1084,579 +955,79 @@ struct ConfigureAIBody: View {
 
     // MARK: - Home screen
 
+    /// Landing screen: the recommended local model first, followed by the
+    /// included no-wait Cloud benefit and a clearly tertiary provider path.
+    /// The actual local-vs-Cloud-only actions stay together in the footer.
     private var homeView: some View {
-        VStack(spacing: 12) {
-            runOnYourMacCard
+        VStack(alignment: .leading, spacing: 16) {
+            LocalModelFeatureCard(state: state)
+            cloudIncludedNote
             if let warning = state.diskSpaceWarning {
                 OnboardingCalloutBanner(tone: .error, rawMessage: warning)
             }
-            useYourOwnKeyRow
+            providerLink
         }
     }
 
-    // MARK: Run on your Mac (recommended, local)
-
-    /// The recommended local card. Tapping the upper region selects the local
-    /// brain; the model inset's "Change" control opens the model popover.
-    /// The subtitle dropped its vague "uses some memory" clause — the inset's
-    /// stat lines now state the exact memory/disk cost against this Mac's
-    /// specs, and the caption below says how to undo the download later.
-    private var runOnYourMacCard: some View {
-        OnboardingGlassCard(isSelected: true) {
-            VStack(alignment: .leading, spacing: 12) {
-                HStack(alignment: .top, spacing: 14) {
-                    localBrainIcon
-                    VStack(alignment: .leading, spacing: 6) {
-                        HStack(spacing: 8) {
-                            Text("Run on your Mac", bundle: .module)
-                                .font(theme.font(size: 14, weight: .semibold))
-                                .foregroundColor(theme.primaryText)
-                                .lineLimit(1)
-                                .layoutPriority(2)
-                            recommendedBadge
-                            Spacer(minLength: 8)
-                        }
-                        Text(
-                            "Free, private, and works offline.",
-                            bundle: .module
-                        )
-                        .font(theme.font(size: 12))
-                        .foregroundColor(theme.secondaryText)
-                        .fixedSize(horizontal: false, vertical: true)
-                    }
-                    selectionRadio(true)
-                }
-
-                localModelInset
-
-                deleteAnytimeCaption
+    /// Supporting copy without option-card styling or interaction: Cloud is an
+    /// included benefit, not a competing setup choice. Keep the $2.50 promise
+    /// stable across repeated onboarding runs so QA can verify first-run copy
+    /// even after this development wallet has already claimed or been refused.
+    /// Claim/retry behavior remains owned by `WelcomeCreditService`.
+    private var cloudIncludedNote: some View {
+        HStack(alignment: .top, spacing: 9) {
+            ZStack {
+                Circle().fill(theme.accentColor.opacity(0.12))
+                Image(systemName: "bolt.fill")
+                    .font(.system(size: 9, weight: .bold))
+                    .foregroundColor(theme.accentColor)
             }
-            .padding(.horizontal, OnboardingMetrics.cardPaddingH)
-            .padding(.vertical, OnboardingMetrics.cardPaddingV)
-        }
-    }
+            .frame(width: 22, height: 22)
 
-    /// Quiet one-liner that answers "what am I committing to?" — the model is
-    /// a single self-contained folder, removable later from the Models tab.
-    private var deleteAnytimeCaption: some View {
-        HStack(alignment: .top, spacing: 6) {
-            Image(systemName: "info.circle")
-                .font(.system(size: 10))
-                .padding(.top, 2)
-            Text(
-                "Kept in one folder on your Mac — delete it anytime from the Models tab to get the space back.",
-                bundle: .module
-            )
-            .font(theme.font(size: 11))
-            .fixedSize(horizontal: false, vertical: true)
-            Spacer(minLength: 0)
-        }
-        .foregroundColor(theme.tertiaryText)
-    }
-
-    /// Leading accent badge for the local card, mirroring `OnboardingRowCard`'s
-    /// selected-icon treatment (accent fill + glow when selected).
-    private var localBrainIcon: some View {
-        ZStack {
-            Circle()
-                .fill(theme.accentColor)
-                .blur(radius: 8)
-                .frame(
-                    width: OnboardingMetrics.cardIcon - 8,
-                    height: OnboardingMetrics.cardIcon - 8
-                )
-            Circle()
-                .fill(theme.accentColor)
-                .frame(width: OnboardingMetrics.cardIcon, height: OnboardingMetrics.cardIcon)
-            Image(systemName: "cpu")
-                .font(.system(size: 18, weight: .medium))
-                .foregroundColor(.white)
-        }
-    }
-
-    /// The selected-model summary under the local card body. Every number
-    /// carries the machine context inline (cost *of* this Mac's capacity) so
-    /// the user reads cost and headroom in one glance:
-    ///   - name row: model name + Downloaded chip + "Change"
-    ///   - stat rows: runtime memory vs total RAM, download size vs free disk
-    ///   - fit row: "picked for your specs" when the auto-default is active,
-    ///     else the plain compatibility verdict.
-    private var localModelInset: some View {
-        VStack(alignment: .leading, spacing: 7) {
-            HStack(spacing: 8) {
-                Text(state.selectedModel?.simplifiedName ?? L("Choose a model"))
-                    .font(theme.font(size: 13, weight: .semibold))
-                    .foregroundColor(theme.primaryText)
-                    .lineLimit(1)
-                localInsetBadge
-                Spacer(minLength: 8)
-                changeButton
-            }
-            localResourceStats
-            localFitLine
-        }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 10)
-        .background(
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .fill(theme.tertiaryBackground)
-        )
-    }
-
-    @ViewBuilder
-    private var localInsetBadge: some View {
-        if state.selectedModel?.isDownloaded == true {
-            OnboardingBadgeChip(badge: OnboardingRowBadge(L("Downloaded"), style: .success))
-        }
-    }
-
-    /// The explicit resource cost of the selected model, read against this
-    /// Mac's own specs. Lines with unknown values disappear instead of
-    /// rendering placeholders.
-    @ViewBuilder
-    private var localResourceStats: some View {
-        if let model = state.selectedModel {
             VStack(alignment: .leading, spacing: 4) {
-                if let memory = ConfigureAIState.memoryStatText(
-                    for: model,
-                    totalMemoryGB: systemMonitor.totalMemoryGB
-                ) {
-                    localStatLine(icon: "memorychip", text: memory)
+                HStack(spacing: 7) {
+                    Text("Start chatting right away", bundle: .module)
+                        .font(theme.font(size: 12, weight: .semibold))
+                        .foregroundColor(theme.primaryText)
+                    OnboardingBadgeChip(
+                        badge: OnboardingRowBadge(L("Cloud included"), style: .accent)
+                    )
                 }
-                if let disk = ConfigureAIState.diskStatText(
-                    for: model,
-                    freeDiskBytes: state.freeDiskBytes
-                ) {
-                    localStatLine(icon: "internaldrive", text: disk)
-                }
-            }
-        }
-    }
-
-    private func localStatLine(icon: String, text: String) -> some View {
-        HStack(spacing: 6) {
-            Image(systemName: icon)
-                .font(.system(size: 10, weight: .medium))
-                .foregroundColor(theme.tertiaryText)
-                .frame(width: 13)
-            Text(text)
+                Text(
+                    "Your free $2.50 credit lets you start immediately. Osaurus switches to your private model automatically when it's ready.",
+                    bundle: .module
+                )
                 .font(theme.font(size: 11))
                 .foregroundColor(theme.secondaryText)
-                .lineLimit(1)
+                .lineSpacing(2)
+                .fixedSize(horizontal: false, vertical: true)
+            }
+
             Spacer(minLength: 0)
         }
-    }
-
-    /// The trust line: when the selection is exactly the model the funnel
-    /// recommends for this hardware, say so ("we chose this for you"). When
-    /// the user picked something else in the chooser, fall back to the plain
-    /// fit verdict so the claim stays honest.
-    @ViewBuilder
-    private var localFitLine: some View {
-        if let model = state.selectedModel {
-            if isRecommendedSelection(model) {
-                localFitRow(
-                    icon: "checkmark.seal.fill",
-                    text: L("Picked for your Mac's specs — nothing to configure"),
-                    color: theme.successColor
-                )
-            } else {
-                switch model.compatibility(totalMemoryGB: systemMonitor.totalMemoryGB) {
-                case .compatible:
-                    localFitRow(
-                        icon: "checkmark.shield.fill",
-                        text: L("Runs well on this Mac"),
-                        color: theme.successColor
-                    )
-                case .tight:
-                    localFitRow(
-                        icon: "exclamationmark.triangle.fill",
-                        text: L("Tight fit on this Mac"),
-                        color: theme.warningColor
-                    )
-                case .tooLarge:
-                    localFitRow(
-                        icon: "xmark.octagon.fill",
-                        text: L("Too large for this Mac"),
-                        color: theme.errorColor
-                    )
-                case .unknown:
-                    EmptyView()
-                }
-            }
-        }
-    }
-
-    private func localFitRow(icon: String, text: String, color: Color) -> some View {
-        HStack(spacing: 6) {
-            Image(systemName: icon)
-                .font(.system(size: 10, weight: .semibold))
-                .frame(width: 13)
-            Text(text)
-                .font(theme.font(size: 11, weight: .semibold))
-                .lineLimit(1)
-            Spacer(minLength: 0)
-        }
-        .foregroundColor(color)
-    }
-
-    private func isRecommendedSelection(_ model: MLXModel) -> Bool {
-        ConfigureAIState.isRecommendedSelection(
-            model,
-            candidates: modelManager.suggestedModels.filter(\.isTopSuggestion),
-            totalMemoryGB: systemMonitor.totalMemoryGB
-        )
-    }
-
-    private var changeButton: some View {
-        Button {
-            state.openModelChooser()
-        } label: {
-            Text("Change", bundle: .module)
-                .font(theme.font(size: 12, weight: .semibold))
-                .foregroundColor(theme.accentColor)
-                .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .localizedHelp("Change model")
-    }
-
-    // MARK: Use your own key (BYOK entry)
-
-    /// Quiet single-line drill-in to the bring-your-own-key flow.
-    private var useYourOwnKeyRow: some View {
-        Button {
-            state.showBYOK()
-        } label: {
-            OnboardingGlassCard {
-                HStack(spacing: 12) {
-                    ZStack {
-                        Circle()
-                            .fill(theme.cardBackground)
-                            .frame(width: 32, height: 32)
-                        Image(systemName: "key.fill")
-                            .font(.system(size: 13, weight: .medium))
-                            .foregroundColor(theme.secondaryText)
-                    }
-                    Text("Already pay for AI? Use your own key", bundle: .module)
-                        .font(theme.font(size: 13, weight: .medium))
-                        .foregroundColor(theme.primaryText)
-                        .lineLimit(1)
-                    Spacer(minLength: 8)
-                    Image(systemName: "chevron.right")
-                        .font(.system(size: 12, weight: .semibold))
-                        .foregroundColor(theme.tertiaryText)
-                }
-                .padding(.horizontal, OnboardingMetrics.cardPaddingH)
-                .padding(.vertical, 12)
-            }
-        }
-        .buttonStyle(.plain)
-    }
-
-    // MARK: Shared selection radio
-
-    private func selectionRadio(_ isSelected: Bool) -> some View {
-        ZStack {
-            Circle()
-                .strokeBorder(
-                    isSelected ? theme.accentColor : theme.primaryBorder,
-                    lineWidth: isSelected ? 6 : 1.5
-                )
-                .frame(width: 20, height: 20)
-            if isSelected {
-                Circle().fill(Color.white).frame(width: 7, height: 7)
-            }
-        }
-    }
-
-    // MARK: "Recommended" badge
-
-    /// "Recommended" pill shown beside the local card title.
-    private var recommendedBadge: some View {
-        Text("Recommended", bundle: .module)
-            .font(theme.font(size: 10, weight: .bold))
-            .foregroundColor(.white)
-            .padding(.horizontal, 6)
-            .padding(.vertical, 2)
-            .background(Capsule().fill(theme.accentColor))
-    }
-
-    // MARK: - Local downloading
-
-    /// State-driven downloading view. Renders one of three layouts depending
-    /// on the live `localDownloadState`:
-    /// - `.downloading` / `.paused` (or initial): progress card with inline
-    ///   Pause / Resume / Cancel controls, plus the delete-anytime caption.
-    /// - `.failed`: inline error card with Retry and Choose-another-model
-    ///   actions, so the user always has a path forward without a disabled
-    ///   Continue button.
-    /// - a refusal that never started (`downloadAlert` with `.notStarted`):
-    ///   rendered through the same failed card. The service's upfront disk
-    ///   preflight refuses by setting only `downloadAlert` — presented by the
-    ///   Models tab, not here — which used to strand onboarding on a permanent
-    ///   "Preparing download..." screen.
-    @ViewBuilder
-    private var localDownloadingView: some View {
-        if case .failed(let message) = state.localDownloadState {
-            localDownloadFailedCard(message: message)
-        } else if let refusal = state.localDownloadRefusal {
-            localDownloadFailedCard(message: refusal.message)
-        } else {
-            VStack(alignment: .leading, spacing: 10) {
-                localDownloadProgressCard
-                downloadReassuranceCaption
-            }
-        }
-    }
-
-    /// Deletion reassurance at the moment the user is watching gigabytes
-    /// arrive — where the "what did I just commit to?" worry actually lives.
-    private var downloadReassuranceCaption: some View {
-        HStack(alignment: .top, spacing: 6) {
-            Image(systemName: "info.circle")
-                .font(.system(size: 10))
-                .padding(.top, 2)
-            Text(
-                "Saved to your Models folder as a single download — delete it anytime to get the space back.",
-                bundle: .module
-            )
-            .font(theme.font(size: 11))
-            .fixedSize(horizontal: false, vertical: true)
-            Spacer(minLength: 0)
-        }
-        .foregroundColor(theme.tertiaryText)
         .padding(.horizontal, 4)
     }
 
-    /// Whether the download is still in its pre-transfer window (manifest
-    /// fetch, identity probe, proxy resolves — ~10s on the proxy route):
-    /// actively downloading but not a single byte received yet. The card
-    /// shows a shimmering "Preparing to download…" label instead of a
-    /// zero-progress bar so the wait reads as activity, not a stall.
-    private var isPreparingDownload: Bool {
-        guard case .downloading = state.localDownloadState else { return false }
-        guard let model = state.selectedModel,
-            let received = modelManager.downloadMetrics[model.id]?.bytesReceived
-        else { return true }
-        return received == 0
-    }
-
-    private var localDownloadProgressCard: some View {
-        OnboardingGlassCard {
-            VStack(alignment: .leading, spacing: 14) {
-                HStack(spacing: 12) {
-                    ZStack {
-                        Circle()
-                            .fill(theme.accentColor.opacity(0.14))
-                            .frame(width: OnboardingMetrics.cardIcon, height: OnboardingMetrics.cardIcon)
-                        Image(systemName: state.selectedModel?.isVLM == true ? "eye" : "cpu")
-                            .font(.system(size: 16, weight: .medium))
-                            .foregroundColor(theme.accentColor)
-                    }
-                    VStack(alignment: .leading, spacing: 3) {
-                        HStack(spacing: 6) {
-                            Text(downloadHeadline)
-                                .font(theme.font(size: 14, weight: .semibold))
-                                .foregroundColor(theme.primaryText)
-                                .lineLimit(1)
-                            if state.isLocalPaused {
-                                pausedPill
-                            }
-                        }
-                        if isPreparingDownload {
-                            OnboardingShimmerLabel(
-                                text: L("Preparing to download…"),
-                                font: theme.font(size: 11),
-                                baseColor: theme.tertiaryText,
-                                highlightColor: theme.primaryText
-                            )
-                        } else {
-                            Text(localProgressText)
-                                .font(theme.font(size: 11))
-                                .foregroundColor(theme.tertiaryText)
-                                .lineLimit(1)
-                        }
-                    }
-                    Spacer(minLength: 0)
-                    inlineDownloadControls
-                }
-
-                if !isPreparingDownload {
-                    OnboardingShimmerBar(
-                        progress: state.localBarProgress,
-                        color: state.isLocalPaused ? theme.tertiaryText : theme.accentColor,
-                        height: 6
-                    )
-                }
+    /// Tertiary escape hatch for existing provider users. Deliberately styled
+    /// as a text action so it doesn't compete with the single download path.
+    private var providerLink: some View {
+        Button {
+            state.showBYOK()
+        } label: {
+            HStack(spacing: 7) {
+                Image(systemName: "key.fill")
+                    .font(.system(size: 11, weight: .medium))
+                Text("Already have a provider? Connect it", bundle: .module)
+                    .font(theme.font(size: 12, weight: .semibold))
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 9, weight: .bold))
             }
-            .padding(.horizontal, OnboardingMetrics.cardPaddingH)
-            .padding(.vertical, OnboardingMetrics.cardPaddingV)
-        }
-    }
-
-    private var downloadHeadline: String {
-        let modelName = state.selectedModel?.name ?? L("model")
-        if state.isLocalPaused {
-            return L("Paused — \(modelName)")
-        }
-        return L("Downloading \(modelName)")
-    }
-
-    private var pausedPill: some View {
-        Text("Paused", bundle: .module)
-            .font(theme.font(size: 10, weight: .bold))
-            .foregroundColor(theme.warningColor)
-            .padding(.horizontal, 6)
-            .padding(.vertical, 2)
-            .background(
-                Capsule().fill(theme.warningColor.opacity(0.14))
-            )
-    }
-
-    /// Pause / Resume + Cancel inline controls — keep the Continue CTA below
-    /// for "Continue when done", but give the user immediate, visible control
-    /// over the in-flight download so they're never stuck (issue
-    /// [#1071](https://github.com/osaurus-ai/osaurus/issues/1071)).
-    @ViewBuilder
-    private var inlineDownloadControls: some View {
-        HStack(spacing: 6) {
-            switch state.localDownloadState {
-            case .paused:
-                inlineIconButton(
-                    systemName: "play.fill",
-                    help: L("Resume download"),
-                    tint: theme.accentColor,
-                    action: state.resumeLocalDownload
-                )
-            case .downloading:
-                inlineIconButton(
-                    systemName: "pause.fill",
-                    help: L("Pause download"),
-                    tint: theme.secondaryText,
-                    action: state.pauseLocalDownload
-                )
-            case .notStarted, .completed, .failed:
-                EmptyView()
-            }
-            inlineIconButton(
-                systemName: "xmark",
-                help: L("Cancel download"),
-                tint: theme.tertiaryText,
-                action: state.cancelLocalDownload
-            )
-        }
-    }
-
-    private func inlineIconButton(
-        systemName: String,
-        help: String,
-        tint: Color,
-        action: @escaping () -> Void
-    ) -> some View {
-        Button(action: action) {
-            Image(systemName: systemName)
-                .font(.system(size: 11, weight: .semibold))
-                .foregroundColor(tint)
-                .frame(width: 24, height: 24)
-                .background(
-                    Circle().fill(theme.tertiaryBackground)
-                )
-                .contentShape(Circle())
+            .foregroundColor(theme.secondaryText)
+            .padding(.vertical, 5)
+            .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .help(Text(help))
-    }
-
-    /// Inline failure card with Try again / Choose another model actions, so
-    /// the user always has a clear path forward without the chrome dead-ending
-    /// into a disabled Continue button.
-    private func localDownloadFailedCard(message: String) -> some View {
-        OnboardingGlassCard {
-            VStack(alignment: .leading, spacing: 12) {
-                HStack(spacing: 12) {
-                    ZStack {
-                        Circle()
-                            .fill(theme.errorColor.opacity(0.14))
-                            .frame(width: OnboardingMetrics.cardIcon, height: OnboardingMetrics.cardIcon)
-                        Image(systemName: "exclamationmark.triangle.fill")
-                            .font(.system(size: 16, weight: .medium))
-                            .foregroundColor(theme.errorColor)
-                    }
-                    VStack(alignment: .leading, spacing: 3) {
-                        Text("Download failed", bundle: .module)
-                            .font(theme.font(size: 14, weight: .semibold))
-                            .foregroundColor(theme.primaryText)
-                        Text(message)
-                            .font(theme.font(size: 11))
-                            .foregroundColor(theme.secondaryText)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
-                    Spacer(minLength: 0)
-                }
-
-                HStack(spacing: 10) {
-                    Spacer()
-                    OnboardingCompactButton(
-                        title: "Choose another model",
-                        style: .ghost,
-                        action: { state.popToHome() }
-                    )
-                    OnboardingCompactButton(
-                        title: "Try again",
-                        icon: "arrow.clockwise",
-                        style: .accent,
-                        action: { state.startLocalDownload() }
-                    )
-                }
-            }
-            .padding(.horizontal, OnboardingMetrics.cardPaddingH)
-            .padding(.vertical, OnboardingMetrics.cardPaddingV)
-        }
-    }
-
-    /// Single-line status text shown beneath the model headline. Pause hides
-    /// live speed/ETA (they're meaningless when paused, and the pill above
-    /// already communicates the pause state); the active download adds them
-    /// when available.
-    private var localProgressText: String {
-        guard let model = state.selectedModel,
-            let metrics = modelManager.downloadMetrics[model.id]
-        else {
-            return state.isLocalPaused ? L("Paused") : L("Preparing download...")
-        }
-
-        var parts: [String] = []
-        if let received = metrics.bytesReceived, let total = metrics.totalBytes {
-            parts.append("\(formatBytes(received)) / \(formatBytes(total))")
-        }
-
-        if state.isLocalPaused {
-            return parts.isEmpty ? L("Paused") : parts.joined(separator: " · ")
-        }
-
-        if let speed = metrics.bytesPerSecond {
-            parts.append("\(formatBytes(Int64(speed)))/s")
-        }
-        if let etaText = formatETA(metrics.etaSeconds) {
-            parts.append(etaText)
-        }
-        return parts.joined(separator: " · ")
-    }
-
-    private func formatETA(_ seconds: Double?) -> String? {
-        guard let eta = seconds, eta > 0, eta < 3600 else { return nil }
-        let m = Int(eta) / 60
-        let s = Int(eta) % 60
-        return m > 0 ? L("\(m)m \(s)s remaining") : L("\(s)s remaining")
-    }
-
-    private func formatBytes(_ bytes: Int64) -> String {
-        let f = ByteCountFormatter()
-        f.countStyle = .file
-        f.allowedUnits = [.useGB, .useMB]
-        f.includesUnit = true
-        return f.string(fromByteCount: bytes)
+        .localizedHelp("Connect a provider")
     }
 
     // MARK: - API picker
@@ -1992,6 +1363,200 @@ struct ConfigureAIBody: View {
     }
 }
 
+// MARK: - Featured local model card
+
+/// The home screen's hero: the local model Osaurus picked for this Mac, with
+/// its use case, download size, and memory requirement. If the user navigates
+/// back after starting the download, this card also reflects live progress and
+/// recovery state. Isolated so only the card re-renders on `ModelManager`'s
+/// frequent progress publishes.
+private struct LocalModelFeatureCard: View {
+    @ObservedObject var state: ConfigureAIState
+
+    @Environment(\.theme) private var theme
+    @ObservedObject private var modelManager = ModelManager.shared
+
+    var body: some View {
+        if let model = state.selectedModel {
+            OnboardingGlassCard(isSelected: state.hasStartedLocalDownload) {
+                VStack(alignment: .leading, spacing: 12) {
+                    header(model)
+                    statusBlock(model)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(16)
+            }
+        }
+    }
+
+    /// Effective download state for the featured model. A bundle already on
+    /// disk renders as `.completed` regardless of any stale service entry.
+    private func downloadState(for model: MLXModel) -> DownloadState {
+        if model.isDownloaded { return .completed }
+        return modelManager.downloadStates[model.id] ?? .notStarted
+    }
+
+    // MARK: Header
+
+    private func header(_ model: MLXModel) -> some View {
+        HStack(alignment: .top, spacing: 16) {
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Picked for your Mac", bundle: .module)
+                    .font(theme.font(size: 10, weight: .bold))
+                    .foregroundColor(theme.accentColor)
+                    .tracking(0.7)
+                    .textCase(.uppercase)
+
+                Text(model.simplifiedName)
+                    .font(theme.font(size: 18, weight: .semibold))
+                    .foregroundColor(theme.primaryText)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                if let subtitle = ConfigureAIState.chooserSubtitle(for: model) {
+                    Text(LocalizedStringKey(subtitle), bundle: .module)
+                        .font(theme.font(size: 12))
+                        .foregroundColor(theme.secondaryText)
+                        .lineSpacing(2)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+
+            Spacer(minLength: 8)
+
+            // Model swaps are only offered before bytes start moving —
+            // switching mid-download would orphan the download in flight.
+            if !state.hasStartedLocalDownload, case .notStarted = downloadState(for: model) {
+                OnboardingCompactButton(title: "Change model", style: .ghost) {
+                    state.openModelChooser()
+                }
+            }
+        }
+    }
+
+    // MARK: Status
+
+    @ViewBuilder
+    private func statusBlock(_ model: MLXModel) -> some View {
+        switch downloadState(for: model) {
+        case .notStarted:
+            modelFacts(model)
+
+        case .downloading(let progress):
+            progressBlock(model, progress: progress)
+
+        case .paused(let progress):
+            VStack(alignment: .leading, spacing: 8) {
+                progressBar(progress)
+                HStack(spacing: 10) {
+                    Text("Download paused", bundle: .module)
+                        .font(theme.font(size: 12))
+                        .foregroundColor(theme.tertiaryText)
+                    OnboardingCompactButton(title: "Resume download", style: .accent) {
+                        modelManager.resumeDownload(model.id)
+                    }
+                    Spacer(minLength: 0)
+                }
+            }
+
+        case .failed(let error):
+            VStack(alignment: .leading, spacing: 8) {
+                OnboardingCalloutBanner.error(prefix: "Download hit a snag", detail: error)
+                OnboardingCompactButton(title: "Try again", style: .accent) {
+                    state.startLocalDownload()
+                }
+            }
+
+        case .completed:
+            HStack(spacing: 6) {
+                Image(systemName: "checkmark.seal.fill")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundColor(theme.successColor)
+                Text("Already on your Mac — ready to go", bundle: .module)
+                    .font(theme.font(size: 12, weight: .medium))
+                    .foregroundColor(theme.secondaryText)
+            }
+        }
+    }
+
+    /// A short, visual answer to the three first-run questions: how large is
+    /// the download, will it fit in memory, and where do chats run? Kept out
+    /// of badge chrome so the card reads like one recommendation, not a row of
+    /// settings.
+    private func modelFacts(_ model: MLXModel) -> some View {
+        VStack(alignment: .leading, spacing: 7) {
+            HStack(spacing: 18) {
+                if let size = model.formattedDownloadSize {
+                    modelFact(icon: "arrow.down.circle", text: L("\(size) download"))
+                }
+                if let memory = model.formattedEstimatedMemory {
+                    modelFact(icon: "memorychip", text: L("needs \(memory) memory"))
+                }
+            }
+            modelFact(icon: "lock.fill", text: L("Private and offline"))
+        }
+    }
+
+    private func modelFact(icon: String, text: String) -> some View {
+        HStack(spacing: 6) {
+            Image(systemName: icon)
+                .font(.system(size: 10, weight: .semibold))
+                .foregroundColor(theme.accentColor)
+            Text(text)
+                .font(theme.font(size: 11, weight: .medium))
+                .foregroundColor(theme.secondaryText)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    private func progressBlock(_ model: MLXModel, progress: Double) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            progressBar(progress)
+
+            HStack(spacing: 0) {
+                Text(metricsText(for: model) ?? L("Downloading…"))
+                    .font(theme.font(size: 12))
+                    .foregroundColor(theme.tertiaryText)
+                Spacer(minLength: 8)
+                Text("\(Int(progress * 100))%", bundle: .module)
+                    .font(theme.font(size: 12, weight: .medium).monospaced())
+                    .foregroundColor(theme.tertiaryText)
+            }
+
+            Text(
+                "You can continue — the download keeps going in the background.",
+                bundle: .module
+            )
+            .font(theme.font(size: 11))
+            .foregroundColor(theme.tertiaryText)
+            .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    private func progressBar(_ progress: Double) -> some View {
+        ProgressView(value: progress)
+            .progressViewStyle(.linear)
+            .tint(theme.accentColor)
+    }
+
+    /// "3.1 GB of 7.5 GB · 12 MB/s" from the live download metrics, or `nil`
+    /// before the first metrics tick (the block falls back to "Downloading…").
+    private func metricsText(for model: MLXModel) -> String? {
+        guard let metrics = modelManager.downloadMetrics[model.id] else { return nil }
+        var parts: [String] = []
+        if let received = metrics.bytesReceived, let total = metrics.totalBytes {
+            parts.append(
+                L(
+                    "\(received.formatted(.byteCount(style: .file))) of \(total.formatted(.byteCount(style: .file)))"
+                )
+            )
+        }
+        if let speed = metrics.bytesPerSecond {
+            parts.append("\(Int64(speed).formatted(.byteCount(style: .file)))/s")
+        }
+        return parts.isEmpty ? nil : parts.joined(separator: " · ")
+    }
+}
+
 // MARK: - Model chooser modal
 
 /// Centered "Choose your model" dialog, hosted at the OnboardingView window
@@ -2293,10 +1858,8 @@ struct ConfigureModelChooserModal: View {
 // MARK: - CTA
 
 /// Primary CTA for the Configure AI step, dispatched per screen:
-///   - Home (local): Download & Install / Continue, enabled once a model is
-///     selected.
-///   - Downloading: a single adaptive "Continue in Background" → "Continue"
-///     button (plus "Try Again" on failure).
+///   - Home: "Download model" begins the background download and advances in
+///     one press. A model already on disk uses "Continue".
 ///   - BYOK picker / API-key hub: cards drill in on tap, so a quiet hint
 ///     stands in for the (absent) Continue button.
 ///   - BYOK forms: the stateful Connect/Test/Continue button.
@@ -2306,21 +1869,8 @@ struct ConfigureAICTA: View {
 
     @Environment(\.theme) private var theme
 
-    /// Observed-but-not-read: the CTA's `isLocalCompleted` / `isLocalFailed`
-    /// reads bounce through `ConfigureAIState`, but those computed properties
-    /// pull live values out of `ModelManager.shared` rather than out of any
-    /// `@Published` on `state`. Without this observer the CTA wouldn't refresh
-    /// from "Continue (disabled)" → "Continue (enabled)" when the download
-    /// finishes.
-    @ObservedObject private var modelManager = ModelManager.shared
-
     var body: some View {
         primaryButton
-            .onChange(of: state.isLocalCompleted) { _, completed in
-                if completed && state.screen == .downloading {
-                    onComplete()
-                }
-            }
             .onChange(of: state.isAPISuccess) { _, success in
                 // Auto-advance once connected (green): a successful test/sign-in
                 // is the confirmation, so move to the next onboarding step
@@ -2345,15 +1895,7 @@ struct ConfigureAICTA: View {
     private var primaryButton: some View {
         switch state.screen {
         case .home:
-            OnboardingBrandButton(
-                title: homeCTATitle,
-                action: { state.startLocalDownloadOrContinue(onComplete: onComplete) },
-                isEnabled: state.selectedModel != nil
-            )
-            .fixedSize(horizontal: true, vertical: false)
-
-        case .downloading:
-            localDownloadingCTA
+            homeCTA
 
         case .byok:
             switch state.apiSubstate {
@@ -2368,16 +1910,49 @@ struct ConfigureAICTA: View {
         }
     }
 
-    /// Home CTA title states the cost at the action itself: the download size
-    /// rides along ("Download & Install (7.5 GB)") so pressing the button is
-    /// never a surprise commitment. Falls back to the plain label when the
-    /// size is unknown; already-downloaded models continue as before.
-    private var homeCTATitle: String {
-        if state.selectedModel?.isDownloaded == true { return L("Continue") }
-        if let size = state.selectedModel?.formattedDownloadSize {
-            return L("Download & Install (\(size))")
+    /// One decision cluster for the home screen. The dominant action starts
+    /// the private-model download and advances immediately; the quiet
+    /// secondary action explicitly skips the download and starts on included
+    /// Cloud.
+    private var homeCTA: some View {
+        VStack(spacing: 9) {
+            OnboardingBrandButton(
+                title: homeCTATitle,
+                action: handleHomeCTA,
+                isEnabled: state.selectedModel != nil && !state.isChoosingModel
+            )
+            .fixedSize(horizontal: true, vertical: false)
+
+            if !state.hasStartedLocalDownload,
+               state.selectedModel?.isDownloaded != true
+            {
+                OnboardingTextButton(title: "Skip download and use Cloud only") {
+                    state.chooseOsaurusAndContinue(onComplete: onComplete)
+                }
+                .localizedHelp(
+                    "Start on free Osaurus Cloud credits — you can download a model anytime later."
+                )
+            }
         }
-        return L("Download & Install")
+    }
+
+    // Raw localization keys — `OnboardingBrandButton` localizes internally.
+    private var homeCTATitle: String {
+        guard let model = state.selectedModel else { return "Continue" }
+        if model.isDownloaded { return "Continue" }
+        if state.hasStartedLocalDownload { return "Continue" }
+        return "Download model"
+    }
+
+    private func handleHomeCTA() {
+        guard state.selectedModel != nil else { return }
+        if state.hasStartedLocalDownload {
+            // The user navigated back after committing the download; don't
+            // restart it, just return to the next step.
+            onComplete()
+        } else {
+            state.chooseLocalAndContinue(onComplete: onComplete)
+        }
     }
 
     /// Footer text shown on the bring-your-own-key provider list / API-key hub,
@@ -2388,35 +1963,6 @@ struct ConfigureAICTA: View {
             .font(theme.font(size: OnboardingMetrics.captionSize))
             .foregroundColor(theme.tertiaryText)
             .frame(height: OnboardingMetrics.buttonHeight)
-    }
-
-    /// CTA for the local downloading screen. Mirrors the inline state-driven
-    /// downloading view: while the download is in flight or paused, the CTA is
-    /// disabled and the inline Pause/Resume/Cancel controls own the action
-    /// surface. On failure — including a preflight refusal that never started
-    /// the download (`localDownloadRefusal`) — the CTA flips to a "Try Again"
-    /// button so the user always has a path forward — issue
-    /// [#1071](https://github.com/osaurus-ai/osaurus/issues/1071).
-    @ViewBuilder
-    private var localDownloadingCTA: some View {
-        if state.isLocalFailed || state.localDownloadRefusal != nil {
-            OnboardingBrandButton(
-                title: "Try Again",
-                action: { state.startLocalDownload() }
-            )
-            .fixedSize(horizontal: true, vertical: false)
-        } else {
-            // Single CTA: the user can always proceed. While the download is
-            // still running it reads "Continue in Background" (onboarding moves
-            // on, the download keeps going); once finished it becomes a plain
-            // "Continue". This replaces the old disabled-CTA + separate
-            // text-link pairing.
-            OnboardingBrandButton(
-                title: state.isLocalCompleted ? "Continue" : "Continue in Background",
-                action: onComplete
-            )
-            .fixedSize(horizontal: true, vertical: false)
-        }
     }
 
     private var apiActionButton: some View {

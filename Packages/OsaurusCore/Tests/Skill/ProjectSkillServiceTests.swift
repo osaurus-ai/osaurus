@@ -32,6 +32,36 @@ struct ProjectSkillServiceTests {
         }
     }
 
+    private final class OneShotScanGate: @unchecked Sendable {
+        private let lock = NSLock()
+        private let entered = DispatchSemaphore(value: 0)
+        private let release = DispatchSemaphore(value: 0)
+        private var shouldBlockNextScan = false
+
+        func blockNextScan() {
+            lock.withLock { shouldBlockNextScan = true }
+        }
+
+        func hook() {
+            let shouldBlock = lock.withLock {
+                let shouldBlock = shouldBlockNextScan
+                shouldBlockNextScan = false
+                return shouldBlock
+            }
+            guard shouldBlock else { return }
+            entered.signal()
+            release.wait()
+        }
+
+        func waitUntilEntered() -> Bool {
+            entered.wait(timeout: .now() + 5) == .success
+        }
+
+        func unblock() {
+            release.signal()
+        }
+    }
+
     private func temporaryDirectory() throws -> URL {
         let url = FileManager.default.temporaryDirectory
             .appendingPathComponent("project-skill-tests-\(UUID().uuidString)", isDirectory: true)
@@ -66,21 +96,45 @@ struct ProjectSkillServiceTests {
         return skillDirectory
     }
 
-    @MainActor
-    private func withTemporaryAgent<T>(
-        _ agent: Agent,
-        operation: () async throws -> T
+    private func withProjectSkillCatalog<T: Sendable>(
+        _ operation: @MainActor @Sendable () async throws -> T
     ) async throws -> T {
+        try await StoragePathsTestLock.shared.run {
+            try await DynamicCatalogTestLock.shared.run(operation)
+        }
+    }
+
+    @MainActor
+    private func withTemporaryAgent<T: Sendable>(
+        _ agent: Agent,
+        operation: @MainActor @Sendable () async throws -> T
+    ) async throws -> T {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(
+            "project-skill-agent-\(UUID().uuidString)",
+            isDirectory: true
+        )
+        let previousRoot = OsaurusPaths.overrideRoot
         let previousActiveAgentID = AgentManager.shared.activeAgentId
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        // Agent grants are stored on the persisted agent record. Keep every
+        // temporary agent in this test suite under a private Osaurus root so
+        // parallel suites cannot remove the path while AgentStore is writing.
+        OsaurusPaths.overrideRoot = root
+        AgentManager.shared.refresh()
         AgentManager.shared.add(agent)
+        func cleanup() async {
+            _ = await AgentManager.shared.delete(id: agent.id)
+            OsaurusPaths.overrideRoot = previousRoot
+            AgentManager.shared.refresh()
+            restoreActiveAgent(previousActiveAgentID)
+            try? FileManager.default.removeItem(at: root)
+        }
         do {
             let result = try await operation()
-            _ = await AgentManager.shared.delete(id: agent.id)
-            restoreActiveAgent(previousActiveAgentID)
+            await cleanup()
             return result
         } catch {
-            _ = await AgentManager.shared.delete(id: agent.id)
-            restoreActiveAgent(previousActiveAgentID)
+            await cleanup()
             throw error
         }
     }
@@ -89,6 +143,26 @@ struct ProjectSkillServiceTests {
     private func restoreActiveAgent(_ id: UUID) {
         let restoredID = AgentManager.shared.agent(for: id) == nil ? Agent.defaultId : id
         AgentManager.shared.setActiveAgent(restoredID)
+    }
+
+    private func projectSkillApprovalsKey(_ rootIdentity: String) -> String {
+        "ProjectSkillGrants.\(rootIdentity)"
+    }
+
+    @MainActor
+    private func resetSharedProjectSkillManager(rootIdentity: String?) {
+        ProjectSkillManager.shared.prepareForFolder(nil)
+        if let rootIdentity {
+            UserDefaults.standard.removeObject(forKey: projectSkillApprovalsKey(rootIdentity))
+        }
+    }
+
+    @MainActor
+    private func resetSharedProjectSkillManager(rootIdentities: Set<String>) {
+        ProjectSkillManager.shared.prepareForFolder(nil)
+        for rootIdentity in rootIdentities {
+            UserDefaults.standard.removeObject(forKey: projectSkillApprovalsKey(rootIdentity))
+        }
     }
 
     @Test func discoversAllSupportedRootsWithStableProjectRelativeIDs() throws {
@@ -416,7 +490,7 @@ struct ProjectSkillServiceTests {
     }
 
     @Test @MainActor func grantsAreProjectScopedAndLoadsAreSessionScoped() async throws {
-        try await DynamicCatalogTestLock.shared.run {
+        try await withProjectSkillCatalog {
         let root = try temporaryDirectory()
         let otherRoot = try temporaryDirectory()
         let suite = "ProjectSkillServiceTests.\(UUID().uuidString)"
@@ -474,7 +548,7 @@ struct ProjectSkillServiceTests {
     }
 
     @Test @MainActor func capabilityToolsDiscoverAndLoadEnabledProjectSkill() async throws {
-        try await DynamicCatalogTestLock.shared.run {
+        try await withProjectSkillCatalog {
         let root = try temporaryDirectory()
         let suite = "ProjectSkillCapabilityTests.\(UUID().uuidString)"
         let defaults = try #require(UserDefaults(suiteName: suite))
@@ -487,7 +561,8 @@ struct ProjectSkillServiceTests {
         // The capability tools use the canonical manager. Preserve its folder
         // boundary and return it to an empty state after this serialized test.
         await ProjectSkillManager.shared.activate(root)
-        defer { ProjectSkillManager.shared.prepareForFolder(nil) }
+        var sharedRootIdentity: String?
+        defer { resetSharedProjectSkillManager(rootIdentity: sharedRootIdentity) }
         let id = try #require(ProjectSkillManager.shared.records.first?.id)
         let disabledDiscover = try await CapabilitiesDiscoverTool().execute(
             argumentsJSON: #"{"query":"invoice review"}"#
@@ -500,6 +575,7 @@ struct ProjectSkillServiceTests {
         #expect(!unscopedDiscover.contains(id))
 
         let rootIdentity = try #require(ProjectSkillManager.shared.rootIdentity)
+        sharedRootIdentity = rootIdentity
         let grantKey = ProjectSkillManager.shared.agentGrantKey(
             rootIdentity: rootIdentity,
             skillID: id
@@ -530,7 +606,7 @@ struct ProjectSkillServiceTests {
     }
 
     @Test @MainActor func contentChangeRevokesApprovalUntilUserReenables() async throws {
-        try await DynamicCatalogTestLock.shared.run {
+        try await withProjectSkillCatalog {
         let root = try temporaryDirectory()
         let suite = "ProjectSkillContentPinTests.\(UUID().uuidString)"
         let defaults = try #require(UserDefaults(suiteName: suite))
@@ -607,7 +683,7 @@ struct ProjectSkillServiceTests {
     }
 
     @Test @MainActor func explicitUntrustClearsAgentGrantsAndRequiresRegrant() async throws {
-        try await DynamicCatalogTestLock.shared.run {
+        try await withProjectSkillCatalog {
         let root = try temporaryDirectory()
         let suite = "ProjectSkillExplicitUntrustTests.\(UUID().uuidString)"
         let defaults = try #require(UserDefaults(suiteName: suite))
@@ -648,8 +724,91 @@ struct ProjectSkillServiceTests {
         }
     }
 
+    @Test @MainActor func agentGrantRequiresCurrentTrust() async throws {
+        try await withProjectSkillCatalog {
+        let root = try temporaryDirectory()
+        let suite = "ProjectSkillGrantTrustTests.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        defer {
+            try? FileManager.default.removeItem(at: root)
+            defaults.removePersistentDomain(forName: suite)
+        }
+        _ = try writeSkill(root: root, source: .agents, directory: "review", name: "Review")
+        let manager = ProjectSkillManager(defaults: defaults)
+        await manager.activate(root)
+        let id = try #require(manager.records.first?.id)
+
+        let agent = Agent(
+            name: "ProjectSkillGrantGate-\(UUID().uuidString.prefix(6))",
+            agentAddress: "project-skill-grant-gate-\(UUID().uuidString)"
+        )
+        try await withTemporaryAgent(agent) {
+            manager.setAgentGranted(true, id: id, agentID: agent.id)
+            #expect(!manager.isAgentGranted(id, agentID: agent.id))
+
+            #expect(await manager.setEnabled(true, id: id))
+            manager.setAgentGranted(true, id: id, agentID: agent.id)
+            #expect(manager.isAgentGranted(id, agentID: agent.id))
+
+            #expect(await manager.setEnabled(false, id: id))
+            manager.setAgentGranted(true, id: id, agentID: agent.id)
+            #expect(!manager.isAgentGranted(id, agentID: agent.id))
+        }
+        }
+    }
+
+    @Test @MainActor func newerRefreshWinsOverOlderSameFolderScan() async throws {
+        try await withProjectSkillCatalog {
+        let root = try temporaryDirectory()
+        let suite = "ProjectSkillRefreshOrderingTests.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        defer {
+            try? FileManager.default.removeItem(at: root)
+            defaults.removePersistentDomain(forName: suite)
+        }
+        let directory = try writeSkill(
+            root: root,
+            source: .agents,
+            directory: "review",
+            name: "Review",
+            body: "OLD_REFRESH_MARKER"
+        )
+        let gate = OneShotScanGate()
+        let scanner = ProjectSkillScanner(targetValidationHook: { gate.hook() })
+        let manager = ProjectSkillManager(scanner: scanner, defaults: defaults)
+        await manager.activate(root)
+        let id = try #require(manager.records.first?.id)
+        #expect(manager.record(id: id)?.instructions.contains("OLD_REFRESH_MARKER") == true)
+
+        gate.blockNextScan()
+        let oldRefresh = Task { await manager.refresh() }
+        let entered = await Task.detached { gate.waitUntilEntered() }.value
+        #expect(entered)
+
+        try """
+            ---
+            name: Review
+            description: Newer scan
+            ---
+
+            NEW_REFRESH_MARKER
+            """.write(
+                to: directory.appendingPathComponent("SKILL.md"),
+                atomically: true,
+                encoding: .utf8
+            )
+        await manager.refresh()
+        #expect(manager.record(id: id)?.instructions.contains("NEW_REFRESH_MARKER") == true)
+
+        gate.unblock()
+        await oldRefresh.value
+        #expect(manager.record(id: id)?.instructions.contains("NEW_REFRESH_MARKER") == true)
+        #expect(!manager.isRefreshing)
+        }
+    }
+
     @Test @MainActor func loadRevalidatesInstructionsInventoryAndSymlinksWithoutRefresh() async throws {
-        try await DynamicCatalogTestLock.shared.run {
+        try await withProjectSkillCatalog {
         let root = try temporaryDirectory()
         let suite = "ProjectSkillLoadRevalidationTests.\(UUID().uuidString)"
         let defaults = try #require(UserDefaults(suiteName: suite))
@@ -727,7 +886,7 @@ struct ProjectSkillServiceTests {
     }
 
     @Test @MainActor func revokedApprovalIsPersistedAndRequiresLiveExplicitReapproval() async throws {
-        try await DynamicCatalogTestLock.shared.run {
+        try await withProjectSkillCatalog {
         let root = try temporaryDirectory()
         let suite = "ProjectSkillReapprovalTests.\(UUID().uuidString)"
         let defaults = try #require(UserDefaults(suiteName: suite))
@@ -803,7 +962,7 @@ struct ProjectSkillServiceTests {
     }
 
     @Test @MainActor func folderSwitchDuringTargetValidationFailsClosed() async throws {
-        try await DynamicCatalogTestLock.shared.run {
+        try await withProjectSkillCatalog {
         let root = try temporaryDirectory()
         let otherRoot = try temporaryDirectory()
         let suite = "ProjectSkillFolderSwitchTests.\(UUID().uuidString)"
@@ -842,12 +1001,13 @@ struct ProjectSkillServiceTests {
     }
 
     @Test @MainActor func agentAllowlistBlocksDiscoverAndLoad() async throws {
-        try await DynamicCatalogTestLock.shared.run {
+        try await withProjectSkillCatalog {
         let root = try temporaryDirectory()
         defer { try? FileManager.default.removeItem(at: root) }
         _ = try writeSkill(root: root, source: .agents, directory: "review", name: "Review")
         await ProjectSkillManager.shared.activate(root)
-        defer { ProjectSkillManager.shared.prepareForFolder(nil) }
+        let sharedRootIdentity = ProjectSkillManager.shared.rootIdentity
+        defer { resetSharedProjectSkillManager(rootIdentity: sharedRootIdentity) }
         let id = try #require(ProjectSkillManager.shared.records.first?.id)
         await ProjectSkillManager.shared.setEnabled(true, id: id)
 
@@ -875,12 +1035,13 @@ struct ProjectSkillServiceTests {
     }
 
     @Test @MainActor func capabilityLoadRequiresTaskLocalAgentEvenWhenCustomAgentIsActive() async throws {
-        try await DynamicCatalogTestLock.shared.run {
+        try await withProjectSkillCatalog {
         let root = try temporaryDirectory()
         defer { try? FileManager.default.removeItem(at: root) }
         _ = try writeSkill(root: root, source: .agents, directory: "review", name: "Review")
         await ProjectSkillManager.shared.activate(root)
-        defer { ProjectSkillManager.shared.prepareForFolder(nil) }
+        let sharedRootIdentity = ProjectSkillManager.shared.rootIdentity
+        defer { resetSharedProjectSkillManager(rootIdentity: sharedRootIdentity) }
         let id = try #require(ProjectSkillManager.shared.records.first?.id)
         await ProjectSkillManager.shared.setEnabled(true, id: id)
 
@@ -902,12 +1063,13 @@ struct ProjectSkillServiceTests {
     }
 
     @Test @MainActor func defaultAndOtherBuiltInAgentsCannotLoadProjectSkills() async throws {
-        try await DynamicCatalogTestLock.shared.run {
+        try await withProjectSkillCatalog {
         let root = try temporaryDirectory()
         defer { try? FileManager.default.removeItem(at: root) }
         _ = try writeSkill(root: root, source: .agents, directory: "review", name: "Review")
         await ProjectSkillManager.shared.activate(root)
-        defer { ProjectSkillManager.shared.prepareForFolder(nil) }
+        let sharedRootIdentity = ProjectSkillManager.shared.rootIdentity
+        defer { resetSharedProjectSkillManager(rootIdentity: sharedRootIdentity) }
         let id = try #require(ProjectSkillManager.shared.records.first?.id)
         await ProjectSkillManager.shared.setEnabled(true, id: id)
 
@@ -931,15 +1093,17 @@ struct ProjectSkillServiceTests {
     }
 
     @Test @MainActor func externalAndBackgroundSurfacesCannotDiscoverOrLoadProjectSkills() async throws {
-        try await DynamicCatalogTestLock.shared.run {
+        try await withProjectSkillCatalog {
         let root = try temporaryDirectory()
         defer { try? FileManager.default.removeItem(at: root) }
         _ = try writeSkill(root: root, source: .agents, directory: "review", name: "Review")
         await ProjectSkillManager.shared.activate(root)
-        defer { ProjectSkillManager.shared.prepareForFolder(nil) }
+        var sharedRootIdentity: String?
+        defer { resetSharedProjectSkillManager(rootIdentity: sharedRootIdentity) }
         let id = try #require(ProjectSkillManager.shared.records.first?.id)
         await ProjectSkillManager.shared.setEnabled(true, id: id)
         let rootIdentity = try #require(ProjectSkillManager.shared.rootIdentity)
+        sharedRootIdentity = rootIdentity
         let grantKey = ProjectSkillManager.shared.agentGrantKey(rootIdentity: rootIdentity, skillID: id)
         let agent = Agent(
             name: "ProjectSkillSurface-\(UUID().uuidString.prefix(6))",
@@ -987,7 +1151,7 @@ struct ProjectSkillServiceTests {
     }
 
     @Test @MainActor func agentGrantDoesNotCarryAcrossProjectsWithSameSkillID() async throws {
-        try await DynamicCatalogTestLock.shared.run {
+        try await withProjectSkillCatalog {
         let firstRoot = try temporaryDirectory()
         let secondRoot = try temporaryDirectory()
         defer {
@@ -997,7 +1161,11 @@ struct ProjectSkillServiceTests {
         _ = try writeSkill(root: firstRoot, source: .agents, directory: "review", name: "Review")
         _ = try writeSkill(root: secondRoot, source: .agents, directory: "review", name: "Review")
         await ProjectSkillManager.shared.activate(firstRoot)
-        defer { ProjectSkillManager.shared.prepareForFolder(nil) }
+        var sharedRootIdentities: Set<String> = []
+        if let rootIdentity = ProjectSkillManager.shared.rootIdentity {
+            sharedRootIdentities.insert(rootIdentity)
+        }
+        defer { resetSharedProjectSkillManager(rootIdentities: sharedRootIdentities) }
         let id = try #require(ProjectSkillManager.shared.records.first?.id)
         await ProjectSkillManager.shared.setEnabled(true, id: id)
         let agent = Agent(
@@ -1009,6 +1177,9 @@ struct ProjectSkillServiceTests {
             #expect(ProjectSkillManager.shared.isAgentGranted(id, agentID: agent.id))
 
             await ProjectSkillManager.shared.activate(secondRoot)
+            if let rootIdentity = ProjectSkillManager.shared.rootIdentity {
+                sharedRootIdentities.insert(rootIdentity)
+            }
             let secondID = try #require(ProjectSkillManager.shared.records.first?.id)
             #expect(secondID == id)
             await ProjectSkillManager.shared.setEnabled(true, id: secondID)

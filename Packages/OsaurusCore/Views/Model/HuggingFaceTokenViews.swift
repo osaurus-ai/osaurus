@@ -132,18 +132,29 @@ struct HuggingFaceTokenPromptSheet: View {
 struct HuggingFaceTokenCard: View {
     @Environment(\.theme) private var theme
 
-    /// Token presence, seeded synchronously at init. `HuggingFaceAuth`
-    /// caches the token in memory and is preloaded off-main at app launch,
-    /// so this read is warm by the time Models opens — no keychain hit on
-    /// the render path, and no async flash. The value only changes through
-    /// this card's own actions, which set it directly.
+    /// Token presence. Seeded from the in-memory cache ONLY — never a
+    /// synchronous keychain read on the render path, which can block the main
+    /// thread for seconds and hang the catalog. `HuggingFaceAuth` is preloaded
+    /// off-main at app launch, so the cache is warm in the common case; on a
+    /// cold cache this starts `false` and `resolvePresence()` corrects it
+    /// off-main. The value otherwise changes only through this card's actions.
     @State private var hasToken: Bool
     @State private var showAddSheet = false
     @State private var isReplacing = false
     @State private var replaceInput: String = ""
 
     init() {
-        _hasToken = State(initialValue: HuggingFaceAuth.hasToken)
+        _hasToken = State(initialValue: HuggingFaceAuth.cachedTokenPresence ?? false)
+    }
+
+    /// Resolve the cold-cache case without blocking the render path: the
+    /// keychain read runs off the main thread, then the result is applied.
+    private func resolvePresence() async {
+        guard HuggingFaceAuth.cachedTokenPresence == nil else { return }
+        let present = await Task.detached(priority: .utility) {
+            HuggingFaceAuth.hasToken
+        }.value
+        await MainActor.run { hasToken = present }
     }
 
     var body: some View {
@@ -160,6 +171,7 @@ struct HuggingFaceTokenCard: View {
             }
             .environment(\.theme, theme)
         }
+        .task { await resolvePresence() }
     }
 
     // MARK: Disconnected

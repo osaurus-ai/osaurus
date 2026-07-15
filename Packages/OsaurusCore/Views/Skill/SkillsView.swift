@@ -824,7 +824,7 @@ private struct SkillRow: View {
                     withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
                         isExpanded.toggle()
                     }
-                }) {
+                }, label: {
                     HStack(spacing: 10) {
                         VStack(alignment: .leading, spacing: 3) {
                             HStack(spacing: 6) {
@@ -898,7 +898,7 @@ private struct SkillRow: View {
                             .rotationEffect(.degrees(isExpanded ? 90 : 0))
                     }
                     .contentShape(Rectangle())
-                }
+                })
                 .buttonStyle(PlainButtonStyle())
 
                 // Enable toggle - separate from expand area
@@ -1045,7 +1045,7 @@ private struct SkillRow: View {
                         }
 
                         if !skill.isBuiltIn && !skill.isFromPlugin {
-                            Button(action: { showDeleteConfirm = true }) {
+                            Button(action: { showDeleteConfirm = true }, label: {
                                 HStack(spacing: 4) {
                                     Image(systemName: "trash")
                                         .font(.system(size: 10))
@@ -1059,7 +1059,7 @@ private struct SkillRow: View {
                                     RoundedRectangle(cornerRadius: 6)
                                         .fill(theme.errorColor.opacity(0.1))
                                 )
-                            }
+                            })
                             .buttonStyle(PlainButtonStyle())
                         }
                     }

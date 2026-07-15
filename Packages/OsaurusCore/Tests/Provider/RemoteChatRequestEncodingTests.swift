@@ -614,6 +614,62 @@ struct RemoteChatRequestEncodingTests {
         #expect(payload["prompt_cache_key"] == nil)
     }
 
+    /// Codex catalog-advertised top-tier efforts must reach the wire through
+    /// the Responses Lite rewrite unchanged — the option normalizer is the
+    /// only gate, so `xhigh`/`max`/`ultra` pass through here verbatim.
+    @Test func codexResponsesLite_passesCatalogTopTierEffortsThrough() throws {
+        for effort in ["xhigh", "max", "ultra"] {
+            let request = Self.makeRequest(
+                model: "gpt-5.6-terra",
+                maxTokens: 1024,
+                reasoningEffort: effort
+            )
+            let data = try request.toCodexOpenResponsesRequest()
+                .toCodexOAuthPayloadData(responsesLiteSessionId: "019f4860-9ca3-7000-81e9-08939c58b0fa")
+            let payload = try Self.decodeAsDictionary(data)
+            let reasoning = try #require(payload["reasoning"] as? [String: Any])
+            #expect(reasoning["effort"] as? String == effort)
+        }
+    }
+
+    /// The official OpenAI API documents `none` … `max` for GPT-5.6; `none`
+    /// must survive the reasoning-controls translation for `api.openai.com`
+    /// (it is a real wire value there), while custom OpenAI-compatible hosts
+    /// keep treating `none` as a local direct-rail alias and strip it.
+    @Test func officialOpenAIAPIKey_sendsNoneThroughMaxEfforts() throws {
+        for effort in ["none", "low", "medium", "high", "xhigh", "max"] {
+            let (accepted, thinking) = RemoteProviderService.remoteChatReasoningControls(
+                providerType: .openResponses,
+                host: "api.openai.com",
+                model: "gpt-5.6-sol",
+                effort: effort
+            )
+            #expect(accepted == effort, "official API must accept \(effort)")
+            #expect(thinking == nil)
+        }
+
+        // Wire body proof: `none` lands as `reasoning.effort` on /v1/responses.
+        let request = Self.makeRequest(
+            model: "gpt-5.6-sol",
+            maxTokens: 1024,
+            reasoningEffort: "none"
+        )
+        let payload = try Self.encodeAsDictionary(
+            request.toOpenResponsesRequest(alwaysUseInputItems: true)
+        )
+        let reasoning = try #require(payload["reasoning"] as? [String: Any])
+        #expect(reasoning["effort"] as? String == "none")
+
+        // Non-official host: `none` stays a local alias and is stripped.
+        let (custom, _) = RemoteProviderService.remoteChatReasoningControls(
+            providerType: .openResponses,
+            host: "my-proxy.example.com",
+            model: "gpt-5.6-sol",
+            effort: "none"
+        )
+        #expect(custom == nil)
+    }
+
     @Test func codexResponsesLiteUUID_isVersion7RFC4122() throws {
         let date = Date(timeIntervalSince1970: 1_700_000_000)
         let random = try #require(UUID(uuidString: "00112233-4455-4677-8899-aabbccddeeff"))

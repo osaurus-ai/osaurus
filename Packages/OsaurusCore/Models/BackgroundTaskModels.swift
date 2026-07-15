@@ -11,36 +11,64 @@ import Foundation
 
 // MARK: - Background Task Status
 
-/// Status of a background task
+/// Lifecycle status of an agent request. Every request moves through an
+/// explicit state machine that is independent of whether any chat window is
+/// currently displaying it:
+///
+///     queued → running → waitingForInput → running → completed / failed
+///     queued / running → cancelled
+///
+/// Only explicit Stop/cancel, app shutdown, budget exhaustion, or terminal
+/// execution ends a request — never a UI context switch.
 public enum BackgroundTaskStatus: Equatable, Sendable {
+    /// Accepted but not yet started: waiting for an execution slot under the
+    /// configured concurrency limits. Promoted FIFO as capacity frees up.
+    case queued
     /// Task is actively executing
     case running
-    /// Task is paused waiting for user clarification
-    case awaitingClarification
-    /// Task has completed (success or failure)
-    case completed(success: Bool, summary: String)
+    /// Task is paused waiting for user input (e.g. a clarify prompt). Alive,
+    /// but not consuming an execution slot.
+    case waitingForInput
+    /// Task finished successfully
+    case completed(summary: String)
+    /// Task finished with an error
+    case failed(summary: String)
     /// Task was cancelled
     case cancelled
 
-    /// Whether the task is still active (running or awaiting input)
+    /// Whether the task is still alive (queued, running, or awaiting input)
     public var isActive: Bool {
         switch self {
-        case .running, .awaitingClarification:
+        case .queued, .running, .waitingForInput:
             return true
-        case .completed, .cancelled:
+        case .completed, .failed, .cancelled:
             return false
         }
     }
 
+    /// Whether the task currently occupies one of the limited execution
+    /// slots. Queued tasks haven't started; waiting tasks released their
+    /// slot so queued work can be promoted while they idle on the user.
+    public var consumesExecutionSlot: Bool {
+        self == .running
+    }
+
+    /// Whether the task ended in a terminal state (success, failure, or cancel)
+    public var isTerminal: Bool { !isActive }
+
     /// Display name for UI
     public var displayName: String {
         switch self {
+        case .queued:
+            return L("Queued")
         case .running:
             return L("Running")
-        case .awaitingClarification:
+        case .waitingForInput:
             return L("Waiting")
-        case .completed(let success, _):
-            return success ? L("Completed") : L("Failed")
+        case .completed:
+            return L("Completed")
+        case .failed:
+            return L("Failed")
         case .cancelled:
             return L("Cancelled")
         }
@@ -49,12 +77,16 @@ public enum BackgroundTaskStatus: Equatable, Sendable {
     /// Icon name for UI
     public var iconName: String {
         switch self {
+        case .queued:
+            return "clock"
         case .running:
             return "arrow.triangle.2.circlepath"
-        case .awaitingClarification:
+        case .waitingForInput:
             return "questionmark.circle.fill"
-        case .completed(let success, _):
-            return success ? "checkmark.circle.fill" : "xmark.circle.fill"
+        case .completed:
+            return "checkmark.circle.fill"
+        case .failed:
+            return "xmark.circle.fill"
         case .cancelled:
             return "stop.circle.fill"
         }

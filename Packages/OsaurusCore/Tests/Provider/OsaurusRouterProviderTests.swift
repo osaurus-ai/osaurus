@@ -47,6 +47,7 @@ struct OsaurusRouterProviderTests {
 
         #expect(model.pickerDescription == "venice · $1.00/M in · $3.00/M out · 131K ctx")
         #expect(model.supportsVision == true)
+        #expect(model.supportsToolCalling == true)
 
         // The factory mirrors `fromRemoteModel` for the display name (last path
         // component of the prefixed id) and surfaces the summary as `description`.
@@ -61,6 +62,7 @@ struct OsaurusRouterProviderTests {
         #expect(item.displayName == "model-b")
         #expect(item.description == "venice · $1.00/M in · $3.00/M out · 131K ctx")
         #expect(item.isVLM == true)
+        #expect(item.supportsToolCalling == true)
         guard case .remote(let name, let pid) = item.source else {
             Issue.record("Expected a remote source, got \(item.source)")
             return
@@ -91,6 +93,7 @@ struct OsaurusRouterProviderTests {
         let model = try #require(discovery.catalog["bare/model"])
         #expect(model.pickerDescription == nil)
         #expect(model.supportsVision == false)
+        #expect(model.supportsToolCalling == nil)
     }
 
     @Test func routerSummaryFrame_isConsumedWithoutFinishingStream() {

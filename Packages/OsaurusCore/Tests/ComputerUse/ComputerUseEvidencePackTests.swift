@@ -944,6 +944,67 @@ final class ComputerUseEvidencePackTests: XCTestCase {
     private func value(in snapshot: CUSnapshot, id: String) -> String? {
         snapshot.elements.first(where: { $0.id == id })?.value
     }
+
+    /// An explicit `open` verb must launch the app FOREGROUND (`background: false`).
+    /// A background launch sets `config.hides = true`; a hidden Cocoa app exposes no
+    /// AX windows, so the readiness poll times out, the verify capture is empty, and
+    /// the model reports the open as failed even though the app did launch. Regression
+    /// guard for the 0.22.3 report: "launches the app but never brings the window to
+    /// the foreground, then incorrectly reports the task as failed."
+    @MainActor
+    func testOpenVerbLaunchesForegroundSoTheWindowIsVisibleAndVerifiable() async {
+        let pid: Int32 = 7420
+        let window = CUWindowSummary(id: 1, title: "Untitled", focused: true, x: 0, y: 0, w: 600, h: 400)
+        let snapshot = CUSnapshot(
+            snapshotId: 1,
+            pid: pid,
+            app: "TextEdit",
+            focusedWindow: "Untitled",
+            tier: .ax,
+            truncated: false,
+            windows: [window],
+            elements: [CUElement(id: "doc", role: "textarea", label: "Document", value: "", windowId: 1)],
+            image: nil
+        )
+        let driver = MockMacDriver(
+            availability: MacDriverAvailability(accessibility: true, screenRecording: true, skyLight: true),
+            apps: [CUAppListing(pid: pid, bundleId: "com.apple.TextEdit", name: "TextEdit", active: false, hidden: false)],
+            snapshots: [pid: [snapshot, snapshot]]
+        )
+
+        let result = await ComputerUseLoop.run(
+            goal: "Open TextEdit.",
+            modelId: "scripted-open",
+            driver: driver,
+            gate: ComputerUseGate(
+                policy: AutonomyPolicy(globalPreset: .autonomous, allowlist: ["TextEdit"])
+            ),
+            feed: SubagentFeed(toolCallId: "evidence-open-fg", kindId: "computer_use", title: "Open TextEdit"),
+            interrupt: InterruptToken(),
+            confirm: { _ in true },
+            limits: RunLimits(maxSteps: 3, wallClockSeconds: 30),
+            vision: .none,
+            sessionId: "evidence-open-fg",
+            nextAction: ComputerUseLoop.scriptedProvider([
+                AgentAction(verb: .open, app: "TextEdit"),
+                AgentAction(verb: .done, reason: "TextEdit is open."),
+            ])
+        )
+
+        XCTAssertTrue(result.outcome.isSuccess, "Open run should succeed; got \(result.outcome)")
+        let openCalls = await driver.openCalls
+        XCTAssertEqual(openCalls.count, 1, "The open verb must reach the driver exactly once.")
+        XCTAssertEqual(openCalls.first?.identifier, "TextEdit")
+        XCTAssertEqual(
+            openCalls.first?.background,
+            false,
+            """
+            The `open` verb launched the app in background mode. Background launching sets \
+            config.hides = true, so the app never comes to the foreground and exposes no AX \
+            windows — the model then reports a successful launch as a failure. An explicit \
+            open must foreground the app.
+            """)
+    }
 }
 
 private actor ConfirmationRecorder {

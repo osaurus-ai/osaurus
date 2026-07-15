@@ -9,9 +9,10 @@
 //    always-present `## Self-improvement` prompt section (which co-fires
 //    on every sandbox turn), so the one-time seed stays identity-only
 //    rather than duplicating it.
-//  - The seed script is idempotent: a `test -f "$HOME/SOUL.md" ||`
-//    guard wraps the heredoc so a soul the agent has accumulated edits
-//    to is never overwritten on subsequent provisions.
+//  - The seed write now lives inside the batched per-agent bootstrap
+//    (`SandboxManager.agentBootstrapScript`) and is idempotent: an
+//    `[ ! -f .../SOUL.md ]` guard wraps the heredoc so a soul the agent
+//    has accumulated edits to is never overwritten on re-provisions.
 //  - The heredoc terminator is single-quoted (`<<'SOUL_EOF'`) so `$` /
 //    backtick / `\` inside the body never expand, and the seed lands
 //    byte-exact regardless of the agent user's shell environment.
@@ -72,26 +73,41 @@ struct SandboxAgentProvisionerSoulSeedTests {
         #expect(body.contains("next session"))
     }
 
-    // MARK: - Seed script shape
+    // MARK: - Batched bootstrap script shape
 
-    /// `test -f "$HOME/SOUL.md" || cat > ...` is the idempotency guard.
+    private func makeScript(
+        token: String? = "tok-123",
+        soulSeedBody: String? = SandboxAgentProvisioner.soulSeedBody
+    ) -> String {
+        SandboxManager.agentBootstrapScript(
+            agentName: "abc",
+            homeDir: "/home/agents/abc",
+            bridgeTokenDir: "/run/osaurus",
+            token: token,
+            soulSeedBody: soulSeedBody
+        )
+    }
+
+    /// The `[ ! -f .../SOUL.md ]` guard is the idempotency contract.
     /// Without it, every provision would overwrite an accumulated soul
     /// — the spec calls this out explicitly: "never overwrite an
     /// agent's accumulated SOUL".
-    @Test("seed script is guarded by test -f against $HOME/SOUL.md")
-    func seedScript_isIdempotentGuarded() {
-        let script = SandboxAgentProvisioner.soulSeedScript()
-        #expect(script.contains(#"test -f "$HOME/SOUL.md""#))
-        #expect(script.contains("||"))
-        #expect(script.contains(#"cat > "$HOME/SOUL.md""#))
+    @Test("bootstrap script guards the seed write on file absence")
+    func bootstrapScript_isIdempotentGuarded() {
+        let script = makeScript()
+        #expect(script.contains("[ ! -f '/home/agents/abc/SOUL.md' ]"))
+        #expect(script.contains("cat > '/home/agents/abc/SOUL.md'"))
+        // Ownership must land with the agent, not root — the script
+        // runs as root, unlike the old per-user seed exec.
+        #expect(script.contains("chown agent-abc:agent-abc '/home/agents/abc/SOUL.md'"))
     }
 
     /// Single-quoted heredoc terminator disables `$` / backtick / `\`
     /// expansion so the seed body's contents land byte-exact regardless
-    /// of the agent user's shell environment.
-    @Test("seed script uses a single-quoted heredoc terminator")
-    func seedScript_usesSingleQuotedHeredoc() {
-        let script = SandboxAgentProvisioner.soulSeedScript()
+    /// of the shell environment.
+    @Test("bootstrap script uses a single-quoted heredoc terminator")
+    func bootstrapScript_usesSingleQuotedHeredoc() {
+        let script = makeScript()
         #expect(script.contains("<<'SOUL_EOF'"))
         #expect(
             !script.contains("<<SOUL_EOF"),
@@ -100,11 +116,11 @@ struct SandboxAgentProvisionerSoulSeedTests {
     }
 
     /// The heredoc terminator must appear on its own line with no
-    /// leading whitespace, otherwise bash treats it as part of the
+    /// leading whitespace, otherwise the shell treats it as part of the
     /// body and the heredoc never closes.
-    @Test("seed script's SOUL_EOF terminator is on its own line, flush left")
-    func seedScript_terminatorIsFlushLeft() {
-        let script = SandboxAgentProvisioner.soulSeedScript()
+    @Test("bootstrap script's SOUL_EOF terminator is on its own line, flush left")
+    func bootstrapScript_terminatorIsFlushLeft() {
+        let script = makeScript()
         let lines = script.components(separatedBy: "\n")
         guard let terminator = lines.first(where: { $0.contains("SOUL_EOF") && !$0.contains("'") })
         else {
@@ -120,9 +136,44 @@ struct SandboxAgentProvisionerSoulSeedTests {
     /// Sanity: the script embeds the canonical seed body verbatim
     /// (after Swift's `"""` indent strip). Catches accidental drift
     /// between the constant and the script wrapper.
-    @Test("seed script embeds the full soulSeedBody verbatim")
-    func seedScript_embedsSeedBody() {
-        let script = SandboxAgentProvisioner.soulSeedScript()
+    @Test("bootstrap script embeds the full soulSeedBody verbatim")
+    func bootstrapScript_embedsSeedBody() {
+        let script = makeScript()
         #expect(script.contains(SandboxAgentProvisioner.soulSeedBody))
+    }
+
+    // MARK: - Bootstrap user/token shape
+
+    /// The user-creation half of the bootstrap must guard on `id` (the
+    /// old `ensureAgentUser` semantics) and fail loudly via `set -e`
+    /// rather than silently continuing after a failed adduser.
+    @Test("bootstrap script creates the user idempotently under set -e")
+    func bootstrapScript_createsUserIdempotently() {
+        let script = makeScript()
+        #expect(script.hasPrefix("set -e"))
+        #expect(script.contains("if ! id agent-abc >/dev/null 2>&1; then"))
+        #expect(script.contains("adduser -D -h '/home/agents/abc' agent-abc"))
+        #expect(script.contains("chmod 700 '/home/agents/abc'"))
+    }
+
+    /// Token file must be created under `umask 0077` (mode 0600 with no
+    /// transient world-readable window) and `printf %s` (byte-exact, no
+    /// trailing newline) — same contract `provisionBridgeToken` had.
+    @Test("bootstrap script writes the token under umask 0077 with printf %s")
+    func bootstrapScript_writesTokenSafely() {
+        let script = makeScript(token: "tok-123")
+        #expect(script.contains("( umask 0077 && printf %s 'tok-123' > /run/osaurus/agent-abc.token )"))
+        #expect(script.contains("chown agent-abc:agent-abc /run/osaurus/agent-abc.token"))
+        #expect(script.contains("chmod 0711 /run/osaurus"))
+    }
+
+    /// Diagnostics-style callers pass no token / no seed; the script
+    /// must degrade to plain user + dirs without leftover fragments.
+    @Test("bootstrap script omits token and seed sections when nil")
+    func bootstrapScript_omitsOptionalSections() {
+        let script = makeScript(token: nil, soulSeedBody: nil)
+        #expect(!script.contains(".token"))
+        #expect(!script.contains("SOUL"))
+        #expect(script.contains("adduser"))
     }
 }

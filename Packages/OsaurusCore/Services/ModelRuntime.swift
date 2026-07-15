@@ -29,8 +29,56 @@ private let genLog = Logger(subsystem: "com.dinoki.osaurus", category: "Generati
 private let _vlmFactory = MLXVLM.VLMModelFactory.shared
 private let _llmFactory = MLXLLM.LLMModelFactory.shared
 
+/// Whether a load may disturb the model someone is already using.
+///
+/// The runtime is strictly single-model by default: loading B evicts resident A
+/// and cancels an in-flight load of A. That is fine when a human is waiting on
+/// B — they asked for it. It is never fine on behalf of housekeeping (memory
+/// distillation, greeting generation, voice-transcript cleanup, speculative
+/// warm-up, a cron-fired agent), which must fill an *empty* slot or step aside.
+///
+/// This has to be enforced inside the actor, at the moment of eviction. Callers
+/// used to probe `hasLoadInFlight()` / `hasResidentModelOther(than:)` and then
+/// load on a later actor hop — a check-then-act race that loses whatever arrived
+/// in between. `ModelRuntime` is reentrant across every `await`, so the only
+/// atomic place to refuse is the same synchronous segment that observed the
+/// conflict.
+public enum ModelLoadIntent: Sendable, Equatable {
+    /// A human is waiting on this load. May evict and cancel as needed.
+    case interactive
+    /// Housekeeping. Reuses a resident model or fills an empty slot; refuses
+    /// rather than disturb a model that is resident or already loading.
+    case background
+}
+
 public actor ModelRuntime {
     // MARK: - Types
+
+    /// Thrown when a `.background` load would have evicted a resident model or
+    /// cancelled an in-flight one. Callers are expected to treat this as "not
+    /// now" — skip the housekeeping, or retry later — never as a hard failure.
+    public struct ResidencyRefusedError: Error, LocalizedError, Sendable, Equatable {
+        public enum Conflict: Sendable, Equatable {
+            /// A different model is resident and would have been evicted.
+            case wouldEvictResident(String)
+            /// A different model is mid-load and would have been cancelled.
+            case wouldCancelLoadInFlight(String)
+        }
+
+        public let requestedModel: String
+        public let conflict: Conflict
+
+        public var errorDescription: String? {
+            switch conflict {
+            case .wouldEvictResident(let resident):
+                return
+                    "Skipped background load of '\(requestedModel)': it would evict '\(resident)', which is in use"
+            case .wouldCancelLoadInFlight(let loading):
+                return
+                    "Skipped background load of '\(requestedModel)': it would cancel the in-flight load of '\(loading)'"
+            }
+        }
+    }
 
     struct LoadRefusedError: Error, LocalizedError, Sendable {
         let modelName: String
@@ -73,6 +121,9 @@ public actor ModelRuntime {
         let name: String
         let container: ModelContainer
         let weightsSizeBytes: Int64
+        /// Identifies the *weights that are actually loaded*, so a prefix-cache
+        /// entry cannot outlive them. See `weightsFingerprint(for:)`.
+        let weightsFingerprint: String
         let isVLM: Bool
         let draftStrategy: MLXLMCommon.DraftStrategy?
         let nativeMTPStatus: String?
@@ -82,6 +133,7 @@ public actor ModelRuntime {
             name: String,
             container: ModelContainer,
             weightsSizeBytes: Int64,
+            weightsFingerprint: String,
             isVLM: Bool = false,
             draftStrategy: MLXLMCommon.DraftStrategy? = nil,
             nativeMTPStatus: String? = nil,
@@ -90,6 +142,7 @@ public actor ModelRuntime {
             self.name = name
             self.container = container
             self.weightsSizeBytes = weightsSizeBytes
+            self.weightsFingerprint = weightsFingerprint
             self.isVLM = isVLM
             self.draftStrategy = draftStrategy
             self.nativeMTPStatus = nativeMTPStatus
@@ -205,10 +258,18 @@ public actor ModelRuntime {
         return modelCache[name] != nil
     }
 
+    /// Models currently held resident. Background callers that can run against
+    /// *any* model (voice-transcript cleanup, for one) use this to pick the one
+    /// already in memory instead of an arbitrary installed model, which under the
+    /// strict single-model policy would evict whatever the user is chatting with.
+    func residentModelNames() -> [String] {
+        Array(modelCache.keys)
+    }
+
     /// Warm-load an installed local model without starting generation. Used by
     /// delegated jobs that temporarily evict chat models for unified-memory
     /// headroom, then restore the prior resident set after the helper job.
-    func preload(name: String) async throws {
+    func preload(name: String, intent: ModelLoadIntent = .interactive) async throws {
         let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else {
             throw NSError(
@@ -226,7 +287,7 @@ public actor ModelRuntime {
             )
         }
         if modelCache[found.name] != nil { return }
-        _ = try await loadContainer(id: found.id, name: found.name)
+        _ = try await loadContainer(id: found.id, name: found.name, intent: intent)
         // A preload never acquires a generation lease, so without arming the
         // idle timer here the model would stay resident FOREVER if no
         // generation ever follows (the timer is otherwise only scheduled on
@@ -781,7 +842,24 @@ public actor ModelRuntime {
     /// per-model `unload` call internally waits for the lease to drop before
     /// freeing buffers, so this method is safe to call with a stale `activeNames`
     /// snapshot — at worst the unload is briefly deferred, never a crash.
-    func unloadModelsNotIn(_ activeNames: Set<String>) async {
+    ///
+    /// - Parameter skipIfLoadInFlight: for housekeeping callers (residency-switch
+    ///   GC). A model that is *loading* is in `loadingTasks`, not yet in
+    ///   `modelCache`, and holds no lease — so it is invisible to both the
+    ///   `activeNames` snapshot and the lease check, and GC will happily tear
+    ///   down the runtime around it. Callers used to guard this by probing
+    ///   `hasLoadInFlight()` first, which is check-then-act: the probe returns,
+    ///   the actor yields, a load registers, and the GC proceeds anyway.
+    ///   Passing `true` moves that decision inside the actor, into the same
+    ///   synchronous segment as the `modelCache` read below.
+    func unloadModelsNotIn(
+        _ activeNames: Set<String>,
+        skipIfLoadInFlight: Bool = false
+    ) async {
+        if skipIfLoadInFlight, hasLoadInFlight() {
+            genLog.info("GC: skipping residency sweep — a model load is in flight")
+            return
+        }
         let leaseHeld = await ModelLease.shared.activeNames()
         let keep = activeNames.union(leaseHeld)
         let toUnload = modelCache.keys.filter { !keep.contains($0) }
@@ -1538,12 +1616,37 @@ public actor ModelRuntime {
         }
     }
 
+    /// Refuse a `.background` load that is about to disturb someone else's model.
+    ///
+    /// This is deliberately **synchronous**. `ModelRuntime` is an actor, so an
+    /// actor-isolated segment with no `await` in it runs to completion without
+    /// interleaving. Callers must therefore observe the conflict (read
+    /// `loadingTasks` / `modelCache`) and call this in the *same* segment — no
+    /// suspension in between. That is what makes the refusal atomic with the
+    /// eviction it is preventing.
+    ///
+    /// Checking-then-awaiting from outside the actor (the old
+    /// `hasLoadInFlight()` + `preload()` shape) cannot work: whatever the probe
+    /// saw is already stale by the time the load runs.
+    private func refuseBackgroundLoadIfItWouldDisturb(
+        intent: ModelLoadIntent,
+        requested: String,
+        conflict: @autoclosure () -> ResidencyRefusedError.Conflict
+    ) throws {
+        guard intent == .background else { return }
+        let refusal = ResidencyRefusedError(requestedModel: requested, conflict: conflict())
+        genLog.info(
+            "loadContainer: refusing background load model=\(requested, privacy: .public) reason=\(refusal.errorDescription ?? "", privacy: .public)"
+        )
+        throw refusal
+    }
+
     /// True while any model load is registered or holds the cold-load slot.
-    /// Background housekeeping (chat warm-up, residency-switch preload/GC)
-    /// checks this before acting: under the strict single-model policy a
-    /// late-arriving background load cancels whatever is already loading, so
-    /// a stale-selection warm-up firing during an explicit API load evicts
-    /// the user's model mid-materialization.
+    ///
+    /// Diagnostics only. Do **not** gate a load on this: the answer is stale the
+    /// moment it returns, because the load you would then start runs on a later
+    /// actor hop. Pass `intent: .background` down into the load instead and let
+    /// `refuseBackgroundLoadIfItWouldDisturb` decide atomically.
     func hasLoadInFlight() -> Bool {
         !loadingTasks.isEmpty || coldLoadActive
     }
@@ -1568,8 +1671,9 @@ public actor ModelRuntime {
     /// Hy3-sized residents do not collide with the next load.
     private func unloadForFlexibleResidentBudget(
         targetName: String,
-        incomingWeightsSizeBytes: Int64
-    ) async {
+        incomingWeightsSizeBytes: Int64,
+        intent: ModelLoadIntent = .interactive
+    ) async throws {
         let limit = Self.flexibleResidentBudgetBytes()
         guard limit > 0 else { return }
 
@@ -1583,6 +1687,15 @@ public actor ModelRuntime {
                 return
             }
 
+            // Flexible mode evicts too, just for a different reason (RAM budget
+            // rather than strict single-model). Without this the "background
+            // never disturbs a resident model" contract would hold only under
+            // the default policy — a silent hole for anyone on manualMultiModel.
+            try refuseBackgroundLoadIfItWouldDisturb(
+                intent: intent,
+                requested: targetName,
+                conflict: .wouldEvictResident(candidate.key)
+            )
             genLog.info(
                 "loadContainer: flexible budget eviction of \(candidate.key, privacy: .public) before loading \(targetName, privacy: .public) residentBytes=\(self.residentWeightBytes(excluding: targetName), privacy: .public) incomingBytes=\(incomingWeightsSizeBytes, privacy: .public) limitBytes=\(limit, privacy: .public)"
             )
@@ -1590,7 +1703,11 @@ public actor ModelRuntime {
         }
     }
 
-    private func loadContainer(id: String, name: String) async throws -> SessionHolder {
+    private func loadContainer(
+        id: String,
+        name: String,
+        intent: ModelLoadIntent = .interactive
+    ) async throws -> SessionHolder {
         try Task.checkCancellation()
         let policy = await ServerConfigurationStore.load()?.modelEvictionPolicy ?? .strictSingleModel
         let loadStartedAt = CFAbsoluteTimeGetCurrent()
@@ -1638,6 +1755,13 @@ public actor ModelRuntime {
                 let otherName = otherLoading.key
                 let otherRecord = otherLoading.value
                 if policy == .strictSingleModel {
+                    // Same actor segment as the `loadingTasks` read above — no
+                    // `await` between observing the conflict and refusing.
+                    try refuseBackgroundLoadIfItWouldDisturb(
+                        intent: intent,
+                        requested: name,
+                        conflict: .wouldCancelLoadInFlight(otherName)
+                    )
                     genLog.info(
                         "loadContainer: strict drain of in-flight load \(otherName, privacy: .public)"
                     )
@@ -1663,6 +1787,15 @@ public actor ModelRuntime {
             if policy == .strictSingleModel,
                 let other = modelCache.keys.first(where: { $0 != name })
             {
+                // `strictEvict` suspends (it waits on the `ModelLease` actor)
+                // before it unloads, so a check placed *inside* it would not be
+                // atomic with the eviction. Refuse here, in the same segment
+                // that read `modelCache`.
+                try refuseBackgroundLoadIfItWouldDisturb(
+                    intent: intent,
+                    requested: name,
+                    conflict: .wouldEvictResident(other)
+                )
                 await strictEvict(other)
                 continue
             }
@@ -1710,6 +1843,14 @@ public actor ModelRuntime {
                 let otherName = otherLoading.key
                 let otherRecord = otherLoading.value
                 if policy == .strictSingleModel {
+                    // Re-checked after `acquireColdLoadSlot()`, which suspends —
+                    // the actor is reentrant across it, so the pre-slot check
+                    // above proves nothing about the state we see now.
+                    try refuseBackgroundLoadIfItWouldDisturb(
+                        intent: intent,
+                        requested: name,
+                        conflict: .wouldCancelLoadInFlight(otherName)
+                    )
                     genLog.info(
                         "loadContainer: strict drain of in-flight load \(otherName, privacy: .public) after cold-load wait"
                     )
@@ -1735,6 +1876,15 @@ public actor ModelRuntime {
             if policy == .strictSingleModel,
                 let other = modelCache.keys.first(where: { $0 != name })
             {
+                // `strictEvict` suspends (it waits on the `ModelLease` actor)
+                // before it unloads, so a check placed *inside* it would not be
+                // atomic with the eviction. Refuse here, in the same segment
+                // that read `modelCache`.
+                try refuseBackgroundLoadIfItWouldDisturb(
+                    intent: intent,
+                    requested: name,
+                    conflict: .wouldEvictResident(other)
+                )
                 await strictEvict(other)
                 continue
             }
@@ -1862,9 +2012,10 @@ public actor ModelRuntime {
         try Task.checkCancellation()
 
         if policy == .manualMultiModel {
-            await unloadForFlexibleResidentBudget(
+            try await unloadForFlexibleResidentBudget(
                 targetName: name,
-                incomingWeightsSizeBytes: loadFootprintBytes
+                incomingWeightsSizeBytes: loadFootprintBytes,
+                intent: intent
             )
         }
         try Task.checkCancellation()
@@ -1963,6 +2114,7 @@ public actor ModelRuntime {
                 name: name,
                 container: container,
                 weightsSizeBytes: loadFootprintBytes,
+                weightsFingerprint: Self.weightsFingerprint(for: localURL),
                 isVLM: isVLM,
                 draftStrategy: mtpPlan.draftStrategy,
                 nativeMTPStatus: mtpPlan.statusLine,
@@ -2063,6 +2215,7 @@ public actor ModelRuntime {
     /// file-level comment for rationale on each knob.
     private nonisolated static func buildCacheCoordinatorConfig(
         modelName: String,
+        weightsFingerprint: String,
         cacheTopology: ModelCacheTopologySnapshot? = nil
     ) -> CacheCoordinatorConfig {
         let settings = ServerRuntimeSettingsStore.snapshot()
@@ -2118,6 +2271,7 @@ public actor ModelRuntime {
         let scopedKey = Self.cacheCoordinatorModelKey(
             modelName: modelName,
             kvModeTag: kvModeTag,
+            weightsFingerprint: weightsFingerprint,
             cacheTopology: cacheTopology
         )
 
@@ -2329,13 +2483,81 @@ public actor ModelRuntime {
         return false
     }
 
+    /// Identity of the weights on disk, cheap enough to recompute on every load.
+    ///
+    /// The prefix cache is keyed by model *name*, and a name is not an identity: a
+    /// re-quantized bundle installed over the old one (MXFP4 -> MXFP8, a re-bake,
+    /// any weight edit) keeps its name, its layer count, its head dims and its KV
+    /// mode — every tag the key carried. The key was therefore byte-identical
+    /// across the swap, and the new weights would restore the OLD weights' KV and
+    /// continue generating from activations that never came from them. Silent, and
+    /// exactly the kind of thing that reads as "the quant is bad".
+    ///
+    /// `stat` per shard, not a content hash: digesting 94 GB on every load is not
+    /// affordable, and (size, mtime) over the shard set already changes on any real
+    /// re-bake. This is a cache *invalidation* key, not a security boundary — the
+    /// cost of a false miss is one slow prefill, so erring toward missing is right.
+    nonisolated static func weightsFingerprint(for directory: URL) -> String {
+        let fm = FileManager.default
+        guard
+            let entries = try? fm.contentsOfDirectory(
+                at: directory,
+                includingPropertiesForKeys: [.fileSizeKey, .contentModificationDateKey],
+                options: [.skipsHiddenFiles])
+        else {
+            // Unreadable bundle: fall back to a value that never matches a previous
+            // load, so we take a cold prefill rather than risk a wrong-weights hit.
+            return "unknown-\(UUID().uuidString)"
+        }
+
+        // Weights and the files that change how they are interpreted. A tokenizer or
+        // config edit changes token ids / rope / quant metadata, which invalidates a
+        // stored KV just as surely as a weight edit does.
+        let interesting = entries.filter { url in
+            let name = url.lastPathComponent
+            return name.hasSuffix(".safetensors")
+                || name == "config.json"
+                || name == "tokenizer.json"
+                || name == "tokenizer_config.json"
+        }
+
+        let parts =
+            interesting
+            .map { url -> String in
+                let values = try? url.resourceValues(forKeys: [
+                    .fileSizeKey, .contentModificationDateKey,
+                ])
+                let size = values?.fileSize ?? -1
+                let mtime = values?.contentModificationDate?.timeIntervalSince1970 ?? -1
+                return "\(url.lastPathComponent):\(size):\(Int(mtime))"
+            }
+            .sorted()
+
+        guard !parts.isEmpty else { return "empty" }
+
+        // FNV-1a, not `hashValue`: Swift seeds `Hasher` per process, so a
+        // `hashValue`-derived key would differ on every launch and the prefix cache
+        // would never hit again — trading a correctness bug for a performance one.
+        // This must be stable across launches and across machines.
+        var hash: UInt64 = 0xcbf2_9ce4_8422_2325
+        for byte in parts.joined(separator: "|").utf8 {
+            hash ^= UInt64(byte)
+            hash = hash &* 0x0000_0100_0000_01b3
+        }
+        return String(format: "%016llx", hash)
+    }
+
     nonisolated static func cacheCoordinatorModelKey(
         modelName: String,
         kvModeTag: String,
+        weightsFingerprint: String,
         cacheTopology: ModelCacheTopologySnapshot? = nil
     ) -> String {
         var tags = [
             modelName,
+            // A name is not an identity — see `weightsFingerprint(for:)`. Without
+            // this, re-baking a pack under the same name serves the old pack's KV.
+            "weights=\(weightsFingerprint)",
             "kv=\(kvModeTag)",
             // vmlx `TQDiskSerializer.currentFormatVersion == 2` at the
             // pinned runtime. Keep this in the host key so older L2 records
@@ -2390,6 +2612,7 @@ public actor ModelRuntime {
         holder.cacheTopology = cacheTopology
         let cacheConfig = Self.buildCacheCoordinatorConfig(
             modelName: holder.name,
+            weightsFingerprint: holder.weightsFingerprint,
             cacheTopology: cacheTopology
         )
         await holder.container.enableCachingAsync(config: cacheConfig)
@@ -2590,7 +2813,11 @@ public actor ModelRuntime {
         }
         let holder: SessionHolder
         do {
-            holder = try await loadContainer(id: modelId, name: modelName)
+            holder = try await loadContainer(
+                id: modelId,
+                name: modelName,
+                intent: parameters.loadIntent
+            )
         } catch {
             await ModelResidencyManager.shared.cancel(modelName: modelName)
             if shouldReportModelLoad {
@@ -3002,6 +3229,11 @@ public actor ModelRuntime {
     ///    keeps MLX compile globally opt-in pending the PR #1173
     ///    model-switch corruption root cause; the per-request flag is set
     ///    in makeGenerateParameters)
+    ///  - memorySafety.mode -> CacheStoreBudget.policy (the prefix-cache store
+    ///    runs inside the decode loop and has no settings handle, so the user's
+    ///    safety level has to be pushed to it; without this the store gates
+    ///    against raw physical RAM and the Memory Safety section is decorative
+    ///    for that decision)
     nonisolated static func applyPerformancePolicy(_ settings: VMLXServerRuntimeSettings) {
         let perf = settings.effectivePerformance
         if let quant = perf.tiedHeadCodec.quantization {
@@ -3017,6 +3249,7 @@ public actor ModelRuntime {
         } else {
             unsetenv("VMLX_ENABLE_UNSAFE_COMPILE")
         }
+        CacheStoreBudget.policy = settings.memorySafety.mode.cacheStorePolicy
     }
 
     nonisolated static func makeGenerateParameters(

@@ -139,11 +139,16 @@ struct ProjectSkillScanner: Sendable {
             diagnostics.append("Rejected duplicate project skill name '\(name)': \(ids)")
         }
 
-        return ProjectSkillScanResult(
+        let result = ProjectSkillScanResult(
             rootIdentity: rootIdentity,
             records: records.sorted { $0.id < $1.id },
             diagnostics: diagnostics.sorted()
         )
+        // Test hook: pause after the scanner has captured a snapshot but before
+        // the manager can apply it, which exercises stale-refresh races without
+        // weakening the production scanner path (nil outside tests).
+        targetValidationHook?()
+        return result
     }
 
     func revalidate(root rawRoot: URL, record: ProjectSkillRecord) -> ProjectSkillRecord {
@@ -652,6 +657,9 @@ final class ProjectSkillManager {
     private let defaults: UserDefaults
     private var scanGeneration = UUID()
     private var scopeGeneration: UInt64 = 0
+    // Same-folder refreshes share `scanGeneration`; this ticket makes the most
+    // recently started refresh the only one allowed to publish UI state.
+    private var refreshSequence: UInt64 = 0
     private var approvedContentHashes: [String: String] = [:]
 
     init(scanner: ProjectSkillScanner = ProjectSkillScanner(), defaults: UserDefaults = .standard) {
@@ -666,6 +674,7 @@ final class ProjectSkillManager {
     func prepareForFolder(_ newRoot: URL?) {
         scanGeneration = UUID()
         scopeGeneration = ProjectSkillScopeSequence.next()
+        refreshSequence &+= 1
         root = newRoot?.standardizedFileURL.resolvingSymlinksInPath()
         rootIdentity = root.map(ProjectSkillScanner.rootIdentity)
         records = []
@@ -691,11 +700,17 @@ final class ProjectSkillManager {
             return
         }
         let generation = scanGeneration
+        refreshSequence &+= 1
+        let refreshID = refreshSequence
         isRefreshing = true
         let result = await Task.detached(priority: .utility) { [scanner] in
             scanner.scan(root: root)
         }.value
-        guard generation == scanGeneration, ProjectSkillScanner.sameResolvedRoot(self.root, root) else { return }
+        guard
+            generation == scanGeneration,
+            refreshID == refreshSequence,
+            ProjectSkillScanner.sameResolvedRoot(self.root, root)
+        else { return }
         rootIdentity = result.rootIdentity
         records = result.records
         diagnostics = result.diagnostics
@@ -858,6 +873,11 @@ final class ProjectSkillManager {
 
     func setAgentGranted(_ granted: Bool, id: String, agentID: UUID) {
         guard Self.canUseProjectSkills(AgentManager.shared.agent(for: agentID)) else { return }
+        if granted {
+            guard enabledIDs.contains(id),
+                records.contains(where: { $0.id == id && $0.status == .available })
+            else { return }
+        }
         if AgentManager.shared.effectiveEnabledSkillNames(for: agentID) == nil {
             AgentManager.shared.seedEnabledCapabilitiesIfNeeded(
                 for: agentID,
