@@ -108,6 +108,41 @@ struct SpawnToolTests {
         #expect(kind.feedTitle.contains("qwen3-4b-4bit"))
     }
 
+    @Test func spawnModelUsagePrefersPositiveProviderThroughput() {
+        let resolved = AgentSubagentRunner.resolvedTokensPerSecond(
+            reported: 73.5,
+            completionTokens: 42,
+            elapsed: 2.0
+        )
+        #expect(resolved == 73.5)
+    }
+
+    @Test func spawnModelUsageMeasuresThroughputWhenProviderReportsZero() {
+        let resolved = AgentSubagentRunner.resolvedTokensPerSecond(
+            reported: 0,
+            completionTokens: 5,
+            elapsed: 0.25
+        )
+        #expect(resolved == 20)
+    }
+
+    @Test func spawnModelUsageDoesNotInventThroughputWithoutMeasurement() {
+        #expect(
+            AgentSubagentRunner.resolvedTokensPerSecond(
+                reported: nil,
+                completionTokens: 5,
+                elapsed: 0
+            ) == nil
+        )
+        #expect(
+            AgentSubagentRunner.resolvedTokensPerSecond(
+                reported: .nan,
+                completionTokens: 0,
+                elapsed: 1
+            ) == nil
+        )
+    }
+
     /// Per-agent spawnable enforcement (agents): a CUSTOM launching agent may
     /// only spawn agents in its OWN `spawnableAgentNames` list — the global
     /// pool does NOT apply to it. Here the main chat's pool lists "Helper", but
