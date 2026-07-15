@@ -363,6 +363,18 @@ struct BuiltinSandboxToolsTests {
             )
         }
 
+        // Seatbelt backend: apk doesn't exist — the tool must reject the
+        // manager up front with a clear error, without running anything.
+        guard SandboxBackend.current == .virtualMachine else {
+            #expect(ToolEnvelope.isError(output))
+            let payload = try failurePayload(output)
+            let message = payload["message"] as? String ?? ""
+            #expect(message.contains("Linux VM"))
+            let calls = await runner.calls
+            #expect(calls.isEmpty)
+            return
+        }
+
         let payload = try successPayload(output)
         #expect(payload["exit_code"] as? Int == 0)
 

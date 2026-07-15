@@ -28,6 +28,48 @@ struct SeatbeltSandboxTests {
         }
     }
 
+    // MARK: - Backend-branched prompt / flag surface
+
+    @Test("system prompt sandbox framing matches the active backend")
+    func promptFramingMatchesBackend() {
+        let heading = SystemPromptTemplates.sandboxSectionHeading
+        let full = SystemPromptTemplates.sandbox(home: "/workspace/agents/a")
+        let compact = SystemPromptTemplates.sandbox(home: "/workspace/agents/a", compact: true)
+        if SandboxBackend.current == .seatbelt {
+            #expect(heading == "## macOS sandbox environment")
+            for prompt in [full, compact] {
+                // The model must not be told it's on Alpine, or offered
+                // a package manager that doesn't exist on this backend.
+                #expect(!prompt.contains("Alpine"))
+                #expect(!prompt.contains("`apk`"))
+                #expect(prompt.contains("macOS"))
+            }
+        } else {
+            #expect(heading == "## Linux sandbox environment")
+            #expect(full.contains("Alpine Linux"))
+            #expect(compact.contains("Alpine Linux"))
+        }
+    }
+
+    @Test("plugin authoring guide only offers apk dependencies on the vm backend")
+    func pluginGuideDependenciesBullet() {
+        let guide = SystemPromptTemplates.pluginCreatorInstructions
+        if SandboxBackend.current == .seatbelt {
+            #expect(!guide.contains("Alpine packages"))
+            #expect(guide.contains("NOT supported"))
+        } else {
+            #expect(guide.contains("Alpine packages (`apk add`)"))
+        }
+    }
+
+    @Test("bridge migration banner never fires on the seatbelt backend")
+    func bridgeMigrationFlagFailsClosedOnSeatbelt() {
+        // Only meaningful to pin on Seatbelt: the VM-side value depends on
+        // the persisted config's provisioned-version stamp.
+        guard SandboxBackend.current == .seatbelt else { return }
+        #expect(SandboxBridgeMigrationFlag.needsRestart == false)
+    }
+
     // MARK: - Profile generation
 
     @Test("profile is deny-by-default and grants workspace + temp writes")
