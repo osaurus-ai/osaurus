@@ -1582,22 +1582,73 @@ final class ChatSession: ObservableObject {
         }
     }
 
-    /// Determine whether an attachment turn uses multipart model input without
-    /// loading blob bytes. The actual message builder remains responsible for
-    /// integrity validation and may fail closed if a persisted ref is corrupt.
+    /// Historical attachments are revalidated when hydrated and omitted when
+    /// unavailable. Only a new outbound payload may block the current send.
+    static func validateAttachmentsForNewTurn(
+        _ outbound: [Attachment],
+        historical _: [Attachment]
+    ) throws {
+        try validateAttachmentsForSend(outbound)
+    }
+
+    /// Determine whether an attachment turn can produce verified multipart
+    /// model input. Reference-backed media is hydrated here so a present but
+    /// corrupt encrypted blob cannot suppress the text-prefix fallback.
     static func attachmentsRenderAsMultimodalParts(
         _ attachments: [Attachment],
         supportsImages: Bool,
         supportsAudio: Bool,
         supportsVideo: Bool
     ) -> Bool {
-        buildUserChatMessage(
-            content: "",
-            attachments: attachments,
-            supportsImages: supportsImages,
-            supportsAudio: supportsAudio,
-            supportsVideo: supportsVideo
-        ).contentParts != nil
+        attachments.contains { attachment in
+            switch attachment.kind {
+            case .image(let data):
+                guard supportsImages else { return false }
+                guard let provenance = attachment.structuredDocumentMetadata?.provenance else {
+                    return !data.isEmpty
+                }
+                return !data.isEmpty
+                    && data.count <= AttachmentBlobStore.maximumImageBytes
+                    && provenance.isWellFormed
+                    && AttachmentBlobStore.contentHash(data) == provenance.contentSHA256
+            case .imageRef(let hash, let byteCount):
+                guard supportsImages,
+                    byteCount >= 0,
+                    byteCount <= AttachmentBlobStore.maximumImageBytes,
+                    (try? AttachmentBlobStore.read(
+                        hash,
+                        maximumBytes: AttachmentBlobStore.maximumImageBytes,
+                        expectedByteCount: byteCount
+                    )) != nil
+                else { return false }
+                if let provenance = attachment.structuredDocumentMetadata?.provenance {
+                    return provenance.isWellFormed && provenance.contentSHA256 == hash
+                }
+                return true
+            case .audio(let data, _, _):
+                return supportsAudio && !data.isEmpty
+            case .audioRef(let hash, let byteCount, _, _):
+                return supportsAudio && byteCount >= 0
+                    && byteCount <= AttachmentBlobStore.maximumAudioBytes
+                    && (try? AttachmentBlobStore.read(
+                        hash,
+                        maximumBytes: AttachmentBlobStore.maximumAudioBytes,
+                        expectedByteCount: byteCount
+                    )) != nil
+            case .video(let data, _):
+                return supportsVideo && !data.isEmpty
+            case .videoRef(let hash, let byteCount, _):
+                return supportsVideo && byteCount >= 0
+                    && byteCount <= AttachmentBlobStore.maximumVideoBytes
+                    && (try? AttachmentBlobStore.read(
+                        hash,
+                        maximumBytes: AttachmentBlobStore.maximumVideoBytes,
+                        expectedByteCount: byteCount
+                    )) != nil
+            case .document, .documentRef:
+                return false
+            }
+        }
     }
 
     /// Prepend a user turn's frozen memory / screen-context prefix to its
@@ -1624,7 +1675,7 @@ final class ChatSession: ObservableObject {
         format: String,
         localSamples: LocalAudioSamples?
     )? {
-        guard attachment.isAudio, let data = attachment.loadAudioData() else { return nil }
+        guard attachment.isAudio, let data = attachment.loadAudioData(), !data.isEmpty else { return nil }
         let format = attachment.audioFormat?
             .trimmingCharacters(in: .whitespacesAndNewlines)
             .lowercased()
@@ -1636,7 +1687,7 @@ final class ChatSession: ObservableObject {
     }
 
     private static func videoPayload(from attachment: Attachment) -> (data: Data, mimeSubtype: String)? {
-        guard attachment.isVideo, let data = attachment.loadVideoData() else { return nil }
+        guard attachment.isVideo, let data = attachment.loadVideoData(), !data.isEmpty else { return nil }
         return (data, videoMimeSubtype(for: attachment.filename))
     }
 
@@ -3831,7 +3882,10 @@ final class ChatSession: ObservableObject {
         let isRegeneration = !hasContent && !turns.isEmpty
         guard hasContent || isRegeneration else { return }
         do {
-            try Self.validateAttachmentsForSend(turns.flatMap(\.attachments) + attachments)
+            try Self.validateAttachmentsForNewTurn(
+                attachments,
+                historical: turns.flatMap(\.attachments)
+            )
         } catch {
             if input.isEmpty { input = text }
             if pendingAttachments.isEmpty { pendingAttachments = attachments }

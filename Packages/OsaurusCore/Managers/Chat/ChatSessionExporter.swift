@@ -219,13 +219,16 @@ public enum ChatSessionExporter {
             throw ExportError.writeFailed
         }
 
-        let tempZip = workRoot.appendingPathComponent("\(bundleName).zip")
+        let tempZip = url.deletingLastPathComponent()
+            .appendingPathComponent(".\(bundleName)-\(UUID().uuidString).tmp")
+        defer { try? fm.removeItem(at: tempZip) }
         do {
             try await fm.zipItem(at: bundleDir, to: tempZip)
             if fm.fileExists(atPath: url.path) {
-                try fm.removeItem(at: url)
+                _ = try fm.replaceItemAt(url, withItemAt: tempZip)
+            } else {
+                try fm.moveItem(at: tempZip, to: url)
             }
-            try fm.moveItem(at: tempZip, to: url)
         } catch {
             throw ExportError.writeFailed
         }

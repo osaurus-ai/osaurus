@@ -550,13 +550,17 @@ public struct BusinessDocumentStudioService: Sendable {
     }
 
     private func installWithoutOverwrite(from temporaryURL: URL, to destinationURL: URL) throws {
-        do {
-            // A hard-link install is an atomic create-new operation. It cannot
-            // replace a destination created after the save panel check.
-            try FileManager.default.linkItem(at: temporaryURL, to: destinationURL)
-            try? FileManager.default.removeItem(at: temporaryURL)
-        } catch {
-            if FileManager.default.fileExists(atPath: destinationURL.path) {
+        // The working item is created beside the destination, so an exclusive
+        // rename is an atomic create-new install for both files and packages.
+        // Unlike a hard link, it also works on filesystems that do not support
+        // links and for directory-backed document formats.
+        let result = temporaryURL.path.withCString { source in
+            destinationURL.path.withCString { destination in
+                Darwin.renamex_np(source, destination, UInt32(RENAME_EXCL))
+            }
+        }
+        guard result == 0 else {
+            if errno == EEXIST {
                 throw BusinessDocumentStudioError.destinationAlreadyExists(destinationURL)
             }
             throw BusinessDocumentStudioError.writeFailed

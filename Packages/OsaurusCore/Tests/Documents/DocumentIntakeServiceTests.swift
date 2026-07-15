@@ -283,7 +283,7 @@ struct DocumentIntakeServiceTests {
         #expect(receipts == 0)
     }
 
-    @Test @MainActor func immediatePageImagesPublishThenConsumeAttachmentReceipt() async throws {
+    @Test @MainActor func pageImagesRequireExplicitReviewBeforeAttach() async throws {
         var attached: [OsaurusCore.Attachment] = []
         var receipts = 0
         let page = Attachment.image(Data([0x89, 0x50]))
@@ -295,7 +295,22 @@ struct DocumentIntakeServiceTests {
         )
         try await Self.waitUntil { coordinator.isPreparing == false }
 
+        #expect(coordinator.attachmentPreview?.attachments == [page])
+        #expect(attached.isEmpty)
+        #expect(receipts == 0)
+        coordinator.confirmCurrentAttachments()
         #expect(attached == [page])
+        #expect(receipts == 1)
+
+        attached = []
+        coordinator.enqueue(
+            [URL(fileURLWithPath: "/tmp/cancelled-scan.pdf")],
+            onImmediateAttachments: { attached = $0 },
+            onAttached: { receipts += 1 }
+        )
+        try await Self.waitUntil { coordinator.attachmentPreview != nil }
+        coordinator.skipCurrent()
+        #expect(attached.isEmpty)
         #expect(receipts == 1)
     }
 

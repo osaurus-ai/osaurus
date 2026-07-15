@@ -445,6 +445,20 @@ struct ChatAttachmentSecurityTests {
         }
     }
 
+    @Test func sendGateDoesNotBrickFollowUpWhenHistoricalAttachmentBecomesInvalid() throws {
+        let expected = Data([0x89, 0x50, 0x4E, 0x47, 0x01])
+        let corruptHistory = Self.provenanceImage(
+            bytes: Data([0x89, 0x50, 0x4E, 0x47, 0x02]),
+            expectedBytes: expected
+        )
+        let validOutbound = Self.provenanceImage(bytes: expected, expectedBytes: expected)
+
+        try ChatSession.validateAttachmentsForNewTurn(
+            [validOutbound],
+            historical: [corruptHistory]
+        )
+    }
+
     @Test func sendGateAcceptsVerifiedAttachmentAndPrefixUsesRenderedMedia() throws {
         let image = Data([0x89, 0x50, 0x4E, 0x47, 0x01])
         let valid = Self.provenanceImage(bytes: image, expectedBytes: image)
@@ -481,6 +495,57 @@ struct ChatAttachmentSecurityTests {
                 supportsVideo: false
             ) == false
         )
+    }
+
+    @Test func multimodalPreflightMatchesRendererForMalformedProvenanceAndEmptyMedia() {
+        let image = Data([0x89, 0x50, 0x4E, 0x47, 0x01])
+        let malformedProvenance = DocumentAttachmentProvenance(
+            sourceSHA256: "not-a-digest",
+            contentSHA256: Attachment.sha256(image),
+            sourceTrust: .userSelectedLocalFile,
+            inspectedAt: Date(timeIntervalSince1970: 1_700_000_000),
+            sourceModificationTime: nil,
+            stableSourceID: Attachment.sha256(Data("stable".utf8))
+        )
+        let malformedImage = Attachment(
+            kind: .image(image),
+            structuredDocumentMetadata: StructuredDocumentAttachmentMetadata(
+                formatId: "pdf",
+                representationFormatId: "pdf-page-image",
+                filename: "scan.pdf",
+                fileSize: Int64(image.count),
+                createdAt: Date(),
+                provenance: malformedProvenance
+            )
+        )
+        let emptyAudio = Attachment.audio(Data(), format: "wav", filename: "empty.wav")
+
+        #expect(malformedImage.loadImageData() == nil)
+        #expect(
+            ChatSession.attachmentsRenderAsMultimodalParts(
+                [malformedImage],
+                supportsImages: true,
+                supportsAudio: false,
+                supportsVideo: false
+            ) == false
+        )
+        #expect(
+            ChatSession.attachmentsRenderAsMultimodalParts(
+                [emptyAudio],
+                supportsImages: false,
+                supportsAudio: true,
+                supportsVideo: false
+            ) == false
+        )
+        let message = ChatSession.buildUserChatMessage(
+            content: "keep the prompt",
+            attachments: [malformedImage, emptyAudio],
+            supportsImages: true,
+            supportsAudio: true,
+            supportsVideo: false
+        )
+        #expect(message.content == "keep the prompt")
+        #expect(message.contentParts == nil)
     }
 
     private static func provenanceImage(bytes: Data, expectedBytes: Data) -> OsaurusCore.Attachment {

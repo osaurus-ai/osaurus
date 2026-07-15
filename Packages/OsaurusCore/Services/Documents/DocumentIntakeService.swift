@@ -33,6 +33,12 @@ public struct DocumentIntakePreview: Sendable, Identifiable {
     }
 }
 
+struct DocumentAttachmentIntakePreview: Sendable, Identifiable {
+    let id = UUID()
+    let filename: String
+    let attachments: [Attachment]
+}
+
 enum DocumentIntakePreparedResult: Sendable {
     case preview(DocumentIntakePreview)
     case attachments([Attachment])
@@ -405,6 +411,7 @@ public struct DocumentIntakeService: Sendable {
 @MainActor
 final class DocumentIntakeCoordinator: ObservableObject {
     @Published private(set) var preview: DocumentIntakePreview?
+    @Published private(set) var attachmentPreview: DocumentAttachmentIntakePreview?
     @Published private(set) var isPreparing = false
     @Published private(set) var errorMessage: String?
 
@@ -418,6 +425,7 @@ final class DocumentIntakeCoordinator: ObservableObject {
     private var task: Task<Void, Never>?
     private var generation = UUID()
     private var currentOnAttached: (() -> Void)?
+    private var currentOnImmediateAttachments: (([Attachment]) -> Void)?
     private let prepare: @Sendable (URL) async throws -> DocumentIntakePreparedResult
 
     init(service: DocumentIntakeService = DocumentIntakeService()) {
@@ -462,9 +470,21 @@ final class DocumentIntakeCoordinator: ObservableObject {
         advanceAfterDismissal()
     }
 
+    func confirmCurrentAttachments() {
+        guard let attachments = attachmentPreview?.attachments else { return }
+        currentOnImmediateAttachments?(attachments)
+        currentOnAttached?()
+        attachmentPreview = nil
+        currentOnImmediateAttachments = nil
+        currentOnAttached = nil
+        advanceAfterDismissal()
+    }
+
     func skipCurrent() {
-        guard preview != nil else { return }
+        guard preview != nil || attachmentPreview != nil else { return }
         preview = nil
+        attachmentPreview = nil
+        currentOnImmediateAttachments = nil
         currentOnAttached = nil
         advanceAfterDismissal()
     }
@@ -475,6 +495,8 @@ final class DocumentIntakeCoordinator: ObservableObject {
         task = nil
         pendingRequests.removeAll()
         preview = nil
+        attachmentPreview = nil
+        currentOnImmediateAttachments = nil
         currentOnAttached = nil
         isPreparing = false
         errorMessage = nil
@@ -485,7 +507,7 @@ final class DocumentIntakeCoordinator: ObservableObject {
     }
 
     private func startNextIfNeeded() {
-        guard preview == nil, task == nil, !pendingRequests.isEmpty else { return }
+        guard preview == nil, attachmentPreview == nil, task == nil, !pendingRequests.isEmpty else { return }
         let pending = pendingRequests.removeFirst()
         let request = UUID()
         generation = request
@@ -501,8 +523,12 @@ final class DocumentIntakeCoordinator: ObservableObject {
                     self.preview = preview
                     currentOnAttached = pending.onAttached
                 case .attachments(let attachments):
-                    pending.onImmediateAttachments(attachments)
-                    pending.onAttached?()
+                    self.attachmentPreview = DocumentAttachmentIntakePreview(
+                        filename: pending.url.lastPathComponent,
+                        attachments: attachments
+                    )
+                    currentOnImmediateAttachments = pending.onImmediateAttachments
+                    currentOnAttached = pending.onAttached
                 }
             } catch is CancellationError {
                 // Cancellation is user intent, not an error toast.
@@ -513,7 +539,7 @@ final class DocumentIntakeCoordinator: ObservableObject {
             guard generation == request else { return }
             task = nil
             isPreparing = false
-            if preview == nil { startNextIfNeeded() }
+            if preview == nil, attachmentPreview == nil { startNextIfNeeded() }
         }
     }
 

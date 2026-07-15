@@ -25,6 +25,19 @@ struct DocumentIntakePresenter: View {
                     }
                 )
             }
+            .sheet(item: attachmentPreviewBinding) { preview in
+                DocumentAttachmentIntakeSheet(
+                    preview: preview,
+                    onAttach: {
+                        actionHandled = true
+                        coordinator.confirmCurrentAttachments()
+                    },
+                    onCancel: {
+                        actionHandled = true
+                        coordinator.skipCurrent()
+                    }
+                )
+            }
             .onChange(of: coordinator.errorMessage) { _, message in
                 guard let message else { return }
                 ToastManager.shared.error(L("Could not attach file"), message: message)
@@ -45,6 +58,110 @@ struct DocumentIntakePresenter: View {
                 }
             }
         )
+    }
+
+    private var attachmentPreviewBinding: Binding<DocumentAttachmentIntakePreview?> {
+        Binding(
+            get: { coordinator.attachmentPreview },
+            set: { value in
+                if actionHandled {
+                    actionHandled = false
+                    return
+                }
+                if value == nil, coordinator.attachmentPreview != nil {
+                    coordinator.skipCurrent()
+                }
+            }
+        )
+    }
+}
+
+private struct DocumentAttachmentIntakeSheet: View {
+    let preview: DocumentAttachmentIntakePreview
+    let onAttach: () -> Void
+    let onCancel: () -> Void
+
+    @Environment(\.theme) private var theme
+    private let pageImages: [NSImage]
+
+    init(
+        preview: DocumentAttachmentIntakePreview,
+        onAttach: @escaping () -> Void,
+        onCancel: @escaping () -> Void
+    ) {
+        self.preview = preview
+        self.onAttach = onAttach
+        self.onCancel = onCancel
+        pageImages = preview.attachments.compactMap { attachment in
+            attachment.loadImageData().flatMap { NSImage(data: $0) }
+        }
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(spacing: 12) {
+                Image(systemName: "doc.viewfinder")
+                    .font(.system(size: 20))
+                    .foregroundColor(theme.accentColor)
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(verbatim: Attachment.redactedFilename(from: preview.filename))
+                        .font(theme.font(size: 15, weight: .semibold))
+                    Text("Review rendered PDF pages before attaching", bundle: .module)
+                        .font(theme.font(size: 11))
+                        .foregroundColor(theme.secondaryText)
+                }
+                Spacer()
+            }
+            .padding(16)
+            Divider()
+            VStack(alignment: .leading, spacing: 12) {
+                Label(
+                    "\(preview.attachments.count) rendered page image(s)",
+                    systemImage: "photo.on.rectangle.angled"
+                )
+                .font(theme.font(size: 13, weight: .semibold))
+                Text(
+                    "This PDF has no extractable text. Osaurus will attach verified page images for a vision-capable model. Review the pages before continuing.",
+                    bundle: .module
+                )
+                .font(theme.font(size: 12))
+                .foregroundColor(theme.secondaryText)
+                ScrollView(.horizontal) {
+                    HStack(alignment: .top, spacing: 10) {
+                        ForEach(Array(pageImages.enumerated()), id: \.offset) { index, image in
+                            VStack(spacing: 4) {
+                                Image(nsImage: image)
+                                    .resizable()
+                                    .aspectRatio(contentMode: .fit)
+                                    .frame(width: 128, height: 156)
+                                    .background(Color.white)
+                                    .overlay(Rectangle().stroke(theme.primaryBorder, lineWidth: 1))
+                                Text("Page \(index + 1)")
+                                    .font(theme.font(size: 10))
+                                    .foregroundColor(theme.secondaryText)
+                            }
+                        }
+                    }
+                }
+                Label("Source captured and integrity checked", systemImage: "checkmark.shield")
+                    .font(theme.font(size: 12))
+                    .foregroundColor(theme.secondaryText)
+            }
+            .padding(18)
+            Spacer()
+            Divider()
+            HStack(spacing: 8) {
+                Spacer()
+                Button(localized: "Cancel", action: onCancel)
+                    .keyboardShortcut(.cancelAction)
+                Button(localized: "Attach Pages", action: onAttach)
+                    .buttonStyle(.borderedProminent)
+                    .keyboardShortcut(.defaultAction)
+            }
+            .padding(14)
+        }
+        .frame(width: 620, height: 480)
+        .background(theme.primaryBackground)
     }
 }
 

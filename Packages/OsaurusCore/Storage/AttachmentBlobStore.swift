@@ -23,6 +23,7 @@
 //
 
 import CryptoKit
+import Darwin
 import Foundation
 import os
 
@@ -200,7 +201,26 @@ public enum AttachmentBlobStore {
     }
 
     private static func boundedRead(_ url: URL, maximumBytes: Int) throws -> Data {
-        let handle = try FileHandle(forReadingFrom: url)
+        let descriptor = Darwin.open(url.path, O_RDONLY | O_CLOEXEC | O_NOFOLLOW)
+        guard descriptor >= 0 else {
+            if errno == ELOOP { throw AttachmentBlobError.symbolicLink }
+            throw AttachmentBlobError.readFailed(String(cString: strerror(errno)))
+        }
+        var statBuffer = stat()
+        guard fstat(descriptor, &statBuffer) == 0 else {
+            let message = String(cString: strerror(errno))
+            Darwin.close(descriptor)
+            throw AttachmentBlobError.readFailed(message)
+        }
+        guard (statBuffer.st_mode & S_IFMT) == S_IFREG else {
+            Darwin.close(descriptor)
+            throw AttachmentBlobError.invalidReference
+        }
+        guard statBuffer.st_size <= off_t(maximumBytes) else {
+            Darwin.close(descriptor)
+            throw AttachmentBlobError.oversized(maximumBytes)
+        }
+        let handle = FileHandle(fileDescriptor: descriptor, closeOnDealloc: true)
         defer { try? handle.close() }
         let data = try handle.read(upToCount: maximumBytes + 1) ?? Data()
         guard data.count <= maximumBytes else { throw AttachmentBlobError.oversized(maximumBytes) }
