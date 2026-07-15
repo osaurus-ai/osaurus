@@ -145,19 +145,28 @@ enum MCPConfigurationImportService {
     }
 
     static func likelySecretKey(_ key: String, isHeader: Bool = false) -> Bool {
-        let normalized = key.uppercased().replacingOccurrences(of: "-", with: "_")
+        let normalized = key.uppercased().map { character in
+            character.isLetter || character.isNumber ? character : "_"
+        }
+        let normalizedKey = String(normalized)
         if isHeader {
-            return normalized == "AUTHORIZATION"
-                || normalized == "COOKIE"
-                || normalized == "PROXY_AUTHORIZATION"
-                || normalized.contains("API_KEY")
-                || normalized.contains("TOKEN")
+            return normalizedKey == "AUTHORIZATION"
+                || normalizedKey == "COOKIE"
+                || normalizedKey == "PROXY_AUTHORIZATION"
+                || normalizedKey.contains("API_KEY")
+                || normalizedKey.contains("TOKEN")
         }
         let markers = ["TOKEN", "SECRET", "PASSWORD", "PASSWD", "CREDENTIAL", "API_KEY", "AUTH"]
-        return markers.contains { normalized.contains($0) }
-            || normalized.hasSuffix("_KEY")
-            || normalized.hasSuffix("_PAT")
-            || normalized == "GH_PAT"
+        let credentialNames: Set<String> = [
+            "AWS_ACCESS_KEY_ID", "AZURE_CLIENT_ID", "DATABASE_URL", "DB_URL",
+            "MONGODB_URI", "MYSQL_PWD", "REDIS_URL", "SESSION_ID",
+        ]
+        return markers.contains { normalizedKey.contains($0) }
+            || normalizedKey.hasSuffix("_KEY")
+            || normalizedKey.hasSuffix("_PAT")
+            || normalizedKey.hasSuffix("_PRIVATE_KEY")
+            || credentialNames.contains(normalizedKey)
+            || normalizedKey == "GH_PAT"
     }
 
     private static func parseServer(
@@ -428,6 +437,26 @@ enum MCPProviderSetupFingerprint {
 
     private static func append(_ key: String, _ value: String, to data: inout Data) {
         data.append(Data("\n\(key.utf8.count):\(key)\(value.utf8.count):\(value)".utf8))
+    }
+}
+
+enum MCPProviderBearerProbeInput {
+    private static let clearSentinel = "<clear-requested>"
+
+    static func resolved(
+        fieldValue: String,
+        clearRequested: Bool,
+        storedValue: String?
+    ) -> String? {
+        let trimmed = fieldValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !trimmed.isEmpty { return trimmed }
+        return clearRequested ? nil : storedValue
+    }
+
+    static func fingerprint(fieldValue: String, clearRequested: Bool) -> String {
+        let trimmed = fieldValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !trimmed.isEmpty { return trimmed }
+        return clearRequested ? clearSentinel : ""
     }
 }
 

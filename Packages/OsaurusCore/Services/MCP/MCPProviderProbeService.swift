@@ -187,6 +187,9 @@ enum MCPProviderProbeRedactor {
         components.password = nil
         components.query = nil
         components.fragment = nil
+        if !components.path.isEmpty && components.path != "/" {
+            components.path = "/redacted-path"
+        }
         return components.string ?? "<redacted-http-url>"
     }
 
@@ -204,6 +207,8 @@ enum MCPProviderProbeRedactor {
                 "$1=***"
             ),
             (#"\beyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\b"#, "jwt=***"),
+            (#"(?:~|/(?:Users|home|private|var|tmp|opt|Library))/[^\s,;}\]]+"#, "<redacted-path>"),
+            (#"(?i)\b[A-Z]:\\[^\s,;}\]]+"#, "<redacted-path>"),
         ]
         for replacement in replacements {
             value = value.mcpReplacingMatches(of: replacement.pattern, with: replacement.template)

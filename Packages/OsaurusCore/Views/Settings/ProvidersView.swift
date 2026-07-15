@@ -73,7 +73,13 @@ struct ProvidersView: View {
                             onSaveBearerToken: { token in
                                 // Persist directly to Keychain (the provider record
                                 // itself doesn't change) and immediately retry.
-                                _ = MCPProviderKeychain.saveToken(token, for: report.id)
+                                guard MCPProviderKeychain.saveToken(token, for: report.id) else {
+                                    _ = ToastManager.shared.error(
+                                        L("Credentials could not be saved"),
+                                        message: L("Check Keychain access and try again.")
+                                    )
+                                    return
+                                }
                                 refreshCredentialPresence()
                                 // Enable the provider so the retry connect doesn't no-op.
                                 if !report.provider.enabled {
@@ -120,16 +126,28 @@ struct ProvidersView: View {
             }
         }
         .sheet(isPresented: $showAddSheet) {
-            ProviderEditSheet(provider: nil) { provider, tokenEdit in
-                manager.addProvider(provider, token: tokenEdit.tokenForNewProvider)
-                refreshCredentialPresence()
+            ProviderEditSheet(provider: nil) { provider, tokenEdit, secretWrites in
+                let saved = manager.addProvider(
+                    provider,
+                    token: tokenEdit.tokenForNewProvider,
+                    secretWrites: secretWrites
+                )
+                if saved { refreshCredentialPresence() }
+                return saved
             }
         }
         .sheet(item: $editingProvider) { provider in
-            ProviderEditSheet(provider: provider) { updatedProvider, tokenEdit in
-                manager.updateProvider(updatedProvider, tokenEdit: tokenEdit)
-                refreshCredentialPresence()
-                refreshHealthSnapshots()
+            ProviderEditSheet(provider: provider) { updatedProvider, tokenEdit, secretWrites in
+                let saved = manager.updateProvider(
+                    updatedProvider,
+                    tokenEdit: tokenEdit,
+                    secretWrites: secretWrites
+                )
+                if saved {
+                    refreshCredentialPresence()
+                    refreshHealthSnapshots()
+                }
+                return saved
             }
         }
         .sheet(isPresented: $showOperationsHub) {
@@ -1241,7 +1259,7 @@ private struct ProviderEditSheet: View {
     @Environment(\.dismiss) private var dismiss
 
     let provider: MCPProvider?
-    let onSave: (MCPProvider, MCPProviderBearerTokenEdit) -> Void
+    let onSave: (MCPProvider, MCPProviderBearerTokenEdit, [MCPProviderSecretWrite]) -> Bool
 
     /// Stable identity for "draft" providers (sheet not yet saved). Reused so OAuth
     /// tokens persisted to Keychain mid-flow stay tied to the provider once saved.
@@ -1266,6 +1284,7 @@ private struct ProviderEditSheet: View {
     @State private var importedSetupRequiresProbe = false
     @State private var showImportConfiguration = false
     @State private var showAdvanced: Bool = false
+    @State private var credentialSaveError: String?
 
     @State private var isSigningIn: Bool = false
     @State private var oauthError: String?
@@ -1497,10 +1516,17 @@ private struct ProviderEditSheet: View {
 
     @ViewBuilder
     private var sheetFooter: some View {
-        HStack(spacing: 12) {
-            footerLeading
-            Spacer()
-            footerTrailing
+        VStack(alignment: .leading, spacing: 8) {
+            if let credentialSaveError {
+                Label(credentialSaveError, systemImage: "exclamationmark.triangle.fill")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundColor(themeManager.currentTheme.errorColor)
+            }
+            HStack(spacing: 12) {
+                footerLeading
+                Spacer()
+                footerTrailing
+            }
         }
         .padding(.horizontal, 24)
         .padding(.vertical, 16)
@@ -2827,10 +2853,16 @@ private struct ProviderEditSheet: View {
             let trimmedClientId = manualClientId.trimmingCharacters(in: .whitespaces)
             let trimmedClientSecret = manualClientSecret.trimmingCharacters(in: .whitespaces)
             guard !trimmedClientId.isEmpty, !trimmedClientSecret.isEmpty else { return }
-            MCPProviderKeychain.saveOAuthClientSecret(
+            guard MCPProviderKeychain.saveOAuthClientSecret(
                 trimmedClientSecret,
                 for: effectiveProviderId
-            )
+            ) else {
+                oauthError = String(
+                    localized: "Credentials could not be saved to Keychain. Check Keychain access and try again.",
+                    bundle: .module
+                )
+                return
+            }
         }
 
         isSigningIn = true
@@ -3079,7 +3111,11 @@ private struct ProviderEditSheet: View {
     private func httpTestToken() -> String? {
         switch authType {
         case .bearerToken:
-            return token.isEmpty ? nil : token
+            return MCPProviderBearerProbeInput.resolved(
+                fieldValue: token,
+                clearRequested: clearBearerToken,
+                storedValue: provider?.getToken()
+            )
         case .oauth:
             return MCPProviderKeychain.getOAuthTokens(for: effectiveProviderId)?.accessToken
         case .none:
@@ -3103,15 +3139,17 @@ private struct ProviderEditSheet: View {
     private func parseStdioFields() -> ParsedStdioFields {
         var regularEnv: [String: String] = [:]
         var secretEnvKeys: [String] = []
-        for entry in envEntries where !entry.key.isEmpty {
+        for entry in envEntries {
+            let key = entry.key.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !key.isEmpty else { continue }
             if entry.isSecret {
-                secretEnvKeys.append(entry.key)
+                secretEnvKeys.append(key)
             } else if !entry.value.isEmpty {
                 // Skip empty regular env vars — persisting `KEY=""`
                 // would silently shadow whatever the subprocess
                 // inherits from its environment, which is almost
                 // never what the user intended.
-                regularEnv[entry.key] = entry.value
+                regularEnv[key] = entry.value
             }
         }
         let trimmedCwd = workingDirectory.trimmingCharacters(in: .whitespaces)
@@ -3179,7 +3217,12 @@ private struct ProviderEditSheet: View {
         let provider = makeProbeProvider()
         return MCPProviderSetupFingerprint.make(
             provider: provider,
-            bearerToken: authType == .bearerToken ? token : nil,
+            bearerToken: authType == .bearerToken
+                ? MCPProviderBearerProbeInput.fingerprint(
+                    fieldValue: token,
+                    clearRequested: clearBearerToken
+                )
+                : nil,
             secretHeaderValues: secretHeaderValues(),
             secretEnvironmentValues: secretEnvironmentValues()
         )
@@ -3198,7 +3241,12 @@ private struct ProviderEditSheet: View {
             provider: provider,
             fingerprint: MCPProviderSetupFingerprint.make(
                 provider: provider,
-                bearerToken: authType == .bearerToken ? token : nil,
+                bearerToken: authType == .bearerToken
+                    ? MCPProviderBearerProbeInput.fingerprint(
+                        fieldValue: token,
+                        clearRequested: clearBearerToken
+                    )
+                    : nil,
                 secretHeaderValues: secretHeaders,
                 secretEnvironmentValues: secretEnvironment
             ),
@@ -3211,8 +3259,11 @@ private struct ProviderEditSheet: View {
     private func secretHeaderValues() -> [String: String] {
         Dictionary(
             customHeaders
-                .filter { $0.isSecret && !$0.key.isEmpty && !$0.value.isEmpty }
-                .map { ($0.key, $0.value) },
+                .compactMap { entry -> (String, String)? in
+                    let key = entry.key.trimmingCharacters(in: .whitespacesAndNewlines)
+                    guard entry.isSecret, !key.isEmpty, !entry.value.isEmpty else { return nil }
+                    return (key, entry.value)
+                },
             uniquingKeysWith: { _, latest in latest }
         )
     }
@@ -3220,13 +3271,17 @@ private struct ProviderEditSheet: View {
     private func secretEnvironmentValues() -> [String: String] {
         Dictionary(
             envEntries
-                .filter { $0.isSecret && !$0.key.isEmpty && !$0.value.isEmpty }
-                .map { ($0.key, $0.value) },
+                .compactMap { entry -> (String, String)? in
+                    let key = entry.key.trimmingCharacters(in: .whitespacesAndNewlines)
+                    guard entry.isSecret, !key.isEmpty, !entry.value.isEmpty else { return nil }
+                    return (key, entry.value)
+                },
             uniquingKeysWith: { _, latest in latest }
         )
     }
 
     private func save() {
+        credentialSaveError = nil
         if importedSetupRequiresProbe
             && !probeGate.hasCurrentSuccess(fingerprint: currentProbeFingerprint) {
             return
@@ -3234,17 +3289,12 @@ private struct ProviderEditSheet: View {
         let trimmedName = name.trimmingCharacters(in: .whitespaces)
         let trimmedURL = url.trimmingCharacters(in: .whitespaces)
 
-        // Separate regular headers from secret headers
-        var regularHeaders: [String: String] = [:]
-        var secretKeys: [String] = []
-
-        for header in customHeaders where !header.key.isEmpty {
-            if header.isSecret {
-                secretKeys.append(header.key)
-            } else {
-                regularHeaders[header.key] = header.value
-            }
-        }
+        // Use the same normalization contract as probes and the operations
+        // hub. A blank secret value means "preserve the Keychain value", so
+        // its key must remain in the provider configuration.
+        let normalizedHeaders = MCPProviderOperationsFieldNormalizer.normalize(
+            customHeaders.map { ($0.key, $0.value, $0.isSecret) }
+        )
 
         // Merge any manual OAuth overrides into the saved config so they
         // survive past sheet dismissal, even if the user hasn't clicked
@@ -3259,59 +3309,67 @@ private struct ProviderEditSheet: View {
         let updatedProvider = MCPProvider(
             id: effectiveProviderId,
             name: trimmedName,
-            url: trimmedURL,
+            url: transport == .http ? trimmedURL : "",
             enabled: provider?.enabled ?? true,
-            customHeaders: regularHeaders,
-            streamingEnabled: streamingEnabled,
+            customHeaders: transport == .http ? normalizedHeaders.regular : [:],
+            streamingEnabled: transport == .http && streamingEnabled,
             discoveryTimeout: discoveryTimeout,
             toolCallTimeout: toolCallTimeout,
             autoConnect: autoConnect,
-            secretHeaderKeys: secretKeys,
-            authType: authType,
-            oauth: oauthForSave,
+            secretHeaderKeys: transport == .http ? normalizedHeaders.secretKeys : [],
+            authType: transport == .http ? authType : .none,
+            oauth: transport == .http ? oauthForSave : nil,
             // Preserve the plugin grouping so an edit-then-save on a
             // Claude-plugin-imported provider doesn't strip its uninstall
             // tag.
             pluginId: provider?.pluginId,
             transport: transport,
             executionHost: executionHost,
-            command: stdio.command,
-            args: stdio.args,
-            env: stdio.env,
-            secretEnvKeys: stdio.secretEnvKeys,
-            workingDirectory: stdio.workingDirectory
+            command: transport == .stdio ? stdio.command : "",
+            args: transport == .stdio ? stdio.args : [],
+            env: transport == .stdio ? stdio.env : [:],
+            secretEnvKeys: transport == .stdio ? stdio.secretEnvKeys : [],
+            workingDirectory: transport == .stdio ? stdio.workingDirectory : nil
         )
 
-        // Save secret env values to Keychain. Like the bearer/secret-header
-        // path, blank values mean "don't overwrite" so the user can leave
-        // sensitive fields alone after the first save.
-        for entry in envEntries
-        where entry.isSecret && !entry.key.isEmpty && !entry.value.isEmpty {
-            _ = MCPProviderKeychain.saveEnvSecret(
-                entry.value,
-                key: entry.key,
-                for: updatedProvider.id
-            )
+        // Blank values preserve existing Keychain entries. Explicit values
+        // are committed atomically with bearer-token intent by the manager.
+        let secretWrites = envEntries.compactMap { entry -> MCPProviderSecretWrite? in
+            let key = entry.key.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard transport == .stdio, entry.isSecret, !key.isEmpty, !entry.value.isEmpty else { return nil }
+            return MCPProviderSecretWrite(storage: .environment, key: key, value: entry.value)
+        } + customHeaders.compactMap { header -> MCPProviderSecretWrite? in
+            let key = header.key.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard transport == .http, header.isSecret, !key.isEmpty, !header.value.isEmpty else { return nil }
+            return MCPProviderSecretWrite(storage: .header, key: key, value: header.value)
         }
-
-        // Save secret header values to Keychain
-        for header in customHeaders where header.isSecret && !header.key.isEmpty && !header.value.isEmpty {
-            MCPProviderKeychain.saveHeaderSecret(header.value, key: header.key, for: updatedProvider.id)
-        }
-
         let tokenEdit = MCPProviderBearerTokenEdit.fromBearerField(
             token,
-            authType: authType,
+            authType: updatedProvider.authType,
             clearRequested: clearBearerToken
         )
-        onSave(updatedProvider, tokenEdit)
+        guard onSave(updatedProvider, tokenEdit, secretWrites) else {
+            credentialSaveError = String(
+                localized: "Credentials could not be saved to Keychain. Check Keychain access and try again.",
+                bundle: .module
+            )
+            return
+        }
         dismiss()
     }
 
     private func buildHeaders() -> [String: String] {
         var headers: [String: String] = [:]
-        for header in customHeaders where !header.key.isEmpty && !header.value.isEmpty {
-            headers[header.key] = header.value
+        for header in customHeaders where !header.key.isEmpty {
+            let key = header.key.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !key.isEmpty else { continue }
+            if !header.value.isEmpty {
+                headers[key] = header.value
+            } else if header.isSecret,
+                let provider,
+                let value = MCPProviderKeychain.getHeaderSecret(key: key, for: provider.id) {
+                headers[key] = value
+            }
         }
         return headers
     }

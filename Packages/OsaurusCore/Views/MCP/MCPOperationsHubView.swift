@@ -66,16 +66,26 @@ struct MCPOperationsHubView: View {
             }
         }
         .sheet(isPresented: $showingAddSheet) {
-            MCPOperationsProviderEditor(provider: nil) { provider, tokenEdit in
-                manager.addProvider(provider, token: tokenEdit.tokenForNewProvider)
-                refreshAll()
+            MCPOperationsProviderEditor(provider: nil) { provider, tokenEdit, secretWrites in
+                let saved = manager.addProvider(
+                    provider,
+                    token: tokenEdit.tokenForNewProvider,
+                    secretWrites: secretWrites
+                )
+                if saved { refreshAll() }
+                return saved
             }
             .environment(\.theme, theme)
         }
         .sheet(item: $editingProvider) { provider in
-            MCPOperationsProviderEditor(provider: provider) { updatedProvider, tokenEdit in
-                manager.updateProvider(updatedProvider, tokenEdit: tokenEdit)
-                refreshAll()
+            MCPOperationsProviderEditor(provider: provider) { updatedProvider, tokenEdit, secretWrites in
+                let saved = manager.updateProvider(
+                    updatedProvider,
+                    tokenEdit: tokenEdit,
+                    secretWrites: secretWrites
+                )
+                if saved { refreshAll() }
+                return saved
             }
             .environment(\.theme, theme)
         }
@@ -757,7 +767,7 @@ private struct MCPOperationsProviderEditor: View {
     @Environment(\.dismiss) private var dismiss
 
     let provider: MCPProvider?
-    let onSave: (MCPProvider, MCPProviderBearerTokenEdit) -> Void
+    let onSave: (MCPProvider, MCPProviderBearerTokenEdit, [MCPProviderSecretWrite]) -> Bool
 
     @State private var draftId = UUID()
     @State private var name = ""
@@ -779,6 +789,7 @@ private struct MCPOperationsProviderEditor: View {
     @State private var envEntries: [KeyValueEntry] = []
     @State private var isTesting = false
     @State private var probeResult: MCPProviderProbeResult?
+    @State private var credentialSaveError: String?
 
     var body: some View {
         VStack(spacing: 0) {
@@ -841,7 +852,13 @@ private struct MCPOperationsProviderEditor: View {
                 .padding(18)
             }
 
-            HStack(spacing: 10) {
+            VStack(alignment: .leading, spacing: 8) {
+                if let credentialSaveError {
+                    Label(credentialSaveError, systemImage: "exclamationmark.triangle.fill")
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundColor(theme.errorColor)
+                }
+                HStack(spacing: 10) {
                 Button { testProvider() } label: {
                     HStack(spacing: 6) {
                         if isTesting {
@@ -877,6 +894,7 @@ private struct MCPOperationsProviderEditor: View {
                 }
                 .buttonStyle(.plain)
                 .disabled(!canSave)
+                }
             }
             .padding(18)
             .background(theme.secondaryBackground)
@@ -1135,16 +1153,23 @@ private struct MCPOperationsProviderEditor: View {
     }
 
     private func save() {
+        credentialSaveError = nil
         let provider = makeProvider()
-        saveSecrets(for: provider)
-        onSave(
+        guard onSave(
             provider,
             MCPProviderBearerTokenEdit.fromBearerField(
                 token,
                 authType: provider.authType,
                 clearRequested: clearBearerToken
+            ),
+            secretWrites(for: provider)
+        ) else {
+            credentialSaveError = String(
+                localized: "Credentials could not be saved to Keychain. Check Keychain access and try again.",
+                bundle: .module
             )
-        )
+            return
+        }
         dismiss()
     }
 
@@ -1166,7 +1191,10 @@ private struct MCPOperationsProviderEditor: View {
                     discoveryTimeout: provider.discoveryTimeout
                 )
             case .stdio:
-                result = await MCPProviderProbeService.probeStdio(provider: providerForStdioProbe(provider))
+                result = await MCPProviderProbeService.probeStdio(
+                    provider: provider,
+                    secretEnvOverrides: secretEnvironmentValues(provider: provider)
+                )
             }
             await MainActor.run {
                 probeResult = result
@@ -1188,9 +1216,9 @@ private struct MCPOperationsProviderEditor: View {
             discoveryTimeout: discoveryTimeout,
             toolCallTimeout: toolCallTimeout,
             autoConnect: autoConnect,
-            secretHeaderKeys: headers.secretKeys,
+            secretHeaderKeys: transport == .http ? headers.secretKeys : [],
             authType: transport == .http ? authType : .none,
-            oauth: provider?.oauth,
+            oauth: transport == .http ? provider?.oauth : nil,
             pluginId: provider?.pluginId,
             transport: transport,
             executionHost: executionHost,
@@ -1198,7 +1226,8 @@ private struct MCPOperationsProviderEditor: View {
             args: transport == .stdio ? ShellArgs.split(argsString) : [],
             env: transport == .stdio ? envFields.regular : [:],
             secretEnvKeys: transport == .stdio ? envFields.secretKeys : [],
-            workingDirectory: workingDirectory.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            workingDirectory: transport == .http
+                || workingDirectory.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                 ? nil
                 : workingDirectory.trimmingCharacters(in: .whitespacesAndNewlines)
         )
@@ -1210,21 +1239,18 @@ private struct MCPOperationsProviderEditor: View {
         )
     }
 
-    private func saveSecrets(for provider: MCPProvider) {
-        for entry in headerEntries where entry.isSecret {
+    private func secretWrites(for provider: MCPProvider) -> [MCPProviderSecretWrite] {
+        let headerWrites = headerEntries.compactMap { entry -> MCPProviderSecretWrite? in
             let key = entry.key.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !key.isEmpty, !entry.value.isEmpty else { continue }
-            MCPProviderKeychain.saveHeaderSecret(entry.value, key: key, for: provider.id)
+            guard provider.transport == .http, entry.isSecret, !key.isEmpty, !entry.value.isEmpty else { return nil }
+            return MCPProviderSecretWrite(storage: .header, key: key, value: entry.value)
         }
-        saveEnvSecrets(for: provider)
-    }
-
-    private func saveEnvSecrets(for provider: MCPProvider) {
-        for entry in envEntries where entry.isSecret {
+        let environmentWrites = envEntries.compactMap { entry -> MCPProviderSecretWrite? in
             let key = entry.key.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !key.isEmpty, !entry.value.isEmpty else { continue }
-            MCPProviderKeychain.saveEnvSecret(entry.value, key: key, for: provider.id)
+            guard provider.transport == .stdio, entry.isSecret, !key.isEmpty, !entry.value.isEmpty else { return nil }
+            return MCPProviderSecretWrite(storage: .environment, key: key, value: entry.value)
         }
+        return headerWrites + environmentWrites
     }
 
     private func bearerTokenForProbe(provider: MCPProvider) -> String? {
@@ -1257,44 +1283,19 @@ private struct MCPOperationsProviderEditor: View {
         return headers
     }
 
-    private func providerForStdioProbe(_ provider: MCPProvider) -> MCPProvider {
-        MCPProvider(
-            id: provider.id,
-            name: provider.name,
-            url: provider.url,
-            enabled: provider.enabled,
-            customHeaders: provider.customHeaders,
-            streamingEnabled: provider.streamingEnabled,
-            discoveryTimeout: provider.discoveryTimeout,
-            toolCallTimeout: provider.toolCallTimeout,
-            autoConnect: provider.autoConnect,
-            secretHeaderKeys: provider.secretHeaderKeys,
-            authType: provider.authType,
-            oauth: provider.oauth,
-            pluginId: provider.pluginId,
-            transport: provider.transport,
-            executionHost: provider.executionHost,
-            command: provider.command,
-            args: provider.args,
-            env: envForProbe(provider: provider),
-            secretEnvKeys: [],
-            workingDirectory: provider.workingDirectory
-        )
-    }
-
-    private func envForProbe(provider: MCPProvider) -> [String: String] {
-        var env = provider.env
+    private func secretEnvironmentValues(provider: MCPProvider) -> [String: String] {
+        var values: [String: String] = [:]
         for entry in envEntries where entry.isSecret {
             let key = entry.key.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !key.isEmpty else { continue }
             if !entry.value.isEmpty {
-                env[key] = entry.value
+                values[key] = entry.value
             } else if let value = MCPProviderKeychain.getEnvSecret(key: key, for: provider.id),
                 !value.isEmpty {
-                env[key] = value
+                values[key] = value
             }
         }
-        return env
+        return values
     }
 }
 

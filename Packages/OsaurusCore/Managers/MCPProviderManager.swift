@@ -24,9 +24,9 @@ public enum MCPProviderBearerTokenEdit: Sendable, Equatable {
         authType: MCPProviderAuthType,
         clearRequested: Bool = false
     ) -> MCPProviderBearerTokenEdit {
-        guard authType == .bearerToken else { return .preserve }
         let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
         if clearRequested && trimmed.isEmpty { return .clear }
+        guard authType == .bearerToken else { return .preserve }
         return trimmed.isEmpty ? .preserve : .replace(trimmed)
     }
 
@@ -49,6 +49,50 @@ public enum MCPProviderBearerTokenEdit: Sendable, Equatable {
         case .clear:
             return delete()
         }
+    }
+}
+
+enum MCPProviderCredentialPersistence {
+    static func persist(
+        providerId: UUID,
+        tokenEdit: MCPProviderBearerTokenEdit,
+        secretWrites: [MCPProviderSecretWrite]
+    ) -> Bool {
+        persist(
+            providerId: providerId,
+            tokenEdit: tokenEdit,
+            secretWrites: secretWrites,
+            readToken: MCPProviderKeychain.getToken,
+            saveToken: MCPProviderKeychain.saveToken,
+            deleteToken: MCPProviderKeychain.deleteToken,
+            persistSecrets: MCPProviderSecretPersistence.persist
+        )
+    }
+
+    static func persist(
+        providerId: UUID,
+        tokenEdit: MCPProviderBearerTokenEdit,
+        secretWrites: [MCPProviderSecretWrite],
+        readToken: (UUID) -> String?,
+        saveToken: (String, UUID) -> Bool,
+        deleteToken: (UUID) -> Bool,
+        persistSecrets: ([MCPProviderSecretWrite], UUID) -> Bool
+    ) -> Bool {
+        let previousToken = readToken(providerId)
+        guard tokenEdit.apply(
+            save: { saveToken($0, providerId) },
+            delete: { deleteToken(providerId) }
+        ) else { return false }
+
+        guard persistSecrets(secretWrites, providerId) else {
+            if let previousToken {
+                _ = saveToken(previousToken, providerId)
+            } else {
+                _ = deleteToken(providerId)
+            }
+            return false
+        }
+        return true
     }
 }
 
@@ -106,17 +150,34 @@ public final class MCPProviderManager: ObservableObject {
     // MARK: - Provider Management
 
     /// Add a new provider
-    public func addProvider(_ provider: MCPProvider, token: String?) {
+    @discardableResult
+    public func addProvider(_ provider: MCPProvider, token: String?) -> Bool {
+        addProvider(provider, token: token, secretWrites: [])
+    }
+
+    @discardableResult
+    func addProvider(
+        _ provider: MCPProvider,
+        token: String?,
+        secretWrites: [MCPProviderSecretWrite]
+    ) -> Bool {
+        let provider = provider.scopedToActiveTransport()
+
+        let tokenEdit: MCPProviderBearerTokenEdit =
+            provider.transport == .http && provider.authType == .bearerToken
+                ? token.map(MCPProviderBearerTokenEdit.replace) ?? .preserve
+                : .preserve
+        guard MCPProviderCredentialPersistence.persist(
+            providerId: provider.id,
+            tokenEdit: tokenEdit,
+            secretWrites: secretWrites
+        ) else { return false }
+
         configuration.add(provider)
         MCPProviderConfigurationStore.save(configuration)
         // KPI: a user-configured MCP tool provider. Only the transport kind
         // is captured — never the command, URL, or args.
         FeatureTelemetry.mcpProviderAdded(transport: provider.transport.rawValue)
-
-        // Save token to Keychain if provided
-        if let token = token, !token.isEmpty {
-            MCPProviderKeychain.saveToken(token, for: provider.id)
-        }
 
         // Initialize state
         providerStates[provider.id] = MCPProviderState(providerId: provider.id)
@@ -129,28 +190,54 @@ public final class MCPProviderManager: ObservableObject {
         }
 
         notifyStatusChanged()
+        return true
     }
 
     /// Update an existing provider
+    @discardableResult
     public func updateProvider(
         _ provider: MCPProvider,
         tokenEdit: MCPProviderBearerTokenEdit = .preserve
-    ) {
+    ) -> Bool {
+        updateProvider(provider, tokenEdit: tokenEdit, secretWrites: [])
+    }
+
+    @discardableResult
+    func updateProvider(
+        _ provider: MCPProvider,
+        tokenEdit: MCPProviderBearerTokenEdit,
+        secretWrites: [MCPProviderSecretWrite]
+    ) -> Bool {
+        let provider = provider.scopedToActiveTransport()
         let wasConnected = providerStates[provider.id]?.isConnected ?? false
+        let previous = configuration.provider(id: provider.id)
+
+        var credentialWrites = secretWrites
+        if let previous {
+            credentialWrites += Set(previous.secretHeaderKeys)
+                .subtracting(Set(provider.secretHeaderKeys))
+                .map { MCPProviderSecretWrite(storage: .header, key: $0, mutation: .delete) }
+            credentialWrites += Set(previous.secretEnvKeys)
+                .subtracting(Set(provider.secretEnvKeys))
+                .map { MCPProviderSecretWrite(storage: .environment, key: $0, mutation: .delete) }
+        }
+        let effectiveTokenEdit: MCPProviderBearerTokenEdit =
+            previous?.authType == .bearerToken && provider.authType != .bearerToken
+                ? .clear
+                : tokenEdit
+        guard MCPProviderCredentialPersistence.persist(
+            providerId: provider.id,
+            tokenEdit: effectiveTokenEdit,
+            secretWrites: credentialWrites
+        ) else { return false }
 
         // Disconnect if connected
         if wasConnected {
             disconnect(providerId: provider.id)
         }
 
-        let previous = configuration.provider(id: provider.id)
         configuration.update(provider)
         MCPProviderConfigurationStore.save(configuration)
-
-        tokenEdit.apply(
-            save: { MCPProviderKeychain.saveToken($0, for: provider.id) },
-            delete: { MCPProviderKeychain.deleteToken(for: provider.id) }
-        )
 
         // If the user switched away from OAuth, drop any cached tokens for this provider.
         if previous?.authType == .oauth && provider.authType != .oauth {
@@ -166,6 +253,7 @@ public final class MCPProviderManager: ObservableObject {
         }
 
         notifyStatusChanged()
+        return true
     }
 
     /// Remove a provider
@@ -176,6 +264,8 @@ public final class MCPProviderManager: ObservableObject {
         // Remove from configuration (also cleans up Keychain)
         configuration.remove(id: id)
         MCPProviderConfigurationStore.save(configuration)
+        MCPProviderCallHistoryStore.clear(providerId: id)
+        MCPProviderHealthSnapshotStore.clear(providerId: id)
 
         // Clean up state
         providerStates.removeValue(forKey: id)
@@ -656,20 +746,9 @@ public final class MCPProviderManager: ObservableObject {
         arguments: [String: MCP.Value],
         timeout: TimeInterval
     ) async throws -> ([MCP.Tool.Content], Bool) {
-        try await withThrowingTaskGroup(of: ([MCP.Tool.Content], Bool).self) { group in
-            group.addTask {
-                let (content, isError) = try await client.callTool(name: toolName, arguments: arguments)
-                return (content, isError ?? false)
-            }
-            group.addTask {
-                try await Task.sleep(nanoseconds: UInt64(timeout * 1_000_000_000))
-                throw MCPProviderError.timeout
-            }
-            guard let result = try await group.next() else {
-                throw MCPProviderError.timeout
-            }
-            group.cancelAll()
-            return result
+        try await MCPAsyncTimeout.run(seconds: timeout) {
+            let (content, isError) = try await client.callTool(name: toolName, arguments: arguments)
+            return (content, isError ?? false)
         }
     }
 

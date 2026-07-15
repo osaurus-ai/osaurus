@@ -274,6 +274,29 @@ public struct MCPProvider: Codable, Identifiable, Sendable, Equatable {
         return merged
     }
 
+    /// Drop fields that belong to the inactive transport before persistence.
+    /// This prevents hidden editor state and its Keychain keys from surviving a
+    /// transport switch.
+    func scopedToActiveTransport() -> MCPProvider {
+        var copy = self
+        switch transport {
+        case .http:
+            copy.command = ""
+            copy.args = []
+            copy.env = [:]
+            copy.secretEnvKeys = []
+            copy.workingDirectory = nil
+        case .stdio:
+            copy.url = ""
+            copy.customHeaders = [:]
+            copy.secretHeaderKeys = []
+            copy.authType = .none
+            copy.oauth = nil
+            copy.streamingEnabled = false
+        }
+        return copy
+    }
+
     /// Check if provider has a token stored in Keychain
     public var hasToken: Bool {
         MCPProviderKeychain.hasToken(for: id)

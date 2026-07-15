@@ -162,7 +162,9 @@ enum MCPProviderOperationsFieldNormalizer {
             if entry.isSecret {
                 secretKeys.append(key)
             } else {
-                regular[key] = entry.value
+                if !entry.value.isEmpty {
+                    regular[key] = entry.value
+                }
             }
         }
 
@@ -179,7 +181,11 @@ public enum MCPProviderOperationsHub {
             let providerId = provider.id
             next[providerId] = MCPProviderCredentialPresence(
                 bearerTokenPresent: MCPProviderKeychain.hasToken(for: providerId),
-                oauthTokensPresent: MCPProviderKeychain.hasOAuthTokens(for: providerId)
+                oauthTokensPresent: MCPProviderKeychain.hasOAuthTokens(for: providerId),
+                authorizationHeaderPresent: provider.secretHeaderKeys.contains { key in
+                    key.caseInsensitiveCompare("Authorization") == .orderedSame
+                        && MCPProviderKeychain.getHeaderSecret(key: key, for: providerId)?.isEmpty == false
+                }
             )
         }
         return next
@@ -237,7 +243,7 @@ public enum MCPProviderOperationsHub {
     ) -> MCPProviderAuthStatus {
         switch provider.authType {
         case .none:
-            if hasCredentialHeader(provider) {
+            if hasCredentialHeader(provider, credentialPresence: credentialPresence) {
                 return MCPProviderAuthStatus(
                     kind: .headerCredentialPresent,
                     severity: .ok,
@@ -254,7 +260,8 @@ public enum MCPProviderOperationsHub {
                 action: nil
             )
         case .bearerToken:
-            if credentialPresence.bearerTokenPresent || hasCredentialHeader(provider) {
+            if credentialPresence.bearerTokenPresent
+                || hasCredentialHeader(provider, credentialPresence: credentialPresence) {
                 return MCPProviderAuthStatus(
                     kind: .bearerTokenPresent,
                     severity: .ok,
@@ -482,9 +489,13 @@ public enum MCPProviderOperationsHub {
         }
     }
 
-    private static func hasCredentialHeader(_ provider: MCPProvider) -> Bool {
-        provider.customHeaders.keys.contains { $0.caseInsensitiveCompare("Authorization") == .orderedSame }
-            || provider.secretHeaderKeys.contains { $0.caseInsensitiveCompare("Authorization") == .orderedSame }
+    private static func hasCredentialHeader(
+        _ provider: MCPProvider,
+        credentialPresence: MCPProviderCredentialPresence
+    ) -> Bool {
+        provider.customHeaders.contains { key, value in
+            key.caseInsensitiveCompare("Authorization") == .orderedSame && !value.isEmpty
+        } || credentialPresence.authorizationHeaderPresent
     }
 
     private static func missingSecretKeys(

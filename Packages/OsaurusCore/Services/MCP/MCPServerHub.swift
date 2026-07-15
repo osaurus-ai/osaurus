@@ -10,10 +10,16 @@ import Foundation
 public struct MCPProviderCredentialPresence: Sendable, Equatable {
     public var bearerTokenPresent: Bool
     public var oauthTokensPresent: Bool
+    public var authorizationHeaderPresent: Bool
 
-    public init(bearerTokenPresent: Bool = false, oauthTokensPresent: Bool = false) {
+    public init(
+        bearerTokenPresent: Bool = false,
+        oauthTokensPresent: Bool = false,
+        authorizationHeaderPresent: Bool = false
+    ) {
         self.bearerTokenPresent = bearerTokenPresent
         self.oauthTokensPresent = oauthTokensPresent
+        self.authorizationHeaderPresent = authorizationHeaderPresent
     }
 }
 

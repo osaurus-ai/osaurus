@@ -16,10 +16,16 @@
     "Choose JSON" : {
       "shouldTranslate" : false
     },
+    "Check Keychain access and try again." : {
+      "shouldTranslate" : false
+    },
     "Check the provider configuration and process logs, then test again." : {
       "shouldTranslate" : false
     },
     "Copy import summary" : {
+      "shouldTranslate" : false
+    },
+    "Credentials could not be saved" : {
       "shouldTranslate" : false
     },
     "No stdio command is configured." : {

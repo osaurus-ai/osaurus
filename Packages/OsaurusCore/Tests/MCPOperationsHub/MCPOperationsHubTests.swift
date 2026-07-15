@@ -12,6 +12,33 @@ import Testing
 
 @Suite("MCP Operations Hub", .serialized)
 struct MCPOperationsHubTests {
+    @Test func declaredSecretAuthorizationHeaderRequiresStoredValueForHealthyAuth() {
+        let provider = MCPProvider(
+            id: UUID(),
+            name: "Remote",
+            url: "https://example.test/mcp",
+            secretHeaderKeys: ["Authorization"],
+            authType: .none,
+            transport: .http
+        )
+
+        let missing = MCPProviderOperationsHub.authStatus(
+            provider: provider,
+            state: nil,
+            credentialPresence: MCPProviderCredentialPresence()
+        )
+        let present = MCPProviderOperationsHub.authStatus(
+            provider: provider,
+            state: nil,
+            credentialPresence: MCPProviderCredentialPresence(authorizationHeaderPresent: true)
+        )
+
+        #expect(missing.kind == .none)
+        #expect(missing.severity == .info)
+        #expect(present.kind == .headerCredentialPresent)
+        #expect(present.severity == .ok)
+    }
+
     @Test func hostLaunchPlanResolvesExecutableAndRedactsCommandSecrets() {
         let provider = MCPProvider(
             id: UUID(),
@@ -48,7 +75,7 @@ struct MCPOperationsHubTests {
         #expect(!plan.pasteboardText.contains("/Projects"))
         #expect(!plan.pasteboardText.contains("server-filesystem"))
         #expect(!plan.pasteboardText.contains("npx"))
-        #expect(plan.pasteboardText.contains("PATH entries searched: 1"))
+        #expect(plan.pasteboardText.contains("PATH entries searched: 10"))
     }
 
     @Test func duplicateHeaderAndEnvRowsNormalizeWithoutTrap() {
@@ -59,6 +86,7 @@ struct MCPOperationsHubTests {
             (key: "API_TOKEN", value: "plain-new", isSecret: false),
             (key: "EMPTY", value: "ignored", isSecret: false),
             (key: "EMPTY", value: "", isSecret: true),
+            (key: "BLANK", value: "", isSecret: false),
         ])
 
         #expect(normalized.regular == ["API_TOKEN": "plain-new"])
@@ -359,7 +387,8 @@ struct MCPOperationsHubTests {
         )
 
         let pasteboard = snapshot.pasteboardText
-        #expect(pasteboard.contains("https://mcp.example.com/mcp"))
+        #expect(pasteboard.contains("https://mcp.example.com/redacted-path"))
+        #expect(!pasteboard.contains("/mcp/private"))
         #expect(!pasteboard.contains("user:pass"))
         #expect(!pasteboard.contains("workspace=secret"))
         #expect(!pasteboard.contains("token=raw"))
@@ -387,6 +416,44 @@ struct MCPOperationsHubTests {
         #expect(deleteCount == 0)
     }
 
+    @Test func transportScopingDropsInactiveConfigurationAndSecretReferences() {
+        let id = UUID()
+        let mixed = MCPProvider(
+            id: id,
+            name: "Mixed",
+            url: "https://private.example/mcp",
+            customHeaders: ["X-Visible": "value"],
+            streamingEnabled: true,
+            secretHeaderKeys: ["Authorization"],
+            authType: .bearerToken,
+            transport: .stdio,
+            command: "/private/bin/server",
+            args: ["--serve"],
+            env: ["VISIBLE": "value"],
+            secretEnvKeys: ["API_TOKEN"],
+            workingDirectory: "/private/work"
+        )
+
+        let stdio = mixed.scopedToActiveTransport()
+        #expect(stdio.url.isEmpty)
+        #expect(stdio.customHeaders.isEmpty)
+        #expect(stdio.secretHeaderKeys.isEmpty)
+        #expect(stdio.authType == .none)
+        #expect(!stdio.streamingEnabled)
+        #expect(stdio.command == "/private/bin/server")
+        #expect(stdio.secretEnvKeys == ["API_TOKEN"])
+
+        var httpInput = mixed
+        httpInput.transport = .http
+        let http = httpInput.scopedToActiveTransport()
+        #expect(http.command.isEmpty)
+        #expect(http.args.isEmpty)
+        #expect(http.env.isEmpty)
+        #expect(http.secretEnvKeys.isEmpty)
+        #expect(http.workingDirectory == nil)
+        #expect(http.secretHeaderKeys == ["Authorization"])
+    }
+
     @Test func bearerTokenEditReplacesOrClearsOnlyByExplicitIntent() {
         var saved: [String] = []
         var deleteCount = 0
@@ -394,6 +461,11 @@ struct MCPOperationsHubTests {
         let explicitClear = MCPProviderBearerTokenEdit.fromBearerField(
             "",
             authType: .bearerToken,
+            clearRequested: true
+        )
+        let clearAfterAuthSwitch = MCPProviderBearerTokenEdit.fromBearerField(
+            "",
+            authType: .none,
             clearRequested: true
         )
         MCPProviderBearerTokenEdit.replace("new-token").apply(
@@ -426,10 +498,18 @@ struct MCPOperationsHubTests {
                 return true
             }
         )
+        clearAfterAuthSwitch.apply(
+            save: { _ in false },
+            delete: {
+                deleteCount += 1
+                return true
+            }
+        )
 
         #expect(explicitClear == .clear)
+        #expect(clearAfterAuthSwitch == .clear)
         #expect(saved == ["new-token"])
-        #expect(deleteCount == 1)
+        #expect(deleteCount == 2)
     }
 
     private func makeTemporaryRoot() throws -> URL {
@@ -439,6 +519,128 @@ struct MCPOperationsHubTests {
         )
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         return root
+    }
+}
+
+@Suite("MCP provider secret persistence")
+struct MCPProviderSecretPersistenceTests {
+    @Test func failedWriteRollsBackEarlierMutationsWithoutExposingValues() {
+        let providerId = UUID()
+        let writes = [
+            MCPProviderSecretWrite(storage: .header, key: "Authorization", value: "header-secret"),
+            MCPProviderSecretWrite(storage: .environment, key: "API_TOKEN", value: "env-secret"),
+        ]
+        var headerValues = ["Authorization": "old-header"]
+        var environmentValues: [String: String] = [:]
+        var events: [String] = []
+
+        let succeeded = MCPProviderSecretPersistence.persist(
+            writes,
+            for: providerId,
+            readHeader: { key, _ in headerValues[key] },
+            readEnvironment: { key, _ in environmentValues[key] },
+            writeHeader: { value, key, id in
+                events.append("set-header:\(key):\(id)")
+                headerValues[key] = value
+                return true
+            },
+            writeEnvironment: { _, key, id in
+                events.append("set-environment:\(key):\(id)")
+                return false
+            },
+            deleteHeader: { key, id in
+                events.append("delete-header:\(key):\(id)")
+                headerValues.removeValue(forKey: key)
+                return true
+            },
+            deleteEnvironment: { key, id in
+                events.append("delete-environment:\(key):\(id)")
+                environmentValues.removeValue(forKey: key)
+                return true
+            }
+        )
+
+        #expect(!succeeded)
+        #expect(headerValues == ["Authorization": "old-header"])
+        #expect(environmentValues.isEmpty)
+        #expect(events == [
+            "set-header:Authorization:\(providerId)",
+            "set-environment:API_TOKEN:\(providerId)",
+            "delete-environment:API_TOKEN:\(providerId)",
+            "set-header:Authorization:\(providerId)",
+        ])
+        #expect(!events.joined().contains("header-secret"))
+        #expect(!events.joined().contains("env-secret"))
+    }
+
+    @Test func emptyWriteSetSucceedsWithoutCallingStorage() {
+        let succeeded = MCPProviderSecretPersistence.persist(
+            [],
+            for: UUID(),
+            readHeader: { _, _ in Issue.record("unexpected header read"); return nil },
+            readEnvironment: { _, _ in Issue.record("unexpected environment read"); return nil },
+            writeHeader: { _, _, _ in Issue.record("unexpected header write"); return false },
+            writeEnvironment: { _, _, _ in Issue.record("unexpected environment write"); return false },
+            deleteHeader: { _, _ in Issue.record("unexpected header delete"); return false },
+            deleteEnvironment: { _, _ in Issue.record("unexpected environment delete"); return false }
+        )
+
+        #expect(succeeded)
+    }
+
+    @Test func credentialTransactionRestoresBearerTokenWhenSecretPersistenceFails() {
+        let providerId = UUID()
+        var storedToken: String? = "old-token"
+        var events: [String] = []
+
+        let succeeded = MCPProviderCredentialPersistence.persist(
+            providerId: providerId,
+            tokenEdit: .replace("new-token"),
+            secretWrites: [MCPProviderSecretWrite(storage: .header, key: "Authorization", value: "secret")],
+            readToken: { _ in storedToken },
+            saveToken: { token, _ in
+                events.append(token == "new-token" ? "replace" : "restore")
+                storedToken = token
+                return true
+            },
+            deleteToken: { _ in
+                events.append("delete")
+                storedToken = nil
+                return true
+            },
+            persistSecrets: { _, _ in false }
+        )
+
+        #expect(!succeeded)
+        #expect(storedToken == "old-token")
+        #expect(events == ["replace", "restore"])
+    }
+
+    @Test func bearerClearIntentChangesProbeAndFingerprintWithoutUsingStoredSecret() {
+        let stored = "stored-secret"
+        let preserved = MCPProviderBearerProbeInput.resolved(
+            fieldValue: "",
+            clearRequested: false,
+            storedValue: stored
+        )
+        let cleared = MCPProviderBearerProbeInput.resolved(
+            fieldValue: "",
+            clearRequested: true,
+            storedValue: stored
+        )
+        let preservedFingerprint = MCPProviderBearerProbeInput.fingerprint(
+            fieldValue: "",
+            clearRequested: false
+        )
+        let clearedFingerprint = MCPProviderBearerProbeInput.fingerprint(
+            fieldValue: "",
+            clearRequested: true
+        )
+
+        #expect(preserved == stored)
+        #expect(cleared == nil)
+        #expect(preservedFingerprint != clearedFingerprint)
+        #expect(!clearedFingerprint.contains(stored))
     }
 }
 
