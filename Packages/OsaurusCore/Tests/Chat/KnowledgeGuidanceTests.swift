@@ -48,6 +48,28 @@ struct KnowledgeGuidanceTests {
         #expect(text.contains("`flag_knowledge_stale`"))
     }
 
+    /// The stale-flag bullet must cover USER-REPORTED changes, not just
+    /// self-discovered rot — a small model holding an "update the doc"
+    /// request and no edit tool otherwise punts instead of filing the
+    /// ticket (live-observed with Ornith-1.0-9B, 2026-07-15).
+    @Test func updateRequestsRouteToStaleFlag() {
+        let text = SystemPromptTemplates.knowledgeGuidance(collections: [
+            KnowledgeGrantDescriptor(name: "Docs", summary: "Product docs.")
+        ])
+        #expect(text.contains("asks you to update"))
+        #expect(text.contains("cannot edit collection documents"))
+    }
+
+    @Test func curatorLineOnlyForCurators() {
+        let grants = [KnowledgeGrantDescriptor(name: "Docs", summary: "Product docs.")]
+        let plain = SystemPromptTemplates.knowledgeGuidance(collections: grants)
+        let curator = SystemPromptTemplates.knowledgeGuidance(
+            collections: grants, curator: true)
+        #expect(!plain.contains("`propose_knowledge_update`"))
+        #expect(curator.contains("`propose_knowledge_update`"))
+        #expect(curator.contains("`flag_knowledge_stale`"))
+    }
+
     @Test func grantDescriptorSlicesCollection() {
         let collection = KnowledgeCollection(
             name: "Docs", summary: "Product docs.", folderPath: "/tmp/docs")

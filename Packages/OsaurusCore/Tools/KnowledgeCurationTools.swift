@@ -36,10 +36,13 @@ private func postCurationChanged() {
 final class FlagKnowledgeStaleTool: OsaurusTool, @unchecked Sendable {
     let name = "flag_knowledge_stale"
     let description =
-        "File a staleness ticket against a knowledge document when you "
-        + "discover it may be out of date (changed APIs, superseded "
-        + "practices, broken references). This only records the report — "
-        + "it never edits the document. A curator follows up on open tickets."
+        "File a staleness ticket against a knowledge document. Use it when "
+        + "the user reports a change or asks you to update a document, AND "
+        + "when you discover outdated content yourself (changed APIs, "
+        + "superseded practices, broken references). This is how document "
+        + "updates START — you cannot edit collection files, so filing the "
+        + "ticket IS satisfying an update request. It only records the "
+        + "report; a curator follows up on open tickets."
 
     let parameters: JSONValue? = .object([
         "type": .string("object"),

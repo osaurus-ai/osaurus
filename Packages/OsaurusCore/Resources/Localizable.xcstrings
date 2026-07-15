@@ -4,176 +4,6 @@
     "" : {
       "shouldTranslate" : false
     },
-    "Approved proposal #%lld" : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Vorschlag #%lld genehmigt"
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "제안 #%lld 승인됨"
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Предложение #%lld утверждено"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "已批准提案 #%lld"
-          }
-        },
-        "zh-Hant" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "已核准提案 #%lld"
-          }
-        }
-      }
-    },
-    "Dismissed proposal #%lld" : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Vorschlag #%lld verworfen"
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "제안 #%lld 기각됨"
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Предложение #%lld отклонено"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "已驳回提案 #%lld"
-          }
-        },
-        "zh-Hant" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "已駁回提案 #%lld"
-          }
-        }
-      }
-    },
-    "Every document has a category (type)" : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Jedes Dokument hat eine Kategorie (Typ)"
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "모든 문서에 카테고리(유형)가 있습니다"
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "У каждого документа есть категория (тип)"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "每个文档都有类别（type）"
-          }
-        },
-        "zh-Hant" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "每個文件都有類別（type）"
-          }
-        }
-      }
-    },
-    "No curator yet — turn on Features → Knowledge → Curator for an agent that can use this collection." : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Noch kein Kurator — aktivieren Sie Funktionen → Wissen → Kurator für einen Agenten, der diese Sammlung nutzen kann."
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "아직 큐레이터가 없습니다 — 이 컬렉션을 사용할 수 있는 에이전트에 대해 기능 → 지식 → 큐레이터를 켜세요."
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Куратора пока нет — включите Функции → Знания → Куратор для агента, который может использовать эту коллекцию."
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "还没有维护者 — 为可使用此集合的智能体开启 功能 → 知识 → 维护者。"
-          }
-        },
-        "zh-Hant" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "尚無維護者 — 為可使用此集合的代理開啟 功能 → 知識 → 維護者。"
-          }
-        }
-      }
-    },
-    "Opened %@ with a briefing for ticket #%lld. Review it and hit send." : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "%@ mit einer Einweisung für Ticket #%lld geöffnet. Prüfen und senden."
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "티켓 #%lld에 대한 안내와 함께 %@을(를) 열었습니다. 검토 후 전송하세요."
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "%@ открыт с инструктажем по тикету #%lld. Проверьте и отправьте."
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "已打开 %@ 并附上工单 #%lld 的说明。请查看后发送。"
-          }
-        },
-        "zh-Hant" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "已開啟 %@ 並附上工單 #%lld 的說明。請查看後傳送。"
-          }
-        }
-      }
-    },
     " — %@" : {
       "localizations" : {
         "de" : {
@@ -17820,6 +17650,40 @@
         }
       }
     },
+    "Approved proposal #%lld" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Vorschlag #%lld genehmigt"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "제안 #%lld 승인됨"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Предложение #%lld утверждено"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已批准提案 #%lld"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已核准提案 #%lld"
+          }
+        }
+      }
+    },
     "Approving writes this content into the collection folder and re-indexes it. Dismissing reopens the linked ticket." : {
       "extractionState" : "stale",
       "localizations" : {
@@ -32753,6 +32617,7 @@
       }
     },
     "Clones into Osaurus-managed storage and keeps the git link for Sync. Uses your existing git credentials (credential helper or SSH agent). Leave empty to use the folder above." : {
+      "extractionState" : "stale",
       "localizations" : {
         "de" : {
           "stringUnit" : {
@@ -49889,6 +49754,40 @@
         }
       }
     },
+    "Dismissed proposal #%lld" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Vorschlag #%lld verworfen"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "제안 #%lld 기각됨"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Предложение #%lld отклонено"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已驳回提案 #%lld"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已駁回提案 #%lld"
+          }
+        }
+      }
+    },
     "dispatch" : {
       "comment" : "A label indicating that a decision should be dispatched.",
       "isCommentAutoGenerated" : true,
@@ -58050,6 +57949,40 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "每 %@"
+          }
+        }
+      }
+    },
+    "Every document has a category (type)" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Jedes Dokument hat eine Kategorie (Typ)"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "모든 문서에 카테고리(유형)가 있습니다"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "У каждого документа есть категория (тип)"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "每个文档都有类别（type）"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "每個文件都有類別（type）"
           }
         }
       }
@@ -70729,9 +70662,6 @@
           }
         }
       }
-    },
-    "https://github.com/team/knowledge.git" : {
-      "shouldTranslate" : false
     },
     "Hugging Face cache" : {
       "comment" : "Title of a settings toggle that lets the user enable or disable the discovery of Hugging Face cache models.",
@@ -94124,6 +94054,40 @@
         }
       }
     },
+    "No curator yet — turn on Features → Knowledge → Curator for an agent that can use this collection." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Noch kein Kurator — aktivieren Sie Funktionen → Wissen → Kurator für einen Agenten, der diese Sammlung nutzen kann."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "아직 큐레이터가 없습니다 — 이 컬렉션을 사용할 수 있는 에이전트에 대해 기능 → 지식 → 큐레이터를 켜세요."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Куратора пока нет — включите Функции → Знания → Куратор для агента, который может использовать эту коллекцию."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "还没有维护者 — 为可使用此集合的智能体开启 功能 → 知识 → 维护者。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "尚無維護者 — 為可使用此集合的代理開啟 功能 → 知識 → 維護者。"
+          }
+        }
+      }
+    },
     "No custom agents to reorder." : {
       "localizations" : {
         "de" : {
@@ -104167,6 +104131,40 @@
         }
       }
     },
+    "Opened %@ with a briefing for ticket #%lld. Review it and hit send." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ mit einer Einweisung für Ticket #%lld geöffnet. Prüfen und senden."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "티켓 #%lld에 대한 안내와 함께 %@을(를) 열었습니다. 검토 후 전송하세요."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ открыт с инструктажем по тикету #%lld. Проверьте и отправьте."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已打开 %@ 并附上工单 #%lld 的说明。请查看后发送。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已開啟 %@ 並附上工單 #%lld 的說明。請查看後傳送。"
+          }
+        }
+      }
+    },
     "OpenRouter" : {
       "comment" : "Name of the credential prompt preset for OpenRouter.",
       "isCommentAutoGenerated" : true,
@@ -104625,6 +104623,7 @@
       }
     },
     "Or clone from a git URL" : {
+      "extractionState" : "stale",
       "localizations" : {
         "de" : {
           "stringUnit" : {
@@ -165237,9 +165236,6 @@
           }
         }
       }
-    },
-    "TurboQuant" : {
-      "shouldTranslate" : false
     },
     "TurboQuant compressions" : {
       "localizations" : {
