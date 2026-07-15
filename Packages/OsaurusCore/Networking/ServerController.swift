@@ -311,6 +311,14 @@ final class ServerController: ObservableObject {
     /// Saves the current configuration to disk
     func saveConfiguration() {
         ServerConfigurationStore.save(configuration)
+        // The runtime caches slices of this legacy configuration (the
+        // RuntimeConfig snapshot's genTopP fallback, and the model
+        // eviction policy consulted by the cross-model budgeter). Legacy
+        // fields like `modelEvictionPolicy` can change WITHOUT any
+        // runtime-settings delta (so `saveRuntimeSettings`' conditional
+        // invalidate never fires) — drop the caches here so the next
+        // request reads the persisted values instead of a stale snapshot.
+        Task { await ModelRuntime.shared.invalidateConfig() }
     }
 
     /// Persists the supplied vmlx runtime settings, projects the
