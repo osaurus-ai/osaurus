@@ -73,6 +73,79 @@ private struct GenerativeGreetingTrigger: ViewModifier {
     }
 }
 
+/// Equatable wrapper around `ChatEmptyState` so it only re-renders when one of
+/// its actual inputs changes. `ChatView` observes the whole `ChatSession`
+/// object, so its body re-evaluates on any `@Published` mutation — including
+/// ones the empty state doesn't care about (a thinking-chip toggle republishes
+/// `activeModelOptions`). Applying `.equatable()` to this view lets SwiftUI
+/// compare the value inputs and skip the subtree when they're unchanged.
+///
+/// The closures are intentionally excluded from `==`: they're recreated on
+/// every parent body pass but capture stable references (`ChatSession`,
+/// `ChatWindowState`, `AppDelegate.shared`), so an older instance behaves
+/// identically to a freshly built one. Comparing them would defeat the
+/// isolation, since two structurally identical closures are never `==`.
+private struct EmptyStateContent: View, Equatable {
+    let selectedModel: String?
+    let agents: [Agent]
+    let activeAgentId: UUID
+    let quickActions: [AgentQuickAction]
+    let generativeGreetingState: GenerativeGreetingState
+    let pendingLocalModelId: String?
+    let temporaryCloudModelName: String?
+    let activeDiscoveredAgent: DiscoveredAgent?
+    let activeRelayAgent: PairedRelayAgent?
+    let remoteAgentAvatar: String?
+    let remoteAgentDescription: String?
+    let remoteAgentQuickActions: [AgentQuickAction]?
+    let isConnecting: Bool
+
+    let onOpenModelManager: () -> Void
+    let onUseFoundation: (() -> Void)?
+    let onQuickAction: (String) -> Void
+    let onUseHostedWhilePending: (() async -> Bool)?
+
+    static func == (lhs: EmptyStateContent, rhs: EmptyStateContent) -> Bool {
+        lhs.selectedModel == rhs.selectedModel
+            && lhs.agents == rhs.agents
+            && lhs.activeAgentId == rhs.activeAgentId
+            && lhs.quickActions == rhs.quickActions
+            && lhs.generativeGreetingState == rhs.generativeGreetingState
+            && lhs.pendingLocalModelId == rhs.pendingLocalModelId
+            && lhs.temporaryCloudModelName == rhs.temporaryCloudModelName
+            && lhs.activeDiscoveredAgent == rhs.activeDiscoveredAgent
+            && lhs.activeRelayAgent == rhs.activeRelayAgent
+            && lhs.remoteAgentAvatar == rhs.remoteAgentAvatar
+            && lhs.remoteAgentDescription == rhs.remoteAgentDescription
+            && lhs.remoteAgentQuickActions == rhs.remoteAgentQuickActions
+            && lhs.isConnecting == rhs.isConnecting
+    }
+
+    var body: some View {
+        ChatEmptyState(
+            hasModels: true,
+            selectedModel: selectedModel,
+            agents: agents,
+            activeAgentId: activeAgentId,
+            quickActions: quickActions,
+            generativeGreetingState: generativeGreetingState,
+            onOpenModelManager: onOpenModelManager,
+            onUseFoundation: onUseFoundation,
+            onQuickAction: onQuickAction,
+            onOpenOnboarding: nil,
+            pendingLocalModelId: pendingLocalModelId,
+            temporaryCloudModelName: temporaryCloudModelName,
+            onUseHostedWhilePending: onUseHostedWhilePending,
+            activeDiscoveredAgent: activeDiscoveredAgent,
+            activeRelayAgent: activeRelayAgent,
+            remoteAgentAvatar: remoteAgentAvatar,
+            remoteAgentDescription: remoteAgentDescription,
+            remoteAgentQuickActions: remoteAgentQuickActions,
+            isConnecting: isConnecting
+        )
+    }
+}
+
 #if DEBUG
     /// Debug-only switch for the canned tool-call timeline used to test the
     /// tool-call rail animation. With `forceEnabled = true`, every send streams
@@ -6503,13 +6576,28 @@ struct ChatView: View {
 
     @ViewBuilder
     private var emptyStateView: some View {
-        ChatEmptyState(
-            hasModels: true,
+        // Wrapped in an Equatable view so a `ChatSession` mutation that doesn't
+        // touch any empty-state input (e.g. toggling thinking, which republishes
+        // `activeModelOptions`) can't re-render the greeting. `ChatView` observes
+        // the whole session object, so its body re-evaluates on every published
+        // change; `.equatable()` lets SwiftUI skip this subtree when the inputs
+        // below are unchanged. The `GenerativeGreetingTrigger` stays *outside*
+        // the equatable boundary so it keeps observing the session and still
+        // fires its onAppear / onChange greeting hooks.
+        EmptyStateContent(
             selectedModel: session.selectedModel,
             agents: windowState.agents,
             activeAgentId: windowState.agentId,
             quickActions: emptyStateQuickActions,
             generativeGreetingState: session.generativeGreetingState,
+            pendingLocalModelId: session.pendingLocalSetupModelId,
+            temporaryCloudModelName: session.temporaryCloudModelDisplayName,
+            activeDiscoveredAgent: windowState.selectedDiscoveredAgent,
+            activeRelayAgent: windowState.selectedRelayAgent,
+            remoteAgentAvatar: windowState.pinnedRemoteAgentAvatar,
+            remoteAgentDescription: remoteAgentDescriptionForEmptyState,
+            remoteAgentQuickActions: windowState.pinnedRemoteAgentQuickActions,
+            isConnecting: windowState.remoteAgentConnectionPhase == .connecting,
             onOpenModelManager: {
                 AppDelegate.shared?.showManagementWindow(initialTab: .models)
             },
@@ -6522,19 +6610,11 @@ struct ChatView: View {
             onQuickAction: { prompt in
                 session.input = prompt
             },
-            onOpenOnboarding: nil,
-            pendingLocalModelId: session.pendingLocalSetupModelId,
-            temporaryCloudModelName: session.temporaryCloudModelDisplayName,
             // Automatic while local setup is pending: connects the Router on
             // demand, with recovery UI if it cannot be reached.
-            onUseHostedWhilePending: { await session.adoptOsaurusRouterModelWhileLocalSetupPending() },
-            activeDiscoveredAgent: windowState.selectedDiscoveredAgent,
-            activeRelayAgent: windowState.selectedRelayAgent,
-            remoteAgentAvatar: windowState.pinnedRemoteAgentAvatar,
-            remoteAgentDescription: remoteAgentDescriptionForEmptyState,
-            remoteAgentQuickActions: windowState.pinnedRemoteAgentQuickActions,
-            isConnecting: windowState.remoteAgentConnectionPhase == .connecting
+            onUseHostedWhilePending: { await session.adoptOsaurusRouterModelWhileLocalSetupPending() }
         )
+        .equatable()
         .transition(.opacity.combined(with: .scale(scale: 0.98)))
         .modifier(
             GenerativeGreetingTrigger(
