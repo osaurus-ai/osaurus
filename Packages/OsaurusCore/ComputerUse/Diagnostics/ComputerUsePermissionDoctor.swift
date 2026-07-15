@@ -189,8 +189,8 @@ enum ComputerUsePermissionDoctor {
             return ComputerUseDiagnosticRow(
                 id: .cloudVision,
                 title: "Cloud vision",
-                value: "Not persisted",
-                detail: "Remote image models need consent for the current run or a persisted opt-in.",
+                value: "Off — ask when needed",
+                detail: "A cloud image model can request consent for one run or a persisted opt-in.",
                 severity: .inactive
             )
         }

@@ -211,9 +211,10 @@ scrubbing:
   most one screenshot to the conversation at a time and reserves image tokens
   against the context budget. When a frame *would* reach a cloud model if only
   consent were granted (`wouldAttachWithConsent`), the loop surfaces a
-  **just-in-time consent prompt** once per run (Allow once / Always allow / Not
-  now) instead of silently staying AX-only. Allow once stays in the run-local
-  state; Always allow writes the persisted opt-in.
+  **just-in-time consent prompt** once per run (Allow for this run / Always
+  allow / Not now) instead of silently staying AX-only. Allow for this run stays
+  in the run-local state; Always allow writes the persisted opt-in until the
+  user turns it off in Settings.
 
 A frame is only ever attached to a model request when **the model accepts
 images** (`ComputerUseTool.modelAcceptsImages`: local VLM detection / media

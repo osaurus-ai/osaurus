@@ -504,6 +504,7 @@ final class ComputerUseLoopRunTests: XCTestCase {
 
     func testCloudVisionAllowOnceStaysScopedToCurrentRun() async {
         let recorder = ConsentPersistenceRecorder()
+        let promptCount = AttemptCounter()
         let d = emptyThenPopulated(
             screenRecording: true,
             image: renderLoopCUImage(text: "Visible account number 1234")
@@ -511,7 +512,10 @@ final class ComputerUseLoopRunTests: XCTestCase {
         let result = await run(
             d,
             provider: ComputerUseLoop.scriptedProvider([AgentAction(verb: .done, reason: "ok")]),
-            requestCloudVisionConsent: { .allowOnce },
+            requestCloudVisionConsent: {
+                _ = await promptCount.bump()
+                return .allowOnce
+            },
             persistCloudVisionConsent: { choice in await recorder.record(choice) },
             vision: VisionContext(
                 modelAcceptsImages: true,
@@ -528,6 +532,61 @@ final class ComputerUseLoopRunTests: XCTestCase {
         XCTAssertTrue(result.metrics.cloudVisionUsed)
         let choices = await recorder.choices()
         XCTAssertEqual(choices, [])
+
+        let secondResult = await run(
+            emptyThenPopulated(
+                screenRecording: true,
+                image: renderLoopCUImage(text: "Visible account number 5678")
+            ),
+            provider: ComputerUseLoop.scriptedProvider([AgentAction(verb: .done, reason: "ok")]),
+            requestCloudVisionConsent: {
+                _ = await promptCount.bump()
+                return .deny
+            },
+            persistCloudVisionConsent: { choice in await recorder.record(choice) },
+            vision: VisionContext(
+                modelAcceptsImages: true,
+                modelIsLocal: false,
+                cloudConsent: false,
+                cloudScrubMode: .allText
+            )
+        )
+
+        XCTAssertTrue(secondResult.outcome.isSuccess)
+        XCTAssertTrue(secondResult.metrics.cloudVisionConsentPrompted)
+        XCTAssertFalse(secondResult.metrics.cloudVisionConsentGranted)
+        XCTAssertFalse(secondResult.metrics.cloudVisionUsed)
+        let totalPrompts = await promptCount.value
+        let recordedChoices = await recorder.choices()
+        XCTAssertEqual(totalPrompts, 2)
+        XCTAssertEqual(recordedChoices, [])
+    }
+
+    func testCloudVisionDenialStaysOnDeviceAndDoesNotPersist() async {
+        let recorder = ConsentPersistenceRecorder()
+        let result = await run(
+            emptyThenPopulated(
+                screenRecording: true,
+                image: renderLoopCUImage(text: "Visible account number 1234")
+            ),
+            provider: ComputerUseLoop.scriptedProvider([AgentAction(verb: .done, reason: "ok")]),
+            requestCloudVisionConsent: { .deny },
+            persistCloudVisionConsent: { choice in await recorder.record(choice) },
+            vision: VisionContext(
+                modelAcceptsImages: true,
+                modelIsLocal: false,
+                cloudConsent: false,
+                cloudScrubMode: .allText
+            )
+        )
+
+        XCTAssertTrue(result.outcome.isSuccess)
+        XCTAssertTrue(result.metrics.cloudVisionConsentPrompted)
+        XCTAssertFalse(result.metrics.cloudVisionConsentGranted)
+        XCTAssertFalse(result.metrics.cloudVisionConsentPersistent)
+        XCTAssertFalse(result.metrics.cloudVisionUsed)
+        let recordedChoices = await recorder.choices()
+        XCTAssertEqual(recordedChoices, [])
     }
 
     func testPreGrantedCloudVisionReportsPersistentScopeWithoutPrompt() async {
@@ -551,7 +610,7 @@ final class ComputerUseLoopRunTests: XCTestCase {
 
         XCTAssertTrue(result.outcome.isSuccess)
         XCTAssertFalse(result.metrics.cloudVisionConsentPrompted)
-        XCTAssertFalse(result.metrics.cloudVisionConsentGranted)
+        XCTAssertTrue(result.metrics.cloudVisionConsentGranted)
         XCTAssertTrue(result.metrics.cloudVisionConsentPersistent)
         XCTAssertTrue(result.metrics.cloudVisionUsed)
         let choices = await recorder.choices()

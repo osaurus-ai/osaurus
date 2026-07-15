@@ -204,8 +204,9 @@ public enum ComputerUseLoop {
         },
         persistCloudVisionConsent: @escaping @Sendable (CloudVisionConsentChoice) async -> Void = {
             choice in
-            guard choice == .allowAlways else { return }
-            await MainActor.run { CloudVisionConsent.shared.grantPersistently() }
+            await MainActor.run {
+                persistCloudVisionChoice(choice, consent: .shared)
+            }
         },
         limits: RunLimits = RunLimits(),
         policySummary: String = "",
@@ -268,6 +269,8 @@ public enum ComputerUseLoop {
             asked: false,
             persistent: vision.cloudConsent
         )
+        metrics.cloudVisionConsentGranted = runConsent.granted
+        metrics.cloudVisionConsentPersistent = runConsent.persistent
 
         // Initial perception so the model's first turn has something to act on.
         // An empty AX tree (Electron, custom-drawn UI) escalates ax→som→vision
@@ -1426,6 +1429,16 @@ public enum ComputerUseLoop {
 
     // MARK: - Vision frame attachment
 
+    @MainActor
+    @usableFromInline
+    static func persistCloudVisionChoice(
+        _ choice: CloudVisionConsentChoice,
+        consent: CloudVisionConsent
+    ) {
+        guard choice == .allowAlways else { return }
+        consent.grantPersistently()
+    }
+
     /// Mutable cloud-vision consent state for a single run. Seeded from the
     /// `VisionContext` snapshot; `asked` ensures the just-in-time prompt fires at
     /// most once per run, and `granted` records a mid-run grant.
@@ -1497,6 +1510,7 @@ public enum ComputerUseLoop {
                 availability: availability,
                 messages: &messages,
                 imageTokensInContext: &imageTokensInContext,
+                consentGranted: consent.granted,
                 persistentConsent: consent.persistent,
                 metrics: &metrics,
                 feed: feed,
@@ -1562,6 +1576,7 @@ public enum ComputerUseLoop {
             consent.granted = true
             consent.persistent = true
             metrics.cloudVisionConsentGranted = true
+            metrics.cloudVisionConsentPersistent = true
         }
         guard
             case .needsScrubForCloud(let img) = VisionAttachment.decide(
@@ -1576,6 +1591,7 @@ public enum ComputerUseLoop {
             availability: availability,
             messages: &messages,
             imageTokensInContext: &imageTokensInContext,
+            consentGranted: consent.granted,
             persistentConsent: consent.persistent,
             metrics: &metrics,
             feed: feed,
@@ -1593,6 +1609,7 @@ public enum ComputerUseLoop {
         availability: MacDriverAvailability,
         messages: inout [ChatMessage],
         imageTokensInContext: inout Int,
+        consentGranted: Bool,
         persistentConsent: Bool,
         metrics: inout ComputerUseRunMetrics,
         feed: SubagentFeed,
@@ -1608,7 +1625,7 @@ public enum ComputerUseLoop {
             ),
             let route = CaptureRouter.cloudRoute(
                 scrubbed: frame,
-                consentGranted: true,
+                consentGranted: consentGranted,
                 availability: availability
             ),
             case .cloudVision(let scrubbed) = route

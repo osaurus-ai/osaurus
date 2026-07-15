@@ -1,7 +1,8 @@
-//
 //  VisionAttachment.swift
 //  OsaurusCore — Computer Use
 //
+//  One-run consent is owned by ComputerUseLoop; CloudVisionConsent only stores
+//  persistent opt-in. The router always receives the effective grant explicitly.
 //  The integration glue between the capture ladder and the model request. When
 //  perception escalates past `ax` and a target still won't resolve, the loop
 //  has pixels in hand (`CUSnapshot.image`); this type decides whether — and

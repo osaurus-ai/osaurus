@@ -429,6 +429,22 @@ struct FeatureTelemetryEventTests {
         #expect(event.props["max_tier"] as? String == "som")
     }
 
+    @Test func computerUseRun_reportsPreGrantedPersistentScopeTruthfully() {
+        let (service, rec, cleanup) = makeRecordingService()
+        defer { cleanup() }
+        var metrics = ComputerUseRunMetrics()
+        metrics.cloudVisionUsed = true
+        metrics.cloudVisionConsentGranted = true
+        metrics.cloudVisionConsentPersistent = true
+
+        FeatureTelemetry.computerUseRun(metrics, outcome: "done", service: service)
+
+        let event = rec.events[0]
+        #expect(event.props["cloud_vision_consent_prompted"] as? Bool == false)
+        #expect(event.props["cloud_vision_consent_granted"] as? Bool == true)
+        #expect(event.props["cloud_vision_consent_scope"] as? String == "persistent")
+    }
+
     // MARK: - Product Hunt launch dialog
 
     @Test func productHuntLaunchDialog_shown_and_clicked_shapes() {

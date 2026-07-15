@@ -111,10 +111,10 @@ final class ComputerUsePermissionDoctorTests: XCTestCase {
             )
         )
 
-        XCTAssertEqual(snapshot.row(.cloudVision)?.value, "Not persisted")
+        XCTAssertEqual(snapshot.row(.cloudVision)?.value, "Off — ask when needed")
         XCTAssertEqual(
             snapshot.row(.cloudVision)?.detail,
-            "Remote image models need consent for the current run or a persisted opt-in."
+            "A cloud image model can request consent for one run or a persisted opt-in."
         )
         XCTAssertEqual(snapshot.row(.cloudVision)?.severity, .inactive)
     }
