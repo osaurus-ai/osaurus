@@ -356,6 +356,16 @@ public enum SystemPromptTemplates {
 
     // MARK: - Building New Tools
 
+    /// `dependencies` bullet of the plugin-authoring recipe. System (`apk`)
+    /// dependencies only exist in the Linux VM backend; on Seatbelt the
+    /// guide must steer authors to pip/npm in `setup` instead (declaring
+    /// `dependencies` there fails registration).
+    private static var pluginDependenciesBullet: String {
+        SandboxBackend.current == .seatbelt
+            ? "- `dependencies`: NOT supported in this macOS sandbox (no `apk`) — leave it empty and install Python/Node packages in `setup` (`pip install …` / `npm install …`). `setup` and every `run` command are validated against the network allowlist (PyPI, npm, GitHub, crates.io); reaching any other host fails registration."
+            : "- `dependencies`: Alpine packages (`apk add`). `setup` and every `run` command are validated against the network allowlist (Alpine repos, PyPI, npm, GitHub, crates.io); reaching any other host fails registration."
+    }
+
     /// The plugin-authoring recipe injected as the `## Building new tools`
     /// section by `PluginCreatorGate` whenever plugin creation is enabled for
     /// the session. Owns the *how* (the SandboxPlugin schema, the write →
@@ -394,7 +404,7 @@ public enum SystemPromptTemplates {
         }
         ```
 
-        - `dependencies`: Alpine packages (`apk add`). `setup` and every `run` command are validated against the network allowlist (Alpine repos, PyPI, npm, GitHub, crates.io); reaching any other host fails registration.
+        \(pluginDependenciesBullet)
         - `secrets`: names whose values come from Keychain — registration fails up front if a declared secret has no value yet.
         - `permissions.network`: comma-separated API hostnames the scripts reach (`outbound` / `none` / malformed → `none`). `permissions.inference` is forced to `false`.
         4. **Write the scripts.** Parameters arrive as `$PARAM_{NAME}` (uppercased) env vars, secrets as `$NAME` env vars; print JSON to stdout, errors to stderr, exit non-zero on failure.

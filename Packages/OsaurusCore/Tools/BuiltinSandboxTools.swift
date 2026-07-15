@@ -251,15 +251,15 @@ internal func hostPathRedirectHint(path: String) -> String? {
         if path == root || path.hasPrefix(root.hasSuffix("/") ? root : root + "/") {
             return
                 "`\(path)` is on your read-only host workspace (`\(root)`), which the "
-                + "Linux sandbox cannot see. Use `file_read` to list the directory or read "
+                + "sandbox cannot see. Use `file_read` to list the directory or read "
                 + "host files, or `file_search` to search them — not `sandbox_*` tools."
         }
     }
 
     if macHostPathPrefixes.contains(where: { path.hasPrefix($0) }) {
         return
-            "`\(path)` looks like a macOS host path; the Linux sandbox cannot see the "
-            + "host filesystem. If you meant a file in your host workspace, use "
+            "`\(path)` looks like a host path outside the sandbox, which the sandbox "
+            + "cannot see. If you meant a file in your host workspace, use "
             + "`file_read` / `file_search` instead."
     }
 
@@ -281,7 +281,7 @@ internal func sandboxDirectoryReadHint(stderr: String) -> String? {
     if ChatExecutionContext.hostReadOnlyScope != nil {
         hint +=
             " To list your read-only host workspace instead, use `file_read` — "
-            + "the Linux sandbox cannot see the host workspace."
+            + "the sandbox cannot see the host workspace."
     }
     return hint
 }
@@ -304,7 +304,7 @@ internal func hostWorkspaceSearchRedirectHint(resolvedPath: String, home: String
     }
     guard normalize(resolvedPath) == normalize(home) else { return nil }
     return
-        "No matches — this searched your Linux sandbox home, which is separate "
+        "No matches — this searched your sandbox home, which is separate "
         + "from (and usually empty compared to) your read-only host workspace. "
         + "If you meant your workspace, use `file_read` to list it or "
         + "`file_search` to search it."
@@ -596,7 +596,7 @@ internal func sandboxExecHostPathHint(
             || lowered.isEmpty)
     guard looksMissing else { return nil }
     return
-        "That path looks like a macOS host path, which the Linux sandbox can't "
+        "That path looks like a host path outside the sandbox, which it can't "
         + "see. To read your read-only host workspace, use `file_read` "
         + "(reads files, lists directories) / `file_search` — not `sandbox_exec`."
 }
@@ -2623,14 +2623,26 @@ actor SandboxInstallLock {
 /// dispatch layer.
 private struct SandboxInstallTool: OsaurusTool, @unchecked Sendable {
     let name = "sandbox_install"
-    let description =
-        "Install packages into the sandbox. Pass `manager`: `apk` for system packages "
-        + "(runs as root, e.g. `ffmpeg`), `pip` for Python packages (into the agent venv at "
-        + "`~/.venv/`), or `npm` for Node packages (into a per-agent workspace). "
-        + "**Use this instead of `sandbox_exec(\"apk add …\" / \"pip install …\" / \"npm install …\")`** "
-        + "so the index refresh, venv/workspace bootstrap, retry harness, and per-agent "
-        + "serialization apply. Installed `python3`/CLI binaries land on your PATH — call them "
-        + "from any `sandbox_exec` cwd. Example: `{\"manager\": \"pip\", \"packages\": [\"numpy\", \"flask\"]}`."
+    /// `apk` only exists in the Linux VM backend — on Seatbelt the schema
+    /// and description omit it entirely so the model is never offered a
+    /// manager that can only fail.
+    private static var hasApk: Bool { SandboxBackend.current == .virtualMachine }
+    var description: String {
+        Self.hasApk
+            ? "Install packages into the sandbox. Pass `manager`: `apk` for system packages "
+                + "(runs as root, e.g. `ffmpeg`), `pip` for Python packages (into the agent venv at "
+                + "`~/.venv/`), or `npm` for Node packages (into a per-agent workspace). "
+                + "**Use this instead of `sandbox_exec(\"apk add …\" / \"pip install …\" / \"npm install …\")`** "
+                + "so the index refresh, venv/workspace bootstrap, retry harness, and per-agent "
+                + "serialization apply. Installed `python3`/CLI binaries land on your PATH — call them "
+                + "from any `sandbox_exec` cwd. Example: `{\"manager\": \"pip\", \"packages\": [\"numpy\", \"flask\"]}`."
+            : "Install packages into the sandbox. Pass `manager`: `pip` for Python packages "
+                + "(into the agent venv at `~/.venv/`) or `npm` for Node packages (into a per-agent "
+                + "workspace). **Use this instead of `sandbox_exec(\"pip install …\" / \"npm install …\")`** "
+                + "so the venv/workspace bootstrap, retry harness, and per-agent serialization apply. "
+                + "Installed `python3`/CLI binaries land on your PATH — call them from any "
+                + "`sandbox_exec` cwd. Example: `{\"manager\": \"pip\", \"packages\": [\"numpy\", \"flask\"]}`."
+    }
     let agentId: String
     let agentName: String
     let home: String
@@ -2642,16 +2654,24 @@ private struct SandboxInstallTool: OsaurusTool, @unchecked Sendable {
             "properties": .object([
                 "manager": .object([
                     "type": .string("string"),
-                    "enum": .array([.string("apk"), .string("pip"), .string("npm")]),
+                    "enum": .array(
+                        Self.hasApk
+                            ? [.string("apk"), .string("pip"), .string("npm")]
+                            : [.string("pip"), .string("npm")]
+                    ),
                     "description": .string(
-                        "Package manager: `apk` (system, root-wide), `pip` (Python venv), `npm` (Node workspace)."
+                        Self.hasApk
+                            ? "Package manager: `apk` (system, root-wide), `pip` (Python venv), `npm` (Node workspace)."
+                            : "Package manager: `pip` (Python venv), `npm` (Node workspace)."
                     ),
                 ]),
                 "packages": .object([
                     "type": .string("array"),
                     "items": .object(["type": .string("string")]),
                     "description": .string(
-                        "Package names, e.g. `[\"ffmpeg\"]` (apk), `[\"numpy\"]` (pip), `[\"express\"]` (npm)."
+                        Self.hasApk
+                            ? "Package names, e.g. `[\"ffmpeg\"]` (apk), `[\"numpy\"]` (pip), `[\"express\"]` (npm)."
+                            : "Package names, e.g. `[\"numpy\"]` (pip), `[\"express\"]` (npm)."
                     ),
                 ]),
             ]),
@@ -2666,7 +2686,7 @@ private struct SandboxInstallTool: OsaurusTool, @unchecked Sendable {
         let managerReq = requireString(
             args,
             "manager",
-            expected: "one of `apk`, `pip`, `npm`",
+            expected: Self.hasApk ? "one of `apk`, `pip`, `npm`" : "one of `pip`, `npm`",
             tool: name
         )
         guard case .value(let managerRaw) = managerReq else { return managerReq.failureEnvelope ?? "" }
@@ -2699,7 +2719,9 @@ private struct SandboxInstallTool: OsaurusTool, @unchecked Sendable {
         default:
             return ToolEnvelope.failure(
                 kind: .invalidArgs,
-                message: "Unknown `manager` \"\(managerRaw)\". Use one of `apk`, `pip`, `npm`.",
+                message:
+                    "Unknown `manager` \"\(managerRaw)\". Use one of "
+                    + (Self.hasApk ? "`apk`, `pip`, `npm`." : "`pip`, `npm`."),
                 tool: name,
                 retryable: false
             )
