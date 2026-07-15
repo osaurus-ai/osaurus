@@ -136,14 +136,17 @@ private struct DocumentAttachmentIntakeSheet: View {
                                     .frame(width: 128, height: 156)
                                     .background(Color.white)
                                     .overlay(Rectangle().stroke(theme.primaryBorder, lineWidth: 1))
-                                Text("Page \(index + 1)")
+                                Text(localized: "Page \(index + 1)")
                                     .font(theme.font(size: 10))
                                     .foregroundColor(theme.secondaryText)
                             }
                         }
                     }
                 }
-                Label("Source captured and integrity checked", systemImage: "checkmark.shield")
+                Label(
+                    localized: "Source captured and integrity checked",
+                    systemImage: "checkmark.shield"
+                )
                     .font(theme.font(size: 12))
                     .foregroundColor(theme.secondaryText)
             }
