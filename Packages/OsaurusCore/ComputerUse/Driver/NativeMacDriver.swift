@@ -220,9 +220,8 @@ public struct NativeMacDriver: MacDriver {
                     let focusResult = ElementInteraction.shared.focusElementWithoutActivation(id: elementId)
                     if !focusResult.success { return mapActionResult(focusResult) }
                     if replace {
-                        // Best-effort clear; some fields aren't AX-clearable, in which
-                        // case typing simply appends.
-                        _ = ElementInteraction.shared.clearElement(id: elementId)
+                        let clearResult = ElementInteraction.shared.clearElement(id: elementId)
+                        if !clearResult.success { return mapActionResult(clearResult) }
                     }
                 }
 
