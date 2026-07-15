@@ -992,13 +992,57 @@ public actor ModelRuntime {
 
     /// MLX freed-buffer cache limit sized for intermediate activation reuse.
     /// Scales with model weight size (larger models have larger activations)
-    /// and is capped by a fraction of system RAM. Returns 0 when idle.
+    /// and is capped by a RAM-tier-aware fraction of system memory. Returns
+    /// 0 when idle.
     private func mlxCacheLimit() -> Int {
         guard !modelCache.isEmpty else { return 0 }
-        let systemRAM = Int(ProcessInfo.processInfo.physicalMemory)
         let totalWeights = Int(modelCache.values.reduce(Int64(0)) { $0 + $1.weightsSizeBytes })
-        let byModel = max(totalWeights / 4, 1 * 1024 * 1024 * 1024)
-        let bySystem = min(systemRAM / 8, 8 * 1024 * 1024 * 1024)
+        return Self.mlxCacheLimitBytes(
+            residentWeightsBytes: totalWeights,
+            physicalMemoryBytes: ChipProfile.current.physicalMemoryBytes,
+            adaptiveDisabled: UserDefaults.standard.bool(
+                forKey: "ai.osaurus.perf.disableAdaptiveMemoryPolicy")
+        )
+    }
+
+    /// Pure tier policy for the buffer-cache cap (unit-tested):
+    ///
+    ///   - ≤ 16 GiB: RAM/10 — the old RAM/8 left too little headroom on the
+    ///     machines where jetsam is a real risk (see
+    ///     `InferenceLoadCoordinator`'s notes); a smaller reuse pool costs a
+    ///     little re-allocation, never correctness.
+    ///   - mid-range: RAM/8 capped at 8 GiB — unchanged from the historical
+    ///     heuristic, so most machines see no behavior change.
+    ///   - ≥ 96 GiB: RAM/6 capped at 24 GiB — the flat 8 GiB cap starved
+    ///     big-memory machines of activation reuse they can trivially afford;
+    ///     24 GiB comfortably covers the largest shipped models' transient
+    ///     activations at long context, and beyond that the freed-buffer
+    ///     cache mostly hoards memory the OS could use better.
+    ///
+    /// Escape hatch: `defaults write com.dinoki.osaurus
+    /// ai.osaurus.perf.disableAdaptiveMemoryPolicy -bool true` restores the
+    /// historical min(weights/4, min(RAM/8, 8 GiB)) on every tier.
+    /// `adaptiveDisabled` is passed in (the UserDefaults read lives at the
+    /// `mlxCacheLimit()` call site) so this function stays genuinely pure.
+    static func mlxCacheLimitBytes(
+        residentWeightsBytes: Int,
+        physicalMemoryBytes: UInt64,
+        adaptiveDisabled: Bool
+    ) -> Int {
+        let gib = 1 << 30
+        let systemRAM = Int(clamping: physicalMemoryBytes)
+        let byModel = max(residentWeightsBytes / 4, 1 * gib)
+
+        let bySystem: Int
+        if adaptiveDisabled {
+            bySystem = min(systemRAM / 8, 8 * gib)
+        } else if physicalMemoryBytes <= 16 << 30 {
+            bySystem = systemRAM / 10
+        } else if physicalMemoryBytes >= 96 << 30 {
+            bySystem = min(systemRAM / 6, 24 * gib)
+        } else {
+            bySystem = min(systemRAM / 8, 8 * gib)
+        }
         return min(byModel, bySystem)
     }
 
