@@ -472,9 +472,9 @@ public final class ClipboardService: ObservableObject {
                     sourceApp: sourceApp
                 )
             case .unavailable:
-                result = await selectionCapture.capture(
-                    sourceApp: sourceApp,
-                    onCopyAttempted: onCopyAttempted
+                result = SelectionCaptureTransaction.failureResult(
+                    .unverifiedFieldDenied,
+                    sourceApp: sourceApp
                 )
             }
         } else {
@@ -559,15 +559,18 @@ final class SelectionCaptureTransaction {
         let changeCount: Int
         let content: ClipboardService.ClipboardContent?
         let pasteboardItems: [[String: Data]]
+        let pasteboardRestorable: Bool
 
         init(
             changeCount: Int,
             content: ClipboardService.ClipboardContent?,
-            pasteboardItems: [[String: Data]] = []
+            pasteboardItems: [[String: Data]] = [],
+            pasteboardRestorable: Bool = true
         ) {
             self.changeCount = changeCount
             self.content = content
             self.pasteboardItems = pasteboardItems
+            self.pasteboardRestorable = pasteboardRestorable
         }
     }
 
@@ -607,10 +610,12 @@ final class SelectionCaptureTransaction {
             dependencies: Dependencies(
                 snapshot: {
                     await ClipboardService.onPasteboardQueue { pasteboard in
-                        Snapshot(
+                        let serialized = serializedPasteboard(in: pasteboard)
+                        return Snapshot(
                             changeCount: pasteboard.changeCount,
                             content: ClipboardService.detectContent(in: pasteboard),
-                            pasteboardItems: serializedItems(in: pasteboard)
+                            pasteboardItems: serialized.items,
+                            pasteboardRestorable: serialized.complete
                         )
                     }
                 },
@@ -633,14 +638,26 @@ final class SelectionCaptureTransaction {
     }
 
     nonisolated static func serializedItems(in pasteboard: NSPasteboard) -> [[String: Data]] {
-        pasteboard.pasteboardItems?.map { item in
-            Dictionary(
-                item.types.compactMap { type in
-                    item.data(forType: type).map { (type.rawValue, $0) }
-                },
-                uniquingKeysWith: { _, latest in latest }
-            )
-        } ?? []
+        serializedPasteboard(in: pasteboard).items
+    }
+
+    nonisolated static func serializedPasteboard(
+        in pasteboard: NSPasteboard
+    ) -> (items: [[String: Data]], complete: Bool) {
+        guard let pasteboardItems = pasteboard.pasteboardItems else { return ([], true) }
+        var complete = true
+        let items = pasteboardItems.map { item in
+            var serialized: [String: Data] = [:]
+            for type in item.types {
+                guard let data = item.data(forType: type) else {
+                    complete = false
+                    continue
+                }
+                serialized[type.rawValue] = data
+            }
+            return serialized
+        }
+        return (items, complete)
     }
 
     nonisolated static func restore(
@@ -694,6 +711,9 @@ final class SelectionCaptureTransaction {
         guard let baseline = await dependencies.snapshot() else {
             return failure(.pasteboardReadFailed, sourceApp: sourceApp)
         }
+        guard baseline.pasteboardRestorable else {
+            return failure(.pasteboardReadFailed, sourceApp: sourceApp)
+        }
         let copyPosted = dependencies.postCopy()
         guard copyPosted else {
             return failure(.accessibilityDenied, sourceApp: sourceApp)
@@ -731,7 +751,16 @@ final class SelectionCaptureTransaction {
         else {
             return result
         }
-        guard let restoredChangeCount = await dependencies.restore(baseline) else { return result }
+        guard let restoredChangeCount = await dependencies.restore(baseline) else {
+            let currentChangeCount = await dependencies.snapshot()?.changeCount
+            let failed = failure(.pasteboardReadFailed, sourceApp: result.report.sourceApp)
+            return Result(
+                report: failed.report,
+                text: nil,
+                content: nil,
+                changeCount: currentChangeCount
+            )
+        }
         return Result(
             report: result.report,
             text: result.text,

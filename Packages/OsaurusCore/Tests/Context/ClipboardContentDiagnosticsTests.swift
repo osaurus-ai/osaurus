@@ -401,7 +401,7 @@ struct ClipboardContentDiagnosticsTests {
         #expect(service.currentContent == nil)
     }
 
-    @Test @MainActor func unsupportedNativeSelectionUsesBoundedCopyFallback() async {
+    @Test @MainActor func unavailableNativeSelectionFailsClosedWithoutSyntheticCopy() async {
         let environment = ScriptedSelectionEnvironment(
             copyScripts: [[.init(afterPolls: 1, content: .text("fallback selection"))]]
         )
@@ -413,10 +413,10 @@ struct ClipboardContentDiagnosticsTests {
 
         let report = await service.grabSelectionReport()
 
-        #expect(report.outcome == .capturedText(characterCount: 18))
-        #expect(report.captureRoute == .syntheticCopy)
-        #expect(environment.copyCount == 1)
-        #expect(service.currentContent == .text("fallback selection"))
+        #expect(report.outcome == .unverifiedFieldDenied)
+        #expect(report.captureRoute == nil)
+        #expect(environment.copyCount == 0)
+        #expect(service.currentContent == nil)
     }
 
     @Test @MainActor func oversizedNativeSelectionDoesNotBypassLimitThroughCopyFallback() async {
@@ -576,6 +576,50 @@ struct ClipboardContentDiagnosticsTests {
         pasteboard.releaseGlobally()
     }
 
+    @Test @MainActor func incompletePasteboardSnapshotPreventsSyntheticCopy() async {
+        let environment = ScriptedSelectionEnvironment(
+            pasteboardRestorable: false,
+            copyScripts: [[.init(afterPolls: 1, content: .text("must not be copied"))]]
+        )
+
+        let result = await makeTransaction(environment).capture(sourceApp: "Notes")
+
+        #expect(result.report.outcome == .pasteboardReadFailed)
+        #expect(environment.copyCount == 0)
+    }
+
+    @Test @MainActor func promisedPasteboardTypeWithoutDataIsNotRestorable() {
+        let pasteboard = NSPasteboard(
+            name: NSPasteboard.Name("osaurus.selection.promised.\(UUID().uuidString)")
+        )
+        let item = NSPasteboardItem()
+        let provider = EmptyPasteboardDataProvider()
+        let promisedType = NSPasteboard.PasteboardType("com.osaurus.test.promised")
+        item.setDataProvider(provider, forTypes: [promisedType])
+        pasteboard.clearContents()
+        #expect(pasteboard.writeObjects([item]))
+
+        let serialized = SelectionCaptureTransaction.serializedPasteboard(in: pasteboard)
+
+        #expect(!serialized.complete)
+        #expect(serialized.items == [[:]])
+        pasteboard.releaseGlobally()
+    }
+
+    @Test @MainActor func restoreFailureDoesNotPublishCapturedSelection() async {
+        let environment = ScriptedSelectionEnvironment(
+            restoreAllowed: false,
+            copyScripts: [[.init(afterPolls: 1, content: .text("private selection"))]]
+        )
+
+        let result = await makeTransaction(environment).capture(sourceApp: "Notes")
+
+        #expect(result.report.outcome == .pasteboardReadFailed)
+        #expect(result.content == nil)
+        #expect(result.text == nil)
+        #expect(result.changeCount == environment.currentChangeCount)
+    }
+
     @MainActor
     private func makeTransaction(
         _ environment: ScriptedSelectionEnvironment
@@ -595,6 +639,14 @@ struct ClipboardContentDiagnosticsTests {
             )
         )
     }
+}
+
+private final class EmptyPasteboardDataProvider: NSObject, NSPasteboardItemDataProvider {
+    func pasteboard(
+        _ pasteboard: NSPasteboard?,
+        item: NSPasteboardItem,
+        provideDataForType type: NSPasteboard.PasteboardType
+    ) {}
 }
 
 @MainActor
@@ -630,19 +682,31 @@ private final class ScriptedSelectionEnvironment {
     private var copyScripts: [[Event]]
     private var scheduled: [ScheduledEvent] = []
     private let copyAllowed: Bool
+    private let pasteboardRestorable: Bool
+    private let restoreAllowed: Bool
+
+    var currentChangeCount: Int { changeCount }
 
     init(
         initialContent: ClipboardService.ClipboardContent? = nil,
         copyAllowed: Bool = true,
+        pasteboardRestorable: Bool = true,
+        restoreAllowed: Bool = true,
         copyScripts: [[Event]] = []
     ) {
         content = initialContent
         self.copyAllowed = copyAllowed
+        self.pasteboardRestorable = pasteboardRestorable
+        self.restoreAllowed = restoreAllowed
         self.copyScripts = copyScripts
     }
 
     func snapshot() -> SelectionCaptureTransaction.Snapshot {
-        .init(changeCount: changeCount, content: content)
+        .init(
+            changeCount: changeCount,
+            content: content,
+            pasteboardRestorable: pasteboardRestorable
+        )
     }
 
     func postCopy() -> Bool {
@@ -656,7 +720,8 @@ private final class ScriptedSelectionEnvironment {
         return true
     }
 
-    func restore(_ snapshot: SelectionCaptureTransaction.Snapshot) -> Int {
+    func restore(_ snapshot: SelectionCaptureTransaction.Snapshot) -> Int? {
+        guard restoreAllowed else { return nil }
         changeCount += 1
         content = snapshot.content
         return changeCount
