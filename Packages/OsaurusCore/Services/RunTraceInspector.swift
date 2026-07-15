@@ -7,6 +7,7 @@
 //  returned as typed findings so callers can show exactly what failed.
 //
 
+import Darwin
 import Foundation
 
 public struct RunTraceInspection: Codable, Sendable, Equatable {
@@ -60,9 +61,20 @@ public struct RunTraceInspection: Codable, Sendable, Equatable {
         let blockingCodes: Set<Finding.Code> = [
             .fileReadFailed, .fileTooLarge, .resourceLimitExceeded, .inspectionCancelled,
             .invalidJSON, .unsupportedArtifact, .invalidFieldType, .decodeFailed,
-            .malformedToolArguments, .malformedToolResult, .exportUnsafe,
+            .invalidFieldValue, .malformedToolArguments, .malformedToolResult, .exportUnsafe,
         ]
-        return findings.first(where: { blockingCodes.contains($0.code) })?.message
+        if let finding = findings.first(where: { blockingCodes.contains($0.code) }) {
+            return finding.message
+        }
+        guard let data = try? JSONEncoder.osaurusCanonical(prettyPrinted: false).encode(self),
+            let text = String(data: data, encoding: .utf8)
+        else {
+            return "report could not be encoded safely"
+        }
+        if Self.containsUnsafeUnicode(text) || Self.containsLocalPath(text) {
+            return "report contains unsafe text or a local path"
+        }
+        return nil
     }
 
     public var canExport: Bool { exportBlockReason == nil }
@@ -228,7 +240,9 @@ public struct RunTraceInspection: Codable, Sendable, Equatable {
 
     private static func containsLocalPath(_ value: String) -> Bool {
         let patterns = [
-            #"(?i)(?:file://)?/(?:Users|home|private|var|tmp)/[^\s\"'<>]+"#,
+            #"(?i)(?:file://)?/(?:Users|home|private|var|tmp|Library|opt)/[^\s\"'<>]+"#,
+            #"(?i)(?:^|[\s\"'])~/(?:[^\s\"'<>]+)"#,
+            #"(?i)(?:^|[\s\"'])Users/(?:[^\s\"'<>]+)"#,
             #"(?i)\b[A-Z]:\\(?:[^\\\s\"'<>]+\\)+[^\\\s\"'<>]*"#,
             #"\\\\[^\\\s\"'<>]+\\[^\s\"'<>]+"#,
         ]
@@ -500,6 +514,7 @@ public enum RunTraceInspector {
 
     public static func inspectFile(
         at url: URL,
+        allowedRoot: URL? = nil,
         options: Options = Options()
     ) -> RunTraceInspection {
         if Task.isCancelled {
@@ -510,6 +525,17 @@ public enum RunTraceInspector {
             )
         }
         do {
+            if let allowedRoot {
+                let root = allowedRoot.resolvingSymlinksInPath().standardizedFileURL
+                let candidate = url.resolvingSymlinksInPath().standardizedFileURL
+                guard isContained(candidate, in: root) else {
+                    return failedInspection(
+                        sourcePath: safeSourcePath(url.path),
+                        code: .fileReadFailed,
+                        message: "trace source is outside the allowed run directory"
+                    )
+                }
+            }
             let values = try url.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey, .fileSizeKey])
             guard values.isRegularFile == true, values.isSymbolicLink != true else {
                 return failedInspection(
@@ -525,8 +551,27 @@ public enum RunTraceInspector {
                     message: "trace exceeds the \(options.maximumFileBytes)-byte inspection limit"
                 )
             }
-            let handle = try FileHandle(forReadingFrom: url)
+            let descriptor = Darwin.open(url.path, O_RDONLY | O_CLOEXEC | O_NOFOLLOW)
+            guard descriptor >= 0 else {
+                return failedInspection(
+                    sourcePath: safeSourcePath(url.path),
+                    code: .fileReadFailed,
+                    message: "trace source could not be opened safely"
+                )
+            }
+            let handle = FileHandle(fileDescriptor: descriptor, closeOnDealloc: true)
             defer { try? handle.close() }
+            var metadata = stat()
+            guard fstat(descriptor, &metadata) == 0,
+                metadata.st_mode & S_IFMT == S_IFREG,
+                metadata.st_nlink == 1
+            else {
+                return failedInspection(
+                    sourcePath: safeSourcePath(url.path),
+                    code: .fileReadFailed,
+                    message: "trace source must be a private regular file"
+                )
+            }
             let data = try handle.read(upToCount: options.maximumFileBytes + 1) ?? Data()
             guard data.count <= options.maximumFileBytes else {
                 return failedInspection(
@@ -547,9 +592,16 @@ public enum RunTraceInspector {
             return failedInspection(
                 sourcePath: safeSourcePath(url.path),
                 code: .fileReadFailed,
-                message: error.localizedDescription
+                message: "trace source could not be read safely"
             )
         }
+    }
+
+    private static func isContained(_ candidate: URL, in root: URL) -> Bool {
+        let rootComponents = root.pathComponents
+        let candidateComponents = candidate.pathComponents
+        return candidateComponents.count > rootComponents.count
+            && Array(candidateComponents.prefix(rootComponents.count)) == rootComponents
     }
 
     public static func inspect(
@@ -613,7 +665,7 @@ public enum RunTraceInspector {
         if root["runId"] != nil || root["agentId"] != nil || root["turns"] != nil {
             return inspectRunTrace(root: root, data: data, sourcePath: displaySourcePath, options: options)
         }
-        if root["cases"] != nil || (root["modelId"] != nil && root["startedAt"] != nil) {
+        if root["cases"] != nil {
             return inspectEvalReport(root: root, sourcePath: displaySourcePath, options: options)
         }
         if root["steps"] != nil {
@@ -811,6 +863,9 @@ public enum RunTraceInspector {
 
         let errorCount = toolCalls.filter { $0.resultStatus == "error" }.count
             + (trace.errorMessage == nil ? 0 : 1)
+        let durationMs = trace.endedAt >= trace.startedAt
+            ? trace.endedAt.timeIntervalSince(trace.startedAt) * 1_000
+            : nil
         let summary = RunTraceInspection.Summary(
             title: "Agent run \(trace.runId.uuidString)",
             status: trace.status,
@@ -821,7 +876,7 @@ public enum RunTraceInspector {
             modelId: nil,
             startedAt: isoString(trace.startedAt),
             endedAt: isoString(trace.endedAt),
-            durationMs: trace.endedAt.timeIntervalSince(trace.startedAt) * 1_000,
+            durationMs: durationMs,
             turnCount: trace.turns.count,
             stepCount: steps.count,
             toolCallCount: toolCalls.count,
@@ -926,7 +981,12 @@ public enum RunTraceInspector {
                 redactedPreview($0, path: "\(path).notes", options: options)
             }
             redactionCount += redactedNotes.reduce(0) { $0 + $1.redactedPaths.count }
-            if let latency = numberAsDouble(row["latencyMs"]) {
+            let latency = nonnegativeTiming(
+                row["latencyMs"],
+                path: "\(path).latencyMs",
+                findings: &findings
+            )
+            if let latency {
                 latencyTotal += latency
                 latencyCount += 1
             }
@@ -941,7 +1001,7 @@ public enum RunTraceInspector {
                     title: "\(id) (\(domain))",
                     detail: detailParts.isEmpty ? nil : detailParts.joined(separator: "; "),
                     status: outcome,
-                    timingMs: numberAsDouble(row["latencyMs"]),
+                    timingMs: latency,
                     relatedToolCallIds: []
                 )
             )
@@ -1037,13 +1097,18 @@ public enum RunTraceInspector {
                 redactedPreview($0, path: "$.steps[\(index)]", options: options)
             }
             redactionCount += redactedDetail?.redactedPaths.count ?? 0
+            let timing = nonnegativeTiming(
+                row["durationMs"] ?? row["latencyMs"],
+                path: "$.steps[\(index)].timingMs",
+                findings: &findings
+            )
             return RunTraceInspection.Step(
                 index: index,
                 kind: .metadata,
                 title: title,
                 detail: redactedDetail?.text,
                 status: optionalString(row["status"]),
-                timingMs: numberAsDouble(row["durationMs"]) ?? numberAsDouble(row["latencyMs"]),
+                timingMs: timing,
                 relatedToolCallIds: []
             )
         }
@@ -1051,6 +1116,11 @@ public enum RunTraceInspector {
             findings.append(redactionFinding(count: redactionCount))
         }
 
+        let durationMs = nonnegativeTiming(
+            root["durationMs"],
+            path: "$.durationMs",
+            findings: &findings
+        )
         let summary = RunTraceInspection.Summary(
             title: optionalString(root["title"]) ?? "Generic step trace",
             status: optionalString(root["status"]),
@@ -1061,7 +1131,7 @@ public enum RunTraceInspector {
             modelId: optionalString(root["modelId"]),
             startedAt: optionalString(root["startedAt"]),
             endedAt: optionalString(root["endedAt"]),
-            durationMs: numberAsDouble(root["durationMs"]),
+            durationMs: durationMs,
             turnCount: 0,
             stepCount: steps.count,
             toolCallCount: 0,
@@ -1470,6 +1540,10 @@ public enum RunTraceInspector {
     private static func matchesSensitiveKey(_ normalized: String, fragment: String) -> Bool {
         guard !fragment.isEmpty else { return false }
         if normalized == fragment { return true }
+        if ["credentials", "cookies", "secrets", "passwords"].contains(normalized),
+            matchesSensitiveKey(String(normalized.dropLast()), fragment: fragment) {
+            return true
+        }
 
         switch fragment {
         case "token":
@@ -1499,7 +1573,7 @@ public enum RunTraceInspector {
         var matched = false
         let patterns = [
             (
-                #"(?i)(["']?(?:api[_-]?key|apikey|authorization|bearer|cookie|credential|keychain|password|private_key|secret|session_token|token)["']?\s*:\s*["'])[^"']+(["'])"#,
+                #"(?i)(["']?(?:api[_-]?key|apikey|authorization|bearer|cookies?|credentials?|keychain|passwords?|private_key|secrets?|session_token|token)["']?\s*:\s*["'])[^"']+(["'])"#,
                 "$1[REDACTED]$2"
             ),
             (#"(?i)(bearer\s+)[A-Za-z0-9._\-+/=]{8,}"#, "$1[REDACTED]"),
@@ -1777,6 +1851,26 @@ public enum RunTraceInspector {
         default:
             return nil
         }
+    }
+
+    private static func nonnegativeTiming(
+        _ value: Any?,
+        path: String,
+        findings: inout [RunTraceInspection.Finding]
+    ) -> Double? {
+        guard let timing = numberAsDouble(value) else { return nil }
+        guard timing >= 0 else {
+            findings.append(
+                .init(
+                    severity: .error,
+                    code: .invalidFieldValue,
+                    path: path,
+                    message: "timing must not be negative"
+                )
+            )
+            return nil
+        }
+        return timing
     }
 
     private static func numberInToolUsagePreview(_ preview: String, key: String) -> Int? {

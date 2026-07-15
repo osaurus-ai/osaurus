@@ -10,12 +10,17 @@ import AppKit
 import SwiftUI
 
 public struct RunTraceDiagnosticView: View {
+    private static let maximumDisplayedRows = 250
+
     @Environment(\.theme) private var theme
+    @State private var copyError: String?
 
     private let inspection: RunTraceInspection
+    private let exportBlockReason: String?
 
     public init(inspection: RunTraceInspection) {
         self.inspection = inspection
+        exportBlockReason = inspection.exportBlockReason
     }
 
     public var body: some View {
@@ -52,31 +57,28 @@ public struct RunTraceDiagnosticView: View {
             }
             Spacer()
             Button {
-                if let report = try? inspection.markdownReport() { copy(report) }
+                copyMarkdownReport()
             } label: {
                 Image(systemName: "doc.on.doc")
                     .font(.system(size: 11))
             }
             .buttonStyle(.borderless)
             .localizedHelp("Copy Markdown report")
-            .disabled(!inspection.canExport)
+            .disabled(exportBlockReason != nil)
 
             Button {
-                if let data = try? inspection.jsonReport(prettyPrinted: true),
-                    let json = String(data: data, encoding: .utf8) {
-                    copy(json)
-                }
+                copyJSONReport()
             } label: {
                 Image(systemName: "curlybraces")
                     .font(.system(size: 11))
             }
             .buttonStyle(.borderless)
             .localizedHelp("Copy JSON report")
-            .disabled(!inspection.canExport)
+            .disabled(exportBlockReason != nil)
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 10)
-        if let reason = inspection.exportBlockReason {
+        if let reason = exportBlockReason {
             Label {
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Report copy unavailable", bundle: .module)
@@ -89,6 +91,35 @@ public struct RunTraceDiagnosticView: View {
             .foregroundColor(.orange)
             .padding(.horizontal, 12)
             .padding(.bottom, 8)
+        } else if let copyError {
+            Label(copyError, systemImage: "exclamationmark.triangle")
+                .font(.system(size: 10))
+                .foregroundColor(.orange)
+                .padding(.horizontal, 12)
+                .padding(.bottom, 8)
+        }
+    }
+
+    private func copyMarkdownReport() {
+        do {
+            copy(try inspection.markdownReport())
+            copyError = nil
+        } catch {
+            copyError = error.localizedDescription
+        }
+    }
+
+    private func copyJSONReport() {
+        do {
+            let data = try inspection.jsonReport(prettyPrinted: true)
+            guard let json = String(data: data, encoding: .utf8) else {
+                copyError = String(localized: "Report is not valid UTF-8.", bundle: .module)
+                return
+            }
+            copy(json)
+            copyError = nil
+        } catch {
+            copyError = error.localizedDescription
         }
     }
 
@@ -137,7 +168,7 @@ public struct RunTraceDiagnosticView: View {
     private var findingsSection: some View {
         VStack(alignment: .leading, spacing: 0) {
             sectionLabel("Findings")
-            ForEach(Array(inspection.findings.enumerated()), id: \.offset) { _, finding in
+            ForEach(Array(inspection.findings.prefix(Self.maximumDisplayedRows).enumerated()), id: \.offset) { _, finding in
                 HStack(alignment: .top, spacing: 8) {
                     Circle()
                         .fill(color(for: finding.severity))
@@ -166,6 +197,9 @@ public struct RunTraceDiagnosticView: View {
                 .padding(.horizontal, 12)
                 .padding(.vertical, 6)
             }
+            if inspection.findings.count > Self.maximumDisplayedRows {
+                emptyLine("Additional findings omitted from this view.")
+            }
         }
     }
 
@@ -175,7 +209,7 @@ public struct RunTraceDiagnosticView: View {
             if inspection.toolCalls.isEmpty {
                 emptyLine("No tool calls recorded.")
             } else {
-                ForEach(Array(inspection.toolCalls.enumerated()), id: \.element.index) { _, call in
+                ForEach(Array(inspection.toolCalls.prefix(Self.maximumDisplayedRows)), id: \.index) { call in
                     VStack(alignment: .leading, spacing: 5) {
                         HStack(spacing: 7) {
                             Text("#\(call.index)")
@@ -197,6 +231,9 @@ public struct RunTraceDiagnosticView: View {
                     .padding(.vertical, 8)
                     .overlay(Divider().foregroundColor(theme.primaryBorder), alignment: .bottom)
                 }
+                if inspection.toolCalls.count > Self.maximumDisplayedRows {
+                    emptyLine("Showing the first \(Self.maximumDisplayedRows) of \(inspection.toolCalls.count) tool calls.")
+                }
             }
         }
     }
@@ -207,7 +244,7 @@ public struct RunTraceDiagnosticView: View {
             if inspection.steps.isEmpty {
                 emptyLine("No steps recorded.")
             } else {
-                ForEach(Array(inspection.steps.enumerated()), id: \.element.index) { _, step in
+                ForEach(Array(inspection.steps.prefix(Self.maximumDisplayedRows)), id: \.index) { step in
                     VStack(alignment: .leading, spacing: 4) {
                         HStack(spacing: 7) {
                             Text("\(step.index)")
@@ -239,6 +276,9 @@ public struct RunTraceDiagnosticView: View {
                     .padding(.horizontal, 12)
                     .padding(.vertical, 7)
                     .overlay(Divider().foregroundColor(theme.primaryBorder), alignment: .bottom)
+                }
+                if inspection.steps.count > Self.maximumDisplayedRows {
+                    emptyLine("Showing the first \(Self.maximumDisplayedRows) of \(inspection.steps.count) steps.")
                 }
             }
         }

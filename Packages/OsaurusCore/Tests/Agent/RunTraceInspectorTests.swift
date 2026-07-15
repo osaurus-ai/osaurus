@@ -42,6 +42,46 @@ struct RunTraceInspectorTests {
         #expect(inspection.toolCalls[0].argumentFormat == "invalid_json")
     }
 
+    @Test func invertedRunTimingIsBlockedAndNeverRenderedAsNegative() {
+        let data = Data(
+            """
+            {
+              "runId": "AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA",
+              "agentId": "BBBBBBBB-BBBB-BBBB-BBBB-BBBBBBBBBBBB",
+              "sessionId": "session-1",
+              "triggerSource": "chat",
+              "status": "error",
+              "startedAt": "2026-06-21T10:00:05Z",
+              "endedAt": "2026-06-21T10:00:00Z",
+              "turns": []
+            }
+            """.utf8
+        )
+
+        let inspection = RunTraceInspector.inspect(data: data)
+        #expect(inspection.summary.durationMs == nil)
+        #expect(inspection.findings.contains { $0.code == .invalidFieldValue })
+        #expect(!inspection.canExport)
+    }
+
+    @Test func negativeGenericTimingIsBlockedAndOmitted() {
+        let data = Data(
+            """
+            {
+              "title": "invalid timing",
+              "durationMs": -10,
+              "steps": [{"title": "bad step", "latencyMs": -2}]
+            }
+            """.utf8
+        )
+
+        let inspection = RunTraceInspector.inspect(data: data)
+        #expect(inspection.summary.durationMs == nil)
+        #expect(inspection.steps.first?.timingMs == nil)
+        #expect(inspection.findings.filter { $0.code == .invalidFieldValue }.count == 2)
+        #expect(!inspection.canExport)
+    }
+
     @Test func terminalErrorMessageRedactsInlineSecretsAndCountsRedactions() throws {
         let data = Data(
             """
@@ -414,6 +454,28 @@ struct RunTraceInspectorTests {
         #expect(throws: RunTraceInspection.ExportError.self) { try inspection.markdownReport() }
     }
 
+    @Test func fileInspectionRejectsOutsideRootAndHardLinkedTrace() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let outside = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let linked = root.appendingPathComponent("linked.json")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer {
+            try? FileManager.default.removeItem(at: root)
+            try? FileManager.default.removeItem(at: outside)
+        }
+        try Data(#"{"title":"safe","steps":[]}"#.utf8).write(to: outside)
+
+        let escaped = RunTraceInspector.inspectFile(at: outside, allowedRoot: root)
+        #expect(escaped.findings.contains { $0.code == .fileReadFailed })
+        let escapedMessageContainsPath = (escaped.findings.first?.message ?? "").contains(outside.path)
+        #expect(!escapedMessageContainsPath)
+
+        try FileManager.default.linkItem(at: outside, to: linked)
+        let hardLinked = RunTraceInspector.inspectFile(at: linked, allowedRoot: root)
+        #expect(hardLinked.findings.contains { $0.code == .fileReadFailed })
+        #expect(!hardLinked.canExport)
+    }
+
     @Test func hostileDepthAndLongStringsFailBeforeJSONMaterialization() {
         let deep = Data((String(repeating: "[", count: 9) + "0" + String(repeating: "]", count: 9)).utf8)
         let long = Data("{\"steps\":[{\"detail\":\"\(String(repeating: "a", count: 513))\"}]}".utf8)
@@ -487,8 +549,17 @@ struct RunTraceInspectorTests {
         let localPath = RunTraceInspector.inspect(
             data: Data("{\"title\":\"/Users/alice/private.txt\",\"steps\":[]}".utf8)
         )
+        #expect(!localPath.canExport)
+        #expect(localPath.exportBlockReason?.contains("local path") == true)
         #expect(throws: RunTraceInspection.ExportError.self) { try localPath.jsonReport() }
         #expect(throws: RunTraceInspection.ExportError.self) { try localPath.markdownReport() }
+
+        for path in ["~/private/run.json", "/Library/Secret/run.json", "/opt/private/run.json"] {
+            let inspection = RunTraceInspector.inspect(
+                data: Data("{\"title\":\"\(path)\",\"steps\":[]}".utf8)
+            )
+            #expect(!inspection.canExport)
+        }
     }
 
     @Test func redactionHasPositiveAndNegativeControls() throws {
@@ -511,6 +582,23 @@ struct RunTraceInspectorTests {
         #expect(!camelDetail.contains("leak-"))
         #expect(camelDetail.components(separatedBy: "[REDACTED]").count == 5)
         #expect(!String(decoding: try camelInspection.jsonReport(), as: UTF8.self).contains("leak-"))
+
+        let plural = Data(
+            #"{"steps":[{"detail":"{\"credentials\":\"leak-a\",\"cookies\":\"leak-b\",\"passwords\":\"leak-c\",\"secrets\":\"leak-d\"}"}]}"#.utf8
+        )
+        let pluralReport = String(decoding: try RunTraceInspector.inspect(data: plural).jsonReport(), as: UTF8.self)
+        #expect(!pluralReport.contains("leak-"))
+    }
+
+    @Test func genericStepsTakePrecedenceOverMetadataOnlyEvalHeuristic() {
+        let inspection = RunTraceInspector.inspect(
+            data: Data(
+                #"{"modelId":"foundation","startedAt":"2026-07-11T00:00:00Z","steps":[{"title":"kept"}]}"#.utf8
+            )
+        )
+
+        #expect(inspection.artifactKind == .genericSteps)
+        #expect(inspection.steps.first?.title == "kept")
     }
 
     @Test func uiFacingMetadataSanitizesBidirectionalControls() throws {

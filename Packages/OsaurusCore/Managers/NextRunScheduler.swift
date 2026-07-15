@@ -213,14 +213,14 @@ public final class NextRunScheduler {
         let processStartedAt = manager.processStartedAt
         let liveRunIds = manager.liveAgentRunIds
         let outcome = await startupReconciliationGate.run {
-            try await Task.detached(priority: .utility) {
+            try await self.runOffMain {
                 try SchedulerDatabase.shared.open()
                 return try SchedulerDatabase.shared.reconcileInterruptedRuns(
                     startedBefore: processStartedAt,
                     excluding: liveRunIds,
                     includingBoundary: false
                 )
-            }.value
+            }
         }
         switch outcome {
         case .completed(let changed):

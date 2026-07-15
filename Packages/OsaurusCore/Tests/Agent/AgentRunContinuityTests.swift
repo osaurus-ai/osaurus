@@ -11,6 +11,13 @@ import Testing
 
 @Suite(.serialized)
 struct AgentRunContinuityTests {
+    @Test func activityDurationNeverRendersNegativeTime() {
+        let start = Date(timeIntervalSince1970: 100)
+
+        #expect(ActivityRunDurationFormatter.label(from: start, to: start.addingTimeInterval(3.25)) == "3.2s")
+        #expect(ActivityRunDurationFormatter.label(from: start, to: start.addingTimeInterval(-1)) == "n/a")
+    }
+
     @Test func versionOneDatabaseMigratesWithoutLosingRuns() async throws {
         try await StoragePathsTestLock.shared.run {
             let root = FileManager.default.temporaryDirectory.appendingPathComponent(
@@ -288,13 +295,6 @@ struct AgentRunContinuityTests {
         #expect(ActivityRunFilter.matchesSearch(run, searchText: "WATCHER"))
         #expect(ActivityRunFilter.matchesSearch(run, searchText: "quarterly"))
         #expect(!ActivityRunFilter.matchesSearch(run, searchText: "invoice"))
-    }
-
-    @Test func refreshPolicyIncludesFinalLiveToTerminalTransition() {
-        #expect(ActivityRunRefreshPolicy.shouldReload(previouslyLive: false, currentlyLive: true))
-        #expect(ActivityRunRefreshPolicy.shouldReload(previouslyLive: true, currentlyLive: true))
-        #expect(ActivityRunRefreshPolicy.shouldReload(previouslyLive: true, currentlyLive: false))
-        #expect(!ActivityRunRefreshPolicy.shouldReload(previouslyLive: false, currentlyLive: false))
     }
 
     @Test func interruptedScheduleHistoryMapsToCancelled() {

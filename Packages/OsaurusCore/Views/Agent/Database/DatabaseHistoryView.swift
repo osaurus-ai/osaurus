@@ -11,15 +11,18 @@
 
 import SwiftUI
 
-enum ActivityRunChatRouting {
-    static func sessionBelongsToRun(sessionAgentId: UUID?, runAgentId: UUID) -> Bool {
-        (sessionAgentId ?? Agent.defaultId) == runAgentId
+enum ActivityRunDurationFormatter {
+    static func label(from start: Date, to end: Date) -> String {
+        let seconds = end.timeIntervalSince(start)
+        guard seconds >= 0 else { return "n/a" }
+        if seconds < 60 { return String(format: "%.1fs", seconds) }
+        return "\(Int(seconds) / 60)m \(Int(seconds) % 60)s"
     }
 }
 
-enum ActivityRunRefreshPolicy {
-    static func shouldReload(previouslyLive: Bool, currentlyLive: Bool) -> Bool {
-        previouslyLive || currentlyLive
+enum ActivityRunChatRouting {
+    static func sessionBelongsToRun(sessionAgentId: UUID?, runAgentId: UUID) -> Bool {
+        (sessionAgentId ?? Agent.defaultId) == runAgentId
     }
 }
 
@@ -78,6 +81,7 @@ struct DatabaseHistoryView: View {
     @State private var isLoadingTrace = false
     @State private var loadError: String? = nil
     @State private var traceLoadError: String?
+    @State private var loadedTraceRunId: UUID?
     @State private var traceLoadRequestID: UUID?
     @State private var traceLoaderTask: Task<TraceLoadResult, Never>?
     @State private var didReconcileInterruptedRuns = false
@@ -101,7 +105,7 @@ struct DatabaseHistoryView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(theme.primaryBackground)
-        .task { await activityRefreshLoop() }
+        .task(id: backgroundManager.liveAgentRunIds) { await activityRefreshLoop() }
         .onChange(of: agentId) { _, _ in
             didReconcileInterruptedRuns = false
             actionError = nil
@@ -109,11 +113,26 @@ struct DatabaseHistoryView: View {
             runs = []
             Task { await loadRuns() }
         }
-        .onChange(of: selectedRunId) { _, _ in
+        .onChange(of: selectedRunId) { previousRunId, nextRunId in
             actionError = nil
+            guard previousRunId != nextRunId else { return }
+            traceLoaderTask?.cancel()
+            traceLoaderTask = nil
+            traceLoadRequestID = nil
+            loadedTraceRunId = nil
+            traceInspection = nil
+            changelogRows = []
+            traceLoadError = nil
+            isLoadingTrace = nextRunId != nil
             Task { await loadTrace() }
         }
-        .onDisappear { traceLoaderTask?.cancel() }
+        .onDisappear {
+            traceLoaderTask?.cancel()
+            traceLoaderTask = nil
+            traceLoadRequestID = nil
+            loadedTraceRunId = nil
+            isLoadingTrace = false
+        }
     }
 
     private var filteredRuns: [AgentRunRecord] {
@@ -133,7 +152,10 @@ struct DatabaseHistoryView: View {
                     .foregroundColor(theme.tertiaryText)
                 Spacer()
                 Button {
-                    Task { await loadRuns() }
+                    Task {
+                        await loadRuns()
+                        await loadTrace()
+                    }
                 } label: {
                     Image(systemName: "arrow.clockwise")
                         .font(.system(size: 11))
@@ -275,7 +297,7 @@ struct DatabaseHistoryView: View {
             if let runId = selectedRunId, let run = runs.first(where: { $0.id == runId }) {
                 traceHeader(for: run)
                 Divider().foregroundColor(theme.primaryBorder)
-                if isLoadingTrace {
+                if isLoadingTrace || loadedTraceRunId != runId {
                     ProgressView().padding(24)
                 } else {
                     ScrollView {
@@ -341,7 +363,7 @@ struct DatabaseHistoryView: View {
                     .foregroundColor(theme.tertiaryText)
                 Spacer()
                 if let ended = run.endedAt {
-                    Text(durationLabel(from: run.startedAt, to: ended))
+                    Text(ActivityRunDurationFormatter.label(from: run.startedAt, to: ended))
                         .font(.system(size: 11))
                         .foregroundColor(theme.tertiaryText)
                 }
@@ -472,40 +494,33 @@ struct DatabaseHistoryView: View {
         .overlay(Divider().foregroundColor(theme.primaryBorder), alignment: .bottom)
     }
 
-    private func durationLabel(from start: Date, to end: Date) -> String {
-        let seconds = end.timeIntervalSince(start)
-        if seconds < 60 {
-            return String(format: "%.1fs", seconds)
-        }
-        let minutes = Int(seconds) / 60
-        let rem = Int(seconds) % 60
-        return "\(minutes)m \(rem)s"
-    }
-
     // MARK: - Loading
 
     @MainActor
     private func loadRuns() async {
         let requestedAgentId = agentId
         let shouldReconcile = !didReconcileInterruptedRuns
+        let processStartedAt = backgroundManager.processStartedAt
+        let liveAgentRunIds = backgroundManager.liveAgentRunIds
         let showInitialSpinner = runs.isEmpty
         if showInitialSpinner { isLoadingRuns = true }
         defer {
             if showInitialSpinner { isLoadingRuns = false }
         }
         do {
-            try SchedulerDatabase.shared.open()
-            if shouldReconcile {
-                _ = try SchedulerDatabase.shared.reconcileInterruptedRuns(
-                    startedBefore: backgroundManager.processStartedAt,
-                    excluding: backgroundManager.liveAgentRunIds
-                )
-                didReconcileInterruptedRuns = true
-            }
             let refreshedRuns = try await Task.detached(priority: .utility) {
-                try SchedulerDatabase.shared.runs(agentId: requestedAgentId, limit: 200)
+                try SchedulerDatabase.shared.open()
+                if shouldReconcile {
+                    _ = try SchedulerDatabase.shared.reconcileInterruptedRuns(
+                        startedBefore: processStartedAt,
+                        excluding: liveAgentRunIds,
+                        includingBoundary: false
+                    )
+                }
+                return try SchedulerDatabase.shared.runs(agentId: requestedAgentId, limit: 200)
             }.value
             guard agentId == requestedAgentId else { return }
+            if shouldReconcile { didReconcileInterruptedRuns = true }
             runs = refreshedRuns
             loadError = nil
             if let current = selectedRunId,
@@ -522,7 +537,7 @@ struct DatabaseHistoryView: View {
     }
 
     @MainActor
-    private func loadTrace() async {
+    private func loadTrace(showLoading: Bool = true) async {
         traceLoaderTask?.cancel()
         guard let runId = selectedRunId else {
             traceLoaderTask = nil
@@ -530,47 +545,53 @@ struct DatabaseHistoryView: View {
             changelogRows = []
             traceInspection = nil
             traceLoadError = nil
+            loadedTraceRunId = nil
             isLoadingTrace = false
             return
         }
         let requestID = UUID()
         let agentId = agentId
         traceLoadRequestID = requestID
-        isLoadingTrace = true
+        if showLoading && loadedTraceRunId != runId {
+            isLoadingTrace = true
+        }
 
         let task = Task.detached(priority: .userInitiated) {
             DatabaseHistoryTraceLoader.load(agentId: agentId, runId: runId)
         }
         traceLoaderTask = task
         let result = await task.value
+        defer {
+            if traceLoadRequestID == requestID {
+                traceLoaderTask = nil
+                isLoadingTrace = false
+            }
+        }
         guard traceLoadRequestID == requestID, selectedRunId == runId else {
             return
         }
-        traceLoaderTask = nil
         traceInspection = result.inspection
         changelogRows = result.changelogRows
         traceLoadError = result.errorMessage
-        isLoadingTrace = false
+        loadedTraceRunId = runId
     }
 
     @MainActor
     private func activityRefreshLoop() async {
         await loadRuns()
-        var previouslyLive = !backgroundManager.liveAgentRunIds.isEmpty
+        await loadTrace(showLoading: false)
+        guard !backgroundManager.liveAgentRunIds.isEmpty else { return }
         while !Task.isCancelled {
             do {
                 try await Task.sleep(for: .seconds(5))
             } catch {
                 return
             }
-            let currentlyLive = !backgroundManager.liveAgentRunIds.isEmpty
-            if ActivityRunRefreshPolicy.shouldReload(
-                previouslyLive: previouslyLive,
-                currentlyLive: currentlyLive
-            ) {
-                await loadRuns()
+            await loadRuns()
+            if selectedRunId.map(backgroundManager.liveAgentRunIds.contains) == true {
+                await loadTrace(showLoading: false)
             }
-            previouslyLive = currentlyLive
+            if backgroundManager.liveAgentRunIds.isEmpty { return }
         }
     }
 
@@ -629,7 +650,10 @@ private enum DatabaseHistoryTraceLoader {
         let traceURL = OsaurusPaths.agentRunTraceFile(agentId: agentId, runId: runId)
         let inspection: RunTraceInspection?
         if FileManager.default.fileExists(atPath: traceURL.path) {
-            inspection = RunTraceInspector.inspectFile(at: traceURL)
+            inspection = RunTraceInspector.inspectFile(
+                at: traceURL,
+                allowedRoot: OsaurusPaths.agentRunsDirectory(for: agentId)
+            )
         } else {
             inspection = nil
         }
