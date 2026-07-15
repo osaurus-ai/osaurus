@@ -2045,7 +2045,12 @@ extension ModelManager {
                         id: id,
                         name: ModelMetadataParser.friendlyName(from: id),
                         description: L("Local model (detected)"),
-                        downloadURL: "https://huggingface.co/\(id)"
+                        downloadURL: "https://huggingface.co/\(id)",
+                        // The scan already runs off-main. Preserve the bundle's
+                        // architecture tag here so hot UI paths can distinguish
+                        // image-only from video-capable local VLMs without
+                        // re-reading config.json during SwiftUI layout.
+                        modelType: VLMDetection.readModelType(at: resolved)
                     )
                     models.append(model)
                 }

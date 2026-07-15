@@ -693,6 +693,10 @@ struct RuntimePolicySourceTests {
         // store (#141) -- the "Safety Level" slider used to be a stored field no
         // resolver read, so it moved nothing.
         //
+        // Now also carries native schema-2 affine1 JANG loading and Metal
+        // execution, Qwen3-VL tool-schema preservation, and bounded media-cache
+        // cleanup (vmlx-swift#149).
+        //
         // This assertion is a repin tripwire, and it earned its keep: PR #1986
         // shipped titled "(+ vmlx repin)" carrying no repin at all, and the live
         // gate run against that build proved only the osaurus-side change while
@@ -700,7 +704,7 @@ struct RuntimePolicySourceTests {
         // files -- Package.swift, Packages/OsaurusCore/Package.resolved, and both
         // xcworkspace Package.resolved files. Miss one and the app resolves a
         // revision nobody proved.
-        let expectedRuntimeHardenedRevision = "a9b10f60e330337a9de2d8ebe3ca74a7370525e4"
+        let expectedRuntimeHardenedRevision = "1ca402953bf941341889bb00b186e46bf0c18d6f"
         let manifestRevision = try Self.vmlxPinRevision(in: manifest)
         let workspaceRevision = try Self.vmlxPinRevision(in: workspaceResolved)
         let appRevision = try Self.vmlxPinRevision(in: appResolved)
@@ -708,7 +712,7 @@ struct RuntimePolicySourceTests {
         #expect(manifestRevision == appRevision)
         #expect(
             manifestRevision == expectedRuntimeHardenedRevision,
-            "Osaurus must consume the pushed vmlx-swift revision proven for this Gemma QAT correctness checkpoint: Gemma 4 QAT loader/parser fixes, paged-cache default policy, prefill progress wiring, Model2Vec static embedding APIs, and the post-merge pin/readiness proof. An internally-consistent older pin is still not wired"
+            "Osaurus must consume the pushed vmlx-swift revision proven for the native affine1 JANG, Qwen3-VL tool-schema, and bounded media-cache checkpoint. An internally-consistent older pin is still not wired"
         )
         #expect(manifest.contains("https://github.com/osaurus-ai/vmlx-swift"))
         #expect(!manifest.contains("https://github.com/osaurus-ai/vmlx-swift-lm"))

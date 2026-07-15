@@ -4196,9 +4196,17 @@ extension FloatingInputCard {
     /// substring/regex matcher; tests pin the boundary at
     /// `ModelMediaCapabilitiesMCDCTests`.
     private var mediaCapabilityDescriptor: ModelMediaCapabilities.Descriptor {
-        ModelMediaCapabilities.composerDescriptor(
+        // The local-model scan runs off-main and records config.json's
+        // model_type. Read only its non-blocking snapshot here: this getter is
+        // evaluated from SwiftUI body/layout and must never trigger a disk
+        // scan or synchronously parse a model bundle.
+        let localModelType = selectedModel.flatMap {
+            ModelManager.findInstalledMLXModelFromCache(named: $0)?.modelType
+        }
+        return ModelMediaCapabilities.composerDescriptor(
             modelId: selectedModel,
-            fallbackSupportsImages: supportsImages
+            fallbackSupportsImages: supportsImages,
+            localModelType: localModelType
         )
     }
 
