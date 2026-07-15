@@ -225,12 +225,12 @@ private extension SandboxView {
         SettingsEmptyState(
             icon: "shippingbox",
             title: L("Sandbox Unavailable"),
-            subtitle: sandboxState.availability.reason ?? "Sandboxed execution is unavailable on this device.",
+            subtitle: sandboxState.availability.reason ?? L("Sandboxed execution is unavailable on this device."),
             examples: [
                 .init(
                     icon: "lock.shield",
                     title: L("Isolated Execution"),
-                    description: "Run code in an isolated sandbox"
+                    description: L("Run code in an isolated sandbox")
                 ),
                 .init(
                     icon: "puzzlepiece.extension",
