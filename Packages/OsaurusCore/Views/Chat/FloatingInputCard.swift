@@ -2982,10 +2982,20 @@ extension FloatingInputCard {
                 toggleThinking(id: thinkingOpt.id)
             } content: {
                 HStack(spacing: 5) {
-                    Image(systemName: isEnabled ? "checkmark.square.fill" : "square")
-                        .font(theme.font(size: CGFloat(theme.captionSize) - 1, weight: .semibold))
-                        .foregroundColor(isEnabled ? theme.accentColor : theme.tertiaryText)
-                        .contentTransition(.symbolEffect(.replace))
+                    // Collapsed, a lone checkbox is ambiguous — it reads as a
+                    // generic toggle, not "thinking". Swap in the brain glyph
+                    // (the same one NativeThinkingView uses) so the icon-only
+                    // chip is self-explanatory; on/off is carried by the accent
+                    // vs. muted color. Expanded, the checkbox + label pairing
+                    // already spells it out, so keep it.
+                    Image(
+                        systemName: compact
+                            ? "brain"
+                            : (isEnabled ? "checkmark.square.fill" : "square")
+                    )
+                    .font(theme.font(size: CGFloat(theme.captionSize) - 1, weight: .semibold))
+                    .foregroundColor(isEnabled ? theme.accentColor : theme.tertiaryText)
+                    .contentTransition(.symbolEffect(.replace))
 
                     if !compact {
                         Text("Thinking", bundle: .module)
