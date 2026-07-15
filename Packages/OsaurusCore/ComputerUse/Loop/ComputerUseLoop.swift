@@ -450,7 +450,9 @@ public enum ComputerUseLoop {
                     step: step,
                     kind: .propose,
                     title: privacySafeActivityLabel(action),
-                    detail: action.note
+                    // Model-authored notes are untrusted and may restate text
+                    // from secure fields. The action label is sufficient here.
+                    detail: nil
                 )
             )
 

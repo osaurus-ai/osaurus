@@ -296,6 +296,18 @@ final class ComputerUseKind: SubagentKind, @unchecked Sendable {
             }
             throw SubagentError.userDenied("Computer Use was stopped by the user.")
         case .gaveUp, .deadEnd, .stepCapReached, .failed:
+            if result.formEvidence.submissionState == .acted
+                || result.formEvidence.submissionState == .verified
+                || result.formEvidence.submissionState == .actionExecutedUnverified {
+                throw SubagentError.executionFailedAfterAction(
+                    message: result.outcome.summary,
+                    state: result.formEvidence.submissionState.rawValue,
+                    submissionPerformed: result.formEvidence.submissionState == .acted
+                        || result.formEvidence.submissionState == .verified,
+                    submissionMayHaveOccurred:
+                        result.formEvidence.submissionState == .actionExecutedUnverified
+                )
+            }
             throw SubagentError.executionFailed(message: result.outcome.summary, retryable: false)
         }
     }

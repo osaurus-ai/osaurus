@@ -155,10 +155,14 @@ public enum SubmissionBoundary {
             )
         let isSubmitActivation =
             (isActivation(action.verb) || isSpaceControlActivation)
-            && !hasDismissalSignal(
-                [element?.label, element?.roleDescription, action.target?.describe]
-                    .compactMap { $0 }
-                    .joined(separator: " ")
+            && (
+                targetHasSubmitSignal
+                    || effect >= .edit
+                    || !hasDismissalSignal(
+                        [element?.label, element?.roleDescription, action.target?.describe]
+                            .compactMap { $0 }
+                            .joined(separator: " ")
+                    )
             )
             && (
                 targetHasSubmitSignal

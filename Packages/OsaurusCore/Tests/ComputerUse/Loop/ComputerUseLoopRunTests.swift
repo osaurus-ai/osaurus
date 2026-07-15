@@ -390,6 +390,24 @@ final class ComputerUseLoopRunTests: XCTestCase {
         XCTAssertEqual(result.formEvidence.submissionState, .notEncountered)
     }
 
+    func testMixedSubmitAndDismissalLabelStillRequiresApproval() async {
+        let control = CUElement(id: "save-close", role: "button", label: "Save and close")
+        let d = driver([control], app: "Safari")
+        let result = await run(
+            d,
+            provider: ComputerUseLoop.scriptedProvider([
+                AgentAction(verb: .click, target: AgentTarget(mark: 1)),
+            ]),
+            gate: ComputerUseGate(policy: AutonomyPolicy(globalPreset: .autonomous)),
+            confirm: { _ in false }
+        )
+
+        XCTAssertTrue(result.outcome.isSuccess)
+        let actions = await d.elementActions
+        XCTAssertTrue(actions.isEmpty)
+        XCTAssertEqual(result.formEvidence.submissionState, .readyForReview)
+    }
+
     func testSecureTypedTextNeverAppearsInActivityFeed() async {
         let canary = "activity-feed-secret-canary"
         let field = CUElement(
@@ -407,6 +425,25 @@ final class ComputerUseLoopRunTests: XCTestCase {
                 AgentAction(verb: .done, reason: "entered"),
             ]),
             gate: ComputerUseGate(policy: AutonomyPolicy(globalPreset: .autonomous)),
+            feed: feed
+        )
+
+        let rendered = feed.currentEvents()
+            .flatMap { [$0.title, $0.detail ?? ""] }
+            .joined(separator: "\n")
+        XCTAssertFalse(rendered.contains(canary))
+    }
+
+    func testModelAuthoredNoteNeverAppearsInActivityFeed() async {
+        let canary = "note-secret-canary"
+        let d = driver([el("go", "button", "Go")])
+        let feed = SubagentFeed(toolCallId: "note", kindId: "computer_use", title: "note redaction")
+        _ = await run(
+            d,
+            provider: ComputerUseLoop.scriptedProvider([
+                AgentAction(verb: .click, target: AgentTarget(mark: 1), note: canary),
+                AgentAction(verb: .done, reason: "complete"),
+            ]),
             feed: feed
         )
 
@@ -593,6 +630,34 @@ final class ComputerUseLoopRunTests: XCTestCase {
             XCTAssertEqual(envelope["submission_state"] as? String, "acted")
             XCTAssertEqual(envelope["submission_performed"] as? Bool, true)
             XCTAssertEqual(envelope["submission_may_have_occurred"] as? Bool, false)
+        }
+    }
+
+    func testFailureAfterApprovedActionPreservesSubmissionEvidence() async throws {
+        let d = driver([el("submit", "button", "Submit request")], app: "Safari")
+        let result = await run(
+            d,
+            provider: ComputerUseLoop.scriptedProvider([
+                AgentAction(verb: .click, target: AgentTarget(mark: 1)),
+                AgentAction(verb: .giveUp, reason: "verification unavailable"),
+            ]),
+            gate: ComputerUseGate(policy: AutonomyPolicy(globalPreset: .autonomous)),
+            confirm: { _ in true }
+        )
+
+        XCTAssertEqual(result.formEvidence.submissionState, .acted)
+        do {
+            _ = try ComputerUseKind.mapOutcome(result, model: "test-model")
+            XCTFail("Failed run should map to a structured failure")
+        } catch let error as SubagentError {
+            let data = try XCTUnwrap(error.envelope(tool: "subagent").data(using: .utf8))
+            let envelope = try XCTUnwrap(
+                JSONSerialization.jsonObject(with: data) as? [String: Any]
+            )
+            XCTAssertEqual(envelope["kind"] as? String, "execution_error")
+            XCTAssertEqual(envelope["retryable"] as? Bool, false)
+            XCTAssertEqual(envelope["submission_state"] as? String, "acted")
+            XCTAssertEqual(envelope["submission_performed"] as? Bool, true)
         }
     }
 

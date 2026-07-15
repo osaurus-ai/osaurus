@@ -129,6 +129,14 @@ public enum SubagentError: Error, Sendable {
         submissionPerformed: Bool,
         submissionMayHaveOccurred: Bool
     )
+    /// The run failed after an approved action reached the target. Preserve
+    /// submission evidence so callers cannot blindly retry the side effect.
+    case executionFailedAfterAction(
+        message: String,
+        state: String,
+        submissionPerformed: Bool,
+        submissionMayHaveOccurred: Bool
+    )
     /// The kind cannot run right now (no model, tools not registered, agent
     /// missing). Not retryable as-is.
     case unavailable(String)
@@ -157,6 +165,18 @@ public enum SubagentError: Error, Sendable {
         case .userDeniedAfterAction(let m, let state, let performed, let mayHaveOccurred):
             return ToolEnvelope.failure(
                 kind: .userDenied,
+                message: m,
+                tool: tool,
+                retryable: false,
+                metadata: [
+                    "submission_state": state,
+                    "submission_performed": performed,
+                    "submission_may_have_occurred": mayHaveOccurred,
+                ]
+            )
+        case .executionFailedAfterAction(let m, let state, let performed, let mayHaveOccurred):
+            return ToolEnvelope.failure(
+                kind: .executionError,
                 message: m,
                 tool: tool,
                 retryable: false,
