@@ -97,6 +97,16 @@ final class ChatSessionsManager: ObservableObject {
         upsertInMemory(session)
     }
 
+    /// Non-blocking save. Updates the in-memory list synchronously (so the
+    /// recent-sessions UI is correct immediately) but hands the disk write to
+    /// the database's serial queue. Use from main-actor hot paths like run
+    /// cleanup where a synchronous encode + DB transaction on a large
+    /// conversation can trip the app-hang watchdog.
+    func saveAsync(_ session: ChatSessionData) {
+        ChatSessionStore.saveAsync(session)
+        upsertInMemory(session)
+    }
+
     /// Delete a session by ID
     func delete(id: UUID) {
         ChatSessionStore.delete(id: id)

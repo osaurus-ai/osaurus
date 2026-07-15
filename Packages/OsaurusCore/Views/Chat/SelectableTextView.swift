@@ -82,7 +82,10 @@ struct SelectableTextView: NSViewRepresentable {
     }
 
     func makeNSView(context: Context) -> SelectableNSTextView {
-        let textView = SelectableNSTextView()
+        // TextKit 1 from birth — this view reads `.layoutManager` for hit
+        // testing and drawing, which would otherwise force a lazy TextKit 2 → 1
+        // downgrade mid-lifecycle (see EditableTextView.makeNSView).
+        let textView = SelectableNSTextView(usingTextLayoutManager: false)
         textView.isEditable = false
         textView.isSelectable = true
         textView.isRichText = true
@@ -1285,9 +1288,12 @@ final class SelectableNSTextView: NSTextView {
                 yRadius: 6
             ).fill()
 
+            // Inset the bar 2pt from the background's top/bottom so it stays
+            // inside the corner curvature (radius 6 from x:4) instead of
+            // poking past the rounded corners.
             blockquoteBarColor.setFill()
             NSBezierPath(
-                roundedRect: NSRect(x: 6, y: rect.origin.y - 2, width: 3, height: rect.height + 4),
+                roundedRect: NSRect(x: 6, y: rect.origin.y, width: 3, height: rect.height),
                 xRadius: 1.5,
                 yRadius: 1.5
             ).fill()

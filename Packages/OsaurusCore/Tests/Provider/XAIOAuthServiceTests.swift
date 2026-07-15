@@ -80,9 +80,10 @@ struct XAIOAuthServiceTests {
         #expect(!XAIOAuthService.isTrustedEndpoint("not a url"))
     }
 
-    @Test func supportedModels_provideOAuthCatalogWithGrok43Default() {
+    @Test func supportedModels_provideOAuthCatalogWithGrok45Default() {
         let models = XAIOAuthService.supportedModels
-        #expect(models.first == "grok-4.3")
+        #expect(models.first == "grok-4.5")
+        #expect(models.contains("grok-4.3"))
         #expect(models.contains("grok-build-0.1"))
         #expect(Set(models).count == models.count, "static catalog has duplicate slugs")
     }

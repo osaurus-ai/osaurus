@@ -54,6 +54,17 @@ struct CellRenderingContext {
     /// closed. Message cells paint every case-insensitive occurrence in
     /// their body text via `NativeMarkdownView.setSearchHighlight`.
     var searchHighlightQuery: String = ""
+    /// Turn owning the find bar's *current* match, or nil when no match is
+    /// current (bar closed / no matches).
+    var searchCurrentTurnId: UUID? = nil
+    /// Zero-based occurrence index of the current match within its turn's
+    /// content. Meaningless when `searchCurrentTurnId` is nil.
+    var searchCurrentOccurrence: Int = 0
+    /// Coordinator-scoped lookup: number of query occurrences in the
+    /// searchable blocks that precede the given block id within its turn.
+    /// Cells subtract it from `searchCurrentOccurrence` to translate the
+    /// turn-relative index into a block-local one.
+    var searchOccurrenceOffset: ((String) -> Int)? = nil
     /// Coordinator-scoped predicate: has the chart with this block id ever
     /// been drawn (and thus already played its entry animation) in the
     /// current chat? Used by `configureAsChart` to suppress the animation
@@ -81,6 +92,16 @@ struct CellRenderingContext {
     /// replaying.
     var cachedToolGroupView: ((String) -> NativeToolCallGroupView?)? = nil
     var cacheToolGroupView: ((String, NativeToolCallGroupView) -> Void)? = nil
+
+    /// Block-local occurrence index of the find bar's current match, or nil
+    /// when the current match isn't in this block's turn (or precedes this
+    /// block). Indices past this block's own occurrences are handled by the
+    /// renderer, which simply paints no current match for them.
+    func searchCurrentIndex(forBlock block: ContentBlock) -> Int? {
+        guard let searchCurrentTurnId, searchCurrentTurnId == block.turnId else { return nil }
+        let local = searchCurrentOccurrence - (searchOccurrenceOffset?(block.id) ?? 0)
+        return local >= 0 ? local : nil
+    }
 }
 
 // MARK: - Cell-Isolated ExpandedBlocksStore Proxy
@@ -108,6 +129,10 @@ final class NativeHeaderView: NSView {
     private var currentAvatarSize: CGFloat = NativeHeaderView.defaultAvatarSize
 
     private var turnId: UUID = UUID()
+    private var messageTimestamp: Date = Date()
+    /// Assistant turn that answered this message; backs the overflow menu's
+    /// "Inspect response". Nil when there's no reply yet.
+    private var responseTurnId: UUID?
     private var onCopy: ((UUID) -> Void)?
     private var onRegenerate: ((UUID) -> Void)?
     private var onEdit: ((UUID) -> Void)?
@@ -115,6 +140,17 @@ final class NativeHeaderView: NSView {
     private var storedOnCancelEdit: (() -> Void)?
     private var currentRole: MessageRole = .assistant
     private var currentTheme: (any ThemeProtocol)?
+    /// The ellipsis "…" control, kept so its overflow menu can anchor to it.
+    private weak var overflowControl: HeaderCircleActionControl?
+
+    /// Formats the message timestamp for the overflow menu header, e.g.
+    /// "Jun 20, 10:17 PM". Localized template so order/separators follow locale.
+    /// Mirrors `NativeAssistantActionsView.timestampFormatter`.
+    private static let timestampFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.setLocalizedDateFormatFromTemplate("MMMd jmm")
+        return formatter
+    }()
 
     override init(frame: NSRect) {
         super.init(frame: frame)
@@ -185,6 +221,8 @@ final class NativeHeaderView: NSView {
         customAvatarPath: String?,
         isEditing: Bool,
         isHovered: Bool,
+        timestamp: Date = Date(),
+        responseTurnId: UUID? = nil,
         theme: any ThemeProtocol,
         onCopy: ((UUID) -> Void)?,
         onRegenerate: ((UUID) -> Void)?,
@@ -193,6 +231,8 @@ final class NativeHeaderView: NSView {
         onCancelEdit: (() -> Void)?
     ) {
         self.turnId = turnId
+        self.messageTimestamp = timestamp
+        self.responseTurnId = responseTurnId
         self.isEditing = isEditing
         self.onCopy = onCopy
         self.onRegenerate = onRegenerate
@@ -266,6 +306,15 @@ final class NativeHeaderView: NSView {
     /// share the same key once stringified.
     private static var monogramCache: [String: NSImage] = [:]
     private static let monogramCacheLock = NSLock()
+
+    /// Drop all memoized monograms (memory-pressure response); re-rendered
+    /// lazily on next display.
+    static func clearMonogramCache() {
+        monogramCacheLock.lock()
+        monogramCache.removeAll()
+        monogramCacheLock.unlock()
+    }
+
     private static func monogramImage(
         name: String,
         tint: NSColor,
@@ -306,6 +355,9 @@ final class NativeHeaderView: NSView {
             return true
         }
         monogramCacheLock.lock()
+        // Safety-net cap (reset-on-overflow): keys vary by initial/tint/size,
+        // and monograms are cheap to re-render.
+        if monogramCache.count >= 256 { monogramCache.removeAll() }
         monogramCache[key] = image
         monogramCacheLock.unlock()
         return image
@@ -359,20 +411,115 @@ final class NativeHeaderView: NSView {
             self.onDelete?(self.turnId)
         }
 
+        // Overflow "…" carrying the message timestamp, mirroring the assistant
+        // footer's overflow menu (minus the assistant-only Inspect action).
+        overflowControl = addBtn(icon: "ellipsis", help: L("More"), theme: theme, tint: nil) { [weak self] in
+            self?.presentOverflowMenu()
+        }
+
         if isEditing, let onCancelEdit {
             addBtn(icon: "xmark", help: L("Cancel edit"), theme: theme, tint: nil, action: onCancelEdit)
         }
     }
 
+    /// Drops a menu under the "…" button mirroring the assistant footer's
+    /// overflow menu: a disabled header showing when the message was sent, then
+    /// an "Inspect response" action that opens the reply's request/response log.
+    /// A user turn has no log of its own, so Inspect keys on the assistant reply
+    /// rather than this turn, and is shown whenever a reply turn exists.
+    ///
+    /// The item is gated only on the O(1) `responseTurnId != nil` check — no log
+    /// lookup happens here, so building/showing the popover never scans the log
+    /// ring on the main thread. Whether the log still exists is resolved lazily
+    /// on click (`inspectResponseFromMenu`), exactly like the assistant menu.
+    private func presentOverflowMenu() {
+        guard let anchor = overflowControl else { return }
+        let menu = NSMenu()
+        menu.autoenablesItems = false
+
+        let header = NSMenuItem(
+            title: Self.timestampFormatter.string(from: messageTimestamp),
+            action: nil,
+            keyEquivalent: ""
+        )
+        header.isEnabled = false
+        menu.addItem(header)
+
+        if responseTurnId != nil {
+            menu.addItem(.separator())
+            let inspect = NSMenuItem(
+                title: L("Inspect response"),
+                action: #selector(inspectResponseFromMenu),
+                keyEquivalent: ""
+            )
+            inspect.target = self
+            if let theme = currentTheme {
+                let pointSize = CGFloat(theme.captionSize)
+                let cfg = NSImage.SymbolConfiguration(pointSize: pointSize, weight: .regular)
+                inspect.image = SymbolImageCache.image(
+                    "waveform.path.ecg.magnifyingglass",
+                    accessibilityDescription: nil
+                )?.withSymbolConfiguration(cfg)
+            }
+            menu.addItem(inspect)
+        }
+
+        // Anchor the menu's top-left just under the button's bottom-left so it
+        // opens downward like the assistant overflow menu. The button is a
+        // non-flipped NSView, so its bottom edge is y == 0 and the 4pt gap sits
+        // below it at a negative y.
+        menu.popUp(positioning: nil, at: NSPoint(x: 0, y: -4), in: anchor)
+    }
+
+    @objc private func inspectResponseFromMenu() {
+        // Focus the reply's request/response log. The menu only gates on a
+        // reply turn existing (no log scan on the popover path), so resolve the
+        // log lazily here and surface the alert when it's absent (never
+        // recorded, or evicted from the in-memory ring since the turn ran).
+        guard let responseTurnId else { return }
+        MainActor.assumeIsolated {
+            if InsightsService.shared.focus(turnId: responseTurnId) {
+                AppDelegate.shared?.showManagementWindow(initialTab: .insights)
+            } else {
+                presentLogUnavailableAlert()
+            }
+        }
+    }
+
+    @MainActor
+    private func presentLogUnavailableAlert() {
+        // Scope the alert to this chat window when we can resolve it, so it
+        // dims and centers over the chat rather than another surface.
+        let scope: ThemedAlertScope =
+            window.flatMap { ChatWindowManager.shared.windowId(for: $0) }
+            .map { .chat($0) } ?? .content
+        let requestId = UUID()
+        ThemedAlertCenter.shared.present(
+            ThemedAlertRequest(
+                id: requestId,
+                title: L("Insights Unavailable"),
+                message: L(
+                    "Detailed request logs are kept only for a short duration to save storage, so there's nothing to show for this response."
+                ),
+                buttons: [.primary(L("OK")) {}],
+                onDismiss: {
+                    ThemedAlertCenter.shared.dismiss(scope: scope, id: requestId)
+                }
+            ),
+            scope: scope
+        )
+    }
+
     private static let actionButtonSize: CGFloat = 28
 
+    @discardableResult
     private func addBtn(
         icon: String,
         help: String,
         theme: any ThemeProtocol,
         tint: NSColor?,
         action: @escaping () -> Void
-    ) {
+    ) -> HeaderCircleActionControl {
         let control = HeaderCircleActionControl(action: action)
         let pointSize = CGFloat(theme.captionSize) - 1
         let cfg = NSImage.SymbolConfiguration(pointSize: pointSize, weight: .medium)
@@ -390,6 +537,7 @@ final class NativeHeaderView: NSView {
             control.heightAnchor.constraint(equalToConstant: Self.actionButtonSize),
         ])
         actionStack.addArrangedSubview(control)
+        return control
     }
 }
 
@@ -928,7 +1076,9 @@ private final class UserMessageInlineEditView: NSView, NSTextViewDelegate {
     private var lastLayoutWidth: CGFloat = 0
 
     override init(frame frameRect: NSRect) {
-        let tv = CustomNSTextView()
+        // TextKit 1 from birth — avoids the lazy TextKit 2 → 1 downgrade on
+        // first `.layoutManager` access (see EditableTextView.makeNSView).
+        let tv = CustomNSTextView(usingTextLayoutManager: false)
         tv.maxHeight = 240
         tv.focusRingType = .none
         tv.isRichText = false
@@ -1311,7 +1461,7 @@ final class NativeStatsView: NSView {
             parts.append(String(format: L("%.1f tok/s"), tps))
         }
         if let count = tokenCount {
-            parts.append(L("\(count) tokens"))
+            parts.append(count == 1 ? L("1 token") : L("\(count) tokens"))
         }
         // Trailing diagnostic chip — vmlx tells us the model never emitted
         // `</think>` (or the family's close tag) before EOS / max_tokens.
@@ -1491,6 +1641,18 @@ final class NativeMessageCellView: NSTableCellView {
     private var currentKindTag: ContentBlockKindTag?
     private var currentBlockId: String?
 
+    /// Bounding rect (in this cell's coordinate space) of the find-match
+    /// occurrence at `index` within this cell's rendered text, or nil when
+    /// the cell renders no searchable text or the index is out of range.
+    /// Used by the table coordinator to scroll to the exact line of the
+    /// current match inside messages taller than the viewport.
+    func searchOccurrenceRect(_ index: Int) -> NSRect? {
+        guard let mv = nativeMarkdownView ?? userTextView,
+            let rect = mv.rectOfSearchOccurrence(index)
+        else { return nil }
+        return mv.convert(rect, to: self)
+    }
+
     /// tracks inline edit vs read-only markdown so we rebuild when edit mode toggles (same block kind)
     private var userMessageInlineEditActive: Bool = false
 
@@ -1621,11 +1783,13 @@ final class NativeMessageCellView: NSTableCellView {
         case let .toolCallGroup(calls):
             configureAsToolCallGroup(block: block, calls: calls, context: context, sameKind: sameKind)
 
-        case let .userMessage(text, attachments):
+        case let .userMessage(text, attachments, timestamp, responseTurnId):
             configureAsUserMessage(
                 block: block,
                 text: text,
                 attachments: attachments,
+                timestamp: timestamp,
+                responseTurnId: responseTurnId,
                 context: context,
                 sameKind: sameKind
             )
@@ -1811,7 +1975,11 @@ final class NativeMessageCellView: NSTableCellView {
             Self.buildHighlights(from: context.sessionRedactions, direction: .inbound),
             theme: context.theme
         )
-        mv.setSearchHighlight(query: context.searchHighlightQuery, theme: context.theme)
+        mv.setSearchHighlight(
+            query: context.searchHighlightQuery,
+            currentIndex: context.searchCurrentIndex(forBlock: block),
+            theme: context.theme
+        )
 
         // Apply assistant bubble background only when the target value actually changes —
         // configure() runs on every streaming token, so unconditional CGColor assignment
@@ -1969,6 +2137,8 @@ final class NativeMessageCellView: NSTableCellView {
         block: ContentBlock,
         text: String,
         attachments: [Attachment],
+        timestamp: Date,
+        responseTurnId: UUID?,
         context: CellRenderingContext,
         sameKind: Bool
     ) {
@@ -2216,7 +2386,11 @@ final class NativeMessageCellView: NSTableCellView {
                 Self.buildHighlights(from: context.sessionRedactions, direction: .outbound),
                 theme: theme
             )
-            mv.setSearchHighlight(query: context.searchHighlightQuery, theme: theme)
+            mv.setSearchHighlight(
+                query: context.searchHighlightQuery,
+                currentIndex: context.searchCurrentIndex(forBlock: block),
+                theme: theme
+            )
         }
 
         if let stack = userImageStack {
@@ -2282,6 +2456,8 @@ final class NativeMessageCellView: NSTableCellView {
             customAvatarPath: nil,
             isEditing: context.editingTurnId == block.turnId,
             isHovered: context.isTurnHovered,
+            timestamp: timestamp,
+            responseTurnId: responseTurnId,
             theme: context.theme,
             onCopy: context.onCopy,
             onRegenerate: context.onRegenerate,
@@ -2574,10 +2750,10 @@ final class NativeMessageCellView: NSTableCellView {
             nativeFileDiffView = dv
         }
         let blockId = block.id
-        // Diff cards default to expanded; the shared `expandedIds` set is reused
-        // with inverted meaning — presence marks a card the user has collapsed.
-        // The height estimator applies the same inversion.
-        let collapsed = context.expandedIds.contains(blockId)
+        // Diff cards default to collapsed; presence in the shared `expandedIds`
+        // set marks a card the user has expanded. The height estimator applies
+        // the same rule.
+        let collapsed = !context.expandedIds.contains(blockId)
         nativeFileDiffView?.onToggleCollapse = {
             context.onToggleExpand(blockId)
         }
@@ -3000,7 +3176,7 @@ enum NativeCellHeightEstimator {
             let lines = max(1, (text.count + chars - 1) / chars)
             return CGFloat(lines) * 22 + 24
 
-        case let .userMessage(text, attachments):
+        case let .userMessage(text, attachments, _, _):
             var h: CGFloat = 8  // outerTopGap
             let innerW = max(width - 32, 100)
 
@@ -3084,12 +3260,12 @@ enum NativeCellHeightEstimator {
             return h
 
         case let .fileDiff(diff):
-            // Diff cards reuse `expandedIds` with inverted meaning, so
-            // `isExpanded == true` here marks a card the user collapsed.
-            // configureAsFileDiff reports measuredCardHeight(...) + 12 for the
-            // cell top/bottom inset — match that.
+            // Diff cards default to collapsed and only expand when the user
+            // opted in via `expandedIds`. configureAsFileDiff reports
+            // measuredCardHeight(...) + 12 for the cell top/bottom inset —
+            // match that.
             let header = NativeFileDiffView.headerHeight
-            if isExpanded { return header + 12 }
+            if !isExpanded { return header + 12 }
             let innerW = max(width - 32 - 14 - 8, 100)
             let chars = max(Int(innerW / 7), 20)
             var lineRows = 0

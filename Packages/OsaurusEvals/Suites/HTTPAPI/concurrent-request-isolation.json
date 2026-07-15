@@ -1,0 +1,15 @@
+{
+  "id": "http_api.concurrent-request-isolation",
+  "domain": "http_api",
+  "label": "http api • two concurrent requests never receive each other's content",
+  "query": "unused (the scenario builds its own echo prompts)",
+  "notes": "Isolation under concurrency: two simultaneous chat requests, each instructed to echo a distinct token, must each get exactly their own token back — a cross-contaminated batcher or shared decode state leaks the sibling's token and fails. Off-CI (needs a model).",
+  "fixtures": {},
+  "expect": {
+    "httpAPI": {
+      "scenario": "concurrent_isolation",
+      "maxTokens": 64,
+      "echoTokens": ["ALPHA-7391", "BRAVO-2648"]
+    }
+  }
+}

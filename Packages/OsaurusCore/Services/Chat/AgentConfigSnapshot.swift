@@ -91,6 +91,11 @@ public struct AgentConfigSnapshot: Sendable, Equatable {
     /// controls whether the model can recall memory mid-session.
     public let searchMemoryEnabled: Bool
 
+    /// Per-agent gate for the native `web_search` tool and its dynamic
+    /// sibling `search_and_extract`. Default ON (free providers work with
+    /// zero config); when false both tools are stripped from the schema.
+    public let webSearchEnabled: Bool
+
     /// Per-agent opt-in for the self-scheduling tools (`schedule_next_run` /
     /// `cancel_next_run` / `notify`). Decoupled from the schedule-mode picker
     /// (which only sets host-enforced bounds); when false those tools are
@@ -141,6 +146,7 @@ public struct AgentConfigSnapshot: Sendable, Equatable {
         renderChartEnabled: Bool = false,
         speakEnabled: Bool = false,
         searchMemoryEnabled: Bool = false,
+        webSearchEnabled: Bool = true,
         selfSchedulingEnabled: Bool = false,
         computerUseEnabled: Bool = false,
         spawnDelegationEnabled: Bool = false,
@@ -163,6 +169,7 @@ public struct AgentConfigSnapshot: Sendable, Equatable {
         self.renderChartEnabled = renderChartEnabled
         self.speakEnabled = speakEnabled
         self.searchMemoryEnabled = searchMemoryEnabled
+        self.webSearchEnabled = webSearchEnabled
         self.selfSchedulingEnabled = selfSchedulingEnabled
         self.computerUseEnabled = computerUseEnabled
         self.spawnDelegationEnabled = spawnDelegationEnabled
@@ -207,6 +214,7 @@ public struct AgentConfigSnapshot: Sendable, Equatable {
             renderChartEnabled: caps.renderChartEnabled,
             speakEnabled: caps.speakEnabled,
             searchMemoryEnabled: caps.searchMemoryEnabled,
+            webSearchEnabled: caps.webSearchEnabled,
             selfSchedulingEnabled: caps.selfSchedulingEnabled,
             computerUseEnabled: caps.computerUseEnabled,
             spawnDelegationEnabled: caps.spawnDelegationEnabled,

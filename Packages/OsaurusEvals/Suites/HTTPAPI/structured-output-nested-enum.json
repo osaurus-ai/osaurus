@@ -1,0 +1,27 @@
+{
+  "id": "http_api.structured-output-nested-enum",
+  "domain": "http_api",
+  "label": "http api • json_object mode handles nested objects, arrays, and enums",
+  "query": "Return a JSON object for a coffee order with keys: \"size\" (one of \"small\", \"medium\", \"large\"), \"extras\" (an array of strings), and \"customer\" (an object with a \"name\" string key). Output only the JSON object.",
+  "notes": "The harder structured-output row: nested object, array, and an enum-constrained field, all validated deterministically by SchemaValidator. A model that emits prose around the JSON, invents enum values, or flattens the nesting fails without any judge. Off-CI (needs a model).",
+  "fixtures": {},
+  "expect": {
+    "httpAPI": {
+      "scenario": "structured_output",
+      "maxTokens": 320,
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "size": { "type": "string", "enum": ["small", "medium", "large"] },
+          "extras": { "type": "array", "items": { "type": "string" } },
+          "customer": {
+            "type": "object",
+            "properties": { "name": { "type": "string" } },
+            "required": ["name"]
+          }
+        },
+        "required": ["size", "extras", "customer"]
+      }
+    }
+  }
+}

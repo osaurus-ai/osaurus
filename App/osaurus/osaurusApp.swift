@@ -146,13 +146,55 @@ private extension osaurusApp {
             Divider()
 
             Menu {
-                ForEach(themeManager.installedThemes, id: \.metadata.id) { theme in
+                Button {
+                    themeManager.setAppearanceMode(.system, clearActiveTheme: true)
+                } label: {
+                    HStack {
+                        Text(verbatim: L("Follow System Appearance"))
+                        if themeManager.activeCustomTheme == nil && themeManager.appearanceMode == .system {
+                            Spacer()
+                            Image(systemName: "checkmark")
+                        }
+                    }
+                }
+
+                Button {
+                    themeManager.setAppearanceMode(.light, clearActiveTheme: true)
+                } label: {
+                    HStack {
+                        Text(verbatim: L("Light"))
+                        if themeManager.activeCustomTheme == nil && themeManager.appearanceMode == .light {
+                            Spacer()
+                            Image(systemName: "checkmark")
+                        }
+                    }
+                }
+
+                Button {
+                    themeManager.setAppearanceMode(.dark, clearActiveTheme: true)
+                } label: {
+                    HStack {
+                        Text(verbatim: L("Dark"))
+                        if themeManager.activeCustomTheme == nil && themeManager.appearanceMode == .dark {
+                            Spacer()
+                            Image(systemName: "checkmark")
+                        }
+                    }
+                }
+
+                Divider()
+
+                ForEach(themeMenuThemeItems, id: \.metadata.id) { theme in
                     Button {
-                        themeManager.applyCustomTheme(theme)
+                        if let mode = ThemeManager.appearanceMode(forBuiltInTheme: theme) {
+                            themeManager.setAppearanceMode(mode, clearActiveTheme: true)
+                        } else {
+                            themeManager.applyCustomTheme(theme)
+                        }
                     } label: {
                         HStack {
                             Text(theme.metadata.name)
-                            if themeManager.activeCustomTheme?.metadata.id == theme.metadata.id {
+                            if isThemeMenuItemActive(theme) {
                                 Spacer()
                                 Image(systemName: "checkmark")
                             }
@@ -171,6 +213,17 @@ private extension osaurusApp {
                 Text(verbatim: L("Theme"))
             }
         }
+    }
+
+    private func isThemeMenuItemActive(_ theme: CustomTheme) -> Bool {
+        if let mode = ThemeManager.appearanceMode(forBuiltInTheme: theme) {
+            return themeManager.activeCustomTheme == nil && themeManager.appearanceMode == mode
+        }
+        return themeManager.activeCustomTheme?.metadata.id == theme.metadata.id
+    }
+
+    private var themeMenuThemeItems: [CustomTheme] {
+        themeManager.installedThemes.filter { ThemeManager.appearanceMode(forBuiltInTheme: $0) == nil }
     }
 
     // MARK: Window Menu

@@ -97,6 +97,33 @@ and
 Primary desktop transports are Slack Socket Mode and Telegram long-poll; public
 webhooks are advanced/future proof paths.
 
+## Release Readiness and Plugin Migration
+
+Native Agent Channels should be treated as ready for testing only after the
+connection is configured and the live proof checklist passes. A saved credential
+is not enough. Telegram receive, for example, also needs local message storage,
+long polling, readable chat ids, authorized sender ids, and no active webhook
+for the same bot token.
+
+Use the native readiness classifier in code for support tooling or future UI:
+
+- Slack local desktop receive proof is blocked until the bot and Socket Mode
+  credentials are saved, the workspace/team is allowlisted, readable channels
+  exist, and authorized senders are configured. Signed HTTP event proof also
+  requires the signing secret.
+- Telegram is blocked until the bot token validates, receive storage and long
+  polling are enabled, readable chats and authorized senders are configured, and
+  no webhook conflicts with long polling.
+- Writes remain a separate gate: enabled writes require write-allowlisted
+  destinations and confirmed send calls.
+
+The legacy Telegram plugin remains a separate integration path. User feedback
+from that plugin should be routed to plugin support unless the user confirms
+they configured Settings -> Channels -> Telegram. The plugin can be deprecated
+after native Telegram Channels have real receive/read/write/restart/group-auth
+proof and a clear migration note, but it should not be removed or described as
+fixed by native-channel work before that proof exists.
+
 ## Configuration
 
 Non-secret channel definitions live in `agent-channels.json`. Secrets should be

@@ -44,6 +44,11 @@ public struct OnboardingView: View {
     @State private var direction: OnboardingDirection = .forward
     /// Guards the one-shot `onboarding_started` + first `stepViewed` emit.
     @State private var didTrackStart = false
+    /// Guards the one-shot identity/Router warm-up kicked off when the user
+    /// reaches the Configure AI step, and tells `configureImplicitDefaults`
+    /// that identity setup is already in flight (so it doesn't start a second,
+    /// racing `OsaurusIdentity.setup()` at finish).
+    @State private var didPrepareManagedBrain = false
 
     @StateObject private var welcomeState = WelcomeState()
     @StateObject private var createAgentState = CreateAgentState()
@@ -79,18 +84,17 @@ public struct OnboardingView: View {
                 cta: { ctaSlot }
             )
 
-            // Hosted at the window root (above the chrome, not inside the
-            // clipped body) so the "Choose your model" dialog can dim the whole
-            // step and center over it — the previous popover overflowed the body
-            // region and covered the footer CTA.
+            // Window-root host for the Configure AI model chooser dialog:
+            // it must dim and block the whole window (header, footer CTA)
+            // while open, so it can't live inside the step's body slot.
             if currentStep == .configureAI && configureAIState.isChoosingModel {
                 ConfigureModelChooserModal(state: configureAIState)
                     .transition(.opacity)
-                    .zIndex(2)
+                    .zIndex(10)
             }
         }
+        .animation(theme.animationQuick(), value: configureAIState.isChoosingModel)
         .frame(width: OnboardingMetrics.windowWidth, height: OnboardingMetrics.windowHeight)
-        .animation(theme.springAnimation(), value: configureAIState.isChoosingModel)
         .onAppear {
             onPreferredSizeChange?(
                 CGSize(
@@ -108,6 +112,33 @@ public struct OnboardingView: View {
         }
         .onChange(of: currentStep) { _, newStep in
             OnboardingTelemetry.stepViewed(newStep)
+            // Warm up identity + Router as soon as this step appears. Both the
+            // Cloud-only path and the temporary bridge used during a local
+            // download should be ready before the user reaches chat.
+            if newStep == .configureAI {
+                prepareManagedBrainReadiness()
+            }
+        }
+    }
+
+    /// One-shot background warm-up for the managed Osaurus brain: create the
+    /// identity master key when missing (fresh install — no biometric prompt),
+    /// then attempt the Router connect so its model catalog is populated by
+    /// the time `pinSelectedBrainModel` looks for it. Safe to run for users
+    /// who end up choosing local/BYOK: identity is created at finish anyway
+    /// (`configureImplicitDefaults`), and the connect only runs while the
+    /// router is enabled.
+    private func prepareManagedBrainReadiness() {
+        guard !didPrepareManagedBrain else { return }
+        didPrepareManagedBrain = true
+        Task.detached(priority: .utility) {
+            // Same gate as `configureImplicitDefaults`: `setup()` on an
+            // existing identity falls into `loadExistingIdentity()`, which
+            // prompts for biometrics — unwanted noise during onboarding.
+            if !OsaurusIdentity.exists() {
+                _ = try? await OsaurusIdentity.setup()
+            }
+            await RemoteProviderManager.shared.connectOsaurusRouterIfPossible()
         }
     }
 
@@ -259,8 +290,10 @@ public struct OnboardingView: View {
                 Spacer(minLength: 0)
             }
         case .configureAI:
-            // Centered (like Create Agent) with a content-hugging pill, so the
-            // CTA reads consistently across the two adjacent steps.
+            // Keep the same centered footer rhythm as every adjacent
+            // onboarding step. Download and Cloud-only stay grouped inside
+            // this cluster so the choice remains clear without shifting the
+            // wizard's visual axis.
             HStack {
                 Spacer(minLength: 0)
                 ConfigureAICTA(
@@ -321,8 +354,9 @@ public struct OnboardingView: View {
             // this step, and the CTA is always enabled so it's a single tap.
             EmptyView()
         case .configureAI:
-            // The download escape hatch now lives in the primary CTA
-            // ("Continue in Background"), so there's no secondary slot.
+            // The Cloud-only escape hatch now lives beside the Cloud
+            // explanation in `ConfigureAIBody`; a far-left footer link was too
+            // disconnected from its meaning and easy to miss.
             EmptyView()
         case .choosePlugins:
             // Skip is folded into the primary CTA when nothing is selected.
@@ -478,12 +512,9 @@ public struct OnboardingView: View {
             configureAIState.selectedBrainSource?.telemetryValue
         )
 
-        // The managed Osaurus Router is intentionally left at its persisted
-        // default (on for fresh installs via `OsaurusRouter.isEnabled`) so the
-        // hosted models are available in everyone's picker. Onboarding no longer
-        // writes the flag, so a user's explicit opt-out in Credits sticks and is
-        // never silently re-enabled. Routing is not forced: each agent still
-        // runs whatever model `pinSelectedBrainModel` pins below.
+        // The managed Router stays at its persisted default unless the user
+        // explicitly chose the Cloud-only path. Local and BYOK choices never
+        // override a previous opt-out; routing follows the model pinned below.
 
         // Pin the new/active agent's default model to the brain the user chose
         // on the Configure AI step, so the first chat respects their selection.
@@ -494,12 +525,19 @@ public struct OnboardingView: View {
     }
 
     /// Pin the new/active agent's default model to the brain source the user
-    /// committed to on the Configure AI step (local or bring-your-own-key). The
-    /// hosted router is on by default and surfaces its models in the picker, but
-    /// it's never forced as the active brain here.
+    /// committed to on the Configure AI step (managed Osaurus, local, or
+    /// bring-your-own-key). Selecting local or a provider never routes through
+    /// the hosted router implicitly — only the explicit `.osaurus` choice pins
+    /// a router model.
     private func pinSelectedBrainModel() {
         let agentId = createAgentState.createdAgentId ?? Agent.defaultId
         switch configureAIState.selectedBrainSource {
+        case .osaurus:
+            // Explicit "Skip download" / start-on-Cloud path: (re-)enable the managed router —
+            // a no-op unless a previous opt-out is being overridden by this
+            // explicit choice — then pin its first chat-capable model.
+            RemoteProviderManager.shared.setOsaurusRouterEnabled(true)
+            pinOsaurusRouterModel(forAgent: agentId)
         case .local:
             // The model may still be downloading; the id is durable and
             // `ChatView.refreshPickerItems` re-resolves it once the bundle lands.
@@ -514,6 +552,25 @@ public struct OnboardingView: View {
             }
         case nil:
             break
+        }
+    }
+
+    /// After onboarding finishes on the managed path, poll (bounded, ~20s) for
+    /// the router's first chat-capable model and pin it. The identity setup
+    /// kicked off on step entry may still be in flight, so each poll retries
+    /// the single-shot connect (a cheap no-op once connected / while
+    /// connecting) before looking the model up. Gives up quietly — the hosted
+    /// models still appear in the picker once the connect lands.
+    private func pinOsaurusRouterModel(forAgent agentId: UUID) {
+        Task { @MainActor in
+            for _ in 0 ..< 40 {
+                if let model = RemoteProviderManager.shared.firstRunOsaurusRouterModelId() {
+                    AgentManager.shared.updateDefaultModel(for: agentId, model: model)
+                    return
+                }
+                await RemoteProviderManager.shared.connectOsaurusRouterIfPossible()
+                try? await Task.sleep(nanoseconds: 500_000_000)
+            }
         }
     }
 
@@ -559,8 +616,10 @@ public struct OnboardingView: View {
         // Keychain with no biometric prompt. We gate on `exists()` because
         // when a master is already present `setup()` would fall into
         // `loadExistingIdentity()`, which *does* prompt for biometrics —
-        // unwanted noise for someone re-running onboarding.
-        if !OsaurusIdentity.exists() {
+        // unwanted noise for someone re-running onboarding. Skipped when the
+        // Configure AI step's warm-up already kicked setup off (it may still
+        // be in flight, so `exists()` alone can't dedupe it).
+        if !didPrepareManagedBrain && !OsaurusIdentity.exists() {
             Task.detached(priority: .utility) {
                 _ = try? await OsaurusIdentity.setup()
             }

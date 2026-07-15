@@ -132,6 +132,18 @@ Emitted once when an agent run is initiated.
 Emitted when the local server transitions to running. No properties. (No port
 or bind address is attached.)
 
+### `sandbox_boot`
+
+Emitted once per successful sandbox VM boot, when provisioning reaches the
+running state. Full-fidelity phase timings stay in a local file
+(`~/.osaurus/container/startup-metrics.json`); only the coarse dimensions
+below are sent.
+
+| Property | Type | Values / meaning |
+|----------|------|------------------|
+| `kind` | string | `cold` (full image unpack), `warm` (reused rootfs), `warmFallback` (warm attempt failed, cold rebuild succeeded), or `template` (rootfs cloned copy-on-write from the immutable base template) |
+| `duration_bucket` | string | Coarse total-boot latency bucket: `lt_1s`, `1_5s`, `5_15s`, `15_60s`, `1_5m`, `gte_5m` |
+
 ### `app_launched`
 
 Emitted once at launch. No properties. Baseline signal for retention.
@@ -175,6 +187,13 @@ The onboarding funnel events — `onboarding_started`, `onboarding_step_viewed`,
 `onboarding_step_skipped`, `onboarding_completed` — carry only a stable step
 name/index and a completion reason. They are defined in
 [`OnboardingTelemetry`](../Packages/OsaurusCore/Views/Onboarding/OnboardingTelemetry.swift).
+
+The Configure AI step adds `brain_source_selected` when the user chooses
+Osaurus Cloud, downloads a local model, or connects a provider. Its
+low-cardinality `source` is `hosted`, `local`, or `provider_key`; the provider
+path adds the closed-enum `provider` type and the local path adds boolean
+`download_started` — whether committing kicked off a background model
+download. No key, model id, or URL is ever attached.
 
 ## Remote identifiers
 

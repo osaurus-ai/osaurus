@@ -172,12 +172,19 @@ class SystemMonitorService: ObservableObject {
         host_page_size(hostPort, &rawPage)
         let pageSize = rawPage
         let totalMemory = Double(ProcessInfo.processInfo.physicalMemory)
-        let freeMemory = Double(vmInfo.free_count) * Double(pageSize)
-        let inactiveMemory = Double(vmInfo.inactive_count) * Double(pageSize)
-        let _ = Double(vmInfo.wire_count) * Double(pageSize)
-        let _ = Double(vmInfo.compressor_page_count) * Double(pageSize)
+        // "Available" mirrors the RAM feasibility gate in `ModelRuntime`
+        // (free + inactive + speculative + purgeable), so the percentage
+        // shown next to the tight-fit banner is the complement of the same
+        // number the gate compares against. Counting speculative/purgeable
+        // (largely file cache) as used overstated pressure versus Activity
+        // Monitor, which treats cached files as available.
+        let availableMemory =
+            (Double(vmInfo.free_count)
+                + Double(vmInfo.inactive_count)
+                + Double(vmInfo.speculative_count)
+                + Double(vmInfo.purgeable_count)) * Double(pageSize)
 
-        let usedMemory = totalMemory - freeMemory - inactiveMemory
+        let usedMemory = max(0.0, totalMemory - availableMemory)
         let percentage = (usedMemory / totalMemory) * 100.0
 
         let totalGB = totalMemory / (1024 * 1024 * 1024)

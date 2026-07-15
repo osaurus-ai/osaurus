@@ -73,6 +73,20 @@ enum ChatSessionStore {
         }
     }
 
+    /// Non-blocking variant of `save`. Hands the write to the database's serial
+    /// queue and returns immediately so a main-actor caller never stalls on the
+    /// encode + transaction. Falls back to the same deferred-save queue when the
+    /// DB isn't open yet, so no write is lost across a key rotation.
+    static func saveAsync(_ session: ChatSessionData) {
+        guard !pendingDeletes.contains(session.id) else { return }
+        ensureOpen()
+        guard didOpen else {
+            pendingSaves[session.id] = session
+            return
+        }
+        ChatHistoryDatabase.shared.saveSessionAsync(session)
+    }
+
     /// Sessions whose writes were deferred because the chat-history DB wasn't
     /// open yet. Keyed by id so repeated saves of the same session collapse to
     /// the latest snapshot. Drained by `flushPendingSaves()`.
@@ -146,6 +160,28 @@ enum ChatSessionStore {
     // MARK: - Lifecycle
 
     private static var didOpen = false
+
+    /// Warm the chat-history database off the main thread so the first
+    /// window's synchronous `loadAll()` finds it already open. The launch
+    /// path (`presentInitialWindow` → `ChatWindowState.init` →
+    /// `ChatSessionsManager.shared` → `loadAll`) otherwise pays the encrypted
+    /// SQLite open (Keychain read + WAL open + migrations) on the main
+    /// thread and trips the app-hang watchdog on slow disks.
+    ///
+    /// `ChatHistoryDatabase.open()` is idempotent and serialized on its own
+    /// queue, so racing the main-thread `ensureOpen()` is safe — whichever
+    /// runs second no-ops.
+    nonisolated static func preloadInBackground() {
+        Task.detached(priority: .userInitiated) {
+            guard StorageKeyManager.shared.isStorageReadyForWrites else { return }
+            StorageMutationGate.blockingAwaitNotMutating()
+            do {
+                try ChatHistoryDatabase.shared.open()
+            } catch {
+                print("[ChatSessionStore] Background chat-history prewarm failed: \(error)")
+            }
+        }
+    }
 
     /// Open the database (idempotent) on first call. Safe to invoke from any
     /// session-touching code path.

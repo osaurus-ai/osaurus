@@ -43,10 +43,14 @@
 //      The ML re-scan covers `Send anyway` semantics: skipping a
 //      person/address/secret entity still blocks the send, since
 //      the post-scrub invariant uses the model not just regex.
-//    * Non-interactive caller (HTTP, plugin, agent) with no
-//      review presenter and `requireReviewForNonInteractive`
-//      enabled → `PrivacyReviewService.review` returns `.canceled`,
-//      which the pipeline lifts into `reviewCanceled`.
+//    * Non-interactive caller (HTTP, plugin, P2P — by request
+//      source, or any caller with no review presenter) with
+//      `requireReviewForNonInteractive` enabled →
+//      `PrivacyReviewService.review` returns
+//      `.blockedNonInteractive`, which the pipeline lifts into the
+//      typed `reviewRequiresInteractive` error (422 on the wire).
+//      Non-UI origins never suspend on the review sheet, even when
+//      a chat window has a presenter registered.
 //
 //  Inbound paths (`wrapInboundStream` / `unscrubInbound`) are
 //  separately documented but the same rule applies: never let a
@@ -92,6 +96,14 @@ enum PrivacyFilterPipelineError: Error, Equatable, LocalizedError {
     /// ever leaving this process. Send is blocked.
     case scrubLeaked(categoryCounts: [EntityCategory: Int])
 
+    /// A non-interactive caller (HTTP API, plugin, P2P) hit fresh PII
+    /// detections while `requireReviewForNonInteractive` is on. There
+    /// is no legitimate way to drive the review sheet for a request
+    /// the user didn't send from the chat window, so the send is
+    /// blocked with an actionable message instead of hanging the
+    /// client on a sheet (or silently auto-approving).
+    case reviewRequiresInteractive(detectionCount: Int)
+
     var errorDescription: String? {
         switch self {
         case .reviewCanceled:
@@ -104,6 +116,9 @@ enum PrivacyFilterPipelineError: Error, Equatable, LocalizedError {
                 "Privacy Filter: \(count) approved redaction(s) didn't apply (substitution mismatch). The message was not sent. This is a bug — please report."
         case .scrubLeaked(let counts):
             return Self.formatScrubLeaked(categoryCounts: counts)
+        case .reviewRequiresInteractive(let count):
+            return
+                "Privacy Filter detected \(count) item(s) of PII in this request. Non-interactive requests (HTTP API, plugins) cannot show the review sheet, so the send was blocked. Approve redactions in the Osaurus chat first, disable 'Require review for non-interactive requests' in Settings → Privacy, or disable the filter for this provider."
         }
     }
 
@@ -117,6 +132,7 @@ enum PrivacyFilterPipelineError: Error, Equatable, LocalizedError {
         case .engineUnavailable: return "privacy_filter_engine_unavailable"
         case .scrubNoOp: return "privacy_filter_scrub_no_op"
         case .scrubLeaked: return "privacy_filter_scrub_leaked"
+        case .reviewRequiresInteractive: return "privacy_filter_review_required"
         }
     }
 
@@ -129,7 +145,7 @@ enum PrivacyFilterPipelineError: Error, Equatable, LocalizedError {
         switch self {
         case .reviewCanceled: return 499  // client-closed-request analog
         case .engineUnavailable: return 503
-        case .scrubNoOp, .scrubLeaked: return 422
+        case .scrubNoOp, .scrubLeaked, .reviewRequiresInteractive: return 422
         }
     }
 
@@ -272,10 +288,20 @@ enum PrivacyFilterPipeline {
     /// Throws `PrivacyFilterPipelineError.reviewCanceled` when the
     /// user dismisses the redaction review sheet. Callers must catch
     /// this and abort the send.
+    ///
+    /// `requestSource` gates interactive review by origin: only
+    /// `.chatUI` requests may suspend on the review sheet. HTTP API,
+    /// plugin, and P2P requests never present UI — with fresh
+    /// detections they either fail closed
+    /// (`.reviewRequiresInteractive`, the default) or auto-approve
+    /// (when the user disabled `requireReviewForNonInteractive`).
+    /// The default `.httpAPI` is the conservative, never-interactive
+    /// choice for callers that don't thread a source explicitly.
     static func applyOutbound(
         messages: [ChatMessage],
         sessionId: String?,
-        providerId: UUID
+        providerId: UUID,
+        requestSource: RequestSource = .httpAPI
     ) async throws -> (messages: [ChatMessage], map: RedactionMap?) {
         let config = PrivacyFilterStore.snapshot()
         guard config.isEnabled(forProviderId: providerId) else {
@@ -479,19 +505,34 @@ enum PrivacyFilterPipeline {
         }
 
         // Hand only the newly-detected entities to the review service.
-        // When a UI presenter is registered + the session hasn't
-        // opted into auto-approve, this suspends until the user
-        // confirms. The background-caller path (HTTP API, plugin
-        // agents) auto-approves so non-interactive callers don't
-        // deadlock.
+        // Interactive (chat UI) requests suspend on the sheet until
+        // the user confirms; non-interactive origins (HTTP API,
+        // plugin, P2P) never present UI — even when a chat window has
+        // a presenter registered — so a server-origin request can't
+        // hang its client on a sheet the user isn't expecting. They
+        // fail closed (or auto-approve per the settings opt-out).
         let outcome = await PrivacyReviewService.shared.review(
             detections: newDetections,
-            sessionId: sid
+            sessionId: sid,
+            allowInteractive: requestSource == .chatUI
         )
         let approvedFromReview: [DetectedEntity]
         switch outcome {
         case .approved(let entities):
             approvedFromReview = entities
+        case .blockedNonInteractive:
+            // Fail-closed block for a non-UI caller. Same map rollback
+            // as the cancel branch (the interned detections never
+            // shipped), but a distinct typed error so the HTTP client
+            // gets an actionable 422 instead of an ambiguous cancel.
+            let freshOriginals = Set(newDetections.map(\.original))
+            await map.rollbackToSnapshot(
+                removingOriginals: freshOriginals,
+                counters: preDetectionCounters
+            )
+            throw PrivacyFilterPipelineError.reviewRequiresInteractive(
+                detectionCount: newDetections.count
+            )
         case .canceled:
             // User cancelled the send (Cancel button, sheet
             // dismissed, or the awaiting Task was cancelled by the
@@ -576,11 +617,24 @@ enum PrivacyFilterPipeline {
                 .filter { !$0.approved }
                 .map(\.original)
         )
+        // Scope the regex re-scan to the message range detection
+        // actually classified (the latest user turn onward). Carry-
+        // over substitution can dirty EARLIER history messages (a
+        // prior-turn placeholder re-applied to an old assistant
+        // reply); those messages were never in detection scope, so
+        // regex hits there (e.g. URLs the model itself emitted last
+        // turn) were never reviewable and must not block the send.
+        // Substitution failures in those messages are still caught
+        // by the per-original assertion below, which checks every
+        // approved original against the FULL scrubbed history.
+        let detectionStart = messages.lastIndex(where: { $0.role == "user" }) ?? 0
+        let scopedDirtyIndices = diff.dirtyIndices.filter { $0 >= detectionStart }
         let leaks = Self.scanForLeaks(
             in: scrubbed,
             ruleset: ruleset,
             ignoreOriginals: skippedOriginals,
-            dirtyIndices: diff.dirtyIndices
+            dirtyIndices: scopedDirtyIndices,
+            skipCodeBlocks: config.skipCodeBlocks
         )
 
         // Per-original assertion: every APPROVED entity should be
@@ -682,11 +736,20 @@ enum PrivacyFilterPipeline {
     /// were untouched by `applyingScrub` (no new text), so re-scanning
     /// them is pure cost. Pass `nil` to scan the whole history (used
     /// by tests and the lower-priority callers).
+    ///
+    /// `skipCodeBlocks` mirrors the detection pass's code masking.
+    /// Detection runs against a `CodeBlockMasker`-masked view (when
+    /// the setting is on), so PII inside fenced / inline / indented
+    /// code is never detected or reviewable. Re-scanning the RAW text
+    /// here would count those spans as "leaks" and block the send on
+    /// text the user was never shown — the invariant must see the
+    /// same masked view detection saw.
     static func scanForLeaks(
         in messages: [ChatMessage],
         ruleset: RegexEntityDetector.EffectiveRuleSet,
         ignoreOriginals: Set<String> = [],
-        dirtyIndices: Set<Int>? = nil
+        dirtyIndices: Set<Int>? = nil,
+        skipCodeBlocks: Bool = false
     ) -> [EntityCategory: Int] {
         var counts: [EntityCategory: Int] = [:]
         let scoped: [ChatMessage]
@@ -702,7 +765,8 @@ enum PrivacyFilterPipeline {
         }
         for text in scoped.scrubbableTexts() {
             if text.isEmpty { continue }
-            let matches = RegexEntityDetector.detect(in: text, ruleset: ruleset)
+            let scanText = skipCodeBlocks ? CodeBlockMasker.mask(text).masked : text
+            let matches = RegexEntityDetector.detect(in: scanText, ruleset: ruleset)
             for match in matches {
                 if ignoreOriginals.contains(match.original) { continue }
                 counts[match.category, default: 0] += 1

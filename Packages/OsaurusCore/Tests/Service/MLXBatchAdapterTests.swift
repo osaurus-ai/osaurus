@@ -609,26 +609,105 @@ struct MLXBatchAdapterTests {
         #expect(effective.repetitionPenalty == engineDefaults.repetitionPenalty)
     }
 
+    /// A model name is not a model identity.
+    ///
+    /// Re-bake a pack (MXFP4 -> MXFP8, a re-quant, any weight edit) and install it
+    /// over the old one under the same name: the layer count, head dims and KV mode
+    /// are all unchanged, so every tag the cache key used to carry is unchanged too.
+    /// The key was therefore byte-identical across the swap, and the NEW weights
+    /// would restore the OLD weights' KV and keep generating from activations that
+    /// never came from them — silently, and looking for all the world like a bad
+    /// quant. Re-quantizing under a stable name is a routine operation here, so this
+    /// was reachable in normal use.
+    @Test func cacheCoordinatorModelKey_isolatesWeightsRebakedUnderTheSameName() {
+        let beforeRebake = ModelRuntime.cacheCoordinatorModelKey(
+            modelName: "Ornith-1.0-9B",
+            kvModeTag: "fp16",
+            weightsFingerprint: "aaaaaaaaaaaaaaaa"
+        )
+        let afterRebake = ModelRuntime.cacheCoordinatorModelKey(
+            modelName: "Ornith-1.0-9B",  // same name, same topology, new weights
+            kvModeTag: "fp16",
+            weightsFingerprint: "bbbbbbbbbbbbbbbb"
+        )
+
+        #expect(
+            beforeRebake != afterRebake,
+            "re-baked weights under the same name must not inherit the old pack's KV cache")
+        #expect(beforeRebake.contains("weights=aaaaaaaaaaaaaaaa"))
+        #expect(afterRebake.contains("weights=bbbbbbbbbbbbbbbb"))
+
+        // ...and the same weights must still hit, or we have traded a correctness
+        // bug for a cache that never warms.
+        let reload = ModelRuntime.cacheCoordinatorModelKey(
+            modelName: "Ornith-1.0-9B",
+            kvModeTag: "fp16",
+            weightsFingerprint: "aaaaaaaaaaaaaaaa"
+        )
+        #expect(reload == beforeRebake, "an unchanged pack must still reuse its cache")
+    }
+
+    /// The fingerprint has to survive a relaunch. Swift seeds `Hasher` per process,
+    /// so a `hashValue`-derived key would change on every launch and the prefix
+    /// cache would never hit again — a correctness fix that quietly becomes a
+    /// performance bug. FNV-1a is stable; this pins that it stays that way.
+    @Test func weightsFingerprint_isStableAndDeterministic() throws {
+        let dir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("fp-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        try Data("weights".utf8).write(to: dir.appendingPathComponent("model.safetensors"))
+        try Data("{}".utf8).write(to: dir.appendingPathComponent("config.json"))
+
+        let first = ModelRuntime.weightsFingerprint(for: dir)
+        let second = ModelRuntime.weightsFingerprint(for: dir)
+        #expect(first == second, "the same bundle must fingerprint identically every time")
+        #expect(first.count == 16, "a 64-bit hex digest")
+        #expect(first != "empty")
+
+        // Editing a shard must change it, or a re-bake still slips through.
+        try Data("different weights entirely".utf8)
+            .write(to: dir.appendingPathComponent("model.safetensors"))
+        #expect(
+            ModelRuntime.weightsFingerprint(for: dir) != first,
+            "a changed shard must invalidate the cache")
+    }
+
+    /// An unreadable bundle must take a cold prefill rather than risk reusing some
+    /// other pack's KV: fail toward a slow request, never toward a wrong one.
+    @Test func weightsFingerprint_unreadableBundleNeverMatches() {
+        let missing = URL(fileURLWithPath: "/nonexistent-\(UUID().uuidString)")
+        let a = ModelRuntime.weightsFingerprint(for: missing)
+        let b = ModelRuntime.weightsFingerprint(for: missing)
+        #expect(a != b, "an unreadable bundle must never produce a reusable cache key")
+    }
+
     @Test func cacheCoordinatorModelKey_namespacesPathDependentCacheTopologies() {
         let dsv4 = ModelRuntime.cacheCoordinatorModelKey(
             modelName: "DeepSeek-V4-Flash-JANGTQ2",
-            kvModeTag: "fp16"
+            kvModeTag: "fp16",
+            weightsFingerprint: "testfp"
         )
         let zaya = ModelRuntime.cacheCoordinatorModelKey(
             modelName: "ZAYA1-8B-JANGTQ4",
-            kvModeTag: "fp16"
+            kvModeTag: "fp16",
+            weightsFingerprint: "testfp"
         )
         let ling = ModelRuntime.cacheCoordinatorModelKey(
             modelName: "Ling-2.6-flash-JANGTQ2-CRACK",
-            kvModeTag: "fp16"
+            kvModeTag: "fp16",
+            weightsFingerprint: "testfp"
         )
         let omni = ModelRuntime.cacheCoordinatorModelKey(
             modelName: "Nemotron-Omni-Nano-JANGTQ4-CRACK",
-            kvModeTag: "fp16"
+            kvModeTag: "fp16",
+            weightsFingerprint: "testfp"
         )
         let generic = ModelRuntime.cacheCoordinatorModelKey(
             modelName: "Mistral-Medium-3.5-128B-MXFP4",
-            kvModeTag: "fp16"
+            kvModeTag: "fp16",
+            weightsFingerprint: "testfp"
         )
 
         #expect(dsv4.contains("kv=fp16"))
@@ -821,7 +900,8 @@ struct MLXBatchAdapterTests {
         ] {
             let key = ModelRuntime.cacheCoordinatorModelKey(
                 modelName: name,
-                kvModeTag: "fp16"
+                kvModeTag: "fp16",
+                weightsFingerprint: "testfp"
             )
             #expect(
                 key.contains("layers=hybrid-ssm"),
@@ -831,14 +911,16 @@ struct MLXBatchAdapterTests {
 
         let omni = ModelRuntime.cacheCoordinatorModelKey(
             modelName: "Nemotron-Omni-Nano-JANGTQ4-CRACK",
-            kvModeTag: "fp16"
+            kvModeTag: "fp16",
+            weightsFingerprint: "testfp"
         )
         #expect(omni.contains("layers=hybrid-ssm"))
         #expect(omni.contains("media=omni-audio-video"))
 
         let zaya = ModelRuntime.cacheCoordinatorModelKey(
             modelName: "ZAYA1-8B-JANGTQ4",
-            kvModeTag: "fp16"
+            kvModeTag: "fp16",
+            weightsFingerprint: "testfp"
         )
         #expect(zaya.contains("layers=zayaCCA"))
         #expect(!zaya.contains("layers=hybrid-ssm"))
@@ -859,6 +941,7 @@ struct MLXBatchAdapterTests {
         let key = ModelRuntime.cacheCoordinatorModelKey(
             modelName: "unrecognized-local-bundle",
             kvModeTag: "turbo(4,3)",
+            weightsFingerprint: "testfp",
             cacheTopology: topology
         )
 
@@ -887,6 +970,7 @@ struct MLXBatchAdapterTests {
         let key = ModelRuntime.cacheCoordinatorModelKey(
             modelName: "NVIDIA-Nemotron-3-Ultra-550B-A55B-JANGTQ_1L",
             kvModeTag: "fp16",
+            weightsFingerprint: "testfp",
             cacheTopology: topology
         )
 
@@ -2160,6 +2244,213 @@ struct MLXBatchAdapterTests {
         let defaults = UserDefaults(suiteName: suiteName)!
         defaults.removePersistentDomain(forName: suiteName)
         return defaults
+    }
+
+    // MARK: - Warm-up prompt truncation
+
+    /// Renders a fixed generation-prompt suffix of [90, 91]: probe render
+    /// without the generation prompt returns the message tokens, with it
+    /// appends the suffix. Mirrors how a real chat template's
+    /// `add_generation_prompt` branch behaves.
+    private struct SuffixProbeTokenizer: MLXLMCommon.GenerationPromptControllableTokenizer {
+        func encode(text: String, addSpecialTokens: Bool) -> [Int] { [] }
+        func decode(tokenIds: [Int], skipSpecialTokens: Bool) -> String { "" }
+        func convertTokenToId(_ token: String) -> Int? { nil }
+        func convertIdToToken(_ id: Int) -> String? { nil }
+        var bosToken: String? { nil }
+        var eosToken: String? { nil }
+        var unknownToken: String? { nil }
+
+        func applyChatTemplate(
+            messages: [[String: any Sendable]],
+            tools: [[String: any Sendable]]?,
+            additionalContext: [String: any Sendable]?
+        ) throws -> [Int] {
+            try applyChatTemplate(
+                messages: messages,
+                tools: tools,
+                additionalContext: additionalContext,
+                addGenerationPrompt: true
+            )
+        }
+
+        func applyChatTemplate(
+            messages: [[String: any Sendable]],
+            tools: [[String: any Sendable]]?,
+            additionalContext: [String: any Sendable]?,
+            addGenerationPrompt: Bool
+        ) throws -> [Int] {
+            let body = [1, 10, 20]
+            return addGenerationPrompt ? body + [90, 91] : body
+        }
+    }
+
+    @Test func warmupTruncation_usesCanonicalBoundaryWhenProcessorProvidesIt() {
+        let boundary = MLXBatchAdapter.warmupCacheBoundary(
+            tokens: [1, 5, 6, 7, 90, 91],
+            cachePrefixTokenCounts: [4],
+            tokenizer: nil,
+            additionalContext: nil
+        )
+
+        #expect(boundary == 4)
+    }
+
+    /// VLM processors (e.g. Gemma 4) never populate `cachePrefixTokenCounts`,
+    /// which is exactly the live "warm dot but prefill from 0" failure: the
+    /// warm-up stored a full prompt ending in generation tokens that the real
+    /// send could never extend. The fallback derives the generation-prompt
+    /// suffix from the tokenizer's own template and strips it.
+    @Test func warmupTruncation_fallsBackToTokenizerDerivedGenerationPromptSuffix() {
+        let boundary = MLXBatchAdapter.warmupCacheBoundary(
+            tokens: [1, 5, 6, 7, 90, 91],
+            cachePrefixTokenCounts: [],
+            tokenizer: SuffixProbeTokenizer(),
+            additionalContext: nil
+        )
+
+        #expect(boundary == 4)
+    }
+
+    @Test func warmupTruncation_reportsNoBoundaryWhenSuffixDoesNotMatch() {
+        // Prompt does not end with the template's generation-prompt suffix —
+        // the helper must never guess a boundary in that case.
+        let boundary = MLXBatchAdapter.warmupCacheBoundary(
+            tokens: [1, 5, 6, 7, 8],
+            cachePrefixTokenCounts: [],
+            tokenizer: SuffixProbeTokenizer(),
+            additionalContext: nil
+        )
+
+        #expect(boundary == nil)
+    }
+
+    @Test func warmupTruncation_reportsNoBoundaryWithoutControllableTokenizer() {
+        let boundary = MLXBatchAdapter.warmupCacheBoundary(
+            tokens: [1, 5, 6, 7, 90, 91],
+            cachePrefixTokenCounts: [],
+            tokenizer: nil,
+            additionalContext: nil
+        )
+
+        #expect(boundary == nil)
+    }
+
+    // MARK: - Warm-up send-invariant prefix (probe renders)
+
+    @Test func warmupSendInvariantBoundary_cutsAtFirstDivergentToken() {
+        let boundary = MLXBatchAdapter.warmupSendInvariantBoundary(
+            probeA: [1, 2, 3, 50, 7, 90, 91],
+            probeB: [1, 2, 3, 50, 8, 90, 91]
+        )
+
+        #expect(boundary == 4)
+    }
+
+    @Test func warmupSendInvariantBoundary_rejectsImmediateDivergence() {
+        // Renders share nothing — e.g. one probe fell back to a different
+        // template family. There is no stable prefix worth storing.
+        let boundary = MLXBatchAdapter.warmupSendInvariantBoundary(
+            probeA: [9, 9, 9],
+            probeB: [1, 2, 3]
+        )
+
+        #expect(boundary == nil)
+    }
+
+    @Test func warmupSendInvariantBoundary_rejectsNonDivergingProbes() {
+        // Identical renders cannot prove where probe-derived tokens begin,
+        // and a probe that is a full prefix of the other proves nothing
+        // about the generation-prompt suffix either.
+        #expect(
+            MLXBatchAdapter.warmupSendInvariantBoundary(
+                probeA: [1, 2, 3],
+                probeB: [1, 2, 3]
+            ) == nil
+        )
+        #expect(
+            MLXBatchAdapter.warmupSendInvariantBoundary(
+                probeA: [1, 2],
+                probeB: [1, 2, 3]
+            ) == nil
+        )
+        #expect(
+            MLXBatchAdapter.warmupSendInvariantBoundary(probeA: [], probeB: []) == nil
+        )
+    }
+
+    /// Simulates the Ornith / qwen3_5 failure: the native template REQUIRES
+    /// a user message, so a history-only render silently falls back to a
+    /// different template whose bytes share nothing with the real send.
+    /// The probe path appends a user turn before rendering, so it always
+    /// renders native, and the stored prefix must be a true token-prefix of
+    /// the real send's render.
+    private enum UserQueryRequiredTemplate {
+        static let systemAndTools = [1, 2, 3, 4, 5, 6]
+        static let userHeader = [50]
+        static let userFooter = [80]
+        static let generationSuffix = [90, 91]
+        /// What the bridge's substituted fallback template renders for a
+        /// history-only message list (native raises 'No user query found').
+        static let fallbackRender = [7, 7, 7, 7, 7]
+
+        static func nativeRender(userText: String) -> [Int] {
+            systemAndTools + userHeader
+                + userText.unicodeScalars.map { Int($0.value) }
+                + userFooter + generationSuffix
+        }
+    }
+
+    @Test func warmupProbePrefix_isTruePrefixOfRealSendForUserQueryRequiredTemplate() async {
+        let chat: [MLXLMCommon.Chat.Message] = [.system("You are an agent.")]
+
+        let warmupTokens = await MLXBatchAdapter.warmupSendInvariantPrefixTokens(chat: chat) {
+            UserQueryRequiredTemplate.nativeRender(userText: $0)
+        }
+
+        // The invariant prefix is everything up to and including the
+        // user-turn header — nothing probe-derived and no generation suffix.
+        #expect(
+            warmupTokens
+                == UserQueryRequiredTemplate.systemAndTools
+                + UserQueryRequiredTemplate.userHeader
+        )
+
+        // The real send extends the stored prefix byte-for-byte.
+        let sendTokens = UserQueryRequiredTemplate.nativeRender(userText: "hey")
+        if let warmupTokens {
+            #expect(Array(sendTokens.prefix(warmupTokens.count)) == warmupTokens)
+        }
+
+        // The history-only render (what the old path would have stored)
+        // shares no prefix with the send — the regression this guards.
+        #expect(
+            Array(sendTokens.prefix(1))
+                != Array(UserQueryRequiredTemplate.fallbackRender.prefix(1))
+        )
+    }
+
+    @Test func warmupProbePrefix_bailsWhenHistoryEndsInUserTurn() async {
+        let chat: [MLXLMCommon.Chat.Message] = [
+            .system("You are an agent."),
+            .user("dangling"),
+        ]
+
+        let warmupTokens = await MLXBatchAdapter.warmupSendInvariantPrefixTokens(chat: chat) {
+            UserQueryRequiredTemplate.nativeRender(userText: $0)
+        }
+
+        #expect(warmupTokens == nil)
+    }
+
+    @Test func warmupProbePrefix_bailsWhenProbeRenderFails() async {
+        let chat: [MLXLMCommon.Chat.Message] = [.system("You are an agent.")]
+
+        let warmupTokens = await MLXBatchAdapter.warmupSendInvariantPrefixTokens(chat: chat) {
+            _ in nil
+        }
+
+        #expect(warmupTokens == nil)
     }
 
     // MARK: - Laguna serving-loop defaults

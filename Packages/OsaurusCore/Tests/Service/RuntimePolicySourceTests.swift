@@ -666,8 +666,45 @@ struct RuntimePolicySourceTests {
         // set_input_array double-free), and the NormConventionResolver
         // fallback (vmlx-swift#117) so an unrecognized norm_convention
         // declaration defers to the order-independent vote instead of
-        // silently disabling the (1+weight) RMSNorm shift.
-        let expectedRuntimeHardenedRevision = "53840914f693e9e1305fbbacb1ecc8e5c1e9625f"
+        // silently disabling the (1+weight) RMSNorm shift, plus the
+        // incremental tool-call envelope progress event
+        // (vmlx-swift#119, `Generation.toolCallProgress`) that lets the
+        // native chat show a live "Preparing tool call" card during a long
+        // buffered tool write instead of a frozen typing indicator.
+        // Now also carries vmlx-swift#123 (production crash-trap fixes):
+        // Qwen3VL low-rank position-id normalization + per-sequence rope
+        // delta broadcast, Gemma4/NemotronH guards against the rank-0/empty
+        // results a failed MLX op returns inside a withError scope, and
+        // non-trapping compiled-closure failure paths — so recorded MLX
+        // errors surface instead of dying in Swift bounds checks.
+        // Now also carries the default-on hybrid-SSM prefix-cache reuse
+        // (vmlx-swift#125, gen-suffix-stripped store + post-answer SSM
+        // re-derive, proven cache-ON == cache-OFF byte-identical on
+        // qwen3_5_moe GatedDeltaNet MoE + nemotron Mamba-2, inert on dense),
+        // the completed split-subscript crash-guard sweep across every
+        // SSM/hybrid mixer (vmlx-swift#126), and the ZAYA tool-aware template
+        // activation from source_model.architecture (vmlx-swift#127) that
+        // stops JANGTQ ZAYA bundles leaking raw tool-call XML.
+        //
+        // Now also carries the cache-store memory budget on all four KV store
+        // paths and the Hunyuan bare-marker aliases (vmlx-swift#139), the
+        // host-scaled store margin plus the Hy3 reasoning-stamp demotion pin
+        // (#140), and the memory-safety level actually reaching the prefix-cache
+        // store (#141) -- the "Safety Level" slider used to be a stored field no
+        // resolver read, so it moved nothing.
+        //
+        // Now also carries native schema-2 affine1 JANG loading and Metal
+        // execution, Qwen3-VL tool-schema preservation, and bounded media-cache
+        // cleanup (vmlx-swift#149).
+        //
+        // This assertion is a repin tripwire, and it earned its keep: PR #1986
+        // shipped titled "(+ vmlx repin)" carrying no repin at all, and the live
+        // gate run against that build proved only the osaurus-side change while
+        // appearing to bless the engine work too. Note the pin lives in FOUR
+        // files -- Package.swift, Packages/OsaurusCore/Package.resolved, and both
+        // xcworkspace Package.resolved files. Miss one and the app resolves a
+        // revision nobody proved.
+        let expectedRuntimeHardenedRevision = "1ca402953bf941341889bb00b186e46bf0c18d6f"
         let manifestRevision = try Self.vmlxPinRevision(in: manifest)
         let workspaceRevision = try Self.vmlxPinRevision(in: workspaceResolved)
         let appRevision = try Self.vmlxPinRevision(in: appResolved)
@@ -675,7 +712,7 @@ struct RuntimePolicySourceTests {
         #expect(manifestRevision == appRevision)
         #expect(
             manifestRevision == expectedRuntimeHardenedRevision,
-            "Osaurus must consume the pushed vmlx-swift revision proven for this Gemma QAT correctness checkpoint: Gemma 4 QAT loader/parser fixes, paged-cache default policy, prefill progress wiring, Model2Vec static embedding APIs, and the post-merge pin/readiness proof. An internally-consistent older pin is still not wired"
+            "Osaurus must consume the pushed vmlx-swift revision proven for the native affine1 JANG, Qwen3-VL tool-schema, and bounded media-cache checkpoint. An internally-consistent older pin is still not wired"
         )
         #expect(manifest.contains("https://github.com/osaurus-ai/vmlx-swift"))
         #expect(!manifest.contains("https://github.com/osaurus-ai/vmlx-swift-lm"))
@@ -1820,6 +1857,134 @@ struct RuntimePolicySourceTests {
         )
     }
 
+    @Test("startup completion is tied to server bind, not plugin loading")
+    func startupCompletionIsTiedToServerBindNotPluginLoading() throws {
+        let appDelegate = try Self.source("AppDelegate.swift")
+        let launchBody = try Self.functionBody(
+            "public func applicationDidFinishLaunching(_ notification: Notification)",
+            in: appDelegate
+        )
+        let observerBody = try Self.functionBody("private func setupObservers()", in: appDelegate)
+        let successfulStartBody = try Self.functionBody(
+            "private func completeFirstSuccessfulServerStart()",
+            in: appDelegate
+        )
+
+        let startupCompleteCall = "LaunchGuard.markStartupComplete()"
+        let startupCompleteCount = appDelegate.components(separatedBy: startupCompleteCall).count - 1
+        #expect(
+            startupCompleteCount == 3,
+            "startup completion should only be cleared by the test-host branch, handled startup-error branch, and first-successful-server-start hook"
+        )
+
+        let serverBind = try #require(launchBody.range(of: "await serverStartupTask.value"))
+        let keychainBranch = try #require(launchBody.range(of: "if keychainDisabledTestMode {"))
+        let safeModeBranch = try #require(
+            launchBody.range(of: "} else if !shouldLoadPluginsAtStartup {", range: keychainBranch.upperBound ..< launchBody.endIndex)
+        )
+        let keychainStartupComplete = try #require(
+            launchBody.range(of: startupCompleteCall, range: keychainBranch.upperBound ..< safeModeBranch.lowerBound)
+        )
+        let runningCheck = try #require(launchBody.range(of: "if serverController.isRunning {"))
+        let completionHook = try #require(launchBody.range(of: "completeFirstSuccessfulServerStart()"))
+        let handledStartupErrorComplete = try #require(
+            launchBody.range(of: "LaunchGuard.markStartupComplete()", range: completionHook.upperBound ..< launchBody.endIndex)
+        )
+        let isRunningSink = try #require(observerBody.range(of: "serverController.$isRunning"))
+        let runningObserverHook = try #require(
+            observerBody.range(of: "if isRunning {\n                    self?.completeFirstSuccessfulServerStart()")
+        )
+        let configurationSink = try #require(observerBody.range(of: "serverController.$configuration"))
+        let successfulBindGuard = try #require(
+            successfulStartBody.range(of: "guard serverController.isRunning else { return }")
+        )
+        let firstSuccessGuard = try #require(
+            successfulStartBody.range(of: "guard !hasCompletedFirstServerStartWork else { return }")
+        )
+        let startupComplete = try #require(successfulStartBody.range(of: startupCompleteCall))
+        let pluginLoad = try #require(successfulStartBody.range(of: "await PluginManager.shared.loadAll()"))
+        let pluginRepositoryRefresh = try #require(
+            successfulStartBody.range(of: "PluginRepositoryService.shared.startBackgroundRefresh()")
+        )
+
+        #expect(
+            keychainBranch.lowerBound < keychainStartupComplete.lowerBound
+                && keychainStartupComplete.lowerBound < safeModeBranch.lowerBound,
+            "keychain-disabled test hosts must clear LaunchGuard without requiring a successful local bind"
+        )
+        #expect(
+            serverBind.lowerBound < runningCheck.lowerBound && runningCheck.lowerBound < completionHook.lowerBound,
+            "the initial server startup task must feed the first-successful-server-start hook only after checking bind success"
+        )
+        #expect(
+            completionHook.lowerBound < handledStartupErrorComplete.lowerBound,
+            "handled startup errors must clear LaunchGuard without running plugin or repository startup work"
+        )
+        #expect(
+            isRunningSink.lowerBound < runningObserverHook.lowerBound
+                && runningObserverHook.lowerBound < configurationSink.lowerBound,
+            "later successful starts must also feed the first-successful-server-start hook"
+        )
+        #expect(
+            successfulBindGuard.lowerBound < startupComplete.lowerBound,
+            "LaunchGuard must mark startup complete only after successful server startup"
+        )
+        #expect(
+            firstSuccessGuard.lowerBound < startupComplete.lowerBound,
+            "first-successful-server-start work must be idempotent across initial and later start notifications"
+        )
+        #expect(
+            startupComplete.lowerBound < pluginLoad.lowerBound,
+            "plugin loading must start after startup completion"
+        )
+        #expect(
+            startupComplete.lowerBound < pluginRepositoryRefresh.lowerBound,
+            "plugin repository refresh must start after startup completion"
+        )
+    }
+
+    @Test("safe-mode recovery restores all launch-skipped subsystems")
+    func safeModeRecoveryRestoresSkippedSubsystems() throws {
+        let appDelegate = try Self.source("AppDelegate.swift")
+        let observerBody = try Self.functionBody("private func setupSafeModeRecovery()", in: appDelegate)
+        let recoveryBody = try Self.functionBody(
+            "private func recoverFromSafeMode(recoveredFeatures: LaunchGuard.Feature)",
+            in: appDelegate
+        )
+
+        #expect(observerBody.contains("LaunchGuard.Feature(rawValue: rawFeatures)"))
+        #expect(
+            recoveryBody.contains("guard !recoveredFeatures.isEmpty else { return }"),
+            "safe-mode recovery must not burn its one-shot guard on a missing or empty recoveredFeatures payload"
+        )
+        #expect(
+            recoveryBody.contains(
+                "if recoveredFeatures.contains(.plugins)"
+            ) && recoveryBody.contains("await PluginManager.shared.loadAll()")
+        )
+        #expect(
+            recoveryBody.contains(
+                "if recoveredFeatures.contains(.plugins)"
+            ) && recoveryBody.contains("PluginRepositoryService.shared.startBackgroundRefresh()")
+        )
+        #expect(
+            recoveryBody.contains(
+                "if recoveredFeatures.contains(.sandbox)"
+            ) && recoveryBody.contains("SandboxToolRegistrar.shared.start()")
+        )
+        #expect(
+            recoveryBody.contains(
+                "if recoveredFeatures.contains(.distillation)"
+            ) && recoveryBody.contains("await MemoryConsolidator.shared.start()")
+                && recoveryBody.contains("await self?.launchEmbeddingInitTask?.value")
+        )
+        #expect(
+            recoveryBody.contains(
+                "if recoveredFeatures.contains(.autoModelLoad)"
+            ) && recoveryBody.contains("await SpeechService.shared.autoLoadIfNeeded()")
+        )
+    }
+
     @Test("live proof keychain-disabled mode keeps app startup off user Keychain")
     func liveProofKeychainDisabledModeKeepsStartupOffUserKeychain() throws {
         let paths = try Self.source("Utils/OsaurusPaths.swift")
@@ -1840,7 +2005,6 @@ struct RuntimePolicySourceTests {
         #expect(appDelegate.contains("OSAURUS_KEYCHAIN_FREE_SHOW_UI"))
         #expect(appDelegate.contains("Keychain disabled by OSAURUS_DISABLE_KEYCHAIN_FOR_TESTS=1"))
         #expect(appDelegate.contains("if keychainDisabledTestMode {"))
-        #expect(appDelegate.contains("LaunchGuard.markStartupComplete()"))
         #expect(
             appDelegate.contains(
                 "if !keychainDisabledTestMode {\n                await MCPProviderManager.shared.connectEnabledProviders()"
@@ -1918,7 +2082,11 @@ struct RuntimePolicySourceTests {
             "Weight-size preflight must count known numbered shards and fall back to a shallow safetensors sum so unknown layouts cannot report 0 bytes."
         )
 
-        let loadStart = try #require(runtime.range(of: "func loadContainer(id: String, name: String)"))
+        // Anchor on the name only — the parameter list grows (it gained
+        // `intent:` for residency safety) and pinning the full signature makes
+        // this preflight-ordering test fail for reasons that have nothing to do
+        // with preflight ordering.
+        let loadStart = try #require(runtime.range(of: "func loadContainer("))
         let loadEnd = try #require(
             runtime.range(of: "let loadID = allocateLoadingTaskID()", range: loadStart.upperBound ..< runtime.endIndex)
         )
@@ -1933,8 +2101,14 @@ struct RuntimePolicySourceTests {
             loadPreflight.contains("let weightsBytes = Self.computeWeightsSizeBytes(at: localURL, modelName: name)")
         )
         #expect(
-            loadPreflight.contains("let loadFootprintBytes = Self.effectiveLoadFootprintBytes("),
-            "Routed mmap/JANGTQ loads must feed the RAM gate with vMLX's effective hot working set, not the whole safetensors shard total."
+            loadPreflight.contains("? weightsBytes")
+                && loadPreflight.contains(": Self.effectiveLoadFootprintBytes("),
+            "Routed mmap/JANGTQ loads must feed the RAM gate with vMLX's effective hot working set; materialized near-RAM-scale loads must budget the full weight size instead."
+        )
+        #expect(
+            loadPreflight.contains("!Self.resolveMemorySafetyLoadPlan(")
+                && loadPreflight.contains("refuseOnShortfall: willMaterialize"),
+            "Whether a load materializes must come from the resolved memory-safety plan (single source of truth with vmlx), and materialized loads must make the RAM verdict authoritative — proceeding into a shortfall aborts in a Metal completion handler instead of degrading."
         )
         // Feasibility gate + concurrent-load reservation must run before the
         // load task is allocated, so a cold load can't bypass RAM accounting.
@@ -1968,8 +2142,11 @@ struct RuntimePolicySourceTests {
                 && runtime.contains("availableMemoryBytes: available"),
             "The load assessment must track available memory and expose it through health/logs without using it as a hard RAM block."
         )
+        // The verdict math lives in the shared builder so the advisory
+        // pre-load gate and the chat input's candidate projection can't
+        // drift apart.
         let assessmentBody = try Self.functionBody(
-            "private func checkRAMFeasibility",
+            "static func buildRAMFeasibility",
             in: runtime
         )
         // RAM pressure must not refuse a user-requested load: unified memory
@@ -1981,6 +2158,15 @@ struct RuntimePolicySourceTests {
                 && !assessmentBody.contains("throw LoadRefusedError(")
                 && !assessmentBody.contains("verdict = .refused"),
             "RAM pressure must warn as .tight, not throw or mark a hard refusal before vMLX attempts the load."
+        )
+        let advisoryGateBody = try Self.functionBody(
+            "private func checkRAMFeasibility",
+            in: runtime
+        )
+        #expect(
+            advisoryGateBody.contains("buildRAMFeasibility(")
+                && !advisoryGateBody.contains("throw LoadRefusedError("),
+            "The pre-load gate must route through the shared assessment builder and stay advisory."
         )
 
         let health = try Self.source("Networking/HTTPHandler.swift")
@@ -2302,7 +2488,13 @@ struct RuntimePolicySourceTests {
         #expect(health.contains("\"idle_unload_at\""))
         #expect(health.contains("\"idle_seconds_remaining\""))
         #expect(windows.contains("modelIdleResidencyPolicy"))
-        #expect(windows.contains("if idlePolicy == .immediately"))
+        // Window close must branch on the full policy: immediate GC for
+        // `.immediately`, short-grace acceleration for `.afterSeconds`
+        // (chat-sourced models only, with a fire-time reopen guard), and no
+        // action for `.never`.
+        #expect(windows.contains("case .immediately:"))
+        #expect(windows.contains("case .afterSeconds:"))
+        #expect(windows.contains("accelerateIdleUnloadAfterChatClose"))
         #expect(
             windows.contains("let found = ModelManager.findInstalledModel(named: model)")
                 && windows.contains("return found.name"),
@@ -2335,7 +2527,7 @@ struct RuntimePolicySourceTests {
     func residentSameModelTurnsDoNotFlashModelLoadingUI() throws {
         let runtime = try Self.source("Services/ModelRuntime.swift")
 
-        #expect(runtime.contains("let shouldReportModelLoad = modelCache[modelName] == nil"))
+        #expect(runtime.contains("let shouldReportModelLoad = modelCache[modelName] == nil && !parameters.suppressProgressUI"))
         #expect(
             runtime.contains(
                 "if shouldReportModelLoad {\n            InferenceProgressManager.shared.modelLoadWillStartAsync()"

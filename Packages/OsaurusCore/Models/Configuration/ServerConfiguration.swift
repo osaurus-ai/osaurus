@@ -24,7 +24,11 @@ public enum AppearanceMode: String, Codable, CaseIterable, Sendable {
 
 /// Configuration settings for the server
 public struct ServerConfiguration: Codable, Equatable, Sendable {
-    public static let defaultModelLoadRAMSoftThreshold = 0.70
+    /// Metal's default working-set ceiling on unified memory is ~75% of
+    /// physical RAM, so a projection under 0.80 is a load that routinely
+    /// succeeds without pressure — warning below that flagged everyday
+    /// fits and users learned to ignore the banner.
+    public static let defaultModelLoadRAMSoftThreshold = 0.80
     public static let defaultModelLoadRAMHardThreshold = 0.90
 
     /// Server port (1-65535)
@@ -130,9 +134,16 @@ public struct ServerConfiguration: Codable, Equatable, Sendable {
         self.modelIdleResidencyPolicy =
             (try? container.decodeIfPresent(ModelIdleResidencyPolicy.self, forKey: .modelIdleResidencyPolicy))
             ?? defaults.modelIdleResidencyPolicy
-        let decodedSoft =
+        var decodedSoft =
             try container.decodeIfPresent(Double.self, forKey: .modelLoadRAMSoftThreshold)
             ?? defaults.modelLoadRAMSoftThreshold
+        // The soft default was 0.70 before it was raised to 0.80, and saves
+        // persist the resolved value, so upgraded installs would keep the old
+        // warn point forever. A persisted value exactly equal to the old
+        // default is the untouched default, not a user choice — repair it.
+        if decodedSoft == 0.70 {
+            decodedSoft = defaults.modelLoadRAMSoftThreshold
+        }
         let decodedHard =
             try container.decodeIfPresent(Double.self, forKey: .modelLoadRAMHardThreshold)
             ?? defaults.modelLoadRAMHardThreshold

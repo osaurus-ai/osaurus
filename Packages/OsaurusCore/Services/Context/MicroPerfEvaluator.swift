@@ -72,6 +72,37 @@ public struct MicroPerfTranscript: Sendable, Codable {
     }
 }
 
+/// Result of a model-lifecycle run (`micro_perf` cases with
+/// `lifecycle: "cold_load"`): per-rep cold-start samples where the TTFT
+/// includes a full unload → reload cycle, plus one warm sample for the
+/// swap-latency contrast. Trend telemetry only — no floors.
+public struct ModelLifecycleTranscript: Sendable, Codable {
+    /// One sample per rep; `ttftMs` is dispatch → first token WITH the
+    /// model evicted first, i.e. the user-visible cold-start latency.
+    public let coldSamples: [MicroPerfSample]
+    /// A final generation with the model resident (no eviction), for the
+    /// cold-vs-warm contrast in one row. nil when a cold rep failed first.
+    public let warmSample: MicroPerfSample?
+    /// Non-nil when a generation failed; completed samples are kept.
+    public let error: String?
+    /// Non-nil when the host cannot run lifecycle rows at all (run model
+    /// is not an installed local MLX model — nothing to unload). The
+    /// harness maps this to SKIP, not fail.
+    public let skipReason: String?
+
+    public init(
+        coldSamples: [MicroPerfSample],
+        warmSample: MicroPerfSample? = nil,
+        error: String? = nil,
+        skipReason: String? = nil
+    ) {
+        self.coldSamples = coldSamples
+        self.warmSample = warmSample
+        self.error = error
+        self.skipReason = skipReason
+    }
+}
+
 /// Benchmark driver. MainActor for the same reason as the other eval
 /// evaluators: engine construction and config-store reads are
 /// main-actor-isolated.
@@ -96,55 +127,13 @@ public enum MicroPerfEvaluator {
         // — the stability this lane exists to provide.
         let sessionId = UUID().uuidString
 
-        func makeRequest() -> ChatCompletionRequest {
-            ChatCompletionRequest(
-                model: resolvedModel,
-                messages: [ChatMessage(role: "user", content: prompt)],
-                temperature: 0.0,
-                max_tokens: maxTokens,
-                stream: true,
-                top_p: nil,
-                frequency_penalty: nil,
-                presence_penalty: nil,
-                stop: nil,
-                n: nil,
-                tools: nil,
-                tool_choice: nil,
-                session_id: sessionId
-            )
-        }
-
         func runRep() async throws -> MicroPerfSample {
-            let started = Date()
-            var ttftMs: Double?
-            var decodeTps: Double?
-            var prefillTps: Double?
-            var tokenCount: Int?
-            var contentChars = 0
-            let stream = try await engine.streamChat(request: makeRequest())
-            for try await delta in stream {
-                if ttftMs == nil {
-                    ttftMs = Date().timeIntervalSince(started) * 1000
-                }
-                if StreamingReasoningHint.decode(delta) != nil { continue }
-                if let stats = StreamingStatsHint.decode(delta) {
-                    if stats.tokensPerSecond > 0 { decodeTps = stats.tokensPerSecond }
-                    if stats.tokenCount > 0 { tokenCount = stats.tokenCount }
-                    if prefillTps == nil, let prefill = stats.prefillTokensPerSecond, prefill > 0 {
-                        prefillTps = prefill
-                    }
-                    continue
-                }
-                if StreamingToolHint.isSentinel(delta) { continue }
-                contentChars += delta.count
-            }
-            return MicroPerfSample(
-                wallMs: Date().timeIntervalSince(started) * 1000,
-                ttftMs: ttftMs,
-                decodeTokensPerSecond: decodeTps,
-                prefillTokensPerSecond: prefillTps,
-                tokenCount: tokenCount,
-                contentChars: contentChars
+            try await measureRep(
+                engine: engine,
+                model: resolvedModel,
+                prompt: prompt,
+                maxTokens: maxTokens,
+                sessionId: sessionId
             )
         }
 
@@ -171,5 +160,134 @@ public enum MicroPerfEvaluator {
             }
         }
         return MicroPerfTranscript(samples: samples)
+    }
+
+    /// Model-lifecycle benchmark (`lifecycle: "cold_load"`): each measured
+    /// rep evicts every resident model via the runtime's real teardown
+    /// (`clearAll` — the same path settings changes drive) and then
+    /// generates, so the rep's TTFT is the true cold-start latency the
+    /// user sees after a model swap. Ends with one warm generation for
+    /// the cold-vs-warm contrast. SKIPs (via `skipReason`) when the run
+    /// model is not an installed local MLX model, because there is
+    /// nothing to unload for Foundation or remote routes.
+    public static func runLifecycle(
+        prompt: String,
+        maxTokens: Int,
+        reps: Int,
+        model: String? = nil
+    ) async -> ModelLifecycleTranscript {
+        let resolvedModel =
+            model
+            ?? ChatConfigurationStore.load().coreModelIdentifier
+            ?? "foundation"
+        guard
+            ModelRuntime.resolveLocalModelDirectory(
+                forModelId: resolvedModel,
+                in: DirectoryPickerService.effectiveModelsDirectory()
+            ) != nil
+        else {
+            return ModelLifecycleTranscript(
+                coldSamples: [],
+                skipReason:
+                    "run model '\(resolvedModel)' is not an installed local MLX model; nothing to unload"
+            )
+        }
+
+        let engine = ChatEngine()
+        // Fresh session per rep: a cold-load row must not get prefix help
+        // from the previous rep's KV entries surviving on disk.
+        var coldSamples: [MicroPerfSample] = []
+        for index in 1 ... max(1, reps) {
+            await ModelRuntime.shared.clearAll()
+            do {
+                coldSamples.append(
+                    try await measureRep(
+                        engine: engine,
+                        model: resolvedModel,
+                        prompt: prompt,
+                        maxTokens: maxTokens,
+                        sessionId: UUID().uuidString
+                    )
+                )
+            } catch {
+                return ModelLifecycleTranscript(
+                    coldSamples: coldSamples,
+                    error: "cold rep \(index)/\(reps) failed: \(error)"
+                )
+            }
+        }
+
+        do {
+            let warm = try await measureRep(
+                engine: engine,
+                model: resolvedModel,
+                prompt: prompt,
+                maxTokens: maxTokens,
+                sessionId: UUID().uuidString
+            )
+            return ModelLifecycleTranscript(coldSamples: coldSamples, warmSample: warm)
+        } catch {
+            return ModelLifecycleTranscript(
+                coldSamples: coldSamples,
+                error: "warm contrast rep failed: \(error)"
+            )
+        }
+    }
+
+    /// One measured generation of the fixed benchmark request. Shared by
+    /// the steady-state and lifecycle lanes.
+    private static func measureRep(
+        engine: ChatEngine,
+        model: String,
+        prompt: String,
+        maxTokens: Int,
+        sessionId: String
+    ) async throws -> MicroPerfSample {
+        let request = ChatCompletionRequest(
+            model: model,
+            messages: [ChatMessage(role: "user", content: prompt)],
+            temperature: 0.0,
+            max_tokens: maxTokens,
+            stream: true,
+            top_p: nil,
+            frequency_penalty: nil,
+            presence_penalty: nil,
+            stop: nil,
+            n: nil,
+            tools: nil,
+            tool_choice: nil,
+            session_id: sessionId
+        )
+        let started = Date()
+        var ttftMs: Double?
+        var decodeTps: Double?
+        var prefillTps: Double?
+        var tokenCount: Int?
+        var contentChars = 0
+        let stream = try await engine.streamChat(request: request)
+        for try await delta in stream {
+            if ttftMs == nil {
+                ttftMs = Date().timeIntervalSince(started) * 1000
+            }
+            if StreamingReasoningHint.decode(delta) != nil { continue }
+            if let stats = StreamingStatsHint.decode(delta) {
+                if stats.tokensPerSecond > 0 { decodeTps = stats.tokensPerSecond }
+                if stats.tokenCount > 0 { tokenCount = stats.tokenCount }
+                if prefillTps == nil, let prefill = stats.prefillTokensPerSecond, prefill > 0 {
+                    prefillTps = prefill
+                }
+                continue
+            }
+            if StreamingToolHint.isSentinel(delta) { continue }
+            contentChars += delta.count
+        }
+        return MicroPerfSample(
+            wallMs: Date().timeIntervalSince(started) * 1000,
+            ttftMs: ttftMs,
+            decodeTokensPerSecond: decodeTps,
+            prefillTokensPerSecond: prefillTps,
+            tokenCount: tokenCount,
+            contentChars: contentChars
+        )
     }
 }

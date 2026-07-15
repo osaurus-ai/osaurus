@@ -40,6 +40,17 @@ public struct EvalCase: Sendable, Codable, Identifiable {
     /// can rescue it). Avoid using this as a debug log; keep it short
     /// and structural.
     public let notes: String?
+    /// Per-case repeat policy for known-flaky cases: run the case this
+    /// many times (in one process, model warm) and merge the trials via
+    /// `EvalCaseReport.mergedTrials`. Declared IN the case file so the
+    /// flake policy travels with the case instead of relying on the
+    /// operator remembering `--repeat`. The CLI's `--repeat N` still
+    /// applies as a floor (`max(cli, case)`). nil → 1.
+    public let trials: Int?
+    /// Minimum fraction of non-skipped trials that must pass for the
+    /// merged row to count as passed (0…1]. Only meaningful with
+    /// `trials > 1`. nil → the default strict-majority rule.
+    public let passThreshold: Double?
     public let fixtures: Fixtures
     public let expect: Expectations
 
@@ -49,6 +60,8 @@ public struct EvalCase: Sendable, Codable, Identifiable {
         label: String? = nil,
         query: String,
         notes: String? = nil,
+        trials: Int? = nil,
+        passThreshold: Double? = nil,
         fixtures: Fixtures,
         expect: Expectations
     ) {
@@ -57,6 +70,8 @@ public struct EvalCase: Sendable, Codable, Identifiable {
         self.label = label
         self.query = query
         self.notes = notes
+        self.trials = trials
+        self.passThreshold = passThreshold
         self.fixtures = fixtures
         self.expect = expect
     }
@@ -183,6 +198,14 @@ public struct EvalCase: Sendable, Codable, Identifiable {
         /// `_updated_at INTEGER NOT NULL DEFAULT (strftime('%s','now')),`
         /// `_deleted_at INTEGER);`
         public let seedSql: [String]?
+        /// Memory-store seeds for `memory` cases. The runner writes these
+        /// into the ISOLATED memory database (pinned facts / episodes /
+        /// identity overrides) for the run agent before the chat starts and
+        /// wipes them afterwards. Seeds go through the same
+        /// `MemoryDatabase` writes the production distiller lands, so the
+        /// read path (relevance gate → planner → `[Memory]` prefix) is the
+        /// real one. Other domains ignore this.
+        public let seedMemory: MemorySeeds?
 
         public init(
             requirePlugins: [String]? = nil,
@@ -195,7 +218,8 @@ public struct EvalCase: Sendable, Codable, Identifiable {
             sandbox: SandboxFixture? = nil,
             seedAgents: [SeedAgent]? = nil,
             seedProviders: [SeedProvider]? = nil,
-            seedSql: [String]? = nil
+            seedSql: [String]? = nil,
+            seedMemory: MemorySeeds? = nil
         ) {
             self.requirePlugins = requirePlugins
             self.seedMethods = seedMethods
@@ -208,6 +232,43 @@ public struct EvalCase: Sendable, Codable, Identifiable {
             self.seedAgents = seedAgents
             self.seedProviders = seedProviders
             self.seedSql = seedSql
+            self.seedMemory = seedMemory
+        }
+    }
+
+    /// Memory-store seeds for `memory` cases. Contents should carry a
+    /// fixture-unique codeword so recall assertions can't pass by accident.
+    public struct MemorySeeds: Sendable, Codable {
+        /// Pinned facts (highest-salience layer; the most reliable seed for
+        /// deterministic recall cases).
+        public let pinnedFacts: [String]?
+        /// Episode summaries (the layer the heuristic gate picks for
+        /// "what did we discuss" queries).
+        public let episodes: [EpisodeSeed]?
+        /// Identity overrides — always injected regardless of the gate.
+        public let identityOverrides: [String]?
+
+        public init(
+            pinnedFacts: [String]? = nil,
+            episodes: [EpisodeSeed]? = nil,
+            identityOverrides: [String]? = nil
+        ) {
+            self.pinnedFacts = pinnedFacts
+            self.episodes = episodes
+            self.identityOverrides = identityOverrides
+        }
+
+        public struct EpisodeSeed: Sendable, Codable {
+            public let summary: String
+            /// Comma-separated topic list (matches the store's CSV column).
+            public let topics: String?
+            public let entities: String?
+
+            public init(summary: String, topics: String? = nil, entities: String? = nil) {
+                self.summary = summary
+                self.topics = topics
+                self.entities = entities
+            }
         }
     }
 
@@ -441,10 +502,8 @@ public struct EvalCase: Sendable, Codable, Identifiable {
         /// and scores whether the final answer is grounded in the named tool
         /// result rather than tool-call arguments.
         public let toolResultGrounding: ToolResultGroundingExpectations?
-        public let streamingHint: StreamingHintExpectations?
         public let prefixHash: PrefixHashExpectations?
         public let argumentCoercion: ArgumentCoercionExpectations?
-        public let requestValidation: RequestValidationExpectations?
         /// Recall expectation for `domain == "capability_search"` cases.
         /// Drives the index-only path through `CapabilitySearchEvaluator`
         /// — no LLM, fast, deterministic. Used to lock in recall floors
@@ -472,7 +531,7 @@ public struct EvalCase: Sendable, Codable, Identifiable {
         /// Pure-data: feeds a scripted action + resolution context through
         /// the harness's `EffectClassifier` and `AutonomyPolicy` and pins
         /// the resulting effect class + gate disposition. No driver, no
-        /// permissions, no LLM — CI-safe like `schema` / `request_validation`.
+        /// permissions, no LLM — CI-safe like `schema` / `argument_coercion`.
         public let computerUse: ComputerUseExpectations?
         /// Model-driven expectation for `domain == "computer_use_loop"` cases.
         /// Unlike `computerUse` (a pure-data gate check), this drives the real
@@ -528,15 +587,49 @@ public struct EvalCase: Sendable, Codable, Identifiable {
         /// stdev reporting — the stable perf row for `history.jsonl` trends
         /// (behaviour cases ride varying prompt sizes and can't be one).
         public let microPerf: MicroPerfExpectations?
+        /// Channel-boundary expectation for `domain == "reasoning_channel"`
+        /// cases. Drives tool-free chat turns through
+        /// `ReasoningChannelEvaluator` (the real ChatEngine streaming path)
+        /// and scores, deterministically, that raw parser markers never
+        /// leak into visible text, that reasoning rides the structured
+        /// channel, and that multi-turn runs stay coherent — the scoreable
+        /// form of the AGENTS.md reasoning non-negotiables.
+        public let reasoning: ReasoningChannelExpectations?
+        /// Scored cache-telemetry expectation for `domain == "cache_proof"`
+        /// cases. Runs prefix-sharing turns and asserts the
+        /// `batchDiagnosticsSnapshot` deltas (KV prefix hits, SSM companion
+        /// hits, disk-L2 activity) that are telemetry-only everywhere else.
+        /// Topology-aware: hybrid-SSM models must show companion hits (a KV
+        /// hit alone is not a pass), and unsupported hosts SKIP with the
+        /// exact reason.
+        public let cacheProof: CacheProofExpectations?
+        /// Live HTTP contract expectation for `domain == "http_api"` cases.
+        /// The runner starts an in-process `OsaurusServer` on an ephemeral
+        /// loopback port (once per suite) and drives real HTTP requests at
+        /// it — SSE chunk shape, `/responses` event ordering,
+        /// `/admin/cache-stats` contract, behavioral params (stop /
+        /// max_tokens / typed errors), structured-output JSON mode, and
+        /// concurrent-request isolation.
+        public let httpAPI: HTTPAPIExpectations?
+        /// Memory-recall expectation for `domain == "memory"` cases. The
+        /// runner seeds the (isolated) memory store from
+        /// `fixtures.seedMemory`, runs a multi-turn chat through the
+        /// production compose + inject path, and asserts recall in the
+        /// visible answer.
+        public let memory: MemoryExpectations?
+        /// Deterministic policy expectation for `domain == "agent_channels"`
+        /// cases. Drives the REAL Slack/Telegram connection services against
+        /// fake provider clients and isolated config/message stores via
+        /// `AgentChannelEvalHarness` — no network, no model — and pins the
+        /// allowlist / confirm-send / MCP-exposure contracts.
+        public let agentChannels: AgentChannelsExpectations?
 
         public init(
             schema: SchemaExpectations? = nil,
             toolEnvelope: ToolEnvelopeExpectations? = nil,
             toolResultGrounding: ToolResultGroundingExpectations? = nil,
-            streamingHint: StreamingHintExpectations? = nil,
             prefixHash: PrefixHashExpectations? = nil,
             argumentCoercion: ArgumentCoercionExpectations? = nil,
-            requestValidation: RequestValidationExpectations? = nil,
             capabilitySearch: CapabilitySearchExpectations? = nil,
             sandboxDiagnostics: SandboxDiagnosticsExpectations? = nil,
             capabilityClaims: CapabilityClaimsExpectations? = nil,
@@ -548,15 +641,18 @@ public struct EvalCase: Sendable, Codable, Identifiable {
             subagent: SubagentExpectations? = nil,
             appleScript: AppleScriptExpectations? = nil,
             judgeCalibration: JudgeCalibrationExpectations? = nil,
-            microPerf: MicroPerfExpectations? = nil
+            microPerf: MicroPerfExpectations? = nil,
+            reasoning: ReasoningChannelExpectations? = nil,
+            cacheProof: CacheProofExpectations? = nil,
+            httpAPI: HTTPAPIExpectations? = nil,
+            memory: MemoryExpectations? = nil,
+            agentChannels: AgentChannelsExpectations? = nil
         ) {
             self.schema = schema
             self.toolEnvelope = toolEnvelope
             self.toolResultGrounding = toolResultGrounding
-            self.streamingHint = streamingHint
             self.prefixHash = prefixHash
             self.argumentCoercion = argumentCoercion
-            self.requestValidation = requestValidation
             self.capabilitySearch = capabilitySearch
             self.sandboxDiagnostics = sandboxDiagnostics
             self.capabilityClaims = capabilityClaims
@@ -569,6 +665,305 @@ public struct EvalCase: Sendable, Codable, Identifiable {
             self.appleScript = appleScript
             self.judgeCalibration = judgeCalibration
             self.microPerf = microPerf
+            self.reasoning = reasoning
+            self.cacheProof = cacheProof
+            self.httpAPI = httpAPI
+            self.memory = memory
+            self.agentChannels = agentChannels
+        }
+    }
+
+    /// Expectation for `domain == "reasoning_channel"` cases — the scored
+    /// form of the reasoning-boundary non-negotiables. The runner drives
+    /// `query` (plus `followUpTurns`, in order, as ONE conversation) through
+    /// `ReasoningChannelEvaluator` and scores each turn deterministically:
+    ///   - the visible channel must never contain a raw parser marker
+    ///     (built-in list + `forbiddenVisibleMarkers`);
+    ///   - the runtime's own `unclosedReasoning` flag must never fire;
+    ///   - `requireVisibleAnswer` (default true) demands non-empty visible
+    ///     text on EVERY turn — no hidden reasoning-only output;
+    ///   - `reasoningFieldExpected` pins where reasoning must land;
+    ///   - a later turn's visible text must never verbatim-echo an earlier
+    ///     turn's reasoning (the multi-turn leak check).
+    /// Cases whose assertions require a reasoning channel SKIP (not fail)
+    /// on models with no channel.
+    public struct ReasoningChannelExpectations: Sendable, Codable {
+        /// Additional user turns sent after `query`, in order, within the
+        /// same conversation/session. nil → single-turn case.
+        public let followUpTurns: [String]?
+        /// Per-turn decode cap. nil → evaluator default (1024).
+        public let maxTokens: Int?
+        /// Default true: every turn's visible text must be non-empty after
+        /// trimming. Set false only for negative fixtures.
+        public let requireVisibleAnswer: Bool?
+        /// Extra markers (beyond the built-in `<think>`-family list) that
+        /// must not appear in any turn's visible text.
+        public let forbiddenVisibleMarkers: [String]?
+        /// Where reasoning must land: `"yes"` (the structured field must be
+        /// non-empty on at least one turn — SKIPs when the model has no
+        /// reasoning channel), `"no"` (the field must stay empty on every
+        /// turn), or `"either"`/nil (not scored).
+        public let reasoningFieldExpected: String?
+        /// Substrings the FINAL turn's visible text must contain
+        /// (case-insensitive) — the cheap coherency check.
+        public let visibleContains: [String]?
+        /// Substrings no turn's visible text may contain (case-insensitive).
+        public let visibleMustNotContain: [String]?
+
+        public init(
+            followUpTurns: [String]? = nil,
+            maxTokens: Int? = nil,
+            requireVisibleAnswer: Bool? = nil,
+            forbiddenVisibleMarkers: [String]? = nil,
+            reasoningFieldExpected: String? = nil,
+            visibleContains: [String]? = nil,
+            visibleMustNotContain: [String]? = nil
+        ) {
+            self.followUpTurns = followUpTurns
+            self.maxTokens = maxTokens
+            self.requireVisibleAnswer = requireVisibleAnswer
+            self.forbiddenVisibleMarkers = forbiddenVisibleMarkers
+            self.reasoningFieldExpected = reasoningFieldExpected
+            self.visibleContains = visibleContains
+            self.visibleMustNotContain = visibleMustNotContain
+        }
+    }
+
+    /// Expectation for `domain == "cache_proof"` cases — telemetry becomes
+    /// scored. The runner snapshots `ModelRuntime.batchDiagnosticsSnapshot()`
+    /// around a prefix-sharing multi-turn conversation (`query` +
+    /// `followUpTurns` under one session id) and asserts the deltas. Every
+    /// floor is individually optional so a case scopes to exactly the
+    /// counters its topology guarantees.
+    ///
+    /// Topology awareness (per the AGENTS.md cache rules):
+    ///   - No local MLX engine after the run (remote/foundation model) →
+    ///     SKIP with the exact reason.
+    ///   - `requireCompanionOnHybrid` (default true): when the loaded model
+    ///     is hybrid-SSM, the case FAILS unless SSM companion hits also
+    ///     moved — a KV prefix hit alone is not a pass for hybrids.
+    ///   - `minSsmCompanionHitsDelta` on a NON-hybrid host → that floor is
+    ///     skipped with a note (the counter can never move).
+    public struct CacheProofExpectations: Sendable, Codable {
+        /// Additional user turns after `query` (same conversation/session,
+        /// shared prefix). nil → the runner sends `query` twice, the
+        /// minimal prefix-sharing shape.
+        public let followUpTurns: [String]?
+        /// Per-turn decode cap. nil → 128 (cache proof needs turns, not prose).
+        public let maxTokens: Int?
+        /// Floor on `prefixHits` delta (full-attention reuse proof).
+        public let minKvPrefixHitsDelta: Int?
+        /// Floor on `ssmCompanionHits` delta (hybrid-SSM reuse proof).
+        public let minSsmCompanionHitsDelta: Int?
+        /// Floor on `diskL2Hits` delta (disk-restore proof; usually only
+        /// meaningful across runs — prefer `minDiskL2StoresDelta` within one).
+        public let minDiskL2HitsDelta: Int?
+        /// Floor on `diskL2Stores` delta (the disk lane actively persisting).
+        public let minDiskL2StoresDelta: Int?
+        /// Optional ceiling on the case's peak physical footprint (MB),
+        /// read from the runner's ResourceSampler — the RAM-gate assertion.
+        public let maxPeakPhysFootprintMb: Double?
+        /// Default true: hybrid-SSM models must show companion hits for the
+        /// case to pass, regardless of which floors the case declares.
+        public let requireCompanionOnHybrid: Bool?
+
+        public init(
+            followUpTurns: [String]? = nil,
+            maxTokens: Int? = nil,
+            minKvPrefixHitsDelta: Int? = nil,
+            minSsmCompanionHitsDelta: Int? = nil,
+            minDiskL2HitsDelta: Int? = nil,
+            minDiskL2StoresDelta: Int? = nil,
+            maxPeakPhysFootprintMb: Double? = nil,
+            requireCompanionOnHybrid: Bool? = nil
+        ) {
+            self.followUpTurns = followUpTurns
+            self.maxTokens = maxTokens
+            self.minKvPrefixHitsDelta = minKvPrefixHitsDelta
+            self.minSsmCompanionHitsDelta = minSsmCompanionHitsDelta
+            self.minDiskL2HitsDelta = minDiskL2HitsDelta
+            self.minDiskL2StoresDelta = minDiskL2StoresDelta
+            self.maxPeakPhysFootprintMb = maxPeakPhysFootprintMb
+            self.requireCompanionOnHybrid = requireCompanionOnHybrid
+        }
+    }
+
+    /// Expectation for `domain == "http_api"` cases. Scenario-based rather
+    /// than a generic HTTP DSL so each contract's assertions stay precise.
+    /// The suite shares ONE in-process `OsaurusServer` on an ephemeral
+    /// loopback port (started lazily by the first case, stopped when the
+    /// process exits); loopback trust means no auth token is needed —
+    /// exactly the production local-client shape.
+    public struct HTTPAPIExpectations: Sendable, Codable {
+        /// Which contract the case pins:
+        ///   - `sse_contract`: POST /v1/chat/completions (stream) — chunk
+        ///     shape, role-first delta, terminal `finish_reason`, `[DONE]`.
+        ///   - `chat_completion`: POST /v1/chat/completions (non-stream) —
+        ///     response envelope shape + content assertions.
+        ///   - `responses_ordering`: POST /v1/responses (stream) — event
+        ///     ordering (created → deltas → completed).
+        ///   - `cache_stats`: GET /admin/cache-stats — required fields;
+        ///     with `prefixProbe` also proves `prefix_hits` increases after
+        ///     a prefix-sharing second request.
+        ///   - `chat_agents_parity`: same prompt through
+        ///     /v1/chat/completions and /agents/default/run must both
+        ///     produce non-empty answers satisfying `responseContains`.
+        ///   - `stop_sequence`: `stop` must actually stop generation
+        ///     (stop text absent from content, finish_reason "stop").
+        ///   - `max_tokens_length`: tiny `max_tokens` truncates with
+        ///     finish_reason "length".
+        ///   - `typed_error`: request built from `body` must return
+        ///     `expectStatus` with a JSON error body (never a 200, never
+        ///     garbage) containing `errorContains`.
+        ///   - `structured_output`: `response_format: json_object` — the
+        ///     content must parse as JSON and (optionally) validate against
+        ///     `outputSchema` via SchemaValidator.
+        ///   - `structured_output_stream`: same contract over SSE — the
+        ///     joined content deltas must parse/validate.
+        ///   - `concurrent_isolation`: two concurrent requests with
+        ///     distinct echo tokens must each get their own token back,
+        ///     never the sibling's.
+        public let scenario: String
+        /// Prompt override (defaults to the case `query`).
+        public let prompt: String?
+        /// Decode cap for generated requests. nil → 256.
+        public let maxTokens: Int?
+        /// Extra raw JSON body (object) merged into the generated request —
+        /// the lever for `typed_error` cases (e.g. `{"n": 4}` or an
+        /// unsupported `response_format`).
+        public let body: JSONValue?
+        /// `stop_sequence`: the stop string to send and assert on.
+        public let stopSequence: String?
+        /// Expected HTTP status for `typed_error` (e.g. 400).
+        public let expectStatus: Int?
+        /// Substring the typed error body must contain.
+        public let errorContains: [String]?
+        /// Substrings the (non-stream) response content must contain,
+        /// case-insensitive. Used by `chat_completion` / parity cases.
+        public let responseContains: [String]?
+        /// `structured_output`: JSON schema the parsed content must
+        /// validate against (via `SchemaValidator`). Optional — without it
+        /// the case only asserts valid JSON.
+        public let outputSchema: JSONValue?
+        /// `cache_stats`: also run two prefix-sharing chat requests and
+        /// assert the aggregate `prefix_hits` increased. Default false —
+        /// requires a local cache-enabled model; SKIPs on hosts without one.
+        public let prefixProbe: Bool?
+        /// `concurrent_isolation`: the two echo tokens (default
+        /// ["ALPHA-7391", "BRAVO-2648"]).
+        public let echoTokens: [String]?
+
+        public init(
+            scenario: String,
+            prompt: String? = nil,
+            maxTokens: Int? = nil,
+            body: JSONValue? = nil,
+            stopSequence: String? = nil,
+            expectStatus: Int? = nil,
+            errorContains: [String]? = nil,
+            responseContains: [String]? = nil,
+            outputSchema: JSONValue? = nil,
+            prefixProbe: Bool? = nil,
+            echoTokens: [String]? = nil
+        ) {
+            self.scenario = scenario
+            self.prompt = prompt
+            self.maxTokens = maxTokens
+            self.body = body
+            self.stopSequence = stopSequence
+            self.expectStatus = expectStatus
+            self.errorContains = errorContains
+            self.responseContains = responseContains
+            self.outputSchema = outputSchema
+            self.prefixProbe = prefixProbe
+            self.echoTokens = echoTokens
+        }
+    }
+
+    /// Expectation for `domain == "memory"` cases. The runner seeds the
+    /// ISOLATED memory store (the eval bootstrap already points
+    /// `OsaurusPaths` at a temp root) from `fixtures.seedMemory`, registers
+    /// a temporary memory-enabled agent, runs `query` (+ `followUpTurns`)
+    /// through `MemoryRecallEvaluator` — the production compose + memory
+    /// inject path — and scores the visible answers.
+    public struct MemoryExpectations: Sendable, Codable {
+        /// Additional user turns after `query` (one conversation).
+        public let followUpTurns: [String]?
+        /// Per-turn decode cap. nil → 512.
+        public let maxTokens: Int?
+        /// Substrings the FINAL turn's answer must contain
+        /// (case-insensitive) — the recall assertion. The needle should be
+        /// a fixture-unique codeword so recall can't be a lucky guess.
+        public let answerContains: [String]?
+        /// Substrings no answer may contain (case-insensitive) — e.g. a
+        /// distractor memory that must NOT be surfaced.
+        public let answerMustNotContain: [String]?
+        /// When true, the composed context must have carried a non-empty
+        /// memory section on the first turn (proves injection happened,
+        /// independent of whether the model used it).
+        public let requireMemoryInjected: Bool?
+
+        public init(
+            followUpTurns: [String]? = nil,
+            maxTokens: Int? = nil,
+            answerContains: [String]? = nil,
+            answerMustNotContain: [String]? = nil,
+            requireMemoryInjected: Bool? = nil
+        ) {
+            self.followUpTurns = followUpTurns
+            self.maxTokens = maxTokens
+            self.answerContains = answerContains
+            self.answerMustNotContain = answerMustNotContain
+            self.requireMemoryInjected = requireMemoryInjected
+        }
+    }
+
+    /// Expectation for `domain == "agent_channels"` cases — deterministic,
+    /// model-free policy pins over the REAL channel services. Each case
+    /// picks one scenario; the harness seeds isolated Slack/Telegram config
+    /// (allowlists from this block), injects fake provider clients, and
+    /// scores the decision plus the message-store side effects.
+    public struct AgentChannelsExpectations: Sendable, Codable {
+        /// Which policy gate the case pins:
+        ///   - `unauthorized_room_read`: `agent_channel_read_messages`
+        ///     against `deniedRoomId` must return a rejected envelope and
+        ///     write no message row.
+        ///   - `sender_allowlist`: an inbound event from `allowedSenderId`
+        ///     stores a snapshot; one from `deniedSenderId` is denied with
+        ///     reason `sender_not_allowlisted` and stores nothing.
+        ///   - `unconfirmed_send`: `agent_channel_send_message` without
+        ///     `confirm_send: true` must fail before provider dispatch
+        ///     (fake client records zero sends).
+        ///   - `mcp_denial`: every `agent_channel_*` tool must be in the
+        ///     externally-denied set, and the live `/mcp/tools` +
+        ///     `/mcp/call` surfaces must hide/403 them.
+        public let scenario: String
+        /// Provider under test: `"slack"` or `"telegram"`. Ignored by
+        /// `mcp_denial`.
+        public let provider: String?
+        /// Room/channel ids seeded into the read+write allowlists.
+        public let allowedRoomIds: [String]?
+        /// The room id the case probes that must NOT be allowlisted.
+        public let deniedRoomId: String?
+        /// Sender ids seeded into the sender allowlist.
+        public let allowedSenderId: String?
+        /// The sender id that must be denied.
+        public let deniedSenderId: String?
+
+        public init(
+            scenario: String,
+            provider: String? = nil,
+            allowedRoomIds: [String]? = nil,
+            deniedRoomId: String? = nil,
+            allowedSenderId: String? = nil,
+            deniedSenderId: String? = nil
+        ) {
+            self.scenario = scenario
+            self.provider = provider
+            self.allowedRoomIds = allowedRoomIds
+            self.deniedRoomId = deniedRoomId
+            self.allowedSenderId = allowedSenderId
+            self.deniedSenderId = deniedSenderId
         }
     }
 
@@ -624,19 +1019,28 @@ public struct EvalCase: Sendable, Codable, Identifiable {
         public let minDecodeTokensPerSecond: Double?
         /// Optional ceiling on the MEDIAN time-to-first-token (ms).
         public let maxTtftMs: Double?
+        /// Model-lifecycle mode: `"cold_load"` measures a full unload →
+        /// reload → first-token cycle per rep (the cold-start row), then a
+        /// warm first-token reading for the swap-latency contrast. nil →
+        /// the standard fixed-decode generation benchmark. Lifecycle rows
+        /// are trend telemetry — no hard floors — and SKIP on hosts whose
+        /// run model is not a local MLX model (nothing to unload).
+        public let lifecycle: String?
 
         public init(
             reps: Int,
             maxTokens: Int,
             promptRepeat: Int? = nil,
             minDecodeTokensPerSecond: Double? = nil,
-            maxTtftMs: Double? = nil
+            maxTtftMs: Double? = nil,
+            lifecycle: String? = nil
         ) {
             self.reps = reps
             self.maxTokens = maxTokens
             self.promptRepeat = promptRepeat
             self.minDecodeTokensPerSecond = minDecodeTokensPerSecond
             self.maxTtftMs = maxTtftMs
+            self.lifecycle = lifecycle
         }
     }
 
@@ -908,6 +1312,12 @@ public struct EvalCase: Sendable, Codable, Identifiable {
         /// Optional total-cost ceiling (input + output, summed across steps).
         /// nil → reported, not scored.
         public let scoredMaxTotalTokens: Int?
+        /// Interruption lever: cancel the run after this many PROCESSED
+        /// tool calls (the loop's `isCancelled` hook flips true once the
+        /// count is reached). The run must exit `cancelled` cleanly — pair
+        /// with `allowedExits: ["cancelled"]` and `files` assertions that
+        /// prove no post-cancel writes landed. nil → never cancelled.
+        public let cancelAfterToolCalls: Int?
 
         public init(
             maxIterations: Int? = nil,
@@ -936,7 +1346,8 @@ public struct EvalCase: Sendable, Codable, Identifiable {
             dbState: [DbStateAssertion]? = nil,
             toolUsageAudit: [ToolUsageAudit]? = nil,
             scoredMaxPromptTokens: Int? = nil,
-            scoredMaxTotalTokens: Int? = nil
+            scoredMaxTotalTokens: Int? = nil,
+            cancelAfterToolCalls: Int? = nil
         ) {
             self.maxIterations = maxIterations
             self.mustCallTools = mustCallTools
@@ -965,6 +1376,7 @@ public struct EvalCase: Sendable, Codable, Identifiable {
             self.toolUsageAudit = toolUsageAudit
             self.scoredMaxPromptTokens = scoredMaxPromptTokens
             self.scoredMaxTotalTokens = scoredMaxTotalTokens
+            self.cancelAfterToolCalls = cancelAfterToolCalls
         }
 
         /// One workspace-file assertion. `path` is relative to the
@@ -1382,43 +1794,6 @@ public struct EvalCase: Sendable, Codable, Identifiable {
         }
     }
 
-    /// Expectation for `domain == "streaming_hint"` cases. Drives one
-    /// of the `StreamingToolHint.{encode,encodeArgs,encodeDone}`
-    /// helpers, then assertions on the resulting sentinel: that
-    /// `isSentinel` reports true, and that the matching `decode*`
-    /// helper round-trips back to the original payload.
-    public struct StreamingHintExpectations: Sendable, Codable {
-        public enum Operation: String, Sendable, Codable {
-            case encode  // tool name → `\u{FFFE}tool:<name>`
-            case encodeArgs  // args fragment → `\u{FFFE}args:<frag>`
-            case encodeDone  // {id,name,args,result} → `\u{FFFE}done:<json>`
-        }
-        public let op: Operation
-        /// For `.encode` and `.encodeArgs` — the single string payload.
-        public let payload: String?
-        /// For `.encodeDone` — structured payload fields.
-        public let callId: String?
-        public let name: String?
-        public let arguments: String?
-        public let result: String?
-
-        public init(
-            op: Operation,
-            payload: String? = nil,
-            callId: String? = nil,
-            name: String? = nil,
-            arguments: String? = nil,
-            result: String? = nil
-        ) {
-            self.op = op
-            self.payload = payload
-            self.callId = callId
-            self.name = name
-            self.arguments = arguments
-            self.result = result
-        }
-    }
-
     /// Expectation for `domain == "prefix_hash"` cases. Two flavors:
     ///   - `expectHash` set → assert `computePrefixHash(a) == expectHash`
     ///   - `compareTo` set → assert `computePrefixHash(a)` and
@@ -1474,30 +1849,6 @@ public struct EvalCase: Sendable, Codable, Identifiable {
         public let helper: Helper
         public let value: JSONValue
         public let expect: JSONValue?  // nil expectation → coercion must return nil
-    }
-
-    /// Expectation for `domain == "request_validation"` cases. Pins
-    /// the accept/reject decision of `RequestValidator.unsupportedSamplerReason`
-    /// for the (`n`, `response_format.type`) tuple. `expectAccept: true`
-    /// asserts no rejection; otherwise the reason string must contain
-    /// `expectReasonContains`.
-    public struct RequestValidationExpectations: Sendable, Codable {
-        public let n: Int?
-        public let responseFormatType: String?
-        public let expectAccept: Bool
-        public let expectReasonContains: String?
-
-        public init(
-            n: Int? = nil,
-            responseFormatType: String? = nil,
-            expectAccept: Bool,
-            expectReasonContains: String? = nil
-        ) {
-            self.n = n
-            self.responseFormatType = responseFormatType
-            self.expectAccept = expectAccept
-            self.expectReasonContains = expectReasonContains
-        }
     }
 
     /// Expectation for `domain == "computer_use"` cases. Pins the

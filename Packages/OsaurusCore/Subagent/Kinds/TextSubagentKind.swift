@@ -70,8 +70,17 @@ final class TextSubagentKind: SubagentKind, @unchecked Sendable {
     private var resolvedAgentId: UUID?
     private var systemPrompt: String = ""
     private var budgets = SubagentBudgets()
-    /// The launching agent's child-tool grant (`none` = text-only).
+    /// The launching agent's child-tool grant (`none` = no generic read-only
+    /// file tools; the target agent's OWN tools ride along regardless — see
+    /// `agentToolSpecs`).
     private var toolAccess: SpawnToolAccess = .none
+    /// Agent mode: the target agent's own enabled tools, resolved at
+    /// `resolveModel` time. This is what makes `spawn_agent` delegate to the
+    /// AGENT rather than to its bare prompt — a Calendar agent spawned without
+    /// its calendar tools either errors on an undispatchable envelope or
+    /// role-plays success while creating nothing (live report). Empty for
+    /// `spawn_model` and for agents with no tools enabled.
+    private var agentToolSpecs: [Tool] = []
     /// The target agent's user-set temperature override (agent mode only;
     /// `nil` keeps the model bundle's own generation defaults).
     private var temperature: Float?
@@ -206,6 +215,14 @@ final class TextSubagentKind: SubagentKind, @unchecked Sendable {
         self.resolvedAgentName = agent.name
         self.resolvedAgentId = agent.id
         self.systemPrompt = agent.systemPrompt
+        // The persona's tool policy rides along with its prompt + model
+        // (the design contract: a subagent IS the agent, bounded). Tool
+        // EXECUTION still flows through `ToolRegistry.execute`, so per-tool
+        // permission gates apply exactly as they do in a direct chat with
+        // this agent.
+        self.agentToolSpecs = await MainActor.run {
+            Self.agentChildToolSpecs(agentId: agent.id)
+        }
         // The target agent's own sampling override rides along (a user-set
         // value, consistent with "defaults come from the model bundle unless
         // the user explicitly overrides").
@@ -245,16 +262,27 @@ final class TextSubagentKind: SubagentKind, @unchecked Sendable {
         settings: AgentSettings?
     ) async throws -> ResolvedModel {
         let perAgentModelTargets = settings?.spawnableModelNames ?? []
+        let allowedModelTargets = SubagentToolVisibility.effectiveSpawnableModels(
+            isDefault: isDefault,
+            config: config,
+            perAgentEnabled: settings?.spawnDelegationEnabled ?? false,
+            perAgentModelTargets: perAgentModelTargets
+        )
         guard
             SubagentToolVisibility.spawnModelAllowed(
                 modelId,
                 isDefault: isDefault,
                 config: config,
-                perAgentModelTargets: perAgentModelTargets
+                perAgentModelTargets: allowedModelTargets
             )
         else {
             throw SubagentError.denied(
-                Self.notSpawnableMessage(kind: "Model", name: modelId, isDefault: isDefault)
+                Self.notSpawnableMessage(
+                    kind: "Model",
+                    name: modelId,
+                    isDefault: isDefault,
+                    allowedNames: allowedModelTargets
+                )
             )
         }
 
@@ -310,7 +338,8 @@ final class TextSubagentKind: SubagentKind, @unchecked Sendable {
         let toolset = await Self.makeToolset(
             access: toolAccess,
             maxToolCalls: budgets.maxToolCalls,
-            feed: feed
+            feed: feed,
+            agentSpecs: agentToolSpecs
         )
 
         let result = try await AgentSubagentRunner.run(
@@ -429,11 +458,38 @@ final class TextSubagentKind: SubagentKind, @unchecked Sendable {
         }
     }
 
-    /// Build the child's curated read-only toolset when the launching agent
-    /// granted access; `nil` keeps the run text-only. The closure enforces the
-    /// allowlist and the per-run tool-call cap, dispatches through the shared
-    /// `ToolRegistry` (its permission gate + schema preflight included), and
-    /// narrates each call to the live feed.
+    /// Tool names never exposed inside a spawned child, on top of the target
+    /// agent's own policy:
+    /// - every subagent-capability tool (`spawn_agent`, `spawn_model`,
+    ///   `image`, computer-use, AppleScript): a bounded child must not fan out
+    ///   further — the recursion guard would refuse at runtime, but keeping
+    ///   the names out of the schema saves the wasted turns.
+    /// - `clarify`: it asks the USER a question, and a spawned child has no
+    ///   user surface — the question would strand the run until its deadline.
+    static func isExcludedChildTool(_ name: String) -> Bool {
+        if SubagentCapabilityRegistry.capability(forToolName: name) != nil { return true }
+        return name == "clarify"
+    }
+
+    /// The target agent's own enabled tools, as the child's schema. Uses the
+    /// same per-agent enabled list the direct-chat surface scopes to
+    /// (`effectiveEnabledToolNames`), so a spawned agent can do what it can do
+    /// in a direct chat — minus the exclusions above. `specs(forTools:)`
+    /// silently drops names that aren't registered right now, so the child
+    /// only ever sees live tools.
+    @MainActor
+    static func agentChildToolSpecs(agentId: UUID) -> [Tool] {
+        let names = AgentManager.shared.effectiveEnabledToolNames(for: agentId) ?? []
+        guard !names.isEmpty else { return [] }
+        return ToolRegistry.shared.specs(forTools: names.filter { !isExcludedChildTool($0) })
+    }
+
+    /// Build the child's toolset: the target agent's own tools (agent mode,
+    /// `agentSpecs`) plus the curated read-only file set when the launching
+    /// agent granted access; `nil` keeps the run text-only. The closure
+    /// enforces the allowlist and the per-run tool-call cap, dispatches
+    /// through the shared `ToolRegistry` (its permission gate + schema
+    /// preflight included), and narrates each call to the live feed.
     ///
     /// `specs` / `dispatch` are injection seams for unit tests (production
     /// passes nil → live registry lookup + registry dispatch).
@@ -441,17 +497,32 @@ final class TextSubagentKind: SubagentKind, @unchecked Sendable {
         access: SpawnToolAccess,
         maxToolCalls: Int,
         feed: SubagentFeed?,
+        agentSpecs: [Tool] = [],
         specs specsOverride: [Tool]? = nil,
         dispatch: (@Sendable (ServiceToolInvocation) async -> String)? = nil
     ) async -> AgentSubagentToolset? {
-        guard access == .readOnly else { return nil }
-        let specs: [Tool]
-        if let specsOverride {
-            specs = specsOverride
-        } else {
-            specs = await MainActor.run {
-                ToolRegistry.shared.specs(forTools: readOnlyChildToolNames)
+        let readOnlySpecs: [Tool]
+        if access == .readOnly {
+            if let specsOverride {
+                readOnlySpecs = specsOverride
+            } else {
+                readOnlySpecs = await MainActor.run {
+                    ToolRegistry.shared.specs(forTools: readOnlyChildToolNames)
+                }
             }
+        } else if let specsOverride, agentSpecs.isEmpty {
+            // Test seam parity: an explicit override with no grant still
+            // yields nothing, exactly like the live registry path.
+            return nil
+        } else {
+            readOnlySpecs = []
+        }
+        // Agent tools first (the persona's own contract), read-only extras
+        // after; first spec wins on a name collision.
+        var specs: [Tool] = []
+        var seen = Set<String>()
+        for spec in agentSpecs + readOnlySpecs where seen.insert(spec.function.name).inserted {
+            specs.append(spec)
         }
         guard !specs.isEmpty else { return nil }
         let allowed = Set(specs.map { $0.function.name })
@@ -520,10 +591,18 @@ final class TextSubagentKind: SubagentKind, @unchecked Sendable {
     /// Shared "not spawnable" denial copy for both targets, so the agent and
     /// model messages can't drift. `kind` is the capitalized noun ("Agent" /
     /// "Model"); the tab pointer differs for the main chat vs a custom agent.
-    private static func notSpawnableMessage(kind: String, name: String, isDefault: Bool) -> String {
-        isDefault
+    private static func notSpawnableMessage(
+        kind: String,
+        name: String,
+        isDefault: Bool,
+        allowedNames: [String] = []
+    ) -> String {
+        let base = isDefault
             ? "\(kind) '\(name)' is not spawnable. Add it in the main chat's Subagents tab."
             : "\(kind) '\(name)' is not spawnable from this agent. Add it in the agent's Subagents tab."
+        guard !allowedNames.isEmpty else { return base }
+        let exact = allowedNames.map { "'\($0)'" }.joined(separator: ", ")
+        return base + " Use exactly one configured id: \(exact)."
     }
 
     private func seedMessages(systemPrompt: String, input: String) -> [ChatMessage] {

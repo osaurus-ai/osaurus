@@ -450,6 +450,12 @@ public enum OsaurusPaths {
     public static func transcriptionConfigFile() -> URL { voiceConfig().appendingPathComponent("transcription.json") }
     public static func remoteProviderConfigFile() -> URL { providers().appendingPathComponent("remote.json") }
     public static func mcpProviderConfigFile() -> URL { providers().appendingPathComponent("mcp.json") }
+    /// Native search-provider configuration (ranked providers + routing).
+    public static func searchProviderConfigFile() -> URL { providers().appendingPathComponent("search.json") }
+    /// User-created declarative search-provider definitions (one JSON each).
+    public static func searchProviderDefinitionsDirectory() -> URL {
+        providers().appendingPathComponent("search-definitions", isDirectory: true)
+    }
     /// On-disk cache for `GenerativeGreetingPool` so app-launches start
     /// with already-warmed greetings instead of a cold inference path.
     /// One JSON file, tiny payload (a handful of strings per agent).

@@ -50,7 +50,11 @@
             onProcessExitHandler = handler
         }
 
-        public init(provider: MCPProvider) throws {
+        /// Linux-name form of the owning agent (`SandboxAgentProvisioner
+        /// .linuxName`). The subprocess runs as `agent-<agentName>`.
+        private let agentName: String
+
+        public init(provider: MCPProvider, agentName: String) throws {
             guard provider.transport == .stdio else {
                 throw MCPStdioTransportError.missingCommand
             }
@@ -59,11 +63,12 @@
             }
             self.providerId = provider.id
             self.providerName = provider.name
-            // Re-use the "default" agent user namespace so the subprocess
-            // lands in the same sandboxed UID class our plugins do, even if
-            // we haven't pre-created a per-provider agent. A future
-            // enhancement could mint per-provider users.
-            self.agentUser = "agent-default"
+            // Scope the subprocess to the CALLING agent's Linux user, not
+            // a shared "agent-default" namespace — the MCP server sees
+            // only that agent's home/files and, in allowlist egress mode,
+            // gets that agent's proxy credential rather than a shared one.
+            self.agentName = agentName
+            self.agentUser = "agent-\(agentName)"
             self.command = SandboxStdioRunner.buildShellCommand(
                 command: provider.command,
                 args: provider.args
@@ -94,8 +99,10 @@
             try await MCPChildSpawnLimiter.shared.acquire()
             spawnSlotHeld = true
 
-            // Ensure the default agent user exists before we exec as it.
-            try? await SandboxManager.shared.ensureAgentUser("default")
+            // Ensure the owning agent's Linux user exists before we exec
+            // as it (the caller normally provisioned it already; this is
+            // the idempotent belt-and-braces for direct starts).
+            try? await SandboxManager.shared.ensureAgentUser(agentName)
 
             do {
                 let proc = try await SandboxManager.shared.execInteractive(
@@ -148,14 +155,14 @@
             try? stdoutWriter.close()
             try? stderrWriter.close()
             if let proc = process {
-                try? await proc.kill(SIGTERM)
+                try? await proc.kill(.term)
                 // Bounded wait; escalate to SIGKILL only if the child ignores
                 // SIGTERM past the grace period. `wait` returns immediately
                 // when the process exits, so the fast path stays fast.
                 do {
                     _ = try await proc.wait(timeoutInSeconds: forceKillGraceSeconds)
                 } catch {
-                    try? await proc.kill(SIGKILL)
+                    try? await proc.kill(.kill)
                 }
                 try? await proc.delete()
                 self.process = nil

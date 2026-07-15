@@ -366,6 +366,42 @@ public final class ChatHistoryDatabase: @unchecked Sendable {
         }
     }
 
+    /// Fire-and-forget variant of `saveSession`. Performs the same incremental
+    /// write, but hops onto the database's serial queue with `async` and
+    /// returns immediately instead of blocking the caller on `queue.sync`.
+    ///
+    /// Callers on the main actor (run cleanup, session persistence) were paying
+    /// the full encode + transaction cost synchronously; on a large
+    /// conversation that can exceed the 3s app-hang watchdog. Ordering is
+    /// preserved because the queue is FIFO, so a later read/save still observes
+    /// this write. Errors are logged rather than thrown since there is no
+    /// caller left to handle them.
+    public func saveSessionAsync(_ session: ChatSessionData) {
+        queue.async { [weak self] in
+            guard let self, self.db != nil else { return }
+            let prepared = self.sessionWithSpilledAttachments(session)
+            do {
+                try self.executeRaw("BEGIN TRANSACTION")
+                try self.upsertSessionRow(prepared)
+                try self.upsertTurnsIncrementally(
+                    sessionId: prepared.id,
+                    turns: prepared.turns
+                )
+                try self.transactionalStep(
+                    "UPDATE sessions SET turn_count = ?1, updated_at = ?2 WHERE id = ?3"
+                ) { stmt in
+                    sqlite3_bind_int(stmt, 1, Int32(prepared.turns.count))
+                    sqlite3_bind_double(stmt, 2, prepared.updatedAt.timeIntervalSince1970)
+                    Self.bindText(stmt, index: 3, value: prepared.id.uuidString)
+                }
+                try self.executeRaw("COMMIT")
+            } catch {
+                try? self.executeRaw("ROLLBACK")
+                print("[ChatHistoryDatabase] async saveSession failed for \(prepared.id): \(error)")
+            }
+        }
+    }
+
     /// Returns a copy of `session` with every turn's attachment array
     /// passed through `AttachmentBlobStore.spillIfNeeded`.
     private func sessionWithSpilledAttachments(_ session: ChatSessionData) -> ChatSessionData {

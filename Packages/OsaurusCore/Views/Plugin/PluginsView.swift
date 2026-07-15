@@ -21,6 +21,7 @@ struct PluginsView: View {
     @State private var isRefreshButtonLoading = false
 
     @State private var isRepoRefreshing = false
+    @State private var isUpdatingAll = false
     @State private var updatesAvailableCount = 0
     @State private var repoLastError: String?
     @State private var missingPermissionsPerPlugin: [String: [SystemPermission]] = [:]
@@ -359,6 +360,54 @@ struct PluginsView: View {
         await updateFilteredLists()
     }
 
+    /// The combined number of installed plugins (repo + Claude) that have an
+    /// update available. Drives both the badge and the "Update all" button's
+    /// visibility.
+    private var totalUpdatesAvailable: Int {
+        updatesAvailableCount + claudeAggregator.plugins.filter { $0.hasUpdate }.count
+    }
+
+    /// Upgrade every installed plugin that has an update available, across both
+    /// the repository plugins and the imported Claude plugins. Updates run
+    /// serially so we don't hammer GitHub or race on the shared skill / plugin
+    /// managers; a single failure is skipped rather than aborting the rest.
+    /// Surfaces a summary toast when finished.
+    private func updateAllPlugins() async {
+        guard !isUpdatingAll else { return }
+        isUpdatingAll = true
+        defer { isUpdatingAll = false }
+
+        let outdatedRepo = repoService.plugins.filter { $0.hasUpdate }
+        let outdatedClaude = claudeAggregator.plugins.filter { $0.hasUpdate }
+        let total = outdatedRepo.count + outdatedClaude.count
+        guard total > 0 else { return }
+
+        var succeeded = 0
+        for plugin in outdatedRepo {
+            do {
+                try await repoService.upgrade(pluginId: plugin.pluginId)
+                succeeded += 1
+            } catch {
+                // Skip this plugin and continue with the rest.
+            }
+        }
+        for plugin in outdatedClaude {
+            do {
+                try await updateClaudePlugin(plugin)
+                succeeded += 1
+            } catch {
+                // Skip this plugin and continue with the rest.
+            }
+        }
+
+        reload()
+        if succeeded == total {
+            showSuccess(L("Updated \(succeeded) plugins"))
+        } else {
+            showSuccess(L("Updated \(succeeded) of \(total) plugins"))
+        }
+    }
+
     private func uninstallClaudePlugin(_ plugin: ClaudePluginInstalled) async {
         _ = await ClaudePluginInstaller.shared.uninstall(pluginId: plugin.pluginId)
         await claudeSkillManager.refresh()
@@ -400,6 +449,15 @@ struct PluginsView: View {
         guard let plugin = source.first(where: { $0.pluginId == pluginId }) else {
             // repo not loaded yet so leave the request in place and let the
             // `$plugins` receiver retry once it arrives
+            return
+        }
+
+        // A superseded plugin that isn't installed has no Browse card to land
+        // on (native search replaced it) — send the deeplink to the Search
+        // settings tab instead of dead-ending.
+        if PluginManager.supersededPluginIds.contains(pluginId), !plugin.isInstalled {
+            managementState.pendingPluginDetailId = nil
+            AppDelegate.shared?.showManagementWindow(initialTab: .search)
             return
         }
 
@@ -506,6 +564,14 @@ struct PluginsView: View {
             } else {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 16) {
+                        GitHubTokenCard()
+                        if totalUpdatesAvailable > 0 {
+                            UpdateAllPluginsBanner(
+                                count: totalUpdatesAvailable,
+                                isUpdating: isUpdatingAll,
+                                action: { Task { await updateAllPlugins() } }
+                            )
+                        }
                         if pluginsWithMissingPermissionsCount > 0 {
                             ToolPermissionBanner(count: pluginsWithMissingPermissionsCount)
                         }
@@ -643,8 +709,10 @@ struct PluginsView: View {
 
     private var nativeBrowseGrid: some View {
         ScrollView {
-            LazyVGrid(columns: twoColumnGrid, spacing: 20) {
-                ForEach(Array(filteredPlugins.enumerated()), id: \.element.id) { index, plugin in
+            VStack(alignment: .leading, spacing: 20) {
+                GitHubTokenCard()
+                LazyVGrid(columns: twoColumnGrid, spacing: 20) {
+                    ForEach(Array(filteredPlugins.enumerated()), id: \.element.id) { index, plugin in
                     PluginCard(
                         plugin: plugin,
                         missingPermissions: [],
@@ -663,6 +731,7 @@ struct PluginsView: View {
                         onInstall: { try await repoService.install(pluginId: plugin.pluginId) },
                         onChange: { reload() }
                     )
+                    }
                 }
             }
             .padding(24)
@@ -897,7 +966,15 @@ struct PluginsView: View {
 
         let (browseResult, installedResult, claudeResult, marketplaceResult, chipCounts) =
             await Task.detached(priority: .userInitiated) {
-                let browse = currentPlugins.filter { Self.pluginMatchesQuery($0, query: query) }
+                // Superseded plugins (native search replaced osaurus.search)
+                // are hidden from Browse unless already installed — new users
+                // shouldn't be offered a plugin whose tools never register.
+                // Existing installs keep their card (with the "Built into
+                // Osaurus" banner) so the uninstall path stays reachable.
+                let browse = currentPlugins.filter {
+                    Self.pluginMatchesQuery($0, query: query)
+                        && ($0.isInstalled || !PluginManager.supersededPluginIds.contains($0.pluginId))
+                }
                 let installed =
                     currentPlugins
                     .filter { $0.isInstalled && Self.pluginMatchesQuery($0, query: query) }
@@ -1229,7 +1306,13 @@ private struct PluginCard: View {
 
     @ViewBuilder
     private var statusBadge: some View {
-        if plugin.hasLoadError {
+        if PluginManager.supersededPluginIds.contains(plugin.pluginId) && plugin.isInstalled {
+            StatusCapsuleBadge(
+                icon: "checkmark.seal.fill",
+                text: L("Built into Osaurus"),
+                color: theme.accentColor
+            )
+        } else if plugin.hasLoadError {
             StatusCapsuleBadge(icon: "exclamationmark.triangle.fill", text: L("Error"), color: .red)
         } else if hasMissingSecrets {
             StatusCapsuleBadge(icon: "key.fill", text: L("Key Required"), color: theme.warningColor)
@@ -1454,15 +1537,19 @@ private struct PluginDetailView: View {
                     heroHeader
                         .padding(.bottom, 8)
 
+                    if isSuperseded {
+                        supersededBanner
+                    }
+
                     if plugin.hasLoadError {
                         errorSection
                     }
 
-                    if hasMissingSecrets && !plugin.hasLoadError {
+                    if hasMissingSecrets && !plugin.hasLoadError && !isSuperseded {
                         secretsBanner
                     }
 
-                    if !missingPermissions.isEmpty && !plugin.hasLoadError {
+                    if !missingPermissions.isEmpty && !plugin.hasLoadError && !isSuperseded {
                         permissionsBanner
                     }
 
@@ -1856,6 +1943,53 @@ private struct PluginDetailView: View {
                         }
                     }
                 }
+            }
+        }
+    }
+
+    // MARK: - Superseded Banner
+
+    private var isSuperseded: Bool {
+        PluginManager.supersededPluginIds.contains(plugin.pluginId) && plugin.isInstalled
+    }
+
+    /// Native search replaced this plugin's tools; point the user at the
+    /// Search settings tab instead of the plugin's own configuration.
+    private var supersededBanner: some View {
+        detailCard {
+            HStack(spacing: 12) {
+                Image(systemName: "checkmark.seal.fill")
+                    .font(.system(size: 20))
+                    .foregroundColor(theme.accentColor)
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Built into Osaurus", bundle: .module)
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundColor(theme.primaryText)
+                    Text(
+                        "Web search is now a native feature. This plugin's tools are no longer loaded — configure providers in Settings → Search. You can uninstall this plugin.",
+                        bundle: .module
+                    )
+                    .font(.system(size: 12))
+                    .foregroundColor(theme.secondaryText)
+                }
+
+                Spacer()
+
+                Button {
+                    AppDelegate.shared?.showManagementWindow(initialTab: .search)
+                } label: {
+                    HStack(spacing: 4) {
+                        Image(systemName: "magnifyingglass").font(.system(size: 10))
+                        Text("Open Search Settings", bundle: .module)
+                            .font(.system(size: 12, weight: .semibold))
+                    }
+                    .foregroundColor(.white)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 8)
+                    .background(RoundedRectangle(cornerRadius: 6).fill(theme.accentColor))
+                }
+                .buttonStyle(PlainButtonStyle())
             }
         }
     }
@@ -2441,5 +2575,78 @@ private struct MarketplaceSkeletonCard: View {
             .fill(theme.tertiaryBackground)
             .frame(width: width, height: height)
             .frame(maxWidth: width == nil ? .infinity : nil, alignment: .leading)
+    }
+}
+
+// MARK: - Update All Plugins Banner
+
+/// Full-width banner surfaced at the top of the Installed tab whenever one or
+/// more installed plugins (repository + Claude) have an update available.
+/// Mirrors `ToolPermissionBanner`'s styling so the two call-to-action cards
+/// read as a family. A single tap upgrades every outdated plugin.
+struct UpdateAllPluginsBanner: View {
+    @Environment(\.theme) private var theme
+    let count: Int
+    let isUpdating: Bool
+    let action: () -> Void
+
+    var body: some View {
+        HStack(spacing: 12) {
+            ZStack {
+                Circle()
+                    .fill(theme.accentColor.opacity(0.15))
+                    .frame(width: 36, height: 36)
+                Image(systemName: "arrow.up.circle.fill")
+                    .font(.system(size: 16))
+                    .foregroundColor(theme.accentColor)
+            }
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(
+                    "\(count) plugin\(count == 1 ? "" : "s") ha\(count == 1 ? "s" : "ve") an update available",
+                    bundle: .module
+                )
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundColor(theme.primaryText)
+                Text("Update them all at once", bundle: .module)
+                    .font(.system(size: 11))
+                    .foregroundColor(theme.secondaryText)
+            }
+
+            Spacer()
+
+            Button(action: action) {
+                HStack(spacing: 4) {
+                    if isUpdating {
+                        ProgressView()
+                            .scaleEffect(0.6)
+                            .frame(width: 12, height: 12)
+                    } else {
+                        Image(systemName: "arrow.up.circle")
+                            .font(.system(size: 11))
+                    }
+                    Text(isUpdating ? "Updating..." : "Update all", bundle: .module)
+                        .font(.system(size: 12, weight: .medium))
+                }
+                .foregroundColor(theme.accentColor)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
+                .background(
+                    RoundedRectangle(cornerRadius: 8)
+                        .fill(theme.accentColor.opacity(0.1))
+                )
+            }
+            .buttonStyle(PlainButtonStyle())
+            .disabled(isUpdating)
+        }
+        .padding(14)
+        .background(
+            RoundedRectangle(cornerRadius: 12)
+                .fill(theme.accentColor.opacity(0.08))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 12)
+                        .stroke(theme.accentColor.opacity(0.2), lineWidth: 1)
+                )
+        )
     }
 }

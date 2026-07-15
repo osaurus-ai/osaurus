@@ -637,5 +637,37 @@ public enum SettingsSearchIndex {
             keywords: ["retention", "prune", "days", "history cleanup"],
             subTab: "settings"
         ),
+
+        // MARK: Search
+        .init(
+            id: "search.providers",
+            tab: .search,
+            title: "Search Providers",
+            keywords: [
+                "web search", "search engine", "tavily", "exa", "brave", "serper", "parallel",
+                "google", "kagi", "duckduckgo", "bing", "api key", "internet",
+            ]
+        ),
+        .init(
+            id: "search.tryIt",
+            tab: .search,
+            section: "Try it",
+            title: "Test Search",
+            keywords: ["test query", "search playground", "try search"]
+        ),
+        .init(
+            id: "search.routing",
+            tab: .search,
+            section: "Advanced",
+            title: "Per-category Provider Order",
+            keywords: ["fallback", "ranking", "routing", "news", "images", "priority"]
+        ),
+        .init(
+            id: "search.custom",
+            tab: .search,
+            section: "Advanced",
+            title: "Custom Search Provider",
+            keywords: ["custom api", "json definition", "searxng", "perplexity", "self-hosted"]
+        ),
     ]
 }

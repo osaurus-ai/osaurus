@@ -354,6 +354,16 @@ public actor GenerativeGreetingPool {
             // entirely if the user is sustaining a long stream.
             if await waitForIdleInference() == false { break }
 
+            // Idle GPU is not the same as a free model slot. Under the strict
+            // single-model policy, generating a greeting with a model that
+            // isn't the resident one *loads* it — evicting whatever a chat or
+            // API client is using, and cancelling any load already in flight.
+            // A speculative greeting must never do that: it is throwaway
+            // content, and re-loading a displaced model costs the user tens of
+            // seconds (a 94 GB pack: ~40 s). Wait for the next tick instead.
+            if await ModelRuntime.shared.hasLoadInFlight() { break }
+            if await ModelRuntime.shared.hasResidentModelOther(than: model) { break }
+
             // Count the attempt only once we've cleared the target +
             // idle gates. Counting earlier conflated "entered runRefill"
             // with "tried to generate" and made the success ratio in

@@ -10,10 +10,12 @@ let package = Package(
     ],
     dependencies: [
         .package(url: "https://github.com/apple/swift-nio.git", from: "2.88.0"),
-        // Keep package-local SwiftPM builds aligned with the workspace
-        // lockfiles. Containerization 0.32.x changed Process.kill's signal
-        // parameter type while the app CI graph is still pinned to 0.31.x.
-        .package(url: "https://github.com/apple/containerization.git", .upToNextMinor(from: "0.31.0")),
+        // Pinned to the 0.35 line — the same Containerization release Apple
+        // Container 1.1.0 ships — for the OCI `initfsReference` provisioning
+        // path, configurable VM overhead, filesystem freeze/thaw/trim, and
+        // the hardened mount/vmnet work. Keep the app workspace lockfiles in
+        // step when bumping.
+        .package(url: "https://github.com/apple/containerization.git", .upToNextMinor(from: "0.35.0")),
         .package(url: "https://github.com/modelcontextprotocol/swift-sdk.git", from: "0.12.0"),
         // MCP pulls EventSource transitively. Enable its AsyncHTTPClient
         // trait at the root so the target's conditional AsyncHTTPClient
@@ -43,10 +45,25 @@ let package = Package(
         // eval/asyncEval/item + synchronize/clearCache to kill the Metal
         // concurrent-encoder crash class) and #117 (NormConventionResolver:
         // an unrecognized norm_convention defers to the vote instead of
-        // silently disabling the (1+weight) shift).
+        // silently disabling the (1+weight) shift). Now also carries the
+        // incremental tool-call envelope progress event (`Generation
+        // .toolCallProgress`) so the app can show a live "preparing tool call"
+        // card during a long buffered tool write (e.g. a large file) instead of
+        // a frozen typing indicator. Additive — existing consumers unaffected.
+        // Now also carries #123 (production crash-trap fixes): Qwen3VL
+        // rotary embedding accepts low-rank position ids and the decode-path
+        // rope delta broadcasts per sequence (stale deltas fall back to cache
+        // offsets); Gemma4 maskedScatter and NemotronH mambaForward guard the
+        // rank-0/empty results a failed MLX op hands back inside a withError
+        // scope; the compile() overloads and innerCall degrade to empty
+        // results instead of trapping on a failed closure evaluation — so a
+        // recorded MLX error reaches the error-scope exit instead of dying in
+        // a Swift bounds check. Contains the previous ff714f1 pin. Now also
+        // carries #149: native schema-2 affine1 JANG loading and Metal kernels,
+        // Qwen3-VL tool-schema preservation, and bounded media-cache cleanup.
         .package(
             url: "https://github.com/osaurus-ai/vmlx-swift",
-            revision: "53840914f693e9e1305fbbacb1ecc8e5c1e9625f"
+            revision: "1ca402953bf941341889bb00b186e46bf0c18d6f"
         ),
         // FluidAudio 0.14.3 added a breaking `language:` parameter to TTS
         // calls that osaurus's `TTSService` doesn't pass. Pinning to the

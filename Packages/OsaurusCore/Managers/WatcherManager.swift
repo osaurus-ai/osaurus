@@ -613,7 +613,11 @@ public final class WatcherManager {
                     folderPath: watcher.watchPath,
                     folderBookmark: watcher.watchBookmark,
                     source: .watcher,
-                    externalSessionKey: watcher.id.uuidString
+                    externalSessionKey: watcher.id.uuidString,
+                    // A file changed on disk and we reacted. The user did not ask
+                    // for this right now and is not waiting on it, so it must not
+                    // evict the model they are chatting with.
+                    loadIntent: .background
                 )
 
                 guard let handle = await TaskDispatcher.shared.dispatch(request) else {

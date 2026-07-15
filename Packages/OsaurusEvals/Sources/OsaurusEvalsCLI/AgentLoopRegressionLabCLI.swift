@@ -82,7 +82,7 @@ extension OsaurusEvalsCLI {
             filter: opts.filter,
             preference: opts.pluginBootstrapPreference
         )
-        _ = EvalBootstrap.configureIsolatedSearchStorageIfNeeded(for: bootstrapPlan)
+        _ = EvalBootstrap.configureIsolatedRunStorage(for: bootstrapPlan)
         let startupWatchdog =
             bootstrapPlan.requiresWork
             ? makeAgentLoopLabStartupWatchdog(options: opts, suite: combinedSuite)

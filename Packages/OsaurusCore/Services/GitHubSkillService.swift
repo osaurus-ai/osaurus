@@ -8,6 +8,7 @@
 
 import Foundation
 import OsaurusRepository
+import os
 
 // MARK: - Models
 
@@ -846,7 +847,7 @@ public enum GitHubSkillError: Error, LocalizedError {
             // (which, for a large repo, never finishes anyway).
             let tokenHint =
                 GitHubSkillService.gitHubToken() == nil
-                ? " Set GITHUB_TOKEN or GH_TOKEN to raise the limit to 5,000/hr."
+                ? " Add a GitHub token in the Plugins tab to raise the limit to 5,000/hr."
                 : ""
             if let resetAt {
                 let formatter = RelativeDateTimeFormatter()
@@ -871,10 +872,25 @@ public final class GitHubSkillService: ObservableObject {
     @Published public var isLoading = false
     @Published public var error: GitHubSkillError?
 
-    private let session: URLSession
+    /// The token is baked into the session's headers at build time, so a
+    /// freshly-added in-app token requires rebuilding the session. Hold it
+    /// behind a lock so `reloadAuthentication()` can swap it in place while the
+    /// nonisolated fetch paths read it concurrently.
+    private let sessionHolder: OSAllocatedUnfairLock<URLSession>
+
+    /// The session used for every GitHub request. Reads the current value
+    /// under the lock, so it reflects the latest configured token.
+    private nonisolated var session: URLSession { sessionHolder.withLock { $0 } }
 
     private init() {
-        self.session = Self.makeSession()
+        self.sessionHolder = OSAllocatedUnfairLock(initialState: Self.makeSession())
+    }
+
+    /// Rebuild the session so a token added (or removed) through the in-app
+    /// GitHub-token flow takes effect immediately — no app restart. Called by
+    /// the token card after saving or clearing the token.
+    public func reloadAuthentication() {
+        sessionHolder.withLock { $0 = Self.makeSession() }
     }
 
     nonisolated static func makeSession() -> URLSession {
@@ -885,8 +901,9 @@ public final class GitHubSkillService: ObservableObject {
         // 60 req/hr per IP, so importing a large plugin/skill repo (e.g.
         // anthropics/knowledge-work-plugins, ~200 SKILL.md across ~22 plugins)
         // fans out enough Contents-API calls to trip a 403 mid-enumeration and
-        // never completes. Attach a token when GITHUB_TOKEN / GH_TOKEN is set to
-        // raise the limit to 5,000/hr. Absent ⇒ byte-identical prior behavior.
+        // never completes. Attach a token — added in-app (Keychain) or via
+        // GITHUB_TOKEN / GH_TOKEN — to raise the limit to 5,000/hr. Absent ⇒
+        // byte-identical prior behavior.
         // This session is dedicated to GitHubSkillService and only contacts
         // GitHub-controlled hosts (api.github.com / *.githubusercontent.com), so
         // the header stays on GitHub. The token is never logged or surfaced in
@@ -899,10 +916,21 @@ public final class GitHubSkillService: ObservableObject {
         return GlobalProxySettings.makeSession(base: config)
     }
 
-    /// A GitHub API token from the process environment, if present and
-    /// non-empty. Never logged. Honors GITHUB_TOKEN then GH_TOKEN.
+    /// The GitHub API token to authenticate with, if any. Never logged. A
+    /// token added through the in-app flow (Keychain) wins over the
+    /// GITHUB_TOKEN / GH_TOKEN environment variables, so an app user isn't
+    /// stuck on the 60/hr anonymous limit just because they launched from
+    /// Finder without an env var.
     nonisolated static func gitHubToken() -> String? {
-        gitHubToken(from: ProcessInfo.processInfo.environment)
+        resolveToken(stored: GitHubAuth.token, environment: ProcessInfo.processInfo.environment)
+    }
+
+    /// Pure precedence resolution so the "in-app token wins over env vars" rule
+    /// is unit-testable without the keychain or process env. A non-blank stored
+    /// token wins; otherwise fall back to GITHUB_TOKEN / GH_TOKEN.
+    nonisolated static func resolveToken(stored: String?, environment: [String: String]) -> String? {
+        if let stored = GitHubAuth.normalize(stored) { return stored }
+        return gitHubToken(from: environment)
     }
 
     /// Pure token resolution over an explicit environment, so the precedence

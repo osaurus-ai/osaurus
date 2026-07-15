@@ -203,7 +203,11 @@ public final class ScheduleManager {
     /// Manually trigger a schedule to run now
     public func runNow(_ scheduleId: UUID) {
         guard let schedule = schedules.first(where: { $0.id == scheduleId }) else { return }
-        executeSchedule(schedule)
+        // A hand-pressed button. The user is watching this run, so it keeps the
+        // normal right to load its model -- even though it arrives with the same
+        // `source: .schedule` as the 3am cron fire below. That is exactly why the
+        // intent is passed explicitly instead of inferred from `source`.
+        executeSchedule(schedule, loadIntent: .interactive)
     }
 
     // MARK: - Plugin Grouping
@@ -328,9 +332,10 @@ public final class ScheduleManager {
             return schedule.shouldRunNow(asOf: now)
         }
 
-        // Execute all due schedules
+        // Timer fired on its own. Nobody is waiting on this, so it must not
+        // evict the model the user is actually chatting with.
         for schedule in schedulesToRun {
-            executeSchedule(schedule)
+            executeSchedule(schedule, loadIntent: .background)
         }
 
         // Schedule the next timer
@@ -350,7 +355,7 @@ public final class ScheduleManager {
                 // If the once date is in the past but hasn't run yet
                 if date <= now && schedule.executionAnchor == nil {
                     print("[Osaurus] Found missed once schedule: \(schedule.name)")
-                    executeSchedule(schedule)
+                    executeSchedule(schedule, loadIntent: .background)
                 }
             } else {
                 // For recurring schedules, check if we missed the last run
@@ -360,7 +365,7 @@ public final class ScheduleManager {
                         nextAfterAnchor <= now
                     {
                         print("[Osaurus] Found missed recurring schedule: \(schedule.name)")
-                        executeSchedule(schedule)
+                        executeSchedule(schedule, loadIntent: .background)
                     }
                 }
             }
@@ -370,7 +375,7 @@ public final class ScheduleManager {
     // MARK: - Execution
 
     /// Execute a schedule by dispatching to TaskDispatcher
-    private func executeSchedule(_ schedule: Schedule) {
+    private func executeSchedule(_ schedule: Schedule, loadIntent: ModelLoadIntent) {
         // Schedules MUST target an explicit custom agent. nil or built-in
         // agentIds were previously coerced to `Agent.defaultId`, silently
         // running anonymous schedules under the Default agent. Refuse the
@@ -397,7 +402,8 @@ public final class ScheduleManager {
             folderPath: triggeredSchedule.folderPath,
             folderBookmark: triggeredSchedule.folderBookmark,
             source: .schedule,
-            externalSessionKey: triggeredSchedule.id.uuidString
+            externalSessionKey: triggeredSchedule.id.uuidString,
+            loadIntent: loadIntent
         )
 
         print("[Osaurus] Executing schedule: \(triggeredSchedule.name)")

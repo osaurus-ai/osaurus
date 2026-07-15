@@ -577,7 +577,14 @@ public struct SystemPromptComposer: Sendable {
             contextDisable: contextDisable,
             sizeClass: window.sizeClass,
             effectiveToolsOff: effectiveToolsOff,
-            capabilityPromptSectionsEnabled: !isTrivialInput,
+            // Tied to the tool-schema fast path, NOT to `isTrivialInput`
+            // alone: capability prose sections are static prefix content, so
+            // dropping them for a trivial query in a session that keeps its
+            // tool schema (sandbox mode, existing history, frozen state)
+            // would rewrite the cached prefix — busting the warm-up KV on a
+            // "hey" first send and the whole conversation KV on any
+            // mid-session "thanks"/"ok" turn, with zero prefill savings.
+            capabilityPromptSectionsEnabled: !suppressTrivialToolSchema,
             prefersCompactPrompt: window.prefersCompactPrompt
         )
     }
@@ -1111,9 +1118,17 @@ public struct SystemPromptComposer: Sendable {
         // current tool kit is incomplete. The gate follows the actual
         // schema, not the mode label: manual-mode agents still carry
         // `capabilities_discover` / `capabilities_load` as pragmatic
-        // always-loaded tools. Trivial first turns suppress this prompt
-        // section through `capabilityPromptSectionsEnabled` without hiding
-        // the callable discovery tools themselves.
+        // always-loaded tools.
+        //
+        // KV-cache stability: `capabilityPromptSectionsEnabled` goes false
+        // ONLY on the greeting-only cold first turn in `.none` mode where
+        // the whole tool schema is dropped too (the #1161 fast path — the
+        // `capabilities_discover` check below would fail there anyway). Like
+        // `pluginCreator`, this section must NOT vanish for a trivial query
+        // in a session that keeps its schema: warm-up composes with
+        // `query: ""` and includes it, so dropping it on a "hey" send (or a
+        // mid-session "thanks") would rewrite the static prefix and force a
+        // full re-prefill.
         if toolset.capabilityPromptSectionsEnabled,
             !effectiveToolsOff,
             tools.contains(where: { $0.function.name == "capabilities_discover" })
@@ -1737,12 +1752,12 @@ public struct SystemPromptComposer: Sendable {
     /// freeze.
     ///
     /// Known, deliberate divergence: `capabilityPromptSectionsEnabled` is
-    /// hardcoded `true` here, while a trivial first send ("hi", "thanks")
-    /// suppresses the capability nudge (see `isTrivialUserQuery`). The
-    /// popover therefore prices the prompt a *real task* will produce —
-    /// slightly overstating a greeting-only first turn is the honest side
-    /// to err on, and pricing against `""` already means "unknown next
-    /// input" rather than "greeting".
+    /// hardcoded `true` here, while a greeting-only cold first send in
+    /// `.none` mode drops the schema AND the capability nudge (see
+    /// `shouldSuppressTrivialToolSchema`). The popover therefore prices the
+    /// prompt a *real task* will produce — slightly overstating that one
+    /// fast-path turn is the honest side to err on, and pricing against
+    /// `""` already means "unknown next input" rather than "greeting".
     @MainActor
     private static func previewToolset(
         snapshot: AgentConfigSnapshot,
@@ -2092,6 +2107,11 @@ public struct SystemPromptComposer: Sendable {
             if !snapshot.searchMemoryEnabled, !keep.contains("search_memory") {
                 byName.removeValue(forKey: "search_memory")
             }
+            if !snapshot.webSearchEnabled {
+                for name in ["web_search", "search_and_extract"] where !keep.contains(name) {
+                    byName.removeValue(forKey: name)
+                }
+            }
             if !snapshot.selfSchedulingEnabled {
                 for name in schedulerToolNames where !keep.contains(name) {
                     byName.removeValue(forKey: name)
@@ -2233,6 +2253,26 @@ public struct SystemPromptComposer: Sendable {
             let allowed = ToolRegistry.shared.builtInSandboxToolNamesSnapshot
                 .union(Self.agentLoopToolNames)
             byName = byName.filter { allowed.contains($0.key) }
+        }
+
+        // `spawn_model` is agent-scoped, so its request-local schema should be
+        // agent-scoped too. Publish the exact legal ids as a nested enum. Remote
+        // providers can validate/select them directly, local tool parsers receive
+        // the same contract, and a blank/guessed id is corrected before the
+        // provider-routing gate. Execution still re-checks the allow-list.
+        if let spawnModel = byName[SubagentCapabilityRegistry.spawnModelToolName] {
+            let config = SubagentConfigurationStore.snapshot()
+            let allowedModelIds = SubagentToolVisibility.effectiveSpawnableModels(
+                isDefault: snapshot.agentId == Agent.defaultId,
+                config: config,
+                perAgentEnabled: snapshot.spawnDelegationEnabled,
+                perAgentModelTargets: snapshot.spawnableModelNames
+            )
+            byName[SubagentCapabilityRegistry.spawnModelToolName] =
+                SpawnModelTool.constrainedSpec(
+                    spawnModel,
+                    allowedModelIds: allowedModelIds
+                )
         }
 
         // Generation-only image schema: when `image` survived the gates but no

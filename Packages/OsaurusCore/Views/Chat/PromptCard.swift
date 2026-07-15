@@ -30,14 +30,34 @@ extension View {
 }
 
 private struct PointingHandCursorModifier: ViewModifier {
+    // Tracks whether THIS instance currently has a cursor pushed, so push/pop
+    // stay strictly balanced. Without it, view-identity churn during frequent
+    // re-renders (e.g. the input card's chips repainting every streamed token)
+    // can deliver an `onHover(false)` with no matching `true`, popping a cursor
+    // this view never pushed — corrupting the process-wide `NSCursor` stack and
+    // leaving the wrong cursor stuck. `onDisappear` releases a push left
+    // outstanding when a hovered view is torn down.
+    @State private var pushed = false
+
     func body(content: Content) -> some View {
-        content.onHover { hovering in
-            if hovering {
-                NSCursor.pointingHand.push()
-            } else {
-                NSCursor.pop()
+        content
+            .onHover { hovering in
+                if hovering {
+                    guard !pushed else { return }
+                    NSCursor.pointingHand.push()
+                    pushed = true
+                } else {
+                    guard pushed else { return }
+                    NSCursor.pop()
+                    pushed = false
+                }
             }
-        }
+            .onDisappear {
+                if pushed {
+                    NSCursor.pop()
+                    pushed = false
+                }
+            }
     }
 }
 

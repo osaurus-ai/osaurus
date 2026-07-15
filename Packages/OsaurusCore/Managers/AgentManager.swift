@@ -288,7 +288,7 @@ public final class AgentManager: ObservableObject {
         if !agent.isBuiltIn {
             FeatureTelemetry.agentCreated()
         }
-        try? assignAddress(to: agent)
+        assignAddressInBackground(to: agent)
         // Notify subscribers (e.g. PluginManager) so plugins get an
         // initial config / tunnel-URL push for the new agent without
         // needing to wait for the next plugin force-reload.
@@ -297,6 +297,27 @@ public final class AgentManager: ObservableObject {
             object: nil,
             userInfo: ["agentId": agent.id]
         )
+    }
+
+    /// Restore a preserved legacy agent backup and publish it like a newly
+    /// available custom agent. `AgentStore` owns conflict-safe decoding /
+    /// re-id behavior; the manager refreshes UI state and gives recovered
+    /// conflict copies a fresh address when the local master key is available.
+    @discardableResult
+    public func restoreRecoverableAgentBackup(at url: URL) throws -> Agent {
+        let agent = try AgentStore.restoreRecoverableBackup(at: url)
+        refresh()
+        if !agent.isBuiltIn {
+            try? assignAddress(to: agent)
+            let restored = self.agent(for: agent.id) ?? agent
+            NotificationCenter.default.post(
+                name: .agentAdded,
+                object: nil,
+                userInfo: ["agentId": agent.id]
+            )
+            return restored
+        }
+        return agent
     }
 
     /// Set or replace the custom avatar image for `agentId`. Writes the bytes
@@ -405,6 +426,43 @@ public final class AgentManager: ObservableObject {
     /// address) rather than throwing. The same-signed app reads its own
     /// `kSecAttrAccessibleWhenUnlocked` key without UI, so assignment is unchanged
     /// there.
+    /// Off-main variant of `assignAddress(to:)` for the agent-creation path.
+    /// `MasterKey.exists()` and the key read are synchronous keychain queries
+    /// that block on securityd's mutex — calling them on the main thread has
+    /// tripped the watchdog when securityd is contended (e.g. a concurrent
+    /// identity setup or iCloud keychain sync). The index is reserved on the
+    /// main actor before detaching so two rapid creations can't collide, and
+    /// the write-back re-loads the agent and only fills a still-empty address,
+    /// so a concurrent `update`/`rotateAddress` can't be clobbered.
+    private func assignAddressInBackground(to agent: Agent) {
+        guard !agent.isBuiltIn, agent.agentAddress == nil else { return }
+        let index = nextUnusedAgentIndex()
+        // Park the reservation immediately (address comes later) so another
+        // creation in the same window gets the next index.
+        if var reserving = self.agent(for: agent.id), reserving.agentIndex == nil {
+            reserving.agentIndex = index
+            update(reserving)
+        }
+        Task.detached(priority: .userInitiated) {
+            guard MasterKey.exists() else { return }
+            let context = LAContext()
+            context.touchIDAuthenticationAllowableReuseDuration = 300
+            context.interactionNotAllowed = true
+            guard var masterKeyData = try? MasterKey.getPrivateKey(context: context) else { return }
+            defer { masterKeyData.zeroOut() }
+            guard let address = try? AgentKey.deriveAddress(masterKey: masterKeyData, index: index)
+            else { return }
+            await MainActor.run {
+                guard var current = AgentManager.shared.agent(for: agent.id),
+                    current.agentAddress == nil
+                else { return }
+                current.agentIndex = index
+                current.agentAddress = address
+                AgentManager.shared.update(current)
+            }
+        }
+    }
+
     public func assignAddress(to agent: Agent) throws {
         guard !agent.isBuiltIn, agent.agentAddress == nil else { return }
         guard MasterKey.exists() else { return }
@@ -666,9 +724,15 @@ extension AgentManager {
         // effect on the next provision, not mid-session.
         if let config {
             var sandboxConfig = SandboxConfigurationStore.load()
-            let desired = config.sandboxNetworkEnabled ? "outbound" : "none"
-            if sandboxConfig.network != desired {
-                sandboxConfig.network = desired
+            let desired = SandboxManager.reconciledNetworkSettings(
+                agentNetworkEnabled: config.sandboxNetworkEnabled,
+                allowedDomains: config.sandboxAllowedDomains
+            )
+            if sandboxConfig.network != desired.network
+                || sandboxConfig.allowedDomains != desired.allowedDomains
+            {
+                sandboxConfig.network = desired.network
+                sandboxConfig.allowedDomains = desired.allowedDomains
                 SandboxConfigurationStore.save(sandboxConfig)
             }
         }
@@ -763,6 +827,10 @@ extension AgentManager {
                 renderChartEnabled: false,
                 speakEnabled: false,
                 searchMemoryEnabled: false,
+                // Native web search stays on for the default agent — free
+                // providers work with zero config and this replaces the
+                // osaurus.search plugin's always-available tools.
+                webSearchEnabled: true,
                 selfSchedulingEnabled: false,
                 computerUseEnabled: false,
                 screenContextEnabled: false
@@ -777,6 +845,7 @@ extension AgentManager {
             renderChartEnabled: agent.settings.renderChartEnabled,
             speakEnabled: agent.settings.speakEnabled,
             searchMemoryEnabled: agent.settings.searchMemoryEnabled,
+            webSearchEnabled: agent.settings.webSearchEnabled,
             selfSchedulingEnabled: agent.settings.selfSchedulingEnabled,
             computerUseEnabled: agent.settings.computerUseEnabled,
             // Screen context is a child of Computer Use: both the per-agent

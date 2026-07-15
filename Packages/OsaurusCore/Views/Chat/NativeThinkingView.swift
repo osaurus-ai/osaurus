@@ -250,9 +250,13 @@ final class NativeThinkingView: NSView {
 
         chevronView.translatesAutoresizingMaskIntoConstraints = false
         chevronView.wantsLayer = true
-        chevronView.image = SymbolImageCache.image("chevron.right", accessibilityDescription: nil)
+        chevronView.image = SymbolImageCache.image(
+            "chevron.right", accessibilityDescription: nil, pointSize: 10, weight: .semibold)
         chevronView.contentTintColor = .tertiaryLabelColor
-        chevronView.imageScaling = .scaleProportionallyUpOrDown
+        // Down-only scaling + a fixed symbol point size keep the right and
+        // down chevrons visually the same size; proportional up-scaling into
+        // the square frame inflated whichever glyph was wider.
+        chevronView.imageScaling = .scaleProportionallyDown
         addSubview(chevronView)
 
         separatorView.translatesAutoresizingMaskIntoConstraints = false
@@ -334,16 +338,16 @@ final class NativeThinkingView: NSView {
     }
 
     private func updateChevron(expanded: Bool, animated: Bool) {
-        let angle: CGFloat = expanded ? .pi / 2 : 0
-        if animated {
-            NSAnimationContext.runAnimationGroup { ctx in
-                ctx.duration = 0.25
-                ctx.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
-                chevronView.layer?.setAffineTransform(CGAffineTransform(rotationAngle: angle))
-            }
-        } else {
-            chevronView.layer?.setAffineTransform(CGAffineTransform(rotationAngle: angle))
-        }
+        // Swap the symbol instead of rotating the layer: table-cell relayout
+        // resets layer transforms, leaving an expanded row with a right-
+        // pointing chevron (mirrors NativeFileDiffView's collapse chevron).
+        // The down state is the right chevron rotated (not chevron.down, a
+        // differently-proportioned glyph) so both states are the same size.
+        chevronView.image =
+            expanded
+            ? SymbolImageCache.rotatedDownChevron(pointSize: 10, weight: .semibold)
+            : SymbolImageCache.image(
+                "chevron.right", accessibilityDescription: nil, pointSize: 10, weight: .semibold)
     }
 
     @objc private func headerTapped() { onToggle?() }

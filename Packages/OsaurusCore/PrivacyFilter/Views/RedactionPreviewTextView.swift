@@ -73,7 +73,9 @@ struct RedactionPreviewTextView: NSViewRepresentable {
         scrollView.borderType = .noBorder
         scrollView.scrollerStyle = .overlay
 
-        let textView = SelectableNSTextView()
+        // TextKit 1 from birth — avoids the lazy TextKit 2 → 1 downgrade on
+        // first `.layoutManager` access (see EditableTextView.makeNSView).
+        let textView = SelectableNSTextView(usingTextLayoutManager: false)
         textView.isEditable = false
         textView.isSelectable = true
         textView.isRichText = true

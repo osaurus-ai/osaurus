@@ -94,6 +94,16 @@ public actor ImageGenerationService {
     /// a custom models-dir bookmark. Image weights must stay on an
     /// SSD-resident volume (USB weights trip the GPU watchdog on first
     /// forward); all candidates here are internal-volume paths.
+    /// Memoized resolution, keyed on the effective models directory. The
+    /// candidate probing below lists up to three directories on disk, and
+    /// callers include @MainActor services (download bookkeeping, picker
+    /// cache) — under I/O pressure a fresh scan per call is an observed UI
+    /// hang. The key invalidates the cache when the user picks a new models
+    /// directory; bundle additions land in the resolved root itself, so a
+    /// stale "populated candidate" answer cannot point downloads elsewhere.
+    private static let rootCacheLock = NSLock()
+    nonisolated(unsafe) private static var rootCache: (key: String, url: URL)?
+
     public static func imageModelsRoot() -> URL {
         let env = ProcessInfo.processInfo.environment
         if let override = env["OSAURUS_IMAGE_MODELS_DIR"], !override.isEmpty {
@@ -114,14 +124,28 @@ public actor ImageGenerationService {
         }
         let osaurusImageDir = DirectoryPickerService.effectiveModelsDirectory()
             .appendingPathComponent("image", isDirectory: true)
+
+        let cacheKey = osaurusImageDir.path
+        rootCacheLock.lock()
+        if let cached = rootCache, cached.key == cacheKey {
+            rootCacheLock.unlock()
+            return cached.url
+        }
+        rootCacheLock.unlock()
+
         let userModelsImageDir = fm.homeDirectoryForCurrentUser
             .appendingPathComponent("models", isDirectory: true)
             .appendingPathComponent("image", isDirectory: true)
         let legacy = MLXStudioModelStore.defaultImageRoot
+        var resolved = osaurusImageDir
         for candidate in [osaurusImageDir, userModelsImageDir, legacy] where holdsBundles(candidate) {
-            return candidate
+            resolved = candidate
+            break
         }
-        return osaurusImageDir
+        rootCacheLock.lock()
+        rootCache = (key: cacheKey, url: resolved)
+        rootCacheLock.unlock()
+        return resolved
     }
 
     private func store() -> MLXStudioModelStore {

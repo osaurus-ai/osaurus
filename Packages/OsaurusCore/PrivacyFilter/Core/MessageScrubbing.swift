@@ -138,7 +138,21 @@ extension ChatMessage {
             for call in calls {
                 let argsText = call.function.arguments
                 if !argsText.isEmpty {
-                    ChatMessage.appendCapped(argsText, into: &out)
+                    // Detection must see the DECODED string leaves,
+                    // not the raw serialized JSON: substitution
+                    // (`substituteJSONArguments`) parses the JSON and
+                    // replaces decoded leaves, so an original captured
+                    // from the raw text spanning an escape sequence
+                    // (`\n`, `\"`, `\\`) would never match at scrub
+                    // time — the substitution silently no-ops and the
+                    // post-scrub per-original assertion blocks the
+                    // send. Scanning the same decoded view keeps
+                    // detect and scrub symmetric. Falls back to the
+                    // raw string on parse failure, matching the
+                    // substitution fallback.
+                    for leaf in ChatMessage.jsonStringLeaves(argsText) {
+                        ChatMessage.appendCapped(leaf, into: &out)
+                    }
                 }
             }
         }
@@ -317,6 +331,43 @@ extension ChatMessage {
             }
         }
         return out
+    }
+
+    /// Decoded string leaves of a tool-call `arguments` JSON body, in
+    /// deterministic (sorted-key) order. Returns `[raw]` when the body
+    /// isn't valid JSON so detection scans the same text the
+    /// substitution fallback would rewrite. Keys are excluded — they
+    /// are schema-defined parameter names and `substituteJSONArguments`
+    /// never touches them, so detecting PII in a key could only
+    /// produce an unsubstitutable original.
+    fileprivate static func jsonStringLeaves(_ raw: String) -> [String] {
+        guard let data = raw.data(using: .utf8),
+            let value = try? JSONSerialization.jsonObject(with: data, options: [.fragmentsAllowed])
+        else {
+            return [raw]
+        }
+        var out: [String] = []
+        collectStringLeaves(value, into: &out)
+        return out
+    }
+
+    private static func collectStringLeaves(_ value: Any, into out: inout [String]) {
+        switch value {
+        case let dict as [String: Any]:
+            // Sorted keys keep segment order deterministic across
+            // calls (JSONSerialization dictionaries are unordered).
+            for (_, leaf) in dict.sorted(by: { $0.key < $1.key }) {
+                collectStringLeaves(leaf, into: &out)
+            }
+        case let arr as [Any]:
+            for item in arr {
+                collectStringLeaves(item, into: &out)
+            }
+        case let str as String:
+            if !str.isEmpty { out.append(str) }
+        default:
+            break
+        }
     }
 
     /// Walk a tool-call `arguments` JSON string and substitute on

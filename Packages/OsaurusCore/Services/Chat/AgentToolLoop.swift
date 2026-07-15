@@ -31,6 +31,7 @@
 //  HTTP and plugin surfaces pass nonisolated ones.
 //
 
+import CryptoKit
 import Foundation
 
 // MARK: - Policy
@@ -958,6 +959,52 @@ enum AgentToolLoop {
         }
         let raw = UUID().uuidString.replacingOccurrences(of: "-", with: "")
         return "call_" + String(raw.prefix(24))
+    }
+
+    /// Short, stable fingerprint of an outbound message array, for Router
+    /// billing idempotency keys. The loop's iteration counter alone is NOT a
+    /// safe key component: budget-refunded iterations (data-movement relief,
+    /// empty-turn retries) reuse the same counter value with a *different*
+    /// request body, which the Router rejects as `IDEMPOTENCY_CONFLICT`
+    /// (HTTP 409). Suffixing the key with this fingerprint keeps genuine
+    /// re-POSTs (`retryWithoutCharge` replays the identical messages)
+    /// deduping on the same key while any body change mints a fresh one.
+    ///
+    /// Covers every field that reaches the wire per message: role, content,
+    /// tool_call_id, reasoning content, tool calls (id/name/arguments), and
+    /// multimodal content parts. Field and message boundaries are separated
+    /// with control bytes so adjacent fields can't collide by concatenation.
+    static func stepIdempotencyFingerprint(messages: [ChatMessage]) -> String {
+        var hasher = SHA256()
+        func feed(_ value: String) {
+            hasher.update(data: Data(value.utf8))
+            hasher.update(data: Data([0x1F]))  // unit separator between fields
+        }
+        for message in messages {
+            feed(message.role)
+            feed(message.content ?? "")
+            feed(message.tool_call_id ?? "")
+            feed(message.reasoning_content ?? "")
+            for call in message.tool_calls ?? [] {
+                feed(call.id)
+                feed(call.function.name)
+                feed(call.function.arguments)
+            }
+            for part in message.contentParts ?? [] {
+                switch part {
+                case .text(let text):
+                    feed("text:" + text)
+                case .imageUrl(let url, let detail):
+                    feed("image:" + (detail ?? "") + ":" + url)
+                case .audioInput(let data, let format):
+                    feed("audio:" + format + ":" + data)
+                case .videoUrl(let url):
+                    feed("video:" + url)
+                }
+            }
+            hasher.update(data: Data([0x1E]))  // record separator between messages
+        }
+        return hasher.finalize().prefix(8).map { String(format: "%02x", $0) }.joined()
     }
 
     /// Run the canonical loop to completion. Errors thrown by

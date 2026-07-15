@@ -18,6 +18,7 @@
 //
 
 import Foundation
+import OsaurusRepository
 
 // MARK: - Provider read visibility (eval isolation)
 
@@ -74,6 +75,40 @@ enum ConfigurationProviderReadVisibility {
     }
 }
 
+private enum PluginRepositoryDiagnosticProjection {
+    static func dictionary(_ result: CentralRepositoryRefreshResult?) -> [String: Any]? {
+        guard let result else { return nil }
+        var dict: [String: Any] = [
+            "succeeded": result.succeeded,
+            "repository_url": result.repositoryURL,
+            "attempted_archive_urls": result.attemptedArchiveURLs,
+            "cache_available": result.cacheAvailable,
+        ]
+        if let refreshedAt = result.refreshedAt {
+            dict["refreshed_at"] = ISO8601DateFormatter().string(from: refreshedAt)
+        }
+        if let cacheUpdatedAt = result.cacheUpdatedAt {
+            dict["cache_updated_at"] = ISO8601DateFormatter().string(from: cacheUpdatedAt)
+        }
+        if let failure = result.failure {
+            var failureDict: [String: Any] = [
+                "kind": failure.kind.rawValue,
+                "message": failure.message,
+                "user_message": failure.userMessage,
+                "retryable": failure.retryable,
+            ]
+            if let failedURL = failure.failedArchiveURL {
+                failureDict["failed_archive_url"] = failedURL
+            }
+            if let httpStatusCode = failure.httpStatusCode {
+                failureDict["http_status_code"] = httpStatusCode
+            }
+            dict["failure"] = failureDict
+        }
+        return dict
+    }
+}
+
 // MARK: - osaurus_status
 
 public final class OsaurusStatusTool: OsaurusTool, @unchecked Sendable {
@@ -113,6 +148,9 @@ public final class OsaurusStatusTool: OsaurusTool, @unchecked Sendable {
             let plugins = PluginRepositoryService.shared.plugins
             let installedPlugins = plugins.filter { $0.installedVersion != nil }
             let failedPlugins = installedPlugins.filter { $0.loadError != nil }
+            let pluginRepositoryDiagnostic = PluginRepositoryDiagnosticProjection.dictionary(
+                PluginRepositoryService.shared.lastRefreshResult
+            )
 
             let schedules = ScheduleManager.shared.schedules
             let enabledSchedules = schedules.filter { $0.isEnabled }
@@ -177,6 +215,7 @@ public final class OsaurusStatusTool: OsaurusTool, @unchecked Sendable {
                 "plugins": [
                     "installed": installedPlugins.count,
                     "failed": failedPlugins.count,
+                    "repository": pluginRepositoryDiagnostic ?? [:],
                 ],
                 "schedules": [
                     "total": schedules.count,
@@ -347,7 +386,14 @@ public final class OsaurusListTool: OsaurusTool, @unchecked Sendable {
                 default:
                     filtered = items
                 }
-                payload = ["scope": "plugins", "filter": filter, "items": filtered]
+                payload = [
+                    "scope": "plugins",
+                    "filter": filter,
+                    "repository": PluginRepositoryDiagnosticProjection.dictionary(
+                        PluginRepositoryService.shared.lastRefreshResult
+                    ) ?? [:],
+                    "items": filtered,
+                ]
             case "schedules":
                 let schedules = ScheduleManager.shared.schedules.map { s -> [String: Any] in
                     return [

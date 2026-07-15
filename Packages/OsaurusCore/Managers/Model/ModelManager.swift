@@ -116,15 +116,16 @@ final class ModelManager: NSObject, ObservableObject {
         /// hardware info and we let everything through until we know.
         enum PerformanceFilter: String, CaseIterable, Identifiable {
             /// Only include models whose `compatibility` is `.compatible`
-            /// (memory usage below the 75 % ratio threshold).
+            /// (working set at or below 85 % of the GPU memory budget).
             case runsWell = "Runs Well"
             /// Only include models whose `compatibility` is `.tight`
-            /// (memory usage between 75 % and 95 % of total RAM)
+            /// (working set between 85 % and 110 % of the GPU memory budget).
             case tightFit = "Tight Fit"
             /// Exclude models whose advisory `compatibility` is `.tooLarge`
-            /// (memory usage above the 95 % ratio threshold). This filter is
-            /// user-selected catalog triage only; runtime load/download does
-            /// not block RAM pressure from this estimate.
+            /// (working set above 110 % of the GPU memory budget — macOS would
+            /// page the weights). This filter is user-selected catalog triage
+            /// only; runtime load/download does not block RAM pressure from
+            /// this estimate.
             case hideTooLarge = "Hide Too Large"
 
             var id: String { rawValue }
@@ -531,7 +532,12 @@ final class ModelManager: NSObject, ObservableObject {
         downloadService.download(model)
     }
 
-    func downloadModel(_ model: MLXModel) { downloadService.download(model) }
+    func downloadModel(
+        _ model: MLXModel,
+        route: ModelDownloadService.DownloadRoute = .direct
+    ) {
+        downloadService.download(model, route: route)
+    }
     func cancelDownload(_ modelId: String) { downloadService.cancel(modelId) }
     func pauseDownload(_ modelId: String) { downloadService.pause(modelId) }
     func resumeDownload(_ modelId: String) {
@@ -682,27 +688,27 @@ extension ModelManager {
             id: "OsaurusAI/LFM2.5-8B-A1B-MXFP8",
             description:
                 "Liquid AI LFM2.5 8B hybrid MoE (~1B active), MXFP8 — high-precision, fast Apple Silicon chat. 128K context.",
-            isTopSuggestion: true,
             modelType: "lfm2_moe",
             releasedAt: date("2026-05-29"),
             useCase: .general
         ),
 
-        // MARK: Gemma 4 — multimodal (onboarding default spine)
+        // MARK: Gemma 4 — multimodal
         //
-        // The dense Gemma 4 QAT line (E2B/E4B/12B/31B, `qat-MXFP4`) is the
-        // onboarding auto-default spine: quantization-aware training beats
-        // post-training quant at equal bit-width, and these are the newest
-        // Gemma builds. `ConfigureAIState.recommendedLocalPick` auto-selects
-        // the largest *dense* QAT model that comfortably fits. The 26B-A4B
-        // QAT MoE below stays a Top Pick but is intentionally excluded from
-        // the auto-default (its footprint is the 36%-bounce risk), and the
-        // E-series QAT entries are excluded from the auto-default until the
-        // 8-bit-vs-QAT-4bit retention A/B clears (small tiers stay on the
-        // 8-bit builds). Top-Pick promotion of the QAT line is gated on the
-        // required AgentLoop tool-use proof for the active Gemma 4 QAT
-        // checkpoint (load, executed tool, tool-result continuation, clean
-        // visible text, no marker leakage, cache telemetry).
+        // Onboarding recommendation spine (2026-07-08, GUI-verified in the
+        // dev-built app — every model below loads, calls tools, reasons with
+        // thinking on, and leaks no markup into visible content):
+        //   • Larger RAM  → Ornith 1.0 MXFP8 (9B / 35B, below).
+        //   • Smaller RAM → official OsaurusAI Gemma 4 at the highest non-QAT,
+        //                    non-MXFP4 precision that exists: `12B-it-MXFP8`
+        //                    (the only MXFP8 Gemma the org ships) and the
+        //                    `E4B/E2B-it-8bit` retention builds (no E-series
+        //                    MXFP8 exists on the HF org).
+        // A *recommended* Gemma build must never be `qat` or plain `MXFP4`, so
+        // the 5 Gemma `qat-MXFP4` builds (E2B/E4B/12B/31B/26B-A4B) stay in the
+        // catalog but are not Top Picks. Qwen 3.6 (incl. MXFP8-MTP), Nemotron-3
+        // and LFM2.5 also remain catalog-only for now: they are installable and
+        // selectable, just not part of the auto-default recommendation spine.
 
         curated(
             id: "OsaurusAI/gemma-4-12B-it-MXFP8",
@@ -717,8 +723,7 @@ extension ModelManager {
         curated(
             id: "OsaurusAI/gemma-4-E2B-it-qat-MXFP4",
             description:
-                "Gemma 4 E2B QAT — quantization-aware 4-bit. Smallest multimodal floor; better quality-per-byte than post-training 4-bit. Runs on any Mac. 128K context.",
-            isTopSuggestion: true,
+                "Gemma 4 E2B QAT — quantization-aware 4-bit. Smallest multimodal floor. Catalog build; not an onboarding recommendation (QAT/MXFP4 excluded). 128K context.",
             modelType: "gemma4",
             releasedAt: date("2026-06-09"),
             useCase: .smallest
@@ -727,8 +732,7 @@ extension ModelManager {
         curated(
             id: "OsaurusAI/gemma-4-E4B-it-qat-MXFP4",
             description:
-                "Gemma 4 E4B QAT — quantization-aware 4-bit multimodal edge model. Images, video, and audio. 128K context.",
-            isTopSuggestion: true,
+                "Gemma 4 E4B QAT — quantization-aware 4-bit multimodal edge model. Catalog build; not an onboarding recommendation (QAT/MXFP4 excluded). 128K context.",
             modelType: "gemma4",
             releasedAt: date("2026-06-09"),
             useCase: .vision
@@ -737,8 +741,7 @@ extension ModelManager {
         curated(
             id: "OsaurusAI/gemma-4-12B-it-qat-MXFP4",
             description:
-                "Gemma 4 12B dense QAT — quantization-aware 4-bit. The mainstream multimodal default for 16–24 GB Macs. 128K context.",
-            isTopSuggestion: true,
+                "Gemma 4 12B dense QAT — quantization-aware 4-bit. Catalog build; not an onboarding recommendation (QAT/MXFP4 excluded — prefer the 12B-it-MXFP8 build). 128K context.",
             modelType: "gemma4",
             releasedAt: date("2026-06-09"),
             useCase: .vision
@@ -747,8 +750,7 @@ extension ModelManager {
         curated(
             id: "OsaurusAI/gemma-4-31B-it-qat-MXFP4",
             description:
-                "Gemma 4 31B dense QAT — quantization-aware 4-bit. Top-tier multimodal quality for 32 GB+ Macs. 128K context.",
-            isTopSuggestion: true,
+                "Gemma 4 31B dense QAT — quantization-aware 4-bit. Catalog build; not an onboarding recommendation (QAT/MXFP4 excluded). 128K context.",
             modelType: "gemma4",
             releasedAt: date("2026-06-09"),
             useCase: .vision
@@ -757,8 +759,7 @@ extension ModelManager {
         curated(
             id: "OsaurusAI/gemma-4-26B-A4B-it-qat-MXFP4",
             description:
-                "Gemma 4 26B-A4B QAT — quantization-aware 4-bit MoE (~4B active) vision model. Selectable Top Pick; excluded from the low-RAM auto-default. 128K context.",
-            isTopSuggestion: true,
+                "Gemma 4 26B-A4B QAT — quantization-aware 4-bit MoE (~4B active) vision model. Catalog build; not an onboarding recommendation (QAT/MXFP4 excluded). 128K context.",
             modelType: "gemma4",
             releasedAt: date("2026-06-09"),
             useCase: .vision
@@ -799,7 +800,6 @@ extension ModelManager {
             id: "OsaurusAI/Qwen3.6-27B-MXFP4",
             description:
                 "Qwen 3.6 27B dense vision model. MXFP4 — best quality per byte. The org's most-downloaded model. 256K context.",
-            isTopSuggestion: true,
             modelType: "qwen3_5",
             releasedAt: date("2026-05-20"),
             useCase: .vision
@@ -809,7 +809,6 @@ extension ModelManager {
             id: "OsaurusAI/Qwen3.6-27B-MXFP8-MTP",
             description:
                 "Qwen 3.6 27B dense vision model. MXFP8 + multi-token-prediction speculative decode — high precision, fast. 256K context.",
-            isTopSuggestion: true,
             modelType: "qwen3_5",
             releasedAt: date("2026-05-20"),
             useCase: .vision
@@ -819,7 +818,6 @@ extension ModelManager {
             id: "OsaurusAI/Qwen3.6-35B-A3B-MXFP8-MTP",
             description:
                 "Qwen 3.6 35B MoE (~3B active) vision model. MXFP8 + multi-token-prediction speculative decode — the precision-first sibling of the MXFP4 build. 256K context.",
-            isTopSuggestion: true,
             modelType: "qwen3_5_moe",
             releasedAt: date("2026-05-20"),
             useCase: .vision
@@ -864,6 +862,32 @@ extension ModelManager {
             isTopSuggestion: true,
             modelType: "qwen3_5_moe",
             releasedAt: date("2026-06-26"),
+            useCase: .vision
+        ),
+
+        // MARK: Bonsai (prism-ml, Qwen 3.5 dense backbone)
+        //
+        // Extreme low-bit dense 27B vision-language models converted from
+        // prism-ml's Bonsai checkpoints. Text matrices use affine JANG
+        // (schema-2 discrete storage — not JANGTQ/MXTQ or a codebook
+        // sidecar); vision components stay 4-bit affine. Same `qwen3_5`
+        // runtime class as Qwen 3.6 / Ornith dense builds.
+
+        curated(
+            id: "OsaurusAI/Bonsai-27b-Ternary-JANG",
+            description:
+                "Bonsai 27B dense vision model on a Qwen 3.5 backbone. Ternary (2-bit slot) affine JANG text weights — ~8 GB on disk.",
+            modelType: "qwen3_5",
+            releasedAt: date("2026-07-14"),
+            useCase: .vision
+        ),
+
+        curated(
+            id: "OsaurusAI/Bonsai-27b-1bit-JANG",
+            description:
+                "Bonsai 27B dense vision model on a Qwen 3.5 backbone. 1-bit affine JANG text weights — smallest of the family at ~4.7 GB.",
+            modelType: "qwen3_5",
+            releasedAt: date("2026-07-14"),
             useCase: .vision
         ),
 
@@ -936,7 +960,6 @@ extension ModelManager {
             id: "OsaurusAI/Nemotron-3-Nano-Omni-30B-A3B-MXFP4",
             description:
                 "NVIDIA Nemotron-3 30B Reasoning hybrid (Mamba-2 + MoE). MXFP4 quantization — fastest decode path. 262K context.",
-            isTopSuggestion: true,
             modelType: "nemotron_h",
             releasedAt: date("2026-04-28"),
             useCase: .reasoning
@@ -1318,9 +1341,23 @@ extension ModelManager {
     /// Find an installed model by user-provided name.
     /// Accepts repo name (case-insensitive) or full id (case-insensitive).
     nonisolated static func findInstalledMLXModel(named name: String) -> MLXModel? {
+        matchInstalledMLXModel(named: name, in: discoverLocalModels())
+    }
+
+    /// Non-blocking variant of `findInstalledMLXModel(named:)` backed by
+    /// `localModelsSnapshotNonBlocking()`. View bodies and per-render getters
+    /// must use this: with a cold cache `discoverLocalModels()` parks on the
+    /// scan condition (up to ~10s) and beachballs the main thread.
+    nonisolated static func findInstalledMLXModelFromCache(named name: String) -> MLXModel? {
+        matchInstalledMLXModel(named: name, in: localModelsSnapshotNonBlocking())
+    }
+
+    private nonisolated static func matchInstalledMLXModel(
+        named name: String,
+        in models: [MLXModel]
+    ) -> MLXModel? {
         let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return nil }
-        let models = discoverLocalModels()
 
         // Try repo component first
         if let match = models.first(where: { m in
@@ -1778,6 +1815,36 @@ extension ModelManager {
 
         let waitLimit = localModelsScanWaitLimitOverrideForTests ?? localModelsScanWaitLimit
         let deadline = Date().addingTimeInterval(waitLimit)
+        startLocalModelsScanLocked()
+
+        if let cached = waitForLocalModelsScan(until: deadline) {
+            localModelsCacheCondition.unlock()
+            return mergeExternalModels(into: cached)
+        } else {
+            let cached = cachedLocalModels ?? []
+            localModelsCacheCondition.unlock()
+            return mergeExternalModels(into: cached)
+        }
+    }
+
+    /// Local models from the warm cache, never waiting on a scan. On a cold
+    /// cache this kicks off the background scan and returns the (possibly
+    /// empty) current state immediately — callers re-render once the scan
+    /// lands via their normal refresh ticks. This is the only local-models
+    /// entry point safe to call from a view body on the main thread.
+    nonisolated static func localModelsSnapshotNonBlocking() -> [MLXModel] {
+        localModelsCacheCondition.lock()
+        let cached = cachedLocalModels
+        if cached == nil && !localModelsScanInFlight {
+            startLocalModelsScanLocked()
+        }
+        localModelsCacheCondition.unlock()
+        return mergeExternalModels(into: cached ?? [])
+    }
+
+    /// Kick off the background disk scan. Caller must hold
+    /// `localModelsCacheCondition` with `localModelsScanInFlight == false`.
+    private nonisolated static func startLocalModelsScanLocked() {
         localModelsScanInFlight = true
         DispatchQueue.global(qos: .utility).async {
             let scanned = scanLocalModels()
@@ -1787,15 +1854,6 @@ extension ModelManager {
             localModelsScanInFlight = false
             localModelsCacheCondition.broadcast()
             localModelsCacheCondition.unlock()
-        }
-
-        if let cached = waitForLocalModelsScan(until: deadline) {
-            localModelsCacheCondition.unlock()
-            return mergeExternalModels(into: cached)
-        } else {
-            let cached = cachedLocalModels ?? []
-            localModelsCacheCondition.unlock()
-            return mergeExternalModels(into: cached)
         }
     }
 
@@ -2013,7 +2071,12 @@ extension ModelManager {
                         id: id,
                         name: ModelMetadataParser.friendlyName(from: id),
                         description: L("Local model (detected)"),
-                        downloadURL: "https://huggingface.co/\(id)"
+                        downloadURL: "https://huggingface.co/\(id)",
+                        // The scan already runs off-main. Preserve the bundle's
+                        // architecture tag here so hot UI paths can distinguish
+                        // image-only from video-capable local VLMs without
+                        // re-reading config.json during SwiftUI layout.
+                        modelType: VLMDetection.readModelType(at: resolved)
                     )
                     models.append(model)
                 }

@@ -151,26 +151,19 @@ public enum SandboxPluginRegistration {
             )
         }
 
-        if let setup = plugin.setup {
-            let violations = SandboxNetworkPolicy.validateSetupCommand(setup)
-            if !violations.isEmpty {
-                throw SandboxPluginRegistrationError.invalidArgs(
-                    "Setup command rejected: \(violations.joined(separator: "; "))"
-                )
-            }
-        }
-
-        // Per-tool `run` commands ride the same network policy as `setup`.
-        // Without this, an agent could put `curl https://evil.example` directly
-        // into a tool's `run` and bypass the allowlist.
-        for tool in plugin.tools ?? [] {
-            let violations = SandboxNetworkPolicy.validateSetupCommand(tool.run)
-            if !violations.isEmpty {
-                throw SandboxPluginRegistrationError.invalidArgs(
-                    "Tool `\(tool.id)` run command rejected: "
-                        + violations.joined(separator: "; ")
-                )
-            }
+        // Setup, per-tool `run`, and daemon commands all ride the same
+        // network policy. Without this, an agent could put
+        // `curl https://evil.example` directly into a tool's `run` and
+        // bypass the allowlist. Hosts the plugin explicitly declares in
+        // `permissions.network` are permitted — they're user-visible and
+        // runtime-enforced by the egress proxy in allowlist mode.
+        // `SandboxPluginManager.install` runs the same check, so library
+        // installs / reinstalls / repairs can't drift from this policy.
+        let violations = SandboxNetworkPolicy.validatePluginCommands(plugin)
+        if !violations.isEmpty {
+            throw SandboxPluginRegistrationError.invalidArgs(
+                violations.joined(separator: "; ")
+            )
         }
 
         if let agentUUID = UUID(uuidString: agentId) {

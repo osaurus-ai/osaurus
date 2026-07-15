@@ -96,11 +96,12 @@ struct ConfigurationDomainRegistryTests {
         ConfigurationDomainBootstrap.registerBuiltIns()
 
         let configureWrites = ToolRegistry.configureWriteToolNames
-        // Provider, model, MCP, plugin, schedule, agent domains each
+        // Provider, model, MCP, search, plugin, schedule, agent domains each
         // contribute exactly one consolidated `osaurus_*` write tool.
         #expect(configureWrites.contains("osaurus_provider"))
         #expect(configureWrites.contains("osaurus_model"))
         #expect(configureWrites.contains("osaurus_mcp"))
+        #expect(configureWrites.contains("osaurus_search"))
         #expect(configureWrites.contains("osaurus_plugin"))
         #expect(configureWrites.contains("osaurus_schedule"))
         #expect(configureWrites.contains("osaurus_agent"))
@@ -138,11 +139,11 @@ struct ConfigurationDomainRegistryTests {
     @Test
     func defaultAgentAllowedToolNames_isTheConsolidatedConfigureSurfacePlusLoop() {
         // The Default-agent baseline is a hard product contract: the
-        // consolidated configure surface (3 reads + 6 per-domain writes)
-        // plus the three agent-loop tools, and NOTHING else. In particular
-        // the capability-search gateway is no longer part of it. Changing
-        // this set changes the model's first-turn schema and must be
-        // reviewed deliberately.
+        // consolidated configure surface (3 reads + 7 per-domain writes)
+        // plus the three agent-loop tools and native `web_search`, and
+        // NOTHING else. In particular the capability-search gateway is no
+        // longer part of it. Changing this set changes the model's
+        // first-turn schema and must be reviewed deliberately.
         ConfigurationDomainBootstrap._resetForTests()
         ConfigurationDomainBootstrap.registerBuiltIns()
         defer { ConfigurationDomainBootstrap._resetForTests() }
@@ -154,12 +155,14 @@ struct ConfigurationDomainRegistryTests {
             "osaurus_provider",
             "osaurus_model",
             "osaurus_mcp",
+            "osaurus_search",
             "osaurus_plugin",
             "osaurus_schedule",
             "osaurus_agent",
             "todo",
             "complete",
             "clarify",
+            "web_search",
         ]
         #expect(ToolRegistry.defaultAgentAllowedToolNames == expected)
         // The capability-search gateway is explicitly NOT in the Default

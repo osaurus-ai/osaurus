@@ -122,4 +122,44 @@ struct EvalMatrixTests {
         #expect(EvalMatrixBuilder.isSubsystemCase(id: "subagent.image-generate-live", domain: "subagent"))
         #expect(!EvalMatrixBuilder.isSubsystemCase(id: "apple_script.scripted-value-query", domain: "apple_script"))
     }
+
+    // MARK: - skip-reason histogram
+
+    @Test func skipReasonsBuildFromSkippedCaseNotes() throws {
+        let cases: [EvalCaseReport] = [
+            .init(
+                id: "agent_loop.ok", label: "ok", domain: "agent_loop", query: nil,
+                outcome: .passed, notes: [], modelId: "m", latencyMs: 0
+            ),
+            .terminal(
+                id: "agent_loop.sb1", label: "sb1", domain: "agent_loop",
+                outcome: .skipped, notes: ["sandbox unavailable: OS too old"], modelId: "m"
+            ),
+            .terminal(
+                id: "agent_loop.sb2", label: "sb2", domain: "agent_loop",
+                outcome: .skipped, notes: ["sandbox unavailable: OS too old"], modelId: "m"
+            ),
+            .terminal(
+                id: "agent_loop.plugin", label: "plugin", domain: "agent_loop",
+                outcome: .skipped, notes: [], modelId: "m"
+            ),
+        ]
+        let col = EvalMatrixBuilder.build(from: [
+            EvalReport(modelId: "m", startedAt: "2026-06-19T00:00:00Z", cases: cases, environment: nil)
+        ]).models[0]
+        let cell = try #require(col.perDomain["agent_loop"])
+        #expect(cell.skipped == 3)
+        #expect(cell.skipReasons == ["sandbox unavailable: OS too old": 2, "unspecified": 1])
+        // Domains with no skips carry no histogram.
+        #expect(cell.passed == 1)
+    }
+
+    @Test func preSchemaDomainCellDecodesWithNilSkipReasons() throws {
+        // The 11 committed contributions predate `skipReasons`; their cells
+        // must keep decoding, reading as "reasons unrecorded".
+        let json = Data(#"{"passed": 5, "scored": 8, "skipped": 3, "errored": 0}"#.utf8)
+        let cell = try JSONDecoder().decode(EvalMatrixDomainCell.self, from: json)
+        #expect(cell.skipped == 3)
+        #expect(cell.skipReasons == nil)
+    }
 }

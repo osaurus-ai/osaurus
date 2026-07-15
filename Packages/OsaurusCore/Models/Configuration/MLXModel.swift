@@ -557,46 +557,6 @@ struct MLXModel: Identifiable, Codable {
         return nil
     }
 
-    // MARK: - Onboarding auto-default classification
-    //
-    // The onboarding default (`ConfigureAIState.recommendedLocalPick`) draws
-    // only from the dense Gemma 4 QAT line, with the E-series 8-bit builds as
-    // a gated small-tier fallback. These flags name those sets so the policy
-    // lives next to the metadata it reads, not buried in the view.
-
-    /// True when the id is a Gemma 4 E-series edge build (`E2B`/`E4B`/...).
-    private var isGemma4ESeries: Bool {
-        id.range(of: #"gemma-4-e\d"#, options: [.regularExpression, .caseInsensitive]) != nil
-    }
-
-    /// True when the id carries an MoE active-param token (e.g. `-A4B`),
-    /// marking a mixture-of-experts build rather than a dense one.
-    private var hasMoEActiveParamToken: Bool {
-        id.range(of: #"-a\d+(\.\d+)?b"#, options: [.regularExpression, .caseInsensitive]) != nil
-    }
-
-    /// True for the **dense** Gemma 4 QAT builds (12B/31B `qat-MXFP4`) that
-    /// form the onboarding auto-default spine. Excludes the E-series (gated on
-    /// the 8-bit-vs-QAT-4bit retention A/B) and the 26B-A4B QAT MoE (its
-    /// footprint is the 36%-bounce risk) — both stay selectable Top Picks but
-    /// are never auto-selected.
-    var isDenseGemmaQATAutoDefault: Bool {
-        let lower = id.lowercased()
-        guard lower.contains("gemma-4"), lower.contains("qat") else { return false }
-        if isGemma4ESeries { return false }
-        if hasMoEActiveParamToken { return false }
-        return true
-    }
-
-    /// True for the Gemma 4 E-series 8-bit retention builds
-    /// (`gemma-4-E2B/E4B-it-8bit`) — the gated small-tier auto-default until
-    /// the QAT-4bit-vs-8bit bounce A/B clears.
-    var isGemmaESeries8bitAutoDefault: Bool {
-        guard isGemma4ESeries else { return false }
-        let lower = id.lowercased()
-        return lower.contains("8bit") || lower.contains("8-bit")
-    }
-
     /// Formatted estimated memory string (e.g. "~3.5 GB")
     var formattedEstimatedMemory: String? {
         guard let gb = estimatedMemoryGB else { return nil }
@@ -605,12 +565,34 @@ struct MLXModel: Identifiable, Codable {
             : String(format: "~%.1f GB", gb)
     }
 
-    /// Assess whether this model can run on the given hardware.
+    /// Comfortably inside the GPU working set, with room for a long-context KV
+    /// cache to grow.
+    private static let comfortableBudgetRatio: Double = 0.85
+    /// The most a working set may overshoot the budget and still be offered.
+    /// `GPUMemoryBudget.defaultBudgetGB` is the conservative split rather than
+    /// the larger one modern macOS advertises, and the recommended working set
+    /// is a recommendation rather than a cliff, so a small overshoot is
+    /// survivable — it just leaves nothing for other apps. Past this the
+    /// weights get paged.
+    private static let maxBudgetRatio: Double = 1.10
+
+    /// Assess whether this model can run on a Mac with `totalMemoryGB` of
+    /// unified memory.
+    ///
+    /// Sized against `GPUMemoryBudget`, not raw RAM. MLX loads weights into
+    /// Metal buffers and macOS silently pages anything past the GPU working
+    /// set, so a model measured against `physicalMemory` can look like it has
+    /// headroom to spare, load without a single error, and then decode at a
+    /// character every few seconds. A 35B MXFP8 bundle needs ~42 GB and a
+    /// 48 GB Mac budgets only ~36 GB to the GPU: 89% of RAM, but 119% of what
+    /// it can actually hold.
     func compatibility(totalMemoryGB: Double) -> ModelCompatibility {
         guard let required = estimatedMemoryGB, totalMemoryGB > 0 else { return .unknown }
-        let ratio = required / totalMemoryGB
-        if ratio < 0.75 { return .compatible }
-        if ratio < 0.95 { return .tight }
+        let budget = GPUMemoryBudget.budgetGB(physicalMemoryGB: totalMemoryGB)
+        guard budget > 0 else { return .unknown }
+        let ratio = required / budget
+        if ratio <= Self.comfortableBudgetRatio { return .compatible }
+        if ratio <= Self.maxBudgetRatio { return .tight }
         return .tooLarge
     }
 
