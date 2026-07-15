@@ -27,7 +27,10 @@ public struct DoctorCommand: Command {
             options = try parseOptions(args)
         } catch let error as ArgumentError {
             let detail: String
-            switch error { case .invalid(let message): detail = message }
+            switch error {
+            case .invalid(let message):
+                detail = message
+            }
             fputs("osaurus doctor: \(detail)\n", stderr)
             fputs(
                 "Usage: osaurus doctor [--port 1...65535] [--json] [--redact] [--verify-signatures]\n",
