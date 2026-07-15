@@ -64,6 +64,15 @@ struct SpawnToolTests {
         #expect(ToolEnvelope.isError(malformed))
     }
 
+    @Test func spawnModelRejectsWhitespaceModelBeforeSpawnabilityGate() async throws {
+        let result = try await SpawnModelTool().execute(
+            argumentsJSON: #"{"input":"do a thing","model":"   \n\t"}"#
+        )
+        #expect(ToolEnvelope.isError(result))
+        #expect(ToolEnvelope.failureMessage(result).contains("cannot be blank"))
+        #expect(!ToolEnvelope.failureMessage(result).contains("Model '' is not spawnable"))
+    }
+
     @Test func bypassesRegistryTimeout() {
         // The nested loop outlives the registry's per-tool wall clock; both spawn
         // tools must opt out so the host owns the deadline.
@@ -97,6 +106,41 @@ struct SpawnToolTests {
         let kind = TextSubagentKind(model: "qwen3-4b-4bit", input: "x")
         #expect(kind.capability.id == "spawn")
         #expect(kind.feedTitle.contains("qwen3-4b-4bit"))
+    }
+
+    @Test func spawnModelUsagePrefersPositiveProviderThroughput() {
+        let resolved = AgentSubagentRunner.resolvedTokensPerSecond(
+            reported: 73.5,
+            completionTokens: 42,
+            elapsed: 2.0
+        )
+        #expect(resolved == 73.5)
+    }
+
+    @Test func spawnModelUsageMeasuresThroughputWhenProviderReportsZero() {
+        let resolved = AgentSubagentRunner.resolvedTokensPerSecond(
+            reported: 0,
+            completionTokens: 5,
+            elapsed: 0.25
+        )
+        #expect(resolved == 20)
+    }
+
+    @Test func spawnModelUsageDoesNotInventThroughputWithoutMeasurement() {
+        #expect(
+            AgentSubagentRunner.resolvedTokensPerSecond(
+                reported: nil,
+                completionTokens: 5,
+                elapsed: 0
+            ) == nil
+        )
+        #expect(
+            AgentSubagentRunner.resolvedTokensPerSecond(
+                reported: .nan,
+                completionTokens: 0,
+                elapsed: 1
+            ) == nil
+        )
     }
 
     /// Per-agent spawnable enforcement (agents): a CUSTOM launching agent may

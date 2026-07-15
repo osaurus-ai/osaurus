@@ -5,8 +5,14 @@
 //  Central registry for chat tools. Provides OpenAI tool specs and execution by name.
 //
 
-import Foundation
 import Combine
+import Foundation
+import OSLog
+
+/// Refusals here are security-relevant: a tool the request never exposed tried to run.
+enum ToolRegistryLogger {
+    static let registry = Logger(subsystem: "ai.osaurus", category: "tool.registry")
+}
 
 private let toolBodyTimeoutQueue = DispatchQueue(label: "ai.osaurus.tool-registry.timeout")
 
@@ -651,6 +657,34 @@ public final class ToolRegistry: ObservableObject {
             let stripped = String(name.dropFirst("tool/".count))
             if toolsByName[stripped] != nil { name = stripped }
         }
+
+        // A tool this request never exposed must not run, however convincingly the model asks
+        // for it.
+        //
+        // Exposure and execution were not bound together. The prompt chose which tools the model
+        // was TOLD about, but nothing stopped it from naming one it was never shown: the parser
+        // records any name once at least one schema is present, and this registry then ran it,
+        // because the comment above used to say access control had already happened upstream. It
+        // had not. A sandbox / plugin / MCP tool deliberately withheld from an agent would execute
+        // if the model merely guessed its name — and tools fired in the app with the tools toggle
+        // visibly OFF.
+        //
+        // Deliberately AFTER the `tool/` normalization above: checking `rawName` would let the
+        // model bypass the whole thing by prefixing the name it was never given.
+        //
+        // `nil` scope means the surface published none and gates its own tools — the registry then
+        // behaves exactly as before. See `ChatExecutionContext.toolExecutionScope`.
+        if let scope = ChatExecutionContext.toolExecutionScope, !scope.permits(name) {
+            ToolRegistryLogger.registry.error(
+                "refusing '\(name, privacy: .public)': not exposed to this request")
+            return ToolErrorEnvelope(
+                kind: .toolNotFound,
+                reason: "\(name) is not available in this conversation.",
+                toolName: name,
+                retryable: false
+            ).toJSONString()
+        }
+
         // External-surface deny list: refuse workspace-mutating tool
         // classes for HTTP/MCP-initiated executions regardless of
         // registration state or permission policy.

@@ -90,8 +90,8 @@ public struct GitHubImportTokenProvider: GitHubAuthTokenProviding {
             return GitHubAuthToken(value: token, source: .environment)
         }
         return nil
-        }
     }
+}
 
 /// Import bounds applied before materialising repo content. These limits are
 /// intentionally scoped to GitHub plugin/skill import.

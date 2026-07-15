@@ -48,6 +48,16 @@ actor OsaurusRouterAPIClient {
         return try await post("/credits/checkout", body: Body(amount_micro: amountMicro))
     }
 
+    /// Claim the one-time welcome credit for brand-new users. Signed like
+    /// every other route (the wallet proves ownership); `deviceId` is the
+    /// stable per-Mac hash from `WelcomeCreditDeviceID` — never the raw
+    /// hardware UUID. Idempotent server-side: a retry of the same claim
+    /// succeeds with `already_granted: true`.
+    func claimWelcomeCredit(deviceId: String) async throws -> OsaurusRouterWelcomeClaimResponse {
+        struct Body: Encodable { let device_id: String }
+        return try await post("/credits/welcome/claim", body: Body(device_id: deviceId))
+    }
+
     func models() async throws -> [OsaurusRouterModel] {
         let response: OsaurusRouterModelListResponse = try await get("/models")
         return response.data

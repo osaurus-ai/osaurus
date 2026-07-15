@@ -1347,29 +1347,44 @@ final class PluginManager {
     /// durable path fails for any reason — partial protection beats
     /// none.
     private nonisolated static func writeLoadingMarker(pluginId: String) {
-        let url = currentlyLoadingURL()
-        let data = Data(pluginId.utf8)
-        let fm = FileManager.default
-        let tmpURL = url.appendingPathExtension("tmp-\(UUID().uuidString)")
-        do {
-            try data.write(to: tmpURL, options: [.atomic])
-            if let handle = try? FileHandle(forUpdating: tmpURL) {
-                try? handle.synchronize()
-                try? handle.close()
+        // `sync` (not direct execution) so a still-running async clear from
+        // the previous plugin can't be reordered after this write and delete
+        // the fresh marker. The write itself must complete before the caller
+        // enters the dlopen/init danger zone, so it cannot be async.
+        markerQueue.sync {
+            let url = currentlyLoadingURL()
+            let data = Data(pluginId.utf8)
+            let fm = FileManager.default
+            let tmpURL = url.appendingPathExtension("tmp-\(UUID().uuidString)")
+            do {
+                try data.write(to: tmpURL, options: [.atomic])
+                if let handle = try? FileHandle(forUpdating: tmpURL) {
+                    try? handle.synchronize()
+                    try? handle.close()
+                }
+                if fm.fileExists(atPath: url.path) {
+                    _ = try fm.replaceItemAt(url, withItemAt: tmpURL)
+                } else {
+                    try fm.moveItem(at: tmpURL, to: url)
+                }
+                fsyncDirectory(url.deletingLastPathComponent())
+            } catch {
+                try? data.write(to: url)
             }
-            if fm.fileExists(atPath: url.path) {
-                _ = try fm.replaceItemAt(url, withItemAt: tmpURL)
-            } else {
-                try fm.moveItem(at: tmpURL, to: url)
-            }
-            fsyncDirectory(url.deletingLastPathComponent())
-        } catch {
-            try? data.write(to: url)
         }
     }
 
+    /// Serializes loading-marker file operations. Clearing is fire-and-forget
+    /// off the caller's thread — the `unlink` stalled for 3+ seconds on slow
+    /// disks and hung the UI when the sweep ran on the main actor — while
+    /// writes stay synchronous for crash durability.
+    private nonisolated static let markerQueue = DispatchQueue(
+        label: "ai.osaurus.plugin-loading-marker", qos: .utility)
+
     private nonisolated static func clearLoadingMarker() {
-        try? FileManager.default.removeItem(at: currentlyLoadingURL())
+        markerQueue.async {
+            try? FileManager.default.removeItem(at: currentlyLoadingURL())
+        }
     }
 
     /// `fsync()`s the directory containing `url` so a preceding atomic

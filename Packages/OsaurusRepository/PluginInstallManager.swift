@@ -17,6 +17,7 @@ public enum PluginInstallError: Error, CustomStringConvertible, LocalizedError {
     case signatureInvalid
     case authorKeyMismatch
     case unzipFailed(String)
+    case archiveRejected(String)
     case layoutInvalid(String)
 
     public var description: String {
@@ -31,6 +32,7 @@ public enum PluginInstallError: Error, CustomStringConvertible, LocalizedError {
             return
                 "The signing key for this plugin has changed. Uninstall the plugin and reinstall it to accept the new key."
         case .unzipFailed(let msg): return "Unzip failed: \(msg)"
+        case .archiveRejected(let msg): return "Plugin archive rejected: \(msg)"
         case .layoutInvalid(let msg): return "Invalid artifact layout: \(msg)"
         }
     }
@@ -44,7 +46,6 @@ public final class PluginInstallManager: @unchecked Sendable {
     /// safely while still blocking accidental or malicious multi-gigabyte installs.
     static let maximumArtifactArchiveBytes: Int64 = 256 * 1024 * 1024
     static let hashReadChunkBytes = 1024 * 1024
-    static let unzipExecutablePath = "/usr/bin/unzip"
     private init() {}
 
     public struct InstallResult: Sendable {
@@ -69,7 +70,7 @@ public final class PluginInstallManager: @unchecked Sendable {
         // the updated key from the registry. We capture the prior version here so we can
         // remove it *after* the new install + symlink swap succeed. Eagerly deleting it now
         // would leave the user with no installed version (and a dangling `current` symlink)
-        // if any later step throws (network, checksum, signature, unzip).
+        // if any later step throws (network, checksum, signature, extraction).
         let keyRotatedFromVersion: SemanticVersion? = {
             guard let latest = InstalledPluginsStore.shared.latestInstalledVersion(pluginId: spec.plugin_id),
                 let existing = InstalledPluginsStore.shared.receipt(pluginId: spec.plugin_id, version: latest),
@@ -131,9 +132,21 @@ public final class PluginInstallManager: @unchecked Sendable {
         }
         NSLog("[Osaurus] Minisign signature verified for \(pluginId)")
 
-        let tmpDir = try makeTempDirectory()
+        let tmpDir = FileManager.default.temporaryDirectory.appendingPathComponent(
+            "osaurus-plugin-\(UUID().uuidString)",
+            isDirectory: true
+        )
         defer { try? FileManager.default.removeItem(at: tmpDir) }
-        try unzip(zipURL: tmpZip, to: tmpDir)
+        do {
+            try BoundedArchiveExtractor.extract(
+                archive: tmpZip,
+                to: tmpDir,
+                policy: .plugin,
+                expectedSHA256: checksum
+            )
+        } catch let error as ArchiveExtractionError {
+            throw PluginInstallError.archiveRejected(error.localizedDescription)
+        }
 
         guard let dylibURL = findFirstDylib(in: tmpDir) else {
             throw PluginInstallError.layoutInvalid("No .dylib found in archive")
@@ -340,7 +353,7 @@ public final class PluginInstallManager: @unchecked Sendable {
         }
     }
 
-    // MARK: - Download / unzip
+    // MARK: - Download / extraction
     private func download(toTempFileFrom url: URL, declaredSize: Int?) async throws -> URL {
         let boundedDeclaredSize = try Self.validatedDeclaredArtifactSize(declaredSize)
         let (downloadedURL, response) = try await RepositoryGlobalProxySettings.sharedSession().download(from: url)
@@ -372,24 +385,6 @@ public final class PluginInstallManager: @unchecked Sendable {
         } catch {
             try? FileManager.default.removeItem(at: tmp)
             throw error
-        }
-    }
-
-    /// Use the system unzip binary directly so plugin installation does not depend on
-    /// a user-controlled PATH lookup through `/usr/bin/env`.
-    private func unzip(zipURL: URL, to destination: URL) throws {
-        let task = Process()
-        task.executableURL = URL(fileURLWithPath: Self.unzipExecutablePath)
-        task.arguments = ["-o", "-q", zipURL.path, "-d", destination.path]
-        let pipe = Pipe()
-        task.standardOutput = pipe
-        task.standardError = pipe
-        try task.run()
-        task.waitUntilExit()
-        if task.terminationStatus != 0 {
-            let data = pipe.fileHandleForReading.readDataToEndOfFile()
-            let s = String(data: data, encoding: .utf8) ?? ""
-            throw PluginInstallError.unzipFailed(s)
         }
     }
 
@@ -461,14 +456,6 @@ public final class PluginInstallManager: @unchecked Sendable {
 
     static func mappedFileData(at url: URL) throws -> Data {
         try Data(contentsOf: url, options: [.mappedIfSafe])
-    }
-
-    private func makeTempDirectory() throws -> URL {
-        let fm = FileManager.default
-        let base = fm.temporaryDirectory
-        let dir = base.appendingPathComponent("osaurus-plugin-\(UUID().uuidString)", isDirectory: true)
-        try fm.createDirectory(at: dir, withIntermediateDirectories: true)
-        return dir
     }
 
     /// Finds a documentation file (case-insensitive) in the extracted archive directory

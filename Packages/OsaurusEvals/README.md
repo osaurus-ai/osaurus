@@ -197,9 +197,11 @@ The loop batches each model's suites into ONE process (the model loads and
 warms once, not once per suite), and when `MODELS` mixes local and
 remote-provider ids it runs the remote models in a parallel background lane —
 remote decode is network-bound, so it doesn't contend with local MLX GPU work.
-The remote lane runs config-isolated (it can't race the local lane on
-`~/.osaurus`) and the sandbox-VM suite is serialized across lanes with a lock.
-Set `PARALLEL_REMOTE=0` to restore the fully sequential order.
+Every eval process runs in its own hermetic throwaway storage root (see
+"Hermetic run storage" below), so parallel lanes can never race each other —
+or a live Osaurus app — on `~/.osaurus`; the sandbox-VM suite is serialized
+across lanes with a lock (the VM itself is host-global). Set
+`PARALLEL_REMOTE=0` to restore the fully sequential order.
 
 Each run lands in `build/evals/loop/<timestamp>/` (also symlinked as
 `build/evals/loop/latest`) with:
@@ -309,11 +311,29 @@ requests `stream_options.include_usage` and surfaces the provider's `usage` as
 the same in-band stats hint the local runtime emits (decode tok/s stays nil when
 the provider omits it, rather than being fabricated).
 
+**Hermetic run storage.** Every `osaurus-evals run` (and `agent-loop-lab`)
+process — pure data suites included — runs against a disposable
+`$TMPDIR/osaurus-evals-<uuid>/` storage root
+(`EvalBootstrap.configureIsolatedRunStorage`). Fixture agents, providers,
+schedules, memory rows, methods, skills, chat state, and KV caches an eval
+creates all land in that throwaway root and **can never touch the user's real
+`~/.osaurus` contexts**. The isolated root is seeded with the few host
+resources a run must still see: read-only symlinks for `Tools/` (installed
+plugins, only when the plan loads them), `cache/external-models.json`
+(HF-cache / LM-Studio model resolution), and `container/` (the host-global
+sandbox VM runtime — boot costs minutes and the container is shared with the
+host app, so it is the one deliberate exception); plus **copies** of
+`config/chat.json` (keeps `--model auto` resolvable) and `config/sandbox.json`
+(keeps provisioned-sandbox detection) so any write a run triggers mutates the
+copy, not the user's file. On normal exit the process deletes its root; roots
+leaked by watchdog `_exit` / crashes are collected by the next run's orphan
+sweep (dead `.owner.pid`).
+
 Startup bootstrap is domain-aware. Suites that require installed native plugins
 load them and rebuild search indices so they mirror the host app. `capability_search`
 suites initialize only the selected tool / method / skill index lanes without
-loading native plugins; those index-only runs use isolated temporary storage so
-fixtures never touch the user's real databases. Debug builds also use
+loading native plugins; index fixtures build fresh inside the isolated root so
+they never touch the user's real databases. Debug builds also use
 a deterministic in-process storage key; release builds still use OsaurusCore's
 normal noninteractive storage-key path against the isolated database files
 (used only when a run opts in to encrypted fixtures; plaintext fixtures need no key).

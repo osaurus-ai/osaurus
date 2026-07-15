@@ -221,6 +221,11 @@ struct GeminiSafetySetting: Codable, Sendable {
 /// Gemini image generation configuration (aspect ratio, resolution)
 struct GeminiImageConfig: Codable, Sendable {
     let aspectRatio: String?  // "1:1","1:4","1:8","2:3","3:2","3:4","4:1","4:3","4:5","5:4","8:1","9:16","16:9","21:9"
+    // "1K"/"2K"/"4K" are confirmed wire literals (uppercase K required).
+    // The 0.5K tier (Gemini 3.1 Flash Image only) is documented in prose as
+    // "512px (0.5K)" but no official example shows its exact literal; we
+    // send the picker segment id "512px" unchanged. If the API rejects it,
+    // re-verify against the current image-generation docs before renaming.
     let imageSize: String?  // "512px", "1K", "2K", "4K"
 }
 

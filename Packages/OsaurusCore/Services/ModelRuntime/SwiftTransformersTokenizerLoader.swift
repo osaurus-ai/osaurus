@@ -1071,7 +1071,17 @@ private struct TokenizerBridge: MLXLMCommon.GenerationPromptControllableTokenize
                 prompt.removeLast(tail.count)
             }
         }
-        return upstream.encode(text: prompt, addSpecialTokens: false)
+        // Throwing, not force-unwrapping. This template emits DeepSeek's control markers
+        // (`<｜Assistant｜>`, `<think>`, …) as literal text, and a bundle whose vocab does
+        // not carry one of them has no id to return for it — DeepSeek's byte-level BPE
+        // declares no unknown token to stand in either. `encode` force-unwrapped that nil
+        // and killed the app (Sentry APPLE-MACOS-10S, 9 events in 0.22.0), from inside a
+        // prefix-cache probe that only wanted to measure the generation-prompt suffix.
+        //
+        // Every caller up this chain already handles a thrown error — the suffix probe
+        // treats failure as "no reusable boundary" and carries on — so a mismatched
+        // bundle now costs a cache optimization instead of the user's session.
+        return try upstream.encodeThrowing(text: prompt, addSpecialTokens: false)
     }
 
     private static func compactCompletedDSV4ToolHistory(

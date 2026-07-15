@@ -316,7 +316,15 @@ final class AccessibilityManager: @unchecked Sendable {
         preparedPids.insert(pid)
         lock.unlock()
 
-        let app = AXUIElementCreateApplication(pid)
+        // `axApp` (NOT a raw app element): the messaging timeout does not
+        // propagate from the system-wide element, so a raw element makes the
+        // two sets below UNBOUNDED. They are the most
+        // dangerous AX calls we make — flipping `AXEnhancedUserInterface` /
+        // `AXManualAccessibility` forces the target to build its entire
+        // accessibility tree synchronously, and an app that is still launching
+        // can sit on the reply indefinitely. This is the open-app path, so an
+        // unbounded block here wedges the driver queue for the whole session.
+        let app = Self.axApp(pid)
         AXUIElementSetAttributeValue(app, "AXManualAccessibility" as CFString, true as CFTypeRef)
         AXUIElementSetAttributeValue(
             app,
@@ -1378,7 +1386,12 @@ private func waitUntilReady(
         // can stay hidden, occluded, or behind another Space.
         let frontmostOK = !requireFrontmost || app.isActive
 
-        let axApp = AXUIElementCreateApplication(app.processIdentifier)
+        // Bounded app element (see `AccessibilityManager.axApp`). A raw app
+        // element inherits no messaging timeout, so this poll — which by
+        // construction runs against an app that is still coming up — could
+        // block forever on a single read instead of failing and retrying
+        // within the 5s budget above.
+        let axApp = AccessibilityManager.axApp(app.processIdentifier)
         var windowValue: CFTypeRef?
         let windowResult = AXUIElementCopyAttributeValue(
             axApp,

@@ -37,9 +37,9 @@ struct OsaurusEvalsCLI {
         // SecItemCopyMatching → securityd with 0% CPU). `LAContext`/UI-skip flags
         // are ignored on legacy items, so the only correct fix is to run
         // Keychain-free: every wrapper (incl. MasterKey) then no-ops. This
-        // mirrors the existing isolated config/search storage for default-agent
-        // cases. Forced before any OsaurusCore access; the harness never needs
-        // real Keychain (remote providers are ephemeral and env-keyed).
+        // matches the hermetic run storage every eval process gets. Forced
+        // before any OsaurusCore access; the harness never needs real
+        // Keychain (remote providers are ephemeral and env-keyed).
         setenv("OSAURUS_DISABLE_KEYCHAIN_FOR_TESTS", "1", 1)
 
         // The sandbox secrets pipeline (sandbox_secret_set → exec env
@@ -176,23 +176,17 @@ struct OsaurusEvalsCLI {
                 )
             }
         )
-        _ = EvalBootstrap.configureIsolatedSearchStorageIfNeeded(for: bootstrapPlan)
-        // Default-agent cases EXECUTE real configure write tools; isolate the
-        // config root (after the search-isolation call so a mixed suite keeps
-        // its plugin `Tools` symlink) so writes never touch the real
-        // `~/.osaurus`. No-op for suites without `default_agent` cases.
-        // OSAURUS_EVALS_ISOLATE_CONFIG=1 forces isolation regardless: the
-        // optimization loop's parallel remote lane sets it so concurrent
-        // processes can never race each other (or a live app) on the real
-        // config root. Only safe for explicit-model runs (an isolated root
-        // has no chat config for `auto` to resolve against) — which remote
-        // `provider/model` ids always are.
-        let forceConfigIsolation =
-            ProcessInfo.processInfo.environment["OSAURUS_EVALS_ISOLATE_CONFIG"] == "1"
-        _ = EvalBootstrap.configureIsolatedConfigStorageIfNeeded(
-            isolate: forceConfigIsolation
-                || suites.contains { $0.selectedCasesIncludeDefaultAgent(filter: opts.filter) }
-        )
+        // Hermetic run storage, unconditionally: EVERY eval run gets a
+        // throwaway root so fixture seeds and executed tool writes (agents,
+        // schedules, providers, memory, methods, skills, chat state) can
+        // never land in the user's real `~/.osaurus` contexts. Host
+        // resources evals must still see are seeded in: config snapshots
+        // are copies (`chat.json` keeps `--model auto` resolvable,
+        // `sandbox.json` keeps provisioned-sandbox detection), and the
+        // sandbox VM runtime stays host-global via a `container/` symlink.
+        // Concurrent lanes (the optimization loop's parallel remote lane)
+        // are safe by construction — each process owns its own root.
+        _ = EvalBootstrap.configureIsolatedRunStorage(for: bootstrapPlan)
         let startupWatchdog =
             bootstrapPlan.requiresWork
             ? makeStartupWatchdog(options: opts, suite: suites[0])

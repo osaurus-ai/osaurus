@@ -181,6 +181,21 @@ struct OsaurusRouterBalanceResponse: Decodable, Equatable, Sendable {
     }
 }
 
+/// `POST /credits/welcome/claim` result. `granted` with
+/// `already_granted == true` is a deduped retry of a claim that landed
+/// earlier — both shapes are success for the client.
+struct OsaurusRouterWelcomeClaimResponse: Decodable, Equatable, Sendable {
+    let granted: Bool
+    let alreadyGranted: Bool
+    let amountMicro: String
+
+    enum CodingKeys: String, CodingKey {
+        case granted
+        case alreadyGranted = "already_granted"
+        case amountMicro = "amount_micro"
+    }
+}
+
 struct OsaurusRouterCheckoutResponse: Decodable, Equatable, Sendable {
     let clientSecret: String
     let checkoutURL: String

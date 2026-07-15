@@ -302,10 +302,6 @@ final class PluginInstallManagerTests: XCTestCase {
         XCTAssertEqual(digest, "76f6ce2a444b4bfcfa21c40ac4df5adc5f4e897fdeb28c3211d69252d09304ca")
     }
 
-    func test_unzipExecutablePath_usesSystemBinaryDirectly() {
-        XCTAssertEqual(PluginInstallManager.unzipExecutablePath, "/usr/bin/unzip")
-    }
-
     func test_isRegularPayloadFile_acceptsRegularFiles() throws {
         let url = tempRoot.appendingPathComponent("Plugin.dylib", isDirectory: false)
         try Data("binary".utf8).write(to: url)

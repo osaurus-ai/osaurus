@@ -8,10 +8,86 @@
 
 import SwiftUI
 
+/// Inline model-options control state for the picker's currently selected
+/// model: every non-thinking option the model's profile (or live provider
+/// catalog) exposes, rendered as a section at the bottom of the picker.
+struct ModelPickerOptionsControl {
+    /// Catalog-driven reasoning capabilities (ChatGPT/Codex live catalog or
+    /// the documented official OpenAI GPT-5.6 contract), when present. Used
+    /// to surface per-level catalog descriptions on the effort row.
+    let capabilities: ModelReasoningCapabilities?
+    /// Non-thinking option definitions for the selected model, in profile
+    /// order. When `capabilities` is present this is just the dynamic
+    /// `reasoningEffort` definition.
+    let options: [ModelOptionDefinition]
+    /// Explicit persisted values. Missing keys mean "use the default" —
+    /// nothing is sent on the wire for them.
+    let values: [String: ModelOptionValue]
+    /// Display-only defaults (profile defaults, or the catalog default for
+    /// capability-enriched effort). Never synthesized into requests.
+    let defaults: [String: ModelOptionValue]
+    /// Persist one option; a nil value removes the explicit override so the
+    /// default applies naturally again.
+    let onChange: (String, ModelOptionValue?) -> Void
+
+    var isEmpty: Bool { options.isEmpty }
+
+    /// The segment id the UI marks as selected for a segmented option:
+    /// explicit choice first, then the display default, then the first
+    /// segment.
+    func effectiveSegmentId(for option: ModelOptionDefinition) -> String? {
+        if let explicit = values[option.id]?.stringValue { return explicit }
+        if let fallback = defaults[option.id]?.stringValue { return fallback }
+        if case .segmented(let segments) = option.kind { return segments.first?.id }
+        return nil
+    }
+
+    /// The on/off state the UI shows for a toggle option: explicit choice
+    /// first, then the display default, then the definition's default.
+    func effectiveToggleValue(for option: ModelOptionDefinition) -> Bool {
+        if let explicit = values[option.id]?.boolValue { return explicit }
+        if let fallback = defaults[option.id]?.boolValue { return fallback }
+        if case .toggle(let defaultValue) = option.kind { return defaultValue }
+        return false
+    }
+
+    /// Estimated rendered height of the options section, used for the
+    /// popover frame. Segmented rows account for chip wrapping in the
+    /// picker's fixed content width.
+    var estimatedHeight: CGFloat {
+        let availableWidth: CGFloat = 352
+        return options.reduce(CGFloat(0)) { total, option in
+            switch option.kind {
+            case .segmented(let segments):
+                var lines: CGFloat = 1
+                var lineWidth: CGFloat = 0
+                for segment in segments {
+                    // chip ≈ label width (~6.5pt/char) + horizontal padding + spacing
+                    let chipWidth = CGFloat(segment.label.count) * 6.5 + 26
+                    if lineWidth + chipWidth > availableWidth {
+                        lines += 1
+                        lineWidth = chipWidth
+                    } else {
+                        lineWidth += chipWidth
+                    }
+                }
+                // header + chip lines + row padding (+ description line when
+                // the catalog publishes level copy)
+                let descriptionHeight: CGFloat =
+                    (option.id == "reasoningEffort" && capabilities != nil) ? 16 : 0
+                return total + 28 + lines * 31 + 20 + descriptionHeight
+            case .toggle:
+                return total + 40
+            }
+        }
+    }
+}
+
 struct ModelPickerView: View {
     let options: [ModelPickerItem]
     @Binding var selectedModel: String?
     let agentId: UUID?
+    var optionsControl: ModelPickerOptionsControl? = nil
     let onDismiss: () -> Void
 
     @State private var searchText = ""
@@ -231,6 +307,16 @@ struct ModelPickerView: View {
         return ModelManager.replacementForDeprecatedModel(id)
     }
 
+    /// Height budget the options section adds to the popover frame; the
+    /// section scrolls once it exceeds its cap so many-option models (e.g.
+    /// Gemini image profiles) can't crowd out the model list.
+    private var optionsSectionHeight: CGFloat {
+        guard let optionsControl, !optionsControl.isEmpty else { return 0 }
+        return min(optionsControl.estimatedHeight, Self.optionsSectionMaxHeight)
+    }
+
+    private static let optionsSectionMaxHeight: CGFloat = 240
+
     var body: some View {
         let tabs = currentTabs
         let rows = visibleRows(in: tabs)
@@ -263,8 +349,19 @@ struct ModelPickerView: View {
                     isFavoritesTab: !isSearching && activeTab?.key == Self.favoritesTabKey
                 )
             }
+
+            if let optionsControl, !optionsControl.isEmpty {
+                Divider().background(theme.primaryBorder.opacity(0.3))
+                optionsSection(optionsControl)
+            }
         }
-        .frame(width: 380, height: min(CGFloat(visibleOptions.count * 48 + 160), 480))
+        .frame(
+            width: 380,
+            height: min(
+                CGFloat(visibleOptions.count * 48 + 160) + optionsSectionHeight,
+                optionsSectionHeight > 0 ? 480 + min(optionsSectionHeight, 200) : 480
+            )
+        )
         .background(popoverBackground)
         .overlay(popoverBorder)
         .shadow(color: theme.shadowColor.opacity(0.15), radius: 12, x: 0, y: 6)
@@ -701,6 +798,222 @@ struct ModelPickerView: View {
             .background(Color.orange.opacity(0.08))
         }
         .buttonStyle(.plain)
+    }
+
+    // MARK: - Options Section
+
+    /// Inline model-options section: every non-thinking option the selected
+    /// model exposes, in profile/catalog order. Scrolls once the estimated
+    /// content exceeds the section cap so many-option models can't crowd out
+    /// the model list.
+    @ViewBuilder
+    private func optionsSection(_ control: ModelPickerOptionsControl) -> some View {
+        let content = VStack(alignment: .leading, spacing: 0) {
+            ForEach(Array(control.options.enumerated()), id: \.element.id) { index, option in
+                if index > 0 {
+                    Divider()
+                        .background(theme.primaryBorder.opacity(0.15))
+                        .padding(.horizontal, 14)
+                }
+                switch option.kind {
+                case .segmented:
+                    segmentedOptionRow(option, control: control)
+                case .toggle:
+                    toggleOptionRow(option, control: control)
+                }
+            }
+        }
+        if control.estimatedHeight > Self.optionsSectionMaxHeight {
+            ScrollView(.vertical, showsIndicators: true) {
+                content
+            }
+            .frame(height: Self.optionsSectionMaxHeight)
+        } else {
+            content
+        }
+    }
+
+    /// Segmented option row: the option's segments in declared order, the
+    /// effective selection marked, a "Default" pill while no explicit
+    /// override exists, and a reset affordance while one does. For the
+    /// catalog-enriched effort row, catalog level descriptions render as
+    /// secondary text/help.
+    @ViewBuilder
+    private func segmentedOptionRow(
+        _ option: ModelOptionDefinition,
+        control: ModelPickerOptionsControl
+    ) -> some View {
+        let segments: [ModelOptionSegment] = {
+            if case .segmented(let segments) = option.kind { return segments }
+            return []
+        }()
+        let isExplicit = control.values[option.id] != nil
+        let effectiveId = control.effectiveSegmentId(for: option)
+        // Catalog levels (with descriptions) back the effort row when the
+        // provider published capabilities; other rows have segments only.
+        let capabilityLevels: [ModelReasoningCapabilities.Level]? =
+            (option.id == "reasoningEffort") ? control.capabilities?.levels : nil
+
+        VStack(alignment: .leading, spacing: 8) {
+            optionRowHeader(option: option, isExplicit: isExplicit, control: control)
+
+            FlowLayout(spacing: 6) {
+                ForEach(segments) { segment in
+                    segmentChip(
+                        label: segment.label,
+                        help: capabilityLevels?.first(where: { $0.id == segment.id })?.description,
+                        isSelected: segment.id == effectiveId,
+                        action: { control.onChange(option.id, .string(segment.id)) }
+                    )
+                }
+            }
+
+            // The effective level's catalog description, when the provider
+            // published one (Codex catalog levels carry ChatGPT's own copy).
+            if let description = capabilityLevels?
+                .first(where: { $0.id == effectiveId })?.description,
+                !description.isEmpty
+            {
+                Text(description)
+                    .font(.system(size: 10))
+                    .foregroundColor(theme.tertiaryText)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 10)
+    }
+
+    /// Toggle option row in the same visual family as the segmented rows.
+    @ViewBuilder
+    private func toggleOptionRow(
+        _ option: ModelOptionDefinition,
+        control: ModelPickerOptionsControl
+    ) -> some View {
+        let isExplicit = control.values[option.id] != nil
+        let isOn = control.effectiveToggleValue(for: option)
+
+        HStack(spacing: 6) {
+            if let icon = option.icon {
+                Image(systemName: icon)
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundColor(isExplicit ? theme.accentColor : theme.tertiaryText)
+            }
+            Text(option.label)
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundColor(theme.primaryText)
+
+            if !isExplicit {
+                defaultPill
+            }
+
+            Spacer()
+
+            if isExplicit {
+                resetButton { control.onChange(option.id, nil) }
+            }
+
+            Toggle(
+                "",
+                isOn: Binding(
+                    get: { isOn },
+                    set: { control.onChange(option.id, .bool($0)) }
+                )
+            )
+            .toggleStyle(.switch)
+            .controlSize(.mini)
+            .labelsHidden()
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 8)
+    }
+
+    /// Shared header line for option rows: icon, label, "Default" pill while
+    /// no explicit override exists, reset affordance while one does.
+    private func optionRowHeader(
+        option: ModelOptionDefinition,
+        isExplicit: Bool,
+        control: ModelPickerOptionsControl
+    ) -> some View {
+        HStack(spacing: 6) {
+            if let icon = option.icon {
+                Image(systemName: icon)
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundColor(isExplicit ? theme.accentColor : theme.tertiaryText)
+            }
+
+            Text(option.label)
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundColor(theme.primaryText)
+
+            if !isExplicit {
+                defaultPill
+            }
+
+            Spacer()
+
+            if isExplicit {
+                resetButton { control.onChange(option.id, nil) }
+            }
+        }
+    }
+
+    private var defaultPill: some View {
+        Text("Default", bundle: .module)
+            .font(.system(size: 10, weight: .medium))
+            .foregroundColor(theme.tertiaryText)
+            .padding(.horizontal, 5)
+            .padding(.vertical, 1)
+            .background(Capsule().fill(theme.secondaryBackground))
+    }
+
+    private func resetButton(action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            HStack(spacing: 3) {
+                Image(systemName: "arrow.uturn.backward")
+                    .font(.system(size: 9))
+                Text("Reset to default", bundle: .module)
+                    .font(.system(size: 11, weight: .medium))
+            }
+            .foregroundColor(theme.secondaryText)
+        }
+        .buttonStyle(.plain)
+        .pointingHandCursor()
+    }
+
+    private func segmentChip(
+        label: String,
+        help: String?,
+        isSelected: Bool,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            Text(label)
+                .font(.system(size: 11, weight: isSelected ? .semibold : .medium))
+                .foregroundColor(isSelected ? theme.accentColor : theme.secondaryText)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 5)
+                .background(
+                    RoundedRectangle(cornerRadius: 6, style: .continuous)
+                        .fill(
+                            isSelected
+                                ? theme.accentColor.opacity(theme.isDark ? 0.15 : 0.1)
+                                : theme.secondaryBackground.opacity(0.6)
+                        )
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 6, style: .continuous)
+                        .strokeBorder(
+                            isSelected
+                                ? theme.accentColor.opacity(0.3)
+                                : theme.primaryBorder.opacity(0.12),
+                            lineWidth: 1
+                        )
+                )
+        }
+        .buttonStyle(.plain)
+        .pointingHandCursor()
+        .help(help ?? label)
     }
 
     // MARK: - Empty State

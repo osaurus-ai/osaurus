@@ -141,9 +141,11 @@ struct NotchView: View {
     private var accentColor: Color {
         guard let task = activeTask else { return theme.accentColorLight }
         switch task.status {
+        case .queued: return notchTertiaryText
         case .running: return theme.accentColorLight
-        case .awaitingClarification: return theme.warningColor
-        case .completed(let success, _): return success ? theme.successColor : theme.errorColor
+        case .waitingForInput: return theme.warningColor
+        case .completed: return theme.successColor
+        case .failed: return theme.errorColor
         case .cancelled: return notchTertiaryText
         }
     }
@@ -403,16 +405,23 @@ struct NotchView: View {
     private var compactTrailing: some View {
         if let task = activeTask {
             switch task.status {
-            case .running, .awaitingClarification:
+            case .queued, .running, .waitingForInput:
                 // Chat tasks don't expose structured progress — show
                 // indeterminate ring (passing -1 makes NotchProgressRing
                 // animate continuously).
                 NotchProgressRing(progress: -1, color: accentColor, size: 14, lineWidth: 1.5)
                     .transition(.opacity.combined(with: .scale(scale: 0.5)))
-            case .completed(let success, _):
+            case .completed:
                 MorphingStatusIcon(
-                    state: success ? .completed : .failed,
-                    accentColor: success ? theme.successColor : theme.errorColor,
+                    state: .completed,
+                    accentColor: theme.successColor,
+                    size: 14
+                )
+                .transition(.opacity.combined(with: .scale(scale: 0.5)))
+            case .failed:
+                MorphingStatusIcon(
+                    state: .failed,
+                    accentColor: theme.errorColor,
                     size: 14
                 )
                 .transition(.opacity.combined(with: .scale(scale: 0.5)))
@@ -435,9 +444,9 @@ struct NotchView: View {
 
                 if let task = activeTask {
                     switch task.status {
-                    case .running, .awaitingClarification:
+                    case .queued, .running, .waitingForInput:
                         expandedRunningBody(task: task)
-                    case .completed(_, let summary):
+                    case .completed(let summary), .failed(let summary):
                         expandedCompletedBody(summary: summary, task: task)
                     case .cancelled:
                         expandedCancelledBody(task: task)

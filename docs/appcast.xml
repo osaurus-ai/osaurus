@@ -3,6 +3,70 @@
   <channel>
     <title>Osaurus</title>
         <item>
+            <title>0.22.3</title>
+            <pubDate>Mon, 13 Jul 2026 08:05:10 +0000</pubDate>
+            <sparkle:channel>release</sparkle:channel>
+            <sparkle:version>0.22.3</sparkle:version>
+            <sparkle:shortVersionString>0.22.3</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
+            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+            <enclosure url="https://github.com/osaurus-ai/osaurus/releases/download/0.22.3/Osaurus-0.22.3.dmg" length="58533982" type="application/octet-stream" sparkle:edSignature="lApgRFVELwyWxU5bTI8CndSKIpvgrBrwwZvO0P3pcSHIdCDAO3RVOWJ6wnEtUTClEckAC3NGLXZfjC1SFWArDw=="/>
+            <description sparkle:format="markdown"><![CDATA[
+## What's Changed
+
+## 🐛 Bug Fixes
+
+- fixed find bar crash when scrolling to a match in a partially rendered message (#2020) by @RaajeevChandran
+- fixed mcp tool discovery dropping paginated tools/list results (#2017) by @RaajeevChandran
+- A request may only execute the tools it exposed (#2018) by @jjang-ai
+- Stop TTS from going silent after the output device changes (#2016) by @jjang-ai
+- Checkpoint: stop the gemma tool-loop, two crashes, and lying tok/s (#2015) by @jjang-ai
+
+## 🧰 Maintenance
+
+- Faster, stronger sandbox runtime: resumable delivery, CoW rootfs, per-agent egress (#2022) by @tpae
+- Repin vmlx-swift: tool-call delimiter leak + batch prose cut (#2021) by @jjang-ai
+
+**Full Changelog**: https://github.com/osaurus-ai/osaurus/compare/0.22.2...0.22.3
+]]></description>
+        </item>
+        <item>
+            <title>0.22.2</title>
+            <pubDate>Sun, 12 Jul 2026 22:38:00 +0000</pubDate>
+            <sparkle:channel>release</sparkle:channel>
+            <sparkle:version>0.22.2</sparkle:version>
+            <sparkle:shortVersionString>0.22.2</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
+            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+            <enclosure url="https://github.com/osaurus-ai/osaurus/releases/download/0.22.2/Osaurus-0.22.2.dmg" length="58529325" type="application/octet-stream" sparkle:edSignature="Su4vCKBmHsHW1zjZF5nACzdNYNgQ62iCazkYTU4oXMLTzlOqVUf4xBjBwZYW4Dmti2FIaTTuB/+JAkAD7SiiCA=="/>
+            <description sparkle:format="markdown"><![CDATA[
+## What's Changed
+
+- Harden plugin and registry archive extraction (#1987) by @mimeding
+- HY3 official: repin vmlx + fix the load path that kept 94 GB packs from ever serving (#1984) by @jjang-ai
+- evals(compat): leaderboard redesign — latest-run precedence, skip accounting, strengths (#1982) by @tpae
+
+## 🐛 Bug Fixes
+
+- Refuse background model loads inside the actor, not before it (#1994) by @jjang-ai
+- Fix Product Hunt launch window to 24 hours (#2000) by @tpae
+- Key the prefix cache to the weights, not just the model's name (#1989) by @jjang-ai
+- Repin vmlx (for real this time) and push the memory-safety level to the cache-store gate (#1988) by @jjang-ai
+- Background work must never evict the model the user is using (+ vmlx repin) (#1986) by @jjang-ai
+- fix: support Codex Responses Lite for GPT-5.6 models (#1983) by @tpae
+
+## 🧰 Maintenance
+
+- Show the Product Hunt kitty next to the dinosaur in the launch dialog (#2011) by @tpae
+- Make local-first onboarding immediately usable (#2008) by @tpae
+- Add one-time Product Hunt launch dialog (July 2026) (#1998) by @tpae
+- evals: hermetic run storage — eval runs can never touch the user's real contexts (#1992) by @tpae
+- feat: catalog-driven reasoning controls + unified model options in the picker (#1991) by @tpae
+
+**Full Changelog**: https://github.com/osaurus-ai/osaurus/compare/0.22.1...0.22.2
+]]></description>
+        </item>
+        <item>
             <title>0.22.1</title>
             <pubDate>Sat, 11 Jul 2026 06:45:27 +0000</pubDate>
             <sparkle:channel>release</sparkle:channel>

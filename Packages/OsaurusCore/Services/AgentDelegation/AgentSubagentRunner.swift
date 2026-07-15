@@ -207,14 +207,11 @@ enum AgentSubagentRunner {
                         + TokenEstimator.estimate(outcome.reasoning)
                 }
                 usage.completionTokens += stepCompletion
-                if let tps = outcome.tokensPerSecond {
-                    usage.tokensPerSecond = tps
-                } else if stepCompletion > 0 {
-                    let elapsed = Date().timeIntervalSince(stepStarted)
-                    if elapsed > 0.5 {
-                        usage.tokensPerSecond = Double(stepCompletion) / elapsed
-                    }
-                }
+                usage.tokensPerSecond = resolvedTokensPerSecond(
+                    reported: outcome.tokensPerSecond,
+                    completionTokens: stepCompletion,
+                    elapsed: Date().timeIntervalSince(stepStarted)
+                ) ?? usage.tokensPerSecond
 
                 if !outcome.toolCalls.isEmpty {
                     // Frame the assistant tool_calls message exactly as the
@@ -338,6 +335,26 @@ enum AgentSubagentRunner {
                 usage: usage
             )
         }
+    }
+
+    /// Prefer a provider/runtime decode rate when it is genuinely populated.
+    /// Remote providers that report token counts but omit throughput currently
+    /// encode `0` in the terminal stats hint; treat that sentinel value as
+    /// unavailable and fall back to measured end-to-end model-step throughput.
+    /// This is deliberately conservative (the elapsed interval includes TTFT)
+    /// but remains real telemetry rather than a synthetic sampler default.
+    static func resolvedTokensPerSecond(
+        reported: Double?,
+        completionTokens: Int,
+        elapsed: TimeInterval
+    ) -> Double? {
+        if let reported, reported.isFinite, reported > 0 {
+            return reported
+        }
+        guard completionTokens > 0, elapsed.isFinite, elapsed > 0 else {
+            return nil
+        }
+        return Double(completionTokens) / elapsed
     }
 
     // MARK: - Stream consumption

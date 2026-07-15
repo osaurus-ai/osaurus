@@ -237,6 +237,26 @@ enum FeatureTelemetry {
         service.track("server_started")
     }
 
+    /// A sandbox VM boot reached `.running`. `kind` is the closed
+    /// `SandboxBootSample.BootKind` token (`cold` | `warm` |
+    /// `warmFallback`); `durationBucket` is a coarse
+    /// `SandboxStartupMetricsStore.latencyBucket` value. Raw durations,
+    /// image digests, and agent identity are never attached — full
+    /// fidelity stays in the local startup-metrics file.
+    static func sandboxBoot(
+        kind: String,
+        durationBucket: String,
+        service: TelemetryService = .shared
+    ) {
+        service.track(
+            "sandbox_boot",
+            [
+                "kind": kind,
+                "duration_bucket": durationBucket,
+            ]
+        )
+    }
+
     // MARK: - Feature adoption / scope
 
     /// A model finished downloading. The model id comes from the curated
@@ -277,6 +297,22 @@ enum FeatureTelemetry {
         service.track("agent_created")
     }
 
+    // MARK: - Product Hunt launch dialog (July 2026, one-shot)
+
+    /// The one-time Product Hunt launch dialog was presented. Count only.
+    static func productHuntLaunchDialogShown(service: TelemetryService = .shared) {
+        service.track("product_hunt_launch_dialog_shown")
+    }
+
+    /// The user dismissed the Product Hunt launch dialog. `action` is a
+    /// closed two-value enum token: `launch` (opened the PH page) or `later`.
+    static func productHuntLaunchDialogClicked(
+        action: String,
+        service: TelemetryService = .shared
+    ) {
+        service.track("product_hunt_launch_dialog_clicked", ["action": action])
+    }
+
     // MARK: - Derivation helpers
 
     /// Whether a chat request counts as a new top-level message for the
@@ -300,6 +336,7 @@ enum FeatureTelemetry {
         case .httpAPI: return "http_api"
         case .plugin: return "plugin"
         case .p2p: return "p2p"
+        case .scheduled: return "scheduled"
         }
     }
 

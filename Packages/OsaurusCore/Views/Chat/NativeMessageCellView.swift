@@ -1461,7 +1461,7 @@ final class NativeStatsView: NSView {
             parts.append(String(format: L("%.1f tok/s"), tps))
         }
         if let count = tokenCount {
-            parts.append(L("\(count) tokens"))
+            parts.append(count == 1 ? L("1 token") : L("\(count) tokens"))
         }
         // Trailing diagnostic chip — vmlx tells us the model never emitted
         // `</think>` (or the family's close tag) before EOS / max_tokens.

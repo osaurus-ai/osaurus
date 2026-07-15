@@ -208,42 +208,102 @@ final class ModelPickerItemCache: ObservableObject {
         }
 
         let manager = RemoteProviderManager.shared
-        let remoteModels = manager.cachedAvailableModels()
-        for providerInfo in remoteModels {
-            let isOsaurusRouter = providerInfo.providerId == RemoteProviderManager.osaurusRouterProviderId
-            for modelId in providerInfo.models {
-                // Osaurus Router models carry pricing/provider/context metadata;
-                // enrich the picker row when we have it, otherwise fall back to a
-                // plain remote item (e.g. before the catalog has loaded).
-                if isOsaurusRouter,
-                    let metadata = manager.osaurusRouterMetadata(for: unprefixedRouterModelId(modelId))
-                {
-                    options.append(
-                        .fromOsaurusRouterModel(
-                            prefixedId: modelId,
-                            providerName: providerInfo.providerName,
-                            providerId: providerInfo.providerId,
-                            metadata: metadata
-                        )
-                    )
-                } else {
-                    options.append(
-                        .fromRemoteModel(
-                            modelId: modelId,
-                            providerName: providerInfo.providerName,
-                            providerId: providerInfo.providerId
-                        )
-                    )
-                }
-            }
-        }
+        let remote = Self.remoteModelItems(
+            providers: manager.cachedAvailableModels(),
+            codexMetadata: OpenAICodexOAuthService.lastModelDiscoverySummary?.modelMetadata ?? [:],
+            osaurusRouterProviderId: RemoteProviderManager.osaurusRouterProviderId,
+            routerMetadata: { manager.osaurusRouterMetadata(for: $0) }
+        )
+        options.append(contentsOf: remote.items)
+
+        // Atomically replace the dynamic reasoning option catalog BEFORE the
+        // rebuilt items are published, so the option normalizer/UI never see
+        // an item advertising capabilities the catalog can't validate.
+        // Full replacement also clears entries for removed/disconnected
+        // providers.
+        RemoteReasoningCapabilityCatalog.replaceAll(remote.reasoningCapabilities)
 
         return options
     }
 
+    /// Pure remote-item assembly, split from `computeItems()` so the
+    /// provider-scoped enrichment rules are unit-testable without live
+    /// provider state:
+    /// - ChatGPT/Codex providers use the live catalog's display name and
+    ///   per-model reasoning capabilities (keyed by bare slug).
+    /// - The official `api.openai.com` Open Responses (API-key) route
+    ///   attaches the documented GPT-5.6 public reasoning profile.
+    /// - Custom OpenAI-compatible providers are never assumed to support
+    ///   either contract.
+    /// Returns the picker items plus the full-id keyed capability map used to
+    /// replace `RemoteReasoningCapabilityCatalog`.
+    static func remoteModelItems(
+        providers: [RemoteProviderManager.CachedProviderModels],
+        codexMetadata: [String: CodexModelMetadata],
+        osaurusRouterProviderId: UUID,
+        routerMetadata: (String) -> OsaurusRouterModel?
+    ) -> (items: [ModelPickerItem], reasoningCapabilities: [String: ModelReasoningCapabilities]) {
+        var items: [ModelPickerItem] = []
+        var capabilities: [String: ModelReasoningCapabilities] = [:]
+
+        for providerInfo in providers {
+            let isOsaurusRouter = providerInfo.providerId == osaurusRouterProviderId
+            let isCodex = providerInfo.providerType == .openAICodex
+            let isOfficialOpenAI =
+                providerInfo.providerType == .openResponses
+                && providerInfo.host.lowercased() == officialOpenAIHost
+            for modelId in providerInfo.models {
+                let item: ModelPickerItem
+                // Osaurus Router models carry pricing/provider/context metadata;
+                // enrich the picker row when we have it, otherwise fall back to a
+                // plain remote item (e.g. before the catalog has loaded).
+                if isOsaurusRouter,
+                    let metadata = routerMetadata(unprefixedRouterModelId(modelId))
+                {
+                    item = .fromOsaurusRouterModel(
+                        prefixedId: modelId,
+                        providerName: providerInfo.providerName,
+                        providerId: providerInfo.providerId,
+                        metadata: metadata
+                    )
+                } else if isCodex {
+                    item = .fromCodexRemoteModel(
+                        modelId: modelId,
+                        providerName: providerInfo.providerName,
+                        providerId: providerInfo.providerId,
+                        metadata: codexMetadata[unprefixedRouterModelId(modelId)]
+                    )
+                } else if isOfficialOpenAI {
+                    item = .fromOfficialOpenAIModel(
+                        modelId: modelId,
+                        providerName: providerInfo.providerName,
+                        providerId: providerInfo.providerId
+                    )
+                } else {
+                    item = .fromRemoteModel(
+                        modelId: modelId,
+                        providerName: providerInfo.providerName,
+                        providerId: providerInfo.providerId
+                    )
+                }
+                items.append(item)
+                if let modelCapabilities = item.reasoningCapabilities {
+                    capabilities[modelId] = modelCapabilities
+                }
+            }
+        }
+
+        return (items, capabilities)
+    }
+
+    /// The official OpenAI API host; the documented GPT-5.6 public reasoning
+    /// contract applies only here, never to custom OpenAI-compatible hosts.
+    static let officialOpenAIHost = "api.openai.com"
+
     /// Strip the provider-name prefix that `cachedAvailableModels()` prepends
-    /// (e.g. "osaurus/<upstream>/model-b" -> "<upstream>/model-b") so it matches the
-    /// catalog key, which is the model's unprefixed id.
+    /// (e.g. "osaurus/<upstream>/model-b" -> "<upstream>/model-b", or
+    /// "openai-chatgpt/gpt-5.6-terra" -> "gpt-5.6-terra") so the id matches
+    /// the router/Codex catalog key, which is the model's unprefixed id.
     private static func unprefixedRouterModelId(_ prefixedId: String) -> String {
         guard let slashIndex = prefixedId.firstIndex(of: "/") else { return prefixedId }
         return String(prefixedId[prefixedId.index(after: slashIndex)...])

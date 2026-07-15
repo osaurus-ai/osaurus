@@ -52,7 +52,6 @@ struct EvalBootstrapPlanTests {
                     searchIndexScope: EvalSearchIndexBootstrapScope(methods: true)
                 )
         )
-        #expect(plan.usesIsolatedSearchStorage)
     }
 
     @Test func capabilitySearchScopesIndexBootstrapToSelectedLanes() {
@@ -141,7 +140,7 @@ struct EvalBootstrapPlanTests {
     }
 
     @MainActor
-    @Test func isolatedSearchStorageOverridesOsaurusRoot() {
+    @Test func runStorageIsolationOverridesOsaurusRoot() {
         let previousRoot = OsaurusPaths.overrideRoot
         var isolatedRoot: URL?
         defer {
@@ -152,7 +151,7 @@ struct EvalBootstrapPlanTests {
             }
         }
 
-        let root = EvalBootstrap.configureIsolatedSearchStorageIfNeeded(
+        let root = EvalBootstrap.configureIsolatedRunStorage(
             for: EvalBootstrapPlan(
                 loadInstalledPlugins: false,
                 searchIndexScope: EvalSearchIndexBootstrapScope(methods: true)
@@ -171,8 +170,34 @@ struct EvalBootstrapPlanTests {
         }
     }
 
+    /// Hermetic-context invariant: EVERY eval run isolates, even a plan with
+    /// no bootstrap work at all (pure data suites). Fixture seeds from any
+    /// domain must never be able to land in the user's real `~/.osaurus`.
     @MainActor
-    @Test func nonIsolatedBootstrapDoesNotReplaceExistingRootOverride() {
+    @Test func runStorageIsolationAppliesToNoWorkPlans() {
+        let previousRoot = OsaurusPaths.overrideRoot
+        var isolatedRoot: URL?
+        defer {
+            OsaurusPaths.overrideRoot = previousRoot
+            StorageKeyManager.shared.wipeCache()
+            if let isolatedRoot {
+                try? FileManager.default.removeItem(at: isolatedRoot)
+            }
+        }
+
+        let plan = EvalBootstrapPlan(loadInstalledPlugins: false, initializeSearchIndices: false)
+        #expect(!plan.requiresWork)
+
+        let root = EvalBootstrap.configureIsolatedRunStorage(for: plan)
+        isolatedRoot = root
+
+        #expect(root != nil)
+        #expect(OsaurusPaths.overrideRoot == root)
+        #expect(root?.lastPathComponent.hasPrefix("osaurus-evals-") == true)
+    }
+
+    @MainActor
+    @Test func isolationDoesNotReplaceExistingRootOverride() {
         let previousRoot = OsaurusPaths.overrideRoot
         let existingRoot = FileManager.default.temporaryDirectory
             .appendingPathComponent("osaurus-evals-existing-\(UUID().uuidString)", isDirectory: true)
@@ -181,7 +206,7 @@ struct EvalBootstrapPlanTests {
             OsaurusPaths.overrideRoot = previousRoot
         }
 
-        let root = EvalBootstrap.configureIsolatedSearchStorageIfNeeded(
+        let root = EvalBootstrap.configureIsolatedRunStorage(
             for: EvalBootstrapPlan(loadInstalledPlugins: true, initializeSearchIndices: false)
         )
 
