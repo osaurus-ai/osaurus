@@ -346,7 +346,11 @@ struct ClipboardContentDiagnosticsTests {
                 [.init(afterPolls: 1, content: nil)],
             ]
         )
-        let service = ClipboardService(selectionCapture: makeTransaction(environment))
+        let service = ClipboardService(
+            selectionCapture: makeTransaction(environment),
+            nativeSelectionCapture: .unsupported(),
+            selectionSource: { nil }
+        )
 
         _ = await service.grabSelectionReport()
         #expect(service.lastSelectionGrabReport != nil)
