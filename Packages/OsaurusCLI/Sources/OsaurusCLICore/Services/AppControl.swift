@@ -20,6 +20,7 @@ public struct AppControl {
         )
     }
 
+    @MainActor
     public static func launchAppIfNeeded() async {
         // Try to detect if server responds; if yes, nothing to do
         let port = Configuration.resolveConfiguredPort() ?? 1337
@@ -60,6 +61,7 @@ public struct AppControl {
     }
 
     /// Attempts to locate the installed Osaurus.app bundle path using common locations and Spotlight.
+    @MainActor
     public static func findAppBundlePath() -> String? {
         let fm = FileManager.default
         for path in commonAppBundlePaths() where fm.fileExists(atPath: path) {
@@ -71,7 +73,8 @@ public struct AppControl {
     /// Returns every known bundle for the Osaurus identifier. Multiple rows
     /// are significant because LaunchServices can otherwise launch a stale
     /// registration even when the CLI belongs to a newer app bundle.
-    public static func findAppBundlePaths() -> [String] {
+    @MainActor
+    public static func findAppBundlePaths(includeSpotlightSearch: Bool = true) -> [String] {
         let fm = FileManager.default
         let home = NSHomeDirectory()
         let candidates = commonAppBundlePaths()
@@ -81,9 +84,14 @@ public struct AppControl {
         ) {
             paths.append(launchServicesSelection.path)
         }
-        let query = "kMDItemCFBundleIdentifier == 'com.dinoki.osaurus'"
-        paths.append(contentsOf: spotlightFindAll(queryArgs: ["-onlyin", "/Applications", query]))
-        paths.append(contentsOf: spotlightFindAll(queryArgs: ["-onlyin", "\(home)/Applications", query]))
+        if includeSpotlightSearch {
+            let query = "kMDItemCFBundleIdentifier == 'com.dinoki.osaurus'"
+            paths.append(contentsOf: spotlightFindAll(queryArgs: ["-onlyin", "/Applications", query]))
+            paths.append(contentsOf: spotlightFindAll(queryArgs: ["-onlyin", "\(home)/Applications", query]))
+            // Preserve discovery of side-loaded and development bundles that
+            // are indexed but not currently registered with LaunchServices.
+            paths.append(contentsOf: spotlightFindAll(queryArgs: [query]))
+        }
         return deduplicatedBundlePaths(paths.filter {
             fm.fileExists(atPath: $0) && URL(fileURLWithPath: $0).pathExtension.lowercased() == "app"
         })
@@ -93,6 +101,8 @@ public struct AppControl {
         [
             "/Applications/Osaurus.app",
             "\(NSHomeDirectory())/Applications/Osaurus.app",
+            "/Applications/osaurus.app",
+            "\(NSHomeDirectory())/Applications/osaurus.app",
         ]
     }
 
@@ -109,6 +119,7 @@ public struct AppControl {
         }
     }
 
+    @MainActor
     public static func runningAppBundlePath() -> String? {
         NSRunningApplication.runningApplications(withBundleIdentifier: "com.dinoki.osaurus")
             .first?.bundleURL?.path

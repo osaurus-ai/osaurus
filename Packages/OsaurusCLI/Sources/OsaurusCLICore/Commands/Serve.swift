@@ -134,7 +134,8 @@ public struct ServeCommand: Command {
             requestedPort: portToCheck,
             includeSignatureChecks: false,
             startupAttempted: true,
-            includeModelInventory: false
+            includeModelInventory: false,
+            includeComprehensiveAppSearch: false
         )
         if diagnostic.serverHealthy {
             print("listening on http://127.0.0.1:\(portToCheck)")

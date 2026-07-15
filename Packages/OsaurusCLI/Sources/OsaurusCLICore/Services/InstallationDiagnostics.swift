@@ -195,7 +195,8 @@ public enum InstallationDiagnostics {
         requestedPort: Int? = nil,
         includeSignatureChecks: Bool = true,
         startupAttempted: Bool = false,
-        includeModelInventory: Bool = true
+        includeModelInventory: Bool = true,
+        includeComprehensiveAppSearch: Bool = true
     ) async -> InstallationDiagnosticReport {
         let configuredPort = Configuration.resolveConfiguredPort()
         let port = requestedPort ?? configuredPort ?? 1337
@@ -207,7 +208,9 @@ public enum InstallationDiagnostics {
         )
         // NSWorkspace is main-thread-bound. Keep discovery on this MainActor
         // entry point, then move filesystem-only work off actor below.
-        let discoveredPaths = AppControl.findAppBundlePaths()
+        let discoveredPaths = AppControl.findAppBundlePaths(
+            includeSpotlightSearch: includeComprehensiveAppSearch
+        )
         let appPaths = await Task.detached(priority: .utility) {
             AppControl.deduplicatedBundlePaths(
                 discoveredPaths + [runningPath, cli.companionAppPath].compactMap { $0 }
