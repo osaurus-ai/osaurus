@@ -351,6 +351,13 @@ struct FloatingInputCard: View {
     /// own hover cancels it so its buttons stay clickable.
     @State private var walletDismissTask: Task<Void, Never>?
     @State private var isSandboxHovered = false
+    /// Width available to the toggle-chip region (the space between the model
+    /// chip and the meta cluster). Measured cheaply via `onGeometryChange` and
+    /// used to decide whether the chips collapse to icon-only — see
+    /// `chipsCompact`. Doing a single width read + one cluster build per frame
+    /// is what keeps the sidebar collapse/expand animation smooth; the earlier
+    /// `ViewThatFits` rebuilt three candidate clusters every frame instead.
+    @State private var chipRegionWidth: CGFloat = 0
     @State private var sandboxPulseAmount: CGFloat = 1.0
     @State private var sandboxPulseTask: Task<Void, Never>? = nil
     @State private var isClipboardHovered = false
@@ -2217,22 +2224,27 @@ extension FloatingInputCard {
             } else {
                 // The interactive toggle chips collapse to icon-only when the
                 // chat area is too narrow to show every label (e.g. the sidebar
-                // is open). ViewThatFits picks the widest rendering that fits, so
-                // the labels never wrap character-by-character the way a plain
-                // compressed HStack made them. Chips carrying live state (folder
-                // name, sandbox download %) keep their text; the scrollable
-                // fallback guarantees no wrap even at the minimum window width.
-                // Every collapsed chip still names itself on hover via help().
-                ViewThatFits(in: .horizontal) {
-                    toggleChipCluster(compact: false)
-                    toggleChipCluster(compact: true)
-                    ScrollView(.horizontal, showsIndicators: false) {
-                        toggleChipCluster(compact: true)
-                            .padding(.vertical, 1)
-                    }
+                // is open) — `chipsCompact`, derived from the measured region
+                // width below, drives that. Chips carrying live state (folder
+                // name, sandbox download %) keep their text regardless; every
+                // collapsed chip still names itself on hover via help(). The
+                // ScrollView is the no-wrap safety net: it fills the space
+                // between the model chip and the meta cluster (so the meta
+                // cluster stays right-aligned, just like a Spacer would), and
+                // guarantees the labels never wrap character-by-character even
+                // at the minimum window width. We measure this region rather
+                // than probe layout candidates so the sidebar animation, which
+                // changes this width every frame, only triggers one cheap
+                // cluster build per frame instead of ViewThatFits's three.
+                ScrollView(.horizontal, showsIndicators: false) {
+                    toggleChipCluster(compact: chipsCompact)
+                        .padding(.vertical, 1)
                 }
-
-                Spacer()
+                .onGeometryChange(for: CGFloat.self) { proxy in
+                    proxy.size.width
+                } action: { width in
+                    chipRegionWidth = width
+                }
 
                 // Right-aligned "meta" cluster: balance + token usage.
                 metaCluster
@@ -2240,11 +2252,46 @@ extension FloatingInputCard {
         }
     }
 
+    /// Whether the toggle chips should collapse to icon-only. True once the
+    /// measured `chipRegionWidth` is narrower than the labeled chips would
+    /// need. The per-chip width is a deliberate estimate — the ScrollView
+    /// safety net absorbs any error, so this only has to be in the ballpark to
+    /// flip the row to icons a beat before the labels would otherwise scroll.
+    private var chipsCompact: Bool {
+        guard chipRegionWidth > 0 else { return false }
+        let perLabeledChip: CGFloat = 96
+        return chipRegionWidth < CGFloat(visibleToggleChipCount) * perLabeledChip
+    }
+
+    /// Count of toggle chips currently in the cluster, mirroring the visibility
+    /// conditions in `toggleChipCluster`. Drives the `chipsCompact` width
+    /// budget so the collapse point scales with how many chips are actually on
+    /// screen (a remote-agent run, for instance, hides most of them).
+    private var visibleToggleChipCount: Int {
+        var count = 0
+        if !isRemoteAgentRun,
+            let model = selectedModel,
+            ModelProfileRegistry.profile(for: model)?.thinkingOption != nil
+        {
+            count += 1
+        }
+        if autoSpeakAssistant { count += 1 }
+        if !isRemoteAgentRun, !isDefaultConfigAgent, isSandboxAvailable { count += 1 }
+        if !isRemoteAgentRun { count += 1 }  // folder or configuration chip
+        if AppConfiguration.shared.chatConfig.enableClipboardMonitoring
+            && clipboardService.hasNewContent
+        {
+            count += 1
+        }
+        return count
+    }
+
     /// The interactive toggle chips (thinking, auto-speak, sandbox, folder,
     /// clipboard) as one horizontal group. `compact` drops each chip's text
     /// label to icon-only unless the chip has live state worth spelling out;
-    /// `selectorRow` offers both a labeled and a compact rendering to
-    /// `ViewThatFits` so the row degrades gracefully as it narrows.
+    /// `selectorRow` renders one rendering of this cluster, choosing `compact`
+    /// from the measured region width so the row degrades gracefully as it
+    /// narrows without re-measuring layout candidates every frame.
     @ViewBuilder
     private func toggleChipCluster(compact: Bool) -> some View {
         HStack(spacing: 6) {

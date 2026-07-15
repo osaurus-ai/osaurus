@@ -163507,9 +163507,6 @@
         }
       }
     },
-    "TurboQuant" : {
-      "shouldTranslate" : false
-    },
     "TurboQuant compressions" : {
       "localizations" : {
         "de" : {
