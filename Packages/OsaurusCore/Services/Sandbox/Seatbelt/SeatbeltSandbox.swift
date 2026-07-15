@@ -53,6 +53,12 @@
             FileManager.default.isExecutableFile(atPath: sandboxExecPath)
         }
 
+        /// Scratch directory granted read-write in every profile and
+        /// exported as `TMPDIR` — the user's real `$TMPDIR` stays denied.
+        public static var scratchDir: String {
+            NSTemporaryDirectory() + "osaurus-seatbelt"
+        }
+
         // MARK: - Profile
 
         /// Network policy for a generated profile, derived from

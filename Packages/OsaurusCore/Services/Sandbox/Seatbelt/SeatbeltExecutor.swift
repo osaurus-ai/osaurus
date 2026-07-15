@@ -91,7 +91,7 @@
             // Point tools' scratch writes at a directory the profile
             // actually allows, instead of the user's default $TMPDIR
             // (which is deny-listed).
-            let scratch = NSTemporaryDirectory() + "osaurus-seatbelt"
+            let scratch = SeatbeltSandbox.scratchDir
             try? FileManager.default.createDirectory(
                 atPath: scratch, withIntermediateDirectories: true)
             if env["TMPDIR"] == nil { env["TMPDIR"] = scratch }

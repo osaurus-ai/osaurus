@@ -220,10 +220,7 @@
             @Published public var isPrefetchingRuntime: Bool = false
 
             private static var initialAvailability: SandboxAvailability {
-                let osVersion = ProcessInfo.processInfo.operatingSystemVersion.majorVersion
-                return osVersion >= 26
-                    ? .available
-                    : .unavailable(reason: "Requires macOS 26 or later")
+                SandboxManager.resolveAvailability()
             }
         }
 
@@ -237,18 +234,28 @@
         public func refreshAvailability() async -> SandboxAvailability {
             _availability = nil
 
-            let osVersion = ProcessInfo.processInfo.operatingSystemVersion.majorVersion
-            guard osVersion >= 26 else {
-                let result = SandboxAvailability.unavailable(reason: "Requires macOS 26 or later")
-                _availability = result
-                await MainActor.run { State.shared.availability = result }
-                return result
-            }
-
-            let result = SandboxAvailability.available
+            let result = Self.resolveAvailability()
             _availability = result
             await MainActor.run { State.shared.availability = result }
             return result
+        }
+
+        /// Availability by backend. macOS 26+ always uses the VM. Older
+        /// systems fall back to Seatbelt (`sandbox-exec`) host confinement
+        /// when the binary is present — the fallback is never selected on
+        /// macOS 26+ (see `SandboxBackend.current`).
+        static func resolveAvailability() -> SandboxAvailability {
+            switch SandboxBackend.current {
+            case .virtualMachine:
+                return .available
+            case .seatbelt:
+                return SeatbeltSandbox.isSupported
+                    ? .available
+                    : .unavailable(
+                        reason:
+                            "Requires macOS 26 or later (and no sandbox-exec fallback was found)"
+                    )
+            }
         }
 
         // MARK: - Container Status
@@ -337,6 +344,15 @@
         }
 
         public func refreshStatus() async -> ContainerStatus {
+            if SandboxBackend.current == .seatbelt {
+                // No VM or on-disk assets to inspect — the Seatbelt backend
+                // is "running" purely by virtue of having been provisioned
+                // this session, and "stopped" otherwise (starting it is
+                // instant, so there is no notProvisioned cold state).
+                _status = _status.isRunning ? .running : .stopped
+                syncStatus()
+                return _status
+            }
             if linuxContainer != nil {
                 _status = .running
             } else if FileManager.default.fileExists(atPath: staleContainerDir.path) {
@@ -727,11 +743,42 @@
             }
         }
 
+        /// "Provision" the Seatbelt fallback: no VM, no image download —
+        /// just make sure the host workspace tree exists and flip status
+        /// to running. Instant, so none of the journey/progress UI runs.
+        private func provisionSeatbelt() throws {
+            guard SeatbeltSandbox.isSupported else {
+                throw SandboxError.provisionFailed(
+                    "sandbox-exec not found at \(SeatbeltSandbox.sandboxExecPath)")
+            }
+            let fm = FileManager.default
+            for dir in [
+                OsaurusPaths.containerWorkspace(),
+                OsaurusPaths.containerAgentsDir(),
+                OsaurusPaths.containerSharedDir(),
+            ] {
+                try fm.createDirectory(at: dir, withIntermediateDirectories: true)
+            }
+            var config = SandboxConfigurationStore.load()
+            if !config.setupComplete {
+                config.setupComplete = true
+                SandboxConfigurationStore.save(config)
+            }
+            _status = .running
+            _lastBootReadyAt = Date()
+            syncStatus()
+        }
+
         public func provision() async throws {
             guard _availability?.isAvailable == true else {
                 throw SandboxError.unavailable
             }
             _removedByUser = false
+
+            if SandboxBackend.current == .seatbelt {
+                try provisionSeatbelt()
+                return
+            }
 
             // Take over from any in-flight background prefetch. The
             // journey-driven asset resolution below resumes whatever
@@ -1289,6 +1336,13 @@
         /// UI moves directly from running to starting instead of briefly
         /// rendering the stopped dashboard between lifecycle phases.
         private func stopContainer(publishStoppedStatus: Bool) async throws {
+            if SandboxBackend.current == .seatbelt {
+                // Nothing persistent to tear down — Seatbelt confinement
+                // is per-exec; stopping just gates future execs.
+                _status = .stopped
+                if publishStoppedStatus { syncStatus() }
+                return
+            }
             if let container = linuxContainer {
                 try await container.stop()
             }
@@ -1498,6 +1552,20 @@
             stderrTee: (any Writer)? = nil,
             onProcessStarted: (@Sendable (ProcessHandle) -> Void)? = nil
         ) async throws -> ContainerExecResult {
+            if SandboxBackend.current == .seatbelt {
+                // Host confinement has no per-user separation — `user` is
+                // ignored; the Seatbelt profile is the isolation boundary.
+                return try await execViaSeatbelt(
+                    command: command,
+                    env: env,
+                    cwd: cwd,
+                    timeout: timeout,
+                    stdoutTee: stdoutTee,
+                    stderrTee: stderrTee,
+                    onProcessStarted: onProcessStarted
+                )
+            }
+
             guard linuxContainer != nil else {
                 throw SandboxError.containerNotRunning
             }
@@ -1526,6 +1594,44 @@
                 stderrTee: stderrTee,
                 onProcessStarted: onProcessStarted
             )
+        }
+
+        /// Seatbelt-backend exec: run the command as a host process under
+        /// `sandbox-exec` confinement. Guest-style `/workspace/…` paths in
+        /// the command, cwd, and env are rewritten to the host workspace
+        /// so the model-facing path contract matches the VM backend.
+        private func execViaSeatbelt(
+            command: String,
+            env: [String: String],
+            cwd: String?,
+            timeout: TimeInterval?,
+            stdoutTee: (any Writer)?,
+            stderrTee: (any Writer)?,
+            onProcessStarted: (@Sendable (ProcessHandle) -> Void)?
+        ) async throws -> ContainerExecResult {
+            guard _status.isRunning else {
+                throw SandboxError.containerNotRunning
+            }
+            let root = OsaurusPaths.containerWorkspace().path
+            let network = SeatbeltSandbox.NetworkPolicy.from(
+                configNetwork: SandboxConfigurationStore.load().network)
+            let profile = SeatbeltSandbox.profile(
+                workspaceRoot: root,
+                tempDir: SeatbeltSandbox.scratchDir,
+                network: network
+            )
+            let mappedCwd = cwd.map { SeatbeltPathMapper.mapToHost($0, workspaceRoot: root) }
+            return try await SeatbeltExecutor.run(
+                SeatbeltExecutor.Request(
+                    command: SeatbeltPathMapper.mapToHost(command, workspaceRoot: root),
+                    env: SeatbeltPathMapper.mapEnvToHost(env, workspaceRoot: root),
+                    cwd: mappedCwd ?? root,
+                    timeout: timeout,
+                    profile: profile,
+                    stdoutTee: stdoutTee,
+                    stderrTee: stderrTee,
+                    onProcessStarted: onProcessStarted
+                ))
         }
 
         public func execAsRoot(
@@ -1598,6 +1704,13 @@
             stdout: any Writer,
             stderr: any Writer
         ) async throws -> LinuxProcess {
+            if SandboxBackend.current == .seatbelt {
+                // Long-lived bidirectional-stdio processes (stdio MCP
+                // servers) are VM-only for now — the return type is the
+                // SDK's LinuxProcess, which has no host equivalent.
+                throw SandboxError.execFailed(
+                    "Interactive sandbox processes require the VM backend (macOS 26 or later)")
+            }
             guard let container = linuxContainer else {
                 throw SandboxError.containerNotRunning
             }
@@ -1648,6 +1761,14 @@
             agentId: UUID?,
             soulSeedBody: String?
         ) async throws {
+            if SandboxBackend.current == .seatbelt {
+                // No guest, no Linux users, no bridge shim — bootstrap is
+                // just the host-side directory tree plus the first-run
+                // SOUL seed. Bridge tokens are skipped: the vsock shim
+                // that consumes them doesn't exist on this backend.
+                try Self.bootstrapAgentOnHost(agentName: agentName, soulSeedBody: soulSeedBody)
+                return
+            }
             let linuxName = "agent-\(agentName)"
             var token: String?
             if let agentId {
@@ -1722,7 +1843,34 @@
             return lines.joined(separator: "\n")
         }
 
+        /// Host-side equivalent of the guest bootstrap script, used by the
+        /// Seatbelt backend. Static so it's testable without the actor.
+        static func bootstrapAgentOnHost(agentName: String, soulSeedBody: String?) throws {
+            let root = OsaurusPaths.containerWorkspace().path
+            let home = SeatbeltPathMapper.mapToHost(
+                OsaurusPaths.inContainerAgentHome(agentName), workspaceRoot: root)
+            let fm = FileManager.default
+            try fm.createDirectory(
+                atPath: home + "/plugins",
+                withIntermediateDirectories: true,
+                attributes: nil
+            )
+            // chmod 700, mirroring the guest script — other host users
+            // (not other agents) are kept out.
+            try? fm.setAttributes([.posixPermissions: 0o700], ofItemAtPath: home)
+            if let soulSeedBody {
+                let soulPath = home + "/SOUL.md"
+                if !fm.fileExists(atPath: soulPath) {
+                    try soulSeedBody.write(toFile: soulPath, atomically: true, encoding: .utf8)
+                }
+            }
+        }
+
         public func ensureAgentUser(_ agentName: String) async throws {
+            if SandboxBackend.current == .seatbelt {
+                try Self.bootstrapAgentOnHost(agentName: agentName, soulSeedBody: nil)
+                return
+            }
             let checkResult = try await exec(command: "id agent-\(agentName) 2>/dev/null")
             if checkResult.succeeded { return }
 
@@ -1745,6 +1893,16 @@
         }
 
         public func removeAgentUser(_ agentName: String) async throws -> Bool {
+            if SandboxBackend.current == .seatbelt {
+                // No Linux user exists — remove the host-side agent home.
+                let root = OsaurusPaths.containerWorkspace().path
+                let home = SeatbeltPathMapper.mapToHost(
+                    OsaurusPaths.inContainerAgentHome(agentName), workspaceRoot: root)
+                let fm = FileManager.default
+                guard fm.fileExists(atPath: home) else { return false }
+                try fm.removeItem(atPath: home)
+                return true
+            }
             let linuxUser = "agent-\(agentName)"
             let checkResult = try await exec(command: "id \(linuxUser) 2>/dev/null")
             guard checkResult.succeeded else { return false }
