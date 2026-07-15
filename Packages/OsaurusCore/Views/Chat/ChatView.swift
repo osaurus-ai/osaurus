@@ -105,7 +105,10 @@ private struct EmptyStateContent: View, Equatable {
     let onQuickAction: (String) -> Void
     let onUseHostedWhilePending: (() async -> Bool)?
 
-    static func == (lhs: EmptyStateContent, rhs: EmptyStateContent) -> Bool {
+    // `nonisolated` because Equatable's `==` is a non-isolated requirement but
+    // this view type is main-actor-isolated. Every compared field is a Sendable
+    // value type, so reading them off the main actor is race-free.
+    nonisolated static func == (lhs: EmptyStateContent, rhs: EmptyStateContent) -> Bool {
         lhs.selectedModel == rhs.selectedModel
             && lhs.agents == rhs.agents
             && lhs.activeAgentId == rhs.activeAgentId
