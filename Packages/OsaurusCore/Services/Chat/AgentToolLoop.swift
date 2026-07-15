@@ -1135,6 +1135,16 @@ enum AgentToolLoop {
                     for (slot, invocation) in invocations.enumerated() {
                         let callId = Self.callId(for: invocation)
                         await hooks.willProcessCall(invocation, callId)
+                        if let guarded = state.guardedResult(name: invocation.toolName) {
+                            slotted[slot] = AgentLoopToolOutcome(
+                                invocation: invocation,
+                                callId: callId,
+                                result: guarded,
+                                wasDeduped: false,
+                                wasError: false
+                            )
+                            continue
+                        }
                         if let held = state.heldResult(
                             name: invocation.toolName,
                             argsJSON: invocation.jsonArguments
@@ -1283,6 +1293,32 @@ enum AgentToolLoop {
                         }
                         let callId = Self.callId(for: invocation)
                         await hooks.willProcessCall(invocation, callId)
+
+                        // Bounded discovery guard: once the state machine has
+                        // enough ranked sources, synthesize a structured
+                        // transition result instead of paying for another
+                        // rephrased provider call. The outcome still lands in
+                        // surface history through `onBatchComplete` below.
+                        if let guarded = state.guardedResult(name: invocation.toolName) {
+                            state.record(
+                                name: invocation.toolName,
+                                argsJSON: invocation.jsonArguments,
+                                result: guarded
+                            )
+                            if let bias = state.nextStepBias() {
+                                pendingStateNotice = "[System Notice] " + bias
+                            }
+                            outcomes.append(
+                                AgentLoopToolOutcome(
+                                    invocation: invocation,
+                                    callId: callId,
+                                    result: guarded,
+                                    wasDeduped: false,
+                                    wasError: false
+                                )
+                            )
+                            continue
+                        }
 
                         // Consecutive-identical dedupe: replay the EXACT envelope
                         // the model already received instead of re-executing.

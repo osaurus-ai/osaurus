@@ -2073,6 +2073,21 @@ public struct SystemPromptComposer: Sendable {
             )
         }
 
+        // A chart assembled from live web data needs both halves of the web
+        // pipeline in the same turn: discovery (`web_search`) and retrieval
+        // (`search_and_extract`). Keeping extraction dynamic for ordinary
+        // chat still preserves the lean baseline, while the explicit Charts
+        // + Web capability combination is a strong signal that retrieval is
+        // required. Expose the real tool contract up front so small local
+        // models do not get trapped rephrasing discovery queries while trying
+        // to guess the capabilities-load transition.
+        if !isManual, snapshot.renderChartEnabled, snapshot.webSearchEnabled {
+            add(
+                ToolRegistry.shared.specs(forTools: ["search_and_extract"]),
+                replacingExisting: true
+            )
+        }
+
         // Per-agent built-in tool gates. These tools are registered as
         // built-ins (so direct execution + ChatView interception still
         // work) but stripped from the auto-mode schema unless the agent

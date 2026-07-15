@@ -408,10 +408,16 @@ public struct Skill: Codable, Identifiable, Sendable, Equatable {
                     **If raw tabular data is available from an attachment, web extraction,
                     sandbox/file read, download, or computation:** call the `render_chart` tool.
                     Retrieve or compute the data first, then pass its full raw content in the
-                    `data` field and use `xColumn` / `series` to specify which columns to plot.
+                    `data` field without removing or rewriting its header row, and use
+                    `xColumn` / `series` to specify which columns to plot.
+                    When `search_and_extract` returns a `data_ref` and an exact
+                    `next_action`, call `render_chart` with those arguments instead of
+                    copying the raw payload through your context.
                     The tool does not fetch URLs itself; it handles parsing and downsampling once
-                    data is available. Do not keep rephrasing web searches when retrieval is the
-                    required next step. Example:
+                    data is available. After `web_search` selects a source, call
+                    `search_and_extract` with that result's direct `url` to retrieve its actual
+                    contents; never pass a known URL back as another search query, and do not keep
+                    rephrasing discovery searches when retrieval is the required next step. Example:
                     ```
                     render_chart(
                       data: "<full raw CSV/TSV/JSON content>",

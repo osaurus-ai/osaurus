@@ -23,6 +23,14 @@ enum SearchExtractionStatus: String, Sendable, Equatable {
 
 enum SearchReadability {
     static let maxMarkdownCharacters = 12_000
+    /// Structured datasets need more room than an article excerpt: one year
+    /// of daily OHLC rows or a compact JSON response routinely exceeds 12K
+    /// characters. Still bounded so a direct URL cannot flood the model.
+    static let maxStructuredTextCharacters = 64_000
+    /// Full structured payload retained for an in-process tool-to-tool handoff.
+    /// The model-facing excerpt remains capped above; larger responses fall
+    /// back to that excerpt instead of occupying the reference store.
+    static let maxStructuredDataCharacters = 1_000_000
     static let maxHTMLBytes = 5 * 1_024 * 1_024
     private static let minUsefulWordCount = 20
 
@@ -37,6 +45,8 @@ enum SearchReadability {
         var truncated: Bool
         var message: String?
         var totalWordCount: Int?
+        var structuredData: String?
+        var structuredFormat: String?
 
         var extracted: Bool { status == .ok }
     }
@@ -68,7 +78,10 @@ enum SearchReadability {
             SearchHTTPClient.userAgents.randomElement() ?? SearchHTTPClient.userAgents[0],
             forHTTPHeaderField: "User-Agent"
         )
-        request.setValue("text/html,application/xhtml+xml", forHTTPHeaderField: "Accept")
+        request.setValue(
+            "text/html,application/xhtml+xml,text/csv,text/tab-separated-values,text/plain,application/json,application/*+json;q=0.9,*/*;q=0.1",
+            forHTTPHeaderField: "Accept"
+        )
 
         let delegate = SearchReadabilityRedirectDelegate()
         let session = URLSession(configuration: configuration, delegate: delegate, delegateQueue: nil)
@@ -101,10 +114,12 @@ enum SearchReadability {
                 data.append(byte)
                 try Task.checkCancellation()
             }
-            guard let html = String(data: data, encoding: .utf8), !html.isEmpty else {
+            guard let text = String(data: data, encoding: .utf8), !text.isEmpty else {
                 return failure(status: .empty, message: "empty response")
             }
-            return extract(html: html, sourceURL: requestURL)
+            let contentType = (response as? HTTPURLResponse)?
+                .value(forHTTPHeaderField: "Content-Type")
+            return extract(responseText: text, contentType: contentType, sourceURL: requestURL)
         } catch is CancellationError {
             return failure(status: .cancelled, message: "cancelled")
         } catch let error as URLError {
@@ -118,6 +133,72 @@ enum SearchReadability {
         } catch {
             return failure(status: .fetchFailed, message: SearchDiagnostics.redact(error.localizedDescription))
         }
+    }
+
+    /// Preserve structured text responses verbatim instead of running them
+    /// through HTML readability. This is the data path used by chart tasks:
+    /// CSV/TSV/JSON rows must reach `render_chart` with their header and values
+    /// intact. HTML (including pages mislabeled as text/plain) still follows
+    /// the normal readability path.
+    static func extract(
+        responseText: String,
+        contentType: String?,
+        sourceURL: URL? = nil
+    ) -> Extraction {
+        let normalizedType = contentType?.lowercased() ?? ""
+        let pathExtension = sourceURL?.pathExtension.lowercased() ?? ""
+        let trimmed = responseText.trimmingCharacters(in: .whitespacesAndNewlines)
+        let lowercasedPrefix = trimmed.prefix(32).lowercased()
+        let looksLikeHTML =
+            lowercasedPrefix.hasPrefix("<!doctype html")
+            || lowercasedPrefix.hasPrefix("<html")
+        let structuredFormat: String? = {
+            guard !looksLikeHTML else { return nil }
+            if normalizedType.contains("application/json")
+                || normalizedType.contains("+json")
+                || pathExtension == "json"
+            {
+                return "json"
+            }
+            if normalizedType.contains("tab-separated-values") || pathExtension == "tsv" {
+                return "tsv"
+            }
+            if normalizedType.contains("text/csv")
+                || normalizedType.contains("application/csv")
+                || pathExtension == "csv"
+            {
+                return "csv"
+            }
+            return nil
+        }()
+
+        guard let structuredFormat else {
+            return extract(html: responseText, sourceURL: sourceURL)
+        }
+        guard !trimmed.isEmpty else {
+            return failure(status: .empty, message: "empty content")
+        }
+
+        let capped = SearchDiagnostics.truncate(
+            trimmed,
+            maxCharacters: maxStructuredTextCharacters
+        )
+        let wordCount = capped.text.split(whereSeparator: { $0.isWhitespace }).count
+        return Extraction(
+            markdown: capped.text,
+            wordCount: wordCount,
+            title: sourceURL?.lastPathComponent,
+            byline: nil,
+            lang: nil,
+            canonicalURL: sourceURL?.absoluteString,
+            status: .ok,
+            truncated: capped.truncated,
+            message: nil,
+            totalWordCount: capped.truncated
+                ? trimmed.split(whereSeparator: { $0.isWhitespace }).count : nil,
+            structuredData: trimmed.count <= maxStructuredDataCharacters ? trimmed : nil,
+            structuredFormat: structuredFormat
+        )
     }
 
     /// Pure extraction from raw HTML (testable without network).
@@ -144,7 +225,8 @@ enum SearchReadability {
             tags: [
                 "script", "style", "noscript", "template", "svg", "iframe", "header", "footer",
                 "nav", "aside", "form", "button",
-            ])
+            ]
+        )
         if let main = SearchHTML.pickMainContainer(content) { content = main }
         let markdown = SearchHTML.htmlToMarkdown(content)
         let wordCount = markdown.split(whereSeparator: { $0.isWhitespace }).count
@@ -172,7 +254,9 @@ enum SearchReadability {
             status: .ok,
             truncated: capped.truncated,
             message: nil,
-            totalWordCount: capped.truncated ? wordCount : nil
+            totalWordCount: capped.truncated ? wordCount : nil,
+            structuredData: nil,
+            structuredFormat: nil
         )
     }
 
@@ -192,7 +276,9 @@ enum SearchReadability {
             status: status,
             truncated: false,
             message: message.map(SearchDiagnostics.redact),
-            totalWordCount: nil
+            totalWordCount: nil,
+            structuredData: nil,
+            structuredFormat: nil
         )
     }
 }

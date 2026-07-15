@@ -290,6 +290,7 @@ final class CapabilitiesDiscoverTool: OsaurusTool, @unchecked Sendable {
             }
             return result
         }
+        let requestExposedToolNames = ChatExecutionContext.toolExecutionScope?.authorizedNames ?? []
 
         if hits.isEmpty {
             let queryList = queries.map { "'\($0)'" }.joined(separator: ", ")
@@ -335,7 +336,11 @@ final class CapabilitiesDiscoverTool: OsaurusTool, @unchecked Sendable {
             }
             + hits.tools.map {
                 var extraLines = ["runtime: \($0.entry.runtime.rawValue)"]
-                if let availability = toolAvailabilityByName[$0.entry.id] {
+                if requestExposedToolNames.contains($0.entry.id) {
+                    extraLines.append(
+                        "availability: already_loaded - exposed and callable in the current request"
+                    )
+                } else if let availability = toolAvailabilityByName[$0.entry.id] {
                     extraLines.append("availability: \(availability.compactSummary)")
                     if let groupName = availability.groupName {
                         extraLines.append("provider: \(groupName)")
@@ -948,6 +953,7 @@ final class CapabilitiesLoadTool: OsaurusTool, @unchecked Sendable {
     /// load). Without a session in context we can't know — return false
     /// and let the buffer path run (harmless, just redundant).
     private func isAlreadyLoadedInSession(_ toolId: String) async -> Bool {
+        if ChatExecutionContext.toolExecutionScope?.permits(toolId) == true { return true }
         guard let sessionId = ChatExecutionContext.currentSessionId, !sessionId.isEmpty,
             let state = await SessionToolStateStore.shared.get(sessionId)
         else { return false }

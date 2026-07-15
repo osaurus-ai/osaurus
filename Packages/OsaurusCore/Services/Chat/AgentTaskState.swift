@@ -166,6 +166,15 @@ public final class AgentTaskState {
     /// detector so productive consecutive calls to other web tools stay valid.
     private static let webDiscoveryRunThreshold = 4
 
+    /// Concrete transitions that consume or process discovered data. Meta
+    /// operations such as capability discovery/loading and provider
+    /// configuration deliberately do not reset the search budget: the live
+    /// Bonsai loop used those as a detour and resumed rephrased discovery.
+    private static let webDiscoveryProgressTools: Set<String> = [
+        "search_and_extract", "render_chart", "browser_do", "http_request",
+        "file_read", "sandbox_read_file", "shell_run", "sandbox_exec",
+    ]
+
     // MARK: State
 
     /// A read result still considered fresh: the canonical path it read and
@@ -222,8 +231,8 @@ public final class AgentTaskState {
     /// reworded-planning-loop nudge (e.g. `todo` re-issued every turn).
     private var planningRunName: String?
     private var planningRunCount = 0
-    /// Consecutive `web_search` executions regardless of argument changes.
-    /// Any other tool is concrete transition/progress and resets the run.
+    /// `web_search` executions since the last concrete retrieval/processing
+    /// action, regardless of argument changes or intervening meta tools.
     private var webDiscoveryRunCount = 0
 
     public init(biasEnabled: Bool = true) {
@@ -288,6 +297,31 @@ public final class AgentTaskState {
             return held.envelope
         }
         return nil
+    }
+
+    /// Return a synthetic, structured transition result when the model keeps
+    /// issuing discovery searches after the bounded research window. Unlike
+    /// the bias notice, this is load-bearing: the next `web_search` is not sent
+    /// to a provider, so a small model cannot burn the rest of the run on
+    /// rephrased discovery queries and network latency. It remains a success
+    /// envelope because this is an agent-loop routing decision, not a provider
+    /// failure; the model can continue immediately with retrieval or report a
+    /// truthful blocker when retrieval is unavailable.
+    public func guardedResult(name: String) -> String? {
+        guard name == "web_search", webDiscoveryRunCount >= Self.webDiscoveryRunThreshold else {
+            return nil
+        }
+        return ToolEnvelope.success(
+            tool: name,
+            result: [
+                "kind": "transition_required",
+                "executed": false,
+                "reason": "discovery_limit_reached",
+                "message":
+                    "Discovery is complete. Do not issue another web_search. Retrieve a selected result with search_and_extract using its direct url, then process it and call render_chart when requested. If retrieval or chart rendering is unavailable, report that blocker now.",
+                "next_tools": ["search_and_extract", "render_chart"],
+            ]
+        )
     }
 
     /// Convenience boolean mirror of `heldResult`.
@@ -392,16 +426,14 @@ public final class AgentTaskState {
             planningRunCount = 0
         }
 
-        // Discovery-to-retrieval transition guard. Different query text must
-        // not defeat it: the observed Bonsai failure repeatedly rephrased the
-        // same request while receiving only more snippets. This remains an
-        // advisory — every call executes — and any other tool immediately
-        // disarms it, so multi-source research can alternate search with
-        // extraction/processing without being mislabeled a loop.
+        // Discovery-to-retrieval transition guard. Different query text and
+        // meta-tool detours must not defeat it: the observed Bonsai failure
+        // repeatedly rephrased the same request, then loaded/discovered more
+        // capabilities, then resumed searching. Only real retrieval or
+        // processing disarms the budget.
         if name == "web_search" {
-            webDiscoveryRunCount =
-                previousToolName == name ? webDiscoveryRunCount + 1 : 1
-        } else {
+            webDiscoveryRunCount += 1
+        } else if Self.webDiscoveryProgressTools.contains(name), ToolEnvelope.isSuccess(result) {
             webDiscoveryRunCount = 0
         }
 

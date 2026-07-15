@@ -45,9 +45,18 @@ struct WebSearchToolTests {
     }
 
     @Test func searchAndExtractContractProvidesPageContent() {
-        let description = SearchAndExtractTool().description
+        let tool = SearchAndExtractTool()
+        let description = tool.description
         #expect(description.contains("actual page text or data"))
-        #expect(description.contains("rather than more"))
+        #expect(description.contains("pass the selected result's URL"))
+        guard case .object(let root)? = tool.parameters,
+            case .object(let properties)? = root["properties"]
+        else {
+            Issue.record("missing search_and_extract object schema")
+            return
+        }
+        #expect(properties["url"] != nil)
+        #expect(properties["urls"] != nil)
     }
 
     // MARK: - Dynamic category enum
@@ -90,7 +99,10 @@ struct WebSearchToolTests {
 
     // MARK: - Agent gating in resolveTools
 
-    private static func makeSnapshot(webSearchEnabled: Bool) -> AgentConfigSnapshot {
+    private static func makeSnapshot(
+        webSearchEnabled: Bool,
+        renderChartEnabled: Bool = false
+    ) -> AgentConfigSnapshot {
         AgentConfigSnapshot(
             agentId: UUID(),
             toolsDisabled: false,
@@ -101,6 +113,7 @@ struct WebSearchToolTests {
             manualToolNames: nil,
             systemPrompt: "",
             dbEnabled: false,
+            renderChartEnabled: renderChartEnabled,
             webSearchEnabled: webSearchEnabled
         )
     }
@@ -112,6 +125,21 @@ struct WebSearchToolTests {
         )
         let names = Set(tools.map { $0.function.name })
         #expect(names.contains("web_search"))
+        #expect(!names.contains("search_and_extract"))
+    }
+
+    @Test func chartAndWebExposeRetrievalOnTheFirstTurn() {
+        let tools = SystemPromptComposer.resolveTools(
+            snapshot: Self.makeSnapshot(
+                webSearchEnabled: true,
+                renderChartEnabled: true
+            ),
+            executionMode: .none
+        )
+        let names = Set(tools.map { $0.function.name })
+        #expect(names.contains("web_search"))
+        #expect(names.contains("search_and_extract"))
+        #expect(names.contains("render_chart"))
     }
 
     @Test func disablingWebSearchStripsBothTools() {
@@ -160,23 +188,27 @@ struct WebSearchToolTests {
         let available = ["web", "news"]
         #expect(
             WebSearchArgs.sanitizeCategory("news", available: available, warnings: &warnings)
-                == "news")
+                == "news"
+        )
         #expect(warnings.isEmpty)
         // Synonyms local models produce map onto available categories.
         #expect(
             WebSearchArgs.sanitizeCategory("articles", available: available, warnings: &warnings)
-                == "news")
+                == "news"
+        )
         #expect(warnings.isEmpty)
         // Unknown category: fall back to web + warning, never an error.
         #expect(
             WebSearchArgs.sanitizeCategory("videos", available: available, warnings: &warnings)
-                == "web")
+                == "web"
+        )
         #expect(warnings.count == 1)
         // Synonym for an UNAVAILABLE category also falls back.
         warnings = []
         #expect(
             WebSearchArgs.sanitizeCategory("photos", available: available, warnings: &warnings)
-                == "web")
+                == "web"
+        )
         #expect(warnings.count == 1)
     }
 
@@ -204,6 +236,10 @@ struct WebSearchToolTests {
         let results = payload["results"] as? [[String: Any]]
         let snippet = results?.first?["snippet"] as? String
         #expect((snippet?.count ?? 0) <= WebSearchResultFormatter.maxSnippetLength + 1)
+        let nextAction = payload["next_action"] as? [String: Any]
+        #expect((nextAction?["tool"] as? String) == "search_and_extract")
+        #expect((nextAction?["instruction"] as? String)?.contains("Do not rephrase") == true)
+        #expect((nextAction?["candidate_urls"] as? [String]) == ["https://x.example"])
     }
 
     @Test func noResultsHintDependsOnProviderConfiguration() {

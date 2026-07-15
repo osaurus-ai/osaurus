@@ -610,12 +610,21 @@ struct AgentTaskStateTests {
     /// and only on identical args, which these are not).
     @Test func planningLoop_productiveMultiTargetNotNudged() {
         let state = AgentTaskState()
-        state.record(name: "file_write", argsJSON: #"{"path":"a.txt","content":"1"}"#,
-            result: ToolEnvelope.success(tool: "file_write", text: "ok"))
-        state.record(name: "file_write", argsJSON: #"{"path":"b.txt","content":"2"}"#,
-            result: ToolEnvelope.success(tool: "file_write", text: "ok"))
-        state.record(name: "file_write", argsJSON: #"{"path":"c.txt","content":"3"}"#,
-            result: ToolEnvelope.success(tool: "file_write", text: "ok"))
+        state.record(
+            name: "file_write",
+            argsJSON: #"{"path":"a.txt","content":"1"}"#,
+            result: ToolEnvelope.success(tool: "file_write", text: "ok")
+        )
+        state.record(
+            name: "file_write",
+            argsJSON: #"{"path":"b.txt","content":"2"}"#,
+            result: ToolEnvelope.success(tool: "file_write", text: "ok")
+        )
+        state.record(
+            name: "file_write",
+            argsJSON: #"{"path":"c.txt","content":"3"}"#,
+            result: ToolEnvelope.success(tool: "file_write", text: "ok")
+        )
         #expect(state.nextStepBias() == nil, "multi-file writes are progress, not a loop")
     }
 
@@ -626,8 +635,11 @@ struct AgentTaskStateTests {
         let todoEnv = ToolEnvelope.success(tool: "todo", text: "Todo updated.")
         state.record(name: "todo", argsJSON: #"{"markdown":"- [ ] a"}"#, result: todoEnv)
         state.record(name: "todo", argsJSON: #"{"markdown":"- [ ] b"}"#, result: todoEnv)
-        state.record(name: "file_write", argsJSON: #"{"path":"a.txt","content":"x"}"#,
-            result: ToolEnvelope.success(tool: "file_write", text: "ok"))
+        state.record(
+            name: "file_write",
+            argsJSON: #"{"path":"a.txt","content":"x"}"#,
+            result: ToolEnvelope.success(tool: "file_write", text: "ok")
+        )
         state.record(name: "todo", argsJSON: #"{"markdown":"- [ ] c"}"#, result: todoEnv)
         #expect(state.nextStepBias() == nil, "interleaved action resets the planning run")
     }
@@ -641,15 +653,25 @@ struct AgentTaskStateTests {
     @Test func planningLoop_consecutiveNonPlanningToolNotNudged() {
         for tool in ["db_insert", "image", "web_search", "capabilities_load"] {
             let state = AgentTaskState()
-            state.record(name: tool, argsJSON: #"{"q":"1"}"#,
-                result: ToolEnvelope.success(tool: tool, text: "ok"))
-            state.record(name: tool, argsJSON: #"{"q":"2"}"#,
-                result: ToolEnvelope.success(tool: tool, text: "ok"))
-            state.record(name: tool, argsJSON: #"{"q":"3"}"#,
-                result: ToolEnvelope.success(tool: tool, text: "ok"))
+            state.record(
+                name: tool,
+                argsJSON: #"{"q":"1"}"#,
+                result: ToolEnvelope.success(tool: tool, text: "ok")
+            )
+            state.record(
+                name: tool,
+                argsJSON: #"{"q":"2"}"#,
+                result: ToolEnvelope.success(tool: tool, text: "ok")
+            )
+            state.record(
+                name: tool,
+                argsJSON: #"{"q":"3"}"#,
+                result: ToolEnvelope.success(tool: tool, text: "ok")
+            )
             #expect(
                 state.nextStepBias() == nil,
-                "3 consecutive \(tool) calls are work, not a planning loop")
+                "3 consecutive \(tool) calls are work, not a planning loop"
+            )
         }
     }
 
@@ -698,6 +720,67 @@ struct AgentTaskStateTests {
             result: ToolEnvelope.success(tool: "search_and_extract", text: "page body")
         )
         #expect(state.nextStepBias() == nil, "retrieval resets the discovery-only run")
+    }
+
+    @Test func webSearchLoop_failedRetrievalDoesNotResetGuard() throws {
+        let state = AgentTaskState()
+        for n in 1 ... 4 {
+            state.record(
+                name: "web_search",
+                argsJSON: #"{"query":"dataset \#(n)"}"#,
+                result: ToolEnvelope.success(tool: "web_search", text: "ranked snippets")
+            )
+        }
+
+        state.record(
+            name: "search_and_extract",
+            argsJSON: #"{"url":"https://example.com/data.csv"}"#,
+            result: ToolEnvelope.failure(
+                kind: .notFound,
+                message: "search_and_extract is not available in this conversation.",
+                tool: "search_and_extract",
+                retryable: false
+            )
+        )
+
+        let guarded = try #require(state.guardedResult(name: "web_search"))
+        #expect(guarded.contains("transition_required"))
+    }
+
+    @Test func webSearchLoop_metaToolDetourDoesNotResetGuard() throws {
+        let state = AgentTaskState()
+        for n in 1 ... 4 {
+            state.record(
+                name: "web_search",
+                argsJSON: #"{"query":"dataset \#(n)"}"#,
+                result: ToolEnvelope.success(tool: "web_search", text: "ranked snippets")
+            )
+        }
+
+        state.record(
+            name: "capabilities_load",
+            argsJSON: #"{"ids":["skill/Data Visualizer"]}"#,
+            result: ToolEnvelope.success(tool: "capabilities_load", text: "loaded")
+        )
+        let guarded = try #require(state.guardedResult(name: "web_search"))
+        #expect(guarded.contains("transition_required"))
+    }
+
+    @Test func webSearchLoop_fifthDiscoveryIsGuardedWithoutProviderExecution() throws {
+        let state = AgentTaskState()
+        for n in 1 ... 4 {
+            state.record(
+                name: "web_search",
+                argsJSON: #"{"query":"dataset \#(n)"}"#,
+                result: ToolEnvelope.success(tool: "web_search", text: "ranked snippets")
+            )
+        }
+
+        let guarded = try #require(state.guardedResult(name: "web_search"))
+        #expect(ToolEnvelope.isSuccess(guarded))
+        #expect(guarded.contains("transition_required"))
+        #expect(guarded.contains("search_and_extract"))
+        #expect(state.guardedResult(name: "search_and_extract") == nil)
     }
 
     /// Identical successful web reads are replayable just like file reads;
