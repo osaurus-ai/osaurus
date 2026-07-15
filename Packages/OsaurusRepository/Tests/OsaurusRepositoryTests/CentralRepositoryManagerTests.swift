@@ -139,7 +139,7 @@ final class CentralRepositoryManagerTests: XCTestCase {
         let result = CentralRepositoryManager.shared.refreshWithDiagnostics()
 
         XCTAssertFalse(result.succeeded)
-        XCTAssertEqual(result.failure?.kind, .unzipFailed)
+        XCTAssertEqual(result.failure?.kind, .malformedArchive)
         XCTAssertEqual(
             result.attemptedArchiveURLs,
             ["https://github.com/osaurus-ai/osaurus-tools/archive/refs/heads/main.zip"]
@@ -184,6 +184,84 @@ final class CentralRepositoryManagerTests: XCTestCase {
         }
 
         XCTAssertFalse(CentralRepositoryManager.shared.refresh())
+    }
+
+    func testRefreshAcceptsValidatedRegistryArchiveAndPublishesSpecs() throws {
+        let archive = try makeRegistryArchive(named: "valid")
+        configureRefresh(with: archive)
+
+        let result = CentralRepositoryManager.shared.refreshWithDiagnostics()
+
+        XCTAssertTrue(result.succeeded)
+        XCTAssertNil(result.failure)
+        XCTAssertEqual(CentralRepositoryManager.shared.listAllSpecs().map(\.plugin_id), ["osaurus.test"])
+    }
+
+    func testRefreshClassifiesUnsafeRegistryArchive() throws {
+        let archive = try makeRegistryArchive(named: "unsafe", zipArguments: ["-q", "-y", "-r"]) { root in
+            try FileManager.default.createSymbolicLink(
+                at: root.appendingPathComponent("plugins/escape"),
+                withDestinationURL: URL(fileURLWithPath: "/tmp/outside")
+            )
+        }
+        configureRefresh(with: archive)
+
+        let result = CentralRepositoryManager.shared.refreshWithDiagnostics()
+
+        XCTAssertFalse(result.succeeded)
+        XCTAssertEqual(result.failure?.kind, .unsafeArchive)
+        XCTAssertTrue(result.userMessage?.contains("unsafe entries") == true)
+    }
+
+    func testRefreshClassifiesRegistryArchiveResourceLimit() throws {
+        let archive = try makeRegistryArchive(named: "oversized-ratio") { root in
+            try Data(repeating: 0, count: 5 * 1_048_576).write(
+                to: root.appendingPathComponent("repetitive.bin")
+            )
+        }
+        configureRefresh(with: archive)
+
+        let result = CentralRepositoryManager.shared.refreshWithDiagnostics()
+
+        XCTAssertFalse(result.succeeded)
+        XCTAssertEqual(result.failure?.kind, .archiveResourceLimit)
+        XCTAssertTrue(result.userMessage?.contains("safety limits") == true)
+    }
+
+    private func makeRegistryArchive(
+        named name: String,
+        zipArguments: [String] = ["-q", "-r"],
+        configure: (URL) throws -> Void = { _ in }
+    ) throws -> URL {
+        let source = tempRoot.appendingPathComponent("source-\(name)", isDirectory: true)
+        let repository = source.appendingPathComponent("osaurus-tools-main", isDirectory: true)
+        let plugins = repository.appendingPathComponent("plugins", isDirectory: true)
+        try FileManager.default.createDirectory(at: plugins, withIntermediateDirectories: true)
+        let spec = PluginSpec(plugin_id: "osaurus.test", name: "Test Plugin")
+        try JSONEncoder().encode(spec).write(to: plugins.appendingPathComponent("osaurus.test.json"))
+        try configure(repository)
+
+        let archive = tempRoot.appendingPathComponent("registry-\(name).zip")
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/zip")
+        process.arguments = zipArguments + [archive.path, "osaurus-tools-main"]
+        process.currentDirectoryURL = source
+        process.standardOutput = FileHandle.nullDevice
+        process.standardError = FileHandle.nullDevice
+        try process.run()
+        process.waitUntilExit()
+        XCTAssertEqual(process.terminationStatus, 0)
+        return archive
+    }
+
+    private func configureRefresh(with archive: URL) {
+        CentralRepositoryManager.downloadFileOverride = { _, destination in
+            try FileManager.default.copyItem(at: archive, to: destination)
+        }
+        CentralRepositoryManager.shared.central = CentralRepository(
+            url: "https://github.com/osaurus-ai/osaurus-tools.git",
+            branch: "main"
+        )
     }
 
     private func writeCachedSpec(pluginId: String) throws {

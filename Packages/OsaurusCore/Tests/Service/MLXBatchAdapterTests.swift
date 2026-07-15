@@ -609,26 +609,105 @@ struct MLXBatchAdapterTests {
         #expect(effective.repetitionPenalty == engineDefaults.repetitionPenalty)
     }
 
+    /// A model name is not a model identity.
+    ///
+    /// Re-bake a pack (MXFP4 -> MXFP8, a re-quant, any weight edit) and install it
+    /// over the old one under the same name: the layer count, head dims and KV mode
+    /// are all unchanged, so every tag the cache key used to carry is unchanged too.
+    /// The key was therefore byte-identical across the swap, and the NEW weights
+    /// would restore the OLD weights' KV and keep generating from activations that
+    /// never came from them — silently, and looking for all the world like a bad
+    /// quant. Re-quantizing under a stable name is a routine operation here, so this
+    /// was reachable in normal use.
+    @Test func cacheCoordinatorModelKey_isolatesWeightsRebakedUnderTheSameName() {
+        let beforeRebake = ModelRuntime.cacheCoordinatorModelKey(
+            modelName: "Ornith-1.0-9B",
+            kvModeTag: "fp16",
+            weightsFingerprint: "aaaaaaaaaaaaaaaa"
+        )
+        let afterRebake = ModelRuntime.cacheCoordinatorModelKey(
+            modelName: "Ornith-1.0-9B",  // same name, same topology, new weights
+            kvModeTag: "fp16",
+            weightsFingerprint: "bbbbbbbbbbbbbbbb"
+        )
+
+        #expect(
+            beforeRebake != afterRebake,
+            "re-baked weights under the same name must not inherit the old pack's KV cache")
+        #expect(beforeRebake.contains("weights=aaaaaaaaaaaaaaaa"))
+        #expect(afterRebake.contains("weights=bbbbbbbbbbbbbbbb"))
+
+        // ...and the same weights must still hit, or we have traded a correctness
+        // bug for a cache that never warms.
+        let reload = ModelRuntime.cacheCoordinatorModelKey(
+            modelName: "Ornith-1.0-9B",
+            kvModeTag: "fp16",
+            weightsFingerprint: "aaaaaaaaaaaaaaaa"
+        )
+        #expect(reload == beforeRebake, "an unchanged pack must still reuse its cache")
+    }
+
+    /// The fingerprint has to survive a relaunch. Swift seeds `Hasher` per process,
+    /// so a `hashValue`-derived key would change on every launch and the prefix
+    /// cache would never hit again — a correctness fix that quietly becomes a
+    /// performance bug. FNV-1a is stable; this pins that it stays that way.
+    @Test func weightsFingerprint_isStableAndDeterministic() throws {
+        let dir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("fp-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        try Data("weights".utf8).write(to: dir.appendingPathComponent("model.safetensors"))
+        try Data("{}".utf8).write(to: dir.appendingPathComponent("config.json"))
+
+        let first = ModelRuntime.weightsFingerprint(for: dir)
+        let second = ModelRuntime.weightsFingerprint(for: dir)
+        #expect(first == second, "the same bundle must fingerprint identically every time")
+        #expect(first.count == 16, "a 64-bit hex digest")
+        #expect(first != "empty")
+
+        // Editing a shard must change it, or a re-bake still slips through.
+        try Data("different weights entirely".utf8)
+            .write(to: dir.appendingPathComponent("model.safetensors"))
+        #expect(
+            ModelRuntime.weightsFingerprint(for: dir) != first,
+            "a changed shard must invalidate the cache")
+    }
+
+    /// An unreadable bundle must take a cold prefill rather than risk reusing some
+    /// other pack's KV: fail toward a slow request, never toward a wrong one.
+    @Test func weightsFingerprint_unreadableBundleNeverMatches() {
+        let missing = URL(fileURLWithPath: "/nonexistent-\(UUID().uuidString)")
+        let a = ModelRuntime.weightsFingerprint(for: missing)
+        let b = ModelRuntime.weightsFingerprint(for: missing)
+        #expect(a != b, "an unreadable bundle must never produce a reusable cache key")
+    }
+
     @Test func cacheCoordinatorModelKey_namespacesPathDependentCacheTopologies() {
         let dsv4 = ModelRuntime.cacheCoordinatorModelKey(
             modelName: "DeepSeek-V4-Flash-JANGTQ2",
-            kvModeTag: "fp16"
+            kvModeTag: "fp16",
+            weightsFingerprint: "testfp"
         )
         let zaya = ModelRuntime.cacheCoordinatorModelKey(
             modelName: "ZAYA1-8B-JANGTQ4",
-            kvModeTag: "fp16"
+            kvModeTag: "fp16",
+            weightsFingerprint: "testfp"
         )
         let ling = ModelRuntime.cacheCoordinatorModelKey(
             modelName: "Ling-2.6-flash-JANGTQ2-CRACK",
-            kvModeTag: "fp16"
+            kvModeTag: "fp16",
+            weightsFingerprint: "testfp"
         )
         let omni = ModelRuntime.cacheCoordinatorModelKey(
             modelName: "Nemotron-Omni-Nano-JANGTQ4-CRACK",
-            kvModeTag: "fp16"
+            kvModeTag: "fp16",
+            weightsFingerprint: "testfp"
         )
         let generic = ModelRuntime.cacheCoordinatorModelKey(
             modelName: "Mistral-Medium-3.5-128B-MXFP4",
-            kvModeTag: "fp16"
+            kvModeTag: "fp16",
+            weightsFingerprint: "testfp"
         )
 
         #expect(dsv4.contains("kv=fp16"))
@@ -821,7 +900,8 @@ struct MLXBatchAdapterTests {
         ] {
             let key = ModelRuntime.cacheCoordinatorModelKey(
                 modelName: name,
-                kvModeTag: "fp16"
+                kvModeTag: "fp16",
+                weightsFingerprint: "testfp"
             )
             #expect(
                 key.contains("layers=hybrid-ssm"),
@@ -831,14 +911,16 @@ struct MLXBatchAdapterTests {
 
         let omni = ModelRuntime.cacheCoordinatorModelKey(
             modelName: "Nemotron-Omni-Nano-JANGTQ4-CRACK",
-            kvModeTag: "fp16"
+            kvModeTag: "fp16",
+            weightsFingerprint: "testfp"
         )
         #expect(omni.contains("layers=hybrid-ssm"))
         #expect(omni.contains("media=omni-audio-video"))
 
         let zaya = ModelRuntime.cacheCoordinatorModelKey(
             modelName: "ZAYA1-8B-JANGTQ4",
-            kvModeTag: "fp16"
+            kvModeTag: "fp16",
+            weightsFingerprint: "testfp"
         )
         #expect(zaya.contains("layers=zayaCCA"))
         #expect(!zaya.contains("layers=hybrid-ssm"))
@@ -859,6 +941,7 @@ struct MLXBatchAdapterTests {
         let key = ModelRuntime.cacheCoordinatorModelKey(
             modelName: "unrecognized-local-bundle",
             kvModeTag: "turbo(4,3)",
+            weightsFingerprint: "testfp",
             cacheTopology: topology
         )
 
@@ -887,6 +970,7 @@ struct MLXBatchAdapterTests {
         let key = ModelRuntime.cacheCoordinatorModelKey(
             modelName: "NVIDIA-Nemotron-3-Ultra-550B-A55B-JANGTQ_1L",
             kvModeTag: "fp16",
+            weightsFingerprint: "testfp",
             cacheTopology: topology
         )
 

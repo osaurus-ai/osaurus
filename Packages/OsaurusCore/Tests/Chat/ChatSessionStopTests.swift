@@ -28,7 +28,7 @@ struct ChatSessionStopTests {
     func stop_ignoresLateResultsWhenEngineSetupIgnoresCancellation() async throws {
         try await ChatHistoryTestStorage.run {
             let session = ChatSession()
-            session.chatEngineFactory = { IgnoringCancellationChatEngine() }
+            session.chatEngineFactory = { _ in IgnoringCancellationChatEngine() }
 
             session.send("Hello")
             try await Task.sleep(for: .milliseconds(20))
@@ -49,7 +49,7 @@ struct ChatSessionStopTests {
         try await ChatHistoryTestStorage.run {
             let session = ChatSession()
             let engine = CancellationObservingChatEngine()
-            session.chatEngineFactory = { engine }
+            session.chatEngineFactory = { _ in engine }
 
             session.send("Hello")
             try await waitUntilAsync(timeout: Self.asyncTimeout) {
@@ -71,7 +71,7 @@ struct ChatSessionStopTests {
     func send_ignoresReentrantSendBeforeStreamingFlagFlips() async throws {
         try await ChatHistoryTestStorage.run {
             let session = ChatSession()
-            session.chatEngineFactory = { IgnoringCancellationChatEngine() }
+            session.chatEngineFactory = { _ in IgnoringCancellationChatEngine() }
 
             session.send("first")
             session.send("second")
@@ -87,7 +87,7 @@ struct ChatSessionStopTests {
     func send_finishesReasoningOnlyLocalStream() async throws {
         try await ChatHistoryTestStorage.run {
             let session = ChatSession()
-            session.chatEngineFactory = { ReasoningOnlyChatEngine() }
+            session.chatEngineFactory = { _ in ReasoningOnlyChatEngine() }
 
             session.send("Hello")
 

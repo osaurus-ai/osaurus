@@ -191,7 +191,17 @@ public final class SandboxToolRegistrar {
         let availability = await SandboxManager.shared.refreshAvailability()
         guard availability.isAvailable else { return }
         let config = SandboxConfigurationStore.load()
-        guard config.autoStart, config.setupComplete else { return }
+        guard config.autoStart, config.setupComplete else {
+            // The user consented to sandbox setup before (`setupComplete`)
+            // but isn't auto-booting the VM. Warm the runtime asset cache
+            // in the background — resumable, silent, no VM — so a later
+            // manual start (or an app update that rotated the pinned
+            // image/initfs) boots from cache instead of a cold download.
+            if config.setupComplete {
+                await SandboxManager.shared.prefetchRuntimeAssetsInBackground()
+            }
+            return
+        }
         do {
             try await SandboxManager.shared.startContainer()
         } catch {

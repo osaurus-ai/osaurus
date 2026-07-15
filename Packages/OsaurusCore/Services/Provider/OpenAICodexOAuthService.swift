@@ -73,6 +73,50 @@ public enum OpenAICodexOAuthError: LocalizedError, Sendable {
     }
 }
 
+/// One reasoning level a Codex model advertises in the live `/models`
+/// catalog, in the catalog's order. `effort` is the exact wire value
+/// (`low`, `xhigh`, `ultra`, ...); `description` is ChatGPT's own copy for
+/// the level, surfaced as secondary text in the effort picker.
+public struct CodexReasoningLevel: Sendable, Equatable, Hashable {
+    public let effort: String
+    public let description: String?
+
+    public init(effort: String, description: String? = nil) {
+        self.effort = effort
+        self.description = description
+    }
+}
+
+/// Per-model capability metadata decoded from the live Codex `/models`
+/// catalog. This is the authoritative source for a model's reasoning
+/// surface — sets differ per model (Terra offers `ultra`, Luna stops at
+/// `max`) and must never be inferred from model names.
+public struct CodexModelMetadata: Sendable, Equatable, Hashable {
+    public let slug: String
+    public let displayName: String?
+    /// Catalog default effort. Display-only: Osaurus shows it when the user
+    /// made no explicit choice but never injects it into requests.
+    public let defaultReasoningLevel: String?
+    /// Supported efforts in catalog order. Empty when the catalog exposes no
+    /// reasoning contract for the model.
+    public let supportedReasoningLevels: [CodexReasoningLevel]
+    public let usesResponsesLite: Bool
+
+    public init(
+        slug: String,
+        displayName: String? = nil,
+        defaultReasoningLevel: String? = nil,
+        supportedReasoningLevels: [CodexReasoningLevel] = [],
+        usesResponsesLite: Bool = false
+    ) {
+        self.slug = slug
+        self.displayName = displayName
+        self.defaultReasoningLevel = defaultReasoningLevel
+        self.supportedReasoningLevels = supportedReasoningLevels
+        self.usesResponsesLite = usesResponsesLite
+    }
+}
+
 public enum OpenAICodexOAuthService {
 
     // MARK: - Configuration
@@ -189,6 +233,11 @@ public enum OpenAICodexOAuthService {
         /// contract. This comes from the live catalog's
         /// `use_responses_lite` field; do not infer it from model names.
         public let responsesLiteModels: Set<String>
+        /// Full per-model capability metadata for every picker-visible model,
+        /// keyed by slug. Replaced atomically with the rest of the summary on
+        /// each successful discovery so reconnect/refetch never leaves stale
+        /// reasoning capabilities behind.
+        public let modelMetadata: [String: CodexModelMetadata]
         public let fetchedAt: Date
 
         public init(
@@ -196,12 +245,14 @@ public enum OpenAICodexOAuthService {
             compatibleCount: Int,
             filteredModels: [FilteredModel],
             responsesLiteModels: Set<String> = [],
+            modelMetadata: [String: CodexModelMetadata] = [:],
             fetchedAt: Date
         ) {
             self.rawEntryCount = rawEntryCount
             self.compatibleCount = compatibleCount
             self.filteredModels = filteredModels
             self.responsesLiteModels = responsesLiteModels
+            self.modelMetadata = modelMetadata
             self.fetchedAt = fetchedAt
         }
     }
@@ -223,6 +274,12 @@ public enum OpenAICodexOAuthService {
         lastDiscoverySummaryBox.withLock {
             $0?.responsesLiteModels.contains(modelId) == true
         }
+    }
+
+    /// Latest catalog capability metadata for `slug`, or nil before the first
+    /// successful discovery / for fallback models that predate the catalog.
+    public static func modelMetadata(forSlug slug: String) -> CodexModelMetadata? {
+        lastDiscoverySummaryBox.withLock { $0?.modelMetadata[slug] }
     }
 
     /// Live model catalog fetched from the ChatGPT/Codex backend, matching what
@@ -284,6 +341,10 @@ public enum OpenAICodexOAuthService {
                 compatible
                     .filter { $0.use_responses_lite == true }
                     .map(\.slug)
+            ),
+            modelMetadata: Dictionary(
+                compatible.map { ($0.slug, $0.capabilityMetadata) },
+                uniquingKeysWith: { first, _ in first }
             ),
             fetchedAt: Date()
         )
@@ -467,12 +528,39 @@ public enum OpenAICodexOAuthService {
         let models: [ModelEntry]
     }
 
+    private struct ReasoningLevelEntry: Decodable {
+        let effort: String?
+        let description: String?
+    }
+
     private struct ModelEntry: Decodable {
         let slug: String
         let visibility: String?
         let priority: Int?
         let shell_type: String?
         let use_responses_lite: Bool?
+        let display_name: String?
+        let default_reasoning_level: String?
+        let supported_reasoning_levels: [ReasoningLevelEntry]?
+
+        /// The publishable capability slice of this entry, preserving the
+        /// catalog's level order and dropping malformed (effort-less) levels.
+        var capabilityMetadata: CodexModelMetadata {
+            CodexModelMetadata(
+                slug: slug,
+                displayName: display_name?.trimmingCharacters(in: .whitespacesAndNewlines)
+                    .nilIfEmpty,
+                defaultReasoningLevel: default_reasoning_level?
+                    .trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty,
+                supportedReasoningLevels: (supported_reasoning_levels ?? []).compactMap { level in
+                    guard let effort = level.effort?.trimmingCharacters(in: .whitespacesAndNewlines),
+                        !effort.isEmpty
+                    else { return nil }
+                    return CodexReasoningLevel(effort: effort, description: level.description)
+                },
+                usesResponsesLite: use_responses_lite == true
+            )
+        }
     }
 
     private struct TokenResponse: Decodable {
@@ -605,6 +693,10 @@ public enum OpenAICodexOAuthService {
 // MARK: - Helpers
 
 extension String {
+    fileprivate var nilIfEmpty: String? {
+        isEmpty ? nil : self
+    }
+
     fileprivate func replacingMatches(of pattern: String, with template: String) -> String {
         guard let regex = try? NSRegularExpression(pattern: pattern) else { return self }
         let range = NSRange(startIndex ..< endIndex, in: self)

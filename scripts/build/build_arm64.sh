@@ -79,6 +79,13 @@ mkdir -p "$ARCHIVE_APP/Contents/Helpers"
 cp "$CLI_SRC" "$ARCHIVE_APP/Contents/Helpers/osaurus"
 chmod +x "$ARCHIVE_APP/Contents/Helpers/osaurus"
 
+# 3b. Bundle the sandbox guest kernel (digest-verified, with provenance
+# sidecar) so first-run sandbox setup installs it from the signed app
+# instead of downloading the 277 MiB Kata distribution. Runs before the
+# re-sign below so the resource is sealed into the bundle signature.
+echo "Bundling sandbox kernel into Resources/SandboxRuntime..."
+./scripts/build/fetch_sandbox_kernel.sh "$ARCHIVE_APP/Contents/Resources/SandboxRuntime"
+
 # Re-sign the archived app (now carrying the embedded CLI) with the same
 # entitlements used for the archive. `--deep` also signs the nested CLI binary
 # so Helpers/osaurus carries the hardened runtime before export seals the

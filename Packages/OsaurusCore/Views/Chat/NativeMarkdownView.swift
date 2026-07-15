@@ -275,6 +275,17 @@ final class NativeMarkdownView: NSView {
     /// which needs live layout). Lets the find bar scroll to the exact line
     /// of the current match inside a message taller than the viewport.
     func rectOfSearchOccurrence(_ index: Int) -> NSRect? {
+        // The upper bound was checked here; the lower bound was not, and this
+        // subscript trapped in production (Sentry APPLE-MACOS-10V: Array._checkSubscript,
+        // reached from the find bar's scroll-to-match). `searchAllOccurrenceRanges` is
+        // rebuilt on every highlight pass while the find bar navigates against counts
+        // taken from the *model's* text, so the index arriving here is not something this
+        // view can vouch for. Treat it as untrusted and answer "no such occurrence"
+        // rather than crashing the app mid-search.
+        guard index >= 0 else {
+            assertionFailure("negative search occurrence index \(index)")
+            return nil
+        }
         if index < searchAllOccurrenceRanges.count {
             guard let tv = textView, tv.window != nil else { return nil }
             let range = searchAllOccurrenceRanges[index]
@@ -290,9 +301,16 @@ final class NativeMarkdownView: NSView {
         for entry in segmentViews {
             guard let child = entry.view as? NativeMarkdownView else { continue }
             let childCount = child.searchOccurrenceTotal
-            if index - consumed < childCount,
-                let rect = child.rectOfSearchOccurrence(index - consumed)
-            {
+            if index - consumed < childCount {
+                // This child owns the occurrence: return its answer, even when
+                // that answer is nil (text view not in a window yet, zero-height
+                // rect). Falling through here handed later siblings an
+                // already-consumed index — negative after the next `consumed`
+                // bump — which passed their upper-bound-only check and trapped
+                // in Array.subscript (Sentry APPLE-MACOS-10V).
+                guard let rect = child.rectOfSearchOccurrence(index - consumed) else {
+                    return nil
+                }
                 return child.convert(rect, to: self)
             }
             consumed += childCount
@@ -745,6 +763,30 @@ final class NativeMarkdownView: NSView {
         theme: any ThemeProtocol,
         isStreaming: Bool
     ) {
+        // Traced: this runs per streaming tick and is the entry point of the
+        // markdown streaming app-hang cluster.
+        ChatPerfTrace.shared.time("markdown.applySegments") {
+            applySegmentsImpl(
+                segments,
+                cacheKey: cacheKey,
+                textChanged: textChanged,
+                widthChanged: widthChanged,
+                width: width,
+                theme: theme,
+                isStreaming: isStreaming
+            )
+        }
+    }
+
+    private func applySegmentsImpl(
+        _ segments: [ContentSegment],
+        cacheKey: String?,
+        textChanged: Bool,
+        widthChanged: Bool,
+        width: CGFloat,
+        theme: any ThemeProtocol,
+        isStreaming: Bool
+    ) {
         let isPureText = segments.allSatisfy {
             if case .textGroup = $0.kind { return true }; return false
         }
@@ -772,6 +814,31 @@ final class NativeMarkdownView: NSView {
     // MARK: - Private: Pure Text Path
 
     private func applyPureTextBlocks(
+        _ blocks: [SelectableTextBlock],
+        cacheKey: String?,
+        textChanged: Bool,
+        widthChanged: Bool,
+        width: CGFloat,
+        theme: any ThemeProtocol,
+        isStreaming: Bool
+    ) {
+        // Traced separately from the enclosing `markdown.applySegments`
+        // window so the report splits the pure-text path out of the
+        // segment total.
+        ChatPerfTrace.shared.time("markdown.applyPureTextBlocks") {
+            applyPureTextBlocksImpl(
+                blocks,
+                cacheKey: cacheKey,
+                textChanged: textChanged,
+                widthChanged: widthChanged,
+                width: width,
+                theme: theme,
+                isStreaming: isStreaming
+            )
+        }
+    }
+
+    private func applyPureTextBlocksImpl(
         _ blocks: [SelectableTextBlock],
         cacheKey: String?,
         textChanged: Bool,

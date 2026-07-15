@@ -406,6 +406,51 @@ struct FeatureTelemetryEventTests {
         #expect(rec.events[2].props["source"] as? String == "dispatch")
     }
 
+    // MARK: - Product Hunt launch dialog
+
+    @Test func productHuntLaunchDialog_shown_and_clicked_shapes() {
+        let (service, rec, cleanup) = makeRecordingService()
+        defer { cleanup() }
+
+        FeatureTelemetry.productHuntLaunchDialogShown(service: service)
+        FeatureTelemetry.productHuntLaunchDialogClicked(action: "launch", service: service)
+        FeatureTelemetry.productHuntLaunchDialogClicked(action: "later", service: service)
+
+        #expect(
+            rec.events.map(\.name) == [
+                "product_hunt_launch_dialog_shown",
+                "product_hunt_launch_dialog_clicked",
+                "product_hunt_launch_dialog_clicked",
+            ]
+        )
+        // Shown carries no event-specific props; clicked carries only the
+        // closed two-value action token.
+        #expect(business(rec.events[0].props).isEmpty)
+        #expect(rec.events[1].props["action"] as? String == "launch")
+        #expect(business(rec.events[1].props).count == 1)
+        #expect(rec.events[2].props["action"] as? String == "later")
+    }
+
+    @Test func productHuntLaunchDialog_events_drop_when_consent_declined() {
+        let suiteName = "feature-telemetry-ph-declined-\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let recorder = Recorder()
+        let service = TelemetryService(
+            defaults: defaults,
+            emit: { name, props in
+                recorder.events.append(Event(name: name, props: props.mapValues { $0 as Any }))
+            }
+        )
+        service.markStartedForTesting()
+        service.setEnabled(false)  // declined → drop
+
+        FeatureTelemetry.productHuntLaunchDialogShown(service: service)
+        FeatureTelemetry.productHuntLaunchDialogClicked(action: "later", service: service)
+
+        #expect(recorder.events.isEmpty)
+    }
+
     // MARK: - Hardware RAM bucket (attached to every event)
 
     /// Every emitted event must carry the coarse `total_memory_gb` bucket so

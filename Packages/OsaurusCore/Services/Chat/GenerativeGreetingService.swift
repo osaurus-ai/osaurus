@@ -224,7 +224,11 @@ public actor GenerativeGreetingService {
                 temperature: temperature,
                 maxTokens: Self.maxTokens(for: sizeClass),
                 timeout: Self.timeout,
-                fallbackModel: fallbackModel
+                fallbackModel: fallbackModel,
+                // A greeting is a nicety. `GenerativeGreetingPool` already refuses to
+                // refill over a resident/loading model; saying so here too means any
+                // other caller of this service inherits the same restraint.
+                intent: .background
             )
         }
 

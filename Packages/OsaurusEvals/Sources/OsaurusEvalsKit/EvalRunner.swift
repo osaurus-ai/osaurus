@@ -1191,10 +1191,11 @@ public enum EvalRunner {
         // Per-case fixture setup. Both `seedMethods` and `enableSkills`
         // mutate persistent state (SQLite + on-disk skill files) — the
         // wrap snapshots prior state and restores it after the case
-        // body runs. Crashes mid-case can leak `eval-` prefixed methods
-        // and toggled-on skills into the developer's local state; we
-        // accept this as a cost of running fixtures against the live
-        // DB rather than building an isolated test harness.
+        // body runs. Every eval process now runs against an isolated
+        // throwaway root (`EvalBootstrap.configureIsolatedRunStorage`),
+        // so a crash mid-case at worst leaks `eval-` prefixed methods
+        // into the temp root the orphan sweep later deletes — never
+        // into the developer's real databases.
         let seededMethods = await applySeedMethods(testCase.fixtures.seedMethods)
         let priorSkillState = await applyEnableSkills(testCase.fixtures.enableSkills)
 

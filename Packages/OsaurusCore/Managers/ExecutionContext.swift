@@ -41,7 +41,8 @@ public final class ExecutionContext: ObservableObject {
         folderBookmark: Data? = nil,
         source: SessionSource = .chat,
         sourcePluginId: String? = nil,
-        externalSessionKey: String? = nil
+        externalSessionKey: String? = nil,
+        loadIntent: ModelLoadIntent = .interactive
     ) {
         self.id = id
         self.agentId = agentId
@@ -56,6 +57,7 @@ public final class ExecutionContext: ObservableObject {
         // actual saved session.
         session.sessionId = id
         session.source = source
+        session.loadIntent = loadIntent
         session.sourcePluginId = sourcePluginId
         session.externalSessionKey = externalSessionKey
         session.dispatchTaskId = id

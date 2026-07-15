@@ -80,6 +80,18 @@ struct GenerationParameters: Sendable {
     /// kept warm by API clients. Defaults to `.httpAPI` — the conservative
     /// choice (never accelerated) for paths that don't set it explicitly.
     let requestSource: RequestSource
+    /// Whether this generation's model load may disturb a model someone else is
+    /// using. `.interactive` (the default) keeps today's behaviour: a human is
+    /// waiting, so the load may evict a resident model or cancel an in-flight
+    /// one. Housekeeping generations — memory distillation, greetings,
+    /// voice-transcript cleanup, speculative warm-up — must pass `.background`,
+    /// which makes `ModelRuntime` refuse the load rather than take the GPU out
+    /// from under an active chat.
+    ///
+    /// This rides on `GenerationParameters` rather than being a separate
+    /// argument so it survives the whole ChatEngine → MLXService → ModelRuntime
+    /// path without every layer having to re-plumb it.
+    let loadIntent: ModelLoadIntent
 
     init(
         temperature: Float?,
@@ -101,7 +113,8 @@ struct GenerationParameters: Sendable {
         runAsRemoteAgent: Bool = false,
         suppressProgressUI: Bool = false,
         warmupPrefill: Bool = false,
-        requestSource: RequestSource = .httpAPI
+        requestSource: RequestSource = .httpAPI,
+        loadIntent: ModelLoadIntent = .interactive
     ) {
         self.temperature = temperature
         self.maxTokens = maxTokens
@@ -123,6 +136,7 @@ struct GenerationParameters: Sendable {
         self.suppressProgressUI = suppressProgressUI
         self.warmupPrefill = warmupPrefill
         self.requestSource = requestSource
+        self.loadIntent = loadIntent
     }
 }
 

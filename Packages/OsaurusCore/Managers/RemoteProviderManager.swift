@@ -47,6 +47,10 @@ public enum RemoteProviderError: LocalizedError {
 public final class RemoteProviderManager: ObservableObject {
     public static let shared = RemoteProviderManager()
     public static let osaurusRouterProviderId = UUID(uuidString: "2CFBD528-62FD-4EF0-A143-3FE532F03840")!
+    /// Product-selected temporary model for the first-run local-download
+    /// experience. Match by final path component because Router ids are
+    /// provider-prefixed (for example `osaurus/deepseek-ai/...`).
+    static let firstRunOsaurusModelSlug = "deepseek-v4-flash"
 
     /// Current configuration
     @Published public private(set) var configuration: RemoteProviderConfiguration
@@ -934,10 +938,23 @@ public final class RemoteProviderManager: ObservableObject {
         return models
     }
 
+    /// One connected provider's cached model list plus its route identity.
+    /// `providerType` and `host` let consumers (the model picker cache)
+    /// distinguish the ChatGPT/Codex OAuth route from the official
+    /// `api.openai.com` API-key route, so the same slug never receives the
+    /// wrong provider's capability set.
+    public struct CachedProviderModels: Sendable {
+        public let providerId: UUID
+        public let providerName: String
+        public let providerType: RemoteProviderType
+        public let host: String
+        public let models: [String]
+    }
+
     /// Get all available models synchronously from cached state
-    public func cachedAvailableModels() -> [(providerId: UUID, providerName: String, models: [String])] {
+    public func cachedAvailableModels() -> [CachedProviderModels] {
         ensureManagedOsaurusRouterProviderIfNeeded()
-        var result: [(providerId: UUID, providerName: String, models: [String])] = []
+        var result: [CachedProviderModels] = []
 
         for provider in configuration.providers {
             if let state = providerStates[provider.id], state.isConnected {
@@ -947,7 +964,15 @@ public final class RemoteProviderManager: ObservableObject {
                     .replacingOccurrences(of: " ", with: "-")
                     .replacingOccurrences(of: "/", with: "-")
                 let prefixedModels = state.discoveredModels.map { "\(prefix)/\($0)" }
-                result.append((providerId: provider.id, providerName: provider.name, models: prefixedModels))
+                result.append(
+                    CachedProviderModels(
+                        providerId: provider.id,
+                        providerName: provider.name,
+                        providerType: provider.providerType,
+                        host: provider.host,
+                        models: prefixedModels
+                    )
+                )
             }
         }
 
@@ -971,6 +996,23 @@ public final class RemoteProviderManager: ObservableObject {
         else { return nil }
         return entry.models.first { !ModelPickerItem.isLikelyEmbeddingOrRerankerID($0) }
             ?? entry.models.first
+    }
+
+    /// DeepSeek V4 Flash for first-run Cloud, with the normal chat-capable
+    /// provider fallback if the Router temporarily omits that model.
+    public func firstRunOsaurusRouterModelId() -> String? {
+        guard
+            let entry = cachedAvailableModels().first(where: {
+                $0.providerId == Self.osaurusRouterProviderId
+            })
+        else { return nil }
+        return entry.models.first(where: Self.isFirstRunOsaurusModelId)
+            ?? entry.models.first { !ModelPickerItem.isLikelyEmbeddingOrRerankerID($0) }
+            ?? entry.models.first
+    }
+
+    static func isFirstRunOsaurusModelId(_ id: String) -> Bool {
+        id.split(separator: "/").last?.lowercased() == firstRunOsaurusModelSlug
     }
 
     /// Metadata for an Osaurus Router model by its unprefixed id (the id as it
