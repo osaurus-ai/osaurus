@@ -128,6 +128,10 @@ public actor ModelRuntime {
         let draftStrategy: MLXLMCommon.DraftStrategy?
         let nativeMTPStatus: String?
         let nativeMTPReason: String?
+        /// Allocator-cache cap resolved from the user-visible memory-safety
+        /// plan used for this exact load. `nil` preserves performance mode's
+        /// explicit unlimited policy.
+        let allocatorCacheLimitBytes: Int?
         var cacheTopology: ModelCacheTopologySnapshot?
         init(
             name: String,
@@ -137,7 +141,8 @@ public actor ModelRuntime {
             isVLM: Bool = false,
             draftStrategy: MLXLMCommon.DraftStrategy? = nil,
             nativeMTPStatus: String? = nil,
-            nativeMTPReason: String? = nil
+            nativeMTPReason: String? = nil,
+            allocatorCacheLimitBytes: Int? = nil
         ) {
             self.name = name
             self.container = container
@@ -147,6 +152,7 @@ public actor ModelRuntime {
             self.draftStrategy = draftStrategy
             self.nativeMTPStatus = nativeMTPStatus
             self.nativeMTPReason = nativeMTPReason
+            self.allocatorCacheLimitBytes = allocatorCacheLimitBytes
         }
     }
 
@@ -999,7 +1005,26 @@ public actor ModelRuntime {
         let totalWeights = Int(modelCache.values.reduce(Int64(0)) { $0 + $1.weightsSizeBytes })
         let byModel = max(totalWeights / 4, 1 * 1024 * 1024 * 1024)
         let bySystem = min(systemRAM / 8, 8 * 1024 * 1024 * 1024)
-        return min(byModel, bySystem)
+        let dynamicLimit = min(byModel, bySystem)
+        return Self.effectiveMLXCacheLimit(
+            dynamicLimit: dynamicLimit,
+            configuredLimits: modelCache.values.map(\.allocatorCacheLimitBytes)
+        )
+    }
+
+    /// Keep Osaurus's weight-scaled reuse heuristic as a ceiling, but never
+    /// exceed the allocator cap visibly resolved for any resident model. The
+    /// previous post-load assignment discarded Safe Auto's 128 MiB cap and
+    /// silently replaced it with at least 1 GiB.
+    nonisolated static func effectiveMLXCacheLimit(
+        dynamicLimit: Int,
+        configuredLimits: [Int?]
+    ) -> Int {
+        guard dynamicLimit > 0 else { return 0 }
+        guard let configuredLimit = configuredLimits.compactMap({ $0 }).min() else {
+            return dynamicLimit
+        }
+        return min(dynamicLimit, max(0, configuredLimit))
     }
 
     /// Flexible-mode resident-weights soft cap. Also read by
@@ -2118,7 +2143,11 @@ public actor ModelRuntime {
                 isVLM: isVLM,
                 draftStrategy: mtpPlan.draftStrategy,
                 nativeMTPStatus: mtpPlan.statusLine,
-                nativeMTPReason: mtpPlan.reason
+                nativeMTPReason: mtpPlan.reason,
+                allocatorCacheLimitBytes: mtpPlan.loadConfiguration.maxResidentBytes
+                    .applyAsCacheLimitInt(
+                        physicalMemory: ProcessInfo.processInfo.physicalMemory
+                    )
             )
         }
 
@@ -2206,8 +2235,10 @@ public actor ModelRuntime {
     // Per-request explicit values still override these. We continue to
     // pass `modelKey` (per-model isolation) and `diskCacheDir` /
     // `enableDiskCache` (osaurus-managed disk path, sandbox-aware).
-    // Everything else (`maxCacheBlocks`, `diskCacheMaxGB`, `pagedBlockSize`,
-    // `ssmMaxEntries`) is left at the library default.
+    // Everything else (`maxCacheBlocks`, `diskCacheMaxGB`, `pagedBlockSize`)
+    // is left at the library default. Hybrid SSM companion snapshots are an
+    // exception: the library default retains 50 fully materialized GPU-state
+    // copies, so the app's Memory Safety mode must also bound that live LRU.
 
     /// Builds a `CacheCoordinatorConfig` with the overrides recommended
     /// by vmlx-swift's `OSAURUS-INTEGRATION.md` (Coordinator-owned KV
@@ -2286,7 +2317,9 @@ public actor ModelRuntime {
         var config = resolvedSettings.cacheCoordinatorConfig(
             modelKey: scopedKey,
             diskCacheDirectory: diskDirUsable ? diskCacheDir : nil,
-            ssmMaxEntries: 50
+            ssmMaxEntries: Self.ssmCompanionEntryLimit(
+                for: resolvedSettings.memorySafety.mode
+            )
         )
         config.defaultKVMode = effectiveDefaultKVMode
         if diskCacheDir != nil, !diskDirUsable {
@@ -2295,6 +2328,30 @@ public actor ModelRuntime {
         }
         applyHostAwareDiskCacheCeiling(to: &config, diskCacheDir: diskCacheDir)
         return config
+    }
+
+    /// Bound the in-memory hybrid/linear-attention companion LRU with the same
+    /// user-visible Memory Safety mode that governs load and allocator caps.
+    ///
+    /// Each entry is a materialized GPU snapshot, not lightweight metadata.
+    /// Bonsai/Qwen 3.5 retained several hundred MiB per boundary under the
+    /// library default of 50, allowing ordinary multi-turn chat plus a Thinking
+    /// toggle to grow back to the model's full on-disk size even though Safe
+    /// Auto visibly promised a bounded plan. Disk L2 remains available for
+    /// older boundaries; the small live LRU keeps the newest cross-turn states.
+    nonisolated static func ssmCompanionEntryLimit(
+        for mode: VMLXMemorySafetyMode
+    ) -> Int {
+        switch mode {
+        case .performance, .diagnosticDangerous:
+            return 50
+        case .balanced:
+            return 8
+        case .safeAuto:
+            return 2
+        case .strict:
+            return 1
+        }
     }
 
     /// Bound the L2 disk-cache cap to a fraction of CURRENT free disk so a

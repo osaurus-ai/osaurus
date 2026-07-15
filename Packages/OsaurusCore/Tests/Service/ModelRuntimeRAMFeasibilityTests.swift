@@ -14,6 +14,44 @@ struct ModelRuntimeRAMFeasibilityTests {
 
     private let gb: Int64 = 1024 * 1024 * 1024
 
+    @Test("Resolved allocator cap cannot be overwritten by weight-scaled cache limit")
+    func resolvedAllocatorCapWins() {
+        let mib = 1024 * 1024
+        #expect(
+            ModelRuntime.effectiveMLXCacheLimit(
+                dynamicLimit: 1024 * mib,
+                configuredLimits: [128 * mib]
+            ) == 128 * mib
+        )
+        #expect(
+            ModelRuntime.effectiveMLXCacheLimit(
+                dynamicLimit: 1024 * mib,
+                configuredLimits: [nil]
+            ) == 1024 * mib
+        )
+        #expect(
+            ModelRuntime.effectiveMLXCacheLimit(
+                dynamicLimit: 1024 * mib,
+                configuredLimits: [1024 * mib, 128 * mib, nil]
+            ) == 128 * mib
+        )
+        #expect(
+            ModelRuntime.effectiveMLXCacheLimit(
+                dynamicLimit: 0,
+                configuredLimits: [128 * mib]
+            ) == 0
+        )
+    }
+
+    @Test("Memory safety bounds live hybrid companion snapshots")
+    func memorySafetyBoundsSSMCompanionSnapshots() {
+        #expect(ModelRuntime.ssmCompanionEntryLimit(for: .performance) == 50)
+        #expect(ModelRuntime.ssmCompanionEntryLimit(for: .balanced) == 8)
+        #expect(ModelRuntime.ssmCompanionEntryLimit(for: .safeAuto) == 2)
+        #expect(ModelRuntime.ssmCompanionEntryLimit(for: .strict) == 1)
+        #expect(ModelRuntime.ssmCompanionEntryLimit(for: .diagnosticDangerous) == 50)
+    }
+
     /// Builds an assessment through the shared verdict math with synthetic
     /// byte counts. Thresholds come from the same store production uses, so
     /// expectations are computed from the resolved values rather than
