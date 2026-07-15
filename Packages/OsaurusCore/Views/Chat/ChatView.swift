@@ -6142,13 +6142,13 @@ struct ChatView: View {
                 }
             }
         }
-        // Allow the window to narrow down to 400pt so it tiles comfortably
+        // Allow the window to narrow down to 550pt so it tiles comfortably
         // beside other windows. The content is responsive (the selector chips
         // collapse to icons, the thread is width-capped and centered), so a
         // narrow width just reflows the same UI rather than clipping it. Ideal
         // width stays wide for the default/unconstrained window size.
         .frame(
-            minWidth: 400,
+            minWidth: 550,
             idealWidth: 950,
             maxWidth: .infinity,
             minHeight: 575,
