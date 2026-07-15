@@ -10,6 +10,65 @@
 import Combine
 import Foundation
 
+/// Durable metadata for a user-owned terminal notch tab. The live chat
+/// session is deliberately not encoded; `ChatSessionStore` remains the
+/// canonical transcript store and is hydrated on demand.
+private struct RetainedNotchTabRecord: Codable {
+    enum TerminalKind: String, Codable {
+        case completed
+        case failed
+        case cancelled
+    }
+
+    let id: UUID
+    let title: String
+    let agentId: UUID
+    let kind: TerminalKind
+    let summary: String?
+    let createdAt: Date
+    let source: SessionSource
+    let sourcePluginId: String?
+    let externalSessionKey: String?
+    let contextPreview: [BackgroundTaskContextMessage]
+
+    @MainActor
+    init?(state: BackgroundTaskState) {
+        let kind: TerminalKind
+        let summary: String?
+        switch state.status {
+        case .completed(let value):
+            kind = .completed
+            summary = value
+        case .failed(let value):
+            kind = .failed
+            summary = value
+        case .cancelled:
+            kind = .cancelled
+            summary = nil
+        case .queued, .running, .waitingForInput:
+            return nil
+        }
+        self.id = state.id
+        self.title = state.taskTitle
+        self.agentId = state.agentId
+        self.kind = kind
+        self.summary = summary
+        self.createdAt = state.createdAt
+        self.source = state.source
+        self.sourcePluginId = state.sourcePluginId
+        self.externalSessionKey = state.externalSessionKey
+        self.contextPreview = state.contextPreview
+    }
+
+    var status: BackgroundTaskStatus {
+        switch kind {
+        case .completed: return .completed(summary: summary ?? "Chat completed")
+        case .failed: return .failed(summary: summary ?? "Chat failed")
+        case .cancelled: return .cancelled
+        }
+    }
+}
+
 // MARK: - Background Task Manager
 
 /// Single owner of all backgrounded chat tasks (dispatched).
@@ -44,6 +103,18 @@ public final class BackgroundTaskManager: ObservableObject {
 
     /// Scheduled auto-finalize timers for completed/cancelled tasks
     private var autoFinalizeTasks: [UUID: Task<Void, Never>] = [:]
+
+    /// Production managers persist terminal notch tabs across relaunches.
+    /// Isolated test managers disable this so suites never read or mutate the
+    /// user's retained-tab defaults.
+    private let persistsRetainedTabs: Bool
+    private let retainedTabsDefaults: UserDefaults
+    private static let retainedTabsDefaultsKey = "retainedNotchTabs.v1"
+
+    /// Production managers hold an idle-sleep assertion while work is
+    /// running or queued. Isolated test managers inject nil so unit tests
+    /// never alter the host machine's power state.
+    private let powerManager: AgentRunPowerManager?
 
     /// Tasks whose dispatch() hasn't returned to the plugin yet; events are
     /// buffered in `heldTaskEvents` until `releaseEventsForDispatch` flushes them.
@@ -80,7 +151,14 @@ public final class BackgroundTaskManager: ObservableObject {
 
     // MARK: - Initialization
 
-    private init() {
+    private init(
+        persistsRetainedTabs: Bool = true,
+        retainedTabsDefaults: UserDefaults = .standard,
+        powerManager: AgentRunPowerManager? = .shared
+    ) {
+        self.persistsRetainedTabs = persistsRetainedTabs
+        self.retainedTabsDefaults = retainedTabsDefaults
+        self.powerManager = powerManager
         viewUpdateCancellable =
             viewUpdateSubject
             .throttle(for: .milliseconds(50), scheduler: DispatchQueue.main, latest: true)
@@ -92,6 +170,7 @@ public final class BackgroundTaskManager: ObservableObject {
                 self.recomputeSortedToastTasks()
                 self.objectWillChange.send()
             }
+        restoreRetainedTabs()
     }
 
     // MARK: - Toast Ordering
@@ -129,9 +208,21 @@ public final class BackgroundTaskManager: ObservableObject {
                 if ap != bp { return ap < bp }
                 return a.createdAt > b.createdAt
             }
+        refreshPowerAssertion()
     }
 
     // MARK: - Public API
+
+    /// Re-evaluate idle-sleep prevention after task state or the user
+    /// preference changes. Waiting-for-input sessions intentionally do not
+    /// keep the Mac awake indefinitely.
+    func refreshPowerAssertion() {
+        powerManager?.update(for: backgroundTasks.values.map(\.status))
+    }
+
+    var isPreventingIdleSystemSleep: Bool {
+        powerManager?.isPreventingIdleSystemSleep ?? false
+    }
 
     /// Check if a task ID corresponds to a background task
     public func isBackgroundTask(_ id: UUID) -> Bool {
@@ -141,6 +232,27 @@ public final class BackgroundTaskManager: ObservableObject {
     /// Get background task state by ID
     public func taskState(for id: UUID) -> BackgroundTaskState? {
         backgroundTasks[id]
+    }
+
+    /// Rename a notch session and its canonical persisted conversation.
+    /// There is intentionally no notch-only alias: the same title appears in
+    /// the notch, Chat window, and conversation sidebar.
+    @discardableResult
+    public func renameTask(_ id: UUID, title: String) -> Bool {
+        guard let state = backgroundTasks[id] else { return false }
+        let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return false }
+
+        state.taskTitle = trimmed
+        if let session = state.chatSession {
+            session.title = trimmed
+            session.save()
+        }
+        ChatSessionsManager.shared.rename(id: id, title: trimmed)
+        persistRetainedTabs()
+        recomputeSortedToastTasks()
+        objectWillChange.send()
+        return true
     }
 
     /// Background-task id (if any) the given window is bound to. Returns
@@ -283,7 +395,7 @@ public final class BackgroundTaskManager: ObservableObject {
     public func openTaskWindow(_ backgroundId: UUID) {
         guard let state = backgroundTasks[backgroundId] else { return }
 
-        if let context = state.executionContext {
+        if let context = state.executionContext ?? hydrateRetainedTask(state) {
             let windowId = ChatWindowManager.shared.createWindowForContext(context, showImmediately: true)
             // Bind window→task so closing this window doesn't kill the
             // still-running task — gated in `ChatWindowManager.windowWillClose` —
@@ -342,6 +454,7 @@ public final class BackgroundTaskManager: ObservableObject {
         state.releaseReferences()
 
         backgroundTasks.removeValue(forKey: backgroundId)
+        persistRetainedTabs()
         recomputeSortedToastTasks()
         pumpQueue()
     }
@@ -395,6 +508,7 @@ public final class BackgroundTaskManager: ObservableObject {
 
         state.chatSession?.stop()
         state.status = .cancelled
+        state.captureContextPreview()
         // Mirror the markCompleted finalisation for the agent_runs row
         // so cancelled runs don't sit in `running` forever in the
         // Activity tab.
@@ -428,8 +542,86 @@ public final class BackgroundTaskManager: ObservableObject {
             json: PluginHostContext.serializeCancelledEvent(taskTitle: state.taskTitle)
         )
         scheduleAutoFinalize(backgroundId)
+        persistRetainedTabs()
         recomputeSortedToastTasks()
         pumpQueue()
+    }
+
+    /// Close a notch agent tab: cancel every active (running / queued /
+    /// waiting) notch-visible task for the agent and finalize the whole
+    /// group atomically. Terminal tasks in the group are finalized without
+    /// a cancel pass.
+    ///
+    /// The group's deferred queued starts are dropped up front:
+    /// `cancelTask` pumps the queue after each cancellation, and a running
+    /// task's freed slot must not briefly promote (and start) this agent's
+    /// own queued work mid-close.
+    public func closeAgentTaskGroup(agentId: UUID) {
+        let ids = sortedToastTasks.filter { $0.agentId == agentId }.map(\.id)
+        guard !ids.isEmpty else { return }
+
+        for id in ids {
+            queuedOrder.removeAll { $0 == id }
+            pendingStarts.removeValue(forKey: id)
+        }
+        for id in ids where backgroundTasks[id]?.status.isActive == true {
+            cancelTask(id)
+        }
+        for id in ids {
+            finalizeTask(id)
+        }
+    }
+
+    /// Submit a quick reply from the notch straight into a task's retained
+    /// `ChatSession`, using the same canonical send path as the chat
+    /// window. For a `.waitingForInput` task this answers the pending
+    /// clarify prompt (`send` clears `awaitingClarify` and resumes the
+    /// loop); for a `.completed` task it starts a follow-up turn and
+    /// revives the session before terminal cleanup dehydrates it.
+    ///
+    /// Returns false when the task is missing, its session is gone, the
+    /// text is empty, or the task is not in a replyable state (running /
+    /// queued work takes input via the chat window; failed / cancelled
+    /// runs are view-only).
+    @discardableResult
+    public func submitQuickReply(_ backgroundId: UUID, text: String) -> Bool {
+        guard let state = backgroundTasks[backgroundId] else { return false }
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return false }
+
+        switch state.status {
+        case .waitingForInput, .completed:
+            break
+        case .queued, .running, .failed, .cancelled:
+            return false
+        }
+
+        // A completed task is already on its terminal-cleanup timer; a
+        // follow-up revives the run, so stop dehydration before dispatching.
+        cancelAutoFinalize(backgroundId)
+        let wasRetained = state.chatSession == nil
+        guard let context = state.executionContext ?? hydrateRetainedTask(state),
+            let session = state.chatSession
+        else { return false }
+        if taskObservers[backgroundId] == nil {
+            observeChatTask(state, session: session)
+        }
+        if wasRetained {
+            state.status = .running
+            state.currentStep = "Preparing follow-up..."
+            persistRetainedTabs()
+            recomputeSortedToastTasks()
+            Task { @MainActor in
+                await context.prepare()
+                session.send(trimmed)
+            }
+            return true
+        }
+        // `send` clears any clarify pause / stale prompt overlay and starts
+        // the next run; the streaming observer transitions the task back to
+        // `.running`, so no status write is needed here.
+        session.send(trimmed)
+        return true
     }
 
     /// Soft-stop a running task by cancelling its current stream.
@@ -803,6 +995,7 @@ public final class BackgroundTaskManager: ObservableObject {
     /// Register a new task state and log an initial activity entry.
     private func registerTask(_ state: BackgroundTaskState) {
         backgroundTasks[state.id] = state
+        persistRetainedTabs()
         recomputeSortedToastTasks()
         state.appendActivity(kind: .info, title: "Running in background")
         emitPluginEvent(state, type: .started, json: PluginHostContext.serializeStartedEvent(state: state))
@@ -814,7 +1007,25 @@ public final class BackgroundTaskManager: ObservableObject {
         /// must not run against `.shared`, where they would cancel tasks
         /// registered by other concurrently-running suites.
         static func makeForTesting() -> BackgroundTaskManager {
-            BackgroundTaskManager()
+            BackgroundTaskManager(
+                persistsRetainedTabs: false,
+                powerManager: nil
+            )
+        }
+
+        static func makeForTesting(powerManager: AgentRunPowerManager) -> BackgroundTaskManager {
+            BackgroundTaskManager(
+                persistsRetainedTabs: false,
+                powerManager: powerManager
+            )
+        }
+
+        static func makeForTestingRetaining(defaults: UserDefaults) -> BackgroundTaskManager {
+            BackgroundTaskManager(
+                persistsRetainedTabs: true,
+                retainedTabsDefaults: defaults,
+                powerManager: nil
+            )
         }
 
         /// Test-only: insert a pre-built `BackgroundTaskState` directly so
@@ -855,14 +1066,21 @@ public final class BackgroundTaskManager: ObservableObject {
             pumpQueue()
         }
 
-        /// Test-only: whether a terminal-state auto-finalize timer is pending
-        /// for this task. Locks in that `markCompleted` schedules its own
-        /// eviction the same way `cancelTask` does — without it a finished
-        /// headless run (schedule / plugin / HTTP) lingers in the registry and
-        /// the next dispatch reattaching by `externalSessionKey` collides with
-        /// the stale `.completed` state.
+        /// Test-only: whether terminal cleanup is pending. Visible tasks
+        /// dehydrate into durable tabs; headless tasks finalize completely.
         func hasPendingAutoFinalizeForTesting(_ id: UUID) -> Bool {
             autoFinalizeTasks[id] != nil
+        }
+
+        /// Test-only: run the terminal resource-release path immediately
+        /// instead of sleeping for the production cleanup delay.
+        func dehydrateTaskForTesting(_ id: UUID) {
+            dehydrateTerminalTask(id)
+        }
+
+        func isTaskDehydratedForTesting(_ id: UUID) -> Bool {
+            guard let state = backgroundTasks[id] else { return false }
+            return state.chatSession == nil && state.executionContext == nil
         }
     #endif
 
@@ -944,6 +1162,7 @@ public final class BackgroundTaskManager: ObservableObject {
     private func markCompleted(_ state: BackgroundTaskState, success: Bool, summary: String) {
         state.status = success ? .completed(summary: summary) : .failed(summary: summary)
         state.currentStep = nil
+        state.captureContextPreview()
         state.executionContext?.chatSession.save()
         // Close out the scheduler `agent_runs` row, if one was opened
         // for this task. `recordRunEnd` is a single UPDATE so the cost
@@ -988,20 +1207,12 @@ public final class BackgroundTaskManager: ObservableObject {
             outputText: outputText
         )
         emitPluginEvent(state, type: eventType, json: json)
-        // Evict the finished task the same way the cancel path does
-        // (`cancelTask` -> `scheduleAutoFinalize`). Without this a completed
-        // *headless* run (schedule / plugin / HTTP — no window) is never
-        // removed from `backgroundTasks`, its observers are never cancelled,
-        // and its id lingers in `streamingObserved`. The next dispatch that
-        // reattaches by `externalSessionKey` (schedules reuse `schedule.id`)
-        // then collides with the zombie state: `awaitCompletion` short-
-        // circuits on the stale `.completed`, stacked observers double-fire
-        // streaming transitions, and leaked runs eventually saturate the
-        // execution slots so later fires queue and never start. Interactive
-        // runs avoid the leak via `openTaskWindow` -> `finalizeTask`; the
-        // 15s auto-finalize is the headless equivalent (and is cancelled by
-        // `finalizeTask` if a window opens the chat first).
+        // Schedule terminal cleanup. Toast-visible sessions become lightweight
+        // durable tabs (observers and live session released); truly headless
+        // runs finalize completely. Both paths prevent stale observers from
+        // colliding with a later external-session reattach.
         scheduleAutoFinalize(state.id)
+        persistRetainedTabs()
         recomputeSortedToastTasks()
         pumpQueue()
     }
@@ -1106,11 +1317,87 @@ public final class BackgroundTaskManager: ObservableObject {
         }
     }
 
-    // MARK: - Private: Auto-Finalize
+    // MARK: - Private: Retained Notch Tabs
 
-    /// Schedule automatic toast removal after 15 seconds.
-    /// Called when a task completes or is cancelled. If the user opens the
-    /// task window before the timer fires, `finalizeTask` cancels it.
+    private func restoreRetainedTabs() {
+        guard persistsRetainedTabs,
+            let data = retainedTabsDefaults.data(forKey: Self.retainedTabsDefaultsKey),
+            let records = try? JSONDecoder().decode([RetainedNotchTabRecord].self, from: data)
+        else { return }
+
+        for record in records {
+            backgroundTasks[record.id] = BackgroundTaskState(
+                retainedId: record.id,
+                taskTitle: record.title,
+                agentId: record.agentId,
+                status: record.status,
+                createdAt: record.createdAt,
+                source: record.source,
+                sourcePluginId: record.sourcePluginId,
+                externalSessionKey: record.externalSessionKey,
+                contextPreview: record.contextPreview
+            )
+        }
+        recomputeSortedToastTasks()
+    }
+
+    private func persistRetainedTabs() {
+        guard persistsRetainedTabs else { return }
+        let records =
+            backgroundTasks.values
+            .filter { $0.showToast && $0.status.isTerminal }
+            .compactMap(RetainedNotchTabRecord.init(state:))
+            .sorted { $0.createdAt < $1.createdAt }
+        guard !records.isEmpty else {
+            retainedTabsDefaults.removeObject(forKey: Self.retainedTabsDefaultsKey)
+            return
+        }
+        if let data = try? JSONEncoder().encode(records) {
+            retainedTabsDefaults.set(data, forKey: Self.retainedTabsDefaultsKey)
+        }
+    }
+
+    /// Rebuild a live execution context from the canonical chat-history row.
+    /// Called only after an explicit reply/open action on a dehydrated tab.
+    private func hydrateRetainedTask(_ state: BackgroundTaskState) -> ExecutionContext? {
+        if let context = state.executionContext { return context }
+        guard var sessionData = ChatSessionStore.load(id: state.id) else { return nil }
+        // The retained record is the user's latest explicit rename. If a
+        // storage-key transition deferred the original DB rename, reconcile
+        // it before hydration so opening/replying cannot resurrect an old
+        // sidebar title.
+        if sessionData.title != state.taskTitle {
+            sessionData.title = state.taskTitle
+            ChatSessionStore.save(sessionData)
+        }
+        let context = ExecutionContext(reattaching: sessionData)
+        state.restoreReferences(context: context)
+        state.taskTitle = sessionData.title
+        return context
+    }
+
+    /// Release the expensive live session and Combine observers while leaving
+    /// a lightweight, persisted terminal tab in the notch.
+    private func dehydrateTerminalTask(_ taskId: UUID) {
+        guard let state = backgroundTasks[taskId], state.status.isTerminal else { return }
+        state.captureContextPreview()
+        cancelAutoFinalize(taskId)
+        taskObservers[taskId]?.forEach { $0.cancel() }
+        taskObservers.removeValue(forKey: taskId)
+        chatTurnCounts.removeValue(forKey: taskId)
+        streamingObserved.remove(taskId)
+        taskIdByWindow = taskIdByWindow.filter { $0.value != taskId }
+        state.releaseReferences()
+        persistRetainedTabs()
+        recomputeSortedToastTasks()
+        objectWillChange.send()
+    }
+
+    // MARK: - Private: Terminal Cleanup
+
+    /// After 15 seconds, release live resources for a terminal task. Visible
+    /// notch tabs remain as durable lightweight records until the user closes
+    /// them; headless tasks still finalize completely.
     private func scheduleAutoFinalize(_ taskId: UUID) {
         cancelAutoFinalize(taskId)
         autoFinalizeTasks[taskId] = Task { @MainActor in
@@ -1118,7 +1405,11 @@ public final class BackgroundTaskManager: ObservableObject {
             guard !Task.isCancelled else { return }
             guard let state = backgroundTasks[taskId], !state.status.isActive else { return }
             guard !dispatchHoldTasks.contains(taskId) else { return }
-            finalizeTask(taskId)
+            if state.showToast {
+                dehydrateTerminalTask(taskId)
+            } else {
+                finalizeTask(taskId)
+            }
         }
     }
 
