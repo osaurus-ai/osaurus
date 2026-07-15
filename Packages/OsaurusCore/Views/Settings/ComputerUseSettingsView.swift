@@ -569,7 +569,7 @@ struct ComputerUseSettingsView: View {
             SettingsToggle(
                 title: L("Allow masked screenshots to reach a cloud model"),
                 description:
-                    "Off by default. When off, Osaurus asks at the start of each Computer Use run. Every cloud screenshot is masked on-device first.",
+                    "Off by default. When off, Osaurus asks during a run when a cloud screenshot would help. Every cloud screenshot is masked on-device first.",
                 isOn: Binding(
                     get: { cloudVisionConsent.isPersistentlyGranted },
                     set: { cloudVisionConsent.setPersistent($0) }

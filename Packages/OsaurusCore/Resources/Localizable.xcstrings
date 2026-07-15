@@ -99836,36 +99836,36 @@
         }
       }
     },
-    "Off by default. When off, Osaurus asks at the start of each Computer Use run. Every cloud screenshot is masked on-device first." : {
+    "Off by default. When off, Osaurus asks during a run when a cloud screenshot would help. Every cloud screenshot is masked on-device first." : {
       "localizations" : {
         "de" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Standardmäßig deaktiviert. Wenn die Option aus ist, fragt Osaurus zu Beginn jedes Computer-Use-Laufs nach. Jeder Cloud-Screenshot wird zuerst auf dem Gerät maskiert."
+            "value" : "Standardmäßig deaktiviert. Wenn die Option aus ist, fragt Osaurus während eines Laufs nach, sobald ein Cloud-Screenshot helfen würde. Jeder Cloud-Screenshot wird zuerst auf dem Gerät maskiert."
           }
         },
         "ko" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "기본적으로 꺼져 있습니다. 꺼져 있으면 Osaurus가 각 Computer Use 실행을 시작할 때 묻습니다. 모든 클라우드 스크린샷은 먼저 기기에서 마스킹됩니다."
+            "value" : "기본적으로 꺼져 있습니다. 꺼져 있으면 클라우드 스크린샷이 도움이 될 때 Osaurus가 실행 중에 묻습니다. 모든 클라우드 스크린샷은 먼저 기기에서 마스킹됩니다."
           }
         },
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "По умолчанию выключено. Когда параметр выключен, Osaurus запрашивает разрешение в начале каждого запуска Computer Use. Каждый облачный снимок экрана сначала маскируется на устройстве."
+            "value" : "По умолчанию выключено. Когда параметр выключен, Osaurus запрашивает разрешение во время запуска, если может помочь облачный снимок экрана. Каждый облачный снимок экрана сначала маскируется на устройстве."
           }
         },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "默认关闭。关闭时，Osaurus 会在每次“电脑操作”运行开始时询问。每张云端截图都会先在设备上进行遮蔽。"
+            "value" : "默认关闭。关闭时，如果云端截图有助于完成任务，Osaurus 会在运行期间询问。每张云端截图都会先在设备上进行遮蔽。"
           }
         },
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "預設關閉。關閉時，Osaurus 會在每次「電腦操作」執行開始時詢問。每張雲端截圖都會先在裝置上進行遮蔽。"
+            "value" : "預設關閉。關閉時，如果雲端截圖有助於完成工作，Osaurus 會在執行期間詢問。每張雲端截圖都會先在裝置上進行遮蔽。"
           }
         }
       }
