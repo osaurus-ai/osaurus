@@ -601,7 +601,17 @@ public enum RemoteProviderConfigurationStore {
         do {
             let encoder = JSONEncoder()
             encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-            try encoder.encode(configuration).write(to: url, options: [.atomic])
+            let data = try encoder.encode(configuration)
+            // Persist off the main thread — this store is @MainActor and the
+            // synchronous write hung the UI under disk pressure. Tests using
+            // a path override read the file back immediately, so they write
+            // synchronously.
+            ConfigDiskWriter.write(
+                data,
+                to: url,
+                synchronous: OsaurusPaths.overrideRoot != nil,
+                onError: { print("[Osaurus] Failed to save RemoteProviderConfiguration: \($0)") }
+            )
         } catch {
             print("[Osaurus] Failed to save RemoteProviderConfiguration: \(error)")
         }

@@ -32,8 +32,7 @@
                 configuration.globalProxyURL = "https://proxy.example.com:8443"
                 try JSONEncoder().encode(configuration).write(to: OsaurusPaths.serverConfigFile(), options: .atomic)
 
-                let delegate = DownloadDelegate()
-                let session = SandboxManager.makeArtifactDownloadSession(delegate: delegate)
+                let session = SandboxResumableDownloader.makeSession()
                 defer { session.invalidateAndCancel() }
 
                 let dictionary = session.configuration.connectionProxyDictionary
@@ -42,14 +41,6 @@
                 #expect(dictionary?[proxyKey(kCFNetworkProxiesHTTPSPort)] as? Int == 8443)
             }
         }
-    }
-
-    private final class DownloadDelegate: NSObject, URLSessionDownloadDelegate {
-        func urlSession(
-            _ session: URLSession,
-            downloadTask: URLSessionDownloadTask,
-            didFinishDownloadingTo location: URL
-        ) {}
     }
 
     private func proxyKey(_ value: CFString) -> AnyHashable {

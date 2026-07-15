@@ -181,7 +181,8 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
             runAsRemoteAgent: request.runAsRemoteAgent,
             suppressProgressUI: request.suppressProgressUI,
             warmupPrefill: request.warmupPrefill,
-            requestSource: inferenceSource
+            requestSource: inferenceSource,
+            loadIntent: request.backgroundModelLoad ? .background : .interactive
         )
 
         // Mode 2 (remote agent run): route to the *selected agent's provider*,
@@ -313,7 +314,10 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
         guard let requestOptions else {
             return [:]
         }
-        guard ModelProfileRegistry.profile(for: model) != nil else {
+        guard
+            ModelProfileRegistry.profile(for: model) != nil
+                || ModelProfileRegistry.reasoningCapabilities(for: model) != nil
+        else {
             return requestOptions
         }
         return ModelProfileRegistry.normalizedOptions(for: model, persisted: requestOptions)

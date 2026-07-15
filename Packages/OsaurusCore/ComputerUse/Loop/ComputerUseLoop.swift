@@ -997,7 +997,15 @@ public enum ComputerUseLoop {
         guard let identifier = action.app, !identifier.isEmpty else {
             return .failure("missing app name")
         }
-        let result = await driver.open(identifier: identifier, background: true)
+        // An explicit `open` verb means the agent (on the user's behalf) wants to
+        // use this app, so launch it foreground: `background: true` sets
+        // `config.hides = true`, and a hidden Cocoa app exposes no AX windows —
+        // `waitUntilReady` then times out, the follow-up capture is empty, and the
+        // model concludes the open failed even though the app did launch. Opening
+        // frontmost brings the window across, populates the AX tree, and lets the
+        // verify capture actually see it. (Background/hidden launching stays
+        // available on the driver primitive for silent perception paths.)
+        let result = await driver.open(identifier: identifier, background: false)
         switch result {
         case .success(let info):
             let snapshot = await driver.capture(pid: info.pid, tier: .ax)

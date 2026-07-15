@@ -2255,6 +2255,26 @@ public struct SystemPromptComposer: Sendable {
             byName = byName.filter { allowed.contains($0.key) }
         }
 
+        // `spawn_model` is agent-scoped, so its request-local schema should be
+        // agent-scoped too. Publish the exact legal ids as a nested enum. Remote
+        // providers can validate/select them directly, local tool parsers receive
+        // the same contract, and a blank/guessed id is corrected before the
+        // provider-routing gate. Execution still re-checks the allow-list.
+        if let spawnModel = byName[SubagentCapabilityRegistry.spawnModelToolName] {
+            let config = SubagentConfigurationStore.snapshot()
+            let allowedModelIds = SubagentToolVisibility.effectiveSpawnableModels(
+                isDefault: snapshot.agentId == Agent.defaultId,
+                config: config,
+                perAgentEnabled: snapshot.spawnDelegationEnabled,
+                perAgentModelTargets: snapshot.spawnableModelNames
+            )
+            byName[SubagentCapabilityRegistry.spawnModelToolName] =
+                SpawnModelTool.constrainedSpec(
+                    spawnModel,
+                    allowedModelIds: allowedModelIds
+                )
+        }
+
         // Generation-only image schema: when `image` survived the gates but no
         // ready edit model is installed, swap it to the edit-free variant (no
         // `source_paths` / `strength`, generation-only description) so the model

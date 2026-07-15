@@ -51,10 +51,9 @@ public struct NotchScreenMetrics: Equatable {
 
 /// User-controlled vertical placement of the task-progress notch overlay.
 ///
-/// `below` (default) keeps the overlay inside the visible frame so it never
-/// covers the menu bar / system status controls (issue that motivated #1874).
-/// `onMenuBar` anchors it to the physical top of the display so it sits on the
-/// menu bar for users who prefer that (issue #1951).
+/// With no saved preference, hardware-notch displays use `onMenuBar` so the
+/// overlay remains visually attached to the physical notch. Other displays
+/// use `belowMenuBar` so the overlay does not cover system status controls.
 public enum NotchOverlayPlacement: String {
     case belowMenuBar
     case onMenuBar
@@ -63,10 +62,25 @@ public enum NotchOverlayPlacement: String {
     /// controller each time it repositions the panel.
     public static let defaultsKey = "notchOverlayPlacement"
 
-    /// Current preference, defaulting to `.belowMenuBar` when unset.
+    /// Adaptive default used when the user has not chosen a placement.
+    static func defaultPlacement(hasHardwareNotch: Bool) -> NotchOverlayPlacement {
+        hasHardwareNotch ? .onMenuBar : .belowMenuBar
+    }
+
+    /// Resolves the saved preference, or the adaptive default for `metrics`.
+    static func resolved(for metrics: NotchScreenMetrics) -> NotchOverlayPlacement {
+        if let rawValue = UserDefaults.standard.string(forKey: defaultsKey),
+            let saved = NotchOverlayPlacement(rawValue: rawValue)
+        {
+            return saved
+        }
+        return defaultPlacement(hasHardwareNotch: metrics.hasHardwareNotch)
+    }
+
+    /// Current preference for the main screen, used as the settings fallback.
     public static var current: NotchOverlayPlacement {
-        UserDefaults.standard.string(forKey: defaultsKey)
-            .flatMap(NotchOverlayPlacement.init) ?? .belowMenuBar
+        guard let screen = NSScreen.main else { return .belowMenuBar }
+        return resolved(for: NotchScreenMetrics.detect(for: screen))
     }
 }
 
@@ -111,8 +125,14 @@ struct NotchPanelPlacement: Equatable {
 
     static func alertContentTopPadding(
         screenFrame: CGRect,
-        visibleFrame: CGRect
+        visibleFrame: CGRect,
+        overMenuBar: Bool = false
     ) -> CGFloat {
+        // A notch attached to the physical display edge must remain at y=0
+        // when the alert temporarily expands its panel to the full screen.
+        // Applying the menu-bar gap here would visibly detach the entire
+        // shape for the duration of the confirmation dialog.
+        guard !overMenuBar else { return 0 }
         guard !visibleFrame.isEmpty else { return 0 }
         return max(0, screenFrame.maxY - visibleFrame.maxY)
     }
@@ -120,15 +140,25 @@ struct NotchPanelPlacement: Equatable {
 
 // MARK: - Notch Window Controller
 
+enum NotchSessionNavigationDirection: Equatable {
+    case previous
+    case next
+}
+
 /// Displays the notch background task indicator at the top center of the screen,
 /// inside the screen's visible frame so task progress never covers the menu bar.
 @MainActor
 public final class NotchWindowController: NSObject, ObservableObject {
     public static let shared = NotchWindowController()
+    static let navigateToPreviousSessionNotification =
+        Notification.Name("NotchWindowController.navigateToPreviousSession")
+    static let navigateToNextSessionNotification =
+        Notification.Name("NotchWindowController.navigateToNextSession")
 
     private var notchPanel: NSPanel?
     private var hostingView: NSHostingView<NotchContentView>?
     private var cancellables = Set<AnyCancellable>()
+    private var keyEventMonitor: Any?
     private var isExpandedForAlert = false
     private var screenChangeDebounce: DispatchWorkItem?
 
@@ -153,6 +183,21 @@ public final class NotchWindowController: NSObject, ObservableObject {
         super.init()
     }
 
+    nonisolated static func sessionNavigationDirection(
+        keyCode: UInt16,
+        modifierFlags: NSEvent.ModifierFlags
+    ) -> NotchSessionNavigationDirection? {
+        let navigationModifiers = modifierFlags.intersection([
+            .command, .shift, .option, .control,
+        ])
+        guard navigationModifiers == .command else { return nil }
+        switch keyCode {
+        case 123: return .previous
+        case 124: return .next
+        default: return nil
+        }
+    }
+
     // MARK: - Public API
 
     /// Setup the notch overlay window.
@@ -163,7 +208,7 @@ public final class NotchWindowController: NSObject, ObservableObject {
         metrics = NotchScreenMetrics.detect(for: screen)
         let panelFrame = panelRect(for: screen, metrics: metrics)
 
-        let panel = NSPanel(
+        let panel = NotchPanel(
             contentRect: panelFrame,
             styleMask: [.borderless, .nonactivatingPanel],
             backing: .buffered,
@@ -204,6 +249,30 @@ public final class NotchWindowController: NSObject, ObservableObject {
 
         panel.orderFrontRegardless()
 
+        // SwiftUI `keyboardShortcut` does not reliably receive commands from
+        // a borderless non-activating panel. Monitor key events while this
+        // panel is key and translate the documented ⌘← / ⌘→ commands into
+        // local navigation notifications. Returning nil consumes the event,
+        // preventing the focused editor from also moving its caret.
+        keyEventMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) {
+            [weak self] event in
+            guard let self, self.notchPanel?.isKeyWindow == true else { return event }
+            let notification: Notification.Name
+            switch Self.sessionNavigationDirection(
+                keyCode: event.keyCode,
+                modifierFlags: event.modifierFlags
+            ) {
+            case .previous:
+                notification = Self.navigateToPreviousSessionNotification
+            case .next:
+                notification = Self.navigateToNextSessionNotification
+            case nil:
+                return event
+            }
+            NotificationCenter.default.post(name: notification, object: nil)
+            return nil
+        }
+
         // Screen change observer
         NotificationCenter.default.addObserver(
             self,
@@ -239,9 +308,23 @@ public final class NotchWindowController: NSObject, ObservableObject {
         cancellables.removeAll()
         screenChangeDebounce?.cancel()
         screenChangeDebounce = nil
+        if let keyEventMonitor {
+            NSEvent.removeMonitor(keyEventMonitor)
+            self.keyEventMonitor = nil
+        }
         notchPanel?.close()
         notchPanel = nil
         hostingView = nil
+    }
+
+    /// Give inline notch controls a real key window before SwiftUI asks an
+    /// `NSTextField` to become first responder. A borderless `NSPanel`
+    /// normally refuses key status; `NotchPanel.canBecomeKey` opts in while
+    /// `.nonactivatingPanel` still prevents a quick reply from pulling the
+    /// whole app to the foreground.
+    public func prepareForTextInput() {
+        guard let panel = notchPanel else { return }
+        panel.makeKeyAndOrderFront(nil)
     }
 
     // MARK: - Private
@@ -314,15 +397,19 @@ public final class NotchWindowController: NSObject, ObservableObject {
             // stuck at the wrong size. We'll retry on the next sync.
             return
         }
+        let screenMetrics = NotchScreenMetrics.detect(for: screen)
+        let overMenuBar = NotchOverlayPlacement.resolved(for: screenMetrics) == .onMenuBar
         let targetFrame =
             alertActive
             ? screen.frame
-            : panelRect(for: screen, metrics: NotchScreenMetrics.detect(for: screen))
+            : panelRect(for: screen, metrics: screenMetrics)
         let targetLevel = alertActive ? Self.alertPanelLevel : basePanelLevel
-        let targetPadding = alertActive
+        let targetPadding =
+            alertActive
             ? NotchPanelPlacement.alertContentTopPadding(
                 screenFrame: screen.frame,
-                visibleFrame: screen.visibleFrame
+                visibleFrame: screen.visibleFrame,
+                overMenuBar: overMenuBar
             )
             : 0
 
@@ -350,7 +437,7 @@ public final class NotchWindowController: NSObject, ObservableObject {
             visibleFrame: screen.visibleFrame,
             preferredSize: CGSize(width: Self.panelWidth, height: Self.panelHeight),
             hiddenMenuBarInset: metrics.notchHeight,
-            overMenuBar: NotchOverlayPlacement.current == .onMenuBar
+            overMenuBar: NotchOverlayPlacement.resolved(for: metrics) == .onMenuBar
         ).frame
     }
 
@@ -359,7 +446,7 @@ public final class NotchWindowController: NSObject, ObservableObject {
     /// `.belowMenuBar` uses `.floating` so it stays above app windows but below
     /// the menu bar / status items.
     private var basePanelLevel: NSWindow.Level {
-        NotchOverlayPlacement.current == .onMenuBar ? Self.onMenuBarPanelLevel : .floating
+        NotchOverlayPlacement.resolved(for: metrics) == .onMenuBar ? Self.onMenuBarPanelLevel : .floating
     }
 
     /// Re-read the placement preference and reposition the panel. Called when
@@ -374,6 +461,16 @@ public final class NotchWindowController: NSObject, ObservableObject {
 
     private static let onMenuBarPanelLevel = NSWindow.Level(rawValue: Int(CGWindowLevelForKey(.mainMenuWindow)) + 1)
     private static let alertPanelLevel = NSWindow.Level(rawValue: Int(CGWindowLevelForKey(.mainMenuWindow)) + 3)
+}
+
+// MARK: - Notch Panel
+
+/// Borderless non-activating panels do not become key by default, which
+/// leaves embedded SwiftUI text fields visible but impossible to focus.
+/// Opting into key status allows typing without changing the overlay's
+/// transient, non-main-window behavior.
+final class NotchPanel: NSPanel {
+    override var canBecomeKey: Bool { true }
 }
 
 // MARK: - Pass-Through View
