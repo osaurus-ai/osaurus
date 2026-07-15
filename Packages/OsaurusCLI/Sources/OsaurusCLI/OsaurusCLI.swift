@@ -127,9 +127,11 @@ struct OsaurusCLI {
                                       access key here or via OSAURUS_MCP_ACCESS_KEY.
               osaurus version         Show version (also: --version or -v)
               osaurus status          Check if the Osaurus server is running
-              osaurus doctor [--port N] [--json] [--redact]
+              osaurus doctor [--port N] [--json] [--redact] [--verify-signatures]
                                       Diagnose CLI/app version skew, duplicate app
-                                      bundles, server startup, and model storage
+                                      bundles, server startup, and model storage.
+                                      Signature checks are explicit because they can
+                                      be slow when many app bundles are installed.
               osaurus list            List available model IDs
               osaurus show <model_id> Show metadata for a model
               osaurus pull <model_id> Download a model from Hugging Face

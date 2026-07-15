@@ -14,6 +14,7 @@ public struct DoctorCommand: Command {
         let port: Int?
         let json: Bool
         let redact: Bool
+        let verifySignatures: Bool
     }
 
     enum ArgumentError: Error, Equatable {
@@ -28,14 +29,20 @@ public struct DoctorCommand: Command {
             let detail: String
             switch error { case .invalid(let message): detail = message }
             fputs("osaurus doctor: \(detail)\n", stderr)
-            fputs("Usage: osaurus doctor [--port 1...65535] [--json] [--redact]\n", stderr)
+            fputs(
+                "Usage: osaurus doctor [--port 1...65535] [--json] [--redact] [--verify-signatures]\n",
+                stderr
+            )
             exit(EXIT_FAILURE)
         } catch {
             fputs("osaurus doctor: invalid arguments\n", stderr)
             exit(EXIT_FAILURE)
         }
 
-        let report = await InstallationDiagnostics.collect(requestedPort: options.port)
+        let report = await InstallationDiagnostics.collect(
+            requestedPort: options.port,
+            includeSignatureChecks: options.verifySignatures
+        )
         let output = options.redact ? report.redacted() : report
         if options.json {
             let encoder = JSONEncoder()
@@ -65,6 +72,7 @@ public struct DoctorCommand: Command {
         var port: Int?
         var json = false
         var redact = false
+        var verifySignatures = false
         var index = 0
         while index < args.count {
             switch args[index] {
@@ -82,11 +90,19 @@ public struct DoctorCommand: Command {
             case "--redact":
                 redact = true
                 index += 1
+            case "--verify-signatures":
+                verifySignatures = true
+                index += 1
             default:
                 throw ArgumentError.invalid("unknown argument `\(args[index])`")
             }
         }
-        return Options(port: port, json: json, redact: redact)
+        return Options(
+            port: port,
+            json: json,
+            redact: redact,
+            verifySignatures: verifySignatures
+        )
     }
 
     public static func render(_ report: InstallationDiagnosticReport) -> String {

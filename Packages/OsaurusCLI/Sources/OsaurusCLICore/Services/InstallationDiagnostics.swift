@@ -193,7 +193,7 @@ public enum InstallationDiagnostics {
     @MainActor
     public static func collect(
         requestedPort: Int? = nil,
-        includeSignatureChecks: Bool = true,
+        includeSignatureChecks: Bool = false,
         startupAttempted: Bool = false,
         includeModelInventory: Bool = true,
         includeComprehensiveAppSearch: Bool = true
