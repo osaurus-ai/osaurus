@@ -70,6 +70,20 @@ struct KnowledgeGuidanceTests {
         #expect(curator.contains("`flag_knowledge_stale`"))
     }
 
+    /// Compact-prompt models only ever see the FIRST sentence of a tool
+    /// description (`oneLineToolDescription`, ≤180 chars). The stale-flag
+    /// tool's routing rule — update request ⇒ file a ticket — must
+    /// therefore fit inside that first sentence, or small models lose it
+    /// entirely (live-observed with Ornith-1.0-9B, 2026-07-15).
+    @Test func staleFlagRoutingSurvivesFirstSentenceTruncation() {
+        let description = FlagKnowledgeStaleTool().description
+        let firstSentence = String(
+            description[..<(description.range(of: ". ")?.lowerBound ?? description.endIndex)])
+        #expect(firstSentence.count <= 180)
+        #expect(firstSentence.contains("update request"))
+        #expect(firstSentence.contains("cannot be edited"))
+    }
+
     @Test func grantDescriptorSlicesCollection() {
         let collection = KnowledgeCollection(
             name: "Docs", summary: "Product docs.", folderPath: "/tmp/docs")

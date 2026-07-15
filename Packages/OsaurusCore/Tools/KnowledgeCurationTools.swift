@@ -35,14 +35,18 @@ private func postCurationChanged() {
 
 final class FlagKnowledgeStaleTool: OsaurusTool, @unchecked Sendable {
     let name = "flag_knowledge_stale"
+    // NOTE: compact-prompt models only see the FIRST sentence of this
+    // description (`oneLineToolDescription`, ≤180 chars) — the routing
+    // rule ("update request ⇒ file a ticket") must live there, not in a
+    // follow-up sentence (live-observed miss with Ornith-1.0-9B).
     let description =
-        "File a staleness ticket against a knowledge document. Use it when "
-        + "the user reports a change or asks you to update a document, AND "
-        + "when you discover outdated content yourself (changed APIs, "
-        + "superseded practices, broken references). This is how document "
-        + "updates START — you cannot edit collection files, so filing the "
-        + "ticket IS satisfying an update request. It only records the "
-        + "report; a curator follows up on open tickets."
+        "File a staleness ticket to start an update to a knowledge document "
+        + "— the required first step for ANY update request, since "
+        + "collection files cannot be edited directly. Use it when the user "
+        + "reports a change or asks for an update, and when you discover "
+        + "outdated content yourself (changed APIs, superseded practices, "
+        + "broken references). It only records the report; a curator "
+        + "follows up on open tickets."
 
     let parameters: JSONValue? = .object([
         "type": .string("object"),
