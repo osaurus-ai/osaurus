@@ -133,6 +133,20 @@ public struct BackgroundTaskActivityItem: Identifiable, Equatable, Sendable {
 
 // MARK: - Background Task State
 
+/// Small transcript excerpt retained by a completed notch tab after its live
+/// `ChatSession` has been released. Enough context remains visible to decide
+/// whether and how to follow up; the full persisted session is rehydrated only
+/// when the user replies or opens Chat.
+public struct BackgroundTaskContextMessage: Codable, Equatable, Sendable {
+    public let role: String
+    public let content: String
+
+    public init(role: String, content: String) {
+        self.role = role
+        self.content = content
+    }
+}
+
 /// State of a chat task running in the background.
 /// Observable so BackgroundTaskManager can update properties from publishers.
 @MainActor
@@ -168,6 +182,12 @@ public final class BackgroundTaskState: ObservableObject, Identifiable {
 
     /// When the background task was created
     public let createdAt: Date
+
+    /// Recent conversational context used by the notch follow-up UI. This is
+    /// captured at completion and persisted with retained tabs, allowing the
+    /// live ChatSession and its observers to be released without reducing the
+    /// tab to an unhelpful "Chat completed" summary.
+    @Published public private(set) var contextPreview: [BackgroundTaskContextMessage] = []
 
     /// Plugin that originated this dispatch (for on_task_event callback routing).
     public var sourcePluginId: String?
@@ -261,6 +281,34 @@ public final class BackgroundTaskState: ObservableObject, Identifiable {
         self.showToast = showToast
     }
 
+    /// Restore a lightweight terminal tab from durable metadata. No live
+    /// session/context is allocated until the user replies or opens Chat.
+    init(
+        retainedId id: UUID,
+        taskTitle: String,
+        agentId: UUID,
+        status: BackgroundTaskStatus,
+        createdAt: Date,
+        source: SessionSource,
+        sourcePluginId: String?,
+        externalSessionKey: String?,
+        contextPreview: [BackgroundTaskContextMessage]
+    ) {
+        self.id = id
+        self.taskTitle = taskTitle
+        self.agentId = agentId
+        self.chatSession = nil
+        self.executionContext = nil
+        self.status = status
+        self.currentStep = nil
+        self.createdAt = createdAt
+        self.source = source
+        self.sourcePluginId = sourcePluginId
+        self.externalSessionKey = externalSessionKey
+        self.showToast = true
+        self.contextPreview = contextPreview
+    }
+
     deinit {
         print("[BackgroundTaskState] deinit – id: \(id)")
     }
@@ -269,6 +317,33 @@ public final class BackgroundTaskState: ObservableObject, Identifiable {
     func releaseReferences() {
         chatSession = nil
         executionContext = nil
+    }
+
+    /// Install a fully hydrated persisted conversation before resuming or
+    /// opening a retained tab.
+    func restoreReferences(context: ExecutionContext) {
+        chatSession = context.chatSession
+        executionContext = context
+    }
+
+    /// Snapshot the most recent conversational turns, excluding tool/system
+    /// protocol rows and blank messages. The short excerpt is intentionally
+    /// bounded so durable tabs stay lightweight.
+    func captureContextPreview(maxMessages: Int = 4) {
+        guard let session = chatSession else { return }
+        contextPreview =
+            session.turns
+            .filter { turn in
+                (turn.role == .user || turn.role == .assistant)
+                    && !turn.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            }
+            .suffix(maxMessages)
+            .map {
+                BackgroundTaskContextMessage(
+                    role: $0.role.rawValue,
+                    content: $0.content.trimmingCharacters(in: .whitespacesAndNewlines)
+                )
+            }
     }
 
     // MARK: - Activity Feed

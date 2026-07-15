@@ -57,15 +57,15 @@ struct ChatSettingsView: View {
     /// `AgentSettings.greetingPersona`.
     @State private var tempGreetingPersona: String = ""
 
-    /// Placement of the task-progress notch overlay. Off (default) keeps it
-    /// below the menu bar so it never covers the clock / battery / status
-    /// controls; on anchors it to the top of the display so it sits on the
-    /// menu bar (issue #1951). Bound to `UserDefaults` key
+    /// Placement of the task-progress notch overlay. With no saved preference,
+    /// it defaults on for hardware-notch displays and off elsewhere. Off keeps
+    /// it below the menu bar; on anchors it to the top of the display. Bound
+    /// to `UserDefaults` key
     /// `NotchOverlayPlacement.defaultsKey`, stored as the enum raw value and
     /// read by `NotchWindowController` when it repositions the panel. Applied
     /// immediately, so it's excluded from the debounced save baseline.
     @AppStorage(NotchOverlayPlacement.defaultsKey) private var notchPlacementRaw: String =
-        NotchOverlayPlacement.belowMenuBar.rawValue
+        NotchOverlayPlacement.current.rawValue
 
     @State private var hasAppeared = false
     @State private var successMessage: String?
