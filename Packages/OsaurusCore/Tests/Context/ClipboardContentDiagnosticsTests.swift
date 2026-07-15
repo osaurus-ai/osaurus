@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 import Testing
 
@@ -255,6 +256,7 @@ struct ClipboardContentDiagnosticsTests {
                     copyCount += 1
                     return true
                 },
+                restore: { snapshot in snapshot.changeCount },
                 sleep: { _ in
                     if copyCount == 1 { sleepsBeforeSecondCopy += 1 }
                 }
@@ -437,7 +439,7 @@ struct ClipboardContentDiagnosticsTests {
         #expect(!service.hasNewContent)
     }
 
-    @Test @MainActor func emptyNativeSelectionNeverInvokesCopyFallback() async {
+    @Test @MainActor func emptyNativeSelectionDoesNotInvokeCopyFallback() async {
         let environment = ScriptedSelectionEnvironment(
             copyScripts: [[.init(afterPolls: 1, content: .text("stale clipboard secret"))]]
         )
@@ -453,6 +455,7 @@ struct ClipboardContentDiagnosticsTests {
         let report = await service.grabSelectionReport()
 
         #expect(report.outcome == .noSelection)
+        #expect(report.captureRoute == nil)
         #expect(environment.copyCount == 0)
         #expect(!service.hasNewContent)
     }
@@ -506,6 +509,73 @@ struct ClipboardContentDiagnosticsTests {
         #expect(SelectionAssistantAction.rewrite.instruction.contains("return only"))
     }
 
+    @Test func staleOrInFlightPasteboardRefreshCannotPublish() {
+        #expect(
+            !ClipboardService.canPublishPasteboardRefresh(
+                observedCaptureGeneration: 4,
+                currentCaptureGeneration: 5,
+                captureInFlight: false
+            )
+        )
+        #expect(
+            !ClipboardService.canPublishPasteboardRefresh(
+                observedCaptureGeneration: 5,
+                currentCaptureGeneration: 5,
+                captureInFlight: true
+            )
+        )
+        #expect(
+            ClipboardService.canPublishPasteboardRefresh(
+                observedCaptureGeneration: 5,
+                currentCaptureGeneration: 5,
+                captureInFlight: false
+            )
+        )
+    }
+
+    @Test @MainActor func emptyBaselineRestoreClearsCapturedSelection() {
+        let pasteboard = NSPasteboard(
+            name: NSPasteboard.Name("osaurus.selection.empty.\(UUID().uuidString)")
+        )
+        pasteboard.clearContents()
+        #expect(pasteboard.setString("private selection", forType: .string))
+
+        let outcome = SelectionCaptureTransaction.restore(
+            baselineItems: [],
+            in: pasteboard
+        )
+
+        #expect(outcome.restored)
+        #expect(pasteboard.string(forType: .string) == nil)
+        pasteboard.releaseGlobally()
+    }
+
+    @Test @MainActor func pasteboardRestorePreservesEveryBaselineItemAndType() {
+        let pasteboard = NSPasteboard(
+            name: NSPasteboard.Name("osaurus.selection.restore.\(UUID().uuidString)")
+        )
+        let baseline: [[String: Data]] = [
+            [
+                NSPasteboard.PasteboardType.string.rawValue: Data("plain".utf8),
+                NSPasteboard.PasteboardType.html.rawValue: Data("<b>plain</b>".utf8),
+            ],
+            [
+                NSPasteboard.PasteboardType.string.rawValue: Data("second".utf8),
+            ],
+        ]
+        pasteboard.clearContents()
+        #expect(pasteboard.setString("private selection", forType: .string))
+
+        let outcome = SelectionCaptureTransaction.restore(
+            baselineItems: baseline,
+            in: pasteboard
+        )
+
+        #expect(outcome.restored)
+        #expect(SelectionCaptureTransaction.serializedItems(in: pasteboard) == baseline)
+        pasteboard.releaseGlobally()
+    }
+
     @MainActor
     private func makeTransaction(
         _ environment: ScriptedSelectionEnvironment
@@ -514,6 +584,7 @@ struct ClipboardContentDiagnosticsTests {
             dependencies: .init(
                 snapshot: { environment.snapshot() },
                 postCopy: { environment.postCopy() },
+                restore: { environment.restore($0) },
                 sleep: { _ in environment.advancePoll() }
             ),
             timing: .init(
@@ -583,6 +654,12 @@ private final class ScriptedSelectionEnvironment {
             }
         }
         return true
+    }
+
+    func restore(_ snapshot: SelectionCaptureTransaction.Snapshot) -> Int {
+        changeCount += 1
+        content = snapshot.content
+        return changeCount
     }
 
     func advancePoll() {

@@ -138,7 +138,7 @@ final class NativeSelectionCapture {
             &selectedValue
         )
         guard selectedStatus == .success else {
-            return .unavailable
+            return .unverifiedField
         }
         guard let selectedText = selectedValue as? String else { return .unverifiedField }
         guard !selectedText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {

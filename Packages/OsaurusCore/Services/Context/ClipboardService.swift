@@ -188,6 +188,8 @@ public final class ClipboardService: ObservableObject {
     private var timer: AnyCancellable?
     /// Guards against overlapping pasteboard reads if one outlives the poll interval.
     private var isChecking = false
+    private var selectionCaptureGeneration: UInt64 = 0
+    private var isSelectionCaptureInFlight = false
     private let selectionCapture: SelectionCaptureTransaction
     private let nativeSelectionCapture: NativeSelectionCapture
     private let selectionSource: @MainActor () -> SelectionSource?
@@ -297,6 +299,8 @@ public final class ClipboardService: ObservableObject {
     /// Poll the pasteboard and, if its content changed, publish it.
     @discardableResult
     private func performPasteboardRefresh(markIdenticalAsNew: Bool = false) async -> SelectionPasteboardResult {
+        guard !isSelectionCaptureInFlight else { return .noReadableContent }
+        let observedCaptureGeneration = selectionCaptureGeneration
         let knownChangeCount = lastChangeCount
 
         // Both the `changeCount` poll and the content read run off-main: every
@@ -313,11 +317,13 @@ public final class ClipboardService: ObservableObject {
             return .noReadableContent
         }
 
-        print("[ClipboardService] Pasteboard change detected. Count: \(changeCount) (was \(knownChangeCount))")
-        lastChangeCount = changeCount
-
         let detected = (await Self.onPasteboardQueue { Self.detectContent(in: $0) }).flatMap { $0 }
+        guard canPublishPasteboardRefresh(observedCaptureGeneration: observedCaptureGeneration) else {
+            return .noReadableContent
+        }
+        print("[ClipboardService] Pasteboard change detected. Count: \(changeCount) (was \(knownChangeCount))")
         guard let content = detected else {
+            lastChangeCount = changeCount
             print("[ClipboardService] Change detected but no meaningful content found on pasteboard.")
             return .noReadableContent
         }
@@ -325,6 +331,7 @@ public final class ClipboardService: ObservableObject {
         // Only update if content actually changed
         guard content != currentContent else {
             print("[ClipboardService] Change detected but content is identical to current.")
+            lastChangeCount = changeCount
             currentContentChangeCount = changeCount
             if markIdenticalAsNew {
                 hasNewContent = true
@@ -344,7 +351,11 @@ public final class ClipboardService: ObservableObject {
         let summary = await Task.detached(priority: .utility) {
             content.redactedDiagnosticDescription
         }.value
+        guard canPublishPasteboardRefresh(observedCaptureGeneration: observedCaptureGeneration) else {
+            return .noReadableContent
+        }
         print("[ClipboardService] New content detected: \(summary)")
+        lastChangeCount = changeCount
         currentContent = content
         currentContentChangeCount = changeCount
         hasNewContent = true
@@ -414,6 +425,10 @@ public final class ClipboardService: ObservableObject {
     private func grabSelectionResult(
         onCopyAttempted: (@MainActor () -> Void)? = nil
     ) async -> SelectionCaptureTransaction.Result {
+        selectionCaptureGeneration &+= 1
+        isSelectionCaptureInFlight = true
+        defer { isSelectionCaptureInFlight = false }
+
         // Capture before Osaurus takes focus so diagnostics retain the real source app.
         let source = selectionSource()
         let sourceApp = source?.displayName
@@ -488,6 +503,22 @@ public final class ClipboardService: ObservableObject {
         return finishSelectionGrab(result)
     }
 
+    private func canPublishPasteboardRefresh(observedCaptureGeneration: UInt64) -> Bool {
+        Self.canPublishPasteboardRefresh(
+            observedCaptureGeneration: observedCaptureGeneration,
+            currentCaptureGeneration: selectionCaptureGeneration,
+            captureInFlight: isSelectionCaptureInFlight
+        )
+    }
+
+    nonisolated static func canPublishPasteboardRefresh(
+        observedCaptureGeneration: UInt64,
+        currentCaptureGeneration: UInt64,
+        captureInFlight: Bool
+    ) -> Bool {
+        !captureInFlight && observedCaptureGeneration == currentCaptureGeneration
+    }
+
     private static func liveSelectionSource() -> SelectionSource? {
         guard let app = NSWorkspace.shared.frontmostApplication else { return nil }
         return SelectionSource(
@@ -527,6 +558,17 @@ final class SelectionCaptureTransaction {
     struct Snapshot: Equatable, Sendable {
         let changeCount: Int
         let content: ClipboardService.ClipboardContent?
+        let pasteboardItems: [[String: Data]]
+
+        init(
+            changeCount: Int,
+            content: ClipboardService.ClipboardContent?,
+            pasteboardItems: [[String: Data]] = []
+        ) {
+            self.changeCount = changeCount
+            self.content = content
+            self.pasteboardItems = pasteboardItems
+        }
     }
 
     struct Result: Equatable, Sendable {
@@ -546,6 +588,7 @@ final class SelectionCaptureTransaction {
     struct Dependencies {
         var snapshot: () async -> Snapshot?
         var postCopy: () -> Bool
+        var restore: (Snapshot) async -> Int?
         var sleep: (UInt64) async -> Void
     }
 
@@ -566,16 +609,69 @@ final class SelectionCaptureTransaction {
                     await ClipboardService.onPasteboardQueue { pasteboard in
                         Snapshot(
                             changeCount: pasteboard.changeCount,
-                            content: ClipboardService.detectContent(in: pasteboard)
+                            content: ClipboardService.detectContent(in: pasteboard),
+                            pasteboardItems: serializedItems(in: pasteboard)
                         )
                     }
                 },
                 postCopy: { KeyboardSimulationService.shared.copySelection() },
+                restore: { baseline in
+                    let outcome = await ClipboardService.onPasteboardQueue { pasteboard in
+                        restore(
+                            baselineItems: baseline.pasteboardItems,
+                            in: pasteboard
+                        )
+                    }
+                    guard let outcome, outcome.restored else { return nil }
+                    return outcome.changeCount
+                },
                 sleep: { nanoseconds in
                     try? await Task.sleep(nanoseconds: nanoseconds)
                 }
             )
         )
+    }
+
+    nonisolated static func serializedItems(in pasteboard: NSPasteboard) -> [[String: Data]] {
+        pasteboard.pasteboardItems?.map { item in
+            Dictionary(
+                item.types.compactMap { type in
+                    item.data(forType: type).map { (type.rawValue, $0) }
+                },
+                uniquingKeysWith: { _, latest in latest }
+            )
+        } ?? []
+    }
+
+    nonisolated static func restore(
+        baselineItems: [[String: Data]],
+        in pasteboard: NSPasteboard
+    ) -> (changeCount: Int, restored: Bool) {
+        let fallbackItems = serializedItems(in: pasteboard)
+        pasteboard.clearContents()
+        guard !baselineItems.isEmpty else {
+            return (pasteboard.changeCount, true)
+        }
+        if pasteboard.writeObjects(makePasteboardItems(from: baselineItems)) {
+            return (pasteboard.changeCount, true)
+        }
+        pasteboard.clearContents()
+        if !fallbackItems.isEmpty {
+            _ = pasteboard.writeObjects(makePasteboardItems(from: fallbackItems))
+        }
+        return (pasteboard.changeCount, false)
+    }
+
+    nonisolated private static func makePasteboardItems(
+        from snapshots: [[String: Data]]
+    ) -> [NSPasteboardItem] {
+        snapshots.map { itemData in
+            let item = NSPasteboardItem()
+            for (type, data) in itemData {
+                item.setData(data, forType: NSPasteboard.PasteboardType(type))
+            }
+            return item
+        }
     }
 
     func capture(
@@ -590,6 +686,7 @@ final class SelectionCaptureTransaction {
 
         if requiresQuietDrain {
             guard await drainLateResponse() else {
+                requiresQuietDrain = false
                 return failure(.pasteboardUnchanged, sourceApp: sourceApp)
             }
         }
@@ -609,15 +706,38 @@ final class SelectionCaptureTransaction {
             elapsed += timing.pollIntervalNanos
             guard let snapshot = await dependencies.snapshot() else {
                 requiresQuietDrain = true
-                return failure(.pasteboardReadFailed, sourceApp: sourceApp)
+                _ = await drainLateResponse()
+                return await restoring(
+                    failure(.pasteboardReadFailed, sourceApp: sourceApp),
+                    baseline: baseline
+                )
             }
             guard snapshot.changeCount != baseline.changeCount else { continue }
             requiresQuietDrain = false
-            return result(for: snapshot, sourceApp: sourceApp)
+            return await restoring(result(for: snapshot, sourceApp: sourceApp), baseline: baseline)
         }
 
         requiresQuietDrain = true
-        return failure(.pasteboardUnchanged, sourceApp: sourceApp)
+        _ = await drainLateResponse()
+        return await restoring(
+            failure(.pasteboardUnchanged, sourceApp: sourceApp),
+            baseline: baseline
+        )
+    }
+
+    private func restoring(_ result: Result, baseline: Snapshot) async -> Result {
+        guard let current = await dependencies.snapshot(),
+              current.changeCount != baseline.changeCount
+        else {
+            return result
+        }
+        guard let restoredChangeCount = await dependencies.restore(baseline) else { return result }
+        return Result(
+            report: result.report,
+            text: result.text,
+            content: result.content,
+            changeCount: restoredChangeCount
+        )
     }
 
     private func drainLateResponse() async -> Bool {
@@ -638,7 +758,10 @@ final class SelectionCaptureTransaction {
         }
 
         let drained = quiet >= timing.drainQuietNanos
-        requiresQuietDrain = !drained
+        // A bounded drain failure applies only to this attempt. Keeping the
+        // flag armed would permanently lock out capture under a noisy clipboard
+        // synchronizer; the next hotkey starts from a fresh baseline instead.
+        requiresQuietDrain = false
         return drained
     }
 
