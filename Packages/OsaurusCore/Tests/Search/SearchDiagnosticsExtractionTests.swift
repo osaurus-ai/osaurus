@@ -98,6 +98,8 @@ struct SearchDiagnosticsExtractionTests {
             "http://[0:0:0:0:0:0:0:1]/page",
             "http://[::ffff:7f00:1]/page",
             "http://[::ffff:a9fe:a9fe]/latest/meta-data",
+            "https://user:password@example.com/page",
+            "https://user@example.com/page",
             "file:///etc/passwd",
         ]
 

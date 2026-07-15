@@ -91,6 +91,7 @@ enum ToolDisplayName {
     /// Whether `rawName` is a search tool whose title should embed its query.
     static func isSearchTool(_ rawName: String) -> Bool {
         rawName == "search" || rawName == "web_search" || rawName == "search_and_extract"
+            || rawName == "research_web"
     }
 
     /// The single `image` tool both generates and edits; show the right verb by
@@ -114,6 +115,7 @@ enum ToolDisplayName {
 
     private static func searchLabel(_ rawName: String, running: Bool, arguments: String?) -> String {
         let onWeb = rawName == "web_search" || rawName == "search_and_extract"
+            || rawName == "research_web"
         guard let query = searchQuery(from: arguments) else {
             // No query parsed yet (e.g. arguments still streaming) — fall back
             // to a clean verb-only form rather than a dangling "Searched for".
@@ -135,7 +137,7 @@ enum ToolDisplayName {
         guard let arguments,
             let data = arguments.data(using: .utf8),
             let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-            let raw = json["query"] as? String
+            let raw = (json["query"] ?? json["question"]) as? String
         else { return nil }
         let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return nil }

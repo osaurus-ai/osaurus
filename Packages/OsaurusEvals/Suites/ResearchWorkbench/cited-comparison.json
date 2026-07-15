@@ -1,0 +1,34 @@
+{
+  "id": "agent_loop.research-workbench-cited-comparison",
+  "domain": "agent_loop",
+  "label": "research workbench - compare fixture evidence with citations",
+  "query": "Use research_web to compare the two fixture-backed deployment options. Give one concise recommendation and cite every factual claim with [S1] or [S2]. Do not use shell or any other web tool.",
+  "notes": "Off-CI model-facing proof. The network backend is deterministic, while tool selection, execution, result reinjection, citation grounding, and final continuation use the production agent loop.",
+  "fixtures": {
+    "researchWeb": {
+      "sources": [
+        {
+          "title": "Northwind deployment guide",
+          "url": "https://northwind.example/deploy",
+          "snippet": "Northwind has a two-minute cold start and regional failover.",
+          "markdown": "Northwind's measured cold start is two minutes. It supports automatic regional failover."
+        },
+        {
+          "title": "Contoso operations guide",
+          "url": "https://contoso.example/operations",
+          "snippet": "Contoso starts in ten seconds but requires manual regional failover.",
+          "markdown": "Contoso's measured cold start is ten seconds. Regional failover requires an operator."
+        }
+      ]
+    }
+  },
+  "expect": {
+    "agentLoop": {
+      "maxIterations": 6,
+      "mustCallTools": ["research_web"],
+      "mustNotCallTools": ["web_search", "search_and_extract", "shell_run"],
+      "noToolErrors": true,
+      "finalTextContains": ["Northwind", "Contoso", "[S1]", "[S2]"]
+    }
+  }
+}

@@ -164,6 +164,12 @@ extension EvalRunner {
                 testCase.fixtures.agentCapabilities,
                 autonomousExec: autonomousExecConfig(from: sandboxFixture)
             )
+        } else if testCase.fixtures.researchWeb != nil {
+            evalAgentId = installEvalAgent(testCase.fixtures.agentCapabilities)
+            if let evalAgentId {
+                AgentManager.shared.updateToolSelectionMode(.manual, for: evalAgentId)
+                AgentManager.shared.updateEnabledToolNames(["research_web"], for: evalAgentId)
+            }
         } else if let caps = testCase.fixtures.agentCapabilities, caps.requestsAnyCapability {
             evalAgentId = installEvalAgent(caps)
         }
@@ -300,16 +306,39 @@ extension EvalRunner {
 
         let judgeModel = EvalJudgeModel.resolveAndWarnOnce(runModelId: modelId)
         let started = Date()
-        let transcript = await AgentLoopEvaluator.run(
-            task: testCase.query,
-            workspace: workspace,
-            agentId: evalAgentId,
-            maxIterations: exp.maxIterations ?? 10,
-            contextWindowOverride: exp.contextWindowOverride,
-            stopOnToolRejection: exp.stopOnToolRejection ?? false,
-            sandbox: sandboxMode,
-            cancelAfterToolCalls: exp.cancelAfterToolCalls
-        )
+        let transcript: AgentLoopTranscript
+        if let fixture = testCase.fixtures.researchWeb {
+            transcript = await ResearchWorkbenchEvaluator.run(
+                task: testCase.query,
+                workspace: workspace,
+                sources: fixture.sources.map {
+                    ResearchWorkbenchFixtureSource(
+                        title: $0.title,
+                        url: $0.url,
+                        snippet: $0.snippet,
+                        markdown: $0.markdown,
+                        status: $0.status ?? "ok"
+                    )
+                },
+                agentId: evalAgentId,
+                maxIterations: exp.maxIterations ?? 10,
+                contextWindowOverride: exp.contextWindowOverride,
+                stopOnToolRejection: exp.stopOnToolRejection ?? false,
+                sandbox: sandboxMode,
+                cancelAfterToolCalls: exp.cancelAfterToolCalls
+            )
+        } else {
+            transcript = await AgentLoopEvaluator.run(
+                task: testCase.query,
+                workspace: workspace,
+                agentId: evalAgentId,
+                maxIterations: exp.maxIterations ?? 10,
+                contextWindowOverride: exp.contextWindowOverride,
+                stopOnToolRejection: exp.stopOnToolRejection ?? false,
+                sandbox: sandboxMode,
+                cancelAfterToolCalls: exp.cancelAfterToolCalls
+            )
+        }
 
         var verdicts: [CapabilityClaimsJudgement] = []
         var judgeAudit: EvalJudgeAudit?

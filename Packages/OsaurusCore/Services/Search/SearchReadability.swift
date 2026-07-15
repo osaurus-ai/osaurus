@@ -41,6 +41,10 @@ enum SearchReadability {
         var extracted: Bool { status == .ok }
     }
 
+    static func fixtureFailure(status: SearchExtractionStatus, message: String) -> Extraction {
+        failure(status: status, message: message)
+    }
+
     /// Fetch `url` and extract the main content. Always returns a typed status
     /// so tool payloads can explain failures without raw network errors.
     static func extract(

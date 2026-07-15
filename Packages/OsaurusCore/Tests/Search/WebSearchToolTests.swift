@@ -37,6 +37,13 @@ struct WebSearchToolTests {
         #expect(!ToolRegistry.defaultAgentAllowedToolNames.contains("search_and_extract"))
     }
 
+    @Test func researchWebIsADynamicNativeTool() {
+        let registry = ToolRegistry.shared
+        #expect(registry.registeredToolNames().contains("research_web"))
+        #expect(!registry.builtInToolNames.contains("research_web"))
+        #expect(!ToolRegistry.defaultAgentAllowedToolNames.contains("research_web"))
+    }
+
     // MARK: - Dynamic category enum
 
     private func categoryEnum(of tool: WebSearchTool) -> [String]? {
@@ -101,7 +108,7 @@ struct WebSearchToolTests {
         #expect(names.contains("web_search"))
     }
 
-    @Test func disablingWebSearchStripsBothTools() {
+    @Test func disablingWebSearchStripsAllNativeSearchTools() {
         let tools = SystemPromptComposer.resolveTools(
             snapshot: Self.makeSnapshot(webSearchEnabled: false),
             executionMode: .none
@@ -109,6 +116,7 @@ struct WebSearchToolTests {
         let names = Set(tools.map { $0.function.name })
         #expect(!names.contains("web_search"))
         #expect(!names.contains("search_and_extract"))
+        #expect(!names.contains("research_web"))
     }
 
     @Test func loadedToolsSurviveTheDisableGate() {
@@ -122,6 +130,18 @@ struct WebSearchToolTests {
         let names = Set(tools.map { $0.function.name })
         #expect(names.contains("web_search"))
         #expect(!names.contains("search_and_extract"))
+        #expect(!names.contains("research_web"))
+    }
+
+    @Test func loadedResearchToolSurvivesTheDisableGate() {
+        let tools = SystemPromptComposer.resolveTools(
+            snapshot: Self.makeSnapshot(webSearchEnabled: false),
+            executionMode: .none,
+            additionalToolNames: ["research_web"]
+        )
+        let names = Set(tools.map { $0.function.name })
+        #expect(names.contains("research_web"))
+        #expect(!names.contains("web_search"))
     }
 
     // MARK: - Weak-caller argument sanitization

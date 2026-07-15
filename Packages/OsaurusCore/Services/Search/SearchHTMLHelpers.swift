@@ -206,6 +206,9 @@ enum SearchHTML {
         guard scheme == "http" || scheme == "https" else {
             return "\(scheme) URLs are blocked"
         }
+        guard url.user?.isEmpty != false, url.password?.isEmpty != false else {
+            return "credential-bearing URLs are blocked"
+        }
         guard let rawHost = url.host?.lowercased(), !rawHost.isEmpty else {
             return "missing host is blocked"
         }

@@ -361,6 +361,10 @@
       "reasoning_channel.structured-field-multi-turn",
       "reasoning_channel.user-pasted-markers-quoted"
     ],
+    "ResearchWorkbench": [
+      "agent_loop.research-workbench-cited-comparison",
+      "agent_loop.research-workbench-source-injection-containment"
+    ],
     "SandboxDiagnostics": [
       "sandbox_diagnostics.apk-redirect",
       "sandbox_diagnostics.clean-oneliner-no-hint",

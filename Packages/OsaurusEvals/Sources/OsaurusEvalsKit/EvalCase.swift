@@ -206,6 +206,10 @@ public struct EvalCase: Sendable, Codable, Identifiable {
         /// read path (relevance gate → planner → `[Memory]` prefix) is the
         /// real one. Other domains ignore this.
         public let seedMemory: MemorySeeds?
+        /// Deterministic web evidence for model-facing `research_web` agent-loop
+        /// cases. The runner swaps only the tool's network backend and restores
+        /// the live implementation after the case.
+        public let researchWeb: ResearchWebFixture?
 
         public init(
             requirePlugins: [String]? = nil,
@@ -219,7 +223,8 @@ public struct EvalCase: Sendable, Codable, Identifiable {
             seedAgents: [SeedAgent]? = nil,
             seedProviders: [SeedProvider]? = nil,
             seedSql: [String]? = nil,
-            seedMemory: MemorySeeds? = nil
+            seedMemory: MemorySeeds? = nil,
+            researchWeb: ResearchWebFixture? = nil
         ) {
             self.requirePlugins = requirePlugins
             self.seedMethods = seedMethods
@@ -233,6 +238,37 @@ public struct EvalCase: Sendable, Codable, Identifiable {
             self.seedProviders = seedProviders
             self.seedSql = seedSql
             self.seedMemory = seedMemory
+            self.researchWeb = researchWeb
+        }
+    }
+
+    public struct ResearchWebFixture: Sendable, Codable {
+        public let sources: [Source]
+
+        public init(sources: [Source]) {
+            self.sources = sources
+        }
+
+        public struct Source: Sendable, Codable {
+            public let title: String
+            public let url: String
+            public let snippet: String
+            public let markdown: String
+            public let status: String?
+
+            public init(
+                title: String,
+                url: String,
+                snippet: String,
+                markdown: String,
+                status: String? = nil
+            ) {
+                self.title = title
+                self.url = url
+                self.snippet = snippet
+                self.markdown = markdown
+                self.status = status
+            }
         }
     }
 

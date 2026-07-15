@@ -307,6 +307,9 @@ public final class ToolRegistry: ObservableObject {
         // Web-search companion: search + Readability extraction. Dynamic so
         // its large schema/results stay out of the always-loaded baseline.
         registerNativeDynamicTool(SearchAndExtractTool())
+        // Multi-angle research evidence. Also dynamic: local models should
+        // see it only after capability discovery, not in every request.
+        registerNativeDynamicTool(ResearchWebTool())
     }
 
     private static let agentChannelTools: [OsaurusTool] = [
