@@ -28,6 +28,16 @@ enum LocalReasoningCapability {
         /// tail. This is reported as metadata only; runtime code must not synthesize
         /// or prepend thinking tags to repair model output.
         let templateInjectsThinkTag: Bool
+        /// The template's DEFAULT thinking state — what the model does when the
+        /// caller passes NO `enable_thinking` kwarg. Drives the UI chip so it
+        /// reports the truth for a fresh/untouched model instead of a hardcoded
+        /// "off". Two real conventions produce opposite defaults:
+        ///   • Ornith / Qwen3: the non-thinking branch is gated on an explicit
+        ///     false (`enable_thinking is false`) → absent kwarg ⇒ thinking ON.
+        ///   • Gemma-4: the thinking branch is gated on an explicit truthy value
+        ///     (`... and enable_thinking`) → absent kwarg ⇒ thinking OFF.
+        /// Only meaningful when `isToggleableThinking` is true.
+        let defaultThinkingOn: Bool
         /// True when the template both exposes a toggle kwarg and uses
         /// reasoning markers the runtime recognizes.
         var isToggleableThinking: Bool { supportsThinking && hasEnableThinkingKwarg }
@@ -35,7 +45,8 @@ enum LocalReasoningCapability {
         static let none = Capability(
             supportsThinking: false,
             hasEnableThinkingKwarg: false,
-            templateInjectsThinkTag: false
+            templateInjectsThinkTag: false,
+            defaultThinkingOn: false
         )
     }
 
@@ -122,8 +133,48 @@ enum LocalReasoningCapability {
         return Capability(
             supportsThinking: hasOpen || hasClose,
             hasEnableThinkingKwarg: hasKwarg,
-            templateInjectsThinkTag: injects
+            templateInjectsThinkTag: injects,
+            defaultThinkingOn: detectDefaultThinkingOn(lower)
         )
+    }
+
+    /// Resolve the template's default thinking state (thinking when the
+    /// `enable_thinking` kwarg is absent). Pure and testable. See
+    /// `Capability.defaultThinkingOn` for the two conventions this recognizes.
+    static func detectDefaultThinkingOn(_ lower: String) -> Bool {
+        // An explicit Jinja `default(...)` filter is authoritative.
+        if lower.range(
+            of: #"enable_thinking\s*\|\s*default\(\s*true\s*\)"#,
+            options: .regularExpression
+        ) != nil {
+            return true
+        }
+        if lower.range(
+            of: #"enable_thinking\s*\|\s*default\(\s*false\s*\)"#,
+            options: .regularExpression
+        ) != nil {
+            return false
+        }
+        // Ternary default idiom (Nemotron-H):
+        //   `enable_thinking = enable_thinking if enable_thinking is defined else True`
+        // The `else <bool>` clause IS the default when the kwarg is absent.
+        if let match = lower.range(
+            of: #"enable_thinking\s+is\s+defined\s+else\s+(true|false)"#,
+            options: .regularExpression
+        ) {
+            return lower[match].contains("true")
+        }
+        // Negative gate: the OFF path requires `enable_thinking` to be explicitly
+        // false, so an absent kwarg falls through to thinking-ON (Ornith, Qwen3).
+        if lower.contains("enable_thinking is false")
+            || lower.contains("enable_thinking == false")
+            || lower.contains("not enable_thinking")
+        {
+            return true
+        }
+        // Otherwise the template only turns thinking ON when `enable_thinking` is
+        // explicitly truthy (Gemma-4), so an absent kwarg means thinking-OFF.
+        return false
     }
 
     private static func localDirectory(forModelId modelId: String) -> URL? {
@@ -190,7 +241,8 @@ enum LocalReasoningCapability {
         return Capability(
             supportsThinking: true,
             hasEnableThinkingKwarg: false,
-            templateInjectsThinkTag: false
+            templateInjectsThinkTag: false,
+            defaultThinkingOn: false
         )
     }
 

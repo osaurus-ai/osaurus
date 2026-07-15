@@ -116,7 +116,10 @@ private struct WaveformBars: View {
     private let barSpacing: CGFloat = 2
 
     var body: some View {
-        TimelineView(.animation(minimumInterval: 1.0 / 60.0)) { timeline in
+        // 30fps is visually indistinguishable for a sine-driven waveform and
+        // halves the per-frame body evaluations, which showed up in app-hang
+        // sampling on memory-starved machines.
+        TimelineView(.animation(minimumInterval: 1.0 / 30.0)) { timeline in
             let timestamp = timeline.date.timeIntervalSinceReferenceDate
 
             HStack(alignment: .center, spacing: barSpacing) {
@@ -134,7 +137,11 @@ private struct WaveformBars: View {
 
     @ViewBuilder
     private func singleBar(index: Int, timestamp: TimeInterval) -> some View {
-        let phaseOffset = phaseOffsets.indices.contains(index) ? phaseOffsets[index] : 0
+        // Before `onAppear` seeds random offsets, fall back to a per-index phase
+        // so bars start desynced. A shared 0 offset would render every bar at the
+        // same height on the first frame — a full-height flash before they settle.
+        let phaseOffset =
+            phaseOffsets.indices.contains(index) ? phaseOffsets[index] : Double(index) * 0.7
 
         // use the raw level for animation intensity
         let effectiveLevel = CGFloat(max(0.0, min(1.0, level)))
@@ -279,6 +286,7 @@ private struct WaveformMinimal: View {
     let color: Color
     let isActive: Bool
 
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var isPulsing = false
 
     var body: some View {
@@ -298,13 +306,14 @@ private struct WaveformMinimal: View {
         }
         .frame(width: 36, height: 36)
         .onAppear {
-            guard isActive else { return }
+            // Continuous decorative pulse: keep the static ring under Reduce Motion.
+            guard isActive, !reduceMotion else { return }
             withAnimation(.easeOut(duration: 1.0).repeatForever(autoreverses: false)) {
                 isPulsing = true
             }
         }
         .onChange(of: isActive) { _, active in
-            if active {
+            if active, !reduceMotion {
                 withAnimation(.easeOut(duration: 1.0).repeatForever(autoreverses: false)) {
                     isPulsing = true
                 }
@@ -329,6 +338,7 @@ public struct TranscriptionPreviewView: View {
     var placeholder: String = "Listening..."
 
     @Environment(\.theme) private var theme
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var cursorVisible = true
 
     public init(
@@ -354,13 +364,18 @@ public struct TranscriptionPreviewView: View {
                     .foregroundColor(theme.primaryText)
             }
 
-            // Blinking cursor
+            // Blinking cursor (static under Reduce Motion)
             if isTranscribing {
                 Rectangle()
                     .fill(theme.accentColor)
                     .frame(width: 2, height: 18)
                     .opacity(cursorVisible ? 1 : 0)
-                    .animation(.easeInOut(duration: 0.5).repeatForever(autoreverses: true), value: cursorVisible)
+                    .animation(
+                        reduceMotion
+                            ? nil
+                            : .easeInOut(duration: 0.5).repeatForever(autoreverses: true),
+                        value: cursorVisible
+                    )
                     .onAppear {
                         cursorVisible = true
                     }
@@ -531,6 +546,7 @@ public struct VoiceStatusIndicator: View {
 // MARK: - Pulse Modifier
 
 private struct PulseModifier: ViewModifier {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var isPulsing = false
 
     func body(content: Content) -> some View {
@@ -542,7 +558,11 @@ private struct PulseModifier: ViewModifier {
                 value: isPulsing
             )
             .onAppear {
-                isPulsing = true
+                // Continuous decorative pulse: hold the steady state under
+                // Reduce Motion.
+                if !reduceMotion {
+                    isPulsing = true
+                }
             }
     }
 }

@@ -106,6 +106,13 @@ public struct AppleScriptRunResult: Sendable {
     public let failed: Int
     /// Total model tokens spent across the run.
     public let modelTokens: Int
+    /// Total wall-clock seconds for the whole run (includes confirmation waits
+    /// and script execution).
+    public let elapsedSeconds: Double
+    /// Seconds spent inside model-generation steps only — the honest
+    /// denominator for tokens-per-second (a user sitting on a confirm card
+    /// must not dilute the reported generation throughput).
+    public let modelSeconds: Double
     /// The last non-empty coerced output across the run (the headline `values`
     /// the parent reads back). Captured on any successful script, including the
     /// verification read-back.
@@ -113,12 +120,22 @@ public struct AppleScriptRunResult: Sendable {
     /// The full per-step transcript (executed + declined + blocked + invalid).
     public let steps: [AppleScriptStepRecord]
 
+    /// The engine's own decode-speed measurement (mean of the per-step
+    /// `usage.tokens_per_second` hints), when any step carried one. This is
+    /// the AUTHORITATIVE decode number: tool-call turns report
+    /// `completion_tokens == 0` by contract, so a tokens/seconds division
+    /// over the loop's counters would understate a tool-heavy run.
+    public let engineDecodeTokensPerSecond: Double?
+
     public init(
         outcome: Outcome,
         scriptsExecuted: Int,
         succeeded: Int = 0,
         failed: Int = 0,
         modelTokens: Int,
+        elapsedSeconds: Double = 0,
+        modelSeconds: Double = 0,
+        engineDecodeTokensPerSecond: Double? = nil,
         lastOutput: String?,
         steps: [AppleScriptStepRecord] = []
     ) {
@@ -127,8 +144,21 @@ public struct AppleScriptRunResult: Sendable {
         self.succeeded = succeeded
         self.failed = failed
         self.modelTokens = modelTokens
+        self.elapsedSeconds = elapsedSeconds
+        self.modelSeconds = modelSeconds
+        self.engineDecodeTokensPerSecond = engineDecodeTokensPerSecond
         self.lastOutput = lastOutput
         self.steps = steps
+    }
+
+    /// Model-generation throughput (tokens per second), or `nil` when the run
+    /// spent no measurable time generating (scripted/injected steps). Prefers
+    /// the engine's own decode measurement; falls back to the loop-derived
+    /// division. Never fabricated: no tokens or no time → no number.
+    public var tokensPerSecond: Double? {
+        if let engineDecodeTokensPerSecond { return engineDecodeTokensPerSecond }
+        guard modelTokens > 0, modelSeconds > 0.001 else { return nil }
+        return Double(modelTokens) / modelSeconds
     }
 }
 
@@ -151,8 +181,21 @@ public typealias AppleScriptStepProvider =
     @Sendable (_ input: AppleScriptStepInput) async throws -> ModelActionCall?
 
 /// Injectable executor seam so tests drive the loop without touching the OS.
+/// Carries the script's OSA language (AppleScript / JXA) so the real executor
+/// picks the right component; string-keyed mocks can ignore it.
 public typealias AppleScriptRunner =
-    @Sendable (_ script: String) async -> AppleScriptExecutionResult
+    @Sendable (_ script: String, _ language: AppleScriptLanguage) async ->
+    AppleScriptExecutionResult
+
+/// Injectable compile-only dry run for the confirm gate: returns the
+/// `.compileError` execution result when the script can't compile (fed back to
+/// the model instead of asking the user to approve an un-runnable script), or
+/// `nil` when it compiles / the check is unavailable. Production defaults to
+/// the real `AppleScriptExecutor.compileCheck`; mock-executor runs default to
+/// no check (a mock world has no OSA syntax to protect).
+public typealias AppleScriptCompileCheck =
+    @Sendable (_ script: String, _ language: AppleScriptLanguage) async ->
+    AppleScriptExecutionResult?
 
 /// One model-proposed script, surfaced to an optional observer BEFORE it is
 /// gated / executed. Carries both the pre-expansion form the model actually
@@ -228,6 +271,14 @@ public struct AppleScriptHarnessOptions: Sendable, Equatable {
     /// Whether to inject the live desktop context (frontmost / running apps)
     /// into the prompt when the caller provides it (shipped: on).
     public var includeDesktopContext: Bool
+    /// Whether to inject the target app's distilled scripting dictionary
+    /// (sdef) when the caller provides it (shipped: on). Sweepable via
+    /// `OSAURUS_AS_DICTIONARY_CONTEXT` — the model stops guessing vocabulary,
+    /// the biggest reducer of compile/runtime errors.
+    public var includeDictionaryContext: Bool
+    /// Whether to inject the per-app AppleScript recipe tips when the caller
+    /// provides them (shipped: on). Sweepable via `OSAURUS_AS_APP_RECIPES`.
+    public var includeAppRecipes: Bool
     /// Which system-prompt phrasing to use (shipped: `.standard`).
     public var promptVariant: PromptVariant
     /// How provided-content placeholders are announced (shipped: `.nameOnly`).
@@ -236,11 +287,15 @@ public struct AppleScriptHarnessOptions: Sendable, Equatable {
     public init(
         verifyReadBack: Bool = true,
         includeDesktopContext: Bool = true,
+        includeDictionaryContext: Bool = true,
+        includeAppRecipes: Bool = true,
         promptVariant: PromptVariant = .standard,
         literalAnnouncementStyle: LiteralAnnouncementStyle = .nameOnly
     ) {
         self.verifyReadBack = verifyReadBack
         self.includeDesktopContext = includeDesktopContext
+        self.includeDictionaryContext = includeDictionaryContext
+        self.includeAppRecipes = includeAppRecipes
         self.promptVariant = promptVariant
         self.literalAnnouncementStyle = literalAnnouncementStyle
     }
@@ -265,22 +320,72 @@ public enum AppleScriptLoop {
         sessionId: String,
         mode: AppleScriptRunMode = .automate,
         environmentContext: String? = nil,
+        dictionaryContext: String? = nil,
+        recipeContext: String? = nil,
         literals: AppleScriptLiterals = AppleScriptLiterals(),
         harness: AppleScriptHarnessOptions = .default,
         execute: AppleScriptRunner? = nil,
         nextScript: AppleScriptStepProvider? = nil,
-        observeProposal: AppleScriptProposalObserver? = nil
+        observeProposal: AppleScriptProposalObserver? = nil,
+        accessibilityGranted: (@Sendable () -> Bool)? = nil,
+        requestAccessibility: (@Sendable () -> Void)? = nil,
+        compileCheck: AppleScriptCompileCheck? = nil,
+        samplingTemperature: Double? = nil
     ) async -> AppleScriptRunResult {
-        let deadline = Date().addingTimeInterval(limits.wallClockSeconds)
+        let runStarted = Date()
+        let deadline = runStarted.addingTimeInterval(limits.wallClockSeconds)
         let engine: ChatEngine? = nextScript == nil ? ChatEngine(source: .chatUI) : nil
         // Default to the real in-process executor; tests inject their own. Kept
         // out of the (public) default argument because `AppleScriptExecutor` is
         // internal and a public default value can't reference an internal symbol.
-        let runExecutor: AppleScriptRunner = execute ?? { await AppleScriptExecutor.run(source: $0) }
+        let runExecutor: AppleScriptRunner =
+            execute ?? { await AppleScriptExecutor.run(source: $0, language: $1) }
+        // Compile-before-confirm dry run: real OSA compile when the real
+        // executor runs the scripts; no check for an injected mock executor
+        // (deterministic tests, no OSA dependency) unless the caller injects
+        // its own checker.
+        let dryCompile: AppleScriptCompileCheck?
+        if let compileCheck {
+            dryCompile = compileCheck
+        } else if execute == nil {
+            dryCompile = { await AppleScriptExecutor.compileCheck(source: $0, language: $1) }
+        } else {
+            dryCompile = nil
+        }
+        // Accessibility preflight seams. The REAL check/prompt guards only the
+        // real OS executor: a mock world has no OS to protect, so an injected
+        // executor defaults to "granted" and stays deterministic. Tests of the
+        // preflight itself inject both closures explicitly.
+        let axGranted: @Sendable () -> Bool
+        let axPrompt: @Sendable () -> Void
+        if let accessibilityGranted {
+            axGranted = accessibilityGranted
+        } else if execute == nil {
+            axGranted = { AppleScriptAccessibility.isGranted() }
+        } else {
+            axGranted = { true }
+        }
+        if let requestAccessibility {
+            axPrompt = requestAccessibility
+        } else if execute == nil {
+            // Fire-and-forget: the TCC dialog must attach on the main actor.
+            axPrompt = { Task { @MainActor in AppleScriptAccessibility.promptForGrant() } }
+        } else {
+            axPrompt = {}
+        }
 
         var systemContent = systemPrompt(mode: mode, variant: harness.promptVariant)
         if harness.includeDesktopContext, let environmentContext, !environmentContext.isEmpty {
             systemContent += "\n\nCurrent desktop:\n\(environmentContext)"
+        }
+        // App knowledge (caller-composed, harness-gated): the target app's
+        // distilled scripting dictionary + curated per-app idiom tips, so the
+        // model writes against the app's REAL vocabulary instead of guessing.
+        if harness.includeDictionaryContext, let dictionaryContext, !dictionaryContext.isEmpty {
+            systemContent += "\n\n\(dictionaryContext)"
+        }
+        if harness.includeAppRecipes, let recipeContext, !recipeContext.isEmpty {
+            systemContent += "\n\n\(recipeContext)"
         }
         if !literals.isEmpty {
             systemContent +=
@@ -306,9 +411,28 @@ public enum AppleScriptLoop {
         var succeeded = 0
         var failed = 0
         var modelTokens = 0
+        // Seconds spent inside model-generation steps only, so token/s reflects
+        // generation throughput rather than confirm-wait / execution time.
+        var modelSeconds = 0.0
+        // Per-step engine decode-speed hints (`usage.tokens_per_second`) — the
+        // authoritative token/s source (tool-call turns carry no completion
+        // token count by contract, so counter division would understate).
+        var decodeRates: [Double] = []
         var lastOutput: String? = nil
         var consecutiveInvalid = 0
         var consecutiveBlocked = 0
+        // Consecutive confirm-gate dry-compile failures. Bounded separately so
+        // a model stuck on syntax terminates with the real reason (the compile
+        // error) instead of ping-ponging until the wall clock. Reset when a
+        // script compiles.
+        var consecutiveCompileFailures = 0
+        // UI-scripting proposals stopped by the Accessibility preflight. Bounded
+        // separately from read-only blocks so the termination reason names the
+        // real blocker (the missing permission, not "invalid actions").
+        var accessibilityBlocked = 0
+        // The OS grant dialog fires at most once per run — repeats would stack
+        // no new information on the user.
+        var accessibilityPromptShown = false
         var lastToolResult: String? = nil
         var steps: [AppleScriptStepRecord] = []
         // The one-shot verification read-back: when a data task finished without
@@ -355,6 +479,10 @@ public enum AppleScriptLoop {
                 succeeded: succeeded,
                 failed: failed,
                 modelTokens: modelTokens,
+                elapsedSeconds: Date().timeIntervalSince(runStarted),
+                modelSeconds: modelSeconds,
+                engineDecodeTokensPerSecond: decodeRates.isEmpty
+                    ? nil : decodeRates.reduce(0, +) / Double(decodeRates.count),
                 lastOutput: lastOutput,
                 steps: steps
             )
@@ -391,11 +519,13 @@ public enum AppleScriptLoop {
                     engine: engine!,
                     modelId: modelId,
                     sessionId: sessionId,
-                    messages: stepMessages
+                    messages: stepMessages,
+                    samplingTemperature: samplingTemperature
                 )
             }
 
             let stepResult: ModelStepResult
+            let modelStepStarted = Date()
             do {
                 stepResult = try await runModelStep(
                     produce,
@@ -408,6 +538,8 @@ public enum AppleScriptLoop {
                 return terminate(.failed(reason: error.localizedDescription))
             }
             modelTokens += stepResult.tokens
+            modelSeconds += Date().timeIntervalSince(modelStepStarted)
+            if let rate = stepResult.tokensPerSecond, rate > 0 { decodeRates.append(rate) }
 
             // No tool call → the model is done. Before accepting completion, run
             // the one-shot verification read-back when a data task produced no
@@ -464,7 +596,7 @@ public enum AppleScriptLoop {
             )
 
             let decoded = AppleScriptAction.decode(argumentsJSON: call.arguments)
-            guard case .script(let proposedScript) = decoded else {
+            guard case .script(let proposedScript, let language) = decoded else {
                 consecutiveInvalid += 1
                 let reason: String
                 if case .invalid(let r) = decoded { reason = r } else { reason = "Invalid call." }
@@ -507,7 +639,9 @@ public enum AppleScriptLoop {
 
             // Classify the proposed script's effect (read / edit / consequential).
             // Escalate-biased + surfaced to the user, never used to fake safety.
-            let effect = AppleScriptEffectClassifier.classify(proposedScript)
+            // A JXA script floors at `.edit` (its mutations are statically
+            // opaque to the AppleScript verb vocabulary).
+            let effect = AppleScriptEffectClassifier.classify(proposedScript, language: language)
 
             // Expand any {{name}} placeholders into exact, correctly-escaped
             // AppleScript string literals BEFORE preview / gate / execution, so
@@ -570,17 +704,67 @@ public enum AppleScriptLoop {
                 )
             )
 
-            // Surface the proposed script (with its effect badge) in the feed
-            // regardless of gate mode, so the chat row always records what was
-            // generated and how risky it is.
+            // Surface the proposed script (with its language + effect badge) in
+            // the feed regardless of gate mode, so the chat row always records
+            // what was generated and how risky it is.
             feed.emit(
                 SubagentActivityEvent(
                     step: step,
                     kind: .propose,
-                    title: "AppleScript (\(effect.displayLabel))",
+                    title: "\(language.displayLabel) (\(effect.displayLabel))",
                     detail: scriptPreview(script)
                 )
             )
+
+            // Accessibility preflight: System Events UI scripting cannot run
+            // without the user's Accessibility grant. Catch it BEFORE the gate
+            // so the user is never asked to approve a script that can't run,
+            // fire the OS grant dialog once (the first-class recovery), and
+            // feed the real reason back so the model can prefer the app's own
+            // dictionary or finish with an honest explanation.
+            if AppleScriptAccessibility.requiresAccessibility(script), !axGranted() {
+                accessibilityBlocked += 1
+                let detail =
+                    "System Events UI scripting needs the Accessibility permission for Osaurus "
+                    + "(System Settings → Privacy & Security → Accessibility)."
+                feed.emit(
+                    SubagentActivityEvent(
+                        step: step,
+                        kind: .error,
+                        title: "Accessibility permission needed",
+                        detail: detail,
+                        success: false
+                    )
+                )
+                if !accessibilityPromptShown {
+                    accessibilityPromptShown = true
+                    axPrompt()
+                }
+                record(intent: effect, status: "permission_required", error: detail, script: script)
+                if accessibilityBlocked >= limits.maxConsecutiveInvalid {
+                    return terminate(
+                        .failed(
+                            reason:
+                                "The task needs System Events UI scripting, but the Accessibility "
+                                + "permission for Osaurus isn't granted. Enable Osaurus under System "
+                                + "Settings → Privacy & Security → Accessibility, then try again."
+                        )
+                    )
+                }
+                let toolResult =
+                    "The script was NOT run: it uses System Events UI scripting, which needs the "
+                    + "user's Accessibility permission for Osaurus, and that permission is not "
+                    + "granted. macOS is showing the grant request now. If the task can be done "
+                    + "through the app's own scripting dictionary instead, do that; otherwise finish "
+                    + "with a short explanation that the user must enable Osaurus under System "
+                    + "Settings → Privacy & Security → Accessibility and retry."
+                messages.append(
+                    ChatMessage(role: "tool", content: toolResult, tool_calls: nil, tool_call_id: call.id)
+                )
+                lastToolResult = toolResult
+                step += 1
+                continue
+            }
 
             // Gate the script against the mode + effect:
             //  • query / verification → run reads automatically, BLOCK writes.
@@ -620,9 +804,65 @@ public enum AppleScriptLoop {
                 step += 1
                 continue
             case .confirm:
+                // Compile-before-confirm dry run: never ask the user to
+                // approve a script that cannot compile. On a syntax error,
+                // feed the REAL compile error back for correction (the same
+                // feedback executing it would have produced) — the user only
+                // ever sees scripts that can actually run.
+                if let dryCompile,
+                    let compileFailure = await dryCompile(script, language),
+                    compileFailure.status == .compileError
+                {
+                    consecutiveCompileFailures += 1
+                    let message = compileFailure.errorMessage ?? "syntax error"
+                    feed.emit(
+                        SubagentActivityEvent(
+                            step: step,
+                            kind: .retry,
+                            title: "Script did not compile; asking for a correction",
+                            detail: message
+                        )
+                    )
+                    record(
+                        intent: effect,
+                        status: "compile_error",
+                        error: message,
+                        errorNumber: compileFailure.errorNumber,
+                        script: script
+                    )
+                    if consecutiveCompileFailures >= limits.maxConsecutiveInvalid {
+                        return terminate(
+                            .failed(
+                                reason:
+                                    "The model could not produce a script that compiles: \(message)"
+                            )
+                        )
+                    }
+                    let toolResult =
+                        "The script was NOT run — it does not compile: \(message). Fix the "
+                        + "\(language.displayLabel) syntax and call run_applescript again."
+                    messages.append(
+                        ChatMessage(
+                            role: "tool",
+                            content: toolResult,
+                            tool_calls: nil,
+                            tool_call_id: call.id
+                        )
+                    )
+                    lastToolResult = toolResult
+                    step += 1
+                    continue
+                }
+                consecutiveCompileFailures = 0
+                // Surface the target app so the confirm card names it AND the
+                // shared prompt queue can offer "don't ask again in {app} this
+                // run" (it scopes that blanket approval on `appName`).
+                let appName = targetAppName(script)
+                let actionLabel =
+                    language == .javascript ? L("Run JXA script") : L("Run AppleScript")
                 let preview = ActionPreview(
-                    appName: nil,
-                    actionLabel: L("Run AppleScript"),
+                    appName: appName,
+                    actionLabel: actionLabel,
                     targetLabel: nil,
                     effect: effect,
                     note: nil,
@@ -632,18 +872,18 @@ public enum AppleScriptLoop {
                     SubagentActivityEvent(
                         step: step,
                         kind: .confirmRequested,
-                        title: "Confirm: Run AppleScript (\(effect.displayLabel))",
+                        title: "Confirm: \(actionLabel) (\(effect.displayLabel))",
                         detail: scriptPreview(script)
                     )
                 )
                 approved = await confirm(preview)
                 if approved {
                     feed.emit(
-                        SubagentActivityEvent(step: step, kind: .confirmed, title: "Approved: Run AppleScript")
+                        SubagentActivityEvent(step: step, kind: .confirmed, title: "Approved: \(actionLabel)")
                     )
                 } else {
                     feed.emit(
-                        SubagentActivityEvent(step: step, kind: .denied, title: "Declined: Run AppleScript")
+                        SubagentActivityEvent(step: step, kind: .denied, title: "Declined: \(actionLabel)")
                     )
                 }
             case .autoRunWithWarning:
@@ -679,10 +919,29 @@ public enum AppleScriptLoop {
                 continue
             }
 
-            feed.emit(SubagentActivityEvent(step: step, kind: .act, title: "Running AppleScript"))
-            let execution = await runExecutor(script)
+            feed.emit(
+                SubagentActivityEvent(
+                    step: step,
+                    kind: .act,
+                    title: "Running \(language.displayLabel)"
+                )
+            )
+            let execution = await runExecutor(script, language)
             scriptsExecuted += 1
             consecutiveBlocked = 0
+            // An assistive-access denial that slipped past the preflight (an
+            // unrecognized UI-scripting form) still gets the first-class
+            // recovery: fire the OS grant dialog once, same as the preflight.
+            if execution.status == .permissionRequired,
+                AppleScriptAccessibility.isAccessibilityDenial(
+                    errorNumber: execution.errorNumber,
+                    errorMessage: execution.errorMessage
+                ),
+                !accessibilityPromptShown
+            {
+                accessibilityPromptShown = true
+                axPrompt()
+            }
             let toolResult = describe(execution, feed: feed, step: step)
             let trimmedOutput = execution.output?.trimmingCharacters(in: .whitespacesAndNewlines)
             if execution.isSuccess {
@@ -749,11 +1008,60 @@ public enum AppleScriptLoop {
                         + "to ONLY read state and `return` the requested information."
                 )
         case .automate:
+            // A classified READ auto-runs with no prompt or warning even in
+            // automate mode: the escalate-biased classifier only rates a script
+            // `.read` when it has no mutating verb / app-state write / writing
+            // shell command, so gating a pure read like a mutation is pure
+            // friction with no safety value — it's the same property the
+            // read-only `mac_query` gate already relies on. This roughly halves
+            // confirmations on the common read-then-write and verification
+            // patterns.
+            if effect == .read { return .autoRunReadOnly }
+            // A CONSEQUENTIAL script (destructive shell, delete/send/purchase,
+            // quit/restart, running a user Shortcut — whose effect is opaque)
+            // always pauses for explicit approval, even when the user chose
+            // auto-run-with-warning: that mode trades confirmation for a
+            // warning on ordinary edits, not on irreversible or trust-boundary
+            // commits. This is the whole point of escalating classification —
+            // an `rm -rf` must never run on a warning banner alone.
+            if effect == .consequential { return .confirm }
             switch executionMode {
             case .confirmEach: return .confirm
             case .autoRunWithWarning: return .autoRunWithWarning
             }
         }
+    }
+
+    /// The first application a script targets via `tell application "Name"` (or
+    /// `tell app "Name"`). Used to label the confirm card's App field and to
+    /// scope the user's "don't ask again in {app} this run" approval, which the
+    /// shared `ComputerUsePromptQueue` keys on `ActionPreview.appName`. `nil`
+    /// when the script targets no named app (e.g. a bare `set volume …` system
+    /// command), so appless scripts simply keep prompting each time.
+    static func targetAppName(_ script: String) -> String? {
+        // AppleScript app names are quoted string literals, so a quoted capture
+        // after `tell application` / `tell app` is exact; JXA addresses the app
+        // as `Application("Name")` / `Application('Name')`. Case-insensitive;
+        // returns the first match.
+        let patterns = [
+            #"tell\s+application\s+"([^"]+)""#,
+            #"tell\s+app\s+"([^"]+)""#,
+            #"application\(\s*"([^"]+)"\s*\)"#,
+            #"application\(\s*'([^']+)'\s*\)"#,
+        ]
+        for pattern in patterns {
+            guard
+                let regex = try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive])
+            else { continue }
+            let range = NSRange(script.startIndex ..< script.endIndex, in: script)
+            guard let match = regex.firstMatch(in: script, options: [], range: range),
+                match.numberOfRanges >= 2,
+                let captured = Range(match.range(at: 1), in: script)
+            else { continue }
+            let name = String(script[captured]).trimmingCharacters(in: .whitespacesAndNewlines)
+            if !name.isEmpty { return name }
+        }
+        return nil
     }
 
     /// The short effect label carried on an `AppleScriptProposalRecord`. The
@@ -867,6 +1175,32 @@ public enum AppleScriptLoop {
             return
                 "The script failed at runtime: \(message)\(code). Adjust the script and call run_applescript again."
         case .permissionRequired:
+            // Two distinct grants map here: the Automation/Apple Events consent
+            // (`-1743`, auto-prompted by the OS at send time) and the
+            // Accessibility grant System Events UI scripting needs (the loop
+            // fires that dialog itself). Name the right one so the model and
+            // the user recover down the correct path.
+            if AppleScriptAccessibility.isAccessibilityDenial(
+                errorNumber: result.errorNumber,
+                errorMessage: result.errorMessage
+            ) {
+                let message = result.errorMessage ?? "Assistive access is required."
+                feed.emit(
+                    SubagentActivityEvent(
+                        step: step,
+                        kind: .error,
+                        title: "Accessibility permission needed",
+                        detail: message,
+                        success: false
+                    )
+                )
+                return
+                    "macOS blocked the script because it uses System Events UI scripting and the "
+                    + "Accessibility permission for Osaurus isn't granted (\(message)). macOS is showing "
+                    + "the grant request — once the user enables Osaurus under System Settings → Privacy "
+                    + "& Security → Accessibility, call run_applescript again. If the task can be done "
+                    + "through the app's own scripting dictionary instead, do that."
+            }
             let message = result.errorMessage ?? "Automation permission is required."
             feed.emit(
                 SubagentActivityEvent(
@@ -998,23 +1332,25 @@ public enum AppleScriptLoop {
 
     /// One model step's result: the proposed call (nil when the model emitted
     /// no tool call → completion), the assistant text (the completion summary),
-    /// and the token usage.
+    /// and the token usage (plus the engine's decode-speed hint when present).
     struct ModelStepResult: Sendable {
         var call: ModelActionCall?
         var text: String?
         var tokens: Int = 0
+        var tokensPerSecond: Double? = nil
     }
 
     private static func modelStep(
         engine: ChatEngine,
         modelId: String,
         sessionId: String,
-        messages: [ChatMessage]
+        messages: [ChatMessage],
+        samplingTemperature: Double? = nil
     ) async throws -> ModelStepResult {
         var req = ChatCompletionRequest(
             model: modelId,
             messages: messages,
-            temperature: nil,
+            temperature: samplingTemperature.map(Float.init),
             max_tokens: nil,
             stream: false,
             top_p: nil,
@@ -1026,10 +1362,20 @@ public enum AppleScriptLoop {
             tool_choice: AppleScriptAction.autoToolChoice,
             session_id: sessionId
         )
-        req.samplingParametersAreImplicit = true
+        // Sampling comes from the model bundle's generation_config unless the
+        // caller EXPLICITLY overrode it (eval-case-declared A/B, recorded in
+        // the report) — never a hidden synthetic default.
+        req.samplingParametersAreImplicit = samplingTemperature == nil
         req.isAgentRequest = true
+        let generateStarted = Date()
         let response = try await engine.completeChat(request: req)
+        AppleScriptTraceLog.record(
+            request: req,
+            response: response,
+            elapsedSeconds: Date().timeIntervalSince(generateStarted)
+        )
         let tokens = response.usage.total_tokens
+        let tokensPerSecond = response.usage.tokens_per_second
         guard let message = response.choices.first?.message else {
             return ModelStepResult(call: nil, text: nil, tokens: tokens)
         }
@@ -1041,10 +1387,11 @@ public enum AppleScriptLoop {
             return ModelStepResult(
                 call: ModelActionCall(id: call.id, arguments: call.function.arguments),
                 text: text,
-                tokens: tokens
+                tokens: tokens,
+                tokensPerSecond: tokensPerSecond
             )
         }
-        return ModelStepResult(call: nil, text: text, tokens: tokens)
+        return ModelStepResult(call: nil, text: text, tokens: tokens, tokensPerSecond: tokensPerSecond)
     }
 
     // MARK: - Model-step robustness (mirrors ComputerUseLoop)
@@ -1128,6 +1475,20 @@ public enum AppleScriptLoop {
                 + "not exist yet or be named slightly differently; prefer a script that finds or "
                 + "creates it (e.g. `if not (exists note \"X\") then make new note`) instead of "
                 + "assuming it is there.\n"
+                + "- If an app has no usable scripting dictionary (commands keep failing with "
+                + "\"doesn't understand\"), fall back to UI scripting: `activate` the app, then `tell "
+                + "application \"System Events\" to tell process \"AppName\"` and drive its menus "
+                + "(`click menu item \"Save\" of menu \"File\" of menu bar 1`) or type with "
+                + "`keystroke`. Prefer the app's own dictionary whenever it works — UI scripting is "
+                + "the fallback, and it needs the user's Accessibility permission (a run will report "
+                + "if that is missing).\n"
+                + "- Scripts are AppleScript by default. If an app is better driven through its "
+                + "JavaScript bridge, set `language` to \"javascript\" in the call to run JXA "
+                + "instead. JXA is always gated as state-changing, so use AppleScript for reads.\n"
+                + "- The user's installed Shortcuts are runnable: `tell application \"Shortcuts "
+                + "Events\" to run shortcut \"Name\"` (add `with input \"…\"` when the task provides "
+                + "input; the result is the shortcut's output). List them with `get name of every "
+                + "shortcut`. Use the exact shortcut name the user gave.\n"
                 + "- Only do what the task asks. Avoid destructive or irreversible actions (deleting, "
                 + "sending, purchasing) unless the user explicitly requested them."
         case .query:
@@ -1154,7 +1515,8 @@ public enum AppleScriptLoop {
             correct the script and call `run_applescript` again.
             - When the task asks for information (a value, state, name, count, list, …), END the script \
             with `return` of exactly those value(s). To return several values, build a string like \
-            `return "volume: " & v & ", track: " & t`, or `return` a list — these read back cleanly. \
+            `return "volume: " & v & ", track: " & t`, `return` a list, or `return` a record like \
+            `{volume:v, track:t}` — all read back cleanly (records as `key: value` pairs). \
             A script with no `return` hands back nothing.
             \(modeRules)
             - Script the relevant app directly when it helps (e.g. `tell application "Safari" … end \
@@ -1181,7 +1543,10 @@ public enum AppleScriptLoop {
                 "- Address objects that may be missing with find-or-create (`if not (exists note \"X\") "
                 + "then make new note`), not by assuming. After a change, run one read-only script that "
                 + "`return`s the resulting state. Avoid destructive/irreversible actions unless "
-                + "explicitly asked."
+                + "explicitly asked. If an app has no usable dictionary, fall back to System Events UI "
+                + "scripting (`tell process`, menus, `keystroke`) — it needs the user's Accessibility "
+                + "permission. The user's Shortcuts run via `tell application \"Shortcuts Events\" to "
+                + "run shortcut \"Name\"` (optional `with input`)."
         case .query:
             intro =
                 "You are Osaurus's AppleScript query agent: answer by writing a READ-ONLY AppleScript "

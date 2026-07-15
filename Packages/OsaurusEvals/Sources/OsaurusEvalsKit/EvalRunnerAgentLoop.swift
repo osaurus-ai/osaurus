@@ -93,6 +93,34 @@ extension EvalRunner {
             )
         }
 
+        // AppleScript delegation cases need an installed AppleScript model —
+        // the tool schema is withheld otherwise (same semantics as the
+        // apple_script suite's live lanes).
+        let wantsAppleScript =
+            testCase.fixtures.agentCapabilities?.appleScriptEnabled == true
+            || (testCase.expect.agentLoop?.mustCallTools ?? []).contains(where: {
+                $0 == "applescript" || $0 == "mac_query"
+            })
+            || (testCase.expect.agentLoop?.mustCallAnyTools ?? []).contains(where: {
+                $0 == "applescript" || $0 == "mac_query"
+            })
+        if wantsAppleScript {
+            let ready = await MainActor.run { EvalHostBootstrap.hasReadyAppleScriptModel }
+            if !ready {
+                return .terminal(
+                    id: testCase.id,
+                    label: label,
+                    domain: testCase.domain,
+                    outcome: .skipped,
+                    notes: [
+                        "no AppleScript model installed; applescript/mac_query delegation "
+                            + "tools withheld — case skipped"
+                    ],
+                    modelId: modelId
+                )
+            }
+        }
+
         // Fresh per-case workspace. Deleted in all exits below.
         let workspace = FileManager.default.temporaryDirectory
             .appendingPathComponent("osaurus-agentloop-eval-\(UUID().uuidString)", isDirectory: true)
@@ -279,20 +307,33 @@ extension EvalRunner {
             maxIterations: exp.maxIterations ?? 10,
             contextWindowOverride: exp.contextWindowOverride,
             stopOnToolRejection: exp.stopOnToolRejection ?? false,
-            sandbox: sandboxMode
+            sandbox: sandboxMode,
+            cancelAfterToolCalls: exp.cancelAfterToolCalls
         )
 
         var verdicts: [CapabilityClaimsJudgement] = []
+        var judgeAudit: EvalJudgeAudit?
+        var judgeElapsed: Double?
         if transcript.error == nil, let rubric = exp.rubric, !rubric.isEmpty {
-            verdicts = await CapabilityClaimsEvaluator.judge(
+            // Self-heal the ephemeral judge provider before grading — a
+            // provider-mutating suite earlier in the same process (e.g.
+            // `default_agent`'s `osaurus_provider`) can have evicted it,
+            // which would otherwise fail every rubric row spuriously.
+            await ensureJudgeProviderRoutable(judgeModel)
+            let judgeStarted = Date()
+            let audit = await CapabilityClaimsEvaluator.judgeDetailed(
                 finalText: transcript.finalText,
                 conditions: rubric,
                 model: judgeModel
             )
+            judgeElapsed = Date().timeIntervalSince(judgeStarted) * 1000
+            verdicts = audit.verdicts
+            judgeAudit = EvalJudgeAudit.from(audit, rubric: rubric, selfJudge: judgeModel == nil)
         }
         let elapsed = Date().timeIntervalSince(started) * 1000
         // Report loop-only latency (model steps + tool execution), not
-        // wall time inflated by judge calls and workspace setup.
+        // wall time inflated by judge calls and workspace setup; judge
+        // time rides in `judgeLatencyMs`.
         let latency = transcript.loopDurationMs > 0 ? transcript.loopDurationMs : elapsed
 
         if let err = transcript.error {
@@ -302,17 +343,21 @@ extension EvalRunner {
                     pluginIdsBeforeRun: pluginIdsBeforeRun
                 )
             }
-            return EvalCaseReport(
-                id: testCase.id,
-                label: label,
-                domain: testCase.domain,
-                query: testCase.query,
-                outcome: .errored,
-                notes: ["agent loop error: \(err)"],
-                modelId: modelId,
-                latencyMs: latency,
-                toolUsage: toolUsageStats(transcript),
-                telemetry: telemetry(from: transcript)
+            return persistAgentLoopTranscript(
+                transcript,
+                for: EvalCaseReport(
+                    id: testCase.id,
+                    label: label,
+                    domain: testCase.domain,
+                    query: testCase.query,
+                    outcome: .errored,
+                    notes: ["agent loop error: \(err)"],
+                    modelId: modelId,
+                    latencyMs: latency,
+                    toolUsage: toolUsageStats(transcript),
+                    telemetry: telemetry(from: transcript)
+                ),
+                query: testCase.query
             )
         }
 
@@ -404,6 +449,13 @@ extension EvalRunner {
                 fail: "finalText missing '\(needle)'"
             )
         }
+        for needle in exp.finalTextMustNotContain ?? [] {
+            score.check(
+                !transcript.finalText.localizedCaseInsensitiveContains(needle),
+                pass: "finalText free of '\(needle)'",
+                fail: "finalText LEAKED '\(needle)'"
+            )
+        }
 
         // 5. LLM-judge rubric — every condition must pass.
         let rubric = exp.rubric ?? []
@@ -443,18 +495,61 @@ extension EvalRunner {
             )
         }
 
-        return EvalCaseReport(
-            id: testCase.id,
-            label: label,
-            domain: testCase.domain,
-            query: testCase.query,
-            outcome: score.passed ? .passed : .failed,
-            notes: score.notes,
-            modelId: modelId,
-            latencyMs: latency,
-            toolUsage: toolUsageStats(transcript),
-            telemetry: telemetry(from: transcript)
+        return persistAgentLoopTranscript(
+            transcript,
+            for: EvalCaseReport(
+                id: testCase.id,
+                label: label,
+                domain: testCase.domain,
+                query: testCase.query,
+                outcome: score.passed ? .passed : .failed,
+                notes: score.notes,
+                modelId: modelId,
+                latencyMs: latency,
+                judgeLatencyMs: judgeElapsed,
+                toolUsage: toolUsageStats(transcript),
+                telemetry: telemetry(from: transcript),
+                judge: judgeAudit
+            ),
+            query: testCase.query
         )
+    }
+
+    /// Hand the full loop transcript to the transcript store (a no-op
+    /// unless `--transcripts` configured it, and it only keeps
+    /// failed/errored rows). Returns the report unchanged so call sites
+    /// stay single-expression returns.
+    private static func persistAgentLoopTranscript(
+        _ transcript: AgentLoopTranscript,
+        for report: EvalCaseReport,
+        query: String
+    ) -> EvalCaseReport {
+        EvalTranscriptStore.persistIfEnabled(
+            EvalCaseTranscript(
+                caseId: report.id,
+                domain: report.domain,
+                modelId: report.modelId,
+                outcome: report.outcome.rawValue,
+                query: query,
+                systemPrompt: transcript.systemPrompt,
+                toolSchemaNames: transcript.toolSchemaNames,
+                toolCalls: transcript.toolCalls.map {
+                    EvalCaseTranscript.ToolEvent(
+                        name: $0.name,
+                        arguments: $0.arguments,
+                        resultPreview: $0.resultPreview,
+                        wasDeduped: $0.wasDeduped,
+                        wasError: $0.wasError
+                    )
+                },
+                finalText: transcript.finalText,
+                iterations: transcript.iterations,
+                exit: transcript.exit,
+                notices: transcript.notices,
+                error: transcript.error
+            )
+        )
+        return report
     }
 
     /// Project the agent-loop transcript's generation metrics into the
@@ -505,7 +600,8 @@ extension EvalRunner {
                 renderChartEnabled: caps?.renderChartEnabled ?? false,
                 speakEnabled: caps?.speakEnabled ?? false,
                 searchMemoryEnabled: caps?.searchMemoryEnabled ?? false,
-                selfSchedulingEnabled: caps?.selfSchedulingEnabled ?? false
+                selfSchedulingEnabled: caps?.selfSchedulingEnabled ?? false,
+                appleScriptEnabled: caps?.appleScriptEnabled ?? false
             )
         )
         AgentStore.save(agent)
@@ -767,6 +863,14 @@ extension EvalRunner {
                 missing.isEmpty,
                 pass: "mustCallTools ok: [\(must.joined(separator: ","))]",
                 fail: "mustCallTools missing: [\(missing.joined(separator: ","))]"
+            )
+        }
+        if let anyMust = exp.mustCallAnyTools, !anyMust.isEmpty {
+            let hit = anyMust.first(where: { calledSet.contains($0) })
+            score.check(
+                hit != nil,
+                pass: "mustCallAnyTools ok: \(hit ?? anyMust[0])",
+                fail: "mustCallAnyTools missing all: [\(anyMust.joined(separator: ","))]"
             )
         }
         if let mustNot = exp.mustNotCallTools {
@@ -1148,7 +1252,11 @@ extension EvalRunner {
                 : (false, "\(labelPrefix) '\(assertion.path)' contents differ from expected")
         }
         if let needle = assertion.contains {
-            return contents.contains(needle)
+            let hit =
+                assertion.caseInsensitive == true
+                ? contents.range(of: needle, options: .caseInsensitive) != nil
+                : contents.contains(needle)
+            return hit
                 ? (true, "\(labelPrefix) '\(assertion.path)' contains '\(needle)'")
                 : (false, "\(labelPrefix) '\(assertion.path)' missing '\(needle)'")
         }

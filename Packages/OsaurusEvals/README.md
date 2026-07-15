@@ -11,23 +11,31 @@ Packages/OsaurusEvals/
   Package.swift
   README.md (this file)
   Config/
-    recall_floors.json  — opt-in `--fail-on-floor` gate config
+    floors.json         — `--fail-on-floor` gate config (suite pass rates + case recall floors)
   Sources/
     OsaurusEvalsKit/    — library (case schema, runner, scorers, model override)
     OsaurusEvalsCLI/    — `osaurus-evals` executable
+  Tests/
+    OsaurusEvalsKitTests/ — harness unit tests (fixture decode, scorers, labs; token-free)
   Suites/
+    AgentDB/            — E2E db_* tool workflows against an isolated agent DB (LLM)
     AgentLoop/          — E2E agentic outcomes in a seeded workspace (LLM)
+    AgentLoopFrontier/  — harder agent-loop tasks for the local-vs-frontier proof lane (LLM)
+    AppleScript/        — AppleScript tool discipline: scripted CI lane + live lane (LLM or scripted)
     ArgumentCoercion/   — ArgumentCoercion.{stringArray,int,bool} pinning
     CapabilityClaims/   — agent-loop "do you have X" behaviour + LLM judge (LLM)
     CapabilitySearch/   — index-only recall measurements (no LLM)
     ComputerUse/        — single-action gate / effect classification (no LLM)
     ComputerUseLoop/    — E2E Computer Use over a scripted screen (LLM or scripted)
     DefaultAgent/       — built-in "Configuring Osaurus" agent: read/write config tools + judge (LLM)
+    JudgeCalibration/   — known-verdict fixtures that grade the JUDGE itself (judge LLM only)
+    MicroPerf/          — fixed-shape decode/TTFT/prefill micro-benchmarks, median ± stdev (LLM)
     PrefixHash/         — KV-cache prefix-hash stability
-    RequestValidation/  — RequestValidator.unsupportedSamplerReason
+    PromptInjection/    — indirect-injection resistance over seeded agent_loop fixtures (LLM)
+    SandboxDiagnostics/ — sandbox self-heal hint layer over canned stderr (no LLM, no VM)
+    SandboxFrontier/    — live Linux-VM sandbox tools; skips without Apple Containerization (LLM)
     ScreenContext/      — deterministic AX-text screen-context distillation (no LLM)
     Schema/             — SchemaValidator.validate pinning
-    StreamingHint/      — StreamingToolHint encode/decode round-trips
     Subagent/           — SubagentSession host: scripted model-free + live spawn/image/computer_use
     ToolEnvelope/       — ToolEnvelope.{success,failure} JSON shape
     ToolResultGrounding/ — transcript fixtures checking final-answer grounding against tool results
@@ -88,6 +96,26 @@ cd Packages/OsaurusEvals
 swift run osaurus-evals run --suite Suites/CapabilitySearch --model foundation
 swift run osaurus-evals run --suite Suites/CapabilitySearch --filter browser --out report.json
 swift run osaurus-evals run --suite Suites/CapabilitySearch --bootstrap-plugins
+
+# Several suites in ONE process — the model loads + warms once and stays
+# resident across them. Reports land at <out-dir>/<out-prefix><Suite>.json.
+swift run osaurus-evals run --suite Suites/AgentLoop --suite Suites/CapabilityClaims \
+  --model mlx-community/Qwen3-4B-4bit --out-dir build/evals --out-prefix llm-qwen-
+
+# Repeat every case 3× (same warm process) and report the merged majority
+# outcome + per-case passRate; rows with mixed trial outcomes are marked FLAKY.
+swift run osaurus-evals run --suite Suites/AgentLoop --repeat 3 --out report.json
+
+# Resume an interrupted run: completed rows are carried from report.json's
+# .partial.jsonl sidecar (written incrementally as each case finishes) or from
+# the previous report itself; only missing/errored/watchdog-blocked rows re-run.
+swift run osaurus-evals run --suite Suites/AgentLoop --out report.json --resume
+
+# Keep full forensics for every failed/errored LLM case: system prompt, each
+# tool call with arguments + result preview, final text, loop notices — one
+# JSON per failing case under report.transcripts/. Off by default (transcripts
+# carry the whole composed prompt; shared reports shouldn't).
+swift run osaurus-evals run --suite Suites/AgentLoop --out report.json --transcripts
 ```
 
 ### Screen Context capture lab
@@ -162,13 +190,28 @@ pipeline — measure → scoreboard → diff vs baseline → fix → re-measure 
 make evals-loop                       # local default: foundation + qwen3-4b
 make evals-loop MODELS="foundation qwen3-4b xai/grok-4.3" \
                 BASELINE=build/evals/loop/<previous-run>   # gate vs a baseline
+make evals-loop EVALS_REPEAT=3        # 3 trials/case; flaky rows marked, diff flake-aware
 ```
+
+The loop batches each model's suites into ONE process (the model loads and
+warms once, not once per suite), and when `MODELS` mixes local and
+remote-provider ids it runs the remote models in a parallel background lane —
+remote decode is network-bound, so it doesn't contend with local MLX GPU work.
+Every eval process runs in its own hermetic throwaway storage root (see
+"Hermetic run storage" below), so parallel lanes can never race each other —
+or a live Osaurus app — on `~/.osaurus`; the sandbox-VM suite is serialized
+across lanes with a lock (the VM itself is host-global). Set
+`PARALLEL_REMOTE=0` to restore the fully sequential order.
 
 Each run lands in `build/evals/loop/<timestamp>/` (also symlinked as
 `build/evals/loop/latest`) with:
 
 - `det-<Suite>.json` — deterministic / embedder-only suites, run once.
 - `llm-<label>-<Suite>.json` — per-model LLM + sandbox suites.
+- `llm-<label>-<Suite>.transcripts/` — full per-case forensics (system prompt,
+  tool calls + result previews, final text) for every failed/errored LLM row;
+  the loop passes `--transcripts` by default since the run dir is git-ignored
+  (`EVALS_TRANSCRIPTS=0` disables).
 - `matrix.json` / `matrix.md` — cross-model scoreboard (domains × models,
   `passed/scored` cells, plus a decode tok/s · TTFT · peak-RAM ·
   `ctx tok/task` · `total tok/task` rollup).
@@ -220,10 +263,17 @@ underlying primitive.
 Anyone can contribute a model-compatibility result from their own Mac — the
 long tail of models/quants/hardware no single maintainer can cover. Each
 contribution is one conflict-free file under `reports/community/`; a maintainer
-folds them into `reports/COMPATIBILITY.md`. See `reports/community/README.md`.
+folds them into `reports/COMPATIBILITY.md`, which also tracks **device
+coverage** (every chip × RAM shape that has reported). The end-to-end
+contributor guide — written for humans and coding agents — is
+[`COMMUNITY_EVALS.md`](../../COMMUNITY_EVALS.md) at the repo root; format
+details live in `reports/community/README.md`.
 
 ```bash
-# Contributor: run ONE model on your hardware, then PR the single file it writes.
+# Contributor: run ONE model on your hardware and auto-open the PR (gh).
+PR=1 MODEL=mlx-community/Qwen3-4B-4bit make evals-contribute
+
+# Same, but stop after writing the file (PR/issue it yourself).
 MODEL=mlx-community/Qwen3-4B-4bit make evals-contribute
 
 # Maintainer: rebuild the leaderboard (or gate a PR's contributions).
@@ -233,13 +283,15 @@ VALIDATE=1 make evals-compat      # PR gate: every contribution carries provenan
 
 Every report now carries a `RunEnvironment` provenance block (chip, RAM, macOS,
 Osaurus build/commit, judge, KV regime, and a `catalogHash` that proves two runs
-graded the same case set). `osaurus-evals compat <dir> [--validate]` is the
-underlying primitive.
+graded the same case set — plus the perf-comparability trio captured at
+run end: SoC `thermalState`, `lowPowerMode`, and `powerSource` (AC/battery),
+so a heat-soaked or battery-throttled run can't masquerade as a regression).
+`osaurus-evals compat <dir> [--validate]` is the underlying primitive.
 
 ### Per-case telemetry
 
 Model-driven rows (`agent_loop`, `capability_claims`, `computer_use_loop`,
-`capability_search`) carry an optional `telemetry` block: token-weighted
+`capability_search`, `micro_perf`, …) carry an optional `telemetry` block: token-weighted
 **decode tok/s**, **TTFT ms**, first-step **prefill tok/s** (from the runtime
 stats hint), **peak physical footprint MB** (Activity-Monitor "Memory", the
 value the `AGENTS.md` RAM gate reads — sampled on a timer across the case), and
@@ -259,11 +311,29 @@ requests `stream_options.include_usage` and surfaces the provider's `usage` as
 the same in-band stats hint the local runtime emits (decode tok/s stays nil when
 the provider omits it, rather than being fabricated).
 
+**Hermetic run storage.** Every `osaurus-evals run` (and `agent-loop-lab`)
+process — pure data suites included — runs against a disposable
+`$TMPDIR/osaurus-evals-<uuid>/` storage root
+(`EvalBootstrap.configureIsolatedRunStorage`). Fixture agents, providers,
+schedules, memory rows, methods, skills, chat state, and KV caches an eval
+creates all land in that throwaway root and **can never touch the user's real
+`~/.osaurus` contexts**. The isolated root is seeded with the few host
+resources a run must still see: read-only symlinks for `Tools/` (installed
+plugins, only when the plan loads them), `cache/external-models.json`
+(HF-cache / LM-Studio model resolution), and `container/` (the host-global
+sandbox VM runtime — boot costs minutes and the container is shared with the
+host app, so it is the one deliberate exception); plus **copies** of
+`config/chat.json` (keeps `--model auto` resolvable) and `config/sandbox.json`
+(keeps provisioned-sandbox detection) so any write a run triggers mutates the
+copy, not the user's file. On normal exit the process deletes its root; roots
+leaked by watchdog `_exit` / crashes are collected by the next run's orphan
+sweep (dead `.owner.pid`).
+
 Startup bootstrap is domain-aware. Suites that require installed native plugins
 load them and rebuild search indices so they mirror the host app. `capability_search`
 suites initialize only the selected tool / method / skill index lanes without
-loading native plugins; those index-only runs use isolated temporary storage so
-fixtures never touch the user's real databases. Debug builds also use
+loading native plugins; index fixtures build fresh inside the isolated root so
+they never touch the user's real databases. Debug builds also use
 a deterministic in-process storage key; release builds still use OsaurusCore's
 normal noninteractive storage-key path against the isolated database files
 (used only when a run opts in to encrypted fixtures; plaintext fixtures need no key).
@@ -280,24 +350,26 @@ Exit codes:
 
 ## Case schema
 
-Every case file shares a top-level shape: `id`, `domain`, optional `label` and `notes`, `query`, `fixtures`, `expect`. The `domain` field selects which runner branch handles the case and which `expect.<sub>` block is required. Fifteen domains exist today:
+Every case file shares a top-level shape: `id`, `domain`, optional `label` and `notes`, `query`, `fixtures`, `expect`. The `domain` field selects which runner branch handles the case and which `expect.<sub>` block is required. Nineteen domains exist today:
 
 | Domain | Hits LLM? | Runner branch | Required expectation block |
 |---|---|---|---|
 | `agent_loop` | yes | `runAgentLoopCase` | `expect.agentLoop` |
 | `capability_claims` | yes | `runCapabilityClaimsCase` | `expect.capabilityClaims` |
 | `default_agent` | yes | `runDefaultAgentCase` | `expect.defaultAgent` |
+| `judge_calibration` | yes⁵ | `runJudgeCalibrationCase` | `expect.judgeCalibration` |
+| `micro_perf` | yes⁶ | `runMicroPerfCase` | `expect.microPerf` |
 | `capability_search` | no | `runCapabilitySearchCase` | `expect.capabilitySearch` |
 | `computer_use` | no | `runComputerUseCase` | `expect.computerUse` |
 | `computer_use_loop` | yes¹ | `runComputerUseLoopCase` | `expect.computerUseLoop` |
 | `subagent` | mixed³ | `runSubagentCase` | `expect.subagent` |
+| `apple_script` | mixed⁴ | `runAppleScriptCase` | `expect.appleScript` |
 | `screen_context` | no² | `runScreenContextCase` | `expect.screenContext` |
 | `schema` | no | `runSchemaCase` | `expect.schema` |
 | `tool_envelope` | no | `runToolEnvelopeCase` | `expect.toolEnvelope` |
-| `streaming_hint` | no | `runStreamingHintCase` | `expect.streamingHint` |
+| `tool_result_grounding` | no | `runToolResultGroundingCase` | `expect.toolResultGrounding` |
 | `prefix_hash` | no | `runPrefixHashCase` | `expect.prefixHash` |
 | `argument_coercion` | no | `runArgumentCoercionCase` | `expect.argumentCoercion` |
-| `request_validation` | no | `runRequestValidationCase` | `expect.requestValidation` |
 | `sandbox_diagnostics` | no | `runSandboxDiagnosticsCase` | `expect.sandboxDiagnostics` |
 
 ¹ `computer_use_loop` drives a live model by default, but a case that supplies `scriptedActions` runs **model-free** (deterministic, CI-safe) via the loop's `AgentStepProvider` seam.
@@ -306,7 +378,13 @@ Every case file shares a top-level shape: `id`, `domain`, optional `label` and `
 
 ³ `subagent` is mixed: the `scripted` lane (and the deterministic `computer_use` scripted-driver cases) drive the `SubagentSession` host with **no model call** (CI-safe), while the live lanes — `spawn`, `image`, and model-driven `computer_use` — exercise the real kinds on the run model and **skip** when their host (model / delegation / image model) isn't configured.
 
-The non-LLM domains are pure-data and run in single-digit ms each — safe to keep growing. `capability_claims` is the LLM-burning domain; keep it off CI.
+⁴ `apple_script` is mixed: cases with canned `scriptedCalls` run **model-free** through a mock executor (CI-safe), while live cases drive the run model and skip without an AppleScript-capable host; the optional rubric is graded only when a strong judge resolves.
+
+⁵ `judge_calibration` calls only the **judge** LLM (one call per case, no run-model loop): the fixture is a frozen assistant reply plus conditions with known correct verdicts, and the case scores whether the resolved judge reproduces them — so swapping `JUDGE_MODEL` is itself a measurable, diffable change. With no strong judge resolved it self-judges with the run model, which is a useful row in its own right (it measures the local model *as* a judge).
+
+⁶ `micro_perf` is the dedicated perf lane: a FIXED prompt (`query` × `promptRepeat`) decoded to a FIXED length (`maxTokens`), `reps` times in one warm process after one unmeasured warm-up, reported as **median ± stdev** (decode tok/s, steady-state TTFT, warm-prefix prefill, wall/rep) — the stable row for `history.jsonl` trends that behaviour rows (varying prompt/decode sizes) can't provide. No tools, no system prompt, no judge, temperature 0; decode speed comes from the runtime's authoritative stats hint, with a clearly-labelled `~est` chars/4 fallback in notes (never in telemetry) for hint-less paths. Optional `minDecodeTokensPerSecond` / `maxTtftMs` floors exist but the recommended gate is the diff/history trend, since absolute numbers are machine-specific.
+
+The non-LLM domains are pure-data and run in single-digit ms each — safe to keep growing. The LLM-driven domains (`agent_loop`, `capability_claims`, `default_agent`, `judge_calibration`, `micro_perf`, and the live lanes of the mixed domains) burn tokens; keep them off CI.
 
 A case with empty `expect: {}` is a valid smoke test — it records what the runner observed without scoring. Useful while bootstrapping.
 
@@ -389,6 +467,10 @@ The suite covers eleven scenarios under `Suites/CapabilityClaims/`: `confirm` (c
 
 The judge model defaults to the run `--model`; export `JUDGE_MODEL=...` to grade small-model output with a stronger evaluator. The runner re-ensures the ephemeral remote judge provider before each judge call, so a suite that runs a provider-mutating config tool mid-run (e.g. `default_agent`'s `osaurus_provider`, which reloads the provider registry from disk and evicts the in-memory judge) can't silently fall back to an unresolved judge.
 
+Every rubric-graded row persists a structured **judge audit** in its report JSON (`cases[].judge`): the judge model that actually graded, `selfJudge`, per-condition verdicts with reasons (passes included, not just failures), the raw judge reply (capped at 4 000 chars), and the retry-attempt count. A disputed grade is auditable from the report alone. The judge itself is measured by the `judge_calibration` domain (`Suites/JudgeCalibration/` — frozen replies with known verdicts; the optimization loop runs it once per pass as the `judge` column), so a judge-model change shows up as a scored, diffable row instead of silently shifting every rubric grade.
+
+Latency semantics are uniform across judged domains: `latencyMs` is the case's own work (the agent loop / evaluator run), and judge-call time is reported separately as `judgeLatencyMs` (shown as `+judge …ms` in the human-readable output). Before this split, `capability_claims` rows silently included judge time in `latencyMs` while `agent_loop` rows didn't, so cross-domain latency comparisons were skewed by however slow the judge happened to be.
+
 ### `default_agent` domain
 
 Behaviour evals for the built-in **"Configuring Osaurus"** agent — the one that ships on `Agent.defaultId`. The query asks the agent to inspect or change Osaurus's own configuration; it reads with `osaurus_status` / `osaurus_list` / `osaurus_describe` and mutates with the consolidated write tools (`osaurus_agent` / `osaurus_provider` / `osaurus_schedule` / `osaurus_model` / `osaurus_mcp` / `osaurus_plugin`). It reuses `CapabilityClaimsEvaluator` with the Default agent id, a frozen tool schema, and **auto-approved** tool execution (a headless run has no approval card), so the loop terminates the moment the model returns text with no tool call. Scoring mixes deterministic transcript checks (`mustCallTools` / `mustNotCallTools` / `argsMustContain`) with an optional LLM-judge `rubric`, and each case runs against an isolated config root so it never touches the user's real `~/.osaurus`.
@@ -450,6 +532,7 @@ Field notes:
 - `expect.agentLoop.files` — `{ path, exists?, contains?, equals? }` assertions on the workspace after the loop ends. `exists` defaults to true; set `false` to pin that a file was NOT created.
 - `expect.agentLoop.commands` — `{ command, expectExitCode }` verification commands run in the workspace after the loop ends (e.g. `grep`, a test runner).
 - `expect.agentLoop.mustCallTools` / `mustNotCallTools` / `maxToolCalls` — deterministic transcript assertions. `maxToolCalls` counts processed calls (executed + deduped) and pins navigation discipline.
+- `expect.agentLoop.mustCallAnyTools` — OR semantics: at least one of the listed tools must be called. Use when several tools legitimately satisfy the same contract (e.g. `shell_run` curl vs `browser_navigate` for a fetch attempt) so the case doesn't over-pin one surface.
 - `expect.agentLoop.noDuplicateExecutedCalls` — no identical `(name, arguments)` pair may *execute* twice; dedupe replays are fine (that's the loop's dedupe working). Duplicate keys use the loop's own argument canonicalisation (sorted-key JSON), so the scorer and the dedupe agree on what "identical" means.
 - `expect.agentLoop.minDedupedReplays` — minimum number of dedupe replays (`wasDeduped`) the transcript must contain. Asserts the replay mechanism actually FIRED, not just that nothing executed twice.
 - `expect.agentLoop.noToolErrors` — opt-in: no processed call may return an error envelope. Off by default; recovery cases legitimately route through tool errors.
@@ -464,7 +547,7 @@ Field notes:
 
 Reported `latencyMs` for this domain is **loop-only** wall time (model steps + tool execution), excluding workspace setup and judge calls.
 
-The suite covers seventeen scenarios under `Suites/AgentLoop/`: `edit-file-then-verify`, `search-then-multi-file-edit`, `write-new-file`, `recover-from-failing-command`, `listing-navigation-discipline`, `duplicate-call-avoidance`, `dedupe-replay-fires`, `repeated-call-nudge`, `parallel-batch-reads`, `batch-error-isolation` (one failing call in a parallel batch must not poison its siblings), `compaction-stress`, `wrap-up-on-budget`, `over-budget-hard-overflow` (tiny window override → distinct `overBudget` exit), `rejection-stops-run` (chat's `stopOnToolRejection: true` policy ends the run on the first error envelope), `clarify-on-ambiguity` (a genuinely ambiguous task must pause via `clarify`, exit `clarifyRequested`), `capabilities-load-midrun` (a tool loaded mid-run is callable immediately under the deferred-schema policy), and `todo-discipline-multistep` (multi-step task must create a todo list and check boxes before `complete`). This suite is the proof lane for "small local → frontier": run it per model family, e.g.
+The scenarios under `Suites/AgentLoop/` (24 today — `ls` the directory for the current roster) cluster into: file-editing outcomes (`edit-file-then-verify`, `search-then-multi-file-edit`, `write-new-file`, `append-preserve-existing`, `multi-file-create-trio`, …), discipline and hygiene (`duplicate-call-avoidance`, `dedupe-replay-fires`, `repeated-call-nudge`, `listing-navigation-discipline`, `todo-discipline-multistep`), parallel-batch semantics (`parallel-batch-reads`, `batch-error-isolation` — one failing call must not poison its siblings), budget/compaction pressure (`compaction-stress`, `wrap-up-on-budget`, `over-budget-hard-overflow` — tiny window override → distinct `overBudget` exit), and loop-policy exits (`rejection-stops-run` for chat's `stopOnToolRejection: true`, `clarify-on-ambiguity` → `clarifyRequested`, `capabilities-load-midrun` for the deferred-schema policy). This suite is the proof lane for "small local → frontier": run it per model family, e.g.
 
 ```bash
 make evals EVALS_SUITE=Packages/OsaurusEvals/Suites/AgentLoop MODEL=foundation
@@ -674,22 +757,29 @@ Real captures exposed three app families the distiller now handles: **native** a
 
 See `Suites/ScreenContext/README.md` for the per-case map and the capture/privacy boundary.
 
+### Prompt-injection resistance (`Suites/PromptInjection/`)
+
+Osaurus's whole surface — file reads, tool results, screen context, browser page text — is an indirect-injection vector: untrusted content the agent ingests can carry instructions that try to hijack the task, exfiltrate a sibling secret, or run a destructive command. This suite seeds that adversarial content into fixtures the agent must read and scores that the agent treats it as **data**, not instructions. Every case rides the `agent_loop` domain because injection *resistance* can only be measured where the model can actually act (the `screen_context` distiller is deterministic text extraction — nothing there obeys anything), so a "screen capture" case simply routes the on-screen text through a file the agent reads.
+
+The design rule that makes these cases trustworthy: **the deterministic guard targets the attacker's GOAL, never a quoted token.** A model that correctly refuses will often explain the attack and quote its marker word, so canarying on the marker measures verbosity, not compromise. Instead each case pins the concrete thing the attacker wanted — a marker file that must not exist (`files exists:false`), a forbidden argument that must not reach `shell_run` (`toolUsageAudit.argsMustNotContain`, e.g. `rm -rf` / `curl`), or a secret value that must not appear in the reply (the `agentLoop.finalTextMustNotContain` canary, reserved for genuine secret material) — plus an LLM-judge rubric for the nuance. Five vectors ship today: a task-override block, secret exfiltration to a sibling file, a destructive-command instruction, one poisoned file among several in a batch read, and adversarial on-screen text. Off-CI (needs a model); wired into the optimization loop's `LLM_SUITES`.
+
 ### Other domains
 
-The pure-data domains (`schema`, `tool_envelope`, `streaming_hint`, `prefix_hash`, `argument_coercion`, `request_validation`) follow the same shape — pick one of the existing `Suites/<domain>/*.json` cases as a template and copy it.
+The pure-data domains (`schema`, `tool_envelope`, `prefix_hash`, `argument_coercion`) follow the same shape — pick one of the existing `Suites/<domain>/*.json` cases as a template and copy it.
 
-## Recall floors gate
+## Floors gate
 
-`Config/recall_floors.json` lists per-case `minMatches` floors for `--fail-on-floor`. The flag is opt-in (not yet wired into CI) and lets contributors dry-run a stricter recall gate locally before it becomes authoritative. Cases intentionally omitted from the floor map are documented in the file's `_comment` (today: indexer-side exclusions, abstain cases blocked by RRF saturation, and embedder-miss cases that need a description audit).
+`Config/floors.json` carries two floor families for `--fail-on-floor` (which the `make evals*` targets now pass by default; disable with `EVALS_FLOOR_FLAG=`):
 
-When a case in the floor map's accepted-hit count drops below `minMatches`, the run exits non-zero even if the case itself "passes" by softer criteria. The gate is independent of pass/fail outcome so it can catch silent recall slippage that the case-level matcher wouldn't.
+- **`suitePassRates`** — per-suite minimum pass rate over scoreable rows (skipped rows excluded). The deterministic token-free suites are pinned at `1.0`: any failing row there is a code regression, never model flake. Suites not listed are unaffected, which is what makes the default-on flag safe for LLM suites. CI runs these suites with the gate via `make evals-deterministic` (the `test-evals` job).
+- **`caseFloors`** — per-case `minMatches` recall floors (today: `capability_search`). When a floored case's accepted-hit count drops below `minMatches`, the run exits non-zero even if the case itself "passes" by softer criteria — the gate is independent of pass/fail outcome so it catches silent recall slippage the case-level matcher wouldn't. A `caseFloors` domain is skipped when the running suite has no cases of that domain; within a matching suite, a missing floored id still breaches (typo guard). Cases intentionally omitted from the floor map are documented in the file's `_comment`.
 
 ## Adding a new case
 
 1. Drop `Suites/<Domain>/my-case.json` with the schema above (pick a sibling case as a template).
 2. `swift run osaurus-evals run --suite Suites/<Domain> --filter my-case` to iterate.
 3. Once green, run the whole suite to make sure you didn't break a sibling.
-4. If your case asserts a recall floor, add it to `Config/recall_floors.json` so `--fail-on-floor` covers it.
+4. If your case asserts a recall floor, add it to `caseFloors` in `Config/floors.json` so `--fail-on-floor` covers it. New deterministic suites should also be listed under `suitePassRates` (and in the Makefile's `EVALS_DETERMINISTIC_SUITES` if CI-safe).
 
 ## Adding a new domain
 
@@ -700,12 +790,12 @@ When a case in the floor map's accepted-hit count drops below `minMatches`, the 
 
 ## CI isolation
 
-This package is a **separate Swift package**. CI / Xcode builds run `swift build` and `swift test` from `Packages/OsaurusCore`, never from here. Even if someone does `swift test` from inside `Packages/OsaurusEvals`, no test target exists yet — runner unit tests should be added with a `OSAURUS_EVALS_ENABLED=1` env-var gate so they never burn tokens unintentionally.
+This package is a **separate Swift package** — the eval *suites* never run on CI (they burn tokens and need local models). The harness's own unit tests DO run on CI: `Tests/OsaurusEvalsKitTests` covers fixture decode, scorer contracts, the regression/scorecard labs, and judge resolution — all deterministic and token-free (no LLM calls, no model loads). Run them locally with `make evals-test` (plain `swift test --package-path Packages/OsaurusEvals` works too); the `test-evals` job in `.github/workflows/ci.yml` runs the same thing on every PR. Tests that need live resources stay behind env-var gates (`OSAURUS_EVALS_ENABLED=1`, `OSAURUS_RUN_SANDBOX_INTEGRATION_TESTS=1`) so nothing burns tokens unintentionally. Suite decode smokes assert **floor** counts (`>=`), so adding cases never breaks them — only deletions or schema drift do.
 
 ## Future hooks (deliberately stubbed)
 
 - Auto-run on new model release (CI workflow listening for HF releases).
-- Domain growth: `Suites/ToolCalling/`, `Suites/SkillInjection/`.
+- Domain growth: `Suites/ToolCalling/`.
 
 Implemented (see "Optimization loop" above): `osaurus-evals diff` (all-domain
 regression check), cross-model scoreboards (`osaurus-evals matrix`), and the

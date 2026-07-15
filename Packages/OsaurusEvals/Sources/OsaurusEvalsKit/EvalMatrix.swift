@@ -19,6 +19,27 @@ public struct EvalMatrixDomainCell: Sendable, Codable, Equatable {
     public let scored: Int
     public let skipped: Int
     public let errored: Int
+    /// Skip-reason histogram (reason → count), taken from the first note of
+    /// each skipped case (the runner writes the gate reason there, e.g.
+    /// "sandbox unavailable: …"). nil when the cell has no skips OR the
+    /// contribution predates this field (reasons unrecorded) — so the
+    /// compatibility report can distinguish "nothing skipped" (skipped == 0)
+    /// from "skipped but why is unknown" (skipped > 0, skipReasons == nil).
+    public let skipReasons: [String: Int]?
+
+    public init(
+        passed: Int,
+        scored: Int,
+        skipped: Int,
+        errored: Int,
+        skipReasons: [String: Int]? = nil
+    ) {
+        self.passed = passed
+        self.scored = scored
+        self.skipped = skipped
+        self.errored = errored
+        self.skipReasons = skipReasons
+    }
 }
 
 public struct EvalMatrixModelColumn: Sendable, Codable, Equatable {
@@ -27,6 +48,13 @@ public struct EvalMatrixModelColumn: Sendable, Codable, Equatable {
     public let perDomain: [String: EvalMatrixDomainCell]
     public let totalPassed: Int
     public let totalScored: Int
+    /// Passed/scored excluding subsystem rows (AppleScript live/liveProof +
+    /// live image subagent) — the chat-model attributable column.
+    public let chatModelPassed: Int
+    public let chatModelScored: Int
+    /// Passed/scored for subsystem-only rows (AppleScript-16B + image stack).
+    public let subsystemPassed: Int
+    public let subsystemScored: Int
     /// Mean decode tok/s across telemetered rows for this model.
     public let meanDecodeTokensPerSecond: Double?
     /// Mean TTFT (ms) across telemetered rows.
@@ -47,6 +75,10 @@ public struct EvalMatrixModelColumn: Sendable, Codable, Equatable {
     public let meanPromptTokensPerTask: Double?
     /// Mean estimated total tokens per task (input + output) across rows.
     public let meanTotalTokensPerTask: Double?
+    /// Number of cases whose repeat trials disagreed (`--repeat N` runs) —
+    /// the per-model flakiness signal. nil when no row carried trial data
+    /// (single-execution runs), 0 when trials ran and all agreed.
+    public let flakyCases: Int?
     /// Run provenance for this model's reports (hardware, OS, build, judge,
     /// catalog hash). nil for older reports; carried through so the history
     /// log and the crowdsourced compatibility leaderboard stay attributable.
@@ -58,6 +90,10 @@ public struct EvalMatrixModelColumn: Sendable, Codable, Equatable {
         perDomain: [String: EvalMatrixDomainCell],
         totalPassed: Int,
         totalScored: Int,
+        chatModelPassed: Int? = nil,
+        chatModelScored: Int? = nil,
+        subsystemPassed: Int? = nil,
+        subsystemScored: Int? = nil,
         meanDecodeTokensPerSecond: Double?,
         meanTtftMs: Double?,
         peakPhysFootprintMb: Double?,
@@ -65,6 +101,7 @@ public struct EvalMatrixModelColumn: Sendable, Codable, Equatable {
         peakCpuPercent: Double? = nil,
         meanPromptTokensPerTask: Double? = nil,
         meanTotalTokensPerTask: Double? = nil,
+        flakyCases: Int? = nil,
         environment: RunEnvironment? = nil
     ) {
         self.modelId = modelId
@@ -72,6 +109,10 @@ public struct EvalMatrixModelColumn: Sendable, Codable, Equatable {
         self.perDomain = perDomain
         self.totalPassed = totalPassed
         self.totalScored = totalScored
+        self.chatModelPassed = chatModelPassed ?? totalPassed
+        self.chatModelScored = chatModelScored ?? totalScored
+        self.subsystemPassed = subsystemPassed ?? 0
+        self.subsystemScored = subsystemScored ?? 0
         self.meanDecodeTokensPerSecond = meanDecodeTokensPerSecond
         self.meanTtftMs = meanTtftMs
         self.peakPhysFootprintMb = peakPhysFootprintMb
@@ -79,6 +120,7 @@ public struct EvalMatrixModelColumn: Sendable, Codable, Equatable {
         self.peakCpuPercent = peakCpuPercent
         self.meanPromptTokensPerTask = meanPromptTokensPerTask
         self.meanTotalTokensPerTask = meanTotalTokensPerTask
+        self.flakyCases = flakyCases
         self.environment = environment
     }
 }
@@ -87,6 +129,49 @@ public struct EvalMatrix: Sendable, Codable, Equatable {
     public let generatedAt: String
     public let domains: [String]
     public let models: [EvalMatrixModelColumn]
+
+    /// Cross-column comparability caveats, mirroring the checks `EvalCompat`
+    /// applies to crowdsourced contributions: columns that graded different
+    /// case catalogs (mixed denominators), columns with no catalog hash at
+    /// all, and columns whose LLM rubrics were graded by the run model
+    /// itself. Surfaced in both markdown and console output so a maintainer
+    /// scoreboard can't silently mix incomparable columns (the way an early
+    /// `reports/SNAPSHOT.md` did).
+    public var comparabilityWarnings: [String] {
+        var warnings: [String] = []
+        let hashed = models.compactMap { col -> (model: String, hash: String)? in
+            guard let hash = col.environment?.catalogHash else { return nil }
+            return (shortModel(col.modelId), hash)
+        }
+        if Set(hashed.map(\.hash)).count > 1 {
+            let detail = hashed.map { "\($0.model)=\($0.hash)" }.joined(separator: ", ")
+            warnings.append(
+                "columns graded DIFFERENT case catalogs (\(detail)) — totals mix "
+                    + "denominators; only same-catalog columns compare 1:1"
+            )
+        }
+        let unhashed =
+            models
+            .filter { $0.environment?.catalogHash == nil }
+            .map { shortModel($0.modelId) }
+        if !unhashed.isEmpty && !hashed.isEmpty {
+            warnings.append(
+                "no catalog hash for: \(unhashed.joined(separator: ", ")) — "
+                    + "comparability with the hashed columns is unverified"
+            )
+        }
+        let selfJudged =
+            models
+            .filter { $0.environment?.judge == "self-judge" }
+            .map { shortModel($0.modelId) }
+        if !selfJudged.isEmpty {
+            warnings.append(
+                "self-judged column(s): \(selfJudged.joined(separator: ", ")) — "
+                    + "LLM-rubric rows were graded by the run model itself (weaker grade)"
+            )
+        }
+        return warnings
+    }
 
     public func toJSON(prettyPrinted: Bool = true) throws -> Data {
         let encoder = JSONEncoder()
@@ -120,6 +205,14 @@ public struct EvalMatrix: Sendable, Codable, Equatable {
         lines.append(
             "| **total** | "
                 + models.map { "**\($0.totalPassed)/\($0.totalScored)**" }.joined(separator: " | ") + " |"
+        )
+        lines.append(
+            "| **chat-model** | "
+                + models.map { "\($0.chatModelPassed)/\($0.chatModelScored)" }.joined(separator: " | ") + " |"
+        )
+        lines.append(
+            "| **subsystem** | "
+                + models.map { "\($0.subsystemPassed)/\($0.subsystemScored)" }.joined(separator: " | ") + " |"
         )
         lines.append("")
         lines.append("## Performance")
@@ -161,6 +254,22 @@ public struct EvalMatrix: Sendable, Codable, Equatable {
                 + models.map { $0.meanTotalTokensPerTask.map { String(format: "%.0f", $0) } ?? "—" }
                 .joined(separator: " | ") + " |"
         )
+        if models.contains(where: { $0.flakyCases != nil }) {
+            lines.append(
+                "| flaky cases (repeat trials) | "
+                    + models.map { $0.flakyCases.map(String.init) ?? "—" }
+                    .joined(separator: " | ") + " |"
+            )
+        }
+        let warnings = comparabilityWarnings
+        if !warnings.isEmpty {
+            lines.append("")
+            lines.append("## Comparability")
+            lines.append("")
+            for warning in warnings {
+                lines.append("- ⚠ \(warning)")
+            }
+        }
         let envRows = models.compactMap { col -> String? in
             guard let env = col.environment else { return nil }
             return "- `\(shortModel(col.modelId))` — \(env.summary)"
@@ -185,6 +294,13 @@ public struct EvalMatrix: Sendable, Codable, Equatable {
             if let ctx = col.meanPromptTokensPerTask { perf.append(String(format: "%.0f ctx tok", ctx)) }
             let perfStr = perf.isEmpty ? "" : "  [\(perf.joined(separator: ", "))]"
             lines.append("  \(shortModel(col.modelId)): \(col.totalPassed)/\(col.totalScored)\(perfStr)")
+            lines.append(
+                "    chat-model: \(col.chatModelPassed)/\(col.chatModelScored)  "
+                    + "subsystem: \(col.subsystemPassed)/\(col.subsystemScored)"
+            )
+        }
+        for warning in comparabilityWarnings {
+            lines.append("  ⚠ \(warning)")
         }
         return lines.joined(separator: "\n")
     }
@@ -195,6 +311,27 @@ public struct EvalMatrix: Sendable, Codable, Equatable {
 }
 
 public enum EvalMatrixBuilder {
+    /// True when a case belongs on the subsystem scoreboard (AppleScript-16B
+    /// live/liveProof lanes + live image subagent), not the chat-model column.
+    public static func isSubsystemCase(id: String, domain: String) -> Bool {
+        if domain == "apple_script" {
+            let lower = id.lowercased()
+            return lower.contains("liveproof") || lower.contains(".live-")
+        }
+        if domain == "subagent", id.hasPrefix("subagent.image-") {
+            return true
+        }
+        return false
+    }
+
+    private static func scoreTotals(for cases: [EvalCaseReport]) -> (passed: Int, scored: Int) {
+        let scoredRows = cases.filter { $0.outcome == .passed || $0.outcome == .failed }
+        return (
+            scoredRows.filter { $0.outcome == .passed }.count,
+            scoredRows.count
+        )
+    }
+
     /// Load every file that decodes as an `EvalReport` under `dir`
     /// (recursively). Files that don't decode (diff summaries, matrices,
     /// notes) are silently skipped so the loop can point this at a
@@ -253,11 +390,18 @@ public enum EvalMatrixBuilder {
             for domain in allDomains {
                 let rows = cases.filter { $0.domain == domain }
                 guard !rows.isEmpty else { continue }
+                let skippedRows = rows.filter { $0.outcome == .skipped }
+                var skipReasons: [String: Int] = [:]
+                for row in skippedRows {
+                    let reason = row.notes.first ?? "unspecified"
+                    skipReasons[reason, default: 0] += 1
+                }
                 perDomain[domain] = EvalMatrixDomainCell(
                     passed: rows.filter { $0.outcome == .passed }.count,
                     scored: rows.filter { $0.outcome == .passed || $0.outcome == .failed }.count,
-                    skipped: rows.filter { $0.outcome == .skipped }.count,
-                    errored: rows.filter { $0.outcome == .errored }.count
+                    skipped: skippedRows.count,
+                    errored: rows.filter { $0.outcome == .errored }.count,
+                    skipReasons: skipReasons.isEmpty ? nil : skipReasons
                 )
             }
             let telem = cases.compactMap(\.telemetry).filter { !$0.isEmpty }
@@ -267,12 +411,21 @@ public enum EvalMatrixBuilder {
             let cpus = telem.compactMap(\.meanCpuPercent)
             let promptToks = telem.compactMap(\.promptTokensTotal)
             let totalToks = telem.compactMap(\.totalModelTokens)
+            let trialed = cases.filter { $0.trials != nil }
+            let chatCases = cases.filter { !isSubsystemCase(id: $0.id, domain: $0.domain) }
+            let subsystemCases = cases.filter { isSubsystemCase(id: $0.id, domain: $0.domain) }
+            let chatTotals = scoreTotals(for: chatCases)
+            let subsystemTotals = scoreTotals(for: subsystemCases)
             return EvalMatrixModelColumn(
                 modelId: modelId,
                 startedAt: startedByModel[modelId],
                 perDomain: perDomain,
                 totalPassed: cases.filter { $0.outcome == .passed }.count,
                 totalScored: cases.filter { $0.outcome == .passed || $0.outcome == .failed }.count,
+                chatModelPassed: chatTotals.passed,
+                chatModelScored: chatTotals.scored,
+                subsystemPassed: subsystemTotals.passed,
+                subsystemScored: subsystemTotals.scored,
                 meanDecodeTokensPerSecond: decodes.isEmpty ? nil : decodes.reduce(0, +) / Double(decodes.count),
                 meanTtftMs: ttfts.isEmpty ? nil : ttfts.reduce(0, +) / Double(ttfts.count),
                 peakPhysFootprintMb: rams.max(),
@@ -282,6 +435,7 @@ public enum EvalMatrixBuilder {
                     ? nil : Double(promptToks.reduce(0, +)) / Double(promptToks.count),
                 meanTotalTokensPerTask: totalToks.isEmpty
                     ? nil : Double(totalToks.reduce(0, +)) / Double(totalToks.count),
+                flakyCases: trialed.isEmpty ? nil : trialed.filter(\.isFlaky).count,
                 environment: envByModel[modelId]
             )
         }

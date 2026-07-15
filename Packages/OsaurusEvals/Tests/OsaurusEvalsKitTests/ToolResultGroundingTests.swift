@@ -199,7 +199,8 @@ struct ToolResultGroundingTests {
 
         let suite = try EvalSuite.load(from: suiteDir)
         #expect(suite.decodeFailures.isEmpty, "decode failures: \(suite.decodeFailures)")
-        #expect(suite.cases.count == 2)
+        // Floor, not exact: new cases must not break this smoke.
+        #expect(suite.cases.count >= 2, "ToolResultGrounding suite shrank; got \(suite.cases.count)")
         for testCase in suite.cases {
             #expect(testCase.domain == "tool_result_grounding")
             let report = EvalRunner.runToolResultGroundingCase(testCase, modelId: "fixture")

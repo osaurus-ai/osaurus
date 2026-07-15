@@ -44,4 +44,30 @@ struct GitHubSkillServiceTokenTests {
         let env = ["GITHUB_TOKEN": "   ", "GH_TOKEN": "ghp_fallback"]
         #expect(GitHubSkillService.gitHubToken(from: env) == "ghp_fallback")
     }
+
+    // MARK: - resolveToken precedence (in-app keychain token vs env vars)
+
+    @Test func storedTokenWinsOverEnvironment() {
+        let env = ["GITHUB_TOKEN": "from_env"]
+        #expect(GitHubSkillService.resolveToken(stored: "ghp_stored", environment: env) == "ghp_stored")
+    }
+
+    @Test func fallsBackToEnvironmentWhenNoStoredToken() {
+        let env = ["GITHUB_TOKEN": "from_env"]
+        #expect(GitHubSkillService.resolveToken(stored: nil, environment: env) == "from_env")
+    }
+
+    @Test func blankStoredTokenFallsBackToEnvironment() {
+        let env = ["GH_TOKEN": "from_env"]
+        #expect(GitHubSkillService.resolveToken(stored: "   \n", environment: env) == "from_env")
+    }
+
+    @Test func trimsStoredTokenThatWins() {
+        #expect(GitHubSkillService.resolveToken(stored: "  ghp_stored\n", environment: [:]) == "ghp_stored")
+    }
+
+    @Test func returnsNilWhenNeitherStoredNorEnvironment() {
+        #expect(GitHubSkillService.resolveToken(stored: nil, environment: [:]) == nil)
+        #expect(GitHubSkillService.resolveToken(stored: "  ", environment: [:]) == nil)
+    }
 }

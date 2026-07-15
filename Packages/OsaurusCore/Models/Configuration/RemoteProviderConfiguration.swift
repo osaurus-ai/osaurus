@@ -166,11 +166,15 @@ public struct RemoteProvider: Codable, Identifiable, Sendable, Equatable {
     public var disableTimeout: Bool
     public var manualModelIds: [String]
 
-    /// Sentinel applied at runtime when `disableTimeout` is set. Finite by design:
-    /// `.infinity` / `.greatestFiniteMagnitude` would crash the streaming path
-    /// (`UInt64(timeout * 1e9)` overflows) and can't be JSON encoded. One year is
-    /// no limit for any real request while staying safely within those bounds.
-    public static let unboundedTimeout: TimeInterval = 60 * 60 * 24 * 365
+    /// Hard ceiling applied at runtime when `disableTimeout` is set. "No
+    /// timeout" is a UX statement about generation length, not a license for
+    /// a dead peer holding an open socket to pin a request task forever — so
+    /// the connect / request / stream-inactivity limits stay finite at 24
+    /// hours, which no legitimate single turn approaches. Finite is also
+    /// structurally required: `.infinity` / `.greatestFiniteMagnitude` would
+    /// crash the streaming path (`UInt64(timeout * 1e9)` overflows) and can't
+    /// be JSON encoded.
+    public static let unboundedTimeout: TimeInterval = 60 * 60 * 24
 
     // Keys for headers that should be stored in Keychain (not persisted in config)
     public var secretHeaderKeys: [String]
@@ -457,6 +461,19 @@ public struct RemoteProviderState: Sendable {
     public var lastReplayDiagnostics: ProviderReplayDiagnosticBundle?
     public var discoveredModels: [String]
     public var lastConnectedAt: Date?
+    /// True when the most recent connect attempt failed for a *transient*
+    /// reason (offline, timeout, DNS/TLS, server 5xx) rather than a terminal
+    /// one (auth, bad config). Drives network-recovery auto-reconnect so a
+    /// provider that failed while the machine was offline comes back on its
+    /// own when connectivity returns, without hammering providers whose keys
+    /// or endpoints are actually wrong.
+    public var lastFailureWasTransient: Bool
+    /// True when the provider's OAuth refresh failed permanently
+    /// (`invalid_grant` / 401): the stored tokens have been cleared and the
+    /// user must sign in again. Mirrors `MCPProviderState.requiresAuth` so
+    /// the UI can show a durable "Sign in again" affordance instead of a
+    /// transient connection error that retries can never fix.
+    public var requiresAuth: Bool
 
     public init(providerId: UUID) {
         self.providerId = providerId
@@ -466,6 +483,8 @@ public struct RemoteProviderState: Sendable {
         self.lastReplayDiagnostics = nil
         self.discoveredModels = []
         self.lastConnectedAt = nil
+        self.lastFailureWasTransient = false
+        self.requiresAuth = false
     }
 
     public var modelCount: Int {
@@ -582,7 +601,17 @@ public enum RemoteProviderConfigurationStore {
         do {
             let encoder = JSONEncoder()
             encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-            try encoder.encode(configuration).write(to: url, options: [.atomic])
+            let data = try encoder.encode(configuration)
+            // Persist off the main thread — this store is @MainActor and the
+            // synchronous write hung the UI under disk pressure. Tests using
+            // a path override read the file back immediately, so they write
+            // synchronously.
+            ConfigDiskWriter.write(
+                data,
+                to: url,
+                synchronous: OsaurusPaths.overrideRoot != nil,
+                onError: { print("[Osaurus] Failed to save RemoteProviderConfiguration: \($0)") }
+            )
         } catch {
             print("[Osaurus] Failed to save RemoteProviderConfiguration: \(error)")
         }

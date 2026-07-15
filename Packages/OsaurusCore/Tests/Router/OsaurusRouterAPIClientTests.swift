@@ -113,6 +113,31 @@ struct OsaurusRouterAPIClientTests {
         #expect(response.nextCursor == "cursor-3")
     }
 
+    @Test func welcomeClaim_postsDeviceIdAndDecodesGrant() async throws {
+        let client = try makeClient { request in
+            #expect(request.url?.path == "/credits/welcome/claim")
+            #expect(request.httpMethod == "POST")
+            let body = String(data: request.httpBodyStreamData ?? request.httpBody ?? Data(), encoding: .utf8) ?? ""
+            #expect(body == #"{"device_id":"stable-device-hash"}"#)
+            return json(#"{"granted":true,"already_granted":false,"amount_micro":"2500000"}"#)
+        }
+
+        let claim = try await client.claimWelcomeCredit(deviceId: "stable-device-hash")
+        #expect(claim.granted == true)
+        #expect(claim.alreadyGranted == false)
+        #expect(claim.amountMicro == "2500000")
+    }
+
+    @Test func welcomeClaim_decodesIdempotentRetry() async throws {
+        let client = try makeClient { _ in
+            json(#"{"granted":true,"already_granted":true,"amount_micro":"2500000"}"#)
+        }
+
+        let claim = try await client.claimWelcomeCredit(deviceId: "stable-device-hash")
+        #expect(claim.granted == true)
+        #expect(claim.alreadyGranted == true)
+    }
+
     @Test func errorEnvelope_mapsInsufficientFunds() async throws {
         let client = try makeClient { _ in
             json(#"{"error":{"code":"INSUFFICIENT_FUNDS","message":"top up required"}}"#, status: 402)

@@ -64,11 +64,13 @@ struct OpenAICompatibleStreamParserTests {
             state: &state,
             yield: { yielded.append($0) }
         )
-        guard case .finishWithToolCall(let invocation) = finish else {
+        guard case .finishWithToolCall(let invocations) = finish, let invocation = invocations.first
+        else {
             Issue.record("Expected recovered tool call, got \(finish)")
             return
         }
 
+        #expect(invocations.count == 1)
         #expect(invocation.toolName == "sandbox_write_file")
         #expect(invocation.toolCallId == "call_1")
         #expect(invocation.jsonArguments == #"{"path":"tetris.html"}"#)
@@ -132,6 +134,44 @@ struct OpenAICompatibleStreamParserTests {
         #expect(state.accumulatedToolCalls[1]?.args == #"{"y":2}"#)
     }
 
+    @Test func parser_dispatchesAllParallelToolCallsAtFinish() throws {
+        // Regression: parallel tool calls used to be silently collapsed to the
+        // lowest-index call. All accumulated slots must dispatch, in slot order.
+        var state = RemoteProviderService.StreamingState(stopSequences: [], trackContent: true)
+        let env = #""id":"chatcmpl-1","object":"chat.completion.chunk","created":0,"model":"m""#
+        let payloads = [
+            #"{\#(env),"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"a","type":"function","function":{"name":"toolA","arguments":"{\"x\":1}"}}]},"finish_reason":null}]}"#,
+            #"{\#(env),"choices":[{"index":0,"delta":{"tool_calls":[{"index":1,"id":"b","type":"function","function":{"name":"toolB","arguments":"{\"y\":2}"}}]},"finish_reason":null}]}"#,
+        ]
+        for payload in payloads {
+            _ = try OpenAICompatibleStreamParser.handleEvent(
+                jsonData: Data(payload.utf8),
+                options: .strict,
+                state: &state,
+                yield: { _ in }
+            )
+        }
+
+        let finish = try OpenAICompatibleStreamParser.handleEvent(
+            jsonData: Data(#"{\#(env),"choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}]}"#.utf8),
+            options: .strict,
+            state: &state,
+            yield: { _ in }
+        )
+        guard case .finishWithToolCall(let invocations) = finish else {
+            Issue.record("Expected parallel tool-call finish, got \(finish)")
+            return
+        }
+        #expect(invocations.map(\.toolName) == ["toolA", "toolB"])
+        #expect(invocations.map(\.toolCallId) == ["a", "b"])
+        #expect(invocations.map(\.jsonArguments) == [#"{"x":1}"#, #"{"y":2}"#])
+
+        // The finish-by-throw shape must be the batch error for >1 call so the
+        // agent loop's `catch let invs as ServiceToolInvocations` sees them all.
+        let thrown = RemoteProviderService.toolInvocationFinishError(invocations)
+        #expect((thrown as? ServiceToolInvocations)?.invocations.count == 2)
+    }
+
     @Test func parser_lenientFullBodyMessageToolCallFinishesWithInvocation() throws {
         var state = RemoteProviderService.StreamingState(stopSequences: [], trackContent: false)
         var yielded: [String] = []
@@ -164,10 +204,12 @@ struct OpenAICompatibleStreamParserTests {
             yield: { yielded.append($0) }
         )
 
-        guard case .finishWithToolCall(let invocation) = outcome else {
+        guard case .finishWithToolCall(let invocations) = outcome, let invocation = invocations.first
+        else {
             Issue.record("Expected full-body tool call, got \(outcome)")
             return
         }
+        #expect(invocations.count == 1)
         #expect(invocation.toolName == "sandbox_write_file")
         #expect(invocation.toolCallId == "call_1")
         #expect(invocation.jsonArguments == #"{"path":"tetris.html"}"#)
@@ -238,6 +280,78 @@ struct OpenAICompatibleStreamParserTests {
             return
         }
         #expect(yielded == ["partial"])
+    }
+
+    @Test func parser_routesMistralStructuredThinkingContentToReasoning() throws {
+        var state = RemoteProviderService.StreamingState(stopSequences: [], trackContent: false)
+        var yielded: [String] = []
+
+        // Thinking phase: Mistral streams `content` as an array of chunks.
+        let thinking = try OpenAICompatibleStreamParser.handleEvent(
+            jsonData: Data(
+                #"{"id":"x","object":"chat.completion.chunk","created":0,"model":"mistral-medium-3.5","choices":[{"index":0,"delta":{"content":[{"type":"thinking","thinking":[{"type":"text","text":"let me think"}]}]},"finish_reason":null}]}"#
+                    .utf8),
+            options: .strict,
+            state: &state,
+            yield: { yielded.append($0) }
+        )
+        guard case .continue = thinking else {
+            Issue.record("Expected thinking chunk to continue, got \(thinking)")
+            return
+        }
+
+        // Transition chunk: a closing think chunk plus the first text chunk.
+        _ = try OpenAICompatibleStreamParser.handleEvent(
+            jsonData: Data(
+                #"{"id":"x","object":"chat.completion.chunk","created":0,"model":"mistral-medium-3.5","choices":[{"index":0,"delta":{"content":[{"type":"thinking","thinking":[{"type":"text","text":" done"}]},{"type":"text","text":"Answer"}]},"finish_reason":null}]}"#
+                    .utf8),
+            options: .strict,
+            state: &state,
+            yield: { yielded.append($0) }
+        )
+
+        // Answer phase: `content` becomes a plain string.
+        _ = try OpenAICompatibleStreamParser.handleEvent(
+            jsonData: Data(#"{"id":"x","object":"chat.completion.chunk","created":0,"model":"mistral-medium-3.5","choices":[{"index":0,"delta":{"content":" text"},"finish_reason":null}]}"#.utf8),
+            options: .strict,
+            state: &state,
+            yield: { yielded.append($0) }
+        )
+
+        let reasoning = yielded.compactMap { StreamingReasoningHint.decode($0) }
+        let visible = yielded.filter { StreamingReasoningHint.decode($0) == nil }
+        #expect(reasoning == ["let me think", " done"])
+        #expect(visible == ["Answer", " text"])
+    }
+
+    @Test func parser_routesSeparateReasoningContentFieldToReasoning() throws {
+        // Regression guard for the flexible `DeltaContent` decoder: the
+        // DeepSeek/Qwen/vLLM separate `reasoning_content` string field must
+        // still route to the reasoning channel and plain `content` to visible.
+        var state = RemoteProviderService.StreamingState(stopSequences: [], trackContent: false)
+        var yielded: [String] = []
+
+        _ = try OpenAICompatibleStreamParser.handleEvent(
+            jsonData: Data(
+                #"{"id":"x","object":"chat.completion.chunk","created":0,"model":"deepseek-reasoner","choices":[{"index":0,"delta":{"reasoning_content":"thinking"},"finish_reason":null}]}"#
+                    .utf8),
+            options: .strict,
+            state: &state,
+            yield: { yielded.append($0) }
+        )
+        _ = try OpenAICompatibleStreamParser.handleEvent(
+            jsonData: Data(
+                #"{"id":"x","object":"chat.completion.chunk","created":0,"model":"deepseek-reasoner","choices":[{"index":0,"delta":{"content":"answer"},"finish_reason":null}]}"#
+                    .utf8),
+            options: .strict,
+            state: &state,
+            yield: { yielded.append($0) }
+        )
+
+        let reasoning = yielded.compactMap { StreamingReasoningHint.decode($0) }
+        let visible = yielded.filter { StreamingReasoningHint.decode($0) == nil }
+        #expect(reasoning == ["thinking"])
+        #expect(visible == ["answer"])
     }
 
     private func dispatchEvents(

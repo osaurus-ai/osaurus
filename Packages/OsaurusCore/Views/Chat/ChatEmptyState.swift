@@ -124,6 +124,26 @@ struct ChatEmptyState: View {
     let onUseFoundation: (() -> Void)?
     let onQuickAction: (String) -> Void
     let onOpenOnboarding: (() -> Void)?
+    /// The agent's pinned local default model while its download is still in
+    /// flight / paused / failed (see `ChatSession.pendingLocalSetupModelId`).
+    /// Non-nil replaces the regular ready state with a focused setup card,
+    /// including while the temporary Cloud model is active, so local download
+    /// progress never disappears.
+    var pendingLocalModelId: String? = nil
+    /// Display name of the temporary Router model already selected while local
+    /// setup runs (DeepSeek V4 Flash for first-run). Nil means Cloud still
+    /// needs to connect.
+    var temporaryCloudModelName: String? = nil
+    /// Automatic temporary Osaurus Cloud selection while the pinned local
+    /// download finishes. Async because the Router may need to connect on
+    /// demand; false lets the setup card surface a retry.
+    var onUseHostedWhilePending: (() async -> Bool)? = nil
+    /// Retry the provider/Router connection from the no-models recovery
+    /// state. nil hides the Retry action.
+    var onRetryConnection: (() async -> Void)? = nil
+    /// Open the providers management surface from the no-models recovery
+    /// state. nil hides the Connect-a-provider action.
+    var onOpenProviders: (() -> Void)? = nil
     var activeDiscoveredAgent: DiscoveredAgent? = nil
     var activeRelayAgent: PairedRelayAgent? = nil
     /// Mascot avatar id of the active remote agent (Mode 2), resolved from its
@@ -306,12 +326,23 @@ struct ChatEmptyState: View {
                 VStack(spacing: 0) {
                     Spacer(minLength: 20)
 
-                    if hasModels {
+                    if let pendingModelId = pendingLocalModelId {
+                        ChatEmptyStateLocalSetup(
+                            modelId: pendingModelId,
+                            hasAppeared: hasAppeared,
+                            temporaryCloudModelName: temporaryCloudModelName,
+                            onUseHostedMeanwhile: onUseHostedWhilePending,
+                            onOpenModelManager: onOpenModelManager
+                        )
+                    } else if hasModels {
                         readyState
                     } else {
                         ChatEmptyStateNoModels(
                             hasAppeared: hasAppeared,
-                            onOpenOnboarding: onOpenOnboarding
+                            onOpenOnboarding: onOpenOnboarding,
+                            onOpenModelManager: onOpenModelManager,
+                            onOpenProviders: onOpenProviders,
+                            onRetryConnection: onRetryConnection
                         )
                     }
 
@@ -566,14 +597,431 @@ struct ChatEmptyState: View {
     }
 }
 
+// MARK: - Shared download formatting
+
+/// "1.2 GB / 7.5 GB · 24 MB/s · 4m 12s left" style status line for an
+/// in-flight download, or nil when no metrics are known yet. Shared by the
+/// no-models and pending-local-setup empty states.
+@MainActor
+private func downloadMetricsText(for modelId: String) -> String? {
+    guard let metrics = ModelManager.shared.downloadMetrics[modelId] else { return nil }
+
+    var parts: [String] = []
+
+    if let received = metrics.bytesReceived, let total = metrics.totalBytes {
+        parts.append("\(formatDownloadBytes(received)) / \(formatDownloadBytes(total))")
+    }
+
+    if let speed = metrics.bytesPerSecond {
+        parts.append("\(formatDownloadBytes(Int64(speed)))/s")
+    }
+
+    if let eta = metrics.etaSeconds, eta > 0 && eta < 3600 {
+        let minutes = Int(eta) / 60
+        let seconds = Int(eta) % 60
+        if minutes > 0 {
+            parts.append(String(format: L("%dm %ds left"), minutes, seconds))
+        } else {
+            parts.append(String(format: L("%ds left"), seconds))
+        }
+    }
+
+    return parts.isEmpty ? nil : parts.joined(separator: " · ")
+}
+
+private func formatDownloadBytes(_ bytes: Int64) -> String {
+    let formatter = ByteCountFormatter()
+    formatter.countStyle = .file
+    formatter.allowedUnits = [.useGB, .useMB]
+    formatter.includesUnit = true
+    return formatter.string(fromByteCount: bytes)
+}
+
+/// Friendly display name for a model id, resolved from the catalog.
+@MainActor
+private func displayName(forModelId modelId: String) -> String {
+    ModelManager.shared.availableModels.first { $0.id == modelId }?.simplifiedName
+        ?? ModelManager.shared.suggestedModels.first { $0.id == modelId }?.simplifiedName
+        ?? modelId
+}
+
+/// Kick a (re)download for a model id. Uses the onboarding proxy route —
+/// these retries happen right after onboarding, before the user has any HF
+/// token; a proxy failure silently falls back to the anonymous HF path.
+@MainActor
+private func restartDownload(forModelId modelId: String) {
+    let model =
+        ModelManager.shared.availableModels.first { $0.id == modelId }
+        ?? ModelManager.shared.suggestedModels.first { $0.id == modelId }
+    guard let model else { return }
+    ModelManager.shared.downloadModel(model, route: .onboardingProxy)
+}
+
+/// Default agent avatar for setup/no-models states, where there is no active
+/// chat agent to anchor to.
+@MainActor
+private func defaultWelcomeAvatar() -> some View {
+    let agent =
+        AgentManager.shared.agents.first(where: { $0.id == Agent.defaultId })
+        ?? Agent.default
+    return HeroAgentAvatar(agent: agent)
+}
+
+// MARK: - Secondary action pill (setup / recovery states)
+
+/// Quiet capsule-outline action used by the setup and recovery empty states,
+/// where several same-weight choices sit side by side (the gradient
+/// `GetStartedButton` stays reserved for the single primary action).
+private struct EmptyStateSecondaryButton: View {
+    let title: LocalizedStringKey
+    var icon: String? = nil
+    let action: () -> Void
+
+    @State private var isHovered = false
+    @Environment(\.theme) private var theme
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 6) {
+                if let icon {
+                    Image(systemName: icon)
+                        .font(.system(size: 11, weight: .semibold))
+                }
+                Text(title, bundle: .module)
+                    .font(.system(size: 13, weight: .medium))
+            }
+            .foregroundColor(isHovered ? theme.primaryText : theme.secondaryText)
+            .padding(.horizontal, 16)
+            .padding(.vertical, 9)
+            .background(
+                Capsule()
+                    .fill(isHovered ? theme.secondaryBackground : Color.clear)
+                    .overlay(
+                        Capsule().strokeBorder(theme.primaryBorder.opacity(0.6), lineWidth: 1)
+                    )
+            )
+            .contentShape(Capsule())
+        }
+        .buttonStyle(.plain)
+        .onHover { hovering in
+            withAnimation(theme.animationQuick()) { isHovered = hovering }
+        }
+    }
+}
+
+// MARK: - Pending Local Setup (models exist, but the chosen one is arriving)
+
+/// Post-onboarding setup state for the local-first path. The pinned private
+/// model is still downloading (or paused / failed), so the included temporary
+/// Osaurus Cloud model is connected automatically. It keeps local progress and
+/// Cloud readiness in one place until the downloaded model takes over.
+private struct ChatEmptyStateLocalSetup: View {
+    let modelId: String
+    let hasAppeared: Bool
+    let temporaryCloudModelName: String?
+    /// Automatic temporary Osaurus Cloud selection while local setup runs.
+    /// Returns false when the Router couldn't be reached; the card then shows
+    /// a retry rather than silently choosing another provider. nil hides the
+    /// connection status entirely.
+    let onUseHostedMeanwhile: (() async -> Bool)?
+    let onOpenModelManager: () -> Void
+
+    @ObservedObject private var modelManager = ModelManager.shared
+    @Environment(\.theme) private var theme
+
+    /// Lifecycle of the automatic Cloud handoff: idle → connecting → ready
+    /// (reported by `temporaryCloudModelName`) | failed (retry stays).
+    private enum CloudBridgePhase: Equatable {
+        case idle
+        case connecting
+        case failed
+    }
+
+    @State private var bridgePhase: CloudBridgePhase = .idle
+
+    private var downloadState: DownloadState {
+        modelManager.downloadStates[modelId] ?? .notStarted
+    }
+
+    private var modelName: String {
+        displayName(forModelId: modelId)
+    }
+
+    var body: some View {
+        VStack(spacing: 16) {
+            defaultWelcomeAvatar()
+                .opacity(hasAppeared ? 1 : 0)
+                .scaleEffect(hasAppeared ? 1 : 0.85)
+                .animation(theme.springAnimation().delay(0.0), value: hasAppeared)
+
+            VStack(spacing: 6) {
+                Text(headline, bundle: .module)
+                    .font(theme.font(size: CGFloat(theme.titleSize) + 4, weight: .semibold))
+                    .foregroundColor(theme.primaryText)
+                    .multilineTextAlignment(.center)
+                    .lineLimit(2)
+                    .opacity(hasAppeared ? 1 : 0)
+                    .offset(y: hasAppeared ? 0 : 20)
+                    .animation(theme.springAnimation().delay(0.1), value: hasAppeared)
+
+                Text(subtitle, bundle: .module)
+                    .font(theme.font(size: CGFloat(theme.bodySize) + 2))
+                    .foregroundColor(theme.secondaryText)
+                    .multilineTextAlignment(.center)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .opacity(hasAppeared ? 1 : 0)
+                    .offset(y: hasAppeared ? 0 : 15)
+                    .animation(theme.springAnimation().delay(0.17), value: hasAppeared)
+            }
+            .frame(maxWidth: 560)
+
+            setupPanel
+                .opacity(hasAppeared ? 1 : 0)
+                .offset(y: hasAppeared ? 0 : 12)
+                .animation(theme.springAnimation().delay(0.25), value: hasAppeared)
+        }
+        .padding(.horizontal, 40)
+        .task {
+            guard temporaryCloudModelName == nil else { return }
+            guard bridgePhase == .idle else { return }
+            startCloudBridge()
+        }
+    }
+
+    /// One visual object for the whole transition: local download on top,
+    /// temporary Cloud readiness below. This replaces the old loose progress
+    /// bar + tiny caption, which looked disconnected in the large empty state.
+    private var setupPanel: some View {
+        let shape = RoundedRectangle(cornerRadius: 16, style: .continuous)
+        return VStack(spacing: 14) {
+            downloadStatus
+            if onUseHostedMeanwhile != nil {
+                Rectangle()
+                    .fill(theme.primaryBorder.opacity(0.35))
+                    .frame(height: 1)
+                cloudStatus
+            }
+        }
+        .padding(18)
+        .frame(maxWidth: 480)
+        .background(shape.fill(theme.secondaryBackground.opacity(theme.isDark ? 0.42 : 0.62)))
+        .overlay(shape.strokeBorder(theme.primaryBorder.opacity(0.45), lineWidth: 1))
+        .shadow(color: theme.shadowColor.opacity(0.07), radius: 14, y: 5)
+        .animation(theme.springAnimation(), value: bridgePhase)
+    }
+
+    @ViewBuilder
+    private var downloadStatus: some View {
+        switch downloadState {
+        case .downloading(let progress):
+            VStack(spacing: 10) {
+                HStack(spacing: 10) {
+                    statusIcon("arrow.down", color: theme.accentColor)
+                    Text(L("Downloading \(modelName)"))
+                        .font(theme.font(size: 13, weight: .semibold))
+                        .foregroundColor(theme.primaryText)
+                        .lineLimit(1)
+                    Spacer(minLength: 8)
+                    Text("\(Int(progress * 100))%", bundle: .module)
+                        .font(theme.font(size: 12, weight: .semibold).monospaced())
+                        .foregroundColor(theme.secondaryText)
+                }
+                progressTrack(progress)
+                if let metrics = downloadMetricsText(for: modelId) {
+                    Text(metrics)
+                        .font(theme.font(size: 11))
+                        .foregroundColor(theme.tertiaryText)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+            }
+
+        case .paused(let progress):
+            VStack(spacing: 10) {
+                HStack(spacing: 10) {
+                    statusIcon("pause.fill", color: theme.warningColor)
+                    Text("Download paused", bundle: .module)
+                        .font(theme.font(size: 13, weight: .semibold))
+                        .foregroundColor(theme.primaryText)
+                    Spacer(minLength: 8)
+                    Text("\(Int(progress * 100))%", bundle: .module)
+                        .font(theme.font(size: 12, weight: .semibold).monospaced())
+                        .foregroundColor(theme.secondaryText)
+                }
+                progressTrack(progress)
+                HStack {
+                    Spacer()
+                    EmptyStateSecondaryButton(
+                        title: "Resume download",
+                        icon: "play.fill"
+                    ) {
+                        modelManager.resumeDownload(modelId)
+                    }
+                }
+            }
+
+        case .failed(let error):
+            VStack(alignment: .leading, spacing: 10) {
+                HStack(spacing: 10) {
+                    statusIcon("exclamationmark", color: theme.warningColor)
+                    Text("Local download needs attention", bundle: .module)
+                        .font(theme.font(size: 13, weight: .semibold))
+                        .foregroundColor(theme.primaryText)
+                }
+                Text(error)
+                    .font(theme.font(size: 11))
+                    .foregroundColor(theme.secondaryText)
+                    .fixedSize(horizontal: false, vertical: true)
+                HStack(spacing: 8) {
+                    EmptyStateSecondaryButton(title: "Try again", icon: "arrow.clockwise") {
+                        restartDownload(forModelId: modelId)
+                    }
+                    EmptyStateSecondaryButton(
+                        title: "Open Models",
+                        icon: "square.grid.2x2",
+                        action: onOpenModelManager
+                    )
+                }
+            }
+
+        case .completed:
+            HStack(spacing: 10) {
+                statusIcon("checkmark", color: theme.successColor)
+                Text("Private model ready", bundle: .module)
+                    .font(theme.font(size: 13, weight: .semibold))
+                    .foregroundColor(theme.primaryText)
+                Spacer()
+            }
+
+        case .notStarted:
+            HStack(spacing: 10) {
+                ProgressView().controlSize(.small)
+                Text("Preparing local download…", bundle: .module)
+                    .font(theme.font(size: 13, weight: .semibold))
+                    .foregroundColor(theme.primaryText)
+                Spacer()
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var cloudStatus: some View {
+        if let cloudModel = temporaryCloudModelName {
+            HStack(alignment: .top, spacing: 10) {
+                statusIcon("checkmark", color: theme.successColor)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Ready to chat now", bundle: .module)
+                        .font(theme.font(size: 12, weight: .semibold))
+                        .foregroundColor(theme.primaryText)
+                    Text(L("\(cloudModel) on Osaurus Cloud · switches to local automatically"))
+                        .font(theme.font(size: 11))
+                        .foregroundColor(theme.tertiaryText)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                Spacer(minLength: 0)
+            }
+        } else {
+            switch bridgePhase {
+            case .idle, .connecting:
+                HStack(spacing: 10) {
+                    ProgressView().controlSize(.small)
+                    Text("Getting Osaurus Cloud ready…", bundle: .module)
+                        .font(theme.font(size: 12, weight: .medium))
+                        .foregroundColor(theme.secondaryText)
+                    Spacer()
+                }
+            case .failed:
+                HStack(spacing: 10) {
+                    statusIcon("exclamationmark", color: theme.warningColor)
+                    VStack(alignment: .leading, spacing: 5) {
+                        Text("Couldn't reach Osaurus Cloud", bundle: .module)
+                            .font(theme.font(size: 12, weight: .semibold))
+                            .foregroundColor(theme.primaryText)
+                        EmptyStateSecondaryButton(
+                            title: "Try again",
+                            icon: "arrow.clockwise",
+                            action: startCloudBridge
+                        )
+                    }
+                    Spacer()
+                }
+            }
+        }
+    }
+
+    private func statusIcon(_ systemName: String, color: Color) -> some View {
+        ZStack {
+            Circle().fill(color.opacity(0.14))
+            Image(systemName: systemName)
+                .font(.system(size: 9, weight: .bold))
+                .foregroundColor(color)
+        }
+        .frame(width: 22, height: 22)
+    }
+
+    private func progressTrack(_ progress: Double) -> some View {
+        GeometryReader { proxy in
+            let clamped = min(max(progress, 0), 1)
+            ZStack(alignment: .leading) {
+                Capsule().fill(theme.primaryBorder.opacity(0.25))
+                Capsule()
+                    .fill(
+                        LinearGradient(
+                            colors: [theme.accentColor, theme.accentColor.opacity(0.72)],
+                            startPoint: .leading,
+                            endPoint: .trailing
+                        )
+                    )
+                    .frame(width: proxy.size.width * clamped)
+            }
+        }
+        .frame(height: 7)
+        .animation(.easeOut(duration: 0.25), value: progress)
+    }
+
+    private func startCloudBridge() {
+        guard bridgePhase != .connecting, let onUseHostedMeanwhile else { return }
+        bridgePhase = .connecting
+        Task {
+            let succeeded = await onUseHostedMeanwhile()
+            // On success the parent passes the selected Cloud model back into
+            // this panel; only failure needs a separate recovery state.
+            bridgePhase = succeeded ? .idle : .failed
+        }
+    }
+
+    private var headline: LocalizedStringKey {
+        switch downloadState {
+        case .failed:
+            return "Your private model needs attention"
+        case .paused:
+            return "Your private model is paused"
+        case .downloading, .completed, .notStarted:
+            return "The brain you picked is on the way"
+        }
+    }
+
+    private var subtitle: LocalizedStringKey {
+        switch downloadState {
+        case .failed, .paused:
+            return "You can keep chatting with Osaurus Cloud."
+        case .downloading, .completed, .notStarted:
+            return "Start chatting now while Osaurus finishes setting up local AI."
+        }
+    }
+}
+
 // MARK: - No-Models / Downloading Wrapper (isolates ModelManager observation)
 
 private struct ChatEmptyStateNoModels: View {
     let hasAppeared: Bool
     let onOpenOnboarding: (() -> Void)?
+    var onOpenModelManager: (() -> Void)? = nil
+    var onOpenProviders: (() -> Void)? = nil
+    var onRetryConnection: (() async -> Void)? = nil
 
     @ObservedObject private var modelManager = ModelManager.shared
     @Environment(\.theme) private var theme
+    @State private var isRetryingConnection = false
 
     /// Active download info (model ID and progress) if any download is in progress
     private var activeDownload: (modelId: String, progress: Double)? {
@@ -588,60 +1036,34 @@ private struct ChatEmptyStateNoModels: View {
     private var isDownloading: Bool { activeDownload != nil }
     private var downloadProgress: Double? { activeDownload?.progress }
 
+    /// A download that gave up (no model landed, nothing else to chat on).
+    /// Surfaced with a retry so the user isn't dumped back into the wizard.
+    private var failedDownload: (modelId: String, message: String)? {
+        for (modelId, state) in modelManager.downloadStates {
+            if case .failed(let error) = state {
+                return (modelId, error)
+            }
+        }
+        return nil
+    }
+
     private var downloadingModelName: String? {
         guard let modelId = activeDownload?.modelId else { return nil }
         return modelManager.availableModels.first { $0.id == modelId }?.name
             ?? modelManager.suggestedModels.first { $0.id == modelId }?.name
     }
 
-    private var downloadProgressText: String? {
-        guard let modelId = activeDownload?.modelId,
-            let metrics = modelManager.downloadMetrics[modelId]
-        else { return nil }
-
-        var parts: [String] = []
-
-        if let received = metrics.bytesReceived, let total = metrics.totalBytes {
-            parts.append("\(formatBytes(received)) / \(formatBytes(total))")
-        }
-
-        if let speed = metrics.bytesPerSecond {
-            parts.append("\(formatBytes(Int64(speed)))/s")
-        }
-
-        if let eta = metrics.etaSeconds, eta > 0 && eta < 3600 {
-            let minutes = Int(eta) / 60
-            let seconds = Int(eta) % 60
-            if minutes > 0 {
-                parts.append(String(format: L("%dm %ds left"), minutes, seconds))
-            } else {
-                parts.append(String(format: L("%ds left"), seconds))
-            }
-        }
-
-        return parts.isEmpty ? nil : parts.joined(separator: " · ")
-    }
-
-    private func formatBytes(_ bytes: Int64) -> String {
-        let formatter = ByteCountFormatter()
-        formatter.countStyle = .file
-        formatter.allowedUnits = [.useGB, .useMB]
-        formatter.includesUnit = true
-        return formatter.string(fromByteCount: bytes)
-    }
-
-    /// Default agent avatar used for the no-models / downloading states,
-    /// where there is no active chat agent to anchor to.
-    private var welcomeAvatar: some View {
-        let agent =
-            AgentManager.shared.agents.first(where: { $0.id == Agent.defaultId })
-            ?? Agent.default
-        return HeroAgentAvatar(agent: agent)
-    }
-
     var body: some View {
         if isDownloading {
             downloadingState
+        } else if let failure = failedDownload {
+            failedDownloadState(failure)
+        } else if !OnboardingService.shared.shouldShowOnboarding {
+            // Onboarding finished but no model is reachable — most commonly
+            // the managed Osaurus connection failed (offline, server hiccup).
+            // Recover in place: retry, go local, or connect a provider —
+            // never send the user back through the whole wizard.
+            connectionRecoveryState
         } else {
             noModelsState
         }
@@ -649,7 +1071,7 @@ private struct ChatEmptyStateNoModels: View {
 
     private var noModelsState: some View {
         VStack(spacing: 14) {
-            welcomeAvatar
+            defaultWelcomeAvatar()
                 .opacity(hasAppeared ? 1 : 0)
                 .scaleEffect(hasAppeared ? 1 : 0.85)
                 .animation(theme.springAnimation().delay(0.0), value: hasAppeared)
@@ -683,9 +1105,122 @@ private struct ChatEmptyStateNoModels: View {
         .padding(.horizontal, 40)
     }
 
+    /// Recoverable first-chat state for a completed onboarding whose brain
+    /// isn't reachable (e.g. the Osaurus connection failed while offline).
+    private var connectionRecoveryState: some View {
+        VStack(spacing: 14) {
+            defaultWelcomeAvatar()
+                .opacity(hasAppeared ? 1 : 0)
+                .scaleEffect(hasAppeared ? 1 : 0.85)
+                .animation(theme.springAnimation().delay(0.0), value: hasAppeared)
+
+            VStack(spacing: 8) {
+                Text("Couldn't reach your AI", bundle: .module)
+                    .font(theme.font(size: CGFloat(theme.titleSize) + 4, weight: .semibold))
+                    .foregroundColor(theme.primaryText)
+                    .opacity(hasAppeared ? 1 : 0)
+                    .offset(y: hasAppeared ? 0 : 20)
+                    .animation(theme.springAnimation().delay(0.1), value: hasAppeared)
+
+                Text(
+                    "Osaurus couldn't connect to a model just now. Retry the connection, run a private model on this Mac, or use your own provider.",
+                    bundle: .module
+                )
+                .font(theme.font(size: CGFloat(theme.bodySize) + 2))
+                .foregroundColor(theme.secondaryText)
+                .multilineTextAlignment(.center)
+                .opacity(hasAppeared ? 1 : 0)
+                .offset(y: hasAppeared ? 0 : 15)
+                .animation(theme.springAnimation().delay(0.17), value: hasAppeared)
+            }
+            .frame(maxWidth: 420)
+
+            VStack(spacing: 10) {
+                if onRetryConnection != nil {
+                    GetStartedButton(
+                        title: isRetryingConnection ? "Retrying…" : "Retry connection"
+                    ) {
+                        retryConnection()
+                    }
+                }
+                HStack(spacing: 10) {
+                    if let onOpenModelManager {
+                        EmptyStateSecondaryButton(
+                            title: "Run a local model",
+                            icon: "cpu",
+                            action: onOpenModelManager
+                        )
+                    }
+                    if let onOpenProviders {
+                        EmptyStateSecondaryButton(
+                            title: "Connect a provider",
+                            icon: "key.fill",
+                            action: onOpenProviders
+                        )
+                    }
+                }
+            }
+            .opacity(hasAppeared ? 1 : 0)
+            .offset(y: hasAppeared ? 0 : 12)
+            .animation(theme.springAnimation().delay(0.25), value: hasAppeared)
+        }
+        .padding(.horizontal, 40)
+    }
+
+    private func retryConnection() {
+        guard !isRetryingConnection, let onRetryConnection else { return }
+        isRetryingConnection = true
+        Task {
+            await onRetryConnection()
+            isRetryingConnection = false
+        }
+    }
+
+    /// The only download that could have produced a model failed and nothing
+    /// else is available — surface the error with a way forward in place.
+    private func failedDownloadState(_ failure: (modelId: String, message: String)) -> some View {
+        VStack(spacing: 14) {
+            defaultWelcomeAvatar()
+                .opacity(hasAppeared ? 1 : 0)
+                .scaleEffect(hasAppeared ? 1 : 0.85)
+                .animation(theme.springAnimation().delay(0.0), value: hasAppeared)
+
+            VStack(spacing: 8) {
+                Text("Download hit a snag", bundle: .module)
+                    .font(theme.font(size: CGFloat(theme.titleSize) + 4, weight: .semibold))
+                    .foregroundColor(theme.primaryText)
+                    .opacity(hasAppeared ? 1 : 0)
+                    .offset(y: hasAppeared ? 0 : 20)
+                    .animation(theme.springAnimation().delay(0.1), value: hasAppeared)
+
+                Text(failure.message)
+                    .font(theme.font(size: CGFloat(theme.bodySize) + 2))
+                    .foregroundColor(theme.secondaryText)
+                    .multilineTextAlignment(.center)
+                    .opacity(hasAppeared ? 1 : 0)
+                    .offset(y: hasAppeared ? 0 : 15)
+                    .animation(theme.springAnimation().delay(0.17), value: hasAppeared)
+            }
+            .frame(maxWidth: 420)
+
+            HStack(spacing: 10) {
+                GetStartedButton(title: "Try again") {
+                    restartDownload(forModelId: failure.modelId)
+                }
+                if let onOpenModelManager {
+                    EmptyStateSecondaryButton(title: "Open Models", action: onOpenModelManager)
+                }
+            }
+            .opacity(hasAppeared ? 1 : 0)
+            .offset(y: hasAppeared ? 0 : 12)
+            .animation(theme.springAnimation().delay(0.25), value: hasAppeared)
+        }
+        .padding(.horizontal, 40)
+    }
+
     private var downloadingState: some View {
         VStack(spacing: 14) {
-            welcomeAvatar
+            defaultWelcomeAvatar()
                 .opacity(hasAppeared ? 1 : 0)
                 .scaleEffect(hasAppeared ? 1 : 0.85)
                 .animation(theme.springAnimation().delay(0.0), value: hasAppeared)
@@ -710,7 +1245,7 @@ private struct ChatEmptyStateNoModels: View {
             }
             .frame(maxWidth: 340)
 
-            if let progress = downloadProgress {
+            if let progress = downloadProgress, let modelId = activeDownload?.modelId {
                 VStack(spacing: 10) {
                     ProgressView(value: progress)
                         .progressViewStyle(.linear)
@@ -718,7 +1253,7 @@ private struct ChatEmptyStateNoModels: View {
                         .tint(theme.accentColor)
 
                     HStack(spacing: 0) {
-                        if let text = downloadProgressText {
+                        if let text = downloadMetricsText(for: modelId) {
                             Text(text)
                                 .font(theme.font(size: 12))
                                 .foregroundColor(theme.tertiaryText)
@@ -809,6 +1344,7 @@ struct QuickActionButton: View {
 // MARK: - Get Started Button
 
 private struct GetStartedButton: View {
+    var title: LocalizedStringKey = "Finish setup"
     let action: () -> Void
 
     @State private var isHovered = false
@@ -817,7 +1353,7 @@ private struct GetStartedButton: View {
     var body: some View {
         Button(action: action) {
             HStack(spacing: 8) {
-                Text("Finish setup", bundle: .module)
+                Text(title, bundle: .module)
                     .font(.system(size: 14, weight: .semibold))
 
                 Image(systemName: "arrow.right")

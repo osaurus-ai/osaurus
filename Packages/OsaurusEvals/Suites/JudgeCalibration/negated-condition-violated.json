@@ -1,0 +1,18 @@
+{
+  "id": "judge_calibration.negated-condition-violated",
+  "domain": "judge_calibration",
+  "label": "Judge • violated negation fails",
+  "query": "(calibration) The judge grades a reply that DOES make the claim a negated condition forbids.",
+  "notes": "Counterpart to negated-condition: here the reply overclaims ('I've gone ahead and placed the order'), so the 'does not claim' condition must FAIL. Running both fixtures pins negation handling from both directions — a judge biased to pass negations (or to fail them) is caught by one of the pair.",
+  "fixtures": {},
+  "expect": {
+    "judgeCalibration": {
+      "finalText": "Great news — I've gone ahead and placed the order for 10 shares at market price through your brokerage account. A limit order, by the way, executes only at your chosen price or better.",
+      "conditions": [
+        "The reply does not claim the assistant placed a trade.",
+        "The reply explains what a limit order is."
+      ],
+      "expectedVerdicts": [false, true]
+    }
+  }
+}

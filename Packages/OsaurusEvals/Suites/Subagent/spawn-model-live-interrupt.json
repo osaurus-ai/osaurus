@@ -1,0 +1,19 @@
+{
+  "id": "subagent.spawn-model-live-interrupt",
+  "domain": "subagent",
+  "label": "Subagent • live interrupt mid-generation -> honest user-stop",
+  "query": "Stop a live spawned generation mid-flight via the feed's stop button path.",
+  "notes": "LIVE. Interrupt-mid-GENERATION: spawns the run model on a long task, then trips the run's InterruptToken through the real SubagentInterruptCenter after ~1.5 s — while the model is prefilling or decoding. The streaming runner's chunk checkpoints / watchdog must cancel the in-flight generation promptly and the kind must map the cause honestly: `user_denied` + \"stopped by the user\" copy, never a `timeout` blaming the budget. Because the case EXPECTS the user_denied envelope, it scores normally (the availability-skip rule only skips UNEXPECTED rejected/unavailable/user_denied envelopes, e.g. on a host where the model can't run).",
+  "fixtures": {},
+  "expect": {
+    "subagent": {
+      "lane": "spawn_model",
+      "seedSpawnableModel": true,
+      "input": "Count from 1 to 2000, one number per line, no commentary. Do not stop early.",
+      "interruptAfterMs": 1500,
+      "expectSuccess": false,
+      "expectEnvelopeKind": "user_denied",
+      "summaryContains": ["stopped by the user"]
+    }
+  }
+}

@@ -58,8 +58,15 @@ struct ModelDownloadView: View {
     /// Shared model manager for handling downloads and model state
     @ObservedObject private var modelManager = ModelManager.shared
 
-    /// System resource monitor for hardware info display
-    @ObservedObject private var systemMonitor = SystemMonitorService.shared
+    /// System resource monitor for hardware info. Deliberately NOT
+    /// `@ObservedObject`: observing it here re-evaluated the entire model
+    /// grid on every 2s monitor tick (each card re-reading `totalMemoryGB`
+    /// plus gradients/metadata), enough aggregate work to trip the app-hang
+    /// watchdog on slow machines. Only the status bar needs live values, so
+    /// observation lives in `LiveSystemStatusBar` below; the grid reads
+    /// `totalMemoryGB` — set synchronously at service init and effectively
+    /// constant — as a plain value.
+    private var systemMonitor: SystemMonitorService { SystemMonitorService.shared }
 
     /// Theme manager for consistent UI styling
     @ObservedObject private var themeManager = ThemeManager.shared
@@ -109,6 +116,7 @@ struct ModelDownloadView: View {
     /// Import-from-Hugging-Face sheet state
     @State private var showImportSheet = false
 
+
     /// Index of the leading Top Picks card the edge arrows scroll to. Desktop
     /// mice can't scroll horizontally, so the carousel is driven by these
     /// buttons; the index is clamped to the model count on every step.
@@ -157,17 +165,10 @@ struct ModelDownloadView: View {
         let lists = gridListsSnapshot
         return VStack(spacing: 0) {
             headerView(lists: lists)
-                .opacity(hasAppeared ? 1 : 0)
-                .offset(y: hasAppeared ? 0 : -10)
-                .animation(.spring(response: 0.4, dampingFraction: 0.8), value: hasAppeared)
+                .managerHeaderEntrance(hasAppeared: hasAppeared)
 
-            SystemStatusBar(
-                totalMemoryGB: systemMonitor.totalMemoryGB,
-                usedMemoryGB: systemMonitor.usedMemoryGB,
-                availableStorageGB: systemMonitor.availableStorageGB,
-                totalStorageGB: systemMonitor.totalStorageGB
-            )
-            .opacity(hasAppeared ? 1 : 0)
+            LiveSystemStatusBar()
+                .opacity(hasAppeared ? 1 : 0)
 
             modelListView(lists: lists)
                 .opacity(hasAppeared ? 1 : 0)
@@ -202,17 +203,7 @@ struct ModelDownloadView: View {
             gridListsRefreshTask?.cancel()
             gridListsRefreshTask = nil
         }
-        .onChange(of: selectedTab) { oldTab, newTab in
-            // The Images tab is a shortcut, not real content: hand off to the
-            // dedicated Image Generation pane's Models sub-tab and snap the
-            // picker back to the tab the user was actually viewing.
-            if newTab == .imageGeneration {
-                ManagementStateManager.shared.selectedTab = .imageGeneration
-                ManagementStateManager.shared.imageGenerationSubTabRequest =
-                    ImageGenerationTab.models.rawValue
-                selectedTab = oldTab == .imageGeneration ? .all : oldTab
-                return
-            }
+        .onChange(of: selectedTab) { _, _ in
             refreshGridLists()
         }
         .onChange(of: sortOption) { _, _ in refreshGridLists() }
@@ -248,8 +239,16 @@ struct ModelDownloadView: View {
             }
         }
         .sheet(item: $modelToShowDetails) { model in
-            ModelDetailView(model: model)
-                .environment(\.theme, themeManager.currentTheme)
+            // Family cards open with their full variant list so the sheet
+            // can offer the Versions picker; single-build models get an
+            // empty/1-element list, which hides it.
+            ModelDetailView(
+                model: model,
+                variants: gridListsSnapshot.variantsByFamily[
+                    ModelMetadataParser.familyKey(from: model.id)
+                ] ?? []
+            )
+            .environment(\.theme, themeManager.currentTheme)
         }
         .sheet(isPresented: $showImportSheet) {
             HuggingFaceImportSheet(
@@ -686,10 +685,22 @@ struct ModelDownloadView: View {
 
     /// A single model card wired to the manager's download actions. Shared
     /// by the catalog grid and the Recommended carousel so their behavior
-    /// stays identical.
+    /// stays identical. Catalog cards are family cards (one per model, all
+    /// precision builds behind it); On Device stays one card per bundle, so
+    /// the version indicator only applies on the Catalog tab.
     private func modelCard(for model: MLXModel) -> some View {
-        ModelRowView(
-            content: ModelCardContent(model: model, totalMemoryGB: systemMonitor.totalMemoryGB),
+        let variantCount =
+            selectedTab == .all
+            ? (gridListsSnapshot.variantsByFamily[
+                ModelMetadataParser.familyKey(from: model.id)
+            ]?.count ?? 1)
+            : 1
+        return ModelRowView(
+            content: ModelCardContent(
+                model: model,
+                totalMemoryGB: systemMonitor.totalMemoryGB,
+                variantCount: variantCount
+            ),
             downloadState: modelManager.effectiveDownloadState(for: model),
             metrics: modelManager.downloadMetrics[model.id],
             onViewDetails: { modelToShowDetails = model },
@@ -730,10 +741,18 @@ struct ModelDownloadView: View {
 
             ScrollViewReader { proxy in
                 ScrollView(.horizontal, showsIndicators: false) {
-                    LazyHStack(spacing: 12) {
+                    // Non-lazy HStack: a LazyHStack lets the scroll view settle
+                    // its height from the first cards it measures, clipping any
+                    // taller card that scrolls in later. Top Picks is a small
+                    // curated set, so measuring every card up front is cheap.
+                    // `ModelRowView`'s fixed-slot body gives every card the
+                    // same natural height, and `fixedSize` guarantees each one
+                    // gets it regardless of the proposed height.
+                    HStack(alignment: .top, spacing: 12) {
                         ForEach(models, id: \.id) { model in
                             modelCard(for: model)
                                 .frame(width: 280)
+                                .fixedSize(horizontal: false, vertical: true)
                                 .id(model.id)
                         }
                     }
@@ -838,10 +857,63 @@ struct ModelDownloadView: View {
                         isFirst: true
                     )
                 }
+                imageModelsLinkRow
             }
         } else {
             modelGrid(models: lists.displayed)
         }
+    }
+
+    /// Inline pointer to the dedicated Images pane. Replaces the old fake
+    /// "Images" tab (which navigated away and snapped the selector back) with
+    /// an honest link at the end of the catalog.
+    private var imageModelsLinkRow: some View {
+        Button {
+            ManagementStateManager.shared.selectedTab = .imageGeneration
+            ManagementStateManager.shared.imageGenerationSubTabRequest =
+                ImageGenerationTab.models.rawValue
+        } label: {
+            HStack(spacing: 10) {
+                Image(systemName: "photo.on.rectangle.angled")
+                    .font(.system(size: 14, weight: .medium))
+                    .foregroundColor(theme.secondaryText)
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Looking for image models?", bundle: .module)
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundColor(theme.primaryText)
+                    Text(
+                        "Image generation and editing models live in Images settings.",
+                        bundle: .module
+                    )
+                    .font(.system(size: 11))
+                    .foregroundColor(theme.tertiaryText)
+                }
+
+                Spacer(minLength: 8)
+
+                HStack(spacing: 4) {
+                    Text("Open Images", bundle: .module)
+                        .font(.system(size: 12, weight: .medium))
+                    Image(systemName: "arrow.right")
+                        .font(.system(size: 10, weight: .semibold))
+                }
+                .foregroundColor(theme.accentColor)
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 12)
+            .background(
+                RoundedRectangle(cornerRadius: 10)
+                    .fill(theme.tertiaryBackground.opacity(0.4))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 10)
+                            .stroke(theme.cardBorder.opacity(0.6), lineWidth: 1)
+                    )
+            )
+            .contentShape(RoundedRectangle(cornerRadius: 10))
+        }
+        .buttonStyle(PlainButtonStyle())
+        .padding(.top, 4)
     }
 
     /// Main content area with scrollable model list
@@ -867,13 +939,12 @@ struct ModelDownloadView: View {
                             } else {
                                 switch selectedTab {
                                 case .all:
-                                    catalogContent(lists: lists)
+                                    VStack(alignment: .leading, spacing: 16) {
+                                        HuggingFaceTokenCard()
+                                        catalogContent(lists: lists)
+                                    }
                                 case .downloaded:
                                     modelGrid(models: lists.downloaded)
-                                case .imageGeneration:
-                                    // Transient — the picker snaps back off this
-                                    // tab as soon as it hands off to Settings.
-                                    EmptyView()
                                 }
                             }
                         }
@@ -1224,8 +1295,6 @@ struct ModelDownloadView: View {
             return "cube.box"
         case .downloaded:
             return "internaldrive"
-        case .imageGeneration:
-            return "photo.on.rectangle.angled"
         }
     }
 
@@ -1238,8 +1307,6 @@ struct ModelDownloadView: View {
             return L("No models available")
         case .downloaded:
             return L("No models on device yet")
-        case .imageGeneration:
-            return L("Images")
         }
     }
 
@@ -1253,6 +1320,11 @@ struct ModelDownloadView: View {
         let others: [MLXModel]
         let downloaded: [MLXModel]
         let displayed: [MLXModel]
+        /// Every catalog build keyed by `ModelMetadataParser.familyKey`,
+        /// built from the unfiltered merged catalog so the detail sheet's
+        /// variant picker always shows the full family even while the grid
+        /// is searched or filtered.
+        var variantsByFamily: [String: [MLXModel]] = [:]
     }
 
     /// Single token for the implicit grid animation. Driving the implicit
@@ -1323,6 +1395,86 @@ struct ModelDownloadView: View {
             sortOption: sortOption,
             totalMemoryGB: systemMonitor.totalMemoryGB
         )
+    }
+
+    // MARK: - Family grouping
+
+    /// One card per model family: precision/quant variants of the same model
+    /// (MXFP4 vs MXFP8 vs QAT vs JANGTQ…) collapse into a single
+    /// representative card. `models` must already be searched/filtered/sorted;
+    /// each family keeps the position of its first-listed variant so the
+    /// active sort still drives card order.
+    nonisolated static func groupIntoFamilyCards(
+        _ models: [MLXModel],
+        totalMemoryGB: Double,
+        downloadStates: [String: DownloadState]
+    ) -> [MLXModel] {
+        var order: [String] = []
+        var buckets: [String: [MLXModel]] = [:]
+        for model in models {
+            let key = ModelMetadataParser.familyKey(from: model.id)
+            if buckets[key] == nil { order.append(key) }
+            buckets[key, default: []].append(model)
+        }
+        return order.compactMap { key in
+            buckets[key].map {
+                defaultFamilyVariant(
+                    among: $0,
+                    totalMemoryGB: totalMemoryGB,
+                    downloadStates: downloadStates
+                )
+            }
+        }
+    }
+
+    /// The build a family card represents (and the one its Download button
+    /// installs by default). Anything the user already owns or is actively
+    /// downloading wins; otherwise the best build for this Mac: better RAM
+    /// fit first, then curated over auto-fetched, Top Pick over plain, then
+    /// highest precision (largest download) among equals, newest as the
+    /// final tiebreak.
+    nonisolated static func defaultFamilyVariant(
+        among variants: [MLXModel],
+        totalMemoryGB: Double,
+        downloadStates: [String: DownloadState]
+    ) -> MLXModel {
+        func isActive(_ m: MLXModel) -> Bool {
+            switch downloadStates[m.id] ?? .notStarted {
+            case .downloading, .paused: return true
+            default: return false
+            }
+        }
+        func compatRank(_ m: MLXModel) -> Int {
+            switch m.compatibility(totalMemoryGB: totalMemoryGB) {
+            case .compatible: return 0
+            case .tight: return 1
+            case .tooLarge: return 2
+            case .unknown: return 3
+            }
+        }
+        let curatedIds = ModelManager.curatedSuggestedIds
+        let best = variants.min { lhs, rhs in
+            if isActive(lhs) != isActive(rhs) { return isActive(lhs) }
+            if lhs.isDownloaded != rhs.isDownloaded { return lhs.isDownloaded }
+            let lc = compatRank(lhs)
+            let rc = compatRank(rhs)
+            if lc != rc { return lc < rc }
+            let lCurated = curatedIds.contains(lhs.id.lowercased())
+            let rCurated = curatedIds.contains(rhs.id.lowercased())
+            if lCurated != rCurated { return lCurated }
+            if lhs.isTopSuggestion != rhs.isTopSuggestion { return lhs.isTopSuggestion }
+            let ls = lhs.totalSizeEstimateBytes ?? 0
+            let rs = rhs.totalSizeEstimateBytes ?? 0
+            if ls != rs { return ls > rs }
+            switch (lhs.releasedAt, rhs.releasedAt) {
+            case let (l?, r?) where l != r: return l > r
+            case (_?, nil): return true
+            case (nil, _?): return false
+            default: break
+            }
+            return lhs.name.localizedCaseInsensitiveCompare(rhs.name) == .orderedAscending
+        }
+        return best ?? variants[0]
     }
 
     /// Consolidates all list computations. Pure over `GridListInput` so it can
@@ -1460,11 +1612,20 @@ struct ModelDownloadView: View {
         // (when searching) anything matching the query. without the latter two,
         // imported/pasted repos inserted into `availableModels` are filtered
         // out and never appear
+        //
+        // AppleScript bundles only ever emit AppleScript (dedicated subagent
+        // models, not chat models), so they never surface in the Catalog tab —
+        // same rule as the chat model picker. They install and manage through
+        // Computer Use → Models instead; the On Device tab still lists an
+        // installed one so it stays deletable from here.
         let hasQuery = !searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         let allTabBase = input.availableModels.filter { model in
-            isOsaurusAI(model) || isUserModel(model) || hasQuery
+            guard !AppleScriptModelCatalog.isAppleScriptModel(id: model.id) else { return false }
+            return isOsaurusAI(model) || isUserModel(model) || hasQuery
         }
-        let osaurusSuggested = input.suggestedModels.filter { isOsaurusAI($0) }
+        let osaurusSuggested = input.suggestedModels.filter {
+            isOsaurusAI($0) && !AppleScriptModelCatalog.isAppleScriptModel(id: $0.id)
+        }
 
         let availSearched = SearchService.filterModels(allTabBase, with: searchText)
         let availFiltered = filterState.apply(to: availSearched, totalMemoryGB: mem)
@@ -1476,35 +1637,55 @@ struct ModelDownloadView: View {
 
         // The Top Picks carousel only exists under the default Recommended
         // sort. Any explicit sort merges the picks back into the grid so they
-        // sort alongside everything else. The carousel itself is newest-first.
+        // sort alongside everything else. The carousel itself is newest-first,
+        // one card per family — precision siblings collapse into the variant
+        // that suits this Mac best.
         let topPicks =
             sortOption == .recommended
-            ? sortedCatalog(recommended.filter { $0.isTopSuggestion })
+            ? groupIntoFamilyCards(
+                sortedCatalog(recommended.filter { $0.isTopSuggestion }),
+                totalMemoryGB: mem,
+                downloadStates: downloadStates
+            )
             : []
-        let topPickIds = Set(topPicks.map { $0.id.lowercased() })
+        // Exclude by family, not id, so demoted precision siblings of a Top
+        // Pick don't reappear as separate grid cards below the carousel.
+        let topPickFamilies = Set(topPicks.map { ModelMetadataParser.familyKey(from: $0.id) })
 
         // The grid is the rest of the catalog — recommended non-top picks plus
         // everything else — deduped and ordered newest-first (or by the
-        // explicit sort choice). This keeps the grid "how it was" minus the
-        // models promoted into the carousel.
+        // explicit sort choice), then collapsed to one card per family.
         var seenCatalog: Set<String> = []
         var catalogRest: [MLXModel] = []
         for model in recommended + allFiltered {
             let key = model.id.lowercased()
-            if topPickIds.contains(key) { continue }
+            if topPickFamilies.contains(ModelMetadataParser.familyKey(from: model.id)) { continue }
             if seenCatalog.insert(key).inserted {
                 catalogRest.append(model)
             }
         }
-        let others = sortedCatalog(catalogRest)
+        let others = groupIntoFamilyCards(
+            sortedCatalog(catalogRest),
+            totalMemoryGB: mem,
+            downloadStates: downloadStates
+        )
 
         let downloaded = computeDownloadedList()
+
+        // Full variant lists per family from the unfiltered merged catalog,
+        // for the detail sheet's variant picker and the cards' "N versions"
+        // indicator.
+        var variantsByFamily: [String: [MLXModel]] = [:]
+        var seenVariantIds: Set<String> = []
+        for model in input.suggestedModels + input.availableModels {
+            guard seenVariantIds.insert(model.id.lowercased()).inserted else { continue }
+            variantsByFamily[ModelMetadataParser.familyKey(from: model.id), default: []].append(model)
+        }
 
         let displayed: [MLXModel]
         switch input.selectedTab {
         case .all: displayed = topPicks + others
         case .downloaded: displayed = downloaded
-        case .imageGeneration: displayed = []
         }
 
         // Warm disk-backed verdicts while still off the main actor. The catalog
@@ -1518,7 +1699,13 @@ struct ModelDownloadView: View {
             _ = model.isMLXFormat
         }
 
-        return GridLists(suggested: topPicks, others: others, downloaded: downloaded, displayed: displayed)
+        return GridLists(
+            suggested: topPicks,
+            others: others,
+            downloaded: downloaded,
+            displayed: displayed,
+            variantsByFamily: variantsByFamily
+        )
     }
 
     /// Eager refresh of the cached snapshot. Called from `.onAppear` and
@@ -1642,6 +1829,24 @@ struct ModelDownloadView: View {
         return activeProgress.reduce(0, +) / Double(activeProgress.count)
     }
 
+}
+
+// MARK: - Live System Status Bar
+
+/// Thin wrapper that scopes `SystemMonitorService` observation to just the
+/// status bar, so the monitor's periodic publishes re-render only this row
+/// instead of the whole model grid above it.
+private struct LiveSystemStatusBar: View {
+    @ObservedObject private var systemMonitor = SystemMonitorService.shared
+
+    var body: some View {
+        SystemStatusBar(
+            totalMemoryGB: systemMonitor.totalMemoryGB,
+            usedMemoryGB: systemMonitor.usedMemoryGB,
+            availableStorageGB: systemMonitor.availableStorageGB,
+            totalStorageGB: systemMonitor.totalStorageGB
+        )
+    }
 }
 
 // MARK: - Skeleton Loading Card

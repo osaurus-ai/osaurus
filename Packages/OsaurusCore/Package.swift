@@ -10,10 +10,12 @@ let package = Package(
     ],
     dependencies: [
         .package(url: "https://github.com/apple/swift-nio.git", from: "2.88.0"),
-        // Keep package-local SwiftPM builds aligned with the workspace
-        // lockfiles. Containerization 0.32.x changed Process.kill's signal
-        // parameter type while the app CI graph is still pinned to 0.31.x.
-        .package(url: "https://github.com/apple/containerization.git", .upToNextMinor(from: "0.31.0")),
+        // Pinned to the 0.35 line — the same Containerization release Apple
+        // Container 1.1.0 ships — for the OCI `initfsReference` provisioning
+        // path, configurable VM overhead, filesystem freeze/thaw/trim, and
+        // the hardened mount/vmnet work. Keep the app workspace lockfiles in
+        // step when bumping.
+        .package(url: "https://github.com/apple/containerization.git", .upToNextMinor(from: "0.35.0")),
         .package(url: "https://github.com/modelcontextprotocol/swift-sdk.git", from: "0.12.0"),
         // MCP pulls EventSource transitively. Enable its AsyncHTTPClient
         // trait at the root so the target's conditional AsyncHTTPClient
@@ -30,10 +32,38 @@ let package = Package(
         // MLXLMCommon, MLXLLM, MLXVLM, Tokenizers, Jinja, cache, parser,
         // MTP, and media-runtime surfaces Osaurus previously pulled from
         // separate MLX, inference, tokenizer, template, and transformer pins.
-        // Pinned to the merge of the writePNG main-actor hang fix on main.
+        // Pinned to vmlx main with the deterministic qwen3.5 RMSNorm-shift fix,
+        // the full order-dependent-load sweep (#108, no more ~7.5% degenerate
+        // loads), the Mistral3 VLM fix that honors the bundle's longest_edge
+        // instead of clamping images to 336px, the stop-string fix (#109), the
+        // Mistral bare-JSON-array tool-call recovery (#110), chunk-level
+        // prefill cancellation (#111), shutdown-drains-producers (#112), and
+        // serialized disk-restore evals (#113) — together closing the
+        // client-disconnect crash train (engine teardown returns only after
+        // producers are off the GPU; restores can't race input tokenization).
+        // Now also carries #116 (serialize GPU-stream drivers — re-locks
+        // eval/asyncEval/item + synchronize/clearCache to kill the Metal
+        // concurrent-encoder crash class) and #117 (NormConventionResolver:
+        // an unrecognized norm_convention defers to the vote instead of
+        // silently disabling the (1+weight) shift). Now also carries the
+        // incremental tool-call envelope progress event (`Generation
+        // .toolCallProgress`) so the app can show a live "preparing tool call"
+        // card during a long buffered tool write (e.g. a large file) instead of
+        // a frozen typing indicator. Additive — existing consumers unaffected.
+        // Now also carries #123 (production crash-trap fixes): Qwen3VL
+        // rotary embedding accepts low-rank position ids and the decode-path
+        // rope delta broadcasts per sequence (stale deltas fall back to cache
+        // offsets); Gemma4 maskedScatter and NemotronH mambaForward guard the
+        // rank-0/empty results a failed MLX op hands back inside a withError
+        // scope; the compile() overloads and innerCall degrade to empty
+        // results instead of trapping on a failed closure evaluation — so a
+        // recorded MLX error reaches the error-scope exit instead of dying in
+        // a Swift bounds check. Contains the previous ff714f1 pin. Now also
+        // carries #149: native schema-2 affine1 JANG loading and Metal kernels,
+        // Qwen3-VL tool-schema preservation, and bounded media-cache cleanup.
         .package(
             url: "https://github.com/osaurus-ai/vmlx-swift",
-            revision: "5b8371b428f205bd7a4e91df901bfefefb71dfda"
+            revision: "1ca402953bf941341889bb00b186e46bf0c18d6f"
         ),
         // FluidAudio 0.14.3 added a breaking `language:` parameter to TTS
         // calls that osaurus's `TTSService` doesn't pass. Pinning to the
@@ -156,10 +186,19 @@ let package = Package(
                 .linkedFramework("Security")
             ]
         ),
+        // Objective-C shim for framework calls that raise an NSException Swift
+        // cannot `catch` (see `osr_catch_exception`). Kept in its own target
+        // because a SwiftPM target cannot mix Swift and Objective-C sources.
+        .target(
+            name: "OsaurusObjCSupport",
+            path: "ObjCSupport",
+            publicHeadersPath: "include"
+        ),
         .target(
             name: "OsaurusCore",
             dependencies: [
                 "OsaurusSQLCipher",
+                "OsaurusObjCSupport",
                 .product(name: "NIOCore", package: "swift-nio"),
                 .product(name: "NIOHTTP1", package: "swift-nio"),
                 .product(name: "NIOPosix", package: "swift-nio"),
@@ -192,7 +231,7 @@ let package = Package(
                 .product(name: "Sentry", package: "sentry-cocoa"),
             ],
             path: ".",
-            exclude: ["Tests", "SQLCipher"],
+            exclude: ["Tests", "SQLCipher", "ObjCSupport"],
             resources: [.process("Resources")],
             swiftSettings: [
                 // `SystemLanguageModel.contextSize` only exists in the macOS 26.4+

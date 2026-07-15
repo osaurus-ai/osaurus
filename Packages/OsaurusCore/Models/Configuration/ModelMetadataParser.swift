@@ -128,7 +128,7 @@ enum ModelMetadataParser {
             #"(?i)\bit\b"#,  // "it" = instruction tuned
             #"(?i)\binstruct\b"#,
             #"(?i)\bchat\b"#,
-            #"(?i)\bjangtq\d*\b"#,  // TurboQuant variants
+            #"(?i)\bjangtq[_0-9a-z]*\b"#,  // TurboQuant variants (JANGTQ4, JANGTQ_K)
             #"(?i)\ba\d+(\.\d+)?b\b"#,  // A3B / A2.5B active param count
         ]
         for pat in dropPatterns {
@@ -170,6 +170,82 @@ enum ModelMetadataParser {
             .replacingOccurrences(of: "phi", with: "Phi", options: .caseInsensitive)
     }
 
+    // MARK: - Family grouping
+
+    /// Hyphen-delimited repo-id segments that encode precision, quantization,
+    /// or delivery format rather than model identity. Stripping them from a
+    /// repo id yields the "family" the catalog groups by: precision variants
+    /// of the same model (MXFP4 vs MXFP8 vs QAT vs JANGTQ…) collapse into one
+    /// card, while genuinely different sizes (9B vs 35B, E2B vs E4B) keep
+    /// their size tokens and stay separate.
+    private static let variantSegmentRegexes: [NSRegularExpression] = {
+        let patterns = [
+            #"^mxfp\d+$"#,  // MXFP4 / MXFP8
+            #"^qat$"#,  // quantization-aware-training marker
+            #"^jangtq[_0-9a-z]*$"#,  // JANGTQ / JANGTQ4 / JANGTQ_K TurboQuant
+            #"^jang_?\d+[a-z]?$"#,  // JANG_4M / JANG_2S mixed precision
+            #"^\d+-?bit$"#,  // 4bit / 8bit / 4-bit
+            #"^(fp16|bf16|fp32)$"#,
+            #"^q\d+(_[a-z0-9]+)*$"#,  // GGUF-style q4_0 / q8_k_m
+            #"^mtp$"#,  // multi-token-prediction speculative decode build
+            #"^mlx$"#,
+        ]
+        return patterns.compactMap {
+            try? NSRegularExpression(pattern: $0, options: .caseInsensitive)
+        }
+    }()
+
+    private nonisolated(unsafe) static var familyKeyCache: [String: String] = [:]
+
+    /// Lowercased grouping key for collapsing precision/quant variants of the
+    /// same model into a single catalog card. Keeps the org prefix so families
+    /// never merge across publishers. Falls back to the full lowercased id
+    /// when stripping would leave nothing.
+    static func familyKey(from repoId: String) -> String {
+        cacheLock.lock()
+        if let cached = familyKeyCache[repoId] {
+            cacheLock.unlock()
+            return cached
+        }
+        cacheLock.unlock()
+
+        let kept = familySegments(from: repoId)
+        let org = repoId.split(separator: "/").dropLast().joined(separator: "/")
+        let tail =
+            kept.isEmpty
+            ? (repoId.split(separator: "/").last.map(String.init) ?? repoId)
+            : kept.joined(separator: "-")
+        let result = (org.isEmpty ? tail : "\(org)/\(tail)").lowercased()
+
+        cacheLock.lock()
+        familyKeyCache[repoId] = result
+        cacheLock.unlock()
+        return result
+    }
+
+    /// Display title for a family card: the repo tail with variant segments
+    /// removed, run through the friendly-name capitalization and the
+    /// developer-token stripper (drops "it"/"instruct"/active-param notation).
+    static func familyDisplayName(from repoId: String) -> String {
+        let kept = familySegments(from: repoId)
+        guard !kept.isEmpty else { return simpleName(from: friendlyName(from: repoId)) }
+        let joined = kept.joined(separator: "-")
+        let name = simpleName(from: friendlyName(from: joined))
+        return name.isEmpty ? friendlyName(from: repoId) : name
+    }
+
+    /// Repo-tail segments with precision/quant/delivery tokens removed,
+    /// original casing preserved.
+    private static func familySegments(from repoId: String) -> [String] {
+        let tail = repoId.split(separator: "/").last.map(String.init) ?? repoId
+        return tail.split(separator: "-").map(String.init).filter { segment in
+            let range = NSRange(segment.startIndex..., in: segment)
+            return !variantSegmentRegexes.contains {
+                $0.firstMatch(in: segment, options: [], range: range) != nil
+            }
+        }
+    }
+
     // MARK: - Private
 
     private static func extractBitWidth(from repoId: String) -> String? {
@@ -192,10 +268,12 @@ enum ModelMetadataParser {
             return String(text[match]).uppercased()
         }
         if let match = text.range(
-            of: #"jangtq\d*"#,
+            of: #"jangtq[_0-9a-z]*"#,
             options: .regularExpression
         ) {
-            return String(text[match]).uppercased()
+            // Underscore suffixes (`JANGTQ_K`) read as "JANGTQ K" in the UI,
+            // matching the JANG mixed-precision label treatment below.
+            return String(text[match]).uppercased().replacingOccurrences(of: "_", with: " ")
         }
         // JANG mixed-precision labels (`JANG_4M`/`4K`/`2L`/`2S`): the leading
         // digit encodes the dominant bit-class (4 ≈ 4-bit, 2 ≈ 2-bit). Surface

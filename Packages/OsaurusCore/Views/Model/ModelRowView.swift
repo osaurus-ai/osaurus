@@ -59,6 +59,11 @@ struct ModelRowView: View {
                 onViewDetails()
             }
         }) {
+            // Fixed-slot body: every row below the header has a constant
+            // height (single-line tag row, fixed stat strip, reserved
+            // two-line description, always-present footer), so all cards
+            // share the same internal rhythm and the same natural height —
+            // rows line up across the grid and carousel by construction.
             VStack(spacing: 0) {
                 gradientHeader
 
@@ -67,15 +72,12 @@ struct ModelRowView: View {
 
                     statStrip
 
-                    if !content.description.isEmpty {
-                        Text(content.description)
-                            .font(.system(size: 12))
-                            .foregroundColor(theme.secondaryText)
-                            .lineLimit(2)
-                            .truncationMode(.tail)
-                            .multilineTextAlignment(.leading)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
+                    Text(content.description)
+                        .font(.system(size: 12))
+                        .foregroundColor(theme.secondaryText)
+                        .lineLimit(2, reservesSpace: true)
+                        .truncationMode(.tail)
+                        .multilineTextAlignment(.leading)
 
                     // Push the footer to the bottom so the popularity /
                     // release line sits at the same place on every card,
@@ -329,44 +331,53 @@ struct ModelRowView: View {
 
     // MARK: - Body Sections
 
-    /// Editorial / decision tags. Use-case leads (when set), followed by
-    /// the colored compatibility verdict and the LLM/VLM type so the eye
-    /// lands on "what is it / will it run" before raw specs.
+    /// Single-line decision row, capped at two pills so it can never wrap
+    /// and shift the rows below: one identity pill — the curated use case
+    /// when set (its tint + icon come from `ModelUseCase`, matching the
+    /// onboarding picker's vocabulary), otherwise the LLM/VLM type, or the
+    /// "Not MLX" warning for unsupported bundles — plus the colored
+    /// compatibility verdict, so the eye lands on "what is it / will it
+    /// run" before raw specs.
     private var leadTags: some View {
-        FlowLayout(spacing: 6) {
-            if let useCase = content.useCase {
-                // Tint + icon come from `ModelUseCase` so the vocabulary
-                // matches the onboarding picker's `.useCase(...)` chip.
-                TintedPill(
-                    icon: useCase.iconName,
-                    label: Text(useCase.displayName, bundle: .module),
-                    color: useCase.tintColor
-                )
-            }
+        HStack(spacing: 6) {
             if content.isUnsupportedFormat {
                 TintedPill(
                     icon: "exclamationmark.octagon",
                     label: Text(L("Not MLX")),
                     color: theme.errorColor
                 )
-            }
-            compatibilityBadge
-            if let type = content.type {
+            } else if let useCase = content.useCase {
+                TintedPill(
+                    icon: useCase.iconName,
+                    label: Text(useCase.displayName, bundle: .module),
+                    color: useCase.tintColor
+                )
+            } else if let type = content.type {
                 modelTypeBadge(type)
             }
+            compatibilityBadge
+            Spacer(minLength: 0)
         }
+        .frame(height: 20)
     }
 
     /// Fixed three-column spec strip. Columns stay in the same order with
     /// a "—" placeholder for missing values so cards line up for
-    /// side-by-side comparison.
+    /// side-by-side comparison. Family cards replace the quant column (the
+    /// representative build's quant would be misleading for a multi-build
+    /// card) with the number of available versions; single-build cards keep
+    /// the quant label since it's what distinguishes them.
     private var statStrip: some View {
         HStack(spacing: 0) {
             StatSegment(label: L("Size"), value: content.size)
             statDivider
             StatSegment(label: L("Params"), value: content.params)
             statDivider
-            StatSegment(label: L("Quant"), value: content.quant)
+            if content.variantCount > 1 {
+                StatSegment(label: L("Versions"), value: "\(content.variantCount)")
+            } else {
+                StatSegment(label: L("Quant"), value: content.quant)
+            }
         }
         .padding(.vertical, 8)
         .frame(maxWidth: .infinity)
@@ -383,53 +394,71 @@ struct ModelRowView: View {
     }
 
     /// Muted footer with popularity and release recency. Pinned to the
-    /// bottom of the card via a `Spacer` so it aligns across rows.
-    @ViewBuilder
+    /// bottom of the card via a `Spacer`, and always rendered at a fixed
+    /// height (even when one or both stats are missing) so the bottom
+    /// edge sits at the same place on every card.
     private var cardFooter: some View {
-        let downloads = content.downloadsText
-        let released = content.releaseText
-        if downloads != nil || released != nil {
-            HStack(spacing: 8) {
-                if let downloads {
-                    HStack(spacing: 3) {
-                        Image(systemName: "arrow.down.circle")
-                            .font(.system(size: 9, weight: .medium))
-                        Text(L("\(downloads) downloads"))
-                            .font(.system(size: 11))
-                    }
-                    .foregroundColor(theme.tertiaryText)
-                }
-
-                // Push popularity to the leading edge and release recency
-                // to the trailing edge so the two read as distinct stats.
-                Spacer(minLength: 8)
-
-                // Curated entries set `releasedAt` explicitly; HF
-                // auto-fetched ones pick it up from `lastModified` —
-                // either way the prefix is "Released".
-                if let released {
-                    Text(L("Released \(released)"))
+        HStack(spacing: 8) {
+            if let downloads = content.downloadsText {
+                HStack(spacing: 3) {
+                    Image(systemName: "arrow.down.circle")
+                        .font(.system(size: 9, weight: .medium))
+                    Text(L("\(downloads) downloads"))
                         .font(.system(size: 11))
-                        .foregroundColor(theme.tertiaryText)
                 }
+                .foregroundColor(theme.tertiaryText)
             }
-            .lineLimit(1)
-            .truncationMode(.tail)
+
+            // Push popularity to the leading edge and release recency
+            // to the trailing edge so the two read as distinct stats.
+            Spacer(minLength: 8)
+
+            // Curated entries set `releasedAt` explicitly; HF
+            // auto-fetched ones pick it up from `lastModified` —
+            // either way the prefix is "Released".
+            if let released = content.releaseText {
+                Text(L("Released \(released)"))
+                    .font(.system(size: 11))
+                    .foregroundColor(theme.tertiaryText)
+            }
         }
+        .lineLimit(1)
+        .truncationMode(.tail)
+        .frame(height: 14)
     }
 
+    /// Plain-language fit verdict. When the RAM estimate is known it reads
+    /// as "Runs Well · needs ~10 GB" so new users get the "will this work on
+    /// my Mac" answer without decoding quant/param jargon.
     @ViewBuilder
     private var compatibilityBadge: some View {
         switch content.compatibility {
         case .compatible:
-            TintedPill(icon: "checkmark.shield", label: Text(L("Runs Well")), color: theme.successColor)
+            TintedPill(
+                icon: "checkmark.shield",
+                label: Text(fitText(verdict: L("Runs Well"))),
+                color: theme.successColor
+            )
         case .tight:
-            TintedPill(icon: "exclamationmark.triangle", label: Text(L("Tight Fit")), color: theme.warningColor)
+            TintedPill(
+                icon: "exclamationmark.triangle",
+                label: Text(fitText(verdict: L("Tight Fit"))),
+                color: theme.warningColor
+            )
         case .tooLarge:
-            TintedPill(icon: "xmark.circle", label: Text(L("Too Large")), color: theme.errorColor)
+            TintedPill(
+                icon: "xmark.circle",
+                label: Text(fitText(verdict: L("Too Large"))),
+                color: theme.errorColor
+            )
         case .unknown:
             EmptyView()
         }
+    }
+
+    private func fitText(verdict: String) -> String {
+        guard let memory = content.memoryNeeded else { return verdict }
+        return "\(verdict) · \(L("needs \(memory)"))"
     }
 
     /// Badge showing whether the model is an LLM, VLM, or image generator.
@@ -464,11 +493,19 @@ struct ModelCardContent {
     var isUnsupportedFormat: Bool = false
     let useCase: ModelUseCase?
     let compatibility: ModelCompatibility
+    /// Formatted RAM the model needs at runtime (e.g. "~10.2 GB"), rendered
+    /// inside the compatibility pill so the fit verdict reads in plain
+    /// language instead of leaning on quant jargon.
+    var memoryNeeded: String? = nil
     /// LLM / VLM / Image pill; `nil` to omit.
     let type: ModelCardType?
     let size: String?
     let params: String?
     let quant: String?
+    /// Number of precision/quant builds this card represents. Catalog cards
+    /// grouped by family carry the family's build count; ungrouped contexts
+    /// (On Device, image models) leave it at 1, which hides the indicator.
+    var variantCount: Int = 1
     /// Raw popularity / release strings; the footer applies its own wording.
     let downloadsText: String?
     let releaseText: String?
@@ -481,22 +518,31 @@ enum ModelCardType {
 }
 
 extension ModelCardContent {
-    /// LLM/VLM card content, preserving the exact values the catalog cards
-    /// rendered before the presentation-model refactor.
-    init(model: MLXModel, totalMemoryGB: Double) {
+    /// LLM/VLM card content. `variantCount > 1` marks a family card (one
+    /// card representing several precision/quant builds): the title becomes
+    /// the family name so a build suffix like "qat MXFP4" never leads, and
+    /// the quant column gives way to the version count.
+    init(model: MLXModel, totalMemoryGB: Double, variantCount: Int = 1) {
         self.init(
-            name: model.name,
+            name: variantCount > 1
+                ? ModelMetadataParser.familyDisplayName(from: model.id)
+                : model.name,
             description: model.description,
             gradientColors: ModelCardGradient.colors(for: model),
             isTopSuggestion: model.isTopSuggestion,
             isDownloaded: model.isDownloaded,
             isUnsupportedFormat: model.isDownloaded && !model.isMLXFormat,
-            useCase: model.useCase,
+            // The "Runs Anywhere" (.smallest) editorial pill is dropped on
+            // cards: the compatibility pill already carries the fit verdict,
+            // so it added nothing and pushed the tag row onto a second line.
+            useCase: model.useCase == .smallest ? nil : model.useCase,
             compatibility: model.compatibility(totalMemoryGB: totalMemoryGB),
+            memoryNeeded: model.formattedEstimatedMemory,
             type: model.useCase == .vision ? nil : (model.isVLM ? .vlm : .llm),
             size: model.formattedDownloadSize,
             params: model.parameterCount,
             quant: model.quantization,
+            variantCount: variantCount,
             downloadsText: model.formattedDownloads,
             releaseText: model.formattedReleaseMonth
         )
@@ -547,6 +593,8 @@ private struct TintedPill: View {
                 .font(.system(size: 8, weight: .semibold))
             label
                 .font(.system(size: 10, weight: .semibold))
+                .lineLimit(1)
+                .truncationMode(.tail)
         }
         .foregroundColor(color)
         .padding(.horizontal, 6)

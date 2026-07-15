@@ -287,9 +287,14 @@ final class PluginManager {
                 loadedPluginPaths.insert(entry.url.path)
                 loadedNew = true
 
-                // Register tools
-                for tool in loaded.tools {
-                    ToolRegistry.shared.registerPluginTool(tool)
+                // Register tools — except for plugins whose functionality is
+                // now built into Osaurus (native search supersedes
+                // osaurus.search); their dylib stays loaded for routes/skills
+                // but the tools would collide with the native surface.
+                if !Self.supersededPluginIds.contains(loaded.plugin.id) {
+                    for tool in loaded.tools {
+                        ToolRegistry.shared.registerPluginTool(tool)
+                    }
                 }
 
                 // Register plugin skills
@@ -343,6 +348,13 @@ final class PluginManager {
     /// to read from any actor / queue, including plugin-author tests
     /// that match against it from a non-MainActor context.
     nonisolated static let abiProbeKey = "__osaurus_abi_probe__"
+
+    /// Plugins whose functionality has been absorbed into Osaurus itself.
+    /// Their tools are NOT registered (the native implementation owns the
+    /// tool names); the Plugins UI shows a "built into Osaurus" notice
+    /// instead of the usual tool list. `nonisolated` so views and the
+    /// migration path can consult it from any context.
+    nonisolated static let supersededPluginIds: Set<String> = ["osaurus.search"]
 
     /// Per-plugin first-delivery sweep. The synthetic ABI probe is
     /// delivered SYNCHRONOUSLY inside a `.currently_loading` marker so
@@ -646,12 +658,6 @@ final class PluginManager {
     ) {
         let pluginId = loaded.plugin.id
 
-        if let url {
-            ToolSecretsKeychain.saveSecret(url, id: "tunnel_url", for: pluginId, agentId: agentId)
-        } else {
-            ToolSecretsKeychain.deleteSecret(id: "tunnel_url", for: pluginId, agentId: agentId)
-        }
-
         // Record the value we pushed so `handleTunnelStatusChange` can
         // dedup. Setting `[agentId] = nil` removes the entry; that's
         // intentional — an absent entry is treated as "last pushed = nil"
@@ -665,18 +671,39 @@ final class PluginManager {
         )
 
         if sync {
+            Self.persistTunnelURLSecret(url, pluginId: pluginId, agentId: agentId)
             loaded.plugin.notifyConfigBatchSync(
                 [(key: "tunnel_url", value: url ?? "")],
                 agentId: agentId,
                 force: force
             )
         } else {
-            loaded.plugin.notifyConfigChanged(
-                key: "tunnel_url",
-                value: url ?? "",
-                agentId: agentId,
-                force: force
-            )
+            // The keychain write blocks on security-daemon XPC and has
+            // hung the main thread for seconds on relay reconnects, so the
+            // fire-and-forget path persists and notifies off the main
+            // actor. The write lands before the notify so plugins that
+            // read the secret back see the new value.
+            Task.detached(priority: .userInitiated) {
+                Self.persistTunnelURLSecret(url, pluginId: pluginId, agentId: agentId)
+                loaded.plugin.notifyConfigChanged(
+                    key: "tunnel_url",
+                    value: url ?? "",
+                    agentId: agentId,
+                    force: force
+                )
+            }
+        }
+    }
+
+    private nonisolated static func persistTunnelURLSecret(
+        _ url: String?,
+        pluginId: String,
+        agentId: UUID
+    ) {
+        if let url {
+            ToolSecretsKeychain.saveSecret(url, id: "tunnel_url", for: pluginId, agentId: agentId)
+        } else {
+            ToolSecretsKeychain.deleteSecret(id: "tunnel_url", for: pluginId, agentId: agentId)
         }
     }
 
@@ -1320,29 +1347,44 @@ final class PluginManager {
     /// durable path fails for any reason — partial protection beats
     /// none.
     private nonisolated static func writeLoadingMarker(pluginId: String) {
-        let url = currentlyLoadingURL()
-        let data = Data(pluginId.utf8)
-        let fm = FileManager.default
-        let tmpURL = url.appendingPathExtension("tmp-\(UUID().uuidString)")
-        do {
-            try data.write(to: tmpURL, options: [.atomic])
-            if let handle = try? FileHandle(forUpdating: tmpURL) {
-                try? handle.synchronize()
-                try? handle.close()
+        // `sync` (not direct execution) so a still-running async clear from
+        // the previous plugin can't be reordered after this write and delete
+        // the fresh marker. The write itself must complete before the caller
+        // enters the dlopen/init danger zone, so it cannot be async.
+        markerQueue.sync {
+            let url = currentlyLoadingURL()
+            let data = Data(pluginId.utf8)
+            let fm = FileManager.default
+            let tmpURL = url.appendingPathExtension("tmp-\(UUID().uuidString)")
+            do {
+                try data.write(to: tmpURL, options: [.atomic])
+                if let handle = try? FileHandle(forUpdating: tmpURL) {
+                    try? handle.synchronize()
+                    try? handle.close()
+                }
+                if fm.fileExists(atPath: url.path) {
+                    _ = try fm.replaceItemAt(url, withItemAt: tmpURL)
+                } else {
+                    try fm.moveItem(at: tmpURL, to: url)
+                }
+                fsyncDirectory(url.deletingLastPathComponent())
+            } catch {
+                try? data.write(to: url)
             }
-            if fm.fileExists(atPath: url.path) {
-                _ = try fm.replaceItemAt(url, withItemAt: tmpURL)
-            } else {
-                try fm.moveItem(at: tmpURL, to: url)
-            }
-            fsyncDirectory(url.deletingLastPathComponent())
-        } catch {
-            try? data.write(to: url)
         }
     }
 
+    /// Serializes loading-marker file operations. Clearing is fire-and-forget
+    /// off the caller's thread — the `unlink` stalled for 3+ seconds on slow
+    /// disks and hung the UI when the sweep ran on the main actor — while
+    /// writes stay synchronous for crash durability.
+    private nonisolated static let markerQueue = DispatchQueue(
+        label: "ai.osaurus.plugin-loading-marker", qos: .utility)
+
     private nonisolated static func clearLoadingMarker() {
-        try? FileManager.default.removeItem(at: currentlyLoadingURL())
+        markerQueue.async {
+            try? FileManager.default.removeItem(at: currentlyLoadingURL())
+        }
     }
 
     /// `fsync()`s the directory containing `url` so a preceding atomic

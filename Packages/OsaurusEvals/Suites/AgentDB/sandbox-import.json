@@ -1,0 +1,45 @@
+{
+  "id": "agentdb.sandbox-import",
+  "domain": "agent_loop",
+  "label": "agentdb • db_import from a file generated in the sandbox workspace",
+  "query": "Earlier you generated a CSV file at exports/report.csv in your sandbox home (columns: sha, author, additions, deletions). Load it into your agent database as a table named commits using db_import, then tell me exactly how many rows the table has.",
+  "notes": "Regression case for the original sandbox gap: db_import used to require a bound host working folder, so files the agent generated INSIDE its sandbox were unreachable and models fell back to token-burning per-row inserts. The dual-root resolver now reads the VM home through the host-visible mount. seedFiles stages the CSV guest-side (real ownership); mustNotCallTools pins that no per-row fallback happened; dbState reads the isolated per-eval-agent DB after the run. Skips (not fails) on hosts without a working sandbox, matching the SandboxFrontier suites.",
+  "fixtures": {
+    "agentCapabilities": {
+      "dbEnabled": true
+    },
+    "sandbox": {
+      "seedFiles": [
+        {
+          "path": "exports/report.csv",
+          "contents": "sha,author,additions,deletions\nsha001,alice,5,1\nsha002,bob,10,2\nsha003,carol,15,3\nsha004,dave,20,4\nsha005,erin,25,5\nsha006,frank,30,6\n"
+        }
+      ]
+    }
+  },
+  "expect": {
+    "agentLoop": {
+      "maxIterations": 10,
+      "mustCallTools": [
+        "db_import"
+      ],
+      "mustNotCallTools": [
+        "db_insert",
+        "db_upsert"
+      ],
+      "dbState": [
+        {
+          "sql": "SELECT COUNT(*) FROM commits",
+          "expectFirstValue": "6"
+        },
+        {
+          "sql": "SELECT SUM(additions) FROM commits",
+          "expectFirstValue": "105"
+        }
+      ],
+      "finalTextContains": [
+        "6"
+      ]
+    }
+  }
+}

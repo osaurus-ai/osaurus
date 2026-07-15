@@ -577,7 +577,14 @@ public struct SystemPromptComposer: Sendable {
             contextDisable: contextDisable,
             sizeClass: window.sizeClass,
             effectiveToolsOff: effectiveToolsOff,
-            capabilityPromptSectionsEnabled: !isTrivialInput,
+            // Tied to the tool-schema fast path, NOT to `isTrivialInput`
+            // alone: capability prose sections are static prefix content, so
+            // dropping them for a trivial query in a session that keeps its
+            // tool schema (sandbox mode, existing history, frozen state)
+            // would rewrite the cached prefix — busting the warm-up KV on a
+            // "hey" first send and the whole conversation KV on any
+            // mid-session "thanks"/"ok" turn, with zero prefill savings.
+            capabilityPromptSectionsEnabled: !suppressTrivialToolSchema,
             prefersCompactPrompt: window.prefersCompactPrompt
         )
     }
@@ -989,13 +996,23 @@ public struct SystemPromptComposer: Sendable {
                     modelNames: modelNames,
                     modelNotes: modelNotes
                 )
+                // The worker tool-reach line must match what the runtime will
+                // actually grant, so resolve it through the SAME helper the
+                // spawn kind uses (default agent → global config, custom →
+                // its own settings).
+                let toolAccess = SubagentToolVisibility.effectiveSpawnToolAccess(
+                    isDefault: isDefault,
+                    config: config,
+                    settings: AgentManager.shared.agent(for: snapshot.agentId)?.settings
+                )
                 composer.append(
                     .static(
                         id: "spawn",
                         label: L("Subagents"),
                         content: SystemPromptTemplates.spawnGuidance(
                             agents: descriptors.agents,
-                            models: descriptors.models
+                            models: descriptors.models,
+                            toolAccess: toolAccess
                         )
                     )
                 )
@@ -1101,9 +1118,17 @@ public struct SystemPromptComposer: Sendable {
         // current tool kit is incomplete. The gate follows the actual
         // schema, not the mode label: manual-mode agents still carry
         // `capabilities_discover` / `capabilities_load` as pragmatic
-        // always-loaded tools. Trivial first turns suppress this prompt
-        // section through `capabilityPromptSectionsEnabled` without hiding
-        // the callable discovery tools themselves.
+        // always-loaded tools.
+        //
+        // KV-cache stability: `capabilityPromptSectionsEnabled` goes false
+        // ONLY on the greeting-only cold first turn in `.none` mode where
+        // the whole tool schema is dropped too (the #1161 fast path — the
+        // `capabilities_discover` check below would fail there anyway). Like
+        // `pluginCreator`, this section must NOT vanish for a trivial query
+        // in a session that keeps its schema: warm-up composes with
+        // `query: ""` and includes it, so dropping it on a "hey" send (or a
+        // mid-session "thanks") would rewrite the static prefix and force a
+        // full re-prefill.
         if toolset.capabilityPromptSectionsEnabled,
             !effectiveToolsOff,
             tools.contains(where: { $0.function.name == "capabilities_discover" })
@@ -1574,7 +1599,7 @@ public struct SystemPromptComposer: Sendable {
     /// users who never enable the feature.
     static let agentDBToolNames: Set<String> = [
         "db_schema", "db_create_table", "db_alter_table", "db_migrate",
-        "db_insert", "db_upsert", "db_import", "db_update", "db_delete", "db_restore",
+        "db_insert", "db_upsert", "db_import", "db_export", "db_update", "db_delete", "db_restore",
         "db_query", "db_execute",
         // Saved views (spec §6.3 / phase 2).
         "db_define_view", "db_run_view", "db_list_views", "db_drop_view",
@@ -1727,12 +1752,12 @@ public struct SystemPromptComposer: Sendable {
     /// freeze.
     ///
     /// Known, deliberate divergence: `capabilityPromptSectionsEnabled` is
-    /// hardcoded `true` here, while a trivial first send ("hi", "thanks")
-    /// suppresses the capability nudge (see `isTrivialUserQuery`). The
-    /// popover therefore prices the prompt a *real task* will produce —
-    /// slightly overstating a greeting-only first turn is the honest side
-    /// to err on, and pricing against `""` already means "unknown next
-    /// input" rather than "greeting".
+    /// hardcoded `true` here, while a greeting-only cold first send in
+    /// `.none` mode drops the schema AND the capability nudge (see
+    /// `shouldSuppressTrivialToolSchema`). The popover therefore prices the
+    /// prompt a *real task* will produce — slightly overstating that one
+    /// fast-path turn is the honest side to err on, and pricing against
+    /// `""` already means "unknown next input" rather than "greeting".
     @MainActor
     private static func previewToolset(
         snapshot: AgentConfigSnapshot,
@@ -2082,6 +2107,11 @@ public struct SystemPromptComposer: Sendable {
             if !snapshot.searchMemoryEnabled, !keep.contains("search_memory") {
                 byName.removeValue(forKey: "search_memory")
             }
+            if !snapshot.webSearchEnabled {
+                for name in ["web_search", "search_and_extract"] where !keep.contains(name) {
+                    byName.removeValue(forKey: name)
+                }
+            }
             if !snapshot.selfSchedulingEnabled {
                 for name in schedulerToolNames where !keep.contains(name) {
                     byName.removeValue(forKey: name)
@@ -2223,6 +2253,26 @@ public struct SystemPromptComposer: Sendable {
             let allowed = ToolRegistry.shared.builtInSandboxToolNamesSnapshot
                 .union(Self.agentLoopToolNames)
             byName = byName.filter { allowed.contains($0.key) }
+        }
+
+        // `spawn_model` is agent-scoped, so its request-local schema should be
+        // agent-scoped too. Publish the exact legal ids as a nested enum. Remote
+        // providers can validate/select them directly, local tool parsers receive
+        // the same contract, and a blank/guessed id is corrected before the
+        // provider-routing gate. Execution still re-checks the allow-list.
+        if let spawnModel = byName[SubagentCapabilityRegistry.spawnModelToolName] {
+            let config = SubagentConfigurationStore.snapshot()
+            let allowedModelIds = SubagentToolVisibility.effectiveSpawnableModels(
+                isDefault: snapshot.agentId == Agent.defaultId,
+                config: config,
+                perAgentEnabled: snapshot.spawnDelegationEnabled,
+                perAgentModelTargets: snapshot.spawnableModelNames
+            )
+            byName[SubagentCapabilityRegistry.spawnModelToolName] =
+                SpawnModelTool.constrainedSpec(
+                    spawnModel,
+                    allowedModelIds: allowedModelIds
+                )
         }
 
         // Generation-only image schema: when `image` survived the gates but no
@@ -2372,6 +2422,116 @@ public struct SystemPromptComposer: Sendable {
             tool_calls: existing.tool_calls,
             tool_call_id: existing.tool_call_id
         )
+    }
+
+    /// Render the memory + screen-context block exactly as the per-turn
+    /// injectors (`injectMemoryPrefix` + `injectScreenContextPrefix`) would
+    /// prepend it to a non-empty user message, INCLUDING the trailing
+    /// separator — so `prefix + originalContent` reproduces the legacy
+    /// injected bytes. Callers freeze this string per user turn (chat) or
+    /// per session ledger entry (HTTP/plugin) so that once a turn has been
+    /// sent with an injected prefix, every later request replays the same
+    /// bytes and the paged KV cache can reuse the whole prior exchange.
+    /// Returns nil when both inputs are nil/blank.
+    static func composeInjectedUserPrefix(
+        memorySection: String?,
+        screenContext: String?
+    ) -> String? {
+        var prefix = ""
+        if let memorySection {
+            let trimmed = memorySection.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !trimmed.isEmpty { prefix = "[Memory]\n\(trimmed)\n[/Memory]\n\n" }
+        }
+        if let screenContext {
+            let trimmed = screenContext.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !trimmed.isEmpty { prefix = "\(trimmed)\n\n" + prefix }
+        }
+        return prefix.isEmpty ? nil : prefix
+    }
+
+    /// Session-stable memory injection for surfaces whose history is owned
+    /// by the CALLER (HTTP `/agents/{id}/run`, plugin host): the client
+    /// resends clean history each request, so a prefix injected into the
+    /// latest user message on request N silently vanishes from request
+    /// N+1's history and the local paged-KV prefix diverges at that message
+    /// (the whole last exchange re-prefills). This helper makes the
+    /// injected bytes sticky:
+    ///   1. re-applies previously recorded prefixes (`frozen`, keyed by
+    ///      content-hash + occurrence of the ORIGINAL user message) to
+    ///      matching history user messages, and
+    ///   2. injects this request's `memorySection` into the latest user
+    ///      message — unless that message already has a recorded prefix
+    ///      (identical retry), in which case the recorded bytes win.
+    /// Returns the (key, prefix) recorded for the latest user message so
+    /// the caller can persist it into the session ledger; nil when nothing
+    /// new was injected. Multimodal (`contentParts`) messages are skipped,
+    /// matching `injectMemoryPrefix`.
+    static func applyFrozenMemoryPrefixes(
+        memorySection: String?,
+        frozen: [String: String],
+        into messages: inout [ChatMessage]
+    ) -> (key: String, prefix: String)? {
+        guard let lastUserIdx = messages.lastIndex(where: { $0.role == "user" }) else { return nil }
+        let keys = frozenPrefixKeys(for: messages)
+
+        func prepend(_ prefix: String, at idx: Int) {
+            let existing = messages[idx]
+            guard existing.contentParts == nil else { return }
+            messages[idx] = ChatMessage(
+                role: existing.role,
+                content: prefix + (existing.content ?? ""),
+                tool_calls: existing.tool_calls,
+                tool_call_id: existing.tool_call_id
+            )
+        }
+
+        // History user messages: replay the exact bytes they were sent with.
+        for (idx, key) in keys where idx != lastUserIdx {
+            if let prefix = frozen[key] { prepend(prefix, at: idx) }
+        }
+
+        guard let lastKey = keys[lastUserIdx] else { return nil }
+        if let recorded = frozen[lastKey] {
+            // Identical retry of the same latest message — byte stability
+            // beats fresher memory.
+            prepend(recorded, at: lastUserIdx)
+            return nil
+        }
+        guard messages[lastUserIdx].contentParts == nil,
+            let prefix = composeInjectedUserPrefix(
+                memorySection: memorySection,
+                screenContext: nil
+            )
+        else { return nil }
+        prepend(prefix, at: lastUserIdx)
+        return (key: lastKey, prefix: prefix)
+    }
+
+    /// Stable ledger keys for every user message in the array:
+    /// FNV-1a hash of the ORIGINAL content plus an occurrence ordinal, so
+    /// duplicate texts ("yes", "continue") map to distinct entries while
+    /// remaining deterministic for a client that resends identical history.
+    private static func frozenPrefixKeys(for messages: [ChatMessage]) -> [Int: String] {
+        var occurrence: [String: Int] = [:]
+        var keys: [Int: String] = [:]
+        for (idx, msg) in messages.enumerated() where msg.role == "user" {
+            let hash = fnv1aHex(msg.content ?? "")
+            let ordinal = occurrence[hash, default: 0]
+            occurrence[hash] = ordinal + 1
+            keys[idx] = "\(hash)#\(ordinal)"
+        }
+        return keys
+    }
+
+    /// Deterministic FNV-1a 64-bit over UTF-8 bytes (matches the hashing
+    /// style used by `CompactionWatermark` for message identities).
+    private static func fnv1aHex(_ text: String) -> String {
+        var hash: UInt64 = 0xcbf2_9ce4_8422_2325
+        for byte in text.utf8 {
+            hash ^= UInt64(byte)
+            hash = hash &* 0x0000_0100_0000_01b3
+        }
+        return String(hash, radix: 16)
     }
 
     /// Prepend a frozen screen-context block (already rendered by

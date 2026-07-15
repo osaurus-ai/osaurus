@@ -27,12 +27,23 @@ unrelated "wants to use your confidential information" prompts:
 ```bash
 OSAURUS_DISABLE_KEYCHAIN_FOR_TESTS=1 \
 OSAURUS_TEST_ROOT=/tmp/osaurus-test \
+OSU_MODELS_DIR=/tmp/osaurus-test-models \
 make test
 ```
 
 In that mode, Keychain wrappers should return nil / no-op on reads, writes,
 and deletes rather than calling `SecItemCopyMatching` / `SecItemAdd` /
 `SecItemUpdate` / `SecItemDelete` against the login Keychain.
+
+`OSU_MODELS_DIR` (pointed at an empty dir) matters on machines with real
+models in `~/MLXModels`: dispatch-style tests start real `ChatSession.send`
+turns, and without the override they resolve the user's installed models and
+try to load them inside the SwiftPM harness — which has no Metal kernels and
+dies with `MLX/MLXArray.swift precondition failed`. With the override those
+sends fail fast with `modelUnavailable`, matching CI behavior. Keychain-gated
+suites (e.g. `PluginAgentScopingTests`) still fail by design under
+`OSAURUS_DISABLE_KEYCHAIN_FOR_TESTS=1`; run those without the flag when you
+need real Keychain proof.
 
 ## Model Runtime Non-Negotiables
 

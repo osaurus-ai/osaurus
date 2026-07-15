@@ -180,7 +180,8 @@ public enum MCPServerHub {
         let diagnostics = MCPLocalProviderDiagnostics.augment(
             report: baseReport,
             provider: provider,
-            healthSnapshot: healthSnapshot
+            healthSnapshot: healthSnapshot,
+            state: state
         )
         let severity = diagnostics.rows.map(\.severity).max(by: mcpSeverityLessThan) ?? .info
         let status = status(for: provider, state: state, highestSeverity: severity)

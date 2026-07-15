@@ -236,9 +236,7 @@ struct AgentsView: View {
     private var gridContent: some View {
         VStack(spacing: 0) {
             headerView
-                .opacity(hasAppeared ? 1 : 0)
-                .offset(y: hasAppeared ? 0 : -10)
-                .animation(.spring(response: 0.4, dampingFraction: 0.8), value: hasAppeared)
+                .managerHeaderEntrance(hasAppeared: hasAppeared)
 
             // First-agent onboarding stays reachable as long as the user has no
             // *local* agents — even if they've already paired a remote agent.
@@ -1018,6 +1016,8 @@ struct AgentDetailView: View {
     @State private var renderChartEnabled: Bool = false
     @State private var speakEnabled: Bool = false
     @State private var searchMemoryEnabled: Bool = false
+    /// Native `web_search` gate — default ON (free providers need no setup).
+    @State private var webSearchEnabled: Bool = true
     @State private var selfSchedulingEnabled: Bool = false
     /// Per-agent subagent capability toggles, keyed by the capability
     /// registry's `PerAgentFlag` (computer_use, spawn, image). Hydrated in
@@ -1077,6 +1077,7 @@ struct AgentDetailView: View {
     /// from / into `AgentSettings`.
     @State private var subagentPermissions: SubagentPermissionDefaults = SubagentPermissionDefaults()
     @State private var subagentBudgets: SubagentBudgets = SubagentBudgets()
+    @State private var spawnToolAccess: SpawnToolAccess = .none
     /// Per-agent subagent model overrides keyed by capability id (computer_use /
     /// spawn). Empty/absent = inherit the kind's default model.
     /// Mirrored from / into `AgentSettings.subagentModelOverrides`.
@@ -1091,6 +1092,9 @@ struct AgentDetailView: View {
     /// it (the persisted bookmark on `Agent.hostWorkspaceBookmark` is the real
     /// grant). `nil` means no host folder is granted.
     @State private var hostWorkspacePath: String? = nil
+    /// Editable mirror of `AutonomousExecConfig.sandboxAllowedDomains`
+    /// (comma-joined). Committed (normalized + persisted) on submit.
+    @State private var sandboxAllowedDomainsText: String = ""
     /// Per-agent on/off for the chat empty-state generative greeting.
     /// Default off, like the other capability flags; the agent opts in
     /// from the Features tab. Drives whether the Empty State section
@@ -1899,7 +1903,7 @@ struct AgentDetailView: View {
     /// the top of the Configure tab now that the title bar's avatar/dropdown is
     /// dedicated to switching between agents.
     private var identitySection: some View {
-        AgentDetailSection(title: L("Identity"), icon: "person.crop.circle") {
+        AgentDetailSection(title: L("editor.section.identity"), icon: "person.crop.circle") {
             VStack(alignment: .leading, spacing: 10) {
                 StyledTextField(
                     placeholder: L("e.g., Code Assistant"),
@@ -2549,19 +2553,19 @@ struct AgentDetailView: View {
 
     private static func scheduleModeTitle(_ mode: AgentScheduleMode) -> String {
         switch mode {
-        case .ambient: return "Ambient"
-        case .reactive: return "Reactive"
-        case .project: return "Project"
-        case .manual: return "Manual"
+        case .ambient: return L("Ambient")
+        case .reactive: return L("Reactive")
+        case .project: return L("Project")
+        case .manual: return L("Manual")
         }
     }
 
     private static func scheduleModeTagline(_ mode: AgentScheduleMode) -> String {
         switch mode {
-        case .ambient: return "Background helper"
-        case .reactive: return "Quick reflexes"
-        case .project: return "Deep work"
-        case .manual: return "Self-scheduling off"
+        case .ambient: return L("Background helper")
+        case .reactive: return L("Quick reflexes")
+        case .project: return L("Deep work")
+        case .manual: return L("Self-scheduling off")
         }
     }
 
@@ -2572,13 +2576,13 @@ struct AgentDetailView: View {
     private static func scheduleModePresetSummary(_ mode: AgentScheduleMode) -> String {
         switch mode {
         case .ambient:
-            return "Up to 6 runs/day · at most once an hour · quiet 10pm–7am."
+            return L("Up to 6 runs/day · at most once an hour · quiet 10pm–7am.")
         case .reactive:
-            return "Up to 48 runs/day · as often as every 5 min · no quiet hours."
+            return L("Up to 48 runs/day · as often as every 5 min · no quiet hours.")
         case .project:
-            return "Up to 4 runs/day · at most once an hour · quiet 10pm–7am."
+            return L("Up to 4 runs/day · at most once an hour · quiet 10pm–7am.")
         case .manual:
-            return "The agent only runs when you ask. Scheduled API calls from the agent are rejected."
+            return L("The agent only runs when you ask. Scheduled API calls from the agent are rejected.")
         }
     }
 
@@ -2723,6 +2727,18 @@ struct AgentDetailView: View {
                             subtitle:
                                 "Let the agent search its own memory mid-conversation to pull up past details on demand. Separate from Memory above, which only auto-injects and saves.",
                             isOn: $searchMemoryEnabled
+                        )
+                    }
+
+                    featureGroup(
+                        "Web",
+                        description: "Live information from the internet."
+                    ) {
+                        featureToggleRow(
+                            title: "Web Search",
+                            subtitle:
+                                "Let the agent search the web through your search providers. Works out of the box with free sources; configure providers in Settings > Search.",
+                            isOn: $webSearchEnabled
                         )
                     }
 
@@ -3436,6 +3452,8 @@ struct AgentDetailView: View {
                 label: "Permission"
             )
             subagentPanelDivider
+            spawnToolAccessRow
+            subagentPanelDivider
             subagentBudgetRows
             subagentFootnote(
                 "Local handoff and RAM-safety for spawn jobs are system settings in Settings → Subagents."
@@ -3760,6 +3778,35 @@ struct AgentDetailView: View {
             get: { subagentBudgets[keyPath: keyPath] },
             set: {
                 subagentBudgets[keyPath: keyPath] = $0
+                debouncedSave()
+            }
+        )
+    }
+
+    /// Worker tool grant for spawned subagents: text-only (default) or the
+    /// curated read-only file set. What "read-only" reaches is enforced in
+    /// `TextSubagentKind.makeToolset`, not here.
+    private var spawnToolAccessRow: some View {
+        subagentControlRow(
+            "Worker tools",
+            subtitle:
+                "Let spawned workers read files themselves (file_read / file_search) so bulk reading stays out of this agent's context."
+        ) {
+            Picker("", selection: spawnToolAccessSelection) {
+                Text("Text-only", bundle: .module).tag(SpawnToolAccess.none)
+                Text("Read-only files", bundle: .module).tag(SpawnToolAccess.readOnly)
+            }
+            .labelsHidden()
+            .pickerStyle(.menu)
+            .frame(maxWidth: 160)
+        }
+    }
+
+    private var spawnToolAccessSelection: Binding<SpawnToolAccess> {
+        Binding(
+            get: { spawnToolAccess },
+            set: {
+                spawnToolAccess = $0
                 debouncedSave()
             }
         )
@@ -5129,6 +5176,10 @@ struct AgentDetailView: View {
                 updateAutonomousExec(from: execConfig) { $0.sandboxNetworkEnabled = networkOn }
             }
 
+            if execConfig?.sandboxNetworkEnabled ?? true {
+                sandboxAllowedDomainsField(execConfig: execConfig, interactive: interactive)
+            }
+
             featureCard(
                 title: "Background Processes",
                 subtitle:
@@ -5169,6 +5220,57 @@ struct AgentDetailView: View {
                 "Start the sandbox container from the Sandbox status bar to enable these."
             )
         }
+    }
+
+    /// Egress domain allowlist editor. Empty keeps unrestricted outbound
+    /// (today's default); a non-empty comma-separated list switches the
+    /// sandbox to host-only networking with the filtering proxy on the
+    /// next boot, limiting outbound connections to the listed domains
+    /// (`example.com` exact, `*.example.com` subdomains) plus domains the
+    /// agent's plugins declare.
+    @ViewBuilder
+    private func sandboxAllowedDomainsField(
+        execConfig: AutonomousExecConfig?,
+        interactive: Bool
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("Allowed Domains", bundle: .module)
+                .font(.system(size: 12, weight: .medium))
+                .foregroundColor(theme.primaryText)
+            TextField(
+                "Leave empty for unrestricted outbound",
+                text: $sandboxAllowedDomainsText
+            )
+            .textFieldStyle(.roundedBorder)
+            .font(.system(size: 12))
+            .disabled(!interactive)
+            .onSubmit { commitSandboxAllowedDomains(execConfig: execConfig) }
+            .onAppear {
+                sandboxAllowedDomainsText =
+                    execConfig?.sandboxAllowedDomains?.joined(separator: ", ") ?? ""
+            }
+            Text(
+                "Comma-separated (e.g. api.github.com, *.example.com). When set, sandbox traffic goes through a host proxy that only permits these domains. Takes effect on next sandbox start.",
+                bundle: .module
+            )
+            .font(.system(size: 11))
+            .foregroundColor(theme.tertiaryText)
+            .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(.leading, 2)
+        .opacity(interactive ? 1 : 0.5)
+    }
+
+    private func commitSandboxAllowedDomains(execConfig: AutonomousExecConfig?) {
+        let raw = sandboxAllowedDomainsText
+            .split(separator: ",")
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+        let normalized = SandboxEgressPolicy.normalizedAllowlist(raw)
+        updateAutonomousExec(from: execConfig) {
+            $0.sandboxAllowedDomains = normalized.isEmpty ? nil : normalized
+        }
+        sandboxAllowedDomainsText = normalized.joined(separator: ", ")
     }
 
     /// Small explanatory line shown under the sandbox toggles when they're
@@ -6046,6 +6148,7 @@ struct AgentDetailView: View {
         renderChartEnabled = agent.settings.renderChartEnabled
         speakEnabled = agent.settings.speakEnabled
         searchMemoryEnabled = agent.settings.searchMemoryEnabled
+        webSearchEnabled = agent.settings.webSearchEnabled
         selfSchedulingEnabled = agent.settings.selfSchedulingEnabled
         subagentToggles = SubagentCapabilityRegistry.perAgentToggleFlags.reduce(into: [:]) {
             acc,
@@ -6064,6 +6167,7 @@ struct AgentDetailView: View {
         subagentPermissions = agent.settings.subagentPermissions
         subagentBudgets = agent.settings.subagentBudgets
         subagentModelOverrides = agent.settings.subagentModelOverrides
+        spawnToolAccess = agent.settings.spawnToolAccess
         // Snapshot the global subagent config for the spawn-handoff warning.
         globalSubagentConfig = SubagentConfigurationStore.snapshot()
         hostWorkspacePath = agent.hostWorkspacePath
@@ -6110,11 +6214,20 @@ struct AgentDetailView: View {
     // MARK: - Agent Secrets
 
     private func loadAgentSecrets() {
-        let stored = AgentSecretsKeychain.getAllSecrets(agentId: agent.id)
-        agentSecrets =
-            stored
-            .map { AgentSecretEntry(key: $0.key, value: $0.value, isNew: false) }
-            .sorted { $0.key.localizedCaseInsensitiveCompare($1.key) == .orderedAscending }
+        // Keychain reads are securityd IPC round-trips (one per secret) and
+        // hung the appear path for 2+ seconds on slow machines. Fetch off
+        // the main actor, publish the result back.
+        let agentId = agent.id
+        Task {
+            let stored = await Task.detached(priority: .userInitiated) {
+                AgentSecretsKeychain.getAllSecrets(agentId: agentId)
+            }.value
+            guard agentId == agent.id else { return }
+            agentSecrets =
+                stored
+                .map { AgentSecretEntry(key: $0.key, value: $0.value, isNew: false) }
+                .sorted { $0.key.localizedCaseInsensitiveCompare($1.key) == .orderedAscending }
+        }
     }
 
     private func addAgentSecret() {
@@ -6253,6 +6366,7 @@ struct AgentDetailView: View {
                 renderChartEnabled: renderChartEnabled,
                 speakEnabled: speakEnabled,
                 searchMemoryEnabled: searchMemoryEnabled,
+                webSearchEnabled: webSearchEnabled,
                 selfSchedulingEnabled: selfSchedulingEnabled,
                 computerUseEnabled: computerUseEnabled,
                 computerUseCeiling: computerUseEnabled ? computerUseCeiling : nil,
@@ -6289,7 +6403,8 @@ struct AgentDetailView: View {
                 imageEditModelId: imageEditModelId,
                 subagentPermissions: subagentPermissions,
                 subagentBudgets: subagentBudgets,
-                subagentModelOverrides: subagentModelOverrides
+                subagentModelOverrides: subagentModelOverrides,
+                spawnToolAccess: spawnToolAccess
             ),
             order: current.order
         )

@@ -632,6 +632,14 @@ public actor MemoryService {
         // Quick global gate before queuing — signals stale-by-the-time-
         // we-run is not an issue because `performDistillSession`
         // re-reads from `pending_signals` inside the coordinator body.
+        //
+        // Whatever the outcome, this attempt consumed the debounce entry:
+        // drop the task reference so `debounceTasks` doesn't accumulate one
+        // entry per conversation for the process lifetime (several early
+        // outcomes — disabled, not-resident, no-signals — used to leak it).
+        // A newer turn re-arms its own entry via `bufferTurn`.
+        defer { debounceTasks[conversationId] = nil }
+
         let config = MemoryConfigurationStore.load()
         guard config.enabled else { return .skipped(reason: "memory_disabled") }
 
@@ -741,7 +749,11 @@ public actor MemoryService {
         do {
             let response = try await CoreModelService.shared.generate(
                 prompt: prompt,
-                systemPrompt: distillSystemPrompt
+                systemPrompt: distillSystemPrompt,
+                // Distillation is housekeeping — it runs on ingest and at launch,
+                // unprompted. It must never evict the model the user is chatting
+                // with (or cancel the one they're waiting on) to summarise history.
+                intent: .background
             )
             let parsed = parseDistillResponse(response)
             let durationMs = Int(Date().timeIntervalSince(startTime) * 1000)
@@ -880,12 +892,23 @@ public actor MemoryService {
         } catch let coreErr as CoreModelError {
             let durationMs = Int(Date().timeIntervalSince(startTime) * 1000)
             switch coreErr {
-            case .modelUnavailable, .circuitBreakerOpen:
+            case .modelUnavailable, .circuitBreakerOpen, .backgroundWouldEvictUserModel:
                 // Config-level / transient backend state. Stay pending and
                 // recover once the model resolves or the breaker closes; do
                 // NOT count toward the cap (a misconfig shouldn't permanently
                 // lose the user's turns).
-                let reason = (coreErr == .circuitBreakerOpen) ? "breaker_open" : "core_model_unavailable"
+                //
+                // `backgroundWouldEvictUserModel` belongs here for the same
+                // reason: the model is busy serving the user, so distillation
+                // steps aside. The signals stay pending and distil on a later
+                // pass, once the runtime is free.
+                let reason: String = {
+                    switch coreErr {
+                    case .circuitBreakerOpen: return "breaker_open"
+                    case .backgroundWouldEvictUserModel: return "model_in_use"
+                    default: return "core_model_unavailable"
+                    }
+                }()
                 MemoryLogger.service.warning("distill: \(reason) for \(conversationId)")
                 logProcessing(
                     agentId: agentId,

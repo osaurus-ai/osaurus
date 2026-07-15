@@ -137,6 +137,21 @@ final class ServerController: ObservableObject {
             lastErrorMessage = nil
             FeatureTelemetry.serverStarted()
             print("[Osaurus] NIO server started successfully on port \(configuration.port)")
+            // One-line record of the effective inference policy so any
+            // benchmark or bug report can state exactly which knobs were in
+            // force without scraping Settings. Values here are the resolved
+            // ones (after Settings/UserDefaults precedence), not the raw keys.
+            let idleResidency: String
+            switch configuration.modelIdleResidencyPolicy {
+            case .immediately: idleResidency = "immediately"
+            case .afterSeconds(let seconds): idleResidency = "after_seconds(\(seconds))"
+            case .never: idleResidency = "never"
+            }
+            print(
+                "[Osaurus] inference policy: maxBatchSize=\(InferenceFeatureFlags.mlxBatchEngineMaxBatchSize) "
+                    + "eviction=\(configuration.modelEvictionPolicy.rawValue) "
+                    + "idleResidency=\(idleResidency)"
+            )
 
             if configuration.exposeToNetwork {
                 BonjourAdvertiser.shared.startAdvertising(port: configuration.port)

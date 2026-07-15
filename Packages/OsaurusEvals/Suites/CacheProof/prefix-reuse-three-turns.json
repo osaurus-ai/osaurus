@@ -1,0 +1,18 @@
+{
+  "id": "cache_proof.prefix-reuse-three-turns",
+  "domain": "cache_proof",
+  "label": "cache proof • reuse keeps compounding across a three-turn session",
+  "query": "Here is a fact to remember: the warehouse door code is 7-7-2-4. Acknowledge briefly.",
+  "notes": "Growth row: turns 2 and 3 each extend the same conversation, so the reuse counter must move at least twice — proving the cache keeps matching as the prefix GROWS, not just once after turn 1 (a one-shot warm-up bug would pass the 2-turn case and fail here). Same topology mapping as the 2-turn row: KV floor on full attention, companion floor on hybrid-SSM. Off-CI (needs a local model).",
+  "fixtures": {},
+  "expect": {
+    "cacheProof": {
+      "followUpTurns": [
+        "What was the door code?",
+        "Good. Now repeat it backwards."
+      ],
+      "maxTokens": 128,
+      "minKvPrefixHitsDelta": 2
+    }
+  }
+}

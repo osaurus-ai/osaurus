@@ -307,6 +307,12 @@ public struct MCPProviderState: Sendable {
     public var discoveredToolCount: Int
     public var discoveredToolNames: [String]
     public var lastConnectedAt: Date?
+    /// When the manager last auto-reconnected after a stale session during tool execution.
+    public var lastAutoReconnectAt: Date?
+    /// True while `executeTool` is rebuilding a stale HTTP/session connection.
+    public var isAutoReconnecting: Bool
+    /// Last stderr lines captured from a stdio subprocess before unexpected exit.
+    public var lastStderrTail: String?
     /// Set when a connection attempt yielded `401 Unauthorized` and the server advertised
     /// OAuth via `WWW-Authenticate`. UI uses this to surface a "Sign in" CTA.
     public var requiresAuth: Bool
@@ -322,6 +328,9 @@ public struct MCPProviderState: Sendable {
         self.discoveredToolCount = 0
         self.discoveredToolNames = []
         self.lastConnectedAt = nil
+        self.lastAutoReconnectAt = nil
+        self.isAutoReconnecting = false
+        self.lastStderrTail = nil
         self.requiresAuth = false
         self.resourceMetadataURL = nil
     }

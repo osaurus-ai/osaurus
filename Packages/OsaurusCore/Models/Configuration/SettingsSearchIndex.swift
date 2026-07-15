@@ -50,8 +50,12 @@ public struct SettingsSearchEntry: Identifiable, Sendable, Hashable {
     }
 
     /// Breadcrumb shown in results, e.g. ["Voice", "Speech to Text", "Transcription Model"].
+    /// A section that just repeats the tab label (e.g. the "General" card inside
+    /// the General tab) is collapsed so results don't read "General › General".
     public var breadcrumb: [String] {
-        section.isEmpty ? [tab.label, title] : [tab.label, section, title]
+        section.isEmpty || section == tab.label
+            ? [tab.label, title]
+            : [tab.label, section, title]
     }
 }
 
@@ -143,35 +147,35 @@ public enum SettingsSearchIndex {
         .init(
             id: "settings.chat.temperature",
             tab: .chat,
-            section: "Chat",
+            section: "Generation",
             title: "Temperature",
             keywords: ["randomness", "creativity", "sampling"]
         ),
         .init(
             id: "settings.chat.maxTokens",
             tab: .chat,
-            section: "Chat",
+            section: "Generation",
             title: "Max Tokens",
             keywords: ["response length", "output tokens"]
         ),
         .init(
             id: "settings.chat.contextLength",
             tab: .chat,
-            section: "Chat",
+            section: "Generation",
             title: "Context Length",
             keywords: ["context window", "context"]
         ),
         .init(
             id: "settings.chat.topP",
             tab: .chat,
-            section: "Chat",
+            section: "Generation",
             title: "Top P",
             keywords: ["nucleus sampling", "top-p"]
         ),
         .init(
             id: "settings.chat.toolAttempts",
             tab: .chat,
-            section: "Chat",
+            section: "Generation",
             title: "Max Tool Attempts",
             keywords: ["tool calls", "agent loop", "attempts"]
         ),
@@ -199,6 +203,20 @@ public enum SettingsSearchIndex {
             section: "Notifications",
             title: "Toast Notifications",
             keywords: ["toast", "position", "timeout", "alerts"]
+        ),
+        .init(
+            id: "settings.notifications.position",
+            tab: .settings,
+            section: "Notifications",
+            title: "Toast Position",
+            keywords: ["position", "corner", "top", "bottom", "placement"]
+        ),
+        .init(
+            id: "settings.notifications.timeout",
+            tab: .settings,
+            section: "Notifications",
+            title: "Toast Timeout",
+            keywords: ["timeout", "duration", "auto dismiss", "seconds"]
         ),
         .init(
             id: "settings.toolPermissions",
@@ -241,11 +259,43 @@ public enum SettingsSearchIndex {
             subTab: "VAD Mode"
         ),
         .init(
+            id: "voice.stt.pause",
+            tab: .voice,
+            section: "Speech to Text",
+            title: "Pause Detection",
+            keywords: ["pause", "auto stop", "auto send", "stop after silence"],
+            subTab: "Speech To Text"
+        ),
+        .init(
+            id: "voice.stt.confirmation",
+            tab: .voice,
+            section: "Speech to Text",
+            title: "Confirmation Delay",
+            keywords: ["confirmation", "cancel window", "delay before send"],
+            subTab: "Speech To Text"
+        ),
+        .init(
+            id: "voice.stt.silence",
+            tab: .voice,
+            section: "Speech to Text",
+            title: "Silence Timeout",
+            keywords: ["silence", "timeout", "close voice input", "inactivity"],
+            subTab: "Speech To Text"
+        ),
+        .init(
             id: "voice.tts.voice",
             tab: .voice,
             section: "Text to Speech",
             title: "Spoken Voice",
             keywords: ["tts", "read aloud", "speech synthesis", "voice"],
+            subTab: "Text To Speech"
+        ),
+        .init(
+            id: "voice.tts.temperature",
+            tab: .voice,
+            section: "Text to Speech",
+            title: "Voice Temperature",
+            keywords: ["tts temperature", "expressiveness", "variation"],
             subTab: "Text To Speech"
         ),
         .init(
@@ -401,6 +451,59 @@ public enum SettingsSearchIndex {
             keywords: ["screen control", "cursor", "automation", "accessibility", "per-app"]
         ),
 
+        // MARK: Channels / Integrations
+        .init(
+            id: "agentChannels.overview",
+            tab: .agentChannels,
+            title: "Channels",
+            keywords: [
+                "agent channels", "integrations", "channels", "discord", "slack", "telegram",
+                "custom json", "custom http", "remote channel",
+            ]
+        ),
+        .init(
+            id: "agentChannels.globalWrites",
+            tab: .agentChannels,
+            section: "Global Channel Safety",
+            title: "Global Channel Writes",
+            keywords: ["kill switch", "disable writes", "remote writes", "channel writes"]
+        ),
+        .init(
+            id: "agentChannels.discord",
+            tab: .agentChannels,
+            section: "Native Integrations",
+            title: "Discord",
+            keywords: ["discord bot token", "discord server ids", "discord channel allowlist"]
+        ),
+        .init(
+            id: "agentChannels.slack",
+            tab: .agentChannels,
+            section: "Native Integrations",
+            title: "Slack",
+            keywords: [
+                "slack bot token", "slack signing secret", "socket mode",
+                "slack workspace ids", "slack channel allowlist",
+            ]
+        ),
+        .init(
+            id: "agentChannels.telegram",
+            tab: .agentChannels,
+            section: "Native Integrations",
+            title: "Telegram",
+            keywords: [
+                "telegram bot token", "telegram chat ids", "sender allowlist",
+                "telegram channel allowlist", "telegram long polling",
+                "telegram getupdates", "store incoming messages",
+            ]
+        ),
+        .init(
+            id: "agentChannels.customJSON",
+            tab: .agentChannels,
+            section: "Custom JSON Connections",
+            title: "Custom HTTP Connections",
+            keywords: ["custom json channels", "webhook", "agent-channels.json", "secret references"]
+        ),
+
         // MARK: Image Generation tab (subTab values are ImageGenerationTab raw values)
         .init(
             id: "imageGeneration.tab",
@@ -486,11 +589,25 @@ public enum SettingsSearchIndex {
                 "cryptographic identity", "keys",
             ]
         ),
+        // The Storage tab is the single home for disk concerns: the models
+        // directory + external sources moved here from the General tab.
         .init(
             id: "storage.location",
             tab: .storage,
-            title: "Storage & Cleanup",
-            keywords: ["disk", "cache", "data location", "cleanup", "models size"]
+            title: "Models Directory",
+            keywords: ["disk", "data location", "models folder", "move models", "cleanup", "models size"]
+        ),
+        .init(
+            id: "storage.externalModels",
+            tab: .storage,
+            title: "External Model Sources",
+            keywords: ["hugging face", "hf cache", "lm studio", "external", "import models"]
+        ),
+        .init(
+            id: "storage.encryption",
+            tab: .storage,
+            title: "Encrypt Local Data at Rest",
+            keywords: ["sqlcipher", "encryption", "filevault", "at rest", "storage key", "backup"]
         ),
         .init(
             id: "themes.appearance",
@@ -503,6 +620,54 @@ public enum SettingsSearchIndex {
             tab: .memory,
             title: "Memory",
             keywords: ["memories", "facts", "recall", "long term memory"]
+        ),
+        .init(
+            id: "memory.settings.budget",
+            tab: .memory,
+            section: "Configuration",
+            title: "Memory Budget",
+            keywords: ["memory tokens", "context budget", "injection"],
+            subTab: "settings"
+        ),
+        .init(
+            id: "memory.settings.retention",
+            tab: .memory,
+            section: "Configuration",
+            title: "Episode Retention",
+            keywords: ["retention", "prune", "days", "history cleanup"],
+            subTab: "settings"
+        ),
+
+        // MARK: Search
+        .init(
+            id: "search.providers",
+            tab: .search,
+            title: "Search Providers",
+            keywords: [
+                "web search", "search engine", "tavily", "exa", "brave", "serper", "parallel",
+                "google", "kagi", "duckduckgo", "bing", "api key", "internet",
+            ]
+        ),
+        .init(
+            id: "search.tryIt",
+            tab: .search,
+            section: "Try it",
+            title: "Test Search",
+            keywords: ["test query", "search playground", "try search"]
+        ),
+        .init(
+            id: "search.routing",
+            tab: .search,
+            section: "Advanced",
+            title: "Per-category Provider Order",
+            keywords: ["fallback", "ranking", "routing", "news", "images", "priority"]
+        ),
+        .init(
+            id: "search.custom",
+            tab: .search,
+            section: "Advanced",
+            title: "Custom Search Provider",
+            keywords: ["custom api", "json definition", "searxng", "perplexity", "self-hosted"]
         ),
     ]
 }

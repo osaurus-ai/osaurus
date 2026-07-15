@@ -268,8 +268,20 @@ public struct Attachment: Codable, Sendable, Equatable, Identifiable {
     private static let nilSentinel = NSNumber(value: -1)
     // NSCache is documented thread-safe for concurrent access from multiple
     // threads; the compiler just can't see that through `Sendable`.
-    nonisolated(unsafe) private static let lineCountCache = NSCache<NSString, NSNumber>()
-    nonisolated(unsafe) private static let tokenEstimateCache = NSCache<NSString, NSNumber>()
+    // Explicit countLimit: without one NSCache only evicts under system
+    // memory pressure, so a long session with many attachments accumulates
+    // entries indefinitely. Values are tiny (NSNumber) but keys embed
+    // content hashes; 2048 covers any realistic working set.
+    nonisolated(unsafe) private static let lineCountCache: NSCache<NSString, NSNumber> = {
+        let c = NSCache<NSString, NSNumber>()
+        c.countLimit = 2_048
+        return c
+    }()
+    nonisolated(unsafe) private static let tokenEstimateCache: NSCache<NSString, NSNumber> = {
+        let c = NSCache<NSString, NSNumber>()
+        c.countLimit = 2_048
+        return c
+    }()
 
     public var isVideo: Bool {
         switch kind {

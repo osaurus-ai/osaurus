@@ -261,7 +261,10 @@ final class StreamingDeltaProcessor {
         let take = min(pending, max(Self.pacingCharsPerTick, scaled))
         appendContent(consume(take))
         lastFlushTime = Date()
-        syncToTurn()
+        // Throttled: appends still land every 16ms tick, but the (expensive)
+        // UI re-apply follows the adaptive `syncIntervalMs` cadence. Any
+        // residual pending content is synced by `finalize()`.
+        syncIfNeeded(now: Date())
     }
 
     /// Pending (unrevealed) character count. O(1) — replaces the O(n)
@@ -309,9 +312,25 @@ final class StreamingDeltaProcessor {
         onSync?()
     }
 
-    private func syncIfNeeded(now: Date) {
-        let syncIntervalMs: Double = 16
+    /// UI sync cadence, scaled down as the turn grows. Every sync re-applies
+    /// the streaming cell — markdown segment dispatch, table relayout, height
+    /// update — and that work is O(content length), so a fixed 16ms cadence
+    /// makes the whole stream O(n²): ChatPerfTrace measured ~21s of
+    /// main-thread work over a 259s markdown stream at ~25 syncs/s, with
+    /// 100ms single-sync peaks (the fleet-hardware app-hang cluster). Short
+    /// responses — the common case — keep the full-rate typewriter; long
+    /// ones trade imperceptible reveal granularity for a bounded per-second
+    /// cost.
+    private var syncIntervalMs: Double {
+        switch contentLength + thinkingLength {
+        case ..<2_000: return 16
+        case ..<8_000: return 33
+        case ..<32_000: return 66
+        default: return 100
+        }
+    }
 
+    private func syncIfNeeded(now: Date) {
         let timeSinceSync = now.timeIntervalSince(lastSyncTime) * 1000
         if (syncCount == 0 && hasPendingContent)
             || (timeSinceSync >= syncIntervalMs && hasPendingContent)

@@ -55,9 +55,13 @@ public final class FrontmostAppTracker: ObservableObject {
         ) { note in
             let app =
                 note.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication
-            // `queue: .main` guarantees this runs on the main thread, so the
-            // hop into MainActor state is safe and synchronous.
-            MainActor.assumeIsolated {
+            // `queue: .main` already runs this on the main thread, but
+            // `MainActor.assumeIsolated`'s executor check has crashed in the
+            // Swift runtime (null deref in isMainExecutor) when LaunchServices
+            // delivers this notification outside any task context on macOS 27
+            // betas. Hop with a Task instead — record() only tracks the last
+            // activation, so the async delivery doesn't change behavior.
+            Task { @MainActor in
                 FrontmostAppTracker.shared.record(app)
             }
         }
@@ -70,6 +74,14 @@ public final class FrontmostAppTracker: ObservableObject {
         if app.processIdentifier == selfPid { return }
         if let bundleId = app.bundleIdentifier, bundleId == selfBundleId { return }
         lastNonSelfPid = app.processIdentifier
-        lastNonSelfAppName = app.localizedName ?? app.bundleIdentifier
+        // Skip the no-op publish: assigning an unchanged `@Published` value
+        // still fires the whole Combine/SwiftUI fan-out synchronously inside
+        // this NSWorkspace notification callback, which showed up as a
+        // main-thread hang under load (Sentry APPLE-MACOS-RQ). Re-activating
+        // the same app (the common case) shouldn't redo any downstream work.
+        let name = app.localizedName ?? app.bundleIdentifier
+        if lastNonSelfAppName != name {
+            lastNonSelfAppName = name
+        }
     }
 }

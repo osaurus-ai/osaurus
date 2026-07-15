@@ -1,0 +1,14 @@
+{
+  "id": "reasoning_channel.no-looping-long-answer",
+  "domain": "reasoning_channel",
+  "label": "reasoning channel • long structured answer completes without loop or marker leak",
+  "query": "List the 12 months of the year in order, one per line, each followed by its number of days in a non-leap year. Then end with the single word DONE on its own line.",
+  "notes": "Looping / degeneration guard on a longer decode: the deterministic DONE sentinel proves the model reached a clean end-of-answer instead of spiralling (a length-cap fake pass would miss the sentinel and fail). Marker sweep and unclosed-span checks ride along on the longer output where leaks are most likely. Off-CI (needs a model).",
+  "fixtures": {},
+  "expect": {
+    "reasoning": {
+      "maxTokens": 2048,
+      "visibleContains": ["February", "September", "DONE"]
+    }
+  }
+}

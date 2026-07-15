@@ -21,9 +21,7 @@ struct SlashCommandsView: View {
     var body: some View {
         VStack(spacing: 0) {
             headerView
-                .opacity(hasAppeared ? 1 : 0)
-                .offset(y: hasAppeared ? 0 : -10)
-                .animation(.spring(response: 0.4, dampingFraction: 0.8), value: hasAppeared)
+                .managerHeaderEntrance(hasAppeared: hasAppeared)
 
             Spacer().frame(height: 2)
 
@@ -109,16 +107,16 @@ struct SlashCommandsView: View {
     private var commandList: some View {
         ScrollView {
             LazyVStack(spacing: 8) {
-                ForEach(Array(registry.customCommands.enumerated()), id: \.element.id) { index, cmd in
-                    commandRow(cmd, index: index)
+                ForEach(registry.customCommands) { cmd in
+                    commandRow(cmd)
                 }
             }
             .padding(20)
         }
     }
 
-    private func commandRow(_ cmd: SlashCommand, index: Int) -> some View {
-        GlassListRow(animationIndex: index) {
+    private func commandRow(_ cmd: SlashCommand) -> some View {
+        GlassListRow {
             HStack(spacing: 12) {
                 // Icon badge
                 ZStack {

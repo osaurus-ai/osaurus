@@ -106,6 +106,18 @@ struct ModelPickerItem: Identifiable, Hashable {
     /// filter the Osaurus tab by context limit; `nil` when unknown.
     let contextLength: Int?
 
+    /// Whether Router metadata explicitly advertises tool calling. Nil for
+    /// non-Router models and older catalogs that do not publish the capability.
+    /// The first-run temporary Cloud selector uses this with price + context to
+    /// choose a lower-cost model that can still run the agent experience.
+    let supportsToolCalling: Bool?
+
+    /// Catalog-driven reasoning-effort capabilities for remote models: the
+    /// live ChatGPT/Codex catalog contract, or the documented official
+    /// OpenAI GPT-5.6 API-key contract. Nil for models without a dynamic
+    /// effort surface (they keep the static profile fallback).
+    let reasoningCapabilities: ModelReasoningCapabilities?
+
     /// Image-generation metadata. Nil for text/remote chat models.
     let imageKind: String?
     let imageCapabilities: ImageModelCapabilities?
@@ -126,6 +138,8 @@ struct ModelPickerItem: Identifiable, Hashable {
         inputPriceMicroPerMTok: Int64? = nil,
         outputPriceMicroPerMTok: Int64? = nil,
         contextLength: Int? = nil,
+        supportsToolCalling: Bool? = nil,
+        reasoningCapabilities: ModelReasoningCapabilities? = nil,
         imageKind: String? = nil,
         imageCapabilities: ImageModelCapabilities? = nil,
         imageDefaultSteps: Int? = nil,
@@ -144,6 +158,8 @@ struct ModelPickerItem: Identifiable, Hashable {
         self.inputPriceMicroPerMTok = inputPriceMicroPerMTok
         self.outputPriceMicroPerMTok = outputPriceMicroPerMTok
         self.contextLength = contextLength
+        self.supportsToolCalling = supportsToolCalling
+        self.reasoningCapabilities = reasoningCapabilities
         self.imageKind = imageKind
         self.imageCapabilities = imageCapabilities
         self.imageDefaultSteps = imageDefaultSteps
@@ -155,6 +171,13 @@ struct ModelPickerItem: Identifiable, Hashable {
     func matches(searchQuery: String) -> Bool {
         guard !searchQuery.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return true }
         return [displayName, id, source.displayName].contains { SearchService.matches(query: searchQuery, in: $0) }
+    }
+
+    /// Cross-provider key under which this model is stored in the favourites
+    /// list — the source's unique key plus the id, so the same id offered by two
+    /// providers is bookmarked independently.
+    var favoriteKey: String {
+        FavoriteModelsStore.key(sourceKey: source.uniqueKey, modelId: id)
     }
 }
 
@@ -215,6 +238,52 @@ extension ModelPickerItem {
         )
     }
 
+    /// Create a ChatGPT/Codex remote model picker item enriched with the
+    /// live catalog's display name and per-model reasoning capabilities.
+    /// `metadata` is nil for fallback (pre-catalog) slugs, which then behave
+    /// exactly like plain remote items.
+    static func fromCodexRemoteModel(
+        modelId: String,
+        providerName: String,
+        providerId: UUID,
+        metadata: CodexModelMetadata?
+    ) -> ModelPickerItem {
+        let catalogDisplayName = metadata?.displayName?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        return ModelPickerItem(
+            id: modelId,
+            displayName: (catalogDisplayName?.isEmpty == false ? catalogDisplayName : nil)
+                ?? displayName(fromModelId: modelId),
+            source: .remote(providerName: providerName, providerId: providerId),
+            reasoningCapabilities: metadata.flatMap(ModelReasoningCapabilities.init(codex:))
+        )
+    }
+
+    /// Create a picker item for the official `api.openai.com` API-key route.
+    /// GPT-5.6 models attach the documented public reasoning profile
+    /// (`none` … `max`, never Codex-only `ultra`); every other id keeps the
+    /// plain `/v1/models` id/display behavior and the generic static
+    /// profile fallback.
+    static func fromOfficialOpenAIModel(
+        modelId: String,
+        providerName: String,
+        providerId: UUID
+    ) -> ModelPickerItem {
+        ModelPickerItem(
+            id: modelId,
+            displayName: displayName(fromModelId: modelId),
+            source: .remote(providerName: providerName, providerId: providerId),
+            reasoningCapabilities: isPublicGPT56ModelId(modelId) ? .officialOpenAIGPT56 : nil
+        )
+    }
+
+    /// Whether a (possibly provider-prefixed) id names a GPT-5.6 model
+    /// covered by the documented public API reasoning contract.
+    static func isPublicGPT56ModelId(_ id: String) -> Bool {
+        let bare = id.split(separator: "/").last.map(String.init) ?? id
+        return bare.lowercased().hasPrefix("gpt-5.6")
+    }
+
     /// Create an Osaurus Router model picker item enriched with the router's
     /// per-model metadata (underlying provider, pricing, context, capabilities).
     /// The metadata is rendered in the picker row's existing second line via
@@ -237,7 +306,8 @@ extension ModelPickerItem {
             outputPriceMicroPerMTok: Int64(
                 metadata.outputMicroPerMTok.trimmingCharacters(in: .whitespacesAndNewlines)
             ),
-            contextLength: metadata.contextLength > 0 ? metadata.contextLength : nil
+            contextLength: metadata.contextLength > 0 ? metadata.contextLength : nil,
+            supportsToolCalling: metadata.supportsToolCalling
         )
     }
 
@@ -288,6 +358,17 @@ extension OsaurusRouterModel {
         return capabilities.contains { key, value in
             value && visionKeys.contains(key.lowercased())
         }
+    }
+
+    /// Router catalogs currently use `tools`; accept common aliases so a
+    /// backend naming cleanup does not silently make first-run selection less
+    /// capable. Nil means the catalog did not make a claim either way.
+    var supportsToolCalling: Bool? {
+        guard let capabilities else { return nil }
+        let toolKeys: Set<String> = ["tools", "tool_calling", "function_calling"]
+        let matches = capabilities.filter { toolKeys.contains($0.key.lowercased()) }
+        guard !matches.isEmpty else { return nil }
+        return matches.contains { $0.value }
     }
 
     /// Human-friendly context window (e.g. 131072 -> "131K", 1048576 -> "1M").

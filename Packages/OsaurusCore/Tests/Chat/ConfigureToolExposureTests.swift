@@ -59,8 +59,9 @@ struct ConfigureToolExposureTests {
         let names = Set(tools.map { $0.function.name })
         #expect(names == ToolRegistry.defaultAgentAllowedToolNames)
         // Structural: the allowed set is the configure surface (reads +
-        // writes) plus exactly the three agent-loop tools, with no overlap.
-        #expect(names.count == ToolRegistry.configureToolNames.count + 3)
+        // writes) plus exactly the three agent-loop tools and native
+        // `web_search`, with no overlap.
+        #expect(names.count == ToolRegistry.configureToolNames.count + 4)
     }
 
     @Test
@@ -84,7 +85,7 @@ struct ConfigureToolExposureTests {
     }
 
     @Test
-    func defaultAgent_includesTheConsolidatedSixWrites() async {
+    func defaultAgent_includesTheConsolidatedWrites() async {
         Self.ensureBootstrapped()
         let snapshot = Self.makeSnapshot(agentId: Agent.defaultId)
         let tools = SystemPromptComposer.resolveTools(
@@ -94,11 +95,12 @@ struct ConfigureToolExposureTests {
         let names = Set(tools.map { $0.function.name })
         let expectedWrites: Set<String> = [
             "osaurus_provider", "osaurus_model", "osaurus_mcp",
-            "osaurus_plugin", "osaurus_schedule", "osaurus_agent",
+            "osaurus_search", "osaurus_plugin", "osaurus_schedule",
+            "osaurus_agent",
         ]
         #expect(
             expectedWrites.isSubset(of: names),
-            "expected the six consolidated write tools; got \(names.sorted())"
+            "expected the seven consolidated write tools; got \(names.sorted())"
         )
         // The pre-consolidation write set is gone — no `osaurus_*_<verb>`.
         #expect(!names.contains("osaurus_provider_add"))

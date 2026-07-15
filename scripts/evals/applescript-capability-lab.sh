@@ -25,9 +25,17 @@ set -uo pipefail
 #   MODEL          AppleScript model routed through the runner. Default "auto"
 #                  (the currently configured local model). Live cases SKIP when
 #                  no AppleScript model is installed.
-#   FILTER         case-id substring filter. Default "live" (the capability
-#                  lane). Use "liveProof" for the real-executor ground-truth
-#                  lane (permission-gated, real side effects), or "" for all.
+#   FILTER         case-id substring filter. Default "live-" (the mock-world
+#                  capability lane; the trailing hyphen keeps the substring
+#                  match from also catching the liveproof-* cases). Use
+#                  "liveproof" for the real-executor ground-truth lane
+#                  (permission-gated, REAL side effects), or "" for all.
+#                  The liveproof lane can intermittently wedge the CLI's
+#                  concurrency runtime on a real-executor case; the per-case
+#                  watchdog (OSAURUS_EVALS_CASE_TIMEOUT_SEC, default 600)
+#                  records the row as `errored` and terminates the suite with
+#                  a complete report, so a wedge never silently stalls a sweep
+#                  — rerun the lane to get scores for the remaining rows.
 #   SUITE          suite dir (relative to the OsaurusEvals package). Default
 #                  "Suites/AppleScript".
 #   VARIANTS       newline-separated "name|prompt|literal|verify|desktop" rows
@@ -50,7 +58,7 @@ REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 EVALS_PKG="${REPO_ROOT}/Packages/OsaurusEvals"
 
 MODEL="${MODEL:-auto}"
-FILTER="${FILTER:-live}"
+FILTER="${FILTER:-live-}"
 SUITE="${SUITE:-Suites/AppleScript}"
 LAB_OUT_ROOT="${LAB_OUT_ROOT:-${REPO_ROOT}/build/evals/applescript-capability-lab}"
 BASELINE="${BASELINE:-}"

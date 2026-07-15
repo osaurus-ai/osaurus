@@ -2,7 +2,7 @@
 
 Run agent code in an isolated Linux virtual machine — safely, locally, and with full dev environment capabilities.
 
-The Sandbox is a shared Linux container powered by Apple's [Containerization](https://developer.apple.com/documentation/containerization) framework. It gives every Osaurus agent access to a real Linux environment with shell, package managers, compilers, and file system access — all running natively on Apple Silicon with zero risk to your Mac.
+The Sandbox is a shared Linux container powered by Apple's [Containerization](https://developer.apple.com/documentation/containerization) framework. It gives every Osaurus agent access to a real Linux environment with shell, package managers, compilers, and file system access — all running natively on Apple Silicon inside a hardware virtual machine, keeping agent code off your macOS system. (See [Security Boundaries](#security) for what the VM does and does not isolate.)
 
 > **Sandbox Tools vs Native Plugins:** Osaurus has two distinct extensibility systems. **Sandbox tools** (this guide) are JSON recipes that run inside the Linux container — no compiler, no code signing, ideal for shell-based workflows. **Native plugins** are compiled `.dylib` files with full host API access (inference, storage, HTTP routes, web UIs); see [`docs/plugins/README.md`](plugins/README.md). The terms used to overlap; this doc uses **Sandbox Tools** consistently.
 
@@ -12,7 +12,7 @@ The Sandbox is a shared Linux container powered by Apple's [Containerization](ht
 
 ### Safe Execution
 
-Agents can run arbitrary code, install packages, and modify files without any risk to the host macOS system. The VM is a disposable, resettable environment. If something goes wrong, reset the container and start fresh — your Mac is never affected.
+Agents can run arbitrary code, install packages, and modify files inside a disposable, resettable VM instead of on your Mac. If something goes wrong, reset the container and start fresh. The VM boundary protects the host filesystem and processes; sandboxed code can still use whatever network egress and host-bridge capabilities you grant it, so those are policy-controlled separately (see [Network Policy](#network-policy)).
 
 ### Real Dev Environment
 
@@ -20,7 +20,7 @@ Agents gain a full Linux environment with shell access, Python (pip), Node.js (n
 
 ### Multi-Agent Isolation
 
-Each agent gets its own Linux user and home directory. One agent's files, processes, and installed packages cannot interfere with another's. Run multiple specialized agents simultaneously — a Python data analyst, a Node.js web developer, and a system administration agent — without cross-contamination.
+Each agent gets its own Linux user and home directory. Standard Unix permissions keep one agent's files and processes separate from another's within the shared VM. System-level state is still shared: packages installed with `apk` (root) are visible to every agent, so a system package one agent installs or upgrades can affect the others. Per-agent language-level environments (pip `--user`, npm prefix) stay isolated per home directory.
 
 ### Lightweight Tool Ecosystem
 
@@ -132,7 +132,7 @@ swift test --package-path Packages/OsaurusCore --filter SandboxProvisioningDiagn
 |-----------|-------------|
 | **Linux VM** | Alpine Linux with Kata Containers 3.17.0 ARM64 kernel, 8 GiB root filesystem |
 | **VirtioFS Mounts** | `/workspace` maps to `~/.osaurus/container/workspace/`, `/output` maps to `~/.osaurus/container/output/` |
-| **NAT Networking** | Container gets `10.0.2.15/24` via `VZNATNetworkDeviceAttachment` |
+| **Networking** | vmnet-backed interface: shared NAT in `outbound` mode, host-only + filtering egress proxy in `proxy` mode, absent in `none` mode |
 | **Vsock Bridge** | Unix socket relayed via vsock connects the container to the Host API Bridge server |
 | **Per-Agent Users** | Each agent gets a Linux user `agent-{name}` with home at `/workspace/agents/{name}/` |
 | **Host API Bridge** | HTTP server on the host, accessible from the container via `osaurus-host` CLI shim |
@@ -147,7 +147,8 @@ Configure the container via the Management window → **Sandbox** → **Containe
 |---------|-------|---------|-------------|
 | CPUs | 1–8 | 2 | Virtual CPU cores allocated to the VM |
 | Memory | 1–8 GB | 2 GB | RAM allocated to the VM |
-| Network | outbound / none | outbound | NAT networking for outbound internet access |
+| Network | outbound / proxy / none | outbound | `outbound` = unrestricted NAT; `proxy` = host-only network with a domain-allowlist egress proxy (set per-agent Allowed Domains in Agent settings); `none` = no networking |
+| Per-Agent Environments | on / off | off | Experimental: boot from the provisioning agent's own copy-on-write clone of the base image (see below) |
 | Auto-Start | on / off | on | Automatically start the container when Osaurus launches |
 
 Changes require a container restart to take effect.
@@ -162,6 +163,34 @@ Changes require a container restart to take effect.
   "network": "outbound"
 }
 ```
+
+### Rootfs templates and copy-on-write boots
+
+The first cold boot unpacks the pinned OCI image into an 8 GiB `rootfs.ext4`
+and captures that pristine, never-booted filesystem as an immutable **base
+template** (`~/.osaurus/container/templates/`, keyed by image digest +
+runtime format version) using an APFS `clonefile` — an instant, block-sharing
+copy. Any later boot that can't reuse the previous rootfs (reset, app update
+that kept the same image pin, corrupted warm cache) clones the template in
+milliseconds instead of re-unpacking. Templates are never booted or mutated;
+a damaged clone triggers exactly one fall back to a full unpack, which
+recaptures a fresh template.
+
+### Per-Agent Environments (experimental)
+
+With **Per-Agent Environments** on, the VM boots from the provisioning
+agent's own clone of the base template
+(`~/.osaurus/container/environments/<agent>/rootfs.ext4`) instead of the
+single shared mutable rootfs. System packages an agent installs with `apk`
+persist in its own environment and are invisible to other agents. The pool
+is bounded: least-recently-used clones beyond the configured cap (default 3)
+are evicted after each boot and re-clone fresh from the template on next
+use. Agent home directories live on the virtiofs `/workspace` mount and are
+never affected by environment eviction or reset.
+
+The VM is still one-at-a-time: switching the active agent takes effect at
+the next sandbox start. Turning the toggle off returns to the shared-rootfs
+behavior unchanged — that is the rollback path while this feature is staged.
 
 ---
 
@@ -577,7 +606,21 @@ Each agent runs as a separate Linux user (`agent-{name}`). Standard Unix file pe
 
 ### Network Policy
 
-Container networking can be set to `outbound` (NAT with internet access) or `none` (completely isolated). Plugins can declare their own network requirements in the `permissions` field.
+Container networking has three modes:
+
+- **`outbound`** — unrestricted NAT internet access (the default, and an explicit user choice).
+- **`proxy`** — the VM boots on a **host-only** vmnet interface with no NAT to the outside. All egress must go through a filtering HTTP/HTTPS CONNECT proxy that Osaurus runs on the vmnet gateway address. This mode is selected automatically when the provisioning agent has a non-empty **Allowed Domains** list in its Agent settings.
+- **`none`** — no guest networking at all.
+
+In proxy mode, enforcement is per-connection and per-agent:
+
+- Guest processes receive `http_proxy`/`https_proxy` environment variables carrying the agent's bridge token; the proxy derives identity from that token alone.
+- The requested hostname must match the agent's resolved allowlist — the union of the agent's own Allowed Domains and the domain lists declared by that agent's installed plugins (`permissions.network`). Patterns are `example.com` (exact) or `*.example.com` (subdomains, not the apex).
+- IP literals are rejected outright, and resolved addresses are re-checked on the host before connecting: names that resolve to loopback, RFC1918/ULA, link-local, CGNAT, or multicast/reserved space are refused (DNS-rebinding defense).
+
+**Known limitation:** in proxy mode the guest can still reach the vmnet gateway address itself — i.e. the proxy and any host service bound to that interface. Closing that off from inside the guest requires in-guest firewall (nftables) support that upstream Containerization does not yet expose. Traffic to anything beyond the gateway is blocked by the host-only network itself.
+
+Plugins declare their network requirements in the `permissions` field; those declarations are validated at install, reinstall, and repair time and feed the runtime allowlist.
 
 ### Rate Limiting
 

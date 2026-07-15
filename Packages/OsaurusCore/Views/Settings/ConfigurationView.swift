@@ -279,20 +279,6 @@ struct ConfigurationView: View {
 
                     SettingsDivider()
 
-                    // Storage
-                    SettingsSubsection(label: "Storage") {
-                        DirectoryPickerView()
-                    }
-
-                    SettingsDivider()
-
-                    // External models (HF cache, LM Studio)
-                    SettingsSubsection(label: "External models") {
-                        ExternalModelsSettingsView()
-                    }
-
-                    SettingsDivider()
-
                     // Maintenance
                     SettingsSubsection(label: "Maintenance", anchorId: "settings.general.reset") {
                         VStack(alignment: .leading, spacing: 12) {
@@ -332,9 +318,7 @@ struct ConfigurationView: View {
             VStack(spacing: 0) {
                 // Header
                 headerView
-                    .opacity(hasAppeared ? 1 : 0)
-                    .offset(y: hasAppeared ? 0 : -10)
-                    .animation(.spring(response: 0.4, dampingFraction: 0.8), value: hasAppeared)
+                    .managerHeaderEntrance(hasAppeared: hasAppeared)
 
                 // Scrollable content area
                 ScrollViewReader { proxy in
@@ -367,7 +351,8 @@ struct ConfigurationView: View {
                                         // Position Picker
                                         SettingsField(
                                             label: "Toast Position",
-                                            hint: "Where toasts appear on screen"
+                                            hint: "Where toasts appear on screen",
+                                            anchorId: "settings.notifications.position"
                                         ) {
                                             ToastPositionPicker(selection: $tempToastPosition)
                                                 .onChange(of: tempToastPosition) { _, _ in
@@ -380,7 +365,8 @@ struct ConfigurationView: View {
                                             label: "Default Timeout",
                                             text: $tempToastTimeout,
                                             placeholder: "5.0",
-                                            help: "Seconds before auto-dismiss. Empty uses default 5s"
+                                            help: "Seconds before auto-dismiss. Empty uses default 5s",
+                                            anchorId: "settings.notifications.timeout"
                                         )
                                         .onChange(of: tempToastTimeout) { _, _ in
                                             saveToastConfig()
@@ -506,7 +492,7 @@ struct ConfigurationView: View {
                     .background(
                         RoundedRectangle(cornerRadius: 24)
                             .fill(theme.cardBackground)
-                            .shadow(color: Color.black.opacity(0.2), radius: 20, x: 0, y: 10)
+                            .shadow(color: theme.shadowColor.opacity(0.2), radius: 20, x: 0, y: 10)
                     )
                     .overlay(
                         RoundedRectangle(cornerRadius: 24)
@@ -592,8 +578,8 @@ struct ConfigurationView: View {
 
     private var headerView: some View {
         ManagerHeaderWithActions(
-            title: L("Settings"),
-            subtitle: L("Configure your Osaurus settings")
+            title: L("General"),
+            subtitle: L("App behavior, system integration, and notifications")
         ) {
             HeaderSecondaryButton("Restore View Defaults", icon: "arrow.counterclockwise") {
                 resetToDefaults()
@@ -722,7 +708,7 @@ struct ConfigurationView: View {
         let response = alert.runModal()
         if response == .alertFirstButtonReturn {
             Task { @MainActor in
-                withAnimation(.easeIn(duration: 0.3)) {
+                withAnimation(.easeOut(duration: 0.25)) {
                     isResetting = true
                 }
                 // Yield to allow UI to update before heavy deletion starts

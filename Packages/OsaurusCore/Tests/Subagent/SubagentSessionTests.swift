@@ -171,6 +171,82 @@ struct SubagentSessionTests {
         _ = await SubagentSession.run(kind, tool: "scripted")
         #expect(observedBox.value == "live")
     }
+
+    @Test("residency phase timings derive from the feed timeline (handoff legs only)")
+    func residencyPhaseTimingDerivation() {
+        let t0 = Date(timeIntervalSince1970: 1_000)
+        func event(
+            _ title: String,
+            at offset: TimeInterval,
+            kind: SubagentActivityEvent.Kind = .phase
+        ) -> SubagentActivityEvent {
+            SubagentActivityEvent(
+                timestamp: t0.addingTimeInterval(offset),
+                kind: kind,
+                title: title
+            )
+        }
+        let events = [
+            event("waiting_for_chat_idle", at: 0),
+            event("unloading_chat_models", at: 1.5),
+            event("running", at: 4.5),
+            event("generating", at: 5.0, kind: .progress),
+            event("restoring_chat_models", at: 20.0),
+        ]
+        let timings = SubagentSession.residencyPhaseTimings(
+            events: events,
+            endedAt: t0.addingTimeInterval(28.0)
+        )
+        #expect(
+            timings.map(\.phase) == [
+                "waiting_for_chat_idle", "unloading_chat_models", "restoring_chat_models",
+            ]
+        )
+        #expect(abs(timings[0].seconds - 1.5) < 0.001)
+        #expect(abs(timings[1].seconds - 3.0) < 0.001)
+        // The final restore leg runs until the run's end timestamp.
+        #expect(abs(timings[2].seconds - 8.0) < 0.001)
+        // Kind-specific phases ("running") and progress rows are not timed.
+        #expect(!timings.contains { $0.phase == "running" })
+    }
+
+    @Test("a handoff-wrapped run reports residency phases in its payload")
+    func residencyPayloadFromScriptedHandoff() async {
+        let kind = ScriptedKind(needsHandoff: true)
+        // A handoff that emits the real phase titles around the body.
+        let handoff = PhaseEmittingHandoff()
+        let envelope = await SubagentSession.run(kind, tool: "scripted", handoff: handoff)
+        #expect(ToolEnvelope.isSuccess(envelope))
+        let payload = ToolEnvelope.successPayload(envelope) as? [String: Any]
+        let residency = payload?["residency"] as? [String: Any]
+        let phases = residency?["phases"] as? [String: Any]
+        #expect(phases?.keys.contains("waiting_for_chat_idle") == true)
+        #expect(phases?.keys.contains("unloading_chat_models") == true)
+        #expect(phases?.keys.contains("restoring_chat_models") == true)
+        let order = residency?["phase_order"] as? [String]
+        #expect(
+            order == [
+                "waiting_for_chat_idle", "unloading_chat_models", "restoring_chat_models",
+            ]
+        )
+    }
+}
+
+/// Handoff that emits the production phase titles around the body, so the
+/// session's payload derivation sees a realistic timeline without ModelRuntime.
+private struct PhaseEmittingHandoff: SubagentHandoff {
+    func around(
+        scope: SubagentScope,
+        resolved: ResolvedModel,
+        feed: SubagentFeed,
+        run body: () async throws -> SubagentResult
+    ) async throws -> SubagentResult {
+        feed.emitPhase("waiting_for_chat_idle", detail: nil)
+        feed.emitPhase("unloading_chat_models", detail: "local-a")
+        let result = try await body()
+        feed.emitPhase("restoring_chat_models", detail: "local-a")
+        return result
+    }
 }
 
 /// Tiny reference box so escaping `@Sendable` closures can hand a value back.

@@ -10,7 +10,7 @@ WORKSPACE := osaurus.xcworkspace
 DERIVED := build/DerivedData
 XCODEBUILD_FLAGS ?=
 
-.PHONY: help cli app install-cli serve status test ci-test computer-use-evidence clean bench-setup bench-ingest bench-ingest-chunks bench-run bench evals-prep evals evals-verbose evals-report evals-all evals-all-verbose evals-all-report evals-capture-screen evals-loop evals-matrix evals-diff evals-contribute evals-compat
+.PHONY: help cli app install-cli serve status test ci-test computer-use-evidence clean bench-setup bench-ingest bench-ingest-chunks bench-run bench evals-prep evals evals-verbose evals-report evals-all evals-all-verbose evals-all-report evals-deterministic evals-capture-screen evals-loop evals-matrix evals-diff evals-contribute evals-compat
 
 help:
 	@echo "Targets:"
@@ -30,13 +30,15 @@ help:
 	@echo "  evals-all           Run every suite under Packages/OsaurusEvals/Suites/* (MODEL=, FILTER=)"
 	@echo "  evals-all-verbose   Same as 'evals-all' plus per-case raw LLM response"
 	@echo "  evals-all-report    Same as 'evals-all' but writes per-suite JSON to EVALS_OUT_DIR (build/evals/)"
+	@echo "  evals-deterministic Run the token-free suites with the floors gate (CI-safe, no model)"
 	@echo "  evals-capture-screen Capture a real app's screen context into a (gitignored) fixture (APP=, OUT=)"
 	@echo "  evals-loop          Optimization loop: run all suites per model + scoreboard + diff (MODELS=, BASELINE=, RECORD=1 LABEL= to commit reports/SNAPSHOT+history)"
 	@echo "  evals-matrix        Cross-model scoreboard from a reports dir (DIR=, HISTORY= LABEL= to append a trend row)"
 	@echo "  evals-diff          All-domain before/after diff (BASELINE=, CURRENT=)"
-	@echo "  evals-contribute    Crowdsource: run one model on your Mac -> reports/community/<file>.json (MODEL=)"
+	@echo "  evals-contribute    Crowdsource: run one model on your Mac -> reports/community/<file>.json (MODEL=, PR=1 auto-PRs; see COMMUNITY_EVALS.md)"
 	@echo "  evals-compat        Fold reports/community/* into the COMPATIBILITY.md leaderboard (COMPAT_DIR=)"
 	@echo "  test           Run OsaurusCore package tests via 'swift test'"
+	@echo "  evals-test     Run the OsaurusEvals harness unit tests (deterministic, token-free)"
 	@echo "  ci-test        Reproduce the CI test-core job locally (xcodebuild + xcbeautify)"
 	@echo "  computer-use-evidence Run local Computer Use proof lane into build/computer-use-evidence/"
 	@echo "  clean          Remove DerivedData build output"
@@ -53,6 +55,8 @@ app: cli
 	mkdir -p "$(DERIVED)/Build/Products/$(CONFIG)/osaurus.app/Contents/Helpers"
 	cp "$(DERIVED)/Build/Products/$(CONFIG)/osaurus-cli" "$(DERIVED)/Build/Products/$(CONFIG)/osaurus.app/Contents/Helpers/osaurus"
 	chmod +x "$(DERIVED)/Build/Products/$(CONFIG)/osaurus.app/Contents/Helpers/osaurus"
+	@echo "Bundling sandbox kernel (Resources/SandboxRuntime)…"
+	./scripts/build/fetch_sandbox_kernel.sh "$(DERIVED)/Build/Products/$(CONFIG)/osaurus.app/Contents/Resources/SandboxRuntime"
 
 install-cli: cli
 	@echo "Installing CLI symlink…"
@@ -74,6 +78,13 @@ status:
 test:
 	@echo "Running OsaurusCore tests…"
 	swift test --package-path Packages/OsaurusCore
+
+# Harness unit tests for the evals package itself (fixture decode, scoring,
+# regression lab, judge resolution). Deterministic and token-free — no LLM
+# calls — so this is safe for CI, unlike the eval suites themselves.
+evals-test:
+	@echo "Running OsaurusEvals harness tests…"
+	OSAURUS_DISABLE_KEYCHAIN_FOR_TESTS=1 swift test --package-path Packages/OsaurusEvals
 
 # Mirrors the CI `test-core` job: same xcodebuild flags, same xcbeautify
 # pipe, same xcresult bundle. Run this locally to repro a failed CI run.
@@ -115,6 +126,13 @@ BENCH_BATCH ?= 20
 EASYLOCOMO_REPO ?= https://github.com/playeriv65/EasyLocomo.git
 EASYLOCOMO_DIR := benchmarks/EasyLocomo
 BENCH_PYTHON := $(EASYLOCOMO_DIR)/.venv/bin/python
+
+# Inference benchmark (TTFT / prefill / decode) against the running server.
+# Usage: make bench-mlx [BENCH_MLX_ARGS="--model <id> --runs 5"]
+BENCH_MLX_ARGS ?=
+bench-mlx: install-cli
+	@echo "Running osaurus bench…"
+	osaurus bench $(BENCH_MLX_ARGS)
 
 bench-setup:
 	@echo "Setting up EasyLocomo benchmark…"
@@ -160,6 +178,12 @@ EVALS_ROOT := Packages/OsaurusEvals/Suites
 EVALS_SUITE ?= $(EVALS_ROOT)/CapabilitySearch
 EVALS_OUT ?= build/evals.json
 EVALS_OUT_DIR ?= build/evals
+# Floors gate (Config/floors.json) is on by default: per-suite pass-rate
+# floors apply only to the deterministic suites listed in the file, and
+# per-case recall floors apply only when the suite contains that domain,
+# so the flag is a no-op for everything else. Disable with
+# `make evals EVALS_FLOOR_FLAG=`.
+EVALS_FLOOR_FLAG ?= --fail-on-floor
 # Auto-discovered list of every subdirectory under Suites/. Adding a new
 # `Suites/MyDomain/` automatically picks it up here — no Makefile edit
 # required when a new suite lands.
@@ -179,6 +203,7 @@ evals: evals-prep
 	@echo "Running OsaurusEvals against $(EVALS_SUITE)…"
 	swift run --package-path Packages/OsaurusEvals osaurus-evals run \
 		--suite $(EVALS_SUITE) \
+		$(EVALS_FLOOR_FLAG) \
 		$(if $(MODEL),--model $(MODEL),) \
 		$(if $(FILTER),--filter $(FILTER),)
 
@@ -187,6 +212,7 @@ evals-verbose: evals-prep
 	swift run --package-path Packages/OsaurusEvals osaurus-evals run \
 		--suite $(EVALS_SUITE) \
 		--verbose \
+		$(EVALS_FLOOR_FLAG) \
 		$(if $(MODEL),--model $(MODEL),) \
 		$(if $(FILTER),--filter $(FILTER),)
 
@@ -194,6 +220,7 @@ evals-report: evals-prep
 	@mkdir -p $(dir $(EVALS_OUT))
 	swift run --package-path Packages/OsaurusEvals osaurus-evals run \
 		--suite $(EVALS_SUITE) \
+		$(EVALS_FLOOR_FLAG) \
 		$(if $(MODEL),--model $(MODEL),) \
 		$(if $(FILTER),--filter $(FILTER),) \
 		--out $(EVALS_OUT)
@@ -210,6 +237,7 @@ evals-all: evals-prep
 		echo "── $$suite ──"; \
 		swift run --package-path Packages/OsaurusEvals osaurus-evals run \
 			--suite $$suite \
+			$(EVALS_FLOOR_FLAG) \
 			$(if $(MODEL),--model $(MODEL),) \
 			$(if $(FILTER),--filter $(FILTER),) \
 			|| rc=$$?; \
@@ -224,6 +252,7 @@ evals-all-verbose: evals-prep
 		swift run --package-path Packages/OsaurusEvals osaurus-evals run \
 			--suite $$suite \
 			--verbose \
+			$(EVALS_FLOOR_FLAG) \
 			$(if $(MODEL),--model $(MODEL),) \
 			$(if $(FILTER),--filter $(FILTER),) \
 			|| rc=$$?; \
@@ -241,6 +270,7 @@ evals-all-report: evals-prep
 		echo "── $$suite → $$out ──"; \
 		swift run --package-path Packages/OsaurusEvals osaurus-evals run \
 			--suite $$suite \
+			$(EVALS_FLOOR_FLAG) \
 			$(if $(MODEL),--model $(MODEL),) \
 			$(if $(FILTER),--filter $(FILTER),) \
 			--out $$out \
@@ -248,6 +278,26 @@ evals-all-report: evals-prep
 	done; \
 	echo ""; \
 	echo "Wrote per-suite reports to $(EVALS_OUT_DIR)/"; \
+	exit $$rc
+
+# Deterministic token-free suites: pure-data scorers with no model load, no
+# embedder, no network — every row is a code contract, so any failure is a
+# regression (floors.json pins their pass rate at 1.0). Safe on hosted CI
+# runners; the CI `test-evals` job runs this after the harness unit tests.
+# No `evals-prep` dependency: these lanes never touch MLX or the embedder.
+EVALS_DETERMINISTIC_SUITES := Schema ToolEnvelope PrefixHash ArgumentCoercion \
+	ToolResultGrounding AgentChannels ComputerUse ScreenContext
+
+evals-deterministic:
+	@rc=0; for name in $(EVALS_DETERMINISTIC_SUITES); do \
+		echo ""; \
+		echo "── $(EVALS_ROOT)/$$name ──"; \
+		swift run --package-path Packages/OsaurusEvals osaurus-evals run \
+			--suite $(EVALS_ROOT)/$$name \
+			--fail-on-floor \
+			$(if $(FILTER),--filter $(FILTER),) \
+			|| rc=$$?; \
+	done; \
 	exit $$rc
 
 # Capture a real app's screen context into a ScreenContextFixture JSON for the
@@ -269,13 +319,15 @@ evals-capture-screen:
 # timestamped dir → cross-model matrix (scoreboard) → optional diff vs a
 # saved baseline. The maintainer pipeline; see
 # scripts/evals/optimization-loop.sh for env overrides (MODELS=, BASELINE=,
-# FILTER=, STRICT=).
+# FILTER=, STRICT=, EVALS_REPEAT=, PARALLEL_REMOTE=).
 #   make evals-loop
 #   make evals-loop MODELS="foundation qwen3-4b xai/grok-4.3" BASELINE=build/evals/loop/<prev>
 #   RECORD=1 LABEL="qwen fix" make evals-loop   # also refresh committed reports/SNAPSHOT + history
+#   make evals-loop EVALS_REPEAT=3              # 3 trials per case; flaky rows marked, diff flake-aware
 evals-loop:
 	@MODELS="$(MODELS)" BASELINE="$(BASELINE)" FILTER="$(FILTER)" STRICT="$(STRICT)" \
 		RECORD="$(RECORD)" LABEL="$(LABEL)" \
+		EVALS_REPEAT="$(EVALS_REPEAT)" PARALLEL_REMOTE="$(PARALLEL_REMOTE)" \
 		bash scripts/evals/optimization-loop.sh
 
 # Cross-model scoreboard from an existing dir of *.json reports. Point
@@ -300,10 +352,12 @@ evals-diff:
 # Crowdsource model compatibility: run the per-model LLM suites for ONE model on
 # your hardware and emit a single contribution file under reports/community/.
 # Export a strong judge key (e.g. XAI_API_KEY) or JUDGE_MODEL to avoid a
-# self-judged (weaker) run. See reports/community/README.md.
+# self-judged (weaker) run. PR=1 auto-submits (branch -> push -> gh pr create).
+# Contributor guide: COMMUNITY_EVALS.md.
 #   MODEL=mlx-community/Qwen3-4B-4bit make evals-contribute
+#   PR=1 MODEL=mlx-community/Qwen3-4B-4bit make evals-contribute
 evals-contribute:
-	@MODEL="$(MODEL)" bash scripts/evals/contribute.sh $(MODEL)
+	@MODEL="$(MODEL)" PR="$(PR)" bash scripts/evals/contribute.sh $(MODEL)
 
 # Fold every contribution under reports/community/ into the committed
 # COMPATIBILITY.{md,json} leaderboard. Run VALIDATE=1 for the PR gate (verify

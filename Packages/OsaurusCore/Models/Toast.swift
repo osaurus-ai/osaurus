@@ -57,12 +57,12 @@ public enum ToastPosition: String, Codable, Sendable, CaseIterable {
     /// Display name for UI
     public var displayName: String {
         switch self {
-        case .topRight: return "Top Right"
-        case .topLeft: return "Top Left"
-        case .topCenter: return "Top Center"
-        case .bottomRight: return "Bottom Right"
-        case .bottomLeft: return "Bottom Left"
-        case .bottomCenter: return "Bottom Center"
+        case .topRight: return L("Top Right")
+        case .topLeft: return L("Top Left")
+        case .topCenter: return L("Top Center")
+        case .bottomRight: return L("Bottom Right")
+        case .bottomLeft: return L("Bottom Left")
+        case .bottomCenter: return L("Bottom Center")
         }
     }
 

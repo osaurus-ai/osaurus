@@ -1,0 +1,14 @@
+{
+  "id": "http_api.sse-chat-contract",
+  "domain": "http_api",
+  "label": "http api • /v1/chat/completions SSE: chunk shape, role-first delta, [DONE]",
+  "query": "Say hello in exactly one short sentence.",
+  "notes": "The streaming contract row: every data: line must parse as a chat.completion.chunk with a stable id, the FIRST delta must carry the assistant role, exactly one chunk carries a terminal finish_reason, and the stream ends with the literal [DONE] sentinel. Runs against the shared in-process OsaurusServer on an ephemeral loopback port. Off-CI (needs a model).",
+  "fixtures": {},
+  "expect": {
+    "httpAPI": {
+      "scenario": "sse_contract",
+      "maxTokens": 128
+    }
+  }
+}

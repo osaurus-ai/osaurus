@@ -34,7 +34,11 @@ enum ContentBlockKind: Equatable {
     case paragraph(index: Int, text: String, isStreaming: Bool, role: MessageRole)
     case toolCallGroup(calls: [ToolCallItem])
     case thinking(index: Int, text: String, isStreaming: Bool, duration: TimeInterval?)
-    case userMessage(text: String, attachments: [Attachment])
+    /// `responseTurnId` is the assistant turn that answered this message (the
+    /// first assistant turn that follows it), used by the overflow menu's
+    /// "Inspect response" to open that reply's request/response log. Nil when the
+    /// message has no assistant reply yet.
+    case userMessage(text: String, attachments: [Attachment], timestamp: Date, responseTurnId: UUID?)
     case sharedArtifact(artifact: SharedArtifact)
     case pendingToolCall(toolName: String, argPreview: String?, argSize: Int)
     /// Generation benchmarks footer for a completed assistant turn.
@@ -90,7 +94,11 @@ enum ContentBlockKind: Equatable {
             guard lText.count == rText.count else { return false }
             return lText == rText
 
-        case let (.userMessage(lText, lAttach), .userMessage(rText, rAttach)):
+        case let (
+            .userMessage(lText, lAttach, lTime, lResp),
+            .userMessage(rText, rAttach, rTime, rResp)
+        ):
+            guard lTime == rTime && lResp == rResp else { return false }
             guard lText.count == rText.count else { return false }
             guard lAttach.count == rAttach.count else { return false }
             return lText == rText && lAttach == rAttach
@@ -172,6 +180,22 @@ struct ContentBlock: Identifiable, Equatable, Hashable {
 
     func withPosition(_ newPosition: BlockPosition) -> ContentBlock {
         ContentBlock(id: id, turnId: turnId, kind: kind, position: newPosition)
+    }
+
+    /// Raw text the find bar (Cmd+F) highlighter scans for this block, or
+    /// nil for block kinds that never paint search matches. Must stay in
+    /// sync with the cell layer's `setSearchHighlight` call sites so the
+    /// per-turn occurrence indices computed from turn content line up with
+    /// the blocks that render them.
+    var searchableText: String? {
+        switch kind {
+        case let .paragraph(_, text, _, role) where role == .user || role == .assistant:
+            return text
+        case let .userMessage(text, _, _, _):
+            return text
+        default:
+            return nil
+        }
     }
 
     // MARK: - Factory Methods
@@ -258,12 +282,19 @@ struct ContentBlock: Identifiable, Equatable, Hashable {
         turnId: UUID,
         text: String,
         attachments: [Attachment],
+        timestamp: Date,
+        responseTurnId: UUID?,
         position: BlockPosition
     ) -> ContentBlock {
         ContentBlock(
             id: "usermsg-\(turnId.uuidString)",
             turnId: turnId,
-            kind: .userMessage(text: text, attachments: attachments),
+            kind: .userMessage(
+                text: text,
+                attachments: attachments,
+                timestamp: timestamp,
+                responseTurnId: responseTurnId
+            ),
             position: position
         )
     }
@@ -382,8 +413,7 @@ extension ContentBlock {
         from turns: [ChatTurn],
         streamingTurnId: UUID?,
         agentName: String,
-        previousTurn: ChatTurn? = nil,
-        thinkingEnabled: Bool = false
+        previousTurn: ChatTurn? = nil
     ) -> [ContentBlock] {
         var blocks: [ContentBlock] = []
         var previousRole: MessageRole? = previousTurn?.role
@@ -409,11 +439,25 @@ extension ContentBlock {
 
             // User messages are emitted as a single unified block
             if turn.role == .user {
+                // The reply this message produced = the first assistant turn
+                // that follows it (the direct response to this message). Nil
+                // until a reply exists. Powers the overflow menu's "Inspect
+                // response". Deliberately the *first* reply turn, not the last
+                // of the group: the incremental block cache only ever rebuilds
+                // this block while the first reply turn is the sole one present,
+                // so keying on the first turn stays consistent between live
+                // streaming and a full rebuild on chat reopen.
+                let next = index + 1
+                let responseTurnId: UUID? =
+                    next < filteredTurns.count && filteredTurns[next].role == .assistant
+                    ? filteredTurns[next].id : nil
                 blocks.append(
                     .userMessage(
                         turnId: turn.id,
                         text: turn.content,
                         attachments: turn.attachments,
+                        timestamp: turn.createdAt,
+                        responseTurnId: responseTurnId,
                         position: .only
                     )
                 )
@@ -501,24 +545,14 @@ extension ContentBlock {
                 && !hasSharedArtifacts && (turn.toolCalls ?? []).isEmpty && turn.pendingToolName == nil
                 && !turn.hasRemoteToolActivity
             {
-                // During prefill (no content/thinking/tools yet), always show the typing
+                // During prefill (no content/thinking/tools yet), show the typing
                 // indicator so the interface doesn't appear frozen. Skipped once a
                 // Mode 2 remote tool is running — the running tool chip already
                 // signals progress, so a typing indicator on top would be noise.
-                // Only add the thinking placeholder when thinking is actually enabled for
-                // this model — non-thinking models don't need it.
-                if thinkingEnabled {
-                    turnBlocks.append(
-                        .thinking(
-                            turnId: turn.id,
-                            index: 0,
-                            text: "",
-                            isStreaming: true,
-                            duration: nil,
-                            position: .middle
-                        )
-                    )
-                }
+                // Deliberately no "Thinking" placeholder here: the model hasn't
+                // produced reasoning yet, so labeling load/prefill as thinking
+                // misstates the phase. The real thinking block above appears on
+                // the first reasoning delta via `hasRenderableThinking`.
                 turnBlocks.append(.typingIndicator(turnId: turn.id, position: .middle))
             }
 
@@ -603,12 +637,60 @@ extension ContentBlock {
                         let result,
                         let diff = FileDiff.from(toolResult: result)
                     {
-                        // Replace the generic tool-call row with a GitHub-style
-                        // diff card so a folder-scoped edit reads as a reviewable
-                        // change rather than an opaque tool invocation.
+                        // Completed file write: keep the tool row (it flips to
+                        // past tense, "Wrote a file…") with the diff card below
+                        // it. The row persisted through the pending and running
+                        // phases, so removing it at completion read as a
+                        // flicker; the card alone also lost the duration badge.
+                        regularItems.append(
+                            ToolCallItem(call: call, result: result, duration: turn.toolCallDurations[call.id])
+                        )
                         flushRegularItems()
                         turnBlocks.append(
                             .fileDiff(turnId: turn.id, callId: call.id, diff: diff, position: .middle)
+                        )
+                    } else if FileDiff.diffProducingToolNames.contains(call.function.name),
+                        let result,
+                        ToolEnvelope.successPayload(result) == nil,
+                        let preview = FileDiff.streamingPreview(
+                            toolName: call.function.name,
+                            partialArgs: call.function.arguments,
+                            isStreaming: false
+                        )
+                    {
+                        // FAILED file write: the streamed content was never
+                        // applied, but discarding it with the error made the
+                        // card the user just watched stream vanish. Keep the
+                        // failed row (error in the title + expandable envelope)
+                        // with the content as a "preview"-badged card below.
+                        regularItems.append(
+                            ToolCallItem(call: call, result: result, duration: turn.toolCallDurations[call.id])
+                        )
+                        flushRegularItems()
+                        turnBlocks.append(
+                            .fileDiff(turnId: turn.id, callId: call.id, diff: preview, position: .middle)
+                        )
+                    } else if isStreaming,
+                        result == nil,
+                        FileDiff.diffProducingToolNames.contains(call.function.name),
+                        let preview = FileDiff.streamingPreview(
+                            toolName: call.function.name,
+                            partialArgs: call.function.arguments
+                        )
+                    {
+                        // File write currently EXECUTING: the streamed preview
+                        // state was cleared when the call was parsed, but the
+                        // result (with the real diff) hasn't landed yet. Keep
+                        // the running tool row (shimmer continuity from the
+                        // pending chip) with the preview card below it — the
+                        // real diff replaces the card under the same block id
+                        // when the result lands.
+                        regularItems.append(
+                            ToolCallItem(call: call, result: nil, duration: nil)
+                        )
+                        flushRegularItems()
+                        turnBlocks.append(
+                            .fileDiff(turnId: turn.id, callId: call.id, diff: preview, position: .middle)
                         )
                     } else {
                         regularItems.append(
@@ -620,6 +702,14 @@ extension ContentBlock {
             }
 
             if isStreaming, let pendingName = turn.pendingToolName {
+                // File-writing tools stream their whole file through the call
+                // arguments. Render a live diff card that grows with the code
+                // instead of the generic pending chip, so the finished card
+                // doesn't land as one jarring dump. Falls back to the chip
+                // until the content field starts streaming.
+                // The shimmer chip stays up for the whole pending phase —
+                // the growing diff preview renders BELOW it rather than
+                // replacing it, so the "working" signal never blinks out.
                 turnBlocks.append(
                     .pendingToolCall(
                         turnId: turn.id,
@@ -629,6 +719,21 @@ extension ContentBlock {
                         position: .middle
                     )
                 )
+                if let partialArgs = turn.pendingToolArgFull,
+                    let preview = FileDiff.streamingPreview(
+                        toolName: pendingName,
+                        partialArgs: partialArgs
+                    )
+                {
+                    turnBlocks.append(
+                        .fileDiff(
+                            turnId: turn.id,
+                            callId: "pending-\(turn.id.uuidString)",
+                            diff: preview,
+                            position: .middle
+                        )
+                    )
+                }
             }
 
             // stats must be shown only on the final turn (intermediate tool calling turns should not display them)

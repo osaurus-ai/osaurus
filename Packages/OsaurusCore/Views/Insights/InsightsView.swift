@@ -27,9 +27,7 @@ struct InsightsView: View {
     var body: some View {
         VStack(spacing: 0) {
             headerView
-                .opacity(hasAppeared ? 1 : 0)
-                .offset(y: hasAppeared ? 0 : -10)
-                .animation(.spring(response: 0.4, dampingFraction: 0.8), value: hasAppeared)
+                .managerHeaderEntrance(hasAppeared: hasAppeared)
 
             ZStack {
                 if let selected = selectedLog {
@@ -632,6 +630,7 @@ private struct SourceBadge: View {
         case .httpAPI: return .blue
         case .plugin: return .teal
         case .p2p: return .purple
+        case .scheduled: return .orange
         }
     }
 }
@@ -643,6 +642,7 @@ extension RequestSource {
         case .httpAPI: return "HTTP"
         case .plugin: return "Plugin"
         case .p2p: return "P2P"
+        case .scheduled: return "Scheduled"
         }
     }
 }

@@ -221,6 +221,82 @@ struct ExternalModelLocatorTests {
         )
     }
 
+    @Test func scanCustomModelFolder_findsDirectAndNestedBundles() {
+        let root = makeTempDir()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let direct = root.appendingPathComponent("Direct-Model", isDirectory: true)
+        let nested = root.appendingPathComponent("publisher/repo", isDirectory: true)
+        let hfSnapshot = root
+            .appendingPathComponent("models--org--cached", isDirectory: true)
+            .appendingPathComponent("snapshots/abc123", isDirectory: true)
+        writeBundle(at: direct)
+        writeBundle(at: nested)
+        writeBundle(at: hfSnapshot)
+
+        let report = ExternalModelLocator.scanCustomModelFolderReport(root: root)
+        let ids = Set(report.discovered.map(\.id))
+
+        #expect(ids.contains("Direct-Model"))
+        #expect(ids.contains("publisher/repo"))
+        #expect(!ids.contains("models--org--cached/snapshots/abc123"))
+        #expect(report.discovered.allSatisfy { $0.source == "Custom model folder" })
+    }
+
+    @Test func scanCustomModelFolder_acceptsSelectedBundleRoot() {
+        let root = makeTempDir()
+        defer { try? FileManager.default.removeItem(at: root) }
+        writeBundle(at: root)
+
+        let report = ExternalModelLocator.scanCustomModelFolderReport(root: root)
+
+        #expect(report.discovered.map(\.id) == [root.lastPathComponent])
+        #expect(report.discovered.first?.bundlePath == root.standardizedFileURL.path)
+        #expect(report.discovered.first?.source == "Custom model folder")
+        #expect(report.skipped.isEmpty)
+    }
+
+    @Test func rescan_resolvesCustomModelFolderPath() async {
+        await OsaurusTestGlobals.withPathsLock {
+            rescan_resolvesCustomModelFolderPath_body()
+        }
+    }
+
+    private func rescan_resolvesCustomModelFolderPath_body() {
+        let previousRoot = OsaurusPaths.overrideRoot
+        let previousOverride = ExternalModelLocator.testRootsOverride
+        let manifestRoot = makeTempDir()
+        let customRoot = makeTempDir()
+        OsaurusPaths.overrideRoot = manifestRoot
+        ExternalModelLocator.invalidateInMemory()
+        defer {
+            OsaurusPaths.overrideRoot = previousRoot
+            ExternalModelLocator.testRootsOverride = previousOverride
+            ExternalModelLocator.invalidateInMemory()
+            try? FileManager.default.removeItem(at: manifestRoot)
+            try? FileManager.default.removeItem(at: customRoot)
+        }
+
+        let bundle = customRoot.appendingPathComponent("publisher/repo", isDirectory: true)
+        writeBundle(at: bundle)
+
+        ExternalModelLocator.testRootsOverride = [(root: customRoot, source: .customModelFolder)]
+        ExternalModelLocator.rescan()
+
+        let resolved = ExternalModelLocator.path(forId: "publisher/repo")
+        #expect(resolved?.standardizedFileURL.path == bundle.standardizedFileURL.path)
+
+        let models = ExternalModelLocator.models()
+        #expect(
+            models.contains {
+                $0.id == "publisher/repo" && $0.externalSource == "Custom model folder"
+            }
+        )
+
+        let report = ExternalModelLocator.lastScanReport()
+        #expect(report?.discovered.contains { $0.id == "publisher/repo" } == true)
+        #expect(report?.skipped.isEmpty == true)
+    }
+
     // MARK: - HF cache scan + resolution (via test override)
 
     @Test func rescan_resolvesHFCacheSnapshotAndPath() async {

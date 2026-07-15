@@ -2,11 +2,11 @@
 //  OsaurusEvalsCLI.swift
 //  osaurus-evals
 //
-//  Tiny CLI over `OsaurusEvalsKit`. Deliberately no
-//  swift-argument-parser dependency — the surface is small enough that
-//  manual parsing is clearer than wiring a fourth-party dep just for
-//  three flags. Add a real arg parser if/when a subcommand surface
-//  appears (`run`, `diff`, `score`, ...).
+//  CLI over `OsaurusEvalsKit`. Deliberately no swift-argument-parser
+//  dependency: the subcommands (`run`, `diff`, `matrix`, `compat`,
+//  `scorecard`, `capture-screen`, `agent-loop-lab`) share one
+//  hand-rolled flag walk, which keeps the eval binary dependency-free
+//  and its parsing greppable next to the flags it documents.
 //
 //  Usage:
 //    osaurus-evals run --suite Suites/CapabilitySearch [--model foundation] [--filter browser] [--out report.json]
@@ -37,10 +37,20 @@ struct OsaurusEvalsCLI {
         // SecItemCopyMatching → securityd with 0% CPU). `LAContext`/UI-skip flags
         // are ignored on legacy items, so the only correct fix is to run
         // Keychain-free: every wrapper (incl. MasterKey) then no-ops. This
-        // mirrors the existing isolated config/search storage for default-agent
-        // cases. Forced before any OsaurusCore access; the harness never needs
-        // real Keychain (remote providers are ephemeral and env-keyed).
+        // matches the hermetic run storage every eval process gets. Forced
+        // before any OsaurusCore access; the harness never needs real
+        // Keychain (remote providers are ephemeral and env-keyed).
         setenv("OSAURUS_DISABLE_KEYCHAIN_FOR_TESTS", "1", 1)
+
+        // The sandbox secrets pipeline (sandbox_secret_set → exec env
+        // injection → SecretScrubber redaction) is a scored surface
+        // (SandboxFrontier secrets-roundtrip), but the Keychain-free gate
+        // above turns every AgentSecretsKeychain call into a no-op — the
+        // model stores a secret, gets `stored:true`… and `$KEY` is empty in
+        // the VM. A process-lifetime in-memory store keeps the pipeline
+        // real (same code path, same scrubbing) without touching the
+        // login Keychain; per-case cleanup purges it.
+        setenv("OSAURUS_AGENT_SECRETS_IN_MEMORY", "1", 1)
 
         // Eval isolation: to drive a remote model the harness connects an
         // in-memory provider (`EvalRemoteProviderBootstrap`), which lands in
@@ -109,6 +119,11 @@ struct OsaurusEvalsCLI {
         _ = await runWithDeadline(seconds: 8) {
             await ModelRuntime.shutdownForOutOfProcessExit()
         }
+        // `_exit` below skips atexit hooks, so the isolated config root
+        // (up to ~10 GB of throwaway kv_v2 with the KV regime override)
+        // must be removed explicitly — leaked roots piled up to ~100 GB
+        // across a marathon and induced disk-pressure decode collapse.
+        EvalBootstrap.cleanupIsolatedRootForExit()
         fflush(stdout)
         fflush(stderr)
         Darwin._exit(code)
@@ -139,9 +154,9 @@ struct OsaurusEvalsCLI {
             exit(2)
         }
 
-        let suite: EvalSuite
+        let suites: [EvalSuite]
         do {
-            suite = try EvalSuite.load(from: opts.suite)
+            suites = try opts.suites.map { try EvalSuite.load(from: $0) }
         } catch {
             FileHandle.standardError.write(
                 Data(("failed to load suite: \(error.localizedDescription)\n").utf8)
@@ -149,22 +164,32 @@ struct OsaurusEvalsCLI {
             exit(2)
         }
 
-        let bootstrapPlan = EvalBootstrapPlan.make(
-            suite: suite,
-            filter: opts.filter,
-            preference: opts.pluginBootstrapPreference
+        // ONE bootstrap for the whole (possibly multi-suite) process: the
+        // union of every suite's needs. Multi-suite runs exist so the local
+        // model loads + warms once and stays resident across suites.
+        let bootstrapPlan = EvalBootstrapPlan.merged(
+            suites.map {
+                EvalBootstrapPlan.make(
+                    suite: $0,
+                    filter: opts.filter,
+                    preference: opts.pluginBootstrapPreference
+                )
+            }
         )
-        _ = EvalBootstrap.configureIsolatedSearchStorageIfNeeded(for: bootstrapPlan)
-        // Default-agent cases EXECUTE real configure write tools; isolate the
-        // config root (after the search-isolation call so a mixed suite keeps
-        // its plugin `Tools` symlink) so writes never touch the real
-        // `~/.osaurus`. No-op for suites without `default_agent` cases.
-        _ = EvalBootstrap.configureIsolatedConfigStorageIfNeeded(
-            isolate: suite.selectedCasesIncludeDefaultAgent(filter: opts.filter)
-        )
+        // Hermetic run storage, unconditionally: EVERY eval run gets a
+        // throwaway root so fixture seeds and executed tool writes (agents,
+        // schedules, providers, memory, methods, skills, chat state) can
+        // never land in the user's real `~/.osaurus` contexts. Host
+        // resources evals must still see are seeded in: config snapshots
+        // are copies (`chat.json` keeps `--model auto` resolvable,
+        // `sandbox.json` keeps provisioned-sandbox detection), and the
+        // sandbox VM runtime stays host-global via a `container/` symlink.
+        // Concurrent lanes (the optimization loop's parallel remote lane)
+        // are safe by construction — each process owns its own root.
+        _ = EvalBootstrap.configureIsolatedRunStorage(for: bootstrapPlan)
         let startupWatchdog =
             bootstrapPlan.requiresWork
-            ? makeStartupWatchdog(options: opts, suite: suite)
+            ? makeStartupWatchdog(options: opts, suite: suites[0])
             : nil
         await EvalBootstrap.run(bootstrapPlan)
         startupWatchdog?.cancel()
@@ -178,92 +203,182 @@ struct OsaurusEvalsCLI {
             modelIds: EvalRemoteProviderBootstrap.candidateModelIds(runModel: opts.model)
         )
 
-        let baseReport = await EvalRunner.run(
-            suite: suite,
-            model: opts.model,
-            filter: opts.filter,
-            thresholdOverride: opts.threshold,
-            embedCosineFloorOverride: opts.embedCosineFloor,
-            bootstrapMode: .alreadyLoaded,
-            // Passed so the per-case watchdog can write a complete report and
-            // force-exit if a case wedges the concurrency runtime (the normal
-            // return path below never executes in that case).
-            outPath: opts.out
-        )
+        var exitCode: Int32 = 0
+        for (index, suite) in suites.enumerated() {
+            let suiteName = suite.directory.lastPathComponent
+            if suites.count > 1 {
+                FileHandle.standardError.write(
+                    Data("[evals] suite \(index + 1)/\(suites.count): \(suiteName)\n".utf8)
+                )
+            }
+            let outPath = resolvedOutPath(for: suite, options: opts)
+
+            // Resume: carry completed rows from the interrupted run's
+            // sidecar/report; only errored + watchdog-blocked rows re-run.
+            var resumeRows: [EvalCaseReport] = []
+            if opts.resume, let outPath {
+                let prior = EvalResume.loadPriorRows(outPath: outPath)
+                resumeRows = EvalResume.completedRows(prior)
+                if !resumeRows.isEmpty {
+                    FileHandle.standardError.write(
+                        Data(
+                            ("[evals] resume: carrying \(resumeRows.count) completed row(s) "
+                                + "from \(outPath); re-running the rest\n").utf8
+                        )
+                    )
+                }
+            }
+
+            // Incremental sidecar: every completed row lands on disk as it
+            // finishes, so a crash mid-suite is resumable with --resume.
+            let partialSink = EvalPartialRowSink(outPath: outPath)
+
+            // Full-transcript forensics for failed/errored LLM rows
+            // (--transcripts): one JSON per failing case in a sidecar dir
+            // next to the report. Needs an output anchor; a stdout-only
+            // run gets a warning instead of an invented path.
+            if opts.transcripts {
+                if let outPath {
+                    EvalTranscriptStore.configure(
+                        directory: EvalTranscriptStore.sidecarDirectory(forOut: outPath)
+                    )
+                } else {
+                    EvalTranscriptStore.configure(directory: nil)
+                    FileHandle.standardError.write(
+                        Data(
+                            "[evals] --transcripts needs --out/--out-dir to anchor the sidecar dir; skipping\n"
+                                .utf8
+                        )
+                    )
+                }
+            }
+
+            let baseReport = await EvalRunner.run(
+                suite: suite,
+                model: opts.model,
+                filter: opts.filter,
+                thresholdOverride: opts.threshold,
+                embedCosineFloorOverride: opts.embedCosineFloor,
+                bootstrapMode: .alreadyLoaded,
+                // Passed so the per-case watchdog can write a complete report
+                // and force-exit if a case wedges the concurrency runtime (the
+                // normal return path below never executes in that case).
+                outPath: outPath,
+                repeatCount: opts.repeatCount,
+                resumeRows: resumeRows,
+                onCaseCompleted: { partialSink?.append($0) }
+            )
+
+            // Stamp run provenance (hardware, OS, build, judge, catalog hash)
+            // so every emitted report is self-describing — the trustworthy
+            // substrate for crowdsourced model-compatibility contributions.
+            // `caseIDs` are the cases that actually ran (post-filter),
+            // matching the report rows.
+            let report = baseReport.withEnvironment(
+                RunEnvironment.current(
+                    caseIDs: baseReport.cases.map(\.id),
+                    runModel: baseReport.modelId
+                )
+            )
+
+            print(report.formatHumanReadable(verbose: opts.verbose))
+
+            if opts.reportForensics {
+                print("\n" + Self.formatForensicsBlock(report, suite: suite))
+            }
+
+            if let outPath {
+                do {
+                    let data = try report.toJSON(prettyPrinted: true)
+                    let url = URL(fileURLWithPath: outPath)
+                    try FileManager.default.createDirectory(
+                        at: url.deletingLastPathComponent(),
+                        withIntermediateDirectories: true
+                    )
+                    try data.write(to: url)
+                    print("\nwrote \(report.cases.count) cases to \(url.path)")
+                    partialSink?.finalizeSuccess()
+                } catch {
+                    FileHandle.standardError.write(
+                        Data(("failed to write report: \(error.localizedDescription)\n").utf8)
+                    )
+                    // Don't fail the run for an output write hiccup — the
+                    // human-readable report already printed and is the
+                    // primary deliverable. Keep the sidecar for --resume.
+                    partialSink?.close()
+                }
+            }
+
+            if opts.transcripts, let directory = EvalTranscriptStore.directory,
+                EvalTranscriptStore.writtenCount > 0
+            {
+                print(
+                    "wrote \(EvalTranscriptStore.writtenCount) failed-case transcript(s) "
+                        + "to \(directory.path)"
+                )
+            }
+
+            let counts = report.counts
+            if counts.failed + counts.errored > 0 { exitCode = max(exitCode, 1) }
+
+            // Optional opt-in stricter gate over `floors.json`: (1) per-case
+            // recall floors — recomputes the matched-name count against the
+            // case's fixture expectations and trips a breach when matched <
+            // `minMatches` (skipped cases excluded: missing local plugin is a
+            // "didn't apply" signal, not a regression); (2) per-suite pass-rate
+            // floors for the deterministic token-free suites, where any
+            // failure is a code regression.
+            if opts.failOnFloor {
+                let floorsURL =
+                    opts.floorsPath.map { URL(fileURLWithPath: $0) }
+                    ?? Self.defaultFloorsURL()
+                do {
+                    let floors = try Self.loadFloors(from: floorsURL)
+                    var breaches = Self.computeFloorBreaches(
+                        report: report,
+                        suite: suite,
+                        floors: floors.caseFloors
+                    )
+                    if let suiteBreach = Self.computeSuitePassRateBreach(
+                        report: report,
+                        suiteName: suiteName,
+                        floors: floors
+                    ) {
+                        breaches.append(suiteBreach)
+                    }
+                    if !breaches.isEmpty {
+                        print("\n[floor breaches]")
+                        for line in breaches { print("  - \(line)") }
+                        exitCode = max(exitCode, 1)
+                    } else {
+                        print("\n[floors] all listed floors met")
+                    }
+                } catch {
+                    FileHandle.standardError.write(
+                        Data(
+                            ("failed to load floors at \(floorsURL.path): "
+                                + "\(error.localizedDescription)\n").utf8
+                        )
+                    )
+                    exitCode = 2
+                }
+            }
+        }
 
         EvalRemoteProviderBootstrap.teardown(ephemeralProviderIds)
 
-        // Stamp run provenance (hardware, OS, build, judge, catalog hash) so
-        // every emitted report is self-describing — the trustworthy substrate
-        // for crowdsourced model-compatibility contributions. `caseIDs` are the
-        // cases that actually ran (post-filter), matching the report rows.
-        let report = baseReport.withEnvironment(
-            RunEnvironment.current(
-                caseIDs: baseReport.cases.map(\.id),
-                runModel: baseReport.modelId
-            )
-        )
-
-        print(report.formatHumanReadable(verbose: opts.verbose))
-
-        if opts.reportForensics {
-            print("\n" + Self.formatForensicsBlock(report, suite: suite))
-        }
-
-        if let outPath = opts.out {
-            do {
-                let data = try report.toJSON(prettyPrinted: true)
-                let url = URL(fileURLWithPath: outPath)
-                try data.write(to: url)
-                print("\nwrote \(report.cases.count) cases to \(url.path)")
-            } catch {
-                FileHandle.standardError.write(
-                    Data(("failed to write report: \(error.localizedDescription)\n").utf8)
-                )
-                // Don't fail the run for an output write hiccup — the
-                // human-readable report already printed and is the
-                // primary deliverable.
-            }
-        }
-
-        let counts = report.counts
-        var exitCode: Int32 = (counts.failed + counts.errored == 0) ? 0 : 1
-
-        // Optional opt-in stricter gate. Walks every case listed in
-        // `recall_floors.json`, recomputes the matched-name count
-        // against the case's fixture expectations, and trips a breach
-        // when matched < `minMatches`. Skipped cases (missing local
-        // plugin) are excluded — they're already a "didn't apply"
-        // signal, not a regression. CI wiring is deferred to the
-        // post-fix PR; today this exists so contributors can dry-run
-        // the gate locally before it becomes authoritative.
-        if opts.failOnFloor {
-            let floorsURL =
-                opts.floorsPath.map { URL(fileURLWithPath: $0) }
-                ?? Self.defaultFloorsURL()
-            do {
-                let floors = try Self.loadFloors(from: floorsURL)
-                let breaches = Self.computeFloorBreaches(
-                    report: report,
-                    suite: suite,
-                    floors: floors
-                )
-                if !breaches.isEmpty {
-                    print("\n[floor breaches]")
-                    for line in breaches { print("  - \(line)") }
-                    exitCode = 1
-                } else {
-                    print("\n[floors] all listed cases met minMatches")
-                }
-            } catch {
-                FileHandle.standardError.write(
-                    Data(("failed to load floors at \(floorsURL.path): \(error.localizedDescription)\n").utf8)
-                )
-                exitCode = 2
-            }
-        }
-
         await shutdownAndExit(exitCode)
+    }
+
+    /// Resolve where a suite's JSON report goes: `--out` (single suite) or
+    /// `--out-dir/<prefix><SuiteDirName>.json` (any number of suites).
+    /// nil when neither flag was given (stdout-only run).
+    static func resolvedOutPath(for suite: EvalSuite, options: Options) -> String? {
+        if let dir = options.outDir {
+            let name = "\(options.outPrefix)\(suite.directory.lastPathComponent).json"
+            return URL(fileURLWithPath: dir).appendingPathComponent(name).path
+        }
+        return options.out
     }
 
     // MARK: - Floors
@@ -290,7 +405,10 @@ struct OsaurusEvalsCLI {
                 phase: "startup bootstrap",
                 timeoutLabel: EvalTimeoutReport.formatSeconds(timeoutSeconds),
                 reportData: reportData,
-                outPath: opts.out
+                // Bootstrap is process-wide; on timeout the errored report
+                // lands at the FIRST suite's resolved output path so the
+                // matrix driver still gets a real cell.
+                outPath: resolvedOutPath(for: suite, options: opts)
             )
         )
     }
@@ -301,33 +419,92 @@ struct OsaurusEvalsCLI {
     /// the user passes an absolute or repo-relative path explicitly;
     /// otherwise we assume the conventional checkout layout.
     static func defaultFloorsURL() -> URL {
-        URL(fileURLWithPath: "Packages/OsaurusEvals/Config/recall_floors.json")
+        URL(fileURLWithPath: "Packages/OsaurusEvals/Config/floors.json")
     }
 
-    /// Decode `recall_floors.json` into a domain → caseId → minMatches
-    /// map. Hand-rolled JSON walk so the `_comment` top-level key (and
-    /// any future doc/metadata keys) is silently skipped without a
-    /// custom `Decodable`.
-    static func loadFloors(from url: URL) throws -> [String: [String: Int]] {
+    /// Parsed shape of `floors.json`: per-case recall floors (domain →
+    /// caseId → minMatches) plus per-suite minimum pass rates (suite
+    /// directory name → rate in 0…1).
+    struct Floors {
+        let caseFloors: [String: [String: Int]]
+        let suitePassRates: [String: Double]
+    }
+
+    /// Decode `floors.json`. Hand-rolled JSON walk so the `_comment`
+    /// top-level key (and any future doc/metadata keys) is silently
+    /// skipped without a custom `Decodable`. Two accepted shapes:
+    ///   - general (current): `{ "suitePassRates": {…}, "caseFloors": {domain: {caseId: {minMatches}}} }`
+    ///   - legacy (recall_floors.json): `{domain: {caseId: {minMatches}}}` at the root
+    static func loadFloors(from url: URL) throws -> Floors {
         let data = try Data(contentsOf: url)
         let any = try JSONSerialization.jsonObject(with: data)
         guard let root = any as? [String: Any] else {
             throw CLIError.invalidValue("--floors", "root is not an object")
         }
-        var result: [String: [String: Int]] = [:]
-        for (domain, value) in root {
-            if domain.hasPrefix("_") { continue }
-            guard let cases = value as? [String: Any] else { continue }
-            var inner: [String: Int] = [:]
-            for (caseId, raw) in cases {
-                guard let entry = raw as? [String: Any] else { continue }
-                if let mm = entry["minMatches"] as? Int {
-                    inner[caseId] = mm
+
+        func decodeCaseFloors(_ object: [String: Any]) -> [String: [String: Int]] {
+            var result: [String: [String: Int]] = [:]
+            for (domain, value) in object {
+                if domain.hasPrefix("_") { continue }
+                guard let cases = value as? [String: Any] else { continue }
+                var inner: [String: Int] = [:]
+                for (caseId, raw) in cases {
+                    guard let entry = raw as? [String: Any] else { continue }
+                    if let mm = entry["minMatches"] as? Int {
+                        inner[caseId] = mm
+                    }
+                }
+                result[domain] = inner
+            }
+            return result
+        }
+
+        var suitePassRates: [String: Double] = [:]
+        if let rates = root["suitePassRates"] as? [String: Any] {
+            for (suiteName, raw) in rates {
+                if suiteName.hasPrefix("_") { continue }
+                if let rate = raw as? Double {
+                    suitePassRates[suiteName] = rate
+                } else if let rate = raw as? Int {
+                    suitePassRates[suiteName] = Double(rate)
                 }
             }
-            result[domain] = inner
         }
-        return result
+
+        let caseFloors: [String: [String: Int]]
+        if let nested = root["caseFloors"] as? [String: Any] {
+            caseFloors = decodeCaseFloors(nested)
+        } else {
+            // Legacy flat shape (pre-generalization recall_floors.json).
+            caseFloors = decodeCaseFloors(root)
+        }
+        return Floors(caseFloors: caseFloors, suitePassRates: suitePassRates)
+    }
+
+    /// Per-suite pass-rate gate: when the suite's directory name is
+    /// listed in `suitePassRates`, its pass rate over scoreable rows
+    /// (passed / (passed + failed + errored); skipped rows excluded)
+    /// must meet the floor. Suites not listed never breach — that's
+    /// what makes `--fail-on-floor` safe to pass on every run.
+    static func computeSuitePassRateBreach(
+        report: EvalReport,
+        suiteName: String,
+        floors: Floors
+    ) -> String? {
+        guard let floor = floors.suitePassRates[suiteName] else { return nil }
+        let counts = report.counts
+        let scoreable = counts.passed + counts.failed + counts.errored
+        guard scoreable > 0 else {
+            return "\(suiteName): floor \(floor) declared but no scoreable rows ran"
+        }
+        let rate = Double(counts.passed) / Double(scoreable)
+        if rate < floor {
+            return String(
+                format: "%@: pass rate %.3f (%d/%d) below suite floor %.3f",
+                suiteName, rate, counts.passed, scoreable, floor
+            )
+        }
+        return nil
     }
 
     /// Walk every (domain, caseId, minMatches) tuple in `floors` and
@@ -335,7 +512,11 @@ struct OsaurusEvalsCLI {
     /// count is below the floor. `skipped` outcomes never breach
     /// (different host, different installed plugins). Unknown case
     /// IDs are surfaced as breaches so a typo in the floor file
-    /// can't silently disable the gate.
+    /// can't silently disable the gate — but a whole domain is
+    /// skipped when the running suite contains NO cases of that
+    /// domain, so the case gate composes with the suite pass-rate
+    /// gate under an always-on `--fail-on-floor` (a Schema run must
+    /// not breach on absent capability_search ids).
     static func computeFloorBreaches(
         report: EvalReport,
         suite: EvalSuite,
@@ -348,7 +529,9 @@ struct OsaurusEvalsCLI {
         let rowsById = Dictionary(
             uniqueKeysWithValues: report.cases.map { ($0.id, $0) }
         )
+        let domainsInSuite = Set(suite.cases.map(\.domain))
         for (domain, floorByCaseId) in floors {
+            guard domainsInSuite.contains(domain) else { continue }
             for (caseId, minMatches) in floorByCaseId {
                 guard let caseDef = casesById[caseId] else {
                     breaches.append("\(caseId): not found in suite")
@@ -558,10 +741,31 @@ struct OsaurusEvalsCLI {
     // MARK: - Args
 
     struct Options {
-        let suite: URL
+        /// One or more suite directories (`--suite` is repeatable). Running
+        /// several suites in ONE process keeps the local model resident and
+        /// warm across suites — a 9-suite LLM pass reloads the model once,
+        /// not 9 times (the single biggest wall-clock lever on a Mac).
+        let suites: [URL]
         let model: ModelSelection
         let filter: String?
         let out: String?
+        /// Per-suite output directory for multi-suite runs: each suite
+        /// writes `<outDir>/<outPrefix><SuiteDirName>.json`.
+        let outDir: String?
+        /// Filename prefix for `--out-dir` files (e.g. `llm-qwen3-4b-`).
+        let outPrefix: String
+        /// Run every case N times in-process and report the merged
+        /// majority outcome + passRate (`trials`/`trialsPassed`).
+        let repeatCount: Int
+        /// Resume an interrupted run: carry completed rows from the
+        /// target output's `.partial.jsonl` sidecar (or the previous
+        /// report JSON) and only run what's missing.
+        let resume: Bool
+        /// Persist the FULL transcript (system prompt, every tool call +
+        /// result preview, final text, loop notices) for each failed or
+        /// errored LLM case into `<report>.transcripts/<caseId>.json`.
+        /// Off by default: transcripts carry the whole composed prompt.
+        let transcripts: Bool
         let verbose: Bool
         /// Capability-search **tools-lane** RRF cutoff sweep value.
         /// Forwarded to `EvalRunner.run(thresholdOverride:)`; no-op
@@ -602,10 +806,15 @@ struct OsaurusEvalsCLI {
         let pluginBootstrapPreference: EvalInstalledPluginBootstrapPreference
 
         static func parse(_ args: [String]) throws -> Options {
-            var suite: URL?
+            var suites: [URL] = []
             var modelRaw: String?
             var filter: String?
             var out: String?
+            var outDir: String?
+            var outPrefix = ""
+            var repeatCount = 1
+            var resume = false
+            var transcripts = false
             var verbose = false
             var threshold: Float?
             var embedCosineFloor: Float?
@@ -620,7 +829,7 @@ struct OsaurusEvalsCLI {
                 let arg = args[i]
                 switch arg {
                 case "--suite":
-                    suite = try urlForArg(args, after: i, flag: arg)
+                    suites.append(try urlForArg(args, after: i, flag: arg))
                     i += 2
                 case "--model":
                     modelRaw = try valueForArg(args, after: i, flag: arg)
@@ -631,6 +840,25 @@ struct OsaurusEvalsCLI {
                 case "--out":
                     out = try valueForArg(args, after: i, flag: arg)
                     i += 2
+                case "--out-dir":
+                    outDir = try valueForArg(args, after: i, flag: arg)
+                    i += 2
+                case "--out-prefix":
+                    outPrefix = try valueForArg(args, after: i, flag: arg)
+                    i += 2
+                case "--repeat":
+                    let raw = try valueForArg(args, after: i, flag: arg)
+                    guard let value = Int(raw), value >= 1 else {
+                        throw CLIError.invalidValue(arg, raw)
+                    }
+                    repeatCount = value
+                    i += 2
+                case "--resume":
+                    resume = true
+                    i += 1
+                case "--transcripts":
+                    transcripts = true
+                    i += 1
                 case "--verbose", "-v":
                     verbose = true
                     i += 1
@@ -674,12 +902,23 @@ struct OsaurusEvalsCLI {
                 }
             }
 
-            guard let suite else { throw CLIError.missingFlag("--suite") }
+            guard !suites.isEmpty else { throw CLIError.missingFlag("--suite") }
+            if suites.count > 1 && out != nil {
+                throw CLIError.invalidValue(
+                    "--out",
+                    "single file with multiple --suite dirs; use --out-dir instead"
+                )
+            }
             return Options(
-                suite: suite,
+                suites: suites,
                 model: ModelSelection.parse(modelRaw),
                 filter: filter,
                 out: out,
+                outDir: outDir,
+                outPrefix: outPrefix,
+                repeatCount: repeatCount,
+                resume: resume,
+                transcripts: transcripts,
                 verbose: verbose,
                 threshold: threshold,
                 embedCosineFloor: embedCosineFloor,
@@ -707,7 +946,9 @@ struct OsaurusEvalsCLI {
             osaurus-evals — run behaviour evals against a chosen model
 
             USAGE:
-                osaurus-evals run --suite <dir> [--model <id>] [--filter <substr>] [--out <path>]
+                osaurus-evals run --suite <dir> [--suite <dir> ...] [--model <id>] [--filter <substr>]
+                                              [--out <path> | --out-dir <dir> [--out-prefix <p>]]
+                                              [--repeat <n>] [--resume] [--transcripts]
                                               [--threshold <float>] [--report-forensics]
                                               [--startup-timeout <seconds>]
                 osaurus-evals capture-screen [--app <name>] [--out <path>]
@@ -720,8 +961,11 @@ struct OsaurusEvalsCLI {
                                         [--out <json>] [--markdown <md>]
 
             FLAGS:
-                --suite <dir>         Required. Directory of *.json eval cases
-                                      (e.g. Suites/CapabilitySearch, Suites/CapabilityClaims).
+                --suite <dir>         Required; repeatable. Directory of *.json eval
+                                      cases (e.g. Suites/CapabilitySearch). Passing
+                                      several dirs runs them all in ONE process so
+                                      the local model loads + warms once and stays
+                                      resident across suites.
                 --model <id>          Model to route through CoreModelService for
                                       this run. Forms:
                                         auto                — keep current config
@@ -730,7 +974,31 @@ struct OsaurusEvalsCLI {
                                         qwen3-4b            — bare local id
                                       Default: auto.
                 --filter <substr>     Only run cases whose id contains <substr>.
-                --out <path>          Also write a JSON report to <path>.
+                --out <path>          Also write a JSON report to <path>. Single
+                                      --suite only; use --out-dir for multi-suite.
+                --out-dir <dir>       Write one report per suite to
+                                      <dir>/<prefix><SuiteDirName>.json.
+                --out-prefix <p>      Filename prefix for --out-dir files
+                                      (e.g. llm-qwen3-4b-). Default: none.
+                --repeat <n>          Run every case n times in this process
+                                      (model stays warm) and report the merged
+                                      majority outcome plus a trials/passRate
+                                      pair. Trials that disagree mark the row
+                                      FLAKY; diff treats flips on flaky rows as
+                                      non-blocking. Default: 1.
+                --resume              Carry completed rows from an interrupted
+                                      run (the --out path's .partial.jsonl
+                                      sidecar, or a previous report JSON) and
+                                      only run what's missing. errored /
+                                      watchdog-blocked rows always re-run.
+                --transcripts         Persist the FULL transcript (system
+                                      prompt, tool calls + result previews,
+                                      final text, loop notices) for every
+                                      failed/errored LLM case to
+                                      <report>.transcripts/<caseId>.json.
+                                      Needs --out/--out-dir. Off by default —
+                                      transcripts carry the whole composed
+                                      prompt, which shared reports shouldn't.
                 --verbose, -v         Print per-case diagnostics: the user query
                                       for each case.
                 --threshold <float>   Override the **tools-lane** RRF cutoff
@@ -768,15 +1036,17 @@ struct OsaurusEvalsCLI {
                                       Capability-search rows only. Designed
                                       for copy-paste into the PR description
                                       during a sweep.
-                --floors <path>       Path to recall_floors.json. Defaults to
-                                      `Packages/OsaurusEvals/Config/recall_floors.json`
+                --floors <path>       Path to floors.json. Defaults to
+                                      `Packages/OsaurusEvals/Config/floors.json`
                                       when --fail-on-floor is set without
                                       --floors. No effect on its own.
-                --fail-on-floor       Opt-in stricter gate: also exit 1 on
-                                      any case in the floors file whose matched
-                                      count is below `minMatches`. Off by
-                                      default; CI wiring is deferred to the
-                                      post-fix PR.
+                --fail-on-floor       Stricter gate: also exit 1 on any case in
+                                      the floors file whose matched count is
+                                      below `minMatches`, and on any listed
+                                      suite whose pass rate is below its
+                                      `suitePassRates` floor. Unlisted suites/
+                                      domains are unaffected, so the make
+                                      targets pass this by default.
                 --startup-timeout <s> Wall-clock guard for startup bootstrap
                                       (installed plugins + search indices)
                                       before the first case runs. On timeout,

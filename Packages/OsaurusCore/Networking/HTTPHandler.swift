@@ -238,6 +238,13 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         /// all-agent key. Agent-scoped keys (`false`) are confined to their
         /// own agent's routes.
         var authedScopeIsMaster: Bool = false
+        /// `true` when the caller presented a Bearer token that validated
+        /// against the configured access keys. Set by the global auth gate
+        /// (non-loopback) or by the opportunistic loopback validation, and
+        /// carried into request tasks via `HTTPCallerContext` so credit-spend
+        /// gates (Osaurus Router) can tell keyed callers from key-less
+        /// loopback-trusted ones.
+        var callerHasVerifiedAccessKey: Bool = false
         /// Set when the request arrived as an encrypted `/secure/call`
         /// envelope and was rewritten to its inner request. Routes that
         /// hard-require end-to-end encryption (`/agents/{id}/run`,
@@ -308,9 +315,19 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         let id = UUID()
         let requestTasks = requestTasks
         let operationBox = RequestTaskOperation(operation)
+        // Snapshot the caller's auth proof (event-loop-only state) into a
+        // task-local so downstream gates — ChatEngine's Osaurus Router
+        // credit-spend gate in particular — can tell keyed HTTP callers from
+        // key-less loopback-trusted ones without threading a flag through
+        // every request struct.
+        let callerContext = HTTPCallerContext(
+            hasVerifiedAccessKey: stateRef.value.callerHasVerifiedAccessKey
+        )
         let task = Task(priority: priority) {
             defer { requestTasks.remove(id: id) }
-            await operationBox.run()
+            await HTTPCallerContext.$current.withValue(callerContext) {
+                await operationBox.run()
+            }
         }
         channelCloseFuture.snapshot()?.whenComplete { _ in
             task.cancel()
@@ -330,6 +347,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             stateRef.value.isSecureChannel = false
             stateRef.value.authedAudience = nil
             stateRef.value.authedScopeIsMaster = false
+            stateRef.value.callerHasVerifiedAccessKey = false
             // Clear last request's attribution so a keep-alive connection's
             // next (possibly loopback / public) request can't inherit it.
             _inboundConnection.value = nil
@@ -500,6 +518,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     switch result {
                     case .valid(_, let audience, let keyNonce):
                         message = ""
+                        stateRef.value.callerHasVerifiedAccessKey = true
                         // Record the key's scope so agent-addressing routes can
                         // confine an agent-scoped key to its own agent.
                         stateRef.value.authedAudience = audience.lowercased()
@@ -546,6 +565,22 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     stateRef.value.requestHead = nil
                     stateRef.value.requestBodyBuffer = nil
                     return
+                }
+            }
+
+            // Loopback callers skip the auth gate entirely, but some
+            // downstream gates (Osaurus Router credit spend) require proof of
+            // a valid access key. Validate a volunteered Bearer token
+            // opportunistically — never rejecting the request, and never
+            // setting `authedAudience` (loopback trust must not suddenly gain
+            // agent-scope confinement just because a key was offered).
+            if isLoopback, !stateRef.value.callerHasVerifiedAccessKey {
+                let authHeader = head.headers.first(name: "Authorization") ?? ""
+                if authHeader.hasPrefix("Bearer ") {
+                    let token = String(authHeader.dropFirst(7))
+                    if case .valid = apiKeyValidator.validate(rawKey: token) {
+                        stateRef.value.callerHasVerifiedAccessKey = true
+                    }
                 }
             }
 
@@ -2854,7 +2889,29 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         if !composed.prompt.isEmpty {
             SystemPromptComposer.injectSystemContent(composed.prompt, into: &enriched.messages)
         }
-        SystemPromptComposer.injectMemoryPrefix(composed.memorySection, into: &enriched.messages)
+        // Session-stable memory injection: when the caller supplies a
+        // session_id, previously injected prefixes are replayed onto the
+        // matching history user messages (the client resends CLEAN history,
+        // so without this the prior turn's injected bytes vanish and the
+        // paged-KV prefix diverges at that message — re-prefilling the whole
+        // last exchange). Without a session_id there is no cross-request
+        // identity, so it falls back to plain latest-message injection.
+        if let sid = request.session_id, !sid.isEmpty {
+            let frozen = await SessionToolStateStore.shared.frozenUserPrefixes(sid)
+            if let recorded = SystemPromptComposer.applyFrozenMemoryPrefixes(
+                memorySection: composed.memorySection,
+                frozen: frozen,
+                into: &enriched.messages
+            ) {
+                await SessionToolStateStore.shared.recordUserPrefix(
+                    sid,
+                    key: recorded.key,
+                    prefix: recorded.prefix
+                )
+            }
+        } else {
+            SystemPromptComposer.injectMemoryPrefix(composed.memorySection, into: &enriched.messages)
+        }
         // Agent-run / HTTP orchestrators must get the active Subagent
         // tools as callable SCHEMAS too. `composeChatContext` only surfaces the
         // built-in image tools as a prompt-hint capability (not the schema), so
@@ -4283,10 +4340,13 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
 
             let formatter = ISO8601DateFormatter()
             let effectiveModels = await MainActor.run {
+                // Duplicate-tolerant: two agent files can share an id (a
+                // manually copied definition), and uniqueKeysWithValues traps.
                 Dictionary(
-                    uniqueKeysWithValues: agents.map {
+                    agents.map {
                         ($0.id, AgentManager.shared.effectiveModel(for: $0.id))
-                    }
+                    },
+                    uniquingKeysWith: { first, _ in first }
                 )
             }
             let items = agents.map { agent in
@@ -4735,6 +4795,9 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 Task { await ModelRuntime.shared.cancelGeneration(name: m) }
             }
         }
+        // Billing dedupe base for Router-bound loop steps: header-supplied or
+        // synthesized. Each loop iteration derives a per-step key from it.
+        let idempotencyBase = Self.httpIdempotencyKey(head: head)
 
         runRequestTask(priority: .userInitiated) {
             defer { admissionToken.release() }
@@ -5022,6 +5085,8 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                         max_tokens: effectiveMaxTokens,
                         stream: true,
                         top_p: req.top_p,
+                        top_k: req.top_k,
+                        min_p: req.min_p,
                         frequency_penalty: req.frequency_penalty,
                         presence_penalty: req.presence_penalty,
                         stop: req.stop,
@@ -5045,6 +5110,18 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     // emits; later tool-result iterations are skipped by the
                     // engine's de-dup rule.
                     iterationReq.isAgentRequest = true
+                    // Per-step Router billing dedupe: the message count is
+                    // stable per logical step (tool loops append messages
+                    // between steps), so a re-POST of the same step reuses its
+                    // key. The count alone is not collision-safe — compaction
+                    // can shrink the array back to a count an earlier step
+                    // used, and a client retry re-derives the same counts over
+                    // nondeterministic model/tool output — so the body
+                    // fingerprint suffix keys any changed body as a distinct
+                    // request instead of a router IDEMPOTENCY_CONFLICT (409).
+                    iterationReq.idempotencyKey =
+                        "\(idempotencyBase)-s\(msgs.count)-"
+                        + AgentToolLoop.stepIdempotencyFingerprint(messages: msgs)
 
                     responseContent = ""
                     var contentCoalescer = Self.StreamDeltaCoalescer(
@@ -5113,8 +5190,38 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     } catch let invs as ServiceToolInvocations {
                         // Local models can emit multiple tool calls in a single
                         // completion; ServiceToolInvocations carries the batch.
+                        // Text can still be pending in the coalescer when the tool call
+                        // arrives (tool calls surface by throw, so the loop's own flush
+                        // never runs). Deliver it before the tool frames or the visible
+                        // answer ends mid-word.
+                        if let pending = contentCoalescer.flush() {
+                            hop {
+                                writerBound.value.writeContent(
+                                    pending,
+                                    model: model,
+                                    responseId: responseId,
+                                    created: created,
+                                    context: ctx.value
+                                )
+                            }
+                        }
                         return .toolCalls(invs.invocations)
                     } catch let inv as ServiceToolInvocation {
+                        // Text can still be pending in the coalescer when the tool call
+                        // arrives (tool calls surface by throw, so the loop's own flush
+                        // never runs). Deliver it before the tool frames or the visible
+                        // answer ends mid-word.
+                        if let pending = contentCoalescer.flush() {
+                            hop {
+                                writerBound.value.writeContent(
+                                    pending,
+                                    model: model,
+                                    responseId: responseId,
+                                    created: created,
+                                    context: ctx.value
+                                )
+                            }
+                        }
                         return .toolCalls([inv])
                     }
 
@@ -5471,6 +5578,10 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
 
     // MARK: - Dispatch & Task Endpoints
 
+    nonisolated static func shouldBindExternalSurfaceForDispatch(isLoopback: Bool) -> Bool {
+        !isLoopback
+    }
+
     /// POST /agents/{identifier}/dispatch — dispatch work/chat task
     /// The identifier can be an agent UUID or a crypto address (0x...).
     private func handleDispatchEndpoint(
@@ -5667,10 +5778,18 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 title: title,
                 showToast: true,
                 source: .http,
-                externalSessionKey: externalSessionKey
+                externalSessionKey: externalSessionKey,
+                externalSurface: Self.shouldBindExternalSurfaceForDispatch(isLoopback: isLoopback)
             )
 
-            let handle = await TaskDispatcher.shared.dispatch(request)
+            let handle: DispatchHandle?
+            if Self.shouldBindExternalSurfaceForDispatch(isLoopback: isLoopback) {
+                handle = await ChatExecutionContext.$isExternalSurface.withValue(true) {
+                    await TaskDispatcher.shared.dispatch(request)
+                }
+            } else {
+                handle = await TaskDispatcher.shared.dispatch(request)
+            }
             let responseBody: String
             let status: HTTPResponseStatus
 
@@ -7110,6 +7229,23 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         return nil
     }
 
+    /// Resolve the billing idempotency key for an HTTP-origin inference
+    /// request. Honors a client-supplied `Idempotency-Key` header so
+    /// CLI/script retries of the same logical request dedupe Osaurus Router
+    /// billing on a re-POST; otherwise synthesizes a per-request key so the
+    /// provider service's idempotent connect-phase retries still dedupe.
+    /// The key rides only the Router wire (in the signed body — see
+    /// `RemoteProviderService.buildChatRequest`); no other upstream sees it.
+    nonisolated static func httpIdempotencyKey(head: HTTPRequestHead) -> String {
+        if let header = head.headers.first(name: "Idempotency-Key")?
+            .trimmingCharacters(in: .whitespacesAndNewlines),
+            !header.isEmpty, header.count <= 128
+        {
+            return header
+        }
+        return "http-\(UUID().uuidString)"
+    }
+
     private func handleChatCompletions(
         head: HTTPRequestHead,
         context: ChannelHandlerContext,
@@ -7189,6 +7325,11 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         #endif
         let httpTrace = HTTPTraceRecorder(ttftTrace)
         req.ttftTrace = ttftTrace
+        // Billing dedupe for Router-bound requests: header-supplied or
+        // synthesized (see `httpIdempotencyKey`). Chat-UI requests set their
+        // own per-step key; HTTP-origin requests previously had none, so a
+        // client retry could double-bill.
+        req.idempotencyKey = Self.httpIdempotencyKey(head: head)
         httpTrace.mark("http_request_decoded")
         httpTrace.set("endpoint", "/chat/completions")
         httpTrace.set("model", model)
@@ -7317,6 +7458,9 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                         }
                     }
                 }
+                var contentCoalescer = Self.StreamDeltaCoalescer(
+                    interval: ServerRuntimeSettingsStore.snapshot().generation.streamInterval
+                )
                 do {
                     httpTrace.mark("http_task_start")
                     let chatEngine = self.chatEngine
@@ -7354,9 +7498,6 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     if disconnected.value { throw CancellationError() }
                     var accumulatedContent = ""
                     var accumulatedReasoning = ""
-                    var contentCoalescer = Self.StreamDeltaCoalescer(
-                        interval: ServerRuntimeSettingsStore.snapshot().generation.streamInterval
-                    )
                     var authoritativeCompletionTokens: Int?
                     var authoritativeTokensPerSecond: Double?
                     var streamFinishReason = "stop"
@@ -7531,6 +7672,21 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                         finishReason: RequestLog.FinishReason(rawValue: finalStreamFinishReason) ?? .stop
                     )
                 } catch let invs as ServiceToolInvocations {
+                    // Text can still be pending in the coalescer when the tool call
+                    // arrives (tool calls surface by throw, so the loop's own flush
+                    // never runs). Deliver it before the tool frames or the visible
+                    // answer ends mid-word.
+                    if let pending = contentCoalescer.flush() {
+                        hop {
+                            writerBound.value.writeContent(
+                                pending,
+                                model: model,
+                                responseId: responseId,
+                                created: created,
+                                context: ctx.value
+                            )
+                        }
+                    }
                     // Multi-tool MLX completion: emit one tool_call delta
                     // per invocation, sharing one finish_reason="tool_calls".
                     // OpenAI clients deduplicate by `index`.
@@ -7595,6 +7751,21 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                         finishReason: .toolCalls
                     )
                 } catch let inv as ServiceToolInvocation {
+                    // Text can still be pending in the coalescer when the tool call
+                    // arrives (tool calls surface by throw, so the loop's own flush
+                    // never runs). Deliver it before the tool frames or the visible
+                    // answer ends mid-word.
+                    if let pending = contentCoalescer.flush() {
+                        hop {
+                            writerBound.value.writeContent(
+                                pending,
+                                model: model,
+                                responseId: responseId,
+                                created: created,
+                                context: ctx.value
+                            )
+                        }
+                    }
                     // Single tool invocation — same emission as above.
                     httpTrace.markFirstSemanticDelta("tool_calls")
                     markSemanticDeltaIfConnected()
@@ -7880,7 +8051,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             requestBodyString = nil
         }
 
-        guard let req = try? JSONDecoder().decode(ChatCompletionRequest.self, from: data) else {
+        guard var decodedReq = try? JSONDecoder().decode(ChatCompletionRequest.self, from: data) else {
             sendResponse(
                 context: context,
                 version: head.version,
@@ -7899,6 +8070,8 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             )
             return
         }
+        decodedReq.idempotencyKey = Self.httpIdempotencyKey(head: head)
+        let req = decodedReq
 
         guard
             let admissionToken = acquireInferenceAdmissionOrReject(
@@ -7963,14 +8136,14 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     }
                 }
             }
+            var contentCoalescer = Self.StreamDeltaCoalescer(
+                interval: ServerRuntimeSettingsStore.snapshot().generation.streamInterval
+            )
             do {
                 let chatEngine = self.chatEngine
                 try Task.checkCancellation()
                 let stream = try await chatEngine.streamChat(request: req)
                 if disconnected.value { throw CancellationError() }
-                var contentCoalescer = Self.StreamDeltaCoalescer(
-                    interval: ServerRuntimeSettingsStore.snapshot().generation.streamInterval
-                )
                 for try await delta in stream {
                     try Task.checkCancellation()
                     if disconnected.value { throw CancellationError() }
@@ -8030,6 +8203,21 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     finishReason: .stop
                 )
             } catch let invs as ServiceToolInvocations {
+                // Text can still be pending in the coalescer when the tool call
+                // arrives (tool calls surface by throw, so the loop's own flush
+                // never runs). Deliver it before the tool frames or the visible
+                // answer ends mid-word.
+                if let pending = contentCoalescer.flush() {
+                    hop {
+                        writerBound.value.writeContent(
+                            pending,
+                            model: req.model,
+                            responseId: "",
+                            created: Int(Date().timeIntervalSince1970),
+                            context: ctx.value
+                        )
+                    }
+                }
                 hop {
                     writerBound.value.writeToolCalls(invs.invocations, model: req.model, context: ctx.value)
                     writerBound.value.writeEnd(ctx.value)
@@ -8051,6 +8239,21 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     finishReason: .toolCalls
                 )
             } catch let inv as ServiceToolInvocation {
+                // Text can still be pending in the coalescer when the tool call
+                // arrives (tool calls surface by throw, so the loop's own flush
+                // never runs). Deliver it before the tool frames or the visible
+                // answer ends mid-word.
+                if let pending = contentCoalescer.flush() {
+                    hop {
+                        writerBound.value.writeContent(
+                            pending,
+                            model: req.model,
+                            responseId: "",
+                            created: Int(Date().timeIntervalSince1970),
+                            context: ctx.value
+                        )
+                    }
+                }
                 hop {
                     writerBound.value.writeToolCalls([inv], model: req.model, context: ctx.value)
                     writerBound.value.writeEnd(ctx.value)
@@ -8302,7 +8505,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             messages.append(ChatMessage(role: "system", content: system))
         }
         messages.append(ChatMessage(role: "user", content: ollama.prompt))
-        let chatRequest = ChatCompletionRequest(
+        var chatRequestDraft = ChatCompletionRequest(
             model: ollama.model,
             messages: messages,
             temperature: ollama.options?.temperature,
@@ -8317,6 +8520,8 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             tool_choice: nil,
             session_id: nil
         )
+        chatRequestDraft.idempotencyKey = Self.httpIdempotencyKey(head: head)
+        let chatRequest = chatRequestDraft
 
         guard
             let admissionToken = acquireInferenceAdmissionOrReject(
@@ -8689,7 +8894,9 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
     nonisolated static func unsupportedSamplerReason(_ req: ChatCompletionRequest) -> String? {
         RequestValidator.unsupportedSamplerReason(
             n: req.n,
-            responseFormatType: req.response_format?.type
+            responseFormatType: req.response_format?.type,
+            logprobs: req.logprobs,
+            topLogprobs: req.top_logprobs
         )
     }
 
@@ -8715,6 +8922,72 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
     }
 
     // MARK: - Health Endpoint
+
+    /// Await `operation`, but give up after `nanoseconds` and return `nil`.
+    ///
+    /// `/health` must answer even when the inference stack is wedged: the
+    /// batch-diagnostics fetch chains awaits through the Registry actor and
+    /// every per-engine actor, so a hung engine would otherwise hang the
+    /// health endpoint (and suppress `LaunchGuard.noteHealthyHealthCheck()`)
+    /// exactly when the process is sick. A structured task group cannot
+    /// express this race — the group scope still waits for the wedged child
+    /// after `cancelAll()` — so the fetch runs as an unstructured task that
+    /// simply loses the race and is abandoned on timeout.
+    static func awaitWithDeadline<T: Sendable>(
+        nanoseconds: UInt64,
+        operation: @escaping @Sendable () async -> T
+    ) async -> T? {
+        let (stream, continuation) = AsyncStream<T?>.makeStream()
+        let work = Task { continuation.yield(await operation()) }
+        let deadline = Task {
+            try? await Task.sleep(nanoseconds: nanoseconds)
+            continuation.yield(nil)
+        }
+        var first: T?
+        for await value in stream {
+            first = value
+            break
+        }
+        continuation.finish()
+        deadline.cancel()
+        // Best-effort: a fetch wedged inside an actor await won't observe
+        // cancellation, but a merely-slow one stops doing work sooner.
+        if first == nil { work.cancel() }
+        return first
+    }
+
+    /// Shape the `/health` `batch_diagnostics` block from a snapshot.
+    /// Pure — extracted from the NIO-embedded endpoint body so the
+    /// nil-snapshot and empty-depth-summary shapes are unit-testable.
+    static func healthBatchDiagnosticsObject(_ snapshot: BatchDiagnosticsSnapshot?) -> Any {
+        guard let d = snapshot else { return NSNull() }
+        // A nil or empty depth summary both mean "no native-MTP models
+        // resolved"; emit JSON null rather than an empty string so consumers
+        // can key off null uniformly.
+        let depths: Any
+        if let summary = d.nativeMTPDepthSummary, !summary.isEmpty {
+            depths = summary
+        } else {
+            depths = NSNull()
+        }
+        return [
+            "pending": d.pendingCount,
+            "active": d.activeCount,
+            "active_high_watermark": d.activeHighWatermark,
+            "accepting_requests": d.isAcceptingRequests,
+            "native_mtp_models": d.nativeMTPModelCount,
+            "native_mtp_depths": depths,
+            "prefix_hits": d.prefixHits,
+            "prefix_misses": d.prefixMisses,
+            "disk_l2_hits": d.diskL2Hits,
+            "disk_l2_misses": d.diskL2Misses,
+            "disk_l2_stores": d.diskL2Stores,
+            "ssm_companion_hits": d.ssmCompanionHits,
+            "ssm_companion_misses": d.ssmCompanionMisses,
+            "ssm_companion_rederives": d.ssmCompanionReDerives,
+            "turboquant_compressions": d.turboQuantCompressions,
+        ] as [String: Any]
+    }
 
     /// `/health` returns liveness plus per-model in-flight counts and the
     /// list of currently-loaded models. External observers can use this to
@@ -8808,16 +9081,44 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                         "required_available_bytes": f.requiredAvailableBytes,
                         "soft_limit_bytes": f.softLimitBytes,
                         "hard_limit_bytes": f.hardLimitBytes,
+                        // What Metal actually keeps resident. A load past this
+                        // is paged by macOS rather than refused, so support
+                        // needs to see it to explain a "fits but crawls" model.
+                        "gpu_budget_bytes": f.gpuBudgetBytes,
+                        "exceeds_gpu_budget": f.exceedsGPUBudget,
                     ] as [String: Any]
             } else {
                 ramFeasibility = NSNull()
             }
 
+            // Cache-effectiveness and speculation counters, aggregated across
+            // every resolved BatchEngine. The Settings panel already renders
+            // these; exposing them here lets benchmark/regression tooling
+            // attribute a TTFT change to its cause (prefix hit vs miss, MTP
+            // engaged vs fallen back) instead of guessing from timings.
+            //
+            // The fetch is raced against a 1-second deadline: it chains
+            // awaits through the Registry actor and every per-engine actor,
+            // and a wedged engine must not wedge /health (or block
+            // LaunchGuard.noteHealthyHealthCheck) exactly when the process
+            // is sick. On timeout the block is JSON null and
+            // `batch_diagnostics_timeout: true` is added at the top level.
+            let batchDiagFetch: BatchDiagnosticsSnapshot?? = await Self.awaitWithDeadline(
+                nanoseconds: 1_000_000_000
+            ) {
+                await MLXBatchAdapter.snapshotDiagnostics()
+            }
+            let batchDiagTimedOut = (batchDiagFetch == nil)
+            let batchDiagnostics = Self.healthBatchDiagnosticsObject(
+                batchDiagFetch.flatMap { $0 }
+            )
+
             let memoryConfig = MemoryConfigurationStore.load()
             let localModelScan: Any = ModelManager.localModelsScanDiagnosticJSONObject() as Any? ?? NSNull()
-            let obj: [String: Any] = [
+            var obj: [String: Any] = [
                 "status": "healthy",
                 "timestamp": Date().ISO8601Format(),
+                "hardware": ChipProfile.current.healthJSONObject(),
                 "loaded": loaded,
                 "current_model": current,
                 "inflight": inflightObj,
@@ -8833,8 +9134,12 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 "index_failures": indexFailures,
                 "local_model_scan": localModelScan,
                 "ram_feasibility": ramFeasibility,
+                "batch_diagnostics": batchDiagnostics,
                 "persistence": PersistenceHealth.shared.snapshot(),
             ]
+            if batchDiagTimedOut {
+                obj["batch_diagnostics_timeout"] = true
+            }
 
             // A served /health means the process is alive and responsive —
             // clear any crash-loop safe mode and bring skipped subsystems back.
@@ -8883,9 +9188,14 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         let logSelf = self
 
         runRequestTask(priority: .userInitiated) {
-            // Get local models
-            var models = MLXService.getAvailableModels().map { OpenAIModel(modelName: $0) }
-            if FoundationModelService.isDefaultModelAvailable() {
+            // Get local models (filtered by the per-model exposure settings)
+            let exposure = ModelExposureStore.shared
+            var models = MLXService.getAvailableModels()
+                .filter { exposure.isExposed(id: $0, kind: .local) }
+                .map { OpenAIModel(modelName: $0) }
+            if FoundationModelService.isDefaultModelAvailable(),
+                exposure.isExposed(id: "foundation", kind: .local)
+            {
                 models.insert(OpenAIModel(modelName: "foundation"), at: 0)
             }
 
@@ -8940,19 +9250,24 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         runRequestTask(priority: .userInitiated) {
             let now = Date().ISO8601Format()
 
-            // Get local models
-            var models = MLXService.getAvailableModels().map { name -> OpenAIModel in
-                var m = OpenAIModel(from: name)
-                m.name = name
-                m.model = name
-                m.modified_at = now
-                m.size = 0
-                m.digest = ""
-                m.details = ModelDetails.localMLXModelDetails(for: name)
-                return m
-            }
+            // Get local models (filtered by the per-model exposure settings)
+            let exposure = ModelExposureStore.shared
+            var models = MLXService.getAvailableModels()
+                .filter { exposure.isExposed(id: $0, kind: .local) }
+                .map { name -> OpenAIModel in
+                    var m = OpenAIModel(from: name)
+                    m.name = name
+                    m.model = name
+                    m.modified_at = now
+                    m.size = 0
+                    m.digest = ""
+                    m.details = ModelDetails.localMLXModelDetails(for: name)
+                    return m
+                }
 
-            if FoundationModelService.isDefaultModelAvailable() {
+            if FoundationModelService.isDefaultModelAvailable(),
+                exposure.isExposed(id: "foundation", kind: .local)
+            {
                 var fm = OpenAIModel(modelName: "foundation")
                 fm.name = "foundation"
                 fm.model = "foundation"
@@ -9255,8 +9570,8 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         let logUserAgent = userAgent
         let logSelf = self
         runRequestTask(priority: .userInitiated) {
-            // External callers never see the externally-denied tool classes
-            // (folder write/shell) — `/mcp/call` refuses them too.
+            // External callers never see app-only tool classes; `/mcp/call`
+            // refuses the same deny list too.
             let entries = await MainActor.run {
                 ToolRegistry.shared.listTools().filter {
                     $0.enabled && !ToolRegistry.externallyDeniedToolNames.contains($0.name)
@@ -9436,12 +9751,12 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             return "{}"
         }()
 
-        // External deny list: folder write/shell tool classes are never
-        // invocable through the MCP bridge (they're also hidden from
-        // `/mcp/tools`). Refuse before any schema validation or gating.
+        // External deny list: app-only tool classes are never invocable
+        // through the MCP bridge (they're also hidden from `/mcp/tools`).
+        // Refuse before any schema validation or gating.
         if ToolRegistry.externallyDeniedToolNames.contains(req.name) {
             let message =
-                "'\(req.name)' is not available to external callers. Folder write and shell tools can only run from the Osaurus app."
+                "'\(req.name)' is not available to external callers. App-only tools can only run from the Osaurus app."
             let bodyJSON = #"{"error":"tool_not_exposable","message":"\#(message)"}"#
             sendResponse(
                 context: context,
@@ -9524,8 +9839,46 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 // Belt-and-braces: the registry re-checks the external deny
                 // list under this flag even if a new entry point forgets
                 // the name-based preflight above.
+                let isEnabled = await MainActor.run {
+                    ToolRegistry.shared.isGlobalEnabled(toolName)
+                }
+                if !isEnabled {
+                    let message = "Tool '\(toolName)' is disabled in Osaurus settings."
+                    let payload: [String: Any] = [
+                        "content": [["type": "text", "text": message]],
+                        "isError": true,
+                    ]
+                    let data =
+                        (try? JSONSerialization.data(withJSONObject: payload, options: .osaurusCanonical))
+                        ?? Data("{}".utf8)
+                    let body = String(decoding: data, as: UTF8.self)
+                    hop {
+                        var headers = [("Content-Type", "application/json; charset=utf-8")]
+                        headers.append(contentsOf: cors)
+                        self.sendResponse(
+                            context: ctx.value,
+                            version: head.version,
+                            status: .ok,
+                            headers: headers,
+                            body: body
+                        )
+                    }
+                    logSelf.logRequest(
+                        method: "POST",
+                        path: "/mcp/call",
+                        userAgent: logUserAgent,
+                        requestBody: logRequestBody,
+                        responseStatus: 200,
+                        startTime: logStartTime,
+                        errorMessage: message
+                    )
+                    return
+                }
+
                 let result = try await ChatExecutionContext.$isExternalSurface.withValue(true) {
-                    try await ToolRegistry.shared.execute(name: toolName, argumentsJSON: argsJSON)
+                    try await ChatExecutionContext.$denyUnapprovedToolPrompts.withValue(true) {
+                        try await ToolRegistry.shared.execute(name: toolName, argumentsJSON: argsJSON)
+                    }
                 }
                 let payload: [String: Any] = [
                     "content": [["type": "text", "text": result]],
@@ -9651,7 +10004,8 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         }
 
         // Convert to internal format
-        let internalReq = anthropicReq.toChatCompletionRequest()
+        var internalReq = anthropicReq.toChatCompletionRequest()
+        internalReq.idempotencyKey = Self.httpIdempotencyKey(head: head)
 
         // Generate response ID
         let messageId = Self.shortId(prefix: "msg_")
@@ -9764,14 +10118,14 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     }
                 }
             }
+            var contentCoalescer = Self.StreamDeltaCoalescer(
+                interval: ServerRuntimeSettingsStore.snapshot().generation.streamInterval
+            )
             do {
                 let chatEngine = self.chatEngine
                 try Task.checkCancellation()
                 let stream = try await chatEngine.streamChat(request: internalReq)
                 if disconnected.value { throw CancellationError() }
-                var contentCoalescer = Self.StreamDeltaCoalescer(
-                    interval: ServerRuntimeSettingsStore.snapshot().generation.streamInterval
-                )
                 for try await delta in stream {
                     try Task.checkCancellation()
                     if disconnected.value { throw CancellationError() }
@@ -9825,6 +10179,15 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     finishReason: .stop
                 )
             } catch let invs as ServiceToolInvocations {
+                // Text can still be pending in the coalescer when the tool call
+                // arrives (tool calls surface by throw, so the loop's own flush
+                // never runs). Deliver it before the tool frames or the visible
+                // answer ends mid-word.
+                if let pending = contentCoalescer.flush() {
+                    hop {
+                        writerBound.value.writeTextDelta(pending, context: ctx.value)
+                    }
+                }
                 // Multi-tool MLX completion: one `tool_use` content block
                 // per invocation, then a single `tool_use` finish.
                 markSemanticDeltaIfChannelActive()
@@ -9850,6 +10213,15 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     finishReason: .toolCalls
                 )
             } catch let inv as ServiceToolInvocation {
+                // Text can still be pending in the coalescer when the tool call
+                // arrives (tool calls surface by throw, so the loop's own flush
+                // never runs). Deliver it before the tool frames or the visible
+                // answer ends mid-word.
+                if let pending = contentCoalescer.flush() {
+                    hop {
+                        writerBound.value.writeTextDelta(pending, context: ctx.value)
+                    }
+                }
                 // Single tool invocation — same emission path.
                 markSemanticDeltaIfChannelActive()
                 hop {
@@ -10418,10 +10790,11 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
 
         // Convert to internal format, preserving local Responses API
         // context when clients chain turns with `previous_response_id`.
-        let internalReq = Self.applyOpenResponsesContext(
+        var internalReq = Self.applyOpenResponsesContext(
             to: openResponsesReq.toChatCompletionRequest(),
             previousResponseId: openResponsesReq.previous_response_id
         )
+        internalReq.idempotencyKey = Self.httpIdempotencyKey(head: head)
 
         // Determine if streaming
         let wantsStream = openResponsesReq.stream ?? false
@@ -10556,14 +10929,14 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     }
                 }
             }
+            var contentCoalescer = Self.StreamDeltaCoalescer(
+                interval: ServerRuntimeSettingsStore.snapshot().generation.streamInterval
+            )
             do {
                 let chatEngine = self.chatEngine
                 try Task.checkCancellation()
                 let stream = try await chatEngine.streamChat(request: internalReq)
                 if disconnected.value { throw CancellationError() }
-                var contentCoalescer = Self.StreamDeltaCoalescer(
-                    interval: ServerRuntimeSettingsStore.snapshot().generation.streamInterval
-                )
                 for try await delta in stream {
                     try Task.checkCancellation()
                     if disconnected.value { throw CancellationError() }
@@ -10668,6 +11041,21 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     finishReason: .stop
                 )
             } catch let invs as ServiceToolInvocations {
+                // Text can still be pending in the coalescer when the tool call
+                // arrives (tool calls surface by throw, so the loop's own flush
+                // never runs). Deliver it before the tool frames or the visible
+                // answer ends mid-word.
+                if let pending = contentCoalescer.flush() {
+                    hop {
+                        writerBound.value.writeReasoningItemDone(context: ctx.value)
+                        if !messageItemOpen.value {
+                            messageItemOpen.value = true
+                            writerBound.value.writeMessageItemAdded(itemId: itemId, context: ctx.value)
+                            writerBound.value.writeContentPartAdded(context: ctx.value)
+                        }
+                        writerBound.value.writeTextDelta(pending, context: ctx.value)
+                    }
+                }
                 markSemanticDeltaIfChannelActive()
                 // Multi-tool MLX completion: emit one function_call item
                 // per invocation. Use the lazy `messageItemOpen` flag so
@@ -10707,6 +11095,21 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     finishReason: .toolCalls
                 )
             } catch let inv as ServiceToolInvocation {
+                // Text can still be pending in the coalescer when the tool call
+                // arrives (tool calls surface by throw, so the loop's own flush
+                // never runs). Deliver it before the tool frames or the visible
+                // answer ends mid-word.
+                if let pending = contentCoalescer.flush() {
+                    hop {
+                        writerBound.value.writeReasoningItemDone(context: ctx.value)
+                        if !messageItemOpen.value {
+                            messageItemOpen.value = true
+                            writerBound.value.writeMessageItemAdded(itemId: itemId, context: ctx.value)
+                            writerBound.value.writeContentPartAdded(context: ctx.value)
+                        }
+                        writerBound.value.writeTextDelta(pending, context: ctx.value)
+                    }
+                }
                 markSemanticDeltaIfChannelActive()
                 // Single tool invocation — same flow with one item.
                 hop {

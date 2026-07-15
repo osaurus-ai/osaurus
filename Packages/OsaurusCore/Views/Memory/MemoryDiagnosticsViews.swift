@@ -462,9 +462,20 @@ extension MemoryView {
         diagnosticRow(
             label: "Pending signals",
             value:
-                L("\(pendingSignals.totalSignals) pending · \(pendingSignals.allTimeSignals) all-time"),
+                L(
+                    "\(pendingSignals.totalSignals) pending · \(pendingSignals.processedSignals) processed · \(pendingSignals.deadLetteredSignals) dead · \(pendingSignals.allTimeSignals) all-time"
+                ),
             statusColor: pendingSignalsStatusColor,
             detail: pendingSignalsStatusDetail
+        )
+        diagnosticRow(
+            label: "Distillation results",
+            value:
+                L(
+                    "\(processingStats.successCount) ok · \(processingStats.skippedCount) skipped · \(processingStats.errorCount) err · \(processingStats.emptyCount) empty · \(processingStats.deadLetterCount) dead"
+                ),
+            statusColor: processingResultsStatusColor,
+            detail: processingResultsDetail
         )
         diagnosticRow(
             label: "Episodes",
@@ -518,12 +529,32 @@ extension MemoryView {
     }
 
     private var pendingSignalsStatusColor: Color {
+        if pendingSignals.deadLetteredSignals > 0 { return deadLetterNeedsAttention ? .red : .orange }
         if pendingSignals.allTimeSignals == 0 { return .red }
         if pendingSignals.totalSignals == 0 { return .green }
         return .orange
     }
 
     private var pendingSignalsStatusDetail: String? {
+        if pendingSignals.deadLetteredSignals > 0 {
+            if !deadLetterNeedsAttention {
+                return
+                    L(
+                        """
+                        Some older buffered turns were dead-lettered after retry failures, \
+                        but later distillation has succeeded.
+                        """
+                    )
+            }
+            return
+                L(
+                    """
+                    Some buffered turns hit the retry cap and were dead-lettered. \
+                    Check Recent Activity for the failing reason, then backfill or \
+                    re-ingest after fixing the model/configuration problem.
+                    """
+                )
+        }
         if pendingSignals.allTimeSignals == 0 {
             return
                 L(
@@ -543,6 +574,53 @@ extension MemoryView {
                 )
         }
         return nil
+    }
+
+    private var processingResultsStatusColor: Color {
+        if deadLetterNeedsAttention { return .red }
+        if processingErrorNeedsAttention { return .red }
+        if processingEmptyNeedsAttention { return .orange }
+        if processingStats.skippedCount > 0 && processingStats.successCount == 0 { return .orange }
+        if processingStats.successCount > 0 { return .green }
+        return .gray
+    }
+
+    private var processingResultsDetail: String? {
+        if deadLetterNeedsAttention {
+            return L("At least one session exceeded the distillation retry cap and stopped retrying.")
+        }
+        if processingErrorNeedsAttention {
+            return L("Recent distillation attempts are failing. Check Recent Activity for the error details.")
+        }
+        if processingEmptyNeedsAttention {
+            return L("The model ran but returned no usable episode for at least one session.")
+        }
+        if processingStats.skippedCount > 0 && processingStats.successCount == 0 {
+            return L("Distillation has only skipped so far; common causes are no core model, model unavailable, or not resident.")
+        }
+        return nil
+    }
+
+    private var latestProcessingStatus: String? {
+        recentLogs.first?.status.lowercased()
+    }
+
+    private var processingHasNoSuccessOrEpisode: Bool {
+        processingStats.successCount == 0 && totalEpisodes == 0
+    }
+
+    private var processingErrorNeedsAttention: Bool {
+        processingStats.errorCount > 0
+            && (latestProcessingStatus == "error" || processingHasNoSuccessOrEpisode)
+    }
+
+    private var processingEmptyNeedsAttention: Bool {
+        processingStats.emptyCount > 0 && processingHasNoSuccessOrEpisode
+    }
+
+    private var deadLetterNeedsAttention: Bool {
+        (processingStats.deadLetterCount > 0 || pendingSignals.deadLetteredSignals > 0)
+            && (latestProcessingStatus == "dead_letter" || processingHasNoSuccessOrEpisode)
     }
 
     private var bufferTelemetryRow: some View {
@@ -857,6 +935,7 @@ extension MemoryView {
         case "error": return L("ERR")
         case "empty": return L("NIL")
         case "skipped": return L("SKP")
+        case "dead_letter": return L("DED")
         default: return status.uppercased()
         }
     }
@@ -867,6 +946,7 @@ extension MemoryView {
         case "error": return .red
         case "empty": return .orange
         case "skipped": return .gray
+        case "dead_letter": return .red
         default: return .blue
         }
     }
@@ -889,12 +969,38 @@ extension MemoryView {
             return DiagnosticHeadline(text: L("Core model not configured."), color: .red)
         }
         if pendingSignals.totalSignals == 0 && totalEpisodes == 0 {
+            if deadLetterNeedsAttention {
+                return DiagnosticHeadline(text: L("Memory signals dead-lettered after repeated failures."), color: .red)
+            }
+            if processingErrorNeedsAttention {
+                return DiagnosticHeadline(text: L("Distillation is failing before writing episodes."), color: .red)
+            }
+            if processingEmptyNeedsAttention {
+                return DiagnosticHeadline(text: L("Distillation ran but produced no usable episode."), color: .orange)
+            }
+            if processingStats.skippedCount > 0 && processingStats.successCount == 0 {
+                return DiagnosticHeadline(text: L("Turns reached memory, but distillation is skipping."), color: .orange)
+            }
             return DiagnosticHeadline(
                 text: L("No buffered turns and no episodes — check per-agent memory."),
                 color: .orange
             )
         }
-        if pendingSignals.totalSignals > 0 && recentLogs.first?.status != "success" {
+        if pendingSignals.totalSignals > 0 && latestProcessingStatus != "success" {
+            if let latest = recentLogs.first {
+                switch latest.status.lowercased() {
+                case "error":
+                    return DiagnosticHeadline(text: L("Buffered turns are blocked by a distillation error."), color: .red)
+                case "dead_letter":
+                    return DiagnosticHeadline(text: L("Buffered turns reached the retry cap."), color: .red)
+                case "empty":
+                    return DiagnosticHeadline(text: L("Latest distillation produced no usable episode."), color: .orange)
+                case "skipped":
+                    return DiagnosticHeadline(text: L("Buffered turns are pending because distillation skipped."), color: .orange)
+                default:
+                    break
+                }
+            }
             return DiagnosticHeadline(
                 text: L("\(pendingSignals.totalSignals) buffered turns waiting on distillation."),
                 color: .orange

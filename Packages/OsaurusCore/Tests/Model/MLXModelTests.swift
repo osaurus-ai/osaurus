@@ -169,8 +169,9 @@ struct MLXModelTests {
         )
     }
 
-    /// Two same-size builds collapse to the same friendly title — that's why the
-    /// chooser pairs the title with a precision chip to keep them apart.
+    /// Two same-size builds collapse to the same friendly title — that's why
+    /// the onboarding chooser dedupes on `simplifiedName` and shows one
+    /// hardware-chosen build per family (`ConfigureAIState.dedupedTopPicks`).
     @Test func simplifiedName_sameSizeVariantsCollapseToSameTitle() {
         let highPrecision = model(named: "Gemma 4 12B it MXFP8").simplifiedName
         let efficient = model(named: "Gemma 4 12B it qat MXFP4").simplifiedName

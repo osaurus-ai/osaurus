@@ -40,6 +40,10 @@ public struct EvalHistoryRow: Codable, Sendable, Equatable {
     /// so pre-existing history lines still decode.
     public let meanPromptTokensPerTask: Double?
     public let meanTotalTokensPerTask: Double?
+    /// Number of cases whose `--repeat` trials disagreed in this run — the
+    /// flake-rate trend. nil for single-execution runs (no trial evidence)
+    /// and for pre-existing history lines.
+    public let flakyCases: Int?
     /// Run provenance (hardware, OS, build, judge, catalog hash). Optional so
     /// pre-existing history lines still decode; populated for runs recorded
     /// after the provenance block shipped so a crowdsourced trend stays
@@ -62,6 +66,7 @@ public struct EvalHistoryRow: Codable, Sendable, Equatable {
         peakCpuPercent: Double? = nil,
         meanPromptTokensPerTask: Double? = nil,
         meanTotalTokensPerTask: Double? = nil,
+        flakyCases: Int? = nil,
         environment: RunEnvironment? = nil
     ) {
         self.ts = ts
@@ -79,6 +84,7 @@ public struct EvalHistoryRow: Codable, Sendable, Equatable {
         self.peakCpuPercent = peakCpuPercent
         self.meanPromptTokensPerTask = meanPromptTokensPerTask
         self.meanTotalTokensPerTask = meanTotalTokensPerTask
+        self.flakyCases = flakyCases
         self.environment = environment
     }
 }
@@ -107,6 +113,7 @@ public enum EvalHistory {
                 peakCpuPercent: col.peakCpuPercent,
                 meanPromptTokensPerTask: col.meanPromptTokensPerTask,
                 meanTotalTokensPerTask: col.meanTotalTokensPerTask,
+                flakyCases: col.flakyCases,
                 environment: col.environment
             )
         }

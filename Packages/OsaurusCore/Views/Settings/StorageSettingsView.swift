@@ -2,11 +2,13 @@
 //  StorageSettingsView.swift
 //  osaurus
 //
-//  Settings panel for at-rest encryption posture. Osaurus stores local data
-//  **plaintext by default** (relying on FileVault) for reliability, and lets
-//  users opt in to SQLCipher encryption here. The panel reflects the *actual*
-//  on-disk state, exposes the opt-in toggle (which runs a live migration),
-//  and keeps the plaintext-backup / key-rotation admin actions.
+//  Settings panel for everything disk-related: where models live (models
+//  directory + external model sources) and how local data is protected at
+//  rest. Osaurus stores local data **plaintext by default** (relying on
+//  FileVault) for reliability, and lets users opt in to SQLCipher encryption
+//  here. The panel reflects the *actual* on-disk state, exposes the opt-in
+//  toggle (which runs a live migration), and keeps the plaintext-backup /
+//  key-rotation admin actions.
 //
 //  Surfaced by the WhatsNew page action `openStorageSettings` and reachable
 //  from the management settings sidebar.
@@ -46,14 +48,14 @@ public struct StorageSettingsView: View {
     public var body: some View {
         VStack(spacing: 0) {
             headerView
-                .opacity(hasAppeared ? 1 : 0)
-                .offset(y: hasAppeared ? 0 : -10)
-                .animation(.spring(response: 0.4, dampingFraction: 0.8), value: hasAppeared)
+                .managerHeaderEntrance(hasAppeared: hasAppeared)
 
             ScrollView {
                 VStack(alignment: .leading, spacing: 24) {
+                    modelStorageSection
+                    externalModelsSection
                     postureCard
-                        .settingsLandingAnchor("storage.location")
+                        .settingsLandingAnchor("storage.encryption")
                     if !storeIssues.isEmpty {
                         recoveryCard
                     }
@@ -113,87 +115,97 @@ public struct StorageSettingsView: View {
 
     private var headerView: some View {
         ManagerHeader(
-            title: L("Local data encryption"),
-            subtitle: L("Plaintext by default — opt in to SQLCipher at-rest encryption")
+            title: L("Storage"),
+            subtitle: L("Where Osaurus stores data on disk — and how it's protected")
         )
+    }
+
+    // MARK: - Model storage (relocated from the General tab)
+
+    /// Where downloaded models live on disk.
+    private var modelStorageSection: some View {
+        SettingsSection(title: "Models Directory", icon: "cube.box", anchorId: "storage.location") {
+            DirectoryPickerView()
+        }
+    }
+
+    /// External model sources (HF cache, LM Studio) discovered in place.
+    private var externalModelsSection: some View {
+        SettingsSection(
+            title: "External Models",
+            icon: "square.stack.3d.up",
+            anchorId: "storage.externalModels"
+        ) {
+            ExternalModelsSettingsView()
+        }
     }
 
     // MARK: - Posture + toggle
 
     private var postureCard: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            HStack(spacing: 10) {
-                Image(systemName: postureIcon)
-                    .font(.system(size: 16, weight: .medium))
-                    .foregroundColor(postureColor)
+        SettingsSection(title: "Encryption", icon: "lock.shield") {
+            VStack(alignment: .leading, spacing: 14) {
+                HStack(spacing: 10) {
+                    Image(systemName: postureIcon)
+                        .font(.system(size: 16, weight: .medium))
+                        .foregroundColor(postureColor)
 
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(LocalizedStringKey(postureTitle), bundle: .module)
-                        .font(.system(size: 13, weight: .semibold))
-                        .foregroundColor(theme.primaryText)
-                    Text(LocalizedStringKey(postureSubtitle), bundle: .module)
-                        .font(.system(size: 12))
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(LocalizedStringKey(postureTitle), bundle: .module)
+                            .font(.system(size: 13, weight: .semibold))
+                            .foregroundColor(theme.primaryText)
+                        Text(LocalizedStringKey(postureSubtitle), bundle: .module)
+                            .font(.system(size: 12))
+                            .foregroundColor(theme.secondaryText)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    Spacer()
+                }
+
+                Divider().background(theme.primaryBorder.opacity(0.2))
+
+                HStack(alignment: .center, spacing: 12) {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Encrypt local data at rest (SQLCipher)", bundle: .module)
+                            .font(.system(size: 12, weight: .semibold))
+                            .foregroundColor(theme.primaryText)
+                        Text(
+                            "Turning this on or off migrates every database and attachment to the new format.",
+                            bundle: .module
+                        )
+                        .font(.system(size: 11))
                         .foregroundColor(theme.secondaryText)
                         .fixedSize(horizontal: false, vertical: true)
-                }
-                Spacer()
-            }
-
-            Divider().background(theme.primaryBorder.opacity(0.2))
-
-            HStack(alignment: .center, spacing: 12) {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("Encrypt local data at rest (SQLCipher)", bundle: .module)
-                        .font(.system(size: 12, weight: .semibold))
-                        .foregroundColor(theme.primaryText)
-                    Text(
-                        "Turning this on or off migrates every database and attachment to the new format.",
-                        bundle: .module
-                    )
-                    .font(.system(size: 11))
-                    .foregroundColor(theme.secondaryText)
-                    .fixedSize(horizontal: false, vertical: true)
-                }
-                Spacer(minLength: 12)
-                if isWorking {
-                    HStack(spacing: 6) {
-                        ProgressView().scaleEffect(0.6)
-                        Text(LocalizedStringKey(workingLabel), bundle: .module)
-                            .font(.system(size: 11))
-                            .foregroundColor(theme.secondaryText)
                     }
-                } else {
-                    Toggle("", isOn: encryptionBinding)
-                        .toggleStyle(SwitchToggleStyle(tint: theme.accentColor))
-                        .labelsHidden()
+                    Spacer(minLength: 12)
+                    if isWorking {
+                        HStack(spacing: 6) {
+                            ProgressView().scaleEffect(0.6)
+                            Text(LocalizedStringKey(workingLabel), bundle: .module)
+                                .font(.system(size: 11))
+                                .foregroundColor(theme.secondaryText)
+                        }
+                    } else {
+                        Toggle("", isOn: encryptionBinding)
+                            .toggleStyle(SwitchToggleStyle(tint: theme.accentColor))
+                            .labelsHidden()
+                    }
                 }
-            }
 
-            if let err = errorMessage {
-                statusLine(text: err, color: theme.errorColor, icon: "exclamationmark.triangle")
-            }
-            if !lastSummary.isEmpty {
-                statusLine(text: lastSummary, color: theme.successColor, icon: "checkmark.circle")
+                if let err = errorMessage {
+                    statusLine(text: err, color: theme.errorColor, icon: "exclamationmark.triangle")
+                }
+                if !lastSummary.isEmpty {
+                    statusLine(text: lastSummary, color: theme.successColor, icon: "checkmark.circle")
+                }
             }
         }
-        .padding(16)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(cardBackground)
     }
 
     // MARK: - Trade-offs
 
     private var tradeoffsCard: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Label {
-                Text("Why encryption is opt-in", bundle: .module)
-            } icon: {
-                Image(systemName: "scalemass")
-                    .foregroundColor(theme.accentColor)
-            }
-            .font(.system(size: 13, weight: .semibold))
-            .foregroundColor(theme.primaryText)
-
+        SettingsSection(title: "Why Encryption Is Opt-In", icon: "scalemass") {
             VStack(alignment: .leading, spacing: 8) {
                 fileVaultRow
                 aboutRow(
@@ -218,9 +230,6 @@ public struct StorageSettingsView: View {
                 )
             }
         }
-        .padding(16)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(cardBackground)
     }
 
     /// Concrete FileVault status so the plaintext recommendation reflects the
@@ -255,16 +264,7 @@ public struct StorageSettingsView: View {
     /// key (or corruption) never leaves the user with a silently dead
     /// subsystem and no way forward.
     private var recoveryCard: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Label {
-                Text("Stores needing attention", bundle: .module)
-            } icon: {
-                Image(systemName: "exclamationmark.triangle.fill")
-                    .foregroundColor(theme.warningColor)
-            }
-            .font(.system(size: 13, weight: .semibold))
-            .foregroundColor(theme.primaryText)
-
+        SettingsSection(title: "Stores Needing Attention", icon: "exclamationmark.triangle.fill") {
             VStack(alignment: .leading, spacing: 12) {
                 ForEach(sortedStoreIssues, id: \.store) { issue in
                     storeIssueRow(issue)
@@ -274,9 +274,6 @@ public struct StorageSettingsView: View {
                 }
             }
         }
-        .padding(16)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(cardBackground)
     }
 
     private var sortedStoreIssues: [StorageStoreIssue] {
@@ -378,15 +375,7 @@ public struct StorageSettingsView: View {
     // MARK: - Actions
 
     private var actionsCard: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            Label {
-                Text("Backup & key", bundle: .module)
-            } icon: {
-                Image(systemName: "archivebox")
-            }
-            .font(.system(size: 13, weight: .semibold))
-            .foregroundColor(theme.primaryText)
-
+        SettingsSection(title: "Backup & Key", icon: "archivebox") {
             VStack(alignment: .leading, spacing: 12) {
                 actionRow(
                     icon: "square.and.arrow.up",
@@ -422,9 +411,6 @@ public struct StorageSettingsView: View {
                 }
             }
         }
-        .padding(16)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(cardBackground)
     }
 
     private var technicalDetails: some View {
@@ -540,15 +526,6 @@ public struct StorageSettingsView: View {
                 .foregroundColor(color)
                 .fixedSize(horizontal: false, vertical: true)
         }
-    }
-
-    private var cardBackground: some View {
-        RoundedRectangle(cornerRadius: 12)
-            .fill(theme.cardBackground)
-            .overlay(
-                RoundedRectangle(cornerRadius: 12)
-                    .stroke(theme.cardBorder, lineWidth: 1)
-            )
     }
 
     // MARK: - Footnote

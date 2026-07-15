@@ -97,6 +97,7 @@ extension EvalRunner {
             return scriptedSpecError(testCase, label: label, modelId: modelId, field: "runFailure", raw: raw)
         }
 
+        let parallel = exp.parallel ?? 1
         let spec = ScriptedSubagentSpec(
             kindId: "scripted",
             needsHandoff: exp.needsHandoff ?? false,
@@ -104,9 +105,24 @@ extension EvalRunner {
             resolveFailure: exp.resolveFailure.flatMap(ScriptedSubagentSpec.Failure.init(rawValue:)),
             runFailure: exp.runFailure.flatMap(ScriptedSubagentSpec.Failure.init(rawValue:)),
             recurse: exp.recurse ?? false,
-            phases: exp.phases ?? ["running"]
+            phases: exp.phases ?? ["running"],
+            remote: exp.remote ?? false,
+            runDelayMs: exp.runDelayMs ?? 0,
+            includeUsageAccounting: exp.includeUsageAccounting ?? false,
+            rendezvousArrivals: (exp.rendezvous ?? false) ? max(2, parallel) : 0
         )
-        let transcript = await SubagentJobEvaluator.runScripted(spec)
+        // `parallel ≥ 2` drives the parallel-batch path (one batch, N
+        // concurrent host runs, shared overlap probe); otherwise one run,
+        // optionally stopped mid-run through the real interrupt center.
+        let transcript: SubagentJobTranscript
+        if parallel >= 2 {
+            transcript = await SubagentJobEvaluator.runScriptedParallelBatch(spec, count: parallel)
+        } else {
+            transcript = await SubagentJobEvaluator.runScripted(
+                spec,
+                interruptAfterMs: exp.interruptAfterMs
+            )
+        }
         let (passed, notes) = score(transcript, against: exp)
         return EvalCaseReport(
             id: testCase.id,
@@ -142,16 +158,23 @@ extension EvalRunner {
         // its own pinned model), making `spawn` a real cross-model column.
         // Positive cases opt into agent seeding (so they RUN anywhere across
         // models); negative guards (not-spawnable) must NOT be seeded.
+        let interruptAfterMs = exp.interruptAfterMs
         let transcript: SubagentJobTranscript
         if exp.seedSpawnableAgent == true {
             transcript = await SubagentJobEvaluator.withSpawnableAgent(name: agent) {
-                await SubagentJobEvaluator.runSpawn(agent: agent, input: input, modelId: modelId)
+                await SubagentJobEvaluator.runSpawn(
+                    agent: agent,
+                    input: input,
+                    modelId: modelId,
+                    interruptAfterMs: interruptAfterMs
+                )
             }
         } else {
             transcript = await SubagentJobEvaluator.runSpawn(
                 agent: agent,
                 input: input,
-                modelId: modelId
+                modelId: modelId,
+                interruptAfterMs: interruptAfterMs
             )
         }
         return finishLive(testCase, exp: exp, transcript: transcript, lane: "spawn", modelId: modelId, label: label)
@@ -181,13 +204,35 @@ extension EvalRunner {
         // spawnable pool (so they RUN anywhere); negative guards (not-spawnable)
         // must NOT be seeded.
         let target = exp.model ?? modelId
+        let interruptAfterMs = exp.interruptAfterMs
         let transcript: SubagentJobTranscript
         if exp.seedSpawnableModel == true {
-            transcript = await SubagentJobEvaluator.withSpawnableModel(id: target) {
-                await SubagentJobEvaluator.runSpawnModel(model: target, input: input)
+            // `seedSpawnToolAccess: "readOnly"` additionally grants the child
+            // the curated read-only toolset for the run (tool-capable lane).
+            // Accept the friendly camelCase spelling and the stored raw value.
+            let toolAccess: SpawnToolAccess? = exp.seedSpawnToolAccess.flatMap {
+                switch $0 {
+                case "readOnly", "read_only": return .readOnly
+                case "none": return SpawnToolAccess.none
+                default: return SpawnToolAccess(rawValue: $0)
+                }
+            }
+            transcript = await SubagentJobEvaluator.withSpawnableModel(
+                id: target,
+                toolAccess: toolAccess
+            ) {
+                await SubagentJobEvaluator.runSpawnModel(
+                    model: target,
+                    input: input,
+                    interruptAfterMs: interruptAfterMs
+                )
             }
         } else {
-            transcript = await SubagentJobEvaluator.runSpawnModel(model: target, input: input)
+            transcript = await SubagentJobEvaluator.runSpawnModel(
+                model: target,
+                input: input,
+                interruptAfterMs: interruptAfterMs
+            )
         }
         return finishLive(
             testCase,
@@ -235,20 +280,175 @@ extension EvalRunner {
                 modelId: modelId
             )
         }
-        let transcript = await SubagentJobEvaluator.runSpawnModelResidency(
-            orchestrator: orchestrator,
-            target: target,
-            handoffEnabled: exp.handoffEnabled ?? true,
-            ensureResident: exp.ensureResident ?? false,
-            input: input
-        )
-        return finishLive(
-            testCase,
-            exp: exp,
-            transcript: transcript,
-            lane: "spawn_model_residency",
+
+        // Matrix-lane extensions over the single-shot direction case: repeated
+        // rapid cycles, sentinel context-recall, marker-leak and
+        // restore-verified checks per cycle, and a before/after crash-report
+        // count around the whole case.
+        let cycles = max(1, exp.cycles ?? 1)
+        let effectiveInput = composedInput(input, sentinel: exp.sentinel)
+        let crashBaseline: Set<String>? =
+            (exp.expectNoNewCrashReports == true) ? crashReportSnapshot() : nil
+
+        var cycleNotes: [String] = []
+        var cyclesPassed = true
+        var lastTranscript: SubagentJobTranscript?
+
+        for cycle in 1 ... cycles {
+            let transcript = await SubagentJobEvaluator.runSpawnModelResidency(
+                orchestrator: orchestrator,
+                target: target,
+                handoffEnabled: exp.handoffEnabled ?? true,
+                ensureResident: exp.ensureResident ?? false,
+                input: effectiveInput
+            )
+
+            // Availability-skip: when the FIRST cycle can't run on this host
+            // (model not installed / remote not routable) and the case didn't
+            // expect that envelope, the whole case reads "didn't apply".
+            let availabilitySkipKinds: Set<String> = ["rejected", "unavailable", "user_denied"]
+            if cycle == 1,
+                !transcript.succeeded,
+                availabilitySkipKinds.contains(transcript.envelopeKind),
+                exp.expectEnvelopeKind != transcript.envelopeKind
+            {
+                return .terminal(
+                    id: testCase.id,
+                    label: label,
+                    domain: testCase.domain,
+                    outcome: .skipped,
+                    notes: [
+                        "live spawn_model_residency lane unavailable on this host: "
+                            + (transcript.error ?? transcript.envelopeKind)
+                    ],
+                    modelId: modelId
+                )
+            }
+
+            // Per-cycle checks (multi-cycle cases must hold EVERY cycle; the
+            // standard matchers run once against the last transcript below).
+            func cycleCheck(_ ok: Bool, _ pass: String, _ fail: String) {
+                cyclesPassed = cyclesPassed && ok
+                cycleNotes.append(ok ? "cycle \(cycle): \(pass)" : "cycle \(cycle): \(fail)")
+            }
+            if cycles > 1 || exp.sentinel != nil || exp.expectNoMarkerLeaks == true
+                || exp.expectRestoredResident == true
+            {
+                if let wantSuccess = exp.expectSuccess {
+                    cycleCheck(
+                        transcript.succeeded == wantSuccess,
+                        "success \(transcript.succeeded)",
+                        "expected success=\(wantSuccess), got \(transcript.succeeded) "
+                            + "(\(transcript.envelopeKind): \(transcript.error ?? "-"))"
+                    )
+                }
+            }
+            if let sentinel = exp.sentinel {
+                cycleCheck(
+                    transcript.summary.localizedCaseInsensitiveContains(sentinel),
+                    "sentinel '\(sentinel)' recalled",
+                    "sentinel '\(sentinel)' MISSING from digest (got: \(transcript.summary.prefix(120)))"
+                )
+            }
+            if exp.expectNoMarkerLeaks == true {
+                let leaks = markerLeaks(in: transcript.summary)
+                cycleCheck(
+                    leaks.isEmpty,
+                    "no marker leaks",
+                    "raw markers leaked into the digest: \(leaks)"
+                )
+            }
+            if exp.expectRestoredResident == true {
+                cycleCheck(
+                    transcript.restoredResident == true,
+                    "orchestrator restored resident",
+                    "orchestrator NOT verified resident after the run "
+                        + "(restoredResident=\(String(describing: transcript.restoredResident)))"
+                )
+            }
+            lastTranscript = transcript
+        }
+
+        guard let final = lastTranscript else {
+            return .terminal(
+                id: testCase.id,
+                label: label,
+                domain: testCase.domain,
+                outcome: .errored,
+                notes: ["residency matrix lane produced no transcript"],
+                modelId: modelId
+            )
+        }
+
+        // Standard matchers against the last cycle's transcript.
+        var (passed, notes) = score(final, against: exp)
+        passed = passed && cyclesPassed
+        notes.append(contentsOf: cycleNotes)
+        if cycles > 1 { notes.append("cycles: \(cycles) rapid cycles completed") }
+
+        // Crash-report gate: zero NEW osaurus-related reports across the case.
+        if let baseline = crashBaseline {
+            let fresh = crashReportSnapshot().subtracting(baseline)
+            if fresh.isEmpty {
+                notes.append("crash reports: none new")
+            } else {
+                passed = false
+                notes.append("NEW crash reports appeared: \(fresh.sorted().joined(separator: ", "))")
+            }
+        }
+
+        return EvalCaseReport(
+            id: testCase.id,
+            label: label,
+            domain: testCase.domain,
+            query: testCase.query,
+            outcome: passed ? .passed : .failed,
+            notes: notes,
             modelId: modelId,
-            label: label
+            latencyMs: final.latencyMs
+        )
+    }
+
+    /// Compose the effective residency-lane input: the case input plus the
+    /// sentinel echo instruction, so recall across the handoff is assertable.
+    nonisolated static func composedInput(_ input: String, sentinel: String?) -> String {
+        guard let sentinel, !sentinel.isEmpty else { return input }
+        return input + " Include the exact token \"\(sentinel)\" verbatim in your reply."
+    }
+
+    /// Raw parser/template/tool markers that must never reach a digest a
+    /// parent agent consumes. Curated from the chat-template families the
+    /// runtime hosts (think tags, ChatML/Gemma turn markers, tool-call tags,
+    /// llama instruction markers).
+    nonisolated static let leakMarkers: [String] = [
+        "<think>", "</think>",
+        "<|",
+        "<tool_call>", "</tool_call>", "[TOOL_CALLS]",
+        "<start_of_turn>", "<end_of_turn>",
+        "[/INST]", "<<SYS>>",
+    ]
+
+    /// The subset of `leakMarkers` present in `text` (empty = clean).
+    nonisolated static func markerLeaks(in text: String) -> [String] {
+        leakMarkers.filter { text.contains($0) }
+    }
+
+    /// Names of osaurus-related crash reports currently on disk
+    /// (`~/Library/Logs/DiagnosticReports/*.ips|*.crash` whose filename
+    /// mentions osaurus, case-insensitive). Compared before/after a matrix
+    /// case to assert zero new reports — the crash-count gate.
+    nonisolated static func crashReportSnapshot() -> Set<String> {
+        let dir = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Library/Logs/DiagnosticReports")
+        guard
+            let names = try? FileManager.default.contentsOfDirectory(atPath: dir.path)
+        else { return [] }
+        return Set(
+            names.filter { name in
+                let lower = name.lowercased()
+                return (lower.hasSuffix(".ips") || lower.hasSuffix(".crash"))
+                    && lower.contains("osaurus")
+            }
         )
     }
 
@@ -545,6 +745,81 @@ extension EvalRunner {
                 fail: "images \(t.imageCount ?? 0) < \(minImages)"
             )
         }
+        if let want = exp.expectMaxConcurrent {
+            check(
+                t.maxConcurrent == want,
+                pass: "maxConcurrent ok: \(want)",
+                fail: "maxConcurrent \(t.maxConcurrent.map(String.init) ?? "nil") != \(want)"
+            )
+        }
+        if let want = exp.expectRunsCompleted {
+            check(
+                t.runsCompleted == want,
+                pass: "runsCompleted ok: \(want)",
+                fail: "runsCompleted \(t.runsCompleted.map(String.init) ?? "nil") != \(want)"
+            )
+        }
+        if exp.expectUsageRecorded == true {
+            let prompt = t.usage?["prompt_tokens"] ?? 0
+            let completion = t.usage?["completion_tokens"] ?? 0
+            check(
+                prompt > 0 && completion > 0,
+                pass: "usage ok: prompt=\(Int(prompt)) completion=\(Int(completion))",
+                fail: "usage missing/zero: prompt=\(Int(prompt)) completion=\(Int(completion))"
+            )
+        }
+        if exp.expectContextAccounting == true {
+            let worker = t.contextAccounting?["worker_tokens"] ?? 0
+            let digest = t.contextAccounting?["digest_tokens"] ?? 0
+            let recorded = t.contextAccounting?["context_saved_tokens"] != nil
+            check(
+                worker > 0 && digest > 0 && recorded,
+                pass: "context accounting ok: worker=\(worker) digest=\(digest)",
+                fail:
+                    "context accounting missing: worker=\(worker) digest=\(digest) "
+                    + "saved_recorded=\(recorded)"
+            )
+        }
+        if let minSaved = exp.minContextSavedTokens {
+            let saved = t.contextAccounting?["context_saved_tokens"] ?? -1
+            check(
+                saved >= minSaved,
+                pass: "context saved ok: \(saved) ≥ \(minSaved)",
+                fail: "context saved \(saved) < \(minSaved)"
+            )
+        }
+        if let requiredPhases = exp.expectResidencyPhases, !requiredPhases.isEmpty {
+            let recorded = t.residencyPhases ?? [:]
+            let missing = requiredPhases.filter { recorded[$0] == nil }
+            check(
+                missing.isEmpty,
+                pass: "residency phases ok: \(requiredPhases)",
+                fail:
+                    "residency phases missing \(missing) "
+                    + "(recorded: \(recorded.keys.sorted()))"
+            )
+        }
+        if let ceilings = exp.maxPhaseSeconds, !ceilings.isEmpty {
+            let recorded = t.residencyPhases ?? [:]
+            for (phase, ceiling) in ceilings.sorted(by: { $0.key < $1.key }) {
+                guard let seconds = recorded[phase] else {
+                    check(false, pass: "", fail: "phase '\(phase)' not recorded (ceiling \(ceiling)s)")
+                    continue
+                }
+                check(
+                    seconds <= ceiling,
+                    pass: String(format: "phase %@ ok: %.2fs ≤ %.0fs", phase, seconds, ceiling),
+                    fail: String(format: "phase %@ %.2fs > ceiling %.0fs", phase, seconds, ceiling)
+                )
+            }
+        }
+        if exp.expectPostRunCache == true {
+            check(
+                t.postRunCache != nil,
+                pass: "post-run cache counters captured",
+                fail: "post-run cache counters missing (local run should capture prefix/L2 stats)"
+            )
+        }
 
         notes.append(
             "transcript: tool=\(t.tool) envelope=\(t.envelopeKind) "
@@ -552,6 +827,26 @@ extension EvalRunner {
                 + "phases=[\(t.feedPhases.joined(separator: ","))] "
                 + "latencyMs=\(Int(t.latencyMs))"
         )
+        if let usage = t.usage, !usage.isEmpty {
+            let tps = usage["tokens_per_second"].map { String(format: " tok/s=%.1f", $0) } ?? ""
+            notes.append(
+                "usage: prompt=\(Int(usage["prompt_tokens"] ?? 0)) "
+                    + "completion=\(Int(usage["completion_tokens"] ?? 0))\(tps)"
+            )
+        }
+        if let context = t.contextAccounting, !context.isEmpty {
+            notes.append(
+                "context: worker=\(context["worker_tokens"] ?? 0) "
+                    + "digest=\(context["digest_tokens"] ?? 0) "
+                    + "saved=\(context["context_saved_tokens"] ?? 0)"
+            )
+        }
+        if let phases = t.residencyPhases, !phases.isEmpty {
+            let joined = phases.sorted(by: { $0.key < $1.key })
+                .map { String(format: "%@=%.2fs", $0.key, $0.value) }
+                .joined(separator: " ")
+            notes.append("residency: \(joined)")
+        }
         return (passed, notes)
     }
 

@@ -3,7 +3,7 @@
   "domain": "agent_loop",
   "label": "agentdb • conditional UPDATE then report the affected count",
   "query": "Your agent database has a table tasks(id INTEGER, status TEXT). In a single UPDATE statement, change every row whose status is 'open' to 'archived'. Then tell me how many tasks are now archived.",
-  "notes": "Write-then-report: a WHERE-scoped UPDATE must touch only the 'open' rows. dbState pins the post-run table (3 archived, 0 open) so a too-broad update (archiving the 'done' rows) or a no-op fails; finalTextContains pins the reported count.",
+  "notes": "Write-then-report: a WHERE-scoped UPDATE must touch only the 'open' rows. dbState pins the post-run table (3 archived, 0 open) so a too-broad update (archiving the 'done' rows) or a no-op fails; finalTextContains pins the reported count. The mutation surface is the model's choice (db_execute UPDATE or the typed db_update both express one WHERE-scoped statement); toolUsageAudit caps per-surface calls so a row-at-a-time loop still fails the 'single statement' contract.",
   "fixtures": {
     "agentCapabilities": { "dbEnabled": true },
     "seedSql": [
@@ -13,7 +13,10 @@
   "expect": {
     "agentLoop": {
       "maxIterations": 10,
-      "mustCallTools": ["db_execute"],
+      "toolUsageAudit": [
+        { "tool": "db_execute", "maxCalls": 2 },
+        { "tool": "db_update", "maxCalls": 1 }
+      ],
       "finalTextContains": ["3"],
       "dbState": [
         { "sql": "SELECT COUNT(*) FROM tasks WHERE status='archived'", "expectFirstValue": "3" },

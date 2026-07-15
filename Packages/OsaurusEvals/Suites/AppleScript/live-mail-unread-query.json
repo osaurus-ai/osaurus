@@ -1,0 +1,21 @@
+{
+  "id": "apple_script.live-mail-unread-query",
+  "domain": "apple_script",
+  "label": "AppleScript • live Mail unread-count query",
+  "query": "How many unread emails are in my Mail inbox? Report just the number, and don't change anything.",
+  "notes": "mac_query capability lane against the extended mock world's Mail state: the model must write a READ-ONLY script that reads the inbox unread count (`unread count of inbox`), and the run must capture the seeded value (6). Query mode blocks any write it might propose; a run that never yields the number fails honestly. Skips when no AppleScript model is installed.",
+  "fixtures": {},
+  "expect": {
+    "appleScript": {
+      "lane": "live",
+      "mode": "query",
+      "executor": { "kind": "mock", "mockWorld": { "mailUnread": 6 } },
+      "valuesContain": ["6"],
+      "scoredMaxSteps": 4,
+      "rubric": [
+        "The AppleScript reads Mail's inbox unread count (e.g. `unread count of inbox` in a `tell application \"Mail\"` block) and yields it as the script's result.",
+        "The script is read-only — it does not send, delete, move, or mark any message, and does not change any other state."
+      ]
+    }
+  }
+}

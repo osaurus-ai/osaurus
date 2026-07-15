@@ -698,6 +698,10 @@ struct ChatCompletionRequest: Codable, Sendable {
     let stream: Bool?
     let top_p: Float?
     var top_k: Int? = nil
+    /// Extension sampling knob (mlx/llama.cpp ecosystems): minimum
+    /// probability cutoff relative to the top token. Mapped to
+    /// `GenerationParameters.minPOverride`.
+    var min_p: Float? = nil
     let frequency_penalty: Float?
     let presence_penalty: Float?
     let stop: [String]?
@@ -719,6 +723,12 @@ struct ChatCompletionRequest: Codable, Sendable {
     /// `{"include_usage": true}` instructs the SSE producer to emit a
     /// final chunk carrying `usage` (prompt/completion/total tokens).
     var stream_options: StreamOptions? = nil
+    /// OpenAI `logprobs`/`top_logprobs`. Neither local MLX decode nor the
+    /// remote proxy surfaces token log-probabilities, so these are decoded
+    /// purely for request validation: a truthy value is rejected with a
+    /// typed 400 instead of being silently dropped.
+    var logprobs: Bool? = nil
+    var top_logprobs: Int? = nil
     /// Model-specific options from the active ModelProfile (not serialized to JSON).
     var modelOptions: [String: ModelOptionValue]? = nil
     /// Optional TTFT trace for diagnostic timing (not serialized to JSON).
@@ -771,15 +781,36 @@ struct ChatCompletionRequest: Codable, Sendable {
     /// (e.g. a leftover prefix like `fugu/...`) can't redirect an agent run to a
     /// different provider. Not decoded from OpenAI JSON, not sent to providers.
     var remoteAgentProviderId: UUID? = nil
+    /// Local-only: when true, model-load and prefill progress are not surfaced
+    /// through `InferenceProgressManager` (background warm-up requests).
+    var suppressProgressUI: Bool = false
+    /// Local-only: when true, the prompt is truncated to the processor's
+    /// canonical history cache boundary (rendered without the generation
+    /// prompt) before prefill. Background warm-up requests set this so the
+    /// KV the engine stores is an exact token-prefix of the next real send —
+    /// required for sliding-window models whose caches cannot be trimmed to
+    /// a boundary at store time.
+    var warmupPrefill: Bool = false
+    /// Local-only: when true, this request's model load must not disturb a model
+    /// that is already resident or already loading — the runtime refuses the load
+    /// instead of evicting. Set by housekeeping that nobody is waiting on
+    /// (speculative warm-up, greeting generation, transcript cleanup, memory
+    /// distillation). Never set for a request a human is waiting on: those are
+    /// entitled to the GPU.
+    ///
+    /// Not decoded from OpenAI JSON, not sent to providers.
+    var backgroundModelLoad: Bool = false
 
     /// Resolved max tokens, preferring max_tokens then max_completion_tokens.
     var resolvedMaxTokens: Int? { max_tokens ?? max_completion_tokens }
 
     private enum CodingKeys: String, CodingKey {
         case model, messages, temperature, max_tokens, max_completion_tokens, stream, top_p, top_k
+        case min_p
         case frequency_penalty, presence_penalty, stop, n
         case tools, tool_choice, session_id
         case seed, response_format, stream_options
+        case logprobs, top_logprobs
         case enable_thinking, reasoning_effort
     }
 
@@ -804,6 +835,7 @@ struct ChatCompletionRequest: Codable, Sendable {
             stream_options: stream_options
         )
         copy.max_completion_tokens = max_completion_tokens
+        copy.min_p = min_p
         copy.modelOptions = modelOptions
         copy.ttftTrace = ttftTrace
         copy.turnId = turnId
@@ -815,6 +847,14 @@ struct ChatCompletionRequest: Codable, Sendable {
         copy.runAsRemoteAgent = runAsRemoteAgent
         copy.remoteAgentLogModel = remoteAgentLogModel
         copy.remoteAgentProviderId = remoteAgentProviderId
+        copy.suppressProgressUI = suppressProgressUI
+        copy.warmupPrefill = warmupPrefill
+        // Must be copied with the other local-only flags. Dropping it silently
+        // promotes a background request back to interactive — and an interactive
+        // request is allowed to evict the model someone is using.
+        copy.backgroundModelLoad = backgroundModelLoad
+        copy.logprobs = logprobs
+        copy.top_logprobs = top_logprobs
         return copy
     }
 
@@ -843,6 +883,7 @@ struct ChatCompletionRequest: Codable, Sendable {
             stream_options: stream_options
         )
         copy.max_completion_tokens = max_completion_tokens
+        copy.min_p = min_p
         copy.modelOptions = modelOptions
         copy.ttftTrace = ttftTrace
         copy.turnId = turnId
@@ -854,7 +895,56 @@ struct ChatCompletionRequest: Codable, Sendable {
         copy.runAsRemoteAgent = runAsRemoteAgent
         copy.remoteAgentLogModel = remoteAgentLogModel
         copy.remoteAgentProviderId = remoteAgentProviderId
+        copy.suppressProgressUI = suppressProgressUI
+        copy.warmupPrefill = warmupPrefill
+        // Must be copied with the other local-only flags. Dropping it silently
+        // promotes a background request back to interactive — and an interactive
+        // request is allowed to evict the model someone is using.
+        copy.backgroundModelLoad = backgroundModelLoad
+        copy.logprobs = logprobs
+        copy.top_logprobs = top_logprobs
         return copy
+    }
+}
+
+extension ChatCompletionRequest {
+    /// Custom decode so `stop` accepts the OpenAI-legal single string as
+    /// well as an array of strings — a bare string used to fail the whole
+    /// request decode and surface as a generic 400 "Invalid request
+    /// format". Declared in an extension so the synthesized memberwise
+    /// initializer (used by HTTPHandler/ChatEngine sub-request builders)
+    /// survives. Decodes exactly the `CodingKeys` set; local-only fields
+    /// keep their defaults.
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        model = try container.decode(String.self, forKey: .model)
+        messages = try container.decode([ChatMessage].self, forKey: .messages)
+        temperature = try container.decodeIfPresent(Float.self, forKey: .temperature)
+        max_tokens = try container.decodeIfPresent(Int.self, forKey: .max_tokens)
+        max_completion_tokens = try container.decodeIfPresent(
+            Int.self, forKey: .max_completion_tokens)
+        stream = try container.decodeIfPresent(Bool.self, forKey: .stream)
+        top_p = try container.decodeIfPresent(Float.self, forKey: .top_p)
+        top_k = try container.decodeIfPresent(Int.self, forKey: .top_k)
+        min_p = try container.decodeIfPresent(Float.self, forKey: .min_p)
+        frequency_penalty = try container.decodeIfPresent(Float.self, forKey: .frequency_penalty)
+        presence_penalty = try container.decodeIfPresent(Float.self, forKey: .presence_penalty)
+        if let singleStop = try? container.decode(String.self, forKey: .stop) {
+            stop = [singleStop]
+        } else {
+            stop = try container.decodeIfPresent([String].self, forKey: .stop)
+        }
+        n = try container.decodeIfPresent(Int.self, forKey: .n)
+        tools = try container.decodeIfPresent([Tool].self, forKey: .tools)
+        tool_choice = try container.decodeIfPresent(ToolChoiceOption.self, forKey: .tool_choice)
+        session_id = try container.decodeIfPresent(String.self, forKey: .session_id)
+        seed = try container.decodeIfPresent(Int.self, forKey: .seed)
+        response_format = try container.decodeIfPresent(ResponseFormat.self, forKey: .response_format)
+        stream_options = try container.decodeIfPresent(StreamOptions.self, forKey: .stream_options)
+        logprobs = try container.decodeIfPresent(Bool.self, forKey: .logprobs)
+        top_logprobs = try container.decodeIfPresent(Int.self, forKey: .top_logprobs)
+        enable_thinking = try container.decodeIfPresent(Bool.self, forKey: .enable_thinking)
+        reasoning_effort = try container.decodeIfPresent(String.self, forKey: .reasoning_effort)
     }
 }
 
@@ -940,6 +1030,64 @@ struct DeltaContent: Codable, Sendable {
         self.refusal = refusal
         self.tool_calls = tool_calls
         self.reasoning_content = reasoning_content
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case role, content, refusal, tool_calls, reasoning_content
+    }
+
+    /// One entry of Mistral's structured `content` array. Mistral streams
+    /// reasoning models as `content: [{type:"thinking", thinking:[{type:"text",
+    /// text:…}]}, {type:"text", text:…}]` rather than the OpenAI-standard plain
+    /// `content` string plus separate `reasoning_content`. Decoded here so
+    /// thinking chunks route to `reasoning_content` and text chunks to `content`,
+    /// letting the rest of the streaming pipeline handle Mistral like every other
+    /// separate-channel reasoning provider.
+    private struct MistralContentChunk: Decodable {
+        let type: String?
+        let text: String?
+        let thinking: [InnerText]?
+
+        struct InnerText: Decodable {
+            let type: String?
+            let text: String?
+        }
+    }
+
+    init(from decoder: Decoder) throws {
+        // Preserve the synthesized decoder's throwing `decodeIfPresent`
+        // semantics for every field: a present-but-malformed value must throw so
+        // the stream parser's split-JSON recovery path can retry, rather than
+        // being silently dropped. Only `content` adds a string-or-array fallback.
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.role = try container.decodeIfPresent(String.self, forKey: .role)
+        self.refusal = try container.decodeIfPresent(String.self, forKey: .refusal)
+        self.tool_calls = try container.decodeIfPresent([DeltaToolCall].self, forKey: .tool_calls)
+        let explicitReasoning = try container.decodeIfPresent(String.self, forKey: .reasoning_content)
+
+        do {
+            // Standard OpenAI-compatible shape: `content` is a string (or absent).
+            self.content = try container.decodeIfPresent(String.self, forKey: .content)
+            self.reasoning_content = explicitReasoning
+        } catch DecodingError.typeMismatch(_, _) {
+            // Mistral reasoning models stream `content` as a structured array of
+            // thinking/text chunks. Route thinking to `reasoning_content` and
+            // text to `content`. A genuine structural error (not a type mismatch)
+            // propagates from here so recovery can retry.
+            let chunks = try container.decode([MistralContentChunk].self, forKey: .content)
+            var visible = ""
+            var thinking = ""
+            for chunk in chunks {
+                if chunk.type == "thinking" {
+                    for part in chunk.thinking ?? [] { thinking += part.text ?? "" }
+                } else {
+                    visible += chunk.text ?? ""
+                }
+            }
+            self.content = visible.isEmpty ? nil : visible
+            let mergedReasoning = (explicitReasoning ?? "") + thinking
+            self.reasoning_content = mergedReasoning.isEmpty ? nil : mergedReasoning
+        }
     }
 }
 
@@ -1036,17 +1184,17 @@ struct ToolFunction: Codable, Sendable {
 }
 
 /// tool_choice option
-enum ToolChoiceOption: Codable, Sendable {
+enum ToolChoiceOption: Codable, Sendable, Equatable {
     case auto
     case none
     case required
     case function(FunctionName)
 
-    struct FunctionName: Codable, Sendable {
+    struct FunctionName: Codable, Sendable, Equatable {
         let type: String
         let function: Name
     }
-    struct Name: Codable, Sendable { let name: String }
+    struct Name: Codable, Sendable, Equatable { let name: String }
 
     init(from decoder: Decoder) throws {
         let container = try decoder.singleValueContainer()

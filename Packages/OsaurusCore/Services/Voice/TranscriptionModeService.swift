@@ -122,6 +122,14 @@ public final class TranscriptionModeService: ObservableObject {
         Task {
             do {
                 try await speechService.startStreamingTranscription()
+                // The user may have cancelled while the stream was starting up.
+                // If we're no longer in `.starting`, a stop is already in flight
+                // (or done) — don't resurrect the session by subscribing again,
+                // which would leave the audio stream and timers running.
+                guard state == .starting else {
+                    _ = await speechService.stopStreamingTranscription()
+                    return
+                }
                 state = .transcribing
                 subscribeToAudioLevel()
                 print("[TranscriptionMode] Started transcription")
@@ -134,8 +142,16 @@ public final class TranscriptionModeService: ObservableObject {
         }
     }
 
-    public func stopTranscription() {
+    /// Stops transcription. When `discard` is true the captured text is thrown
+    /// away (cancel); otherwise it is cleaned up and inserted (done).
+    public func stopTranscription(discard: Bool = false) {
         guard state == .transcribing || state == .starting else { return }
+
+        // A cancel has nothing to clean up, so dismiss the overlay right away
+        // instead of showing a "Processing" state while the stream tears down.
+        if discard {
+            overlayService.hide()
+        }
 
         state = .stopping
         stopEscKeyMonitoring()
@@ -146,17 +162,34 @@ public final class TranscriptionModeService: ObservableObject {
         Task {
             _ = await speechService.stopStreamingTranscription()
 
-            let rawText = speechService.confirmedTranscription
+            let rawText = TranscriptionTextNormalizer.combined([
+                speechService.confirmedTranscription,
+                speechService.currentTranscription,
+            ])
             speechService.clearTranscription()
 
-            if !rawText.isEmpty {
-                let finalText = await TranscriptionCleanupService.shared.clean(rawText)
-                keyboardService.pasteText(finalText)
+            if !discard, !rawText.isEmpty {
+                let cleanedText =
+                    SpeechConfigurationStore.load().postProcessTranscription
+                    ? await TranscriptionCleanupService.shared.clean(rawText)
+                    : rawText
+                let finalText = TranscriptionTextNormalizer.visibleText(cleanedText)
+                if finalText.isEmpty {
+                    showNoSpeechDetectedFeedback()
+                } else {
+                    keyboardService.pasteText(finalText)
+                }
+            } else if !discard {
+                showNoSpeechDetectedFeedback()
             }
 
             overlayService.hide()
-            state = .idle
-            print("[TranscriptionMode] Stopped transcription")
+            if case .error = state {
+                // Keep the error visible in Status/Settings until the next toggle.
+            } else {
+                state = .idle
+            }
+            print("[TranscriptionMode] Stopped transcription (discard: \(discard))")
         }
     }
 
@@ -187,7 +220,7 @@ public final class TranscriptionModeService: ObservableObject {
             self?.stopTranscription()
         }
         overlayService.onCancel = { [weak self] in
-            self?.stopTranscription()
+            self?.stopTranscription(discard: true)
         }
     }
 
@@ -243,19 +276,21 @@ public final class TranscriptionModeService: ObservableObject {
         else { return }
 
         // Reset the pause timer on any real voice activity.
-        let confirmedLength = speechService.confirmedTranscription.count
+        let confirmedText = TranscriptionTextNormalizer.visibleText(speechService.confirmedTranscription)
+        let currentText = TranscriptionTextNormalizer.visibleText(speechService.currentTranscription)
+        let confirmedLength = confirmedText.count
         let hasNewConfirmedText = confirmedLength > lastConfirmedLength
         if hasNewConfirmedText { lastConfirmedLength = confirmedLength }
         if speechService.isSpeechDetected || hasNewConfirmedText
-            || !speechService.currentTranscription.isEmpty
+            || !currentText.isEmpty
         {
             lastSpeechActivityTime = Date()
         }
 
         // Only auto-stop once we've actually captured something to paste.
         let hasContent =
-            !speechService.confirmedTranscription.isEmpty
-            || !speechService.currentTranscription.isEmpty
+            !confirmedText.isEmpty
+            || !currentText.isEmpty
         guard hasContent else { return }
 
         let silenceDuration = Date().timeIntervalSince(lastSpeechActivityTime)
@@ -267,6 +302,14 @@ public final class TranscriptionModeService: ObservableObject {
         }
     }
 
+    private func showNoSpeechDetectedFeedback() {
+        state = .error(L("No speech detected"))
+        ToastManager.shared.infoLocalized(
+            "No Speech Detected",
+            message: "Nothing was inserted."
+        )
+    }
+
     // MARK: - Esc Key Monitoring
 
     private func startEscKeyMonitoring() {
@@ -275,7 +318,7 @@ public final class TranscriptionModeService: ObservableObject {
         escKeyMonitor = NSEvent.addGlobalMonitorForEvents(matching: .keyDown) { [weak self] event in
             if event.keyCode == 53 {  // Esc
                 Task { @MainActor in
-                    self?.stopTranscription()
+                    self?.stopTranscription(discard: true)
                 }
             }
         }

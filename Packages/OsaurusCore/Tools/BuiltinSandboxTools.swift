@@ -1411,12 +1411,15 @@ private struct SandboxSearchFilesTool: OsaurusTool, @unchecked Sendable {
         case "files":
             // A bare word becomes a case-insensitive substring (`*word*`); a
             // pattern with `*`/`?` is passed through as a case-insensitive
-            // glob. Mirrors the host `findFilesByName` matching rule.
+            // glob. Mirrors the host `findFilesByName` matching rule. A
+            // pattern carrying `/` can never match a basename, so it matches
+            // the path instead (`-ipath`) — same rule as the host route.
             let namePattern =
                 FolderToolHelpers.patternHasGlobMetacharacters(pattern) ? pattern : "*\(pattern)*"
             let escapedPattern = shellEscapeSingleQuoted(namePattern)
+            let findPredicate = pattern.contains("/") ? "-ipath" : "-iname"
             let cmd =
-                "find '\(resolved)' -type f -iname '\(escapedPattern)' 2>/dev/null | head -\(cappedMax)"
+                "find '\(resolved)' -type f \(findPredicate) '\(escapedPattern)' 2>/dev/null | head -\(cappedMax)"
             let result = try await SandboxToolCommandRunnerRegistry.shared.execAsAgent(
                 agentName,
                 command: cmd
@@ -1531,7 +1534,8 @@ private func shellEscapeSingleQuoted(_ s: String) -> String {
 private struct SandboxWriteFileTool: OsaurusTool, @unchecked Sendable {
     let name = "sandbox_write_file"
     let description =
-        "Write a file, or edit it in place. Provide `content` to write/replace the whole file; "
+        "Write a file, or edit it in place — always pass `path` (that exact key) as the FIRST argument. "
+        + "Provide `content` to write/replace the whole file; "
         + "provide `old_string` (+`new_string`) to replace one exact match. **Use this instead of "
         + "`echo`/`cat` heredoc / `sed` / `awk` in `sandbox_exec`.** Creates parent directories as "
         + "needed. For an edit, `old_string` must uniquely match one location — include surrounding "

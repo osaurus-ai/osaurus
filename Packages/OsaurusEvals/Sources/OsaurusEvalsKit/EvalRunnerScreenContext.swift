@@ -162,6 +162,8 @@ extension EvalRunner {
         //    (explicit JUDGE_MODEL or a strong `*_API_KEY`). The self-judge
         //    fallback is treated as "no judge available" so CI stays
         //    deterministic and free; a maintainer tuning locally exports a key.
+        var judgeAudit: EvalJudgeAudit?
+        var judgeElapsed: Double?
         if let rubric = exp.rubric, !rubric.isEmpty {
             let resolution = EvalJudgeModel.resolve(runModelId: modelId)
             if resolution.isSelfJudge {
@@ -171,11 +173,19 @@ extension EvalRunner {
                 )
             } else {
                 if let note = resolution.note { notes.append(note) }
-                let verdicts = await CapabilityClaimsEvaluator.judge(
+                // Self-heal the ephemeral judge provider in case a prior
+                // provider-mutating suite evicted it (idempotent no-op
+                // while the judge is still routable).
+                await EvalRunner.ensureJudgeProviderRoutable(resolution.modelId)
+                let judgeStarted = Date()
+                let audit = await CapabilityClaimsEvaluator.judgeDetailed(
                     finalText: rendered,
                     conditions: rubric,
                     model: resolution.modelId
                 )
+                judgeElapsed = Date().timeIntervalSince(judgeStarted) * 1000
+                let verdicts = audit.verdicts
+                judgeAudit = EvalJudgeAudit.from(audit, rubric: rubric, selfJudge: false)
                 for (index, verdict) in verdicts.enumerated() {
                     let condition = index < rubric.count ? rubric[index] : "(condition \(index))"
                     if verdict.pass {
@@ -206,7 +216,9 @@ extension EvalRunner {
             outcome: passed ? .passed : .failed,
             notes: notes,
             modelId: modelId,
-            latencyMs: latency
+            latencyMs: latency,
+            judgeLatencyMs: judgeElapsed,
+            judge: judgeAudit
         )
     }
 

@@ -102,4 +102,18 @@ public enum DefaultAgentConfigurationEvaluator {
             model: model
         )
     }
+
+    /// `judge` plus the audit trail (raw judge reply, resolved judge model,
+    /// attempts) — same delegation, for callers that persist judge evidence.
+    public static func judgeDetailed(
+        finalText: String,
+        conditions: [String],
+        model: String? = nil
+    ) async -> CapabilityClaimsJudgeAudit {
+        await CapabilityClaimsEvaluator.judgeDetailed(
+            finalText: finalText,
+            conditions: conditions,
+            model: model
+        )
+    }
 }

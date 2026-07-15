@@ -28,12 +28,58 @@ private extension OsaurusTool {
                     tool: tool,
                     retryable: false
                 )
-            case .unsupportedKind, .unsupportedAction, .customExecutionNotImplemented:
+            case .globalWritesDisabled, .unsupportedKind, .unsupportedAction, .customExecutionNotImplemented:
                 return ToolEnvelope.failure(
                     kind: .rejected,
                     message: error.localizedDescription,
                     tool: tool,
                     retryable: false
+                )
+            }
+        }
+
+        if let error = error as? AgentChannelCustomJSONRunnerError {
+            let metadata: [String: Any]? = error.partialWriteStatus.map {
+                [
+                    "partial_write": true,
+                    "partial_write_status": $0,
+                ]
+            }
+            switch error {
+            case .missingConfiguration, .actionNotConfigured, .methodNotAllowed,
+                .blockedURL, .spaceNotAllowlisted, .roomNotReadable, .roomNotWritable,
+                .writeDisabled:
+                return ToolEnvelope.failure(
+                    kind: .rejected,
+                    message: error.localizedDescription,
+                    tool: tool,
+                    retryable: false,
+                    metadata: metadata
+                )
+            case .missingSecret:
+                return ToolEnvelope.failure(
+                    kind: .unavailable,
+                    message: error.localizedDescription,
+                    tool: tool,
+                    retryable: false,
+                    metadata: metadata
+                )
+            case .invalidRequest, .invalidTemplate, .missingInput,
+                .sendConfirmationRequired, .emptyMessage:
+                return ToolEnvelope.failure(
+                    kind: .invalidArgs,
+                    message: error.localizedDescription,
+                    tool: tool,
+                    retryable: false,
+                    metadata: metadata
+                )
+            case .httpStatus, .invalidResponse, .transport, .cancelled:
+                return ToolEnvelope.failure(
+                    kind: .executionError,
+                    message: error.localizedDescription,
+                    tool: tool,
+                    retryable: false,
+                    metadata: metadata
                 )
             }
         }
@@ -101,6 +147,148 @@ private extension OsaurusTool {
             }
         }
 
+        if let error = error as? SlackConnectionServiceError {
+            switch error {
+            case .invalidId, .sendConfirmationRequired, .messageTooLong, .emptyMessage, .invalidThreadId:
+                return ToolEnvelope.failure(kind: .invalidArgs, message: error.localizedDescription, tool: tool)
+            case .teamNotConfigured, .channelNotReadable, .channelNotWritable, .writeDisabled, .broadcastMentionDenied:
+                return ToolEnvelope.failure(kind: .rejected, message: error.localizedDescription, tool: tool)
+            case .notConfigured:
+                return ToolEnvelope.failure(
+                    kind: .unavailable,
+                    message: error.localizedDescription,
+                    tool: tool,
+                    retryable: false
+                )
+            case .signingSecretNotConfigured:
+                return ToolEnvelope.failure(
+                    kind: .unavailable,
+                    message: error.localizedDescription,
+                    tool: tool,
+                    retryable: false
+                )
+            case .signatureVerificationFailed, .invalidInboundPayload:
+                return ToolEnvelope.failure(kind: .invalidArgs, message: error.localizedDescription, tool: tool)
+            case .configurationSaveFailed, .api:
+                return ToolEnvelope.failure(
+                    kind: .executionError,
+                    message: error.localizedDescription,
+                    tool: tool,
+                    retryable: false
+                )
+            }
+        }
+
+        if let error = error as? SlackAPIError {
+            switch error {
+            case .invalidToken:
+                return ToolEnvelope.failure(
+                    kind: .unavailable,
+                    message: error.localizedDescription,
+                    tool: tool,
+                    retryable: false
+                )
+            case .missingPermissions:
+                return ToolEnvelope.failure(
+                    kind: .rejected,
+                    message: error.localizedDescription,
+                    tool: tool,
+                    retryable: false
+                )
+            case .notFound:
+                return ToolEnvelope.failure(
+                    kind: .notFound,
+                    message: error.localizedDescription,
+                    tool: tool,
+                    retryable: false
+                )
+            case .rateLimited:
+                return ToolEnvelope.failure(
+                    kind: .unavailable,
+                    message: error.localizedDescription,
+                    tool: tool,
+                    retryable: true
+                )
+            case .invalidResponse, .requestFailed:
+                return ToolEnvelope.failure(
+                    kind: .executionError,
+                    message: error.localizedDescription,
+                    tool: tool,
+                    retryable: false
+                )
+            }
+        }
+
+        if let error = error as? TelegramConnectionServiceError {
+            switch error {
+            case .invalidChatId, .sendConfirmationRequired, .messageTooLong, .emptyMessage, .invalidWebhookSecret:
+                return ToolEnvelope.failure(kind: .invalidArgs, message: error.localizedDescription, tool: tool)
+            case .chatNotReadable, .chatNotWritable, .writeDisabled:
+                return ToolEnvelope.failure(kind: .rejected, message: error.localizedDescription, tool: tool)
+            case .sendBackpressure:
+                return ToolEnvelope.failure(
+                    kind: .unavailable,
+                    message: error.localizedDescription,
+                    tool: tool,
+                    retryable: true
+                )
+            case .notConfigured, .messageStoreUnavailable:
+                return ToolEnvelope.failure(
+                    kind: .unavailable,
+                    message: error.localizedDescription,
+                    tool: tool,
+                    retryable: false
+                )
+            case .configurationSaveFailed, .api:
+                return ToolEnvelope.failure(
+                    kind: .executionError,
+                    message: error.localizedDescription,
+                    tool: tool,
+                    retryable: false
+                )
+            }
+        }
+
+        if let error = error as? TelegramAPIError {
+            switch error {
+            case .invalidToken:
+                return ToolEnvelope.failure(
+                    kind: .unavailable,
+                    message: error.localizedDescription,
+                    tool: tool,
+                    retryable: false
+                )
+            case .forbidden:
+                return ToolEnvelope.failure(
+                    kind: .rejected,
+                    message: error.localizedDescription,
+                    tool: tool,
+                    retryable: false
+                )
+            case .notFound:
+                return ToolEnvelope.failure(
+                    kind: .notFound,
+                    message: error.localizedDescription,
+                    tool: tool,
+                    retryable: false
+                )
+            case .conflict, .rateLimited:
+                return ToolEnvelope.failure(
+                    kind: .unavailable,
+                    message: error.localizedDescription,
+                    tool: tool,
+                    retryable: true
+                )
+            case .invalidResponse, .requestFailed:
+                return ToolEnvelope.failure(
+                    kind: .executionError,
+                    message: error.localizedDescription,
+                    tool: tool,
+                    retryable: false
+                )
+            }
+        }
+
         return ToolEnvelope.failure(
             kind: .executionError,
             message: error.localizedDescription,
@@ -110,8 +298,7 @@ private extension OsaurusTool {
     }
 }
 
-final class AgentChannelListConnectionsTool: OsaurusTool, PermissionedTool, AgentChannelServiceTool, @unchecked Sendable
-{
+final class AgentChannelListConnectionsTool: OsaurusTool, PermissionedTool, AgentChannelServiceTool, @unchecked Sendable {
     let name = "agent_channel_list_connections"
     let description =
         "List configured agent communication channel connections such as Discord, Slack, Telegram, or custom JSON channels."
@@ -359,8 +546,7 @@ final class AgentChannelReadThreadTool: OsaurusTool, PermissionedTool, AgentChan
     }
 }
 
-final class AgentChannelSearchMessagesTool: OsaurusTool, PermissionedTool, AgentChannelServiceTool, @unchecked Sendable
-{
+final class AgentChannelSearchMessagesTool: OsaurusTool, PermissionedTool, AgentChannelServiceTool, @unchecked Sendable {
     let name = "agent_channel_search_messages"
     let description = "Search recent messages across allowlisted channel rooms."
     let parameters: JSONValue? = .object([

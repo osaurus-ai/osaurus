@@ -126,7 +126,8 @@ public struct MCPProviderProbeResult: Codable, Identifiable, Sendable, Equatable
             stage: .listTools,
             reasonCode: .succeeded,
             toolCount: tools.count,
-            toolNames: tools.map(\.name).sorted(),
+            // Server order, which for a paginated tools/list is page order.
+            toolNames: tools.map(\.name),
             message: L("Probe completed initialize/listTools and found \(tools.count) tool(s)."),
             action: nil
         )
@@ -229,21 +230,17 @@ public enum MCPProviderProbeService {
             )
         }
 
-        let configuration = GlobalProxySettings.makeConfiguration(base: .default)
         var allHeaders = headers
         if let token, !token.isEmpty {
             allHeaders["Authorization"] = "Bearer \(token)"
         }
-        if !allHeaders.isEmpty {
-            configuration.httpAdditionalHeaders = allHeaders
-        }
-        configuration.timeoutIntervalForRequest = discoveryTimeout
-        configuration.timeoutIntervalForResource = max(discoveryTimeout, 20)
 
-        let transport = HTTPClientTransport(
+        let transport = MCPHTTPTransportBuilder.makeTransport(
             endpoint: endpoint,
-            configuration: configuration,
-            streaming: streamingEnabled
+            headers: allHeaders,
+            streaming: streamingEnabled,
+            discoveryTimeout: discoveryTimeout,
+            toolCallTimeout: discoveryTimeout
         )
         return await runProbe(provider: provider, transport: transport, startedAt: startedAt)
     }
@@ -303,9 +300,13 @@ public enum MCPProviderProbeService {
             try await withTimeout(seconds: provider.discoveryTimeout) {
                 _ = try await client.connect(transport: transport)
             }
-            let (tools, _) = try await withTimeout(seconds: provider.discoveryTimeout) {
-                try await client.listTools()
+            let tools = try await withTimeout(seconds: provider.discoveryTimeout) {
+                try await client.listAllTools()
             }
+            // Probes are short-lived by contract: disconnect the client so
+            // HTTP transports invalidate their URLSession (and stop any SSE
+            // loop) instead of leaking one per Test click.
+            await client.disconnect()
             if let cleanup {
                 await cleanup()
             }
@@ -315,6 +316,7 @@ public enum MCPProviderProbeService {
                 tools: tools
             )
         } catch {
+            await client.disconnect()
             if let cleanup {
                 await cleanup()
             }
@@ -349,7 +351,15 @@ public enum MCPProviderProbeService {
                         )
                     }
                 }
-                let runner = try SandboxStdioRunner(provider: provider)
+                // Probe runs under the same agent scoping as production
+                // connects: the calling agent's Linux user, provisioned
+                // first so user + bridge token exist.
+                let (agentId, agentName): (UUID, String) = await MainActor.run {
+                    let id = ChatExecutionContext.currentAgentId ?? AgentManager.shared.activeAgent.id
+                    return (id, SandboxAgentProvisioner.linuxName(for: id.uuidString))
+                }
+                try await SandboxAgentProvisioner.shared.ensureProvisioned(agentId: agentId)
+                let runner = try SandboxStdioRunner(provider: provider, agentName: agentName)
                 try await runner.start()
                 return (runner.transport, { await runner.stop() })
             #else

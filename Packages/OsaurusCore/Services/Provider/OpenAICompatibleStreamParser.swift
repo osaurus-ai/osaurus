@@ -28,23 +28,73 @@ struct OpenAICompatibleStreamFramer {
         private var completedLines: [Data] = []
         private var nextOutputIndex = 0
 
+        /// Bulk newline scan: finds terminators with `memchr` and copies whole
+        /// line spans at once instead of appending byte-by-byte (the previous
+        /// per-byte loop dominated the SSE hot path on large deltas).
+        /// Semantics are identical: LF, CR, and CRLF all terminate a line, a
+        /// CRLF split across chunk boundaries yields one line, and a blank
+        /// line is emitted as an empty `Data` (SSE event boundary).
         mutating func append(_ data: Data) {
-            for byte in data {
-                switch byte {
-                case 0x0D:
-                    completedLines.append(lineBuffer)
-                    lineBuffer = Data()
-                    carriageReturnLast = true
-                case 0x0A:
-                    if carriageReturnLast {
-                        carriageReturnLast = false
+            guard !data.isEmpty else { return }
+            data.withUnsafeBytes { (raw: UnsafeRawBufferPointer) in
+                guard let rawBase = raw.baseAddress else { return }
+                let base = rawBase.assumingMemoryBound(to: UInt8.self)
+                let count = raw.count
+                var offset = 0
+                if carriageReturnLast {
+                    carriageReturnLast = false
+                    if base[0] == 0x0A { offset = 1 }
+                }
+                while offset < count {
+                    let remaining = count - offset
+                    let lfOffset = memchr(base + offset, 0x0A, remaining)
+                        .map { UnsafeRawPointer($0) - rawBase }
+                    let crOffset = memchr(base + offset, 0x0D, remaining)
+                        .map { UnsafeRawPointer($0) - rawBase }
+
+                    let terminatorOffset: Int
+                    let terminatorIsCR: Bool
+                    switch (lfOffset, crOffset) {
+                    case (nil, nil):
+                        // No terminator in the rest of the chunk — stash the
+                        // partial line and wait for more bytes.
+                        lineBuffer.append(base + offset, count: remaining)
+                        return
+                    case (let lf?, nil):
+                        terminatorOffset = lf
+                        terminatorIsCR = false
+                    case (nil, let cr?):
+                        terminatorOffset = cr
+                        terminatorIsCR = true
+                    case (let lf?, let cr?):
+                        terminatorIsCR = cr < lf
+                        terminatorOffset = min(lf, cr)
+                    }
+
+                    let lineLength = terminatorOffset - offset
+                    if lineBuffer.isEmpty {
+                        completedLines.append(Data(bytes: base + offset, count: lineLength))
                     } else {
+                        lineBuffer.append(base + offset, count: lineLength)
                         completedLines.append(lineBuffer)
                         lineBuffer = Data()
                     }
-                default:
-                    carriageReturnLast = false
-                    lineBuffer.append(byte)
+
+                    if terminatorIsCR {
+                        if terminatorOffset + 1 < count {
+                            // Swallow an immediately-following LF (CRLF).
+                            offset =
+                                base[terminatorOffset + 1] == 0x0A
+                                ? terminatorOffset + 2 : terminatorOffset + 1
+                        } else {
+                            // CR is the chunk's last byte: remember it so an
+                            // LF at the head of the next chunk is swallowed.
+                            carriageReturnLast = true
+                            offset = count
+                        }
+                    } else {
+                        offset = terminatorOffset + 1
+                    }
                 }
             }
         }
@@ -190,38 +240,46 @@ struct OpenAICompatibleToolCallAccumulator {
         from accumulated: [Int: RemoteProviderService.StreamingState.ToolSlot],
         finishMarker: String
     ) -> RemoteProviderService.AccumulatedToolCallResult {
-        guard let (invocation, wasRepaired) = makeToolInvocation(from: accumulated) else {
-            return .none
-        }
-        if wasRepaired {
+        let resolved = makeToolInvocations(from: accumulated)
+        guard !resolved.isEmpty else { return .none }
+        // Repaired args on ANY slot mean the stream was cut mid-argument —
+        // dispatching a partial batch would lock a half-real parallel call
+        // set into history, so the whole set is treated as truncated.
+        if let repaired = resolved.first(where: { $0.wasRepaired }) {
             return .truncated(
                 truncatedToolCallError(
                     from: accumulated,
-                    toolName: invocation.toolName,
+                    toolName: repaired.invocation.toolName,
                     finishMarker: finishMarker
                 )
             )
         }
-        return .ready(invocation)
+        return .ready(resolved.map(\.invocation))
     }
 
-    static func makeToolInvocation(
+    /// Every accumulated tool call in slot order. Parallel tool calling
+    /// (OpenAI `tool_calls[n]`, Anthropic multiple `tool_use` blocks, Gemini
+    /// multiple `functionCall` parts) fills several slots in one completion;
+    /// all of them are dispatched, matching the local vmlx path. Slots that
+    /// never received a function name cannot be dispatched and are skipped.
+    static func makeToolInvocations(
         from accumulated: [Int: RemoteProviderService.StreamingState.ToolSlot]
-    ) -> (invocation: ServiceToolInvocation, wasRepaired: Bool)? {
-        guard let first = accumulated.min(by: { $0.key < $1.key }),
-            let name = first.value.name
-        else { return nil }
-
-        let validated = validateToolCallJSON(first.value.args)
-        return (
-            ServiceToolInvocation(
-                toolName: name,
-                jsonArguments: validated.json,
-                toolCallId: first.value.id,
-                geminiThoughtSignature: first.value.thoughtSignature
-            ),
-            validated.wasRepaired
-        )
+    ) -> [(invocation: ServiceToolInvocation, wasRepaired: Bool)] {
+        accumulated
+            .sorted { $0.key < $1.key }
+            .compactMap { _, slot in
+                guard let name = slot.name else { return nil }
+                let validated = validateToolCallJSON(slot.args)
+                return (
+                    ServiceToolInvocation(
+                        toolName: name,
+                        jsonArguments: validated.json,
+                        toolCallId: slot.id,
+                        geminiThoughtSignature: slot.thoughtSignature
+                    ),
+                    validated.wasRepaired
+                )
+            }
     }
 
     @inline(__always)
@@ -440,7 +498,7 @@ struct OpenAICompatibleStreamParser {
     ) throws -> RemoteProviderService.StreamEventOutcome {
         switch options.decodeMode {
         case .strict:
-            let chunk = try JSONDecoder().decode(ChatCompletionChunk.self, from: jsonData)
+            let chunk = try state.decoder.decode(ChatCompletionChunk.self, from: jsonData)
             // OpenAI emits usage on a dedicated final chunk (empty `choices`)
             // when `stream_options.include_usage` was set; on every other chunk
             // `usage` is null. Capture whatever is present — surfaced at the
@@ -455,7 +513,7 @@ struct OpenAICompatibleStreamParser {
                 yield: yield
             )
         case .lenient:
-            let chunk = try JSONDecoder().decode(LenientChatCompletionChunk.self, from: jsonData)
+            let chunk = try state.decoder.decode(LenientChatCompletionChunk.self, from: jsonData)
             state.captureProviderUsage(chunk.usage)
             let choice = chunk.choices?.first
             if let message = choice?.message {

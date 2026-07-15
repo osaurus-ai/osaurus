@@ -531,4 +531,123 @@ struct SchemaValidatorCoercionTests {
         let nested = try #require(coerced?["properties"] as? [String: Any])
         #expect((nested["nested"] as? String) == "value")
     }
+
+    // MARK: - Key-spelling rescue (case / snake-camel drift)
+
+    /// `file_search`-shaped schema: the live failure was gemma-4-12B emitting
+    /// `{"Pattern": "…", "target": "content"}` and spiralling on the resulting
+    /// "Missing required property: pattern" for 18 identical calls.
+    private let fileSearchLikeSchema: JSONValue = .object([
+        "type": .string("object"),
+        "additionalProperties": .bool(false),
+        "properties": .object([
+            "pattern": .object(["type": .string("string")]),
+            "target": .object([
+                "type": .string("string"),
+                "enum": .array([.string("content"), .string("files")]),
+            ]),
+            "file_pattern": .object(["type": .string("string")]),
+        ]),
+        "required": .array([.string("pattern")]),
+    ])
+
+    @Test func renamesCaseDriftedKeyToDeclaredSpelling() throws {
+        let coerced =
+            SchemaValidator.coerceArguments(
+                ["Pattern": "magic-token", "target": "content"],
+                against: fileSearchLikeSchema
+            ) as? [String: Any]
+        #expect((coerced?["pattern"] as? String) == "magic-token")
+        #expect(coerced?["Pattern"] == nil)
+        let r = SchemaValidator.validate(arguments: coerced as Any, against: fileSearchLikeSchema)
+        #expect(r.isValid, "got: \(r.errorMessage ?? "?")")
+    }
+
+    @Test func renamesSnakeCaseDriftToCamelDeclared() throws {
+        // render_chart-shaped: `chart_type` → declared `chartType`.
+        let coerced =
+            SchemaValidator.coerceArguments(
+                [
+                    "data": "x,y\n1,2\n",
+                    "chart_type": "bar",
+                    "series": ["y"],
+                ],
+                against: renderChartLikeSchema
+            ) as? [String: Any]
+        #expect((coerced?["chartType"] as? String) == "bar")
+        #expect(coerced?["chart_type"] == nil)
+    }
+
+    @Test func renamedKeyValueStillGetsTypeCoercion() throws {
+        // The renamed key's value must flow through the normal per-property
+        // coercion (here: stringified array → native array).
+        let coerced =
+            SchemaValidator.coerceArguments(
+                [
+                    "data": "x,y\n1,2\n",
+                    "ChartType": "bar",
+                    "Series": "[\"y\"]",
+                ],
+                against: renderChartLikeSchema
+            ) as? [String: Any]
+        #expect((coerced?["chartType"] as? String) == "bar")
+        #expect((coerced?["series"] as? [String]) == ["y"])
+    }
+
+    @Test func verbatimKeyWinsOverSpellingDrift() throws {
+        // Double-emit: `pattern` AND `Pattern` both present. The verbatim
+        // key keeps its value; the stray key is left for the validator's
+        // unknown-key report rather than silently merged.
+        let coerced =
+            SchemaValidator.coerceArguments(
+                ["pattern": "keep-me", "Pattern": "not-me"],
+                against: fileSearchLikeSchema
+            ) as? [String: Any]
+        #expect((coerced?["pattern"] as? String) == "keep-me")
+        #expect((coerced?["Pattern"] as? String) == "not-me")
+    }
+
+    @Test func ambiguousDeclaredFoldIsNeverRenamed() throws {
+        // Two declared keys that fold identically (`filePattern` +
+        // `file_pattern`) make the fold ambiguous — a drifted key must NOT
+        // be guessed into either one.
+        let schema: JSONValue = .object([
+            "type": .string("object"),
+            "properties": .object([
+                "filePattern": .object(["type": .string("string")]),
+                "file_pattern": .object(["type": .string("string")]),
+            ]),
+        ])
+        let coerced =
+            SchemaValidator.coerceArguments(
+                ["FILEPATTERN": "*.swift"],
+                against: schema
+            ) as? [String: Any]
+        #expect((coerced?["FILEPATTERN"] as? String) == "*.swift")
+        #expect(coerced?["filePattern"] == nil)
+        #expect(coerced?["file_pattern"] == nil)
+    }
+
+    @Test func unrelatedKeysAreLeftAlone() throws {
+        let coerced =
+            SchemaValidator.coerceArguments(
+                ["pattern": "x", "bogus_key": "y"],
+                against: fileSearchLikeSchema
+            ) as? [String: Any]
+        #expect((coerced?["bogus_key"] as? String) == "y")
+    }
+
+    @Test func missingRequiredNamesNearMissKeyWhenCoercionBypassed() {
+        // Validation without coercion (defence in depth): the error must
+        // name the drifted key so the model can correct its next call
+        // instead of re-sending identical arguments.
+        let r = SchemaValidator.validate(
+            arguments: ["Pattern": "magic-token"],
+            against: fileSearchLikeSchema
+        )
+        #expect(!r.isValid)
+        #expect(r.field == "pattern")
+        #expect(r.errorMessage?.contains("you sent `Pattern`") == true)
+        #expect(r.errorMessage?.contains("use `pattern`") == true)
+    }
 }

@@ -200,6 +200,12 @@ public enum AgentLoopEvaluator {
     ///     `autonomousExec.enabled == true` (the runner's eval agent) —
     ///     tool registration reads the agent record. Builtin sandbox
     ///     tools are unregistered on exit; the container is NOT stopped.
+    ///   - cancelAfterToolCalls: interruption lever for cancellation evals.
+    ///     When set, the loop's `isCancelled` hook flips true once this many
+    ///     tool calls have been processed, so the run ends with the
+    ///     production `.cancelled` exit at the next cancellation checkpoint
+    ///     — the same path a user's stop button drives. nil (default)
+    ///     never cancels.
     public static func run(
         task: String,
         workspace: URL,
@@ -210,7 +216,8 @@ public enum AgentLoopEvaluator {
         streaming: Bool = true,
         maxTokens: Int? = nil,
         stopOnToolRejection: Bool = false,
-        sandbox: AgentLoopSandboxMode? = nil
+        sandbox: AgentLoopSandboxMode? = nil,
+        cancelAfterToolCalls: Int? = nil
     ) async -> AgentLoopTranscript {
         // The Default agent's schema is hard-restricted to the 8-tool
         // configure baseline (folder write tools enter only via
@@ -436,7 +443,11 @@ public enum AgentLoopEvaluator {
             )
         }
 
-        func makeRequest(_ messages: [ChatMessage], stream: Bool) -> ChatCompletionRequest {
+        func makeRequest(
+            _ messages: [ChatMessage],
+            stream: Bool,
+            includeTools: Bool = true
+        ) -> ChatCompletionRequest {
             ChatCompletionRequest(
                 model: resolvedModel,
                 messages: messages,
@@ -448,8 +459,8 @@ public enum AgentLoopEvaluator {
                 presence_penalty: nil,
                 stop: nil,
                 n: nil,
-                tools: toolSpecs.isEmpty ? nil : toolSpecs,
-                tool_choice: toolSpecs.isEmpty ? nil : .auto,
+                tools: (includeTools && !toolSpecs.isEmpty) ? toolSpecs : nil,
+                tool_choice: (includeTools && !toolSpecs.isEmpty) ? .auto : nil,
                 session_id: sessionId
             )
         }
@@ -579,6 +590,13 @@ public enum AgentLoopEvaluator {
         }
 
         let hooks = AgentLoopHooks(
+            isCancelled: {
+                // Cancellation evals: flip cancelled once the processed-call
+                // budget is reached. Reads the same transcript array the
+                // executors append to (all on the main actor, so no race).
+                guard let cancelAfterToolCalls else { return false }
+                return transcriptCalls.count >= cancelAfterToolCalls
+            },
             buildMessages: { notices in
                 // Canonical notice contract: trim with the system prefix
                 // kept byte-stable, then notices ride transiently. Notices
@@ -787,6 +805,17 @@ public enum AgentLoopEvaluator {
                 }
                 return executions
             },
+            // Production parity: chat wires the todo-staleness nudge
+            // (unchecked items + N iterations without a `todo` call →
+            // one-line notice). Without it the eval lane silently drops a
+            // production behavior that exists precisely for multi-step
+            // discipline — the thing todo-discipline cases measure.
+            pendingTodoCount: {
+                guard let todo = await AgentTodoStore.shared.todo(for: sessionId) else {
+                    return 0
+                }
+                return todo.totalCount - todo.doneCount
+            },
             emitFallbackText: { text in
                 // Empty-turn recovery exhausted: surface a visible answer so a
                 // run never resolves to silent empty text.
@@ -807,6 +836,54 @@ public enum AgentLoopEvaluator {
                     state: state,
                     hooks: hooks
                 )
+            }
+            // Production parity (ChatView): when the iteration budget is
+            // exhausted mid-task, chat sends ONE final tool-free request over
+            // the same trimmed history and streams that as the visible
+            // answer. Without this, a cap-hitting eval run scores an empty
+            // finalText that no production user would ever see. The exit
+            // label stays `iterationCapReached` — cases can still assert the
+            // cap — but the transcript carries the wrap-up text.
+            if case .iterationCapReached = runResult.exit {
+                var msgs: [ChatMessage] = [ChatMessage(role: "system", content: systemPrompt)]
+                msgs.append(contentsOf: history)
+                let trimmed = AgentLoopBudget.trimPreservingSystemPrefix(
+                    msgs,
+                    with: budgetManager,
+                    watermark: watermark
+                )
+                // No tool schema on the wrap-up call (mirrors chat's
+                // `tools: nil`), so the token estimate excludes toolTokens.
+                promptTokensTotal += ContextBudgetManager.estimateTokens(for: trimmed)
+                modelStepCount += 1
+                // STREAMING, like ChatView's post-cap call (`stream: true`,
+                // `tools: nil`): the non-streaming local path is not what
+                // production drives here, and a failure must be visible in
+                // the transcript notices — not silently swallowed.
+                do {
+                    var content = ""
+                    let stream = try await engine.streamChat(
+                        request: makeRequest(trimmed, stream: true, includeTools: false)
+                    )
+                    for try await delta in stream {
+                        if StreamingReasoningHint.decode(delta) != nil { continue }
+                        if let stats = StreamingStatsHint.decode(delta) {
+                            if stats.tokensPerSecond > 0, stats.tokenCount > 0 {
+                                decodeTpsWeightedSum +=
+                                    stats.tokensPerSecond * Double(stats.tokenCount)
+                                decodeTpsTokenWeight += stats.tokenCount
+                            }
+                            completionTokensTotal += max(0, stats.tokenCount)
+                            continue
+                        }
+                        if StreamingToolHint.isSentinel(delta) { continue }
+                        content += delta
+                    }
+                    let text = content.trimmingCharacters(in: .whitespacesAndNewlines)
+                    if !text.isEmpty { finalText = text }
+                } catch {
+                    noticesSeen.append("[post-cap wrap-up failed: \(error)]")
+                }
             }
             // A run ended by a successful `complete` intercept IS the
             // model's final response (the summary), not a surface

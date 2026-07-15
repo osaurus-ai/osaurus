@@ -1,0 +1,27 @@
+{
+  "id": "subagent.residency-matrix-local-remote",
+  "domain": "subagent",
+  "label": "Subagent • matrix: local→remote × rapid cycles, orchestrator stays resident",
+  "query": "Rapid repeated remote spawns while a local orchestrator is GPU-resident.",
+  "notes": "LIVE RESIDENCY MATRIX (crash lane) — local orchestrator, REMOTE target: 2 rapid production cycles that must never touch the local GPU (handoffWrapped=false), with the resident orchestrator VERIFIED still loaded after every cycle (no needless eviction), sentinel recall through the remote worker, no raw markers in the digest, and zero NEW osaurus crash reports across the case. Requires the remote provider connected — run with a remote --model (e.g. MODEL=xai/grok-4.3) + XAI_API_KEY; SKIPS when the local orchestrator isn't installed or the remote target isn't routable. Run with FILTER=residency-matrix.",
+  "fixtures": {},
+  "expect": {
+    "subagent": {
+      "lane": "spawn_model_residency",
+      "orchestrator": "mlx-community/Qwen3.5-4B-OptiQ-4bit",
+      "model": "xai/grok-4.3",
+      "handoffEnabled": true,
+      "ensureResident": true,
+      "cycles": 2,
+      "sentinel": "papaya-window-88",
+      "input": "Reply with one short sentence confirming you received this task.",
+      "expectSuccess": true,
+      "expectEnvelopeKind": "success",
+      "expectResultKind": "spawn_result",
+      "expectHandoffWrapped": false,
+      "expectNoNewCrashReports": true,
+      "expectRestoredResident": true,
+      "expectNoMarkerLeaks": true
+    }
+  }
+}

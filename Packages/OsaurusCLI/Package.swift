@@ -31,6 +31,7 @@ let package = Package(
             dependencies: [
                 "OsaurusCLICore",
                 .product(name: "MCP", package: "swift-sdk"),
+                .product(name: "OsaurusRepository", package: "OsaurusRepository"),
             ]
         ),
     ]

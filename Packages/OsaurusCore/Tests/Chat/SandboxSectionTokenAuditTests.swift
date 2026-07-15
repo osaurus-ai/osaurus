@@ -188,12 +188,28 @@ struct SandboxSectionTokenAuditTests {
         #expect(SystemPromptTemplates.secretHandlingGuidanceCompact.contains("sandbox_secret_set"))
         #expect(SystemPromptTemplates.secretHandlingGuidanceCompact.contains("env var"))
 
-        // Agent loop: compact keeps all four tools.
+        // Agent loop: compact keeps all four tools AND is a real reduction —
+        // the 2026-06 version was only ~6% smaller than full, which paid the
+        // maintenance cost of a second variant for no prefill win. Live
+        // numbers after the 2026-07 retighten: full 240, compact 167 tokens
+        // (~30% saved). The 80% ratio ceiling locks the win in while leaving
+        // headroom for small wording fixes.
         let compactLoop = SystemPromptTemplates.agentLoopGuidanceCompact
-        smaller(SystemPromptTemplates.agentLoopGuidance, compactLoop, label: "agent loop")
+        let fullLoopTokens = TokenEstimator.estimate(SystemPromptTemplates.agentLoopGuidance)
+        let compactLoopTokens = TokenEstimator.estimate(compactLoop)
+        #expect(
+            compactLoopTokens * 5 <= fullLoopTokens * 4,
+            "agent loop compact (\(compactLoopTokens)) is not ≤80% of full (\(fullLoopTokens)) — the compact variant has crept back toward full size"
+        )
         for tool in ["todo", "complete", "clarify", "share_artifact"] {
             #expect(compactLoop.contains(tool), "compact agent loop dropped \(tool)")
         }
+        // The anti-punt clarify discipline (W4 eval fix) must survive the
+        // retighten: the compact bootstrap skeleton truncates ClarifyTool's
+        // description to its first sentence, so this bullet is the only
+        // place a small model sees the "fully specified ≠ ambiguous" rule.
+        #expect(compactLoop.contains("last resort"))
+        #expect(compactLoop.contains("fully specified"))
 
         // Grounding (discovery-aware): compact keeps the capability-claim rule.
         smaller(

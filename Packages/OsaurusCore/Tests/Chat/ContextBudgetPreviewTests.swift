@@ -298,6 +298,83 @@ struct ContextBudgetPreviewTests {
         }
     }
 
+    /// Warm-up parity: warm-up composes with `query: ""` (never trivial), so
+    /// a trivial first send ("hey") in sandbox mode must render the exact
+    /// same static prefix — including the `capabilityNudge` section — or the
+    /// warmed KV misses and the model re-prefills from 0. Regression for the
+    /// live "green dot but full re-prefill on 'hey'" bug where the trivial
+    /// gate dropped just the Capability Discovery section while the tool
+    /// schema stayed.
+    @Test("compose: sandbox trivial first send matches warmup compose byte-for-byte")
+    func sandboxTrivialFirstSend_matchesWarmupCompose() async {
+        await withAgent(toolSelectionMode: .auto, autonomous: true) { agentId in
+            BuiltinSandboxTools.register(
+                agentId: agentId.uuidString,
+                agentName: "warmup-parity-test",
+                config: AutonomousExecConfig(enabled: true)
+            )
+            defer { ToolRegistry.shared.unregisterAllSandboxTools() }
+
+            let warmup = await SystemPromptComposer.composeChatContext(
+                agentId: agentId,
+                executionMode: .sandbox(hostRead: nil),
+                query: ""
+            )
+            let send = await SystemPromptComposer.composeChatContext(
+                agentId: agentId,
+                executionMode: .sandbox(hostRead: nil),
+                query: "hey"
+            )
+
+            #expect(SystemPromptComposer.isTrivialUserQuery("hey"))
+            // Sandbox mode keeps the schema (the trivial fast path is
+            // `.none`-only), so the nudge must stay too.
+            #expect(!send.tools.isEmpty)
+            #expect(sectionIds(send).contains("capabilityNudge"))
+            #expect(sectionIds(send) == sectionIds(warmup))
+            #expect(send.staticPrefix == warmup.staticPrefix)
+            #expect(send.prompt == warmup.prompt)
+            #expect(send.cacheHint == warmup.cacheHint)
+            // Same value the debug log prints as `Static prefix: N (hash: …)`
+            // — the live bug showed warmup f909bca1… vs send 931995ed….
+            #expect(send.manifest.prefixHash == warmup.manifest.prefixHash)
+        }
+    }
+
+    /// Mid-session KV stability: a trivial acknowledgement ("thanks") in a
+    /// session with history must not rewrite the system prompt — dropping the
+    /// `capabilityNudge` section there would bust the entire conversation KV
+    /// for zero prefill savings.
+    @Test("compose: trivial mid-conversation turn keeps capability nudge section")
+    func trivialMidConversation_keepsCapabilityNudgeSection() async {
+        await withAgent(toolSelectionMode: .auto) { agentId in
+            let frozen = LoadedTools(
+                ToolRegistry.shared.alwaysLoadedSpecs(mode: .none).map(\.function.name)
+            )
+            let messages = [ChatMessage(role: "user", content: "summarize this project")]
+            let steady = await SystemPromptComposer.composeChatContext(
+                agentId: agentId,
+                executionMode: .none,
+                query: "",
+                messages: messages,
+                frozenAlwaysLoadedNames: frozen
+            )
+            let thanks = await SystemPromptComposer.composeChatContext(
+                agentId: agentId,
+                executionMode: .none,
+                query: "thanks",
+                messages: messages,
+                frozenAlwaysLoadedNames: frozen
+            )
+
+            #expect(SystemPromptComposer.isTrivialUserQuery("thanks"))
+            #expect(sectionIds(thanks).contains("capabilityNudge"))
+            #expect(sectionIds(thanks) == sectionIds(steady))
+            #expect(thanks.staticPrefix == steady.staticPrefix)
+            #expect(thanks.prompt == steady.prompt)
+        }
+    }
+
     /// The loop cheat-sheet is schema-gated: it renders from the FIRST
     /// real turn whenever loop tools resolve into the schema, so the model
     /// sees the "when to call which" guide on its first multi-step task

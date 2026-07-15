@@ -52,6 +52,17 @@ public struct ScreenContextDistiller: Sendable {
         self.maxItemChars = maxItemChars
     }
 
+    /// Area (width * height) of a rectangle reported by the accessibility API,
+    /// clamped so the multiply can't overflow `Int` and trap. AX can return
+    /// absurd or garbage dimensions for off-screen or misreporting elements, and
+    /// the raw `w * h` (and the downstream `area * 100` comparison) would crash
+    /// on overflow. Clamping each side keeps the value well within `Int` while
+    /// preserving the relative ordering these areas are used for.
+    private static func clampedArea(_ w: Int, _ h: Int) -> Int {
+        let side = 1_000_000
+        return min(max(0, w), side) * min(max(0, h), side)
+    }
+
     /// Osaurus's own identity, used to exclude it from the "what you're doing"
     /// signal (it's usually frontmost when the user hits send).
     private struct SelfIdentity {
@@ -343,7 +354,7 @@ public struct ScreenContextDistiller: Sendable {
     /// largest window when none is flagged focused.
     private func focusedWindowSummary(in snapshot: CUSnapshot) -> CUWindowSummary? {
         snapshot.windows.first(where: { $0.focused })
-            ?? snapshot.windows.max(by: { (max(0, $0.w) * max(0, $0.h)) < (max(0, $1.w) * max(0, $1.h)) })
+            ?? snapshot.windows.max(by: { Self.clampedArea($0.w, $0.h) < Self.clampedArea($1.w, $1.h) })
     }
 
     /// True when the elements already contain a text area carrying real content,
@@ -394,7 +405,7 @@ public struct ScreenContextDistiller: Sendable {
         let largest =
             elements
             .filter { $0.role.lowercased() == "textarea" }
-            .max(by: { (max(0, $0.w) * max(0, $0.h)) < (max(0, $1.w) * max(0, $1.h)) })
+            .max(by: { Self.clampedArea($0.w, $0.h) < Self.clampedArea($1.w, $1.h) })
         guard let largest, let viewing = cleaned(largest.value, limit: maxViewingChars) else {
             return focused
         }
@@ -436,7 +447,7 @@ public struct ScreenContextDistiller: Sendable {
                 .map(dedupKey)
         )
 
-        let windowArea = focusedWindow.map { max(0, $0.w) * max(0, $0.h) } ?? 0
+        let windowArea = focusedWindow.map { Self.clampedArea($0.w, $0.h) } ?? 0
 
         // Rank candidates so genuine content leads: the main editor/body first,
         // then headings, then body text, then filled inputs — lower tiers only
@@ -498,7 +509,7 @@ public struct ScreenContextDistiller: Sendable {
         windowArea: Int
     ) -> (text: String, rank: ContentRank, weight: Int)? {
         let label = cleaned(element.label, limit: maxItemChars)
-        let area = max(0, element.w) * max(0, element.h)
+        let area = Self.clampedArea(element.w, element.h)
         // "Large" = occupies a meaningful fraction of the focused window, the
         // signature of a document/editor body vs. a sidebar label.
         let isLarge = windowArea > 0 && area * 100 >= windowArea * 12

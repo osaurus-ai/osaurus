@@ -3,7 +3,7 @@
   "domain": "agent_loop",
   "label": "sandbox • background job lifecycle: start, poll, kill, verify",
   "query": "Start the long-running command 'sleep 300' in your sandbox as a background job (sandbox_exec with background:true). Use sandbox_process to confirm it is actually running, then kill it, then confirm it is gone. Finally write a short lifecycle log of what you observed to bg_lifecycle.txt in your home — include the pid, the running confirmation, and the word 'killed'.",
-  "notes": "Full background lifecycle through the sanctioned surface: background:true (not shell '&'), sandbox_process poll + kill. Requires backgroundProcessEnabled; the lifecycle file pins that each stage was actually observed.",
+  "notes": "Full background lifecycle through the sanctioned surface: background:true (not shell '&'), sandbox_process poll + kill. Requires backgroundProcessEnabled; the lifecycle file pins that each stage was actually observed. The 'killed' check is case-insensitive: the query is a natural-language contract ('include the word'), and a log that reads 'Status: Killed' has observed the same lifecycle stage — sentence capitalization is not a lifecycle defect (12B failed only on the capital K while every stage was genuinely proven via sandbox_process).",
   "fixtures": {
     "sandbox": {
       "backgroundProcessEnabled": true
@@ -29,7 +29,8 @@
       "sandboxFiles": [
         {
           "path": "bg_lifecycle.txt",
-          "contains": "killed"
+          "contains": "killed",
+          "caseInsensitive": true
         }
       ]
     }

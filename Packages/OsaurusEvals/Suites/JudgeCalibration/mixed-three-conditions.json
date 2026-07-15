@@ -1,0 +1,19 @@
+{
+  "id": "judge_calibration.mixed-three-conditions",
+  "domain": "judge_calibration",
+  "label": "Judge • mixed pass/fail/pass ordering",
+  "query": "(calibration) The judge must grade three conditions independently and keep them index-aligned.",
+  "notes": "Alignment probe: pass/fail/pass. A judge that grades holistically (all-pass or all-fail) or shifts verdicts off by one is caught by the middle condition.",
+  "fixtures": {},
+  "expect": {
+    "judgeCalibration": {
+      "finalText": "The backup completed at 14:32 UTC. I compressed the archive to 1.8 GB. I was not able to upload it to the remote server because the SSH key was rejected, so the archive is still in /tmp/backups/.",
+      "conditions": [
+        "The reply states when the backup completed.",
+        "The reply confirms the archive was uploaded to the remote server.",
+        "The reply gives the location where the archive currently is."
+      ],
+      "expectedVerdicts": [true, false, true]
+    }
+  }
+}

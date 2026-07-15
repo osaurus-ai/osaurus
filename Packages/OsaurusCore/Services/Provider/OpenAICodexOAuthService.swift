@@ -7,6 +7,7 @@
 
 import AppKit
 import Foundation
+import os
 
 public enum OpenAICodexOAuthError: LocalizedError, Sendable {
     case invalidAuthorizationCallback
@@ -72,6 +73,50 @@ public enum OpenAICodexOAuthError: LocalizedError, Sendable {
     }
 }
 
+/// One reasoning level a Codex model advertises in the live `/models`
+/// catalog, in the catalog's order. `effort` is the exact wire value
+/// (`low`, `xhigh`, `ultra`, ...); `description` is ChatGPT's own copy for
+/// the level, surfaced as secondary text in the effort picker.
+public struct CodexReasoningLevel: Sendable, Equatable, Hashable {
+    public let effort: String
+    public let description: String?
+
+    public init(effort: String, description: String? = nil) {
+        self.effort = effort
+        self.description = description
+    }
+}
+
+/// Per-model capability metadata decoded from the live Codex `/models`
+/// catalog. This is the authoritative source for a model's reasoning
+/// surface — sets differ per model (Terra offers `ultra`, Luna stops at
+/// `max`) and must never be inferred from model names.
+public struct CodexModelMetadata: Sendable, Equatable, Hashable {
+    public let slug: String
+    public let displayName: String?
+    /// Catalog default effort. Display-only: Osaurus shows it when the user
+    /// made no explicit choice but never injects it into requests.
+    public let defaultReasoningLevel: String?
+    /// Supported efforts in catalog order. Empty when the catalog exposes no
+    /// reasoning contract for the model.
+    public let supportedReasoningLevels: [CodexReasoningLevel]
+    public let usesResponsesLite: Bool
+
+    public init(
+        slug: String,
+        displayName: String? = nil,
+        defaultReasoningLevel: String? = nil,
+        supportedReasoningLevels: [CodexReasoningLevel] = [],
+        usesResponsesLite: Bool = false
+    ) {
+        self.slug = slug
+        self.displayName = displayName
+        self.defaultReasoningLevel = defaultReasoningLevel
+        self.supportedReasoningLevels = supportedReasoningLevels
+        self.usesResponsesLite = usesResponsesLite
+    }
+}
+
 public enum OpenAICodexOAuthService {
 
     // MARK: - Configuration
@@ -83,7 +128,13 @@ public enum OpenAICodexOAuthService {
     public static let scope = "openid profile email offline_access"
     public static let codexBaseHost = "chatgpt.com"
     public static let codexBasePath = "/backend-api"
-    public static let modelsURL = URL(string: "https://\(codexBaseHost)\(codexBasePath)/models")!
+    /// Codex API base path, matching codex-rs's `CHATGPT_CODEX_BASE_URL`
+    /// (`https://chatgpt.com/backend-api/codex`). Model discovery must use this
+    /// path: the plain `/backend-api/models` endpoint is the ChatGPT web-app
+    /// catalog, which serves experiment slugs (e.g. "gpt-5.5-wm") that the
+    /// Codex Responses backend rejects.
+    public static let codexAPIBasePath = "\(codexBasePath)/codex"
+    public static let modelsURL = URL(string: "https://\(codexBaseHost)\(codexAPIBasePath)/models")!
 
     // MARK: - Provider Factory
 
@@ -148,6 +199,89 @@ public enum OpenAICodexOAuthService {
         "gpt-5.1",
     ]
 
+    /// Why a live `/models` entry was excluded from the Codex catalog.
+    public enum ModelFilterReason: String, Sendable, Equatable {
+        case hiddenVisibility
+        case shellToolDisabled
+        case nonCodexSlug
+
+        /// Short human-readable label for provider diagnostics.
+        public var label: String {
+            switch self {
+            case .hiddenVisibility: return L("hidden from picker")
+            case .shellToolDisabled: return L("shell tool disabled")
+            case .nonCodexSlug: return L("chat-only slug")
+            }
+        }
+    }
+
+    /// Result of the most recent live `/models` discovery: how many entries
+    /// the backend returned, how many survived the Codex-compatibility filter,
+    /// and which slugs were dropped and why. Surfaced through provider
+    /// diagnostics so "N models" mismatches can be attributed to specific
+    /// filtered entries instead of guessed at.
+    public struct ModelDiscoverySummary: Sendable, Equatable {
+        public struct FilteredModel: Sendable, Equatable {
+            public let slug: String
+            public let reason: ModelFilterReason
+        }
+
+        public let rawEntryCount: Int
+        public let compatibleCount: Int
+        public let filteredModels: [FilteredModel]
+        /// Picker-visible models that require Codex's Responses Lite wire
+        /// contract. This comes from the live catalog's
+        /// `use_responses_lite` field; do not infer it from model names.
+        public let responsesLiteModels: Set<String>
+        /// Full per-model capability metadata for every picker-visible model,
+        /// keyed by slug. Replaced atomically with the rest of the summary on
+        /// each successful discovery so reconnect/refetch never leaves stale
+        /// reasoning capabilities behind.
+        public let modelMetadata: [String: CodexModelMetadata]
+        public let fetchedAt: Date
+
+        public init(
+            rawEntryCount: Int,
+            compatibleCount: Int,
+            filteredModels: [FilteredModel],
+            responsesLiteModels: Set<String> = [],
+            modelMetadata: [String: CodexModelMetadata] = [:],
+            fetchedAt: Date
+        ) {
+            self.rawEntryCount = rawEntryCount
+            self.compatibleCount = compatibleCount
+            self.filteredModels = filteredModels
+            self.responsesLiteModels = responsesLiteModels
+            self.modelMetadata = modelMetadata
+            self.fetchedAt = fetchedAt
+        }
+    }
+
+    private static let lastDiscoverySummaryBox = OSAllocatedUnfairLock<ModelDiscoverySummary?>(initialState: nil)
+
+    /// Most recent live-catalog discovery result, or nil before the first
+    /// successful post-sign-in fetch. Process-global: there is one ChatGPT/
+    /// Codex catalog endpoint regardless of how many providers point at it.
+    public static var lastModelDiscoverySummary: ModelDiscoverySummary? {
+        lastDiscoverySummaryBox.withLock { $0 }
+    }
+
+    /// Whether the latest authenticated Codex catalog says `modelId` requires
+    /// Responses Lite. A missing catalog entry deliberately returns false:
+    /// fallback models predate the Lite contract, while live GPT-5.6 entries
+    /// carry the authoritative flag.
+    public static func usesResponsesLite(modelId: String) -> Bool {
+        lastDiscoverySummaryBox.withLock {
+            $0?.responsesLiteModels.contains(modelId) == true
+        }
+    }
+
+    /// Latest catalog capability metadata for `slug`, or nil before the first
+    /// successful discovery / for fallback models that predate the catalog.
+    public static func modelMetadata(forSlug slug: String) -> CodexModelMetadata? {
+        lastDiscoverySummaryBox.withLock { $0?.modelMetadata[slug] }
+    }
+
     /// Live model catalog fetched from the ChatGPT/Codex backend, matching what
     /// `codex-rs`'s `ModelsClient.list_models` does. Filters out chat-only
     /// models so callers only see Codex-Responses-compatible slugs.
@@ -156,7 +290,7 @@ public enum OpenAICodexOAuthService {
     ) async throws -> [String] {
         var components = URLComponents(url: modelsURL, resolvingAgainstBaseURL: false)!
         components.queryItems = [
-            URLQueryItem(name: "client_version", value: clientVersion())
+            URLQueryItem(name: "client_version", value: codexClientVersion)
         ]
 
         var request = URLRequest(url: components.url!)
@@ -166,42 +300,80 @@ public enum OpenAICodexOAuthService {
         request.setValue(tokens.accountId, forHTTPHeaderField: "chatgpt-account-id")
         request.setValue("codex_cli_rs", forHTTPHeaderField: "originator")
         request.setValue("responses=experimental", forHTTPHeaderField: "OpenAI-Beta")
+        request.setValue(codexUserAgent(), forHTTPHeaderField: "User-Agent")
 
         let data = try await performRequest(request, operation: .modelCatalog)
+        let (models, summary) = try decodeModelCatalog(data)
+        lastDiscoverySummaryBox.withLock { $0 = summary }
+        return models
+    }
+
+    /// Decode a live `/models` payload into the Codex-compatible slug list
+    /// plus a summary of what was filtered out and why. Split from the network
+    /// call so the filter can be exercised against wire fixtures in tests.
+    static func decodeModelCatalog(_ data: Data) throws -> (models: [String], summary: ModelDiscoverySummary) {
         guard let decoded = try? JSONDecoder().decode(ModelsResponse.self, from: data) else {
             let preview = String(data: data.prefix(200), encoding: .utf8) ?? "non-text response"
             throw OpenAICodexOAuthError.modelCatalogDecodeFailed(preview)
         }
 
-        return decoded.models
-            .filter(isCodexCompatible)
+        var compatible: [ModelEntry] = []
+        var filtered: [ModelDiscoverySummary.FilteredModel] = []
+        for entry in decoded.models {
+            guard !entry.slug.isEmpty else { continue }
+            if let reason = incompatibilityReason(for: entry) {
+                filtered.append(.init(slug: entry.slug, reason: reason))
+            } else {
+                compatible.append(entry)
+            }
+        }
+
+        let models: [String] =
+            compatible
             .sorted { ($0.priority ?? .max) < ($1.priority ?? .max) }
             .map(\.slug)
             .uniqued()
+        let summary = ModelDiscoverySummary(
+            rawEntryCount: decoded.models.count,
+            compatibleCount: models.count,
+            filteredModels: filtered,
+            responsesLiteModels: Set(
+                compatible
+                    .filter { $0.use_responses_lite == true }
+                    .map(\.slug)
+            ),
+            modelMetadata: Dictionary(
+                compatible.map { ($0.slug, $0.capabilityMetadata) },
+                uniquingKeysWith: { first, _ in first }
+            ),
+            fetchedAt: Date()
+        )
+        return (models, summary)
     }
 
-    /// True when a `/models` entry can be used through the Codex Responses
-    /// backend with a ChatGPT subscription. The same endpoint also returns
-    /// chat-only models (e.g. `gpt-5-4-thinking`), which fail with
-    /// `HTTP 400 "model is not supported when using Codex with a ChatGPT
-    /// account"` if we surface them.
-    private static func isCodexCompatible(_ entry: ModelEntry) -> Bool {
-        guard !entry.slug.isEmpty else { return false }
-
+    /// Nil when a `/models` entry can be used through the Codex Responses
+    /// backend with a ChatGPT subscription; otherwise the reason it must be
+    /// excluded. The same endpoint also returns chat-only models (e.g.
+    /// `gpt-5-4-thinking`), which fail with `HTTP 400 "model is not supported
+    /// when using Codex with a ChatGPT account"` if we surface them.
+    private static func incompatibilityReason(for entry: ModelEntry) -> ModelFilterReason? {
         // Must be a picker-visible model.
-        guard (entry.visibility ?? "list").lowercased() == "list" else { return false }
+        guard (entry.visibility ?? "list").lowercased() == "list" else { return .hiddenVisibility }
 
         // Codex requires shell-tool support. Chat-only models come back with
         // `shell_type: "disabled"`. Treat a missing field as "unknown -> allow"
         // and rely on the slug check below to catch it.
         if let shellType = entry.shell_type, shellType.lowercased() == "disabled" {
-            return false
+            return .shellToolDisabled
         }
 
         // Codex slugs always use a dotted version (e.g. "gpt-5.4-codex").
         // Chat-only slugs use dashes throughout (e.g. "gpt-5-4-thinking",
         // "gpt-4o"). Match the dotted "<family>-<major>.<minor>" prefix.
-        return entry.slug.range(of: #"^gpt-\d+\.\d+"#, options: .regularExpression) != nil
+        if entry.slug.range(of: #"^gpt-\d+\.\d+"#, options: .regularExpression) == nil {
+            return .nonCodexSlug
+        }
+        return nil
     }
 
     /// Convenience wrapper used by call sites that want a single "best
@@ -323,14 +495,31 @@ public enum OpenAICodexOAuthService {
     // MARK: - Internals
 
     /// `client_version` query parameter sent to the Codex `/models` endpoint.
-    /// Mirrors what the Codex CLI does (it sends its own crate version) so the
-    /// backend can gate model availability per client.
-    private static func clientVersion() -> String {
-        let bundleVersion = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String
-        if let bundleVersion, !bundleVersion.isEmpty {
-            return "osaurus-\(bundleVersion)"
-        }
-        return "0.99.0"
+    /// Tracks the openai/codex CLI release: the backend silently filters the
+    /// catalog for older or unrecognized versions (non-semver values like
+    /// "osaurus-1.2.3" get the wrong subset entirely). Bump this to the
+    /// current Codex CLI release when new models stop appearing in discovery.
+    public static let codexClientVersion = "0.144.1"
+
+    /// Codex CLI-style `User-Agent`, mirroring codex-rs's
+    /// `get_codex_user_agent()` format:
+    /// `codex_cli_rs/<version> (<os> <version>; <arch>) <terminal>`.
+    /// The Codex backend routes some models (e.g. gpt-5.6-luna) to internal
+    /// engines based on the originator + User-Agent identity; requests with a
+    /// non-Codex user agent land in a cohort whose engine does not exist and
+    /// fail with HTTP 404 "Model not found" even though the catalog lists the
+    /// model (openai/codex#31967).
+    public static func codexUserAgent() -> String {
+        let os = ProcessInfo.processInfo.operatingSystemVersion
+        #if arch(arm64)
+            let arch = "arm64"
+        #elseif arch(x86_64)
+            let arch = "x86_64"
+        #else
+            let arch = "unknown"
+        #endif
+        return
+            "codex_cli_rs/\(codexClientVersion) (Mac OS \(os.majorVersion).\(os.minorVersion).\(os.patchVersion); \(arch)) unknown"
     }
 
     // MARK: Wire types
@@ -339,11 +528,39 @@ public enum OpenAICodexOAuthService {
         let models: [ModelEntry]
     }
 
+    private struct ReasoningLevelEntry: Decodable {
+        let effort: String?
+        let description: String?
+    }
+
     private struct ModelEntry: Decodable {
         let slug: String
         let visibility: String?
         let priority: Int?
         let shell_type: String?
+        let use_responses_lite: Bool?
+        let display_name: String?
+        let default_reasoning_level: String?
+        let supported_reasoning_levels: [ReasoningLevelEntry]?
+
+        /// The publishable capability slice of this entry, preserving the
+        /// catalog's level order and dropping malformed (effort-less) levels.
+        var capabilityMetadata: CodexModelMetadata {
+            CodexModelMetadata(
+                slug: slug,
+                displayName: display_name?.trimmingCharacters(in: .whitespacesAndNewlines)
+                    .nilIfEmpty,
+                defaultReasoningLevel: default_reasoning_level?
+                    .trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty,
+                supportedReasoningLevels: (supported_reasoning_levels ?? []).compactMap { level in
+                    guard let effort = level.effort?.trimmingCharacters(in: .whitespacesAndNewlines),
+                        !effort.isEmpty
+                    else { return nil }
+                    return CodexReasoningLevel(effort: effort, description: level.description)
+                },
+                usesResponsesLite: use_responses_lite == true
+            )
+        }
     }
 
     private struct TokenResponse: Decodable {
@@ -442,7 +659,11 @@ public enum OpenAICodexOAuthService {
         }
 
         do {
-            return try await server.waitForCallback()
+            // Bounded wait: an abandoned browser tab must not pin this task
+            // (and the fixed loopback port) forever.
+            return try await server.waitForCallback(
+                timeout: OAuthLoopbackServer.defaultSignInTimeout
+            )
         } catch let error as OAuthLoopbackError {
             throw mapLoopbackError(error)
         } catch {
@@ -463,6 +684,8 @@ public enum OpenAICodexOAuthService {
             return .authorizationCallbackRejected(detail.isEmpty ? "OAuth provider returned an error" : detail)
         case .invalidCallback:
             return .authorizationCallbackFailed("invalid callback path or request")
+        case .callbackTimeout:
+            return .authorizationCallbackFailed("timed out waiting for browser callback")
         }
     }
 }
@@ -470,6 +693,10 @@ public enum OpenAICodexOAuthService {
 // MARK: - Helpers
 
 extension String {
+    fileprivate var nilIfEmpty: String? {
+        isEmpty ? nil : self
+    }
+
     fileprivate func replacingMatches(of pattern: String, with template: String) -> String {
         guard let regex = try? NSRegularExpression(pattern: pattern) else { return self }
         let range = NSRange(startIndex ..< endIndex, in: self)

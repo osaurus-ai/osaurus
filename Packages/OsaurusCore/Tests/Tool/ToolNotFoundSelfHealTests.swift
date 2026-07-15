@@ -40,5 +40,12 @@ struct ToolNotFoundSelfHealTests {
         // Message must mention the tool name so the model knows what failed.
         let message = parsed?["message"] as? String ?? ""
         #expect(message.contains(unknownName))
+
+        // Regression (E4B loop): the bare dead-end message left small models
+        // apologizing ("that tool is not available") when the real tool was
+        // in their schema under another name. The envelope must steer back
+        // to the schema without listing tool names (lists trigger invention).
+        #expect(message.contains("tool schema"))
+        #expect(message.contains("Do not guess"))
     }
 }

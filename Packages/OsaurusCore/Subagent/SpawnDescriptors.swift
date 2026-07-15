@@ -168,7 +168,12 @@ public enum SpawnDescriptors {
             let locality = classify(item: item)
             return (locality.isLocal, locality.providerName, trimmed)
         }
-        if ModelManager.findInstalledModel(named: trimmed) != nil {
+        // Cache-backed lookup only: this runs on the MainActor from view-body
+        // paths (ChatView's context-token estimate → system-prompt preview),
+        // and `findInstalledModel` parks on the local-models scan condition
+        // for up to ~10s on a cold cache. A cold cache just means the
+        // locality badge is omitted for this render.
+        if ModelManager.findInstalledMLXModelFromCache(named: trimmed) != nil {
             return (true, nil, trimmed)
         }
         return (nil, nil, trimmed)

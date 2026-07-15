@@ -97,6 +97,16 @@ final class ChatSessionsManager: ObservableObject {
         upsertInMemory(session)
     }
 
+    /// Non-blocking save. Updates the in-memory list synchronously (so the
+    /// recent-sessions UI is correct immediately) but hands the disk write to
+    /// the database's serial queue. Use from main-actor hot paths like run
+    /// cleanup where a synchronous encode + DB transaction on a large
+    /// conversation can trip the app-hang watchdog.
+    func saveAsync(_ session: ChatSessionData) {
+        ChatSessionStore.saveAsync(session)
+        upsertInMemory(session)
+    }
+
     /// Delete a session by ID
     func delete(id: UUID) {
         ChatSessionStore.delete(id: id)
@@ -109,8 +119,8 @@ final class ChatSessionsManager: ObservableObject {
     /// Rename a session.
     ///
     /// Pulls from the in-memory list first because new sessions are only
-    /// flushed to `ChatSessionStore` after their first turn writes, so a
-    /// rename issued before that flush would otherwise be dropped.
+    /// discoverable there until the pre-stream first-turn save reaches
+    /// `ChatSessionStore`; otherwise an early rename could be dropped.
     func rename(id: UUID, title: String) {
         guard
             var session = sessions.first(where: { $0.id == id })

@@ -35,3 +35,22 @@ jobs:
           tags: |
             ghcr.io/osaurus-ai/sandbox:latest
             ghcr.io/osaurus-ai/sandbox:${{ github.sha }}
+
+      # First-run download budget guard: print the pinned digest plus the
+      # per-layer compressed sizes so a PR that balloons the image (or
+      # collapses it back into one giant layer that defeats the client's
+      # concurrent layer downloader) is visible at review time.
+      - name: Report image digest and layer sizes
+        run: |
+          set -euo pipefail
+          REF="ghcr.io/osaurus-ai/sandbox:${{ github.sha }}"
+          echo "== $REF =="
+          docker buildx imagetools inspect "$REF" --raw | jq -r '
+            if .manifests then .manifests[].digest else empty end' | while read -r digest; do
+            docker buildx imagetools inspect "$REF@$digest" --raw | jq -r '
+              .layers
+              | to_entries[]
+              | "layer \(.key): \(.value.size / 1048576 * 100 | round / 100) MiB (\(.value.digest))"'
+            total=$(docker buildx imagetools inspect "$REF@$digest" --raw | jq '[.layers[].size] | add')
+            echo "total compressed: $((total / 1048576)) MiB"
+          done

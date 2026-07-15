@@ -58,6 +58,9 @@ public final class VADService: ObservableObject {
 
     // Debounce detection to avoid duplicate triggers
     private var lastDetectionTime: Date = .distantPast
+
+    /// True while an off-main agent-detection pass is running.
+    private var isDetectionInFlight = false
     private let detectionCooldown: TimeInterval = 3.0  // Seconds before detecting same agent again
 
     // Auto-restart management
@@ -318,26 +321,45 @@ public final class VADService: ObservableObject {
         let now = Date()
         guard now.timeIntervalSince(lastDetectionTime) >= detectionCooldown else { return }
 
-        if let detection = detector.detect(in: text) {
-            lastDetectionTime = now
+        // Skip if a detection pass is already running; the next transcription
+        // update will retry with fresher text anyway.
+        guard !isDetectionInFlight else { return }
+        isDetectionInFlight = true
 
-            print(
-                "[VADService] ✅ Detected agent: \(detection.agentName) with confidence \(detection.confidence) in '\(text)'"
-            )
+        // Fuzzy matching over every agent name and wake variation is heavy on
+        // long transcriptions, so run it off the main actor. The detector is
+        // immutable and Sendable.
+        Task.detached(priority: .userInitiated) { [weak self] in
+            let detection = detector.detect(in: text)
+            await MainActor.run { [weak self] in
+                guard let self else { return }
+                self.isDetectionInFlight = false
+                guard let detection else { return }
+                // Re-check the cooldown: another pass may have fired while
+                // this one was off-main.
+                let now = Date()
+                guard now.timeIntervalSince(self.lastDetectionTime) >= self.detectionCooldown
+                else { return }
+                self.lastDetectionTime = now
 
-            // Pause VAD (will resume when ChatView closes)
-            Task {
-                await self.pause()
-
-                // Clear transcription to avoid re-detecting same phrase
-                speechService.clearTranscription()
-                accumulatedTranscription = ""
-
-                // Post notification to open chat with voice mode
-                NotificationCenter.default.post(
-                    name: .vadAgentDetected,
-                    object: detection
+                print(
+                    "[VADService] ✅ Detected agent: \(detection.agentName) with confidence \(detection.confidence) in '\(text)'"
                 )
+
+                // Pause VAD (will resume when ChatView closes)
+                Task {
+                    await self.pause()
+
+                    // Clear transcription to avoid re-detecting same phrase
+                    self.speechService.clearTranscription()
+                    self.accumulatedTranscription = ""
+
+                    // Post notification to open chat with voice mode
+                    NotificationCenter.default.post(
+                        name: .vadAgentDetected,
+                        object: detection
+                    )
+                }
             }
         }
     }

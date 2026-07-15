@@ -161,7 +161,7 @@ public final class SpeechModelManager: ObservableObject {
     public var totalDownloadedSizeString: String {
         let count = downloadedModelsCount
         if count == 0 { return L("No models") }
-        return L("\(count) model\(count == 1 ? "" : "s") ready")
+        return L("\(count) models ready")
     }
 
     // MARK: - Download Methods

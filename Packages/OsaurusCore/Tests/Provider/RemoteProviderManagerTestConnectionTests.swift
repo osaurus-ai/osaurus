@@ -46,6 +46,28 @@ struct RemoteProviderManagerTestConnectionTests {
         }
     }
 
+    @Test func testConnectionCodexWithoutStoredTokensReturnsStaticFallback() async throws {
+        try await RemoteProviderTestLock.shared.run {
+            // No OAuth tokens exist for a fresh provider id, so the Codex
+            // branch must fall back to the static catalog without touching
+            // the network (there is no transport override to answer it).
+            let models = try await RemoteProviderManager.shared.testConnection(
+                host: "chatgpt.com",
+                providerProtocol: .https,
+                port: nil,
+                basePath: "/backend-api",
+                authType: .openAICodexOAuth,
+                providerType: .openAICodex,
+                apiKey: nil,
+                headers: [:],
+                manualModelIds: [],
+                providerId: UUID()
+            )
+
+            #expect(models == OpenAICodexOAuthService.supportedModels)
+        }
+    }
+
     @Test func testConnectionFailureCarriesRedactedReplayDiagnostics() async throws {
         try await RemoteProviderTestLock.shared.run {
             let manager = RemoteProviderManager.shared

@@ -1482,7 +1482,13 @@ public final class MemoryDatabase: @unchecked Sendable {
                     }
                 }
             )
-            return facts
+            // Natural-language queries ("What is the name of my boat?")
+            // AND-match nothing against short facts; fall through to the
+            // loose-term pass instead of returning empty (mirrors
+            // `searchTranscriptText`).
+            if !facts.isEmpty {
+                return facts
+            }
         }
 
         // Legacy LIKE fallback (no FTS5 available).
@@ -1507,7 +1513,31 @@ public final class MemoryDatabase: @unchecked Sendable {
                 }
             }
         )
-        return facts
+        if !facts.isEmpty {
+            return facts
+        }
+
+        // Loose-term recall: score active facts by how many meaningful query
+        // words they contain (same shape as `searchTranscriptLooseText`).
+        let terms = Self.looseSearchTerms(trimmed)
+        guard !terms.isEmpty else { return [] }
+        let candidates = try loadPinnedFacts(agentId: agentId, limit: max(limit * 50, 250))
+        let scored = candidates.compactMap { fact -> (fact: PinnedFact, score: Int)? in
+            let content = fact.content.lowercased()
+            let score = terms.reduce(0) { partial, term in
+                partial + (content.contains(term) ? 1 : 0)
+            }
+            guard score > 0 else { return nil }
+            return (fact, score)
+        }
+        return
+            scored
+            .sorted {
+                if $0.score != $1.score { return $0.score > $1.score }
+                return $0.fact.salience > $1.fact.salience
+            }
+            .prefix(limit)
+            .map(\.fact)
     }
 
     public func decayPinnedSalience(halfLifeDays: Double) throws {
@@ -1808,7 +1838,12 @@ public final class MemoryDatabase: @unchecked Sendable {
                     }
                 }
             )
-            return episodes
+            // Same rationale as `searchPinnedFactsText`: an AND-match of a
+            // full natural-language question rarely hits an episode summary;
+            // fall through to the loose-term pass instead of returning empty.
+            if !episodes.isEmpty {
+                return episodes
+            }
         }
 
         var sql = """
@@ -1834,7 +1869,31 @@ public final class MemoryDatabase: @unchecked Sendable {
                 }
             }
         )
-        return episodes
+        if !episodes.isEmpty {
+            return episodes
+        }
+
+        // Loose-term recall over summary/topics/entities (same shape as
+        // `searchTranscriptLooseText`).
+        let terms = Self.looseSearchTerms(trimmed)
+        guard !terms.isEmpty else { return [] }
+        let candidates = try loadEpisodes(agentId: agentId, days: 0, limit: max(limit * 50, 250))
+        let scored = candidates.compactMap { episode -> (episode: Episode, score: Int)? in
+            let haystack = "\(episode.summary) \(episode.topicsCSV) \(episode.entitiesCSV)".lowercased()
+            let score = terms.reduce(0) { partial, term in
+                partial + (haystack.contains(term) ? 1 : 0)
+            }
+            guard score > 0 else { return nil }
+            return (episode, score)
+        }
+        return
+            scored
+            .sorted {
+                if $0.score != $1.score { return $0.score > $1.score }
+                return $0.episode.conversationAt > $1.episode.conversationAt
+            }
+            .prefix(limit)
+            .map(\.episode)
     }
 
     public func episodeStats(agentId: String? = nil) throws -> Int {
@@ -2735,6 +2794,8 @@ public final class MemoryDatabase: @unchecked Sendable {
             SELECT
                 SUM(CASE WHEN status = 'pending' THEN 1 ELSE 0 END),
                 COUNT(DISTINCT CASE WHEN status = 'pending' THEN conversation_id END),
+                SUM(CASE WHEN status = 'processed' THEN 1 ELSE 0 END),
+                SUM(CASE WHEN status = 'dead_letter' THEN 1 ELSE 0 END),
                 COUNT(*)
             FROM pending_signals
             """,
@@ -2744,7 +2805,11 @@ public final class MemoryDatabase: @unchecked Sendable {
                     summary.totalSignals =
                         sqlite3_column_type(stmt, 0) == SQLITE_NULL ? 0 : Int(sqlite3_column_int(stmt, 0))
                     summary.distinctConversations = Int(sqlite3_column_int(stmt, 1))
-                    summary.allTimeSignals = Int(sqlite3_column_int(stmt, 2))
+                    summary.processedSignals =
+                        sqlite3_column_type(stmt, 2) == SQLITE_NULL ? 0 : Int(sqlite3_column_int(stmt, 2))
+                    summary.deadLetteredSignals =
+                        sqlite3_column_type(stmt, 3) == SQLITE_NULL ? 0 : Int(sqlite3_column_int(stmt, 3))
+                    summary.allTimeSignals = Int(sqlite3_column_int(stmt, 4))
                 }
             }
         )
@@ -2806,7 +2871,10 @@ public final class MemoryDatabase: @unchecked Sendable {
             """
             SELECT COUNT(*), AVG(duration_ms),
                    SUM(CASE WHEN status = 'success' THEN 1 ELSE 0 END),
-                   SUM(CASE WHEN status = 'error' THEN 1 ELSE 0 END)
+                   SUM(CASE WHEN status = 'error' THEN 1 ELSE 0 END),
+                   SUM(CASE WHEN status = 'skipped' THEN 1 ELSE 0 END),
+                   SUM(CASE WHEN status = 'empty' THEN 1 ELSE 0 END),
+                   SUM(CASE WHEN status = 'dead_letter' THEN 1 ELSE 0 END)
             FROM processing_log
             """,
             bind: { _ in },
@@ -2817,6 +2885,9 @@ public final class MemoryDatabase: @unchecked Sendable {
                         sqlite3_column_type(stmt, 1) != SQLITE_NULL ? Int(sqlite3_column_int(stmt, 1)) : 0
                     stats.successCount = Int(sqlite3_column_int(stmt, 2))
                     stats.errorCount = Int(sqlite3_column_int(stmt, 3))
+                    stats.skippedCount = Int(sqlite3_column_int(stmt, 4))
+                    stats.emptyCount = Int(sqlite3_column_int(stmt, 5))
+                    stats.deadLetterCount = Int(sqlite3_column_int(stmt, 6))
                 }
             }
         )

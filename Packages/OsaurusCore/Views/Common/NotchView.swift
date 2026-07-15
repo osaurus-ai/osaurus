@@ -3,8 +3,11 @@
 //  osaurus
 //
 //  Dynamic Island-inspired notch UI for background tasks.
-//  Cup-shaped overlay that blends with the display bezel and expands
-//  on hover with a bouncy swing animation and staggered content reveal.
+//  Cup-shaped overlay that blends with the display bezel and expands on
+//  hover into an agent-tabbed activity center: one tab per agent, that
+//  agent's sessions in a rail beneath it, inline quick replies for
+//  clarify pauses and completed runs, and one-click access to the full
+//  chat window.
 //
 
 import SwiftUI
@@ -88,15 +91,38 @@ struct NotchView: View {
 
     // MARK: - State
 
-    /// Split hover tracking: trigger zone (top strip) + body (expanded content).
-    @State private var isHoveringTrigger = false
-    @State private var isHoveringBody = false
-    @State private var activeTaskIndex: Int = 0
+    /// Single hover flag driven by the notch body's own bounds. The hover
+    /// region therefore always matches what's on screen: the compact pill,
+    /// or the expanded card once open. (A previous split trigger-strip +
+    /// body-content scheme let the collapsing card re-report hover from the
+    /// area below the pill and ping-pong the expansion.)
+    @State private var isHovering = false
+    /// Id-based tab/session selection. Resolved against the live task set
+    /// on every render (`resolvedSelection`), so a stale id after a task
+    /// finalizes falls back gracefully instead of pointing at the wrong
+    /// row the way the previous index-based selection could.
+    @State private var selectedAgentId: UUID?
+    @State private var selectedTaskId: UUID?
     @State private var showCancelConfirmation = false
+    @State private var showCloseAgentConfirmation = false
+    @State private var pendingCloseAgentId: UUID?
     @State private var contentRevealed = false
     @State private var absorbingTaskIds: Set<UUID> = []
-
-    private var isHovering: Bool { isHoveringTrigger || isHoveringBody }
+    /// Pending debounced hover transition (dwell before expanding, grace
+    /// period before collapsing). Cancelled whenever the hover state flips
+    /// again before the deadline.
+    @State private var hoverTransitionWorkItem: DispatchWorkItem?
+    /// Draft text for the inline quick-reply composer. Reset whenever the
+    /// surfaced session changes so a half-typed answer can't leak into
+    /// another agent's conversation.
+    @State private var quickReplyText = ""
+    @State private var isQuickReplyFocused = false
+    @State private var isQuickReplyComposing = false
+    @State private var renamingTaskId: UUID?
+    @State private var renameDraft = ""
+    @FocusState private var isRenameFocused: Bool
+    /// Selected options for a multi-select clarify prompt rendered inline.
+    @State private var selectedClarifyOptions: Set<String> = []
 
     // MARK: - Metrics & Colors
 
@@ -112,35 +138,60 @@ struct NotchView: View {
     /// reading it here avoids re-running filter+sort on every body access.
     private var sortedTasks: [BackgroundTaskState] { taskManager.sortedToastTasks }
 
-    private var activeTask: BackgroundTaskState? {
-        guard !sortedTasks.isEmpty else { return nil }
-        let idx = min(activeTaskIndex, sortedTasks.count - 1)
-        return sortedTasks[max(0, idx)]
+    /// Tasks grouped into one tab per agent, ordered by each agent's
+    /// highest-priority task.
+    private var agentGroups: [NotchAgentGroup] { NotchTaskGrouping.groups(from: sortedTasks) }
+
+    /// The stored selection resolved against the live groups, with
+    /// fallback to the first group / its highest-priority task.
+    private var resolvedSelection: (group: NotchAgentGroup, task: BackgroundTaskState)? {
+        NotchTaskGrouping.resolveSelection(
+            groups: agentGroups,
+            selectedAgentId: selectedAgentId,
+            selectedTaskId: selectedTaskId
+        )
     }
+
+    /// The session detailed in the expanded card.
+    private var activeTask: BackgroundTaskState? { resolvedSelection?.task }
+
+    /// The globally highest-priority task — drives the compact pill so the
+    /// collapsed notch always reflects the most urgent work.
+    private var compactTask: BackgroundTaskState? { sortedTasks.first }
 
     /// In-flight inline plugin call to surface when there's no dispatched
     /// `BackgroundTaskState` to render. Lets the user see that, e.g., the
     /// Telegram plugin is generating a reply via `complete_stream` even
     /// though the call never created a task.
     private var topPluginActivity: PluginActivityRecord? {
-        guard activeTask == nil else { return nil }
+        guard sortedTasks.isEmpty else { return nil }
         return pluginActivity.topActivity
     }
 
     private var expansion: NotchExpansion {
-        if activeTask != nil { return isHovering ? .expanded : .compact }
+        if !sortedTasks.isEmpty {
+            return (isHovering || isQuickReplyFocused || isRenameFocused) ? .expanded : .compact
+        }
         if topPluginActivity != nil { return isHovering ? .expanded : .compact }
         return .hidden
     }
 
-    private var accentColor: Color {
-        guard let task = activeTask else { return theme.accentColorLight }
+    private func statusColor(for task: BackgroundTaskState?) -> Color {
+        guard let task else { return theme.accentColorLight }
         switch task.status {
+        case .queued: return notchTertiaryText
         case .running: return theme.accentColorLight
-        case .awaitingClarification: return theme.warningColor
-        case .completed(let success, _): return success ? theme.successColor : theme.errorColor
+        case .waitingForInput: return theme.warningColor
+        case .completed: return theme.successColor
+        case .failed: return theme.errorColor
         case .cancelled: return notchTertiaryText
         }
+    }
+
+    /// Accent for the expanded card (selected session) or the compact pill
+    /// (highest-priority session).
+    private var accentColor: Color {
+        statusColor(for: expansion == .compact ? compactTask : (activeTask ?? compactTask))
     }
 
     // MARK: - Sizing
@@ -149,8 +200,22 @@ struct NotchView: View {
         switch expansion {
         case .hidden: return 0
         case .compact: return metrics.notchWidth + 60
-        case .expanded: return max(340, metrics.notchWidth + 140)
+        case .expanded: return max(460, metrics.notchWidth + 210)
         }
+    }
+
+    /// Extra top inset for the expanded card when the overlay is anchored on
+    /// the menu bar and the display has a physical notch. The panel's top edge
+    /// then sits at the very top of the screen, so the hardware notch cutout
+    /// overlaps the card's header; push the content down past it (issue #1951).
+    /// Zero for below-the-menu-bar placement, non-notch displays, and the
+    /// compact pill (whose icons are meant to straddle the cutout).
+    private var hardwareNotchTopInset: CGFloat {
+        guard expansion == .expanded,
+            metrics.hasHardwareNotch,
+            NotchOverlayPlacement.resolved(for: metrics) == .onMenuBar
+        else { return 0 }
+        return metrics.notchHeight
     }
 
     /// Compact: flush with bezel. Expanded: content-driven via fixedSize.
@@ -186,11 +251,11 @@ struct NotchView: View {
         }
     }
 
-    /// Resolves the agent associated with the currently-surfaced task so we
-    /// can render its avatar in the notch. Falls back to the default agent
-    /// when there is no task or the task's agent has since been deleted.
-    private var notchAgent: Agent {
-        if let agentId = activeTask?.agentId,
+    /// Resolves the agent behind a task/tab so we can render its avatar
+    /// and name. Falls back to the default agent when the id is missing
+    /// or the agent has since been deleted.
+    private func agent(withId agentId: UUID?) -> Agent {
+        if let agentId,
             let match = AgentManager.shared.agents.first(where: { $0.id == agentId })
         {
             return match
@@ -199,8 +264,7 @@ struct NotchView: View {
     }
 
     @ViewBuilder
-    private func notchAvatar(size: CGFloat) -> some View {
-        let agent = notchAgent
+    private func notchAvatar(agent: Agent, size: CGFloat) -> some View {
         if agent.isBuiltIn {
             ZStack {
                 Circle()
@@ -233,6 +297,19 @@ struct NotchView: View {
         .spring(response: 0.45, dampingFraction: 0.68, blendDuration: 0.1)
     }
 
+    /// Collapse animation. The bouncy `swingSpring` reads as playful on the
+    /// way open but as judder on the way closed — the card overshoots past
+    /// pill size and rebounds after its content has already faded. Nearly
+    /// critically damped so the collapse settles in one motion.
+    private var settleSpring: Animation {
+        .spring(response: 0.38, dampingFraction: 0.9, blendDuration: 0.1)
+    }
+
+    /// Direction-aware animation for expansion-state changes.
+    private var expansionAnimation: Animation {
+        expansion == .expanded ? swingSpring : settleSpring
+    }
+
     // MARK: - Body
 
     var body: some View {
@@ -247,16 +324,50 @@ struct NotchView: View {
                     )
             }
         }
-        .animation(swingSpring, value: expansion)
+        .padding(.top, windowController.alertContentTopPadding)
+        .animation(expansionAnimation, value: expansion)
         .animation(swingSpring, value: sortedTasks.map(\.id))
-        .animation(swingSpring, value: activeTaskIndex)
-        .onChange(of: sortedTasks.count) { _, newCount in
-            if activeTaskIndex >= newCount {
-                activeTaskIndex = max(0, newCount - 1)
+        .animation(swingSpring, value: selectedAgentId)
+        .animation(swingSpring, value: selectedTaskId)
+        .onChange(of: sortedTasks.map(\.id)) { _, ids in
+            // Drop stale stored selections so a later tap starts from the
+            // resolved fallback rather than resurrecting a finalized id.
+            if let taskId = selectedTaskId, !ids.contains(taskId) {
+                selectedTaskId = nil
+            }
+            if let agentId = selectedAgentId,
+                !sortedTasks.contains(where: { $0.agentId == agentId })
+            {
+                selectedAgentId = nil
             }
         }
-        .onChange(of: isHoveringTrigger) { _, _ in handleHoverChange() }
-        .onChange(of: isHoveringBody) { _, _ in handleHoverChange() }
+        .onChange(of: activeTask?.id) { _, _ in
+            // A different session is now surfaced — clear reply drafts so
+            // they can't be submitted into the wrong conversation.
+            quickReplyText = ""
+            selectedClarifyOptions = []
+            isQuickReplyFocused = false
+            renamingTaskId = nil
+            renameDraft = ""
+            isRenameFocused = false
+        }
+        .onChange(of: isHovering) { _, _ in handleHoverChange() }
+        .onChange(of: isQuickReplyFocused) { _, _ in handleHoverChange() }
+        .onChange(of: isRenameFocused) { _, _ in handleHoverChange() }
+        .onReceive(
+            NotificationCenter.default.publisher(
+                for: NotchWindowController.navigateToPreviousSessionNotification
+            )
+        ) { _ in
+            navigateSession(by: -1)
+        }
+        .onReceive(
+            NotificationCenter.default.publisher(
+                for: NotchWindowController.navigateToNextSessionNotification
+            )
+        ) { _ in
+            navigateSession(by: 1)
+        }
     }
 
     // MARK: - Notch Body
@@ -270,7 +381,7 @@ struct NotchView: View {
             .clipShape(currentShape)
             .contentShape(currentShape)
             .overlay(notchBorderOverlay)
-            .overlay(alignment: .top) { hoverTriggerZone }
+            .onHover(perform: handleBodyHover)
             .shadow(
                 color: Color.black.opacity(expansion == .compact ? 0 : (isHovering ? 0.6 : 0.4)),
                 radius: expansion == .compact ? 0 : (isHovering ? 20 : 12),
@@ -290,16 +401,41 @@ struct NotchView: View {
                 secondaryButton: .cancel(L("Keep Running")),
                 presentationStyle: .window
             )
+            .themedAlert(
+                L("Close Agent Tab?"),
+                isPresented: $showCloseAgentConfirmation,
+                message: L("This agent still has active sessions. Closing the tab cancels all of them."),
+                primaryButton: .destructive(L("Cancel Sessions")) {
+                    if let agentId = pendingCloseAgentId {
+                        closeAgentGroup(agentId: agentId)
+                    }
+                    pendingCloseAgentId = nil
+                },
+                secondaryButton: .cancel(L("Keep Running")) {
+                    pendingCloseAgentId = nil
+                },
+                presentationStyle: .window
+            )
     }
 
-    /// Thin strip at the top that triggers hover — the only entry point for expansion.
-    private var hoverTriggerZone: some View {
-        Color.clear
-            .frame(width: metrics.notchWidth + 60, height: metrics.notchHeight)
-            .contentShape(Rectangle())
-            .onHover { hovering in
-                withAnimation(swingSpring) { isHoveringTrigger = hovering }
-            }
+    /// Hover on the notch body — the only entry point for expansion, sized
+    /// by whatever is actually rendered (compact pill or expanded card).
+    /// Both directions are debounced. Expanding requires a short dwell: the
+    /// pill floats over whatever window sits below (e.g. a browser's tab
+    /// strip), so a cursor merely passing through on its way to that window
+    /// must not balloon the card open and steal the click. Collapsing gets a
+    /// grace period so skimming the card's edge (or the jitter of a hand
+    /// coming to rest) doesn't slam it shut and replay the animation.
+    private func handleBodyHover(_ hovering: Bool) {
+        hoverTransitionWorkItem?.cancel()
+        hoverTransitionWorkItem = nil
+        guard hovering != isHovering else { return }
+        let delay = hovering ? 0.15 : 0.2
+        let work = DispatchWorkItem {
+            withAnimation(hovering ? swingSpring : settleSpring) { isHovering = hovering }
+        }
+        hoverTransitionWorkItem = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: work)
     }
 
     // MARK: - Content Switching
@@ -322,7 +458,16 @@ struct NotchView: View {
                             .combined(with: .scale(scale: 0.6, anchor: .top))
                             .combined(with: .opacity)
                     )
-                    : .opacity
+                    // Plain .opacity removal leaves a full-size ghost of the
+                    // card cross-fading over the already-final-size pill, so
+                    // the collapse reads as an abrupt size snap. Scaling the
+                    // outgoing card toward its top anchor makes it visibly
+                    // retract into the pill instead.
+                    : .asymmetric(
+                        insertion: .opacity,
+                        removal: .scale(scale: 0.12, anchor: .top)
+                            .combined(with: .opacity)
+                    )
             )
         }
     }
@@ -341,8 +486,21 @@ struct NotchView: View {
 
     @ViewBuilder
     private var compactLeading: some View {
-        if activeTask != nil || topPluginActivity != nil {
-            notchAvatar(size: orbSize)
+        if compactTask != nil || topPluginActivity != nil {
+            notchAvatar(agent: agent(withId: compactTask?.agentId), size: orbSize)
+                .overlay(alignment: .bottomTrailing) {
+                    // Aggregate count so the collapsed pill signals there is
+                    // more than the one surfaced session.
+                    if sortedTasks.count > 1 {
+                        Text("\(sortedTasks.count)")
+                            .font(.system(size: 7, weight: .bold, design: .rounded))
+                            .foregroundColor(.white)
+                            .padding(.horizontal, 3)
+                            .padding(.vertical, 1)
+                            .background(Capsule().fill(Color.white.opacity(0.28)))
+                            .offset(x: 7, y: 4)
+                    }
+                }
                 .animation(swingSpring, value: orbSize)
                 .transition(.opacity.combined(with: .scale(scale: 0.5)))
         }
@@ -350,18 +508,25 @@ struct NotchView: View {
 
     @ViewBuilder
     private var compactTrailing: some View {
-        if let task = activeTask {
+        if let task = compactTask {
             switch task.status {
-            case .running, .awaitingClarification:
+            case .queued, .running, .waitingForInput:
                 // Chat tasks don't expose structured progress — show
                 // indeterminate ring (passing -1 makes NotchProgressRing
                 // animate continuously).
                 NotchProgressRing(progress: -1, color: accentColor, size: 14, lineWidth: 1.5)
                     .transition(.opacity.combined(with: .scale(scale: 0.5)))
-            case .completed(let success, _):
+            case .completed:
                 MorphingStatusIcon(
-                    state: success ? .completed : .failed,
-                    accentColor: success ? theme.successColor : theme.errorColor,
+                    state: .completed,
+                    accentColor: theme.successColor,
+                    size: 14
+                )
+                .transition(.opacity.combined(with: .scale(scale: 0.5)))
+            case .failed:
+                MorphingStatusIcon(
+                    state: .failed,
+                    accentColor: theme.errorColor,
                     size: 14
                 )
                 .transition(.opacity.combined(with: .scale(scale: 0.5)))
@@ -379,66 +544,168 @@ struct NotchView: View {
 
     private var expandedContent: some View {
         VStack(alignment: .leading, spacing: 0) {
-            Color.clear.frame(height: metrics.notchHeight)
+            VStack(alignment: .leading, spacing: 12) {
+                if let selection = resolvedSelection {
+                    activeAgentHeader(group: selection.group)
 
-            VStack(alignment: .leading, spacing: 8) {
-                expandedHeader
-
-                if let task = activeTask {
-                    switch task.status {
-                    case .running, .awaitingClarification:
-                        expandedRunningBody(task: task)
-                    case .completed(_, let summary):
-                        expandedCompletedBody(summary: summary, task: task)
-                    case .cancelled:
-                        expandedCancelledBody(task: task)
+                    if agentGroups.count > 1 {
+                        NotchAgentTabRail(
+                            groups: agentGroups,
+                            selectedAgentId: selection.group.agentId,
+                            agentResolver: agent(withId:),
+                            avatarBuilder: { agent, size in AnyView(notchAvatar(agent: agent, size: size)) },
+                            statusColor: { statusColor(for: $0) },
+                            onSelect: selectAgent,
+                            onClose: requestCloseAgentGroup
+                        )
                     }
+
+                    if selection.group.tasks.count > 1 {
+                        NotchSessionRail(
+                            tasks: selection.group.tasks,
+                            selectedTaskId: selection.task.id,
+                            statusColor: { statusColor(for: $0) },
+                            onSelect: selectTask,
+                            onRename: beginRename,
+                            onPrevious: { navigateSession(by: -1) },
+                            onNext: { navigateSession(by: 1) }
+                        )
+                    }
+
+                    VStack(alignment: .leading, spacing: 10) {
+                        expandedHeader(task: selection.task)
+                        expandedBody(for: selection.task)
+                    }
+                    .padding(12)
+                    .background(
+                        RoundedRectangle(cornerRadius: 14, style: .continuous)
+                            .fill(Color.white.opacity(0.045))
+                    )
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 14, style: .continuous)
+                            .strokeBorder(Color.white.opacity(0.08), lineWidth: 1)
+                    )
+                    .id(selection.task.id)
+                    .transition(
+                        .asymmetric(
+                            insertion: .opacity.combined(with: .move(edge: .trailing)),
+                            removal: .opacity.combined(with: .move(edge: .leading))
+                        )
+                    )
                 } else if let activity = topPluginActivity {
+                    pluginActivityHeader(activity)
                     expandedPluginActivityBody(activity: activity)
                 }
-
-                if sortedTasks.count > 1 { taskDotIndicators }
             }
             .padding(.horizontal, 16)
-            .padding(.top, 6)
+            .padding(.top, 6 + hardwareNotchTopInset)
             .padding(.bottom, 14)
             .opacity(contentRevealed ? 1 : 0)
             .offset(y: contentRevealed ? 0 : 8)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .onHover { hovering in
-            withAnimation(swingSpring) { isHoveringBody = hovering }
+    }
+
+    /// A persistent agent identity band anchors the hierarchy. It remains
+    /// visible even when there is only one agent (where an agent tab rail
+    /// would otherwise disappear), making it unambiguous whose sessions
+    /// the user is browsing.
+    private func activeAgentHeader(group: NotchAgentGroup) -> some View {
+        let selectedAgent = agent(withId: group.agentId)
+        return HStack(spacing: 10) {
+            notchAvatar(agent: selectedAgent, size: 34)
+                .overlay(alignment: .bottomTrailing) {
+                    Circle()
+                        .fill(statusColor(for: group.primaryTask))
+                        .frame(width: 10, height: 10)
+                        .overlay(Circle().stroke(Color.black, lineWidth: 2))
+                }
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(selectedAgent.name)
+                    .font(.system(size: 15, weight: .bold, design: .rounded))
+                    .foregroundColor(notchPrimaryText)
+                    .lineLimit(1)
+
+                Text(agentSummary(for: group))
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundColor(notchSecondaryText)
+                    .lineLimit(1)
+            }
+
+            Spacer(minLength: 8)
+
+            if agentGroups.count == 1 {
+                Button(action: { requestCloseAgentGroup(group) }) {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 9, weight: .bold))
+                        .foregroundColor(notchTertiaryText)
+                        .frame(width: 24, height: 24)
+                        .background(Circle().fill(Color.white.opacity(0.08)))
+                        .overlay(Circle().strokeBorder(Color.white.opacity(0.1), lineWidth: 1))
+                }
+                .buttonStyle(.plain)
+                .help(L("Close agent tab"))
+                .accessibilityLabel(Text("Close agent tab", bundle: .module))
+            }
         }
     }
 
-    private var expandedHeader: some View {
-        HStack(spacing: 8) {
-            notchAvatar(size: orbSize)
-
-            if let task = activeTask {
-                VStack(alignment: .leading, spacing: 1) {
-                    Text(task.taskTitle)
-                        .font(.system(size: 12, weight: .semibold))
+    private func expandedHeader(task: BackgroundTaskState) -> some View {
+        HStack(alignment: .center, spacing: 8) {
+            VStack(alignment: .leading, spacing: 1) {
+                if renamingTaskId == task.id {
+                    TextField("", text: $renameDraft)
+                        .textFieldStyle(.plain)
+                        .font(.system(size: 13, weight: .semibold))
                         .foregroundColor(notchPrimaryText)
-                        .lineLimit(1)
-                    Text(headerSubtitle(for: task))
-                        .font(.system(size: 9.5, weight: .medium))
-                        .foregroundColor(notchTertiaryText)
-                        .lineLimit(1)
+                        .focused($isRenameFocused)
+                        .onSubmit { commitRename(task: task) }
+                        .onExitCommand { cancelRename() }
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 3)
+                        .background(
+                            RoundedRectangle(cornerRadius: 6, style: .continuous)
+                                .fill(Color.white.opacity(0.08))
+                        )
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 6, style: .continuous)
+                                .strokeBorder(accentColor.opacity(0.55), lineWidth: 1)
+                        )
+                        .accessibilityLabel(Text("Rename session", bundle: .module))
+                } else {
+                    HStack(spacing: 5) {
+                        Text(task.taskTitle)
+                            .font(.system(size: 13, weight: .semibold))
+                            .foregroundColor(notchPrimaryText)
+                            .lineLimit(1)
+                        Button(action: { beginRename(task) }) {
+                            Image(systemName: "pencil")
+                                .font(.system(size: 8.5, weight: .semibold))
+                                .foregroundColor(notchTertiaryText)
+                                .frame(width: 18, height: 18)
+                        }
+                        .buttonStyle(.plain)
+                        .help(L("Rename session"))
+                        .accessibilityLabel(Text("Rename session", bundle: .module))
+                    }
                 }
-            } else if let activity = topPluginActivity {
-                VStack(alignment: .leading, spacing: 1) {
-                    Text(activity.pluginDisplayName)
-                        .font(.system(size: 12, weight: .semibold))
-                        .foregroundColor(notchPrimaryText)
-                        .lineLimit(1)
-                    Text("Working", bundle: .module)
+                if let origin = headerOrigin(for: task) {
+                    Text(origin)
                         .font(.system(size: 9.5, weight: .medium))
                         .foregroundColor(notchTertiaryText)
+                        .lineLimit(1)
                 }
             }
 
             Spacer(minLength: 4)
+
+            Text(task.status.displayName)
+                .font(.system(size: 9, weight: .semibold))
+                .foregroundColor(statusColor(for: task))
+                .padding(.horizontal, 7)
+                .padding(.vertical, 3)
+                .background(Capsule().fill(statusColor(for: task).opacity(0.12)))
 
             Button(action: handleDismiss) {
                 Image(systemName: "xmark")
@@ -449,6 +716,43 @@ struct NotchView: View {
                     .overlay(Circle().strokeBorder(Color.white.opacity(0.12), lineWidth: 1))
             }
             .buttonStyle(.plain)
+            .accessibilityLabel(Text("Close session", bundle: .module))
+        }
+    }
+
+    private func pluginActivityHeader(_ activity: PluginActivityRecord) -> some View {
+        HStack(spacing: 8) {
+            notchAvatar(agent: agent(withId: nil), size: orbSize)
+
+            VStack(alignment: .leading, spacing: 1) {
+                Text(activity.pluginDisplayName)
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundColor(notchPrimaryText)
+                    .lineLimit(1)
+                Text("Working", bundle: .module)
+                    .font(.system(size: 9.5, weight: .medium))
+                    .foregroundColor(notchTertiaryText)
+            }
+
+            Spacer(minLength: 4)
+        }
+    }
+
+    // MARK: - Session Detail Bodies
+
+    @ViewBuilder
+    private func expandedBody(for task: BackgroundTaskState) -> some View {
+        switch task.status {
+        case .queued, .running:
+            expandedRunningBody(task: task)
+        case .waitingForInput:
+            expandedWaitingBody(task: task)
+        case .completed(let summary):
+            expandedCompletedBody(summary: summary, task: task)
+        case .failed(let summary):
+            expandedFailedBody(summary: summary, task: task)
+        case .cancelled:
+            expandedCancelledBody(task: task)
         }
     }
 
@@ -460,8 +764,58 @@ struct NotchView: View {
                     .foregroundColor(notchSecondaryText)
                     .lineLimit(2)
             }
-            expandedProgress(task: task)
-            if hasActivityItems { expandedActivityFeed(task: task) }
+            IndeterminateShimmerProgress(color: accentColor, height: 3)
+            if hasActivityItems(for: task) { expandedActivityFeed(task: task) }
+
+            notchActionButton("Open Chat") {
+                BackgroundTaskManager.shared.openTaskWindow(task.id)
+            }
+        }
+    }
+
+    /// Waiting-for-input detail: the clarify question with inline answer
+    /// controls (option chips / free-form field), mirroring the in-chat
+    /// `ClarifyPromptOverlay` interaction modes. "Open Chat" stays
+    /// available for answering with full conversation context.
+    private func expandedWaitingBody(task: BackgroundTaskState) -> some View {
+        let payload = task.chatSession?.awaitingClarify
+        return VStack(alignment: .leading, spacing: 8) {
+            if !contextMessages(for: task, maxMessages: 2).isEmpty {
+                conversationContext(task: task, maxMessages: 2)
+            }
+
+            if let question = payload?.question, !question.isEmpty {
+                Text(question)
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundColor(notchPrimaryText)
+                    .lineLimit(3)
+                    .fixedSize(horizontal: false, vertical: true)
+            } else if let step = task.currentStep {
+                Text(step)
+                    .font(.system(size: 10.5, weight: .medium))
+                    .foregroundColor(notchSecondaryText)
+                    .lineLimit(2)
+            }
+
+            if let payload, !payload.options.isEmpty {
+                clarifyOptionChips(payload: payload, task: task)
+                if payload.allowMultiple {
+                    clarifyMultiSelectSubmitRow(payload: payload, task: task)
+                }
+            }
+
+            // Free-form input: the only path for optionless questions, and
+            // the "my answer isn't on the menu" escape hatch alongside
+            // single-select chips. Multi-select keeps the structured answer
+            // unambiguous by omitting it, matching ClarifyPromptOverlay.
+            if payload?.allowMultiple != true {
+                quickReplyComposer(
+                    task: task,
+                    placeholder: (payload?.options.isEmpty ?? true)
+                        ? "Type your answer…"
+                        : "Or type a custom answer…"
+                )
+            }
 
             notchActionButton("Open Chat") {
                 BackgroundTaskManager.shared.openTaskWindow(task.id)
@@ -470,14 +824,81 @@ struct NotchView: View {
     }
 
     private func expandedCompletedBody(summary: String, task: BackgroundTaskState) -> some View {
-        VStack(spacing: 8) {
+        VStack(alignment: .leading, spacing: 8) {
+            if !contextMessages(for: task, maxMessages: 4).isEmpty {
+                conversationContext(task: task, maxMessages: 4)
+            } else {
+                Text(summary)
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundColor(notchSecondaryText)
+                    .lineLimit(3)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+
+            quickReplyComposer(task: task, placeholder: "Reply to follow up…")
+
+            notchActionButton("View Chat") {
+                BackgroundTaskManager.shared.openTaskWindow(task.id)
+            }
+        }
+    }
+
+    private func conversationContext(task: BackgroundTaskState, maxMessages: Int) -> some View {
+        let messages = contextMessages(for: task, maxMessages: maxMessages)
+        let selectedAgent = agent(withId: task.agentId)
+        return VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Image(systemName: "text.bubble")
+                    .font(.system(size: 9, weight: .semibold))
+                Text("RECENT CONTEXT", bundle: .module)
+                    .font(.system(size: 8.5, weight: .bold, design: .rounded))
+                    .tracking(0.9)
+                Spacer()
+            }
+            .foregroundColor(notchTertiaryText)
+
+            ScrollView(.vertical, showsIndicators: false) {
+                VStack(alignment: .leading, spacing: 8) {
+                    ForEach(Array(messages.enumerated()), id: \.offset) { _, message in
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(message.role == "user" ? L("You") : selectedAgent.name)
+                                .font(.system(size: 9, weight: .bold))
+                                .foregroundColor(
+                                    message.role == "user"
+                                        ? notchTertiaryText
+                                        : statusColor(for: task)
+                                )
+                            Text(message.content)
+                                .font(.system(size: 10.5, weight: .medium))
+                                .foregroundColor(notchSecondaryText)
+                                .lineLimit(3)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                        }
+                    }
+                }
+            }
+            .frame(maxHeight: 128)
+        }
+        .padding(10)
+        .background(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .fill(Color.black.opacity(0.18))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .strokeBorder(Color.white.opacity(0.07), lineWidth: 1)
+        )
+    }
+
+    private func expandedFailedBody(summary: String, task: BackgroundTaskState) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
             Text(summary)
                 .font(.system(size: 11, weight: .medium))
                 .foregroundColor(notchSecondaryText)
                 .lineLimit(3)
                 .frame(maxWidth: .infinity, alignment: .leading)
 
-            if hasActivityItems { expandedActivityFeed(task: task) }
+            if hasActivityItems(for: task) { expandedActivityFeed(task: task) }
 
             notchActionButton("View Chat") {
                 BackgroundTaskManager.shared.openTaskWindow(task.id)
@@ -500,19 +921,12 @@ struct NotchView: View {
             Text("Task was cancelled", bundle: .module)
                 .font(.system(size: 11, weight: .medium))
                 .foregroundColor(notchSecondaryText)
-            if hasActivityItems { expandedActivityFeed(task: task) }
+            if hasActivityItems(for: task) { expandedActivityFeed(task: task) }
 
             notchActionButton("View Chat") {
                 BackgroundTaskManager.shared.openTaskWindow(task.id)
             }
         }
-    }
-
-    @ViewBuilder
-    private func expandedProgress(task: BackgroundTaskState) -> some View {
-        // Chat tasks have no structured progress signal, so always show
-        // an indeterminate shimmer while the task is running.
-        IndeterminateShimmerProgress(color: accentColor, height: 3)
     }
 
     private func expandedActivityFeed(task: BackgroundTaskState) -> some View {
@@ -531,23 +945,191 @@ struct NotchView: View {
         )
     }
 
-    // MARK: - Multi-Task Dots
+    // MARK: - Quick Reply
 
-    private var taskDotIndicators: some View {
-        HStack(spacing: 6) {
-            Spacer()
-            ForEach(Array(sortedTasks.enumerated()), id: \.element.id) { index, _ in
-                Circle()
-                    .fill(index == activeTaskIndex ? accentColor : notchTertiaryText)
-                    .frame(width: 6, height: 6)
-                    .scaleEffect(index == activeTaskIndex ? 1.2 : 1.0)
-                    .onTapGesture {
-                        withAnimation(swingSpring) { activeTaskIndex = index }
+    private func quickReplyComposer(task: BackgroundTaskState, placeholder: String) -> some View {
+        let canSubmit = !quickReplyText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        return VStack(alignment: .leading, spacing: 4) {
+            HStack(alignment: .bottom, spacing: 8) {
+                EditableTextView(
+                    text: $quickReplyText,
+                    fontSize: 12,
+                    textColor: notchPrimaryText,
+                    cursorColor: accentColor,
+                    isFocused: $isQuickReplyFocused,
+                    isComposing: $isQuickReplyComposing,
+                    maxHeight: 76,
+                    onCommit: { submitQuickReplyText(task: task) },
+                    onShiftCommit: nil,  // Shift+Enter inserts a newline.
+                    onEscape: {
+                        isQuickReplyFocused = false
+                        return true
                     }
+                )
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(.horizontal, 5)
+                .padding(.vertical, 7)
+                .overlay(alignment: .topLeading) {
+                    if quickReplyText.isEmpty {
+                        Text(LocalizedStringKey(placeholder), bundle: .module)
+                            .font(.system(size: 12))
+                            .foregroundColor(notchTertiaryText)
+                            .padding(.leading, 11)
+                            .padding(.top, 9)
+                            .allowsHitTesting(false)
+                    }
+                }
+                .background(
+                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                        .fill(Color.white.opacity(isQuickReplyFocused ? 0.1 : 0.065))
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                        .strokeBorder(
+                            isQuickReplyFocused ? accentColor.opacity(0.7) : Color.white.opacity(0.12),
+                            lineWidth: isQuickReplyFocused ? 1.5 : 1
+                        )
+                )
+                .shadow(color: isQuickReplyFocused ? accentColor.opacity(0.14) : .clear, radius: 8)
+                .simultaneousGesture(
+                    TapGesture().onEnded {
+                        windowController.prepareForTextInput()
+                        DispatchQueue.main.async { isQuickReplyFocused = true }
+                    }
+                )
+                .accessibilityLabel(Text("Quick reply", bundle: .module))
+
+                Button(action: { submitQuickReplyText(task: task) }) {
+                    Image(systemName: "arrow.up")
+                        .font(.system(size: 12, weight: .bold))
+                        .foregroundColor(canSubmit ? .white : notchTertiaryText)
+                        .frame(width: 34, height: 34)
+                        .background(Circle().fill(canSubmit ? accentColor.opacity(0.85) : Color.white.opacity(0.08)))
+                        .overlay(Circle().strokeBorder(Color.white.opacity(canSubmit ? 0.18 : 0.06), lineWidth: 1))
+                }
+                .buttonStyle(.plain)
+                .disabled(!canSubmit)
+                .accessibilityLabel(Text("Send reply", bundle: .module))
             }
-            Spacer()
+
+            if isQuickReplyFocused {
+                Text("↵ send  ·  ⇧↵ new line  ·  esc dismiss", bundle: .module)
+                    .font(.system(size: 8.5, weight: .medium, design: .rounded))
+                    .foregroundColor(notchTertiaryText)
+                    .padding(.leading, 3)
+                    .transition(.opacity)
+            }
         }
-        .padding(.top, 2)
+    }
+
+    private func clarifyOptionChips(payload: ClarifyPayload, task: BackgroundTaskState) -> some View {
+        ChipFlowLayout(spacing: 6, lineSpacing: 6) {
+            ForEach(payload.options, id: \.self) { option in
+                notchClarifyChip(option, allowMultiple: payload.allowMultiple, task: task)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func notchClarifyChip(
+        _ option: String,
+        allowMultiple: Bool,
+        task: BackgroundTaskState
+    ) -> some View {
+        let isSelected = selectedClarifyOptions.contains(option)
+        return Button {
+            if allowMultiple {
+                if isSelected {
+                    selectedClarifyOptions.remove(option)
+                } else {
+                    selectedClarifyOptions.insert(option)
+                }
+            } else {
+                // Single-select: tapping IS the submission (matching the
+                // in-chat clarify card).
+                submitQuickReply(task: task, answer: option)
+            }
+        } label: {
+            HStack(spacing: 4) {
+                if allowMultiple {
+                    Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
+                        .font(.system(size: 9, weight: .semibold))
+                        .foregroundColor(isSelected ? accentColor : notchTertiaryText)
+                }
+                Text(option)
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundColor(isSelected ? notchPrimaryText : notchSecondaryText)
+                    .lineLimit(1)
+                    .fixedSize(horizontal: true, vertical: false)
+            }
+            .padding(.horizontal, 9)
+            .padding(.vertical, 5)
+            .background(
+                Capsule().fill(isSelected ? accentColor.opacity(0.22) : Color.white.opacity(0.07))
+            )
+            .overlay(
+                Capsule().strokeBorder(
+                    isSelected ? accentColor.opacity(0.5) : Color.white.opacity(0.12),
+                    lineWidth: 1
+                )
+            )
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(Text(option))
+    }
+
+    private func clarifyMultiSelectSubmitRow(
+        payload: ClarifyPayload,
+        task: BackgroundTaskState
+    ) -> some View {
+        HStack {
+            Text(
+                selectedClarifyOptions.isEmpty
+                    ? L("Pick one or more above.")
+                    : "\(selectedClarifyOptions.count) selected"
+            )
+            .font(.system(size: 9.5, weight: .medium))
+            .foregroundColor(notchTertiaryText)
+
+            Spacer()
+
+            Button {
+                // Preserve the order the model gave us so the submitted
+                // answer reflects intent (matching ClarifyPromptOverlay).
+                let ordered = payload.options.filter { selectedClarifyOptions.contains($0) }
+                guard !ordered.isEmpty else { return }
+                submitQuickReply(task: task, answer: ordered.joined(separator: ", "))
+            } label: {
+                Text("Submit", bundle: .module)
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundColor(selectedClarifyOptions.isEmpty ? notchTertiaryText : .white)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 4)
+                    .background(
+                        Capsule().fill(
+                            selectedClarifyOptions.isEmpty
+                                ? Color.white.opacity(0.08)
+                                : accentColor.opacity(0.85)
+                        )
+                    )
+            }
+            .buttonStyle(.plain)
+            .disabled(selectedClarifyOptions.isEmpty)
+            .accessibilityLabel(Text("Submit selected options", bundle: .module))
+        }
+    }
+
+    private func submitQuickReplyText(task: BackgroundTaskState) {
+        let trimmed = quickReplyText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        submitQuickReply(task: task, answer: trimmed)
+    }
+
+    private func submitQuickReply(task: BackgroundTaskState, answer: String) {
+        if BackgroundTaskManager.shared.submitQuickReply(task.id, text: answer) {
+            quickReplyText = ""
+            selectedClarifyOptions = []
+        }
     }
 
     // MARK: - Background & Border
@@ -572,34 +1154,110 @@ struct NotchView: View {
                 ),
                 lineWidth: 1
             )
-            .mask(
-                VStack(spacing: 0) {
-                    Color.clear.frame(height: max(metrics.notchHeight - 6, 0))
-                    LinearGradient(colors: [Color.white.opacity(0), .white], startPoint: .top, endPoint: .bottom)
-                        .frame(height: 10)
-                    Color.white
-                }
-            )
     }
 
     // MARK: - Helpers
 
-    private var hasActivityItems: Bool {
-        guard let task = activeTask else { return false }
-        return task.activityFeed.count > 1
+    private func selectAgent(_ group: NotchAgentGroup) {
+        windowController.prepareForTextInput()
+        withAnimation(swingSpring) {
+            selectedAgentId = group.agentId
+            selectedTaskId = nil
+        }
+    }
+
+    private func selectTask(_ task: BackgroundTaskState) {
+        windowController.prepareForTextInput()
+        withAnimation(swingSpring) {
+            selectedAgentId = task.agentId
+            selectedTaskId = task.id
+        }
+    }
+
+    private func beginRename(_ task: BackgroundTaskState) {
+        windowController.prepareForTextInput()
+        renamingTaskId = task.id
+        renameDraft = task.taskTitle
+        DispatchQueue.main.async { isRenameFocused = true }
+    }
+
+    private func commitRename(task: BackgroundTaskState) {
+        let trimmed = renameDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            cancelRename()
+            return
+        }
+        _ = BackgroundTaskManager.shared.renameTask(task.id, title: trimmed)
+        renamingTaskId = nil
+        renameDraft = ""
+        isRenameFocused = false
+    }
+
+    private func cancelRename() {
+        renamingTaskId = nil
+        renameDraft = ""
+        isRenameFocused = false
+    }
+
+    private func contextMessages(
+        for task: BackgroundTaskState,
+        maxMessages: Int
+    ) -> [BackgroundTaskContextMessage] {
+        if let session = task.chatSession {
+            return
+                session.turns
+                .filter { turn in
+                    (turn.role == .user || turn.role == .assistant)
+                        && !turn.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                }
+                .suffix(maxMessages)
+                .map {
+                    BackgroundTaskContextMessage(
+                        role: $0.role.rawValue,
+                        content: $0.content.trimmingCharacters(in: .whitespacesAndNewlines)
+                    )
+                }
+        }
+        return Array(task.contextPreview.suffix(maxMessages))
+    }
+
+    /// Cycle within the selected agent's sessions. Navigation wraps so the
+    /// arrows and ⌘← / ⌘→ remain useful at either end of the rail.
+    private func navigateSession(by offset: Int) {
+        guard let selection = resolvedSelection,
+            let currentIndex = selection.group.tasks.firstIndex(where: { $0.id == selection.task.id }),
+            !selection.group.tasks.isEmpty
+        else { return }
+        let count = selection.group.tasks.count
+        let nextIndex = (currentIndex + offset + count) % count
+        selectTask(selection.group.tasks[nextIndex])
+    }
+
+    private func agentSummary(for group: NotchAgentGroup) -> String {
+        if group.primaryTask?.status == .waitingForInput {
+            return group.tasks.count == 1
+                ? L("Needs your input")
+                : "\(L("Needs your input")) · \(group.tasks.count) \(L("sessions"))"
+        }
+        if group.activeTaskCount > 0 {
+            return "\(group.activeTaskCount) \(L("active")) · \(group.tasks.count) \(L("sessions"))"
+        }
+        return group.tasks.count == 1
+            ? L("Recent session")
+            : "\(group.tasks.count) \(L("recent sessions"))"
+    }
+
+    private func hasActivityItems(for task: BackgroundTaskState) -> Bool {
+        task.activityFeed.count > 1
             || (task.activityFeed.count == 1 && task.activityFeed.first?.kind != .info)
     }
 
-    /// Builds the second line of the expanded header, surfacing the
-    /// dispatch origin (e.g. "Running · via Telegram") so the user can tell
-    /// at a glance which integration is driving the task.
-    private func headerSubtitle(for task: BackgroundTaskState) -> String {
-        let status = task.status.displayName
+    /// Surfaces the dispatch origin when an integration is driving the task.
+    /// Status already appears in the adjacent pill, so repeating it here
+    /// would add noise for ordinary chat sessions.
+    private func headerOrigin(for task: BackgroundTaskState) -> String? {
         let pluginName = task.sourcePluginId.map(PluginDisplayNameResolver.displayName(for:))
-        guard let origin = task.source.originLabel(pluginDisplayName: pluginName) else {
-            return status
-        }
-        return "\(status) · \(origin)"
+        return task.source.originLabel(pluginDisplayName: pluginName)
     }
 
     private func notchActionButton(_ title: String, action: @escaping () -> Void) -> some View {
@@ -617,16 +1275,47 @@ struct NotchView: View {
     }
 
     private func handleHoverChange() {
-        if isHovering {
+        if isHovering || isQuickReplyFocused || isRenameFocused {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) {
-                guard isHovering else { return }
+                guard isHovering || isQuickReplyFocused || isRenameFocused else { return }
                 withAnimation(.easeOut(duration: 0.25)) { contentRevealed = true }
             }
         } else {
-            withAnimation(.easeOut(duration: 0.15)) { contentRevealed = false }
+            // Fade the content over the same window as the frame's settle
+            // spring. A fast fade makes the card read as "already collapsed"
+            // the instant the content blinks out, so the frame's shrink looks
+            // abrupt even though it animates — the eye tracks the content,
+            // not the border.
+            withAnimation(.easeInOut(duration: 0.3)) { contentRevealed = false }
         }
     }
 
+    // MARK: - Close Actions
+
+    /// Close one agent tab. Active work requires an explicit confirmation
+    /// (mass-cancelling silently would be destructive); a tab holding only
+    /// finished sessions closes immediately.
+    private func requestCloseAgentGroup(_ group: NotchAgentGroup) {
+        if group.hasActiveTasks {
+            pendingCloseAgentId = group.agentId
+            showCloseAgentConfirmation = true
+        } else {
+            closeAgentGroup(agentId: group.agentId)
+        }
+    }
+
+    private func closeAgentGroup(agentId: UUID) {
+        withAnimation(swingSpring) {
+            BackgroundTaskManager.shared.closeAgentTaskGroup(agentId: agentId)
+        }
+        if selectedAgentId == agentId {
+            selectedAgentId = nil
+            selectedTaskId = nil
+        }
+    }
+
+    /// Close the surfaced session: confirm-cancel for active work, absorb
+    /// animation + finalize for finished work.
     private func handleDismiss() {
         guard let task = activeTask else { return }
         if task.status.isActive {

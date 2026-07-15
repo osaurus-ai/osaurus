@@ -23,6 +23,7 @@ public enum OAuthLoopbackError: LocalizedError, Sendable {
     case bindFailed(String)
     case stateMismatch
     case missingCode
+    case callbackTimeout
     case oauthError(error: String, description: String?)
 
     public var errorDescription: String? {
@@ -35,6 +36,8 @@ public enum OAuthLoopbackError: LocalizedError, Sendable {
             return "OAuth state mismatch — possible CSRF or stale callback"
         case .missingCode:
             return "OAuth provider returned no authorization code"
+        case .callbackTimeout:
+            return "Timed out waiting for OAuth sign-in to complete in the browser"
         case .oauthError(let error, let description):
             if let description, !description.isEmpty {
                 return "OAuth provider returned error \(error): \(description)"
@@ -103,12 +106,15 @@ public final class OAuthLoopbackServer: @unchecked Sendable {
         self.callbackPath = callbackPath.hasPrefix("/") ? callbackPath : "/" + callbackPath
         self.corsOriginAllowlist = corsOriginAllowlist
         do {
+            let parameters = NWParameters.tcp
+            // RFC 8252 §7.3: bind to the loopback interface only — never all interfaces.
+            parameters.requiredInterfaceType = .loopback
             switch port {
             case .fixed(let value):
                 let nwPort = NWEndpoint.Port(rawValue: value) ?? .any
-                self.listener = try NWListener(using: .tcp, on: nwPort)
+                self.listener = try NWListener(using: parameters, on: nwPort)
             case .ephemeral:
-                self.listener = try NWListener(using: .tcp, on: .any)
+                self.listener = try NWListener(using: parameters, on: .any)
             }
         } catch {
             throw OAuthLoopbackError.bindFailed(error.localizedDescription)
@@ -177,17 +183,51 @@ public final class OAuthLoopbackServer: @unchecked Sendable {
         }
     }
 
+    /// Await the authorization callback. Responds to task cancellation
+    /// (e.g. a sign-in timeout racing this call) by resuming with
+    /// `CancellationError` — without this, cancelling the surrounding task
+    /// would leave the continuation stranded forever.
     public func waitForCallback() async throws -> OAuthCallbackResult {
-        try await withCheckedThrowingContinuation { continuation in
-            lock.lock()
-            if let pendingResult {
-                self.pendingResult = nil
+        try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { continuation in
+                lock.lock()
+                if let pendingResult {
+                    self.pendingResult = nil
+                    lock.unlock()
+                    continuation.resume(with: pendingResult)
+                    return
+                }
+                self.continuation = continuation
                 lock.unlock()
-                continuation.resume(with: pendingResult)
-                return
             }
-            self.continuation = continuation
-            lock.unlock()
+        } onCancel: {
+            complete(.failure(CancellationError()))
+        }
+    }
+
+    /// Default hard ceiling for browser sign-in flows. Long enough for a user
+    /// to complete MFA, short enough that an abandoned browser tab can't pin
+    /// the sign-in task (and the bound loopback port) forever.
+    public static let defaultSignInTimeout: TimeInterval = 300
+
+    /// Await the authorization callback with a hard deadline. If the browser
+    /// flow is abandoned (tab closed, user walks away), this throws
+    /// `OAuthLoopbackError.callbackTimeout` after `timeout` seconds instead
+    /// of suspending forever. The losing branch is cancelled either way —
+    /// the unbounded `waitForCallback()` resolves through its cancellation
+    /// handler, so no continuation is stranded.
+    public func waitForCallback(timeout: TimeInterval) async throws -> OAuthCallbackResult {
+        try await withThrowingTaskGroup(of: OAuthCallbackResult.self) { group in
+            group.addTask { try await self.waitForCallback() }
+            group.addTask {
+                try await Task.sleep(nanoseconds: UInt64(timeout * 1_000_000_000))
+                throw OAuthLoopbackError.callbackTimeout
+            }
+            guard let result = try await group.next() else {
+                throw OAuthLoopbackError.callbackTimeout
+            }
+            group.cancelAll()
+            return result
         }
     }
 

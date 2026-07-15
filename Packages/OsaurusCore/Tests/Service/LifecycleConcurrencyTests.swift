@@ -21,6 +21,7 @@ import Testing
 
 @testable import OsaurusCore
 
+@Suite(.serialized)
 struct LifecycleConcurrencyTests {
 
     // MARK: - runWithDeadline
@@ -149,5 +150,50 @@ struct LifecycleConcurrencyTests {
         #expect(combined.contains(.plugins))
         #expect(combined.contains(.sandbox))
         #expect(!combined.contains(.autoModelLoad))
+    }
+
+    @Test @MainActor func launchguard_startup_completion_preserves_safe_mode_until_health() {
+        let defaults = UserDefaults.standard
+        let startupInProgressKey = "LaunchGuard.startupInProgress"
+        let crashCountKey = "LaunchGuard.consecutiveCrashCount"
+        let previousInProgress = defaults.object(forKey: startupInProgressKey)
+        let previousCrashCount = defaults.object(forKey: crashCountKey)
+
+        defer {
+            LaunchGuard.noteHealthyHealthCheck()
+            if let previousInProgress {
+                defaults.set(previousInProgress, forKey: startupInProgressKey)
+            } else {
+                defaults.removeObject(forKey: startupInProgressKey)
+            }
+            if let previousCrashCount {
+                defaults.set(previousCrashCount, forKey: crashCountKey)
+            } else {
+                defaults.removeObject(forKey: crashCountKey)
+            }
+        }
+
+        defaults.set(true, forKey: startupInProgressKey)
+        defaults.set(4, forKey: crashCountKey)
+
+        #expect(LaunchGuard.checkOnLaunch())
+        #expect(LaunchGuard.shouldSkip(.plugins))
+        #expect(LaunchGuard.shouldSkip(.sandbox))
+        #expect(LaunchGuard.shouldSkip(.distillation))
+        #expect(LaunchGuard.shouldSkip(.autoModelLoad))
+
+        LaunchGuard.markStartupComplete()
+        #expect(LaunchGuard.shouldSkip(.plugins))
+        #expect(LaunchGuard.shouldSkip(.sandbox))
+        #expect(LaunchGuard.shouldSkip(.distillation))
+        #expect(LaunchGuard.shouldSkip(.autoModelLoad))
+        #expect(defaults.bool(forKey: startupInProgressKey) == false)
+        #expect(defaults.integer(forKey: crashCountKey) == 0)
+
+        LaunchGuard.noteHealthyHealthCheck()
+        #expect(!LaunchGuard.shouldSkip(.plugins))
+        #expect(!LaunchGuard.shouldSkip(.sandbox))
+        #expect(!LaunchGuard.shouldSkip(.distillation))
+        #expect(!LaunchGuard.shouldSkip(.autoModelLoad))
     }
 }

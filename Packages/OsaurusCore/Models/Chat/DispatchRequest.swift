@@ -41,6 +41,26 @@ public struct DispatchRequest: Sendable {
     /// feed straight into `SessionToolStateStore.appendLoadedTools` since
     /// the names are pre-validated.
     public let requestedToolNames: [String]
+    /// True when the dispatch originated from an EXTERNAL surface (for
+    /// example a non-loopback HTTP `/agents/{id}/dispatch` call). The
+    /// dispatcher rebinds `ChatExecutionContext.isExternalSurface` from this
+    /// flag at run start, so externally-denied tools stay denied even if the
+    /// task-local binding at the HTTP layer were lost across the dispatch
+    /// pipeline. Never used to relax an inherited external-surface context.
+    public let externalSurface: Bool
+    /// Whether this run's model load may evict a model someone else is using.
+    ///
+    /// Deliberately NOT derived from `source`. `source` records *where* a run
+    /// came from; this records whether anyone is *waiting on it*, and the two
+    /// genuinely differ: a cron-fired schedule and the user pressing "Run Now"
+    /// on that same schedule both arrive as `.schedule`, but only one of them
+    /// has a human watching a spinner. Inferring intent from `source` would
+    /// make the button refuse to load its own model.
+    ///
+    /// So it is set at the trigger boundary — the one place that knows. Timer
+    /// fires, watcher fires and agent self-wakes pass `.background`; every
+    /// hand-pressed button and every waiting API client keeps the default.
+    public let loadIntent: ModelLoadIntent
 
     public init(
         id: UUID = UUID(),
@@ -54,7 +74,9 @@ public struct DispatchRequest: Sendable {
         sourcePluginId: String? = nil,
         source: SessionSource = .chat,
         externalSessionKey: String? = nil,
-        requestedToolNames: [String] = []
+        requestedToolNames: [String] = [],
+        externalSurface: Bool = false,
+        loadIntent: ModelLoadIntent = .interactive
     ) {
         self.id = id
         self.prompt = prompt
@@ -68,6 +90,8 @@ public struct DispatchRequest: Sendable {
         self.source = source
         self.externalSessionKey = externalSessionKey
         self.requestedToolNames = requestedToolNames
+        self.externalSurface = externalSurface
+        self.loadIntent = loadIntent
     }
 }
 

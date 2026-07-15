@@ -18,11 +18,15 @@ public final class AppConfiguration: ObservableObject {
     public static let shared = AppConfiguration()
 
     @Published public private(set) var chatConfig: ChatConfiguration
-    public private(set) var foundationModelAvailable: Bool
+    @Published public private(set) var foundationModelAvailable: Bool
 
     private init() {
         self.chatConfig = Self.loadFromDisk()
-        self.foundationModelAvailable = FoundationModelService.isDefaultModelAvailable()
+        // The FoundationModels availability probe can block on XPC to the
+        // model daemon, and the first touch of `shared` happens on the main
+        // thread during launch — probe off-main and publish the result.
+        self.foundationModelAvailable = false
+        refreshFoundationModelAvailable()
     }
 
     // MARK: - Public API
@@ -39,7 +43,12 @@ public final class AppConfiguration: ObservableObject {
     }
 
     public func refreshFoundationModelAvailable() {
-        foundationModelAvailable = FoundationModelService.isDefaultModelAvailable()
+        Task.detached(priority: .userInitiated) {
+            let available = FoundationModelService.isDefaultModelAvailable()
+            await MainActor.run {
+                AppConfiguration.shared.foundationModelAvailable = available
+            }
+        }
     }
 
     // MARK: - Constants

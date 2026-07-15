@@ -105,6 +105,10 @@ public struct VoiceInputOverlay: View {
         }
     }
 
+    private var visibleFullText: String {
+        TranscriptionTextNormalizer.visibleText(fullText)
+    }
+
     public var body: some View {
         VStack(spacing: 0) {
             // Main content card
@@ -204,13 +208,13 @@ public struct VoiceInputOverlay: View {
                         .font(.system(size: 15))
                         .foregroundColor(theme.tertiaryText)
                         .italic()
-                } else if fullText.isEmpty {
+                } else if visibleFullText.isEmpty {
                     Text("Listening...", bundle: .module)
                         .font(.system(size: 15))
                         .foregroundColor(theme.tertiaryText)
                         .italic()
                 } else {
-                    Text(fullText)
+                    Text(visibleFullText)
                         .font(.system(size: 15))
                         .foregroundColor(theme.primaryText)
                         .lineLimit(nil)
@@ -276,8 +280,8 @@ public struct VoiceInputOverlay: View {
                     )
                 }
                 .buttonStyle(.plain)
-                .opacity(fullText.isEmpty ? 0.5 : 1)
-                .disabled(fullText.isEmpty)
+                .opacity(visibleFullText.isEmpty ? 0.5 : 1)
+                .disabled(visibleFullText.isEmpty)
 
                 Spacer()
 
@@ -298,8 +302,8 @@ public struct VoiceInputOverlay: View {
                         )
                     }
                     .buttonStyle(.plain)
-                    .opacity(fullText.isEmpty ? 0.5 : 1)
-                    .disabled(fullText.isEmpty)
+                    .opacity(visibleFullText.isEmpty ? 0.5 : 1)
+                    .disabled(visibleFullText.isEmpty)
                 } else {
                     // wrap only the ring in an animated container so its
                     // appearance/disappearance transition is scoped. also prevents
@@ -420,11 +424,10 @@ public struct VoiceInputOverlay: View {
     }
 
     private func sendMessage() {
+        let message = visibleFullText
+        guard !message.isEmpty else { return }
         state = .sending
-        let message = fullText.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !message.isEmpty {
-            onSend?(message)
-        }
+        onSend?(message)
         // FloatingInputCard.sendVoiceMessage owns the rest of the
         // lifecycle. It runs cleanup, then resets state/dismisses the overlay.
         // We intentionally do not auto reset here as doing so caused a visible

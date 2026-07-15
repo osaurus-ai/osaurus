@@ -110,3 +110,25 @@ public enum PluginDisplayNameResolver {
         return pluginId
     }
 }
+
+// MARK: - Inference provenance
+
+extension SessionSource {
+    /// How the inference layer should label requests from this session.
+    ///
+    /// `ChatSession` used to hand every engine `.chatUI` regardless of where the
+    /// session actually came from, so a cron fire, a file-watcher trigger and an
+    /// agent self-wake all reached `ModelRuntime` claiming to be the user typing
+    /// in the chat window. Two things depended on that lie being true, and both
+    /// were wrong for headless runs: which loads are allowed to evict a resident
+    /// model, and which models get their idle-unload accelerated when a chat
+    /// window closes.
+    var inferenceSource: RequestSource {
+        switch self {
+        case .chat: return .chatUI
+        case .http: return .httpAPI
+        case .plugin: return .plugin
+        case .schedule, .watcher, .selfSchedule: return .scheduled
+        }
+    }
+}

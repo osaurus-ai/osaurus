@@ -8,6 +8,30 @@
 
 import SwiftUI
 
+// MARK: - Header Entrance
+
+extension View {
+    /// The standard management-tab header entrance: fade + small downward
+    /// settle on the house spring. Defined once here so every tab shares one
+    /// implementation — and so the −10pt slide collapses to an opacity-only
+    /// fade under Reduce Motion (fade is permitted; movement is not).
+    func managerHeaderEntrance(hasAppeared: Bool) -> some View {
+        modifier(ManagerHeaderEntranceModifier(hasAppeared: hasAppeared))
+    }
+}
+
+private struct ManagerHeaderEntranceModifier: ViewModifier {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    let hasAppeared: Bool
+
+    func body(content: Content) -> some View {
+        content
+            .opacity(hasAppeared ? 1 : 0)
+            .offset(y: hasAppeared || reduceMotion ? 0 : -10)
+            .animation(.spring(response: 0.4, dampingFraction: 0.8), value: hasAppeared)
+    }
+}
+
 // MARK: - Manager Header
 
 /// A unified header component for management views.

@@ -96,9 +96,12 @@ public enum XAIOAuthService {
     /// Models reachable through the xAI OAuth ("Grok Build" / SuperGrok / X
     /// Premium+) entitlement. The OAuth access token is denied access to the
     /// `/models` endpoint (HTTP 403), so — like Codex — model discovery uses
-    /// this built-in catalog rather than a live query. Mirrors OpenClaw's
-    /// selectable xAI model set; `grok-4.3` is the default.
+    /// this built-in catalog rather than a live query. `grok-4.5` is the
+    /// default, matching xAI (it is the Grok Build default on the API and
+    /// CLI); `grok-4.5-latest` and `grok-build-latest` are aliases of it and
+    /// are intentionally not listed separately.
     public static let supportedModels: [String] = [
+        "grok-4.5",
         "grok-4.3",
         "grok-build-0.1",
         "grok-4.20-beta-latest-reasoning",
@@ -417,7 +420,11 @@ public enum XAIOAuthService {
         }
 
         do {
-            return try await server.waitForCallback()
+            // Bounded wait: an abandoned browser tab must not pin this task
+            // (and the bound loopback port) forever.
+            return try await server.waitForCallback(
+                timeout: OAuthLoopbackServer.defaultSignInTimeout
+            )
         } catch let error as OAuthLoopbackError {
             throw mapLoopbackError(error)
         } catch {
@@ -438,6 +445,8 @@ public enum XAIOAuthService {
             return .authorizationCallbackRejected(detail.isEmpty ? "OAuth provider returned an error" : detail)
         case .invalidCallback:
             return .authorizationCallbackFailed("invalid callback path or request")
+        case .callbackTimeout:
+            return .authorizationCallbackFailed("timed out waiting for browser callback")
         }
     }
 }

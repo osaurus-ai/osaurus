@@ -1,0 +1,24 @@
+{
+  "id": "apple_script.liveproof-multi-app-chain",
+  "domain": "apple_script",
+  "label": "AppleScript • liveProof chained read-then-record",
+  "query": "Read the current system output volume, then record it in a note named 'Osaurus Volume Log' (create the note if it doesn't exist), then read that note's body back and report it.",
+  "notes": "Ground-truth lane for the chained read-one-place-write-another shape: the REAL model + REAL executor read actual system state (output volume) and persist it into actual Notes, then prove it landed by reading the note back. HAS REAL SIDE EFFECTS — it writes a dedicated scratch note — and needs Notes Automation permission, so it is meant to be run locally, permission-gated. A pass requires the run to SUCCEED with a read-back containing the recorded value: a run whose only script errors and whose final reply claims completion anyway must fail here (that hallucinated-done shape is exactly what this row measures — the 16B currently fails it; see the capability scoreboard). Skips when no AppleScript model is installed.",
+  "fixtures": {},
+  "expect": {
+    "appleScript": {
+      "lane": "liveProof",
+      "mode": "automate",
+      "executor": { "kind": "real", "probe": "tell application \"Notes\" to count notes" },
+      "expectStatus": "succeeded",
+      "expectOutcome": ["done"],
+      "scriptMustContain": ["volume"],
+      "valuesContain": ["volume"],
+      "scoredMaxSteps": 6,
+      "rubric": [
+        "The AppleScript reads the real current system output volume (not a hardcoded guess) and writes that value into the note named 'Osaurus Volume Log', creating the note if missing.",
+        "The reported read-back contains the recorded volume value — the workflow proves the value was persisted, not merely read."
+      ]
+    }
+  }
+}

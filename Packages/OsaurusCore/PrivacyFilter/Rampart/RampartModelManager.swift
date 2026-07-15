@@ -132,7 +132,15 @@ public final class RampartModelManager: ObservableObject {
             guard let url = resolveURL(file: file) else {
                 throw RampartModelError.badURL(file)
             }
-            let (tempURL, response) = try await session.download(from: url)
+            // Send the user's Hugging Face token for higher rate limits; the
+            // per-task delegate strips it before the 302 to the CDN so it
+            // never reaches a third-party host.
+            var request = URLRequest(url: url)
+            HuggingFaceAuth.authorize(&request)
+            let (tempURL, response) = try await session.download(
+                for: request,
+                delegate: HFRedirectAuthStripper.shared
+            )
             if let http = response as? HTTPURLResponse, !(200 ... 299).contains(http.statusCode) {
                 throw RampartModelError.httpStatus(file, http.statusCode)
             }
@@ -167,6 +175,27 @@ public final class RampartModelManager: ObservableObject {
             try? await loadIfNeeded()
         }
         return await detector.modelSpans(in: text)
+    }
+}
+
+/// Strips the `Authorization` header when a `resolve/...` download redirects
+/// off `huggingface.co` (to the CDN), so the user's token never reaches a
+/// third-party host. Mirrors the model-catalog and privacy-filter
+/// downloaders; used as a per-task delegate on the async download convenience.
+private final class HFRedirectAuthStripper: NSObject, URLSessionTaskDelegate {
+    static let shared = HFRedirectAuthStripper()
+
+    func urlSession(
+        _ session: URLSession,
+        task: URLSessionTask,
+        willPerformHTTPRedirection response: HTTPURLResponse,
+        newRequest request: URLRequest
+    ) async -> URLRequest? {
+        var redirected = request
+        if redirected.url?.host != task.originalRequest?.url?.host {
+            redirected.setValue(nil, forHTTPHeaderField: "Authorization")
+        }
+        return redirected
     }
 }
 

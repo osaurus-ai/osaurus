@@ -15,6 +15,7 @@
 
 import Darwin
 import Foundation
+import IOKit.ps
 
 public struct RunEnvironment: Codable, Sendable, Equatable {
     /// CPU brand string, e.g. "Apple M3 Max" (Apple Silicon) or the Intel
@@ -46,6 +47,23 @@ public struct RunEnvironment: Codable, Sendable, Equatable {
     public let catalogHash: String?
     /// Number of cases that fed `catalogHash` (context for the hash).
     public let caseCount: Int?
+    /// SoC thermal pressure at capture time (end of the run):
+    /// "nominal" / "fair" / "serious" / "critical". Sequential suites heat
+    /// the SoC, so a "serious" here says later columns may be
+    /// thermally depressed — an order effect no per-case metric shows.
+    public let thermalState: String?
+    /// macOS Low Power Mode at capture time — caps CPU/GPU clocks, so
+    /// perf rows from a low-power run aren't comparable to normal ones.
+    public let lowPowerMode: Bool?
+    /// Providing power source at capture time: "AC" / "battery" / "UPS".
+    /// Apple Silicon throttles harder on battery under sustained load.
+    public let powerSource: String?
+    /// Who ran this contribution — a GitHub handle (or name) self-declared
+    /// via `OSAURUS_EVALS_CONTRIBUTOR` (the contribute flow resolves it from
+    /// `gh` / git config). Feeds attribution + the contributor ranking on the
+    /// crowdsourced leaderboard. nil for pre-schema contributions (the compat
+    /// CLI falls back to the git author who added the file).
+    public let contributor: String?
 
     public init(
         chip: String? = nil,
@@ -58,7 +76,11 @@ public struct RunEnvironment: Codable, Sendable, Equatable {
         judge: String? = nil,
         kvRegime: String? = nil,
         catalogHash: String? = nil,
-        caseCount: Int? = nil
+        caseCount: Int? = nil,
+        thermalState: String? = nil,
+        lowPowerMode: Bool? = nil,
+        powerSource: String? = nil,
+        contributor: String? = nil
     ) {
         self.chip = chip
         self.totalRamMb = totalRamMb
@@ -71,6 +93,10 @@ public struct RunEnvironment: Codable, Sendable, Equatable {
         self.kvRegime = kvRegime
         self.catalogHash = catalogHash
         self.caseCount = caseCount
+        self.thermalState = thermalState
+        self.lowPowerMode = lowPowerMode
+        self.powerSource = powerSource
+        self.contributor = contributor
     }
 
     /// Capture the live environment for a run over `caseIDs` against
@@ -95,8 +121,38 @@ public struct RunEnvironment: Codable, Sendable, Equatable {
             judge: judgeResolution.isSelfJudge ? "self-judge" : judgeResolution.modelId,
             kvRegime: nonEmpty(environment["OSAURUS_EVALS_KV_REGIME"]),
             catalogHash: catalogHash(forCaseIDs: caseIDs),
-            caseCount: caseIDs.isEmpty ? nil : Set(caseIDs).count
+            caseCount: caseIDs.isEmpty ? nil : Set(caseIDs).count,
+            thermalState: thermalStateLabel(ProcessInfo.processInfo.thermalState),
+            lowPowerMode: ProcessInfo.processInfo.isLowPowerModeEnabled,
+            powerSource: providingPowerSource(),
+            contributor: nonEmpty(environment["OSAURUS_EVALS_CONTRIBUTOR"])
         )
+    }
+
+    /// Human label for `ProcessInfo.ThermalState` (stable strings — these
+    /// land in committed snapshots/history).
+    static func thermalStateLabel(_ state: ProcessInfo.ThermalState) -> String {
+        switch state {
+        case .nominal: return "nominal"
+        case .fair: return "fair"
+        case .serious: return "serious"
+        case .critical: return "critical"
+        @unknown default: return "unknown"
+        }
+    }
+
+    /// "AC" / "battery" / "UPS" from IOKit's power-source registry, nil
+    /// when the query fails (e.g. sandboxed test runners).
+    static func providingPowerSource() -> String? {
+        guard let type = IOPSGetProvidingPowerSourceType(nil)?.takeRetainedValue() as String? else {
+            return nil
+        }
+        switch type {
+        case kIOPMACPowerKey: return "AC"
+        case kIOPMBatteryPowerKey: return "battery"
+        case kIOPMUPSPowerKey: return "UPS"
+        default: return type.isEmpty ? nil : type
+        }
     }
 
     /// FNV-1a hash of the sorted, de-duplicated case ids. Deterministic and
@@ -123,6 +179,14 @@ public struct RunEnvironment: Codable, Sendable, Equatable {
         if let kvRegime { parts.append("kv=\(kvRegime)") }
         if let judge { parts.append("judge=\(judge)") }
         if let catalogHash { parts.append("catalog=\(catalogHash)") }
+        if let contributor { parts.append("by \(contributor)") }
+        // Perf-comparability caveats: only shown when they'd actually skew
+        // numbers (nominal/AC is the assumed baseline, so it stays quiet).
+        if let thermalState, thermalState != "nominal" {
+            parts.append("thermal=\(thermalState)")
+        }
+        if lowPowerMode == true { parts.append("low-power-mode") }
+        if let powerSource, powerSource != "AC" { parts.append("power=\(powerSource)") }
         return parts.isEmpty ? "(no environment captured)" : parts.joined(separator: " · ")
     }
 

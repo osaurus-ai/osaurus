@@ -44,6 +44,10 @@ struct ModelPickerRow: Equatable, Identifiable {
     /// would fail at load. Defaults to true (every selectable model).
     let isMLXFormat: Bool
     let providerLabel: String?
+    /// Whether this model is currently bookmarked. Drives the row's heart fill
+    /// so favourited rows read as favourited everywhere, not only in the
+    /// Favourites tab.
+    let isFavorite: Bool
 
     init(
         modelId: String,
@@ -54,7 +58,8 @@ struct ModelPickerRow: Equatable, Identifiable {
         quantization: String?,
         isVLM: Bool,
         isMLXFormat: Bool = true,
-        providerLabel: String? = nil
+        providerLabel: String? = nil,
+        isFavorite: Bool = false
     ) {
         self.modelId = modelId
         self.sourceKey = sourceKey
@@ -65,9 +70,16 @@ struct ModelPickerRow: Equatable, Identifiable {
         self.isVLM = isVLM
         self.isMLXFormat = isMLXFormat
         self.providerLabel = providerLabel
+        self.isFavorite = isFavorite
     }
 
     var id: String { "model-\(sourceKey)-\(modelId)" }
+
+    /// Cross-provider key this row is stored under in the favourites list —
+    /// matches `ModelPickerItem.favoriteKey` for the same model.
+    var favoriteKey: String {
+        FavoriteModelsStore.key(sourceKey: sourceKey, modelId: modelId)
+    }
 }
 
 /// Pre-converted NSColors from the SwiftUI theme, built once per theme change
@@ -107,8 +119,13 @@ struct ModelPickerTableRepresentable: NSViewRepresentable {
     let rows: [ModelPickerRow]
     let theme: ThemeProtocol
     var selectedModelId: String?
+    /// True while the Favorites tab is active: the inline heart next to the
+    /// name becomes an always-visible filled heart (remove) instead of a
+    /// hover-only heart (toggle).
+    var isFavoritesTab: Bool = false
     var onSelectModel: ((String) -> Void)?
     var onSwitchTab: ((Int) -> Void)?
+    var onToggleFavorite: ((ModelPickerRow) -> Void)?
     var onDismiss: (() -> Void)?
 
     func makeCoordinator() -> Coordinator { Coordinator() }
@@ -126,7 +143,9 @@ struct ModelPickerTableRepresentable: NSViewRepresentable {
 
         coordinator.onSelectModel = onSelectModel
         coordinator.onSwitchTab = onSwitchTab
+        coordinator.onToggleFavorite = onToggleFavorite
         coordinator.onDismiss = onDismiss
+        coordinator.isFavoritesTab = isFavoritesTab
         coordinator.updateColorsIfNeeded(from: theme)
         coordinator.updateSelectedModelId(selectedModelId)
         coordinator.applyRows(rows)
@@ -138,7 +157,9 @@ struct ModelPickerTableRepresentable: NSViewRepresentable {
         let coordinator = context.coordinator
         coordinator.onSelectModel = onSelectModel
         coordinator.onSwitchTab = onSwitchTab
+        coordinator.onToggleFavorite = onToggleFavorite
         coordinator.onDismiss = onDismiss
+        coordinator.updateFavoritesTab(isFavoritesTab)
         coordinator.updateColorsIfNeeded(from: theme)
         coordinator.updateSelectedModelId(selectedModelId)
         coordinator.applyRows(rows)
@@ -301,9 +322,18 @@ private final class PickerBadgeView: NSView {
     }
 }
 
+/// The trailing favourite control shown on a row, if any. A hover-only heart
+/// in normal tabs, an always-visible filled heart (remove) in the Favorites tab.
+private enum RowAccessoryKind: Equatable {
+    case none
+    case heart  // not yet favourited — outline, shown on hover
+    case heartFill  // favourited — filled, shown persistently
+    case favoritesRemove  // Favorites tab — filled heart inline after the name, removes, always shown
+}
+
 /// Model row cell with hover/selection background.
 @MainActor
-private final class ModelRowCellView: NSTableCellView {
+private final class ModelRowCellView: NSTableCellView, NSGestureRecognizerDelegate {
     private let bgLayer = CALayer()
     private let nameLabel = makeLabel()
     private let vlmBadge = PickerBadgeView()
@@ -312,6 +342,7 @@ private final class ModelRowCellView: NSTableCellView {
     private let paramBadge = PickerBadgeView()
     private let quantBadge = PickerBadgeView()
     private let checkmarkView = NSImageView()
+    private let accessoryButton = NSButton()
 
     /// Manual top-down layout. Without this, NSView's default unflipped
     /// coordinates render the rows bottom-up (description above the name),
@@ -320,6 +351,9 @@ private final class ModelRowCellView: NSTableCellView {
 
     private var rowId: String?
     private var onSelect: (() -> Void)?
+    private var onAccessory: (() -> Void)?
+
+    private var accessoryKind: RowAccessoryKind = .none
 
     // structural flags from the last configure, compared against incoming
     // values to skip relayout when nothing structural changed
@@ -352,6 +386,15 @@ private final class ModelRowCellView: NSTableCellView {
         checkmarkView.imageScaling = .scaleNone
         checkmarkView.isHidden = true
 
+        accessoryButton.isBordered = false
+        accessoryButton.bezelStyle = .regularSquare
+        accessoryButton.imagePosition = .imageOnly
+        accessoryButton.imageScaling = .scaleProportionallyDown
+        accessoryButton.setButtonType(.momentaryChange)
+        accessoryButton.target = self
+        accessoryButton.action = #selector(didClickAccessory)
+        accessoryButton.isHidden = true
+
         addSubview(nameLabel)
         addSubview(vlmBadge)
         addSubview(providerBadge)
@@ -359,13 +402,30 @@ private final class ModelRowCellView: NSTableCellView {
         addSubview(paramBadge)
         addSubview(quantBadge)
         addSubview(checkmarkView)
-        addGestureRecognizer(NSClickGestureRecognizer(target: self, action: #selector(didClick)))
+        addSubview(accessoryButton)
+        let click = NSClickGestureRecognizer(target: self, action: #selector(didClick))
+        click.delegate = self
+        addGestureRecognizer(click)
     }
 
     @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
 
     @objc private func didClick() { onSelect?() }
+    @objc private func didClickAccessory() { onAccessory?() }
+
+    /// Keep the whole-row select gesture from firing when the click lands on the
+    /// visible favourite control — otherwise toggling a favourite would also
+    /// select the model and dismiss the picker. The button's own action still
+    /// runs.
+    func gestureRecognizer(
+        _ gestureRecognizer: NSGestureRecognizer,
+        shouldAttemptToRecognizeWith event: NSEvent
+    ) -> Bool {
+        guard !accessoryButton.isHidden else { return true }
+        let point = accessoryButton.convert(event.locationInWindow, from: nil)
+        return !accessoryButton.bounds.contains(point)
+    }
 
     func configure(
         id: String,
@@ -378,19 +438,25 @@ private final class ModelRowCellView: NSTableCellView {
         isSelected: Bool,
         isHighlighted: Bool,
         isHovered: Bool,
+        isFavorite: Bool,
+        favoritesMode: Bool,
         colors: ThemeColorCache,
         checkmarkImage: NSImage?,
         eyeImage: NSImage?,
+        heartImage: NSImage?,
+        heartFillImage: NSImage?,
         regularFont: NSFont,
         semiboldFont: NSFont,
         descFont: NSFont,
         badgeFont: NSFont,
         badgeFontSmall: NSFont,
-        onSelect: @escaping () -> Void
+        onSelect: @escaping () -> Void,
+        onAccessory: @escaping () -> Void
     ) {
         let isNewRow = rowId != id
         rowId = id
         self.onSelect = onSelect
+        self.onAccessory = onAccessory
 
         let newHasDesc = description?.isEmpty == false
         let newHasBadges = parameterCount != nil || quantization != nil
@@ -509,6 +575,54 @@ private final class ModelRowCellView: NSTableCellView {
         cachedIsHovered = isHovered
         cachedIsHighlighted = isHighlighted
 
+        // Inline favourite control. In the Favorites tab it's an
+        // always-visible filled heart (remove); elsewhere it's a heart — shown
+        // filled and persistent once favourited, and as an outline on hover so
+        // an un-favourited row can be bookmarked. `RowAccessoryKind` is compared
+        // against the last value so an unchanged hover/selection pass skips the
+        // image swap and the relayout.
+        let newAccessoryKind: RowAccessoryKind
+        if favoritesMode {
+            newAccessoryKind = .favoritesRemove
+        } else if isFavorite {
+            newAccessoryKind = .heartFill
+        } else if isHovered {
+            newAccessoryKind = .heart
+        } else {
+            newAccessoryKind = .none
+        }
+
+        if newAccessoryKind != accessoryKind {
+            switch newAccessoryKind {
+            case .none:
+                accessoryButton.isHidden = true
+            case .heart:
+                accessoryButton.image = heartImage
+                accessoryButton.contentTintColor = colors.tertiaryText
+                accessoryButton.isHidden = false
+            case .heartFill:
+                accessoryButton.image = heartFillImage
+                accessoryButton.contentTintColor = colors.accentColor
+                accessoryButton.isHidden = false
+            case .favoritesRemove:
+                accessoryButton.image = heartFillImage
+                accessoryButton.contentTintColor = colors.accentColor
+                accessoryButton.isHidden = false
+            }
+            accessoryButton.toolTip =
+                newAccessoryKind == .favoritesRemove
+                ? L("Remove from favourites")
+                : (newAccessoryKind == .heartFill
+                    ? L("Remove from favourites")
+                    : L("Add to favourites"))
+            // Visibility change shifts the trailing content, so relayout even
+            // when the row's structural content is otherwise unchanged.
+            if (newAccessoryKind == .none) != (accessoryKind == .none) {
+                needsLayout = true
+            }
+            accessoryKind = newAccessoryKind
+        }
+
         // only trigger layout if structure changed
         if structureChanged {
             needsLayout = true
@@ -571,6 +685,33 @@ private final class ModelRowCellView: NSTableCellView {
             nameLabel.frame = CGRect(x: contentX, y: nameY, width: max(0, contentW), height: nameH)
         }
 
+        // Heart sits right after the name text, clamped so it never runs into
+        // the right-aligned Vision badge (or the trailing edge). The button is
+        // framed at the symbol's natural size with its baseline (encoded in
+        // the image's alignment insets) placed on the title's baseline, so the
+        // glyph sits exactly on the text line instead of being box-centred.
+        // The Favorites tab's always-visible remove heart shares this inline
+        // placement so both tabs read the same.
+        if accessoryKind != .none {
+            let imgSize = accessoryButton.image?.size ?? .zero
+            let baselineInset = accessoryButton.image?.alignmentRect.origin.y ?? 0
+            let font = nameLabel.font ?? NSFont.systemFont(ofSize: 12, weight: .medium)
+            let lineH = font.ascender - font.descender
+            let baselineFromTop = (nameH - lineH) / 2 + font.ascender
+            let nameTextW = min(nameLabel.intrinsicContentSize.width, nameLabel.frame.width)
+            let limit = (vlmBadge.isHidden ? trailingX : vlmBadge.frame.minX) - imgSize.width - 4
+            let x = min(nameLabel.frame.minX + nameTextW + 6, limit)
+            // Lift the glyph slightly off the baseline so it reads as
+            // vertically centred against the name text.
+            let bottomPadding: CGFloat = 3.2
+            accessoryButton.frame = CGRect(
+                x: max(contentX, x),
+                y: nameY + baselineFromTop - (imgSize.height - baselineInset) - bottomPadding,
+                width: imgSize.width,
+                height: imgSize.height
+            )
+        }
+
         if hasMeta {
             let metaY = nameY + nameH + 4
             var x = contentX
@@ -602,12 +743,15 @@ private final class ModelRowCellView: NSTableCellView {
         super.prepareForReuse()
         rowId = nil
         onSelect = nil
+        onAccessory = nil
         descLabel.isHidden = true
         vlmBadge.isHidden = true
         providerBadge.isHidden = true
         paramBadge.isHidden = true
         quantBadge.isHidden = true
         checkmarkView.isHidden = true
+        accessoryButton.isHidden = true
+        accessoryKind = .none
         hasDesc = false
         hasBadges = false
         hasVLM = false
@@ -643,7 +787,12 @@ extension ModelPickerTableRepresentable {
         /// nil while searching (tabs hidden) so arrows fall through to the
         /// search field.
         var onSwitchTab: ((Int) -> Void)?
+        var onToggleFavorite: ((ModelPickerRow) -> Void)?
         var onDismiss: (() -> Void)?
+
+        /// True while the Favorites tab is active: rows show an always-visible
+        /// filled-heart remove control instead of the hover-only heart.
+        var isFavoritesTab = false
 
         private var hoveredRowId: String?
         private var highlightedIndex: Int?
@@ -672,6 +821,16 @@ extension ModelPickerTableRepresentable {
             systemSymbolName: "eye",
             accessibilityDescription: nil
         )?.withSymbolConfiguration(.init(pointSize: 8, weight: .medium))
+
+        private lazy var heartImage: NSImage? = NSImage(
+            systemSymbolName: "heart",
+            accessibilityDescription: nil
+        )?.withSymbolConfiguration(.init(pointSize: 12, weight: .medium))
+
+        private lazy var heartFillImage: NSImage? = NSImage(
+            systemSymbolName: "heart.fill",
+            accessibilityDescription: nil
+        )?.withSymbolConfiguration(.init(pointSize: 12, weight: .medium))
 
         // MARK: Setup
 
@@ -783,6 +942,15 @@ extension ModelPickerTableRepresentable {
             reconfigureVisibleCells()
         }
 
+        /// Switch the trailing control between hover-heart and always-on remove heart.
+        /// Only repaints when the mode actually flips; `applyRows` covers the
+        /// row-content refresh that normally accompanies a tab change.
+        func updateFavoritesTab(_ newValue: Bool) {
+            guard isFavoritesTab != newValue else { return }
+            isFavoritesTab = newValue
+            reconfigureVisibleCells()
+        }
+
         // MARK: Apply Rows
 
         private var lastRowIdsHash: Int?
@@ -888,9 +1056,13 @@ extension ModelPickerTableRepresentable {
                 isSelected: selectedModelId == id,
                 isHighlighted: highlightedRowId == row.id,
                 isHovered: hoveredRowId == row.id,
+                isFavorite: row.isFavorite,
+                favoritesMode: isFavoritesTab,
                 colors: colors,
                 checkmarkImage: checkmarkImage,
                 eyeImage: eyeImage,
+                heartImage: heartImage,
+                heartFillImage: heartFillImage,
                 regularFont: regularFont,
                 semiboldFont: semiboldFont,
                 descFont: descFont,
@@ -899,6 +1071,9 @@ extension ModelPickerTableRepresentable {
                 onSelect: { [weak self] in
                     guard row.isMLXFormat else { return }
                     self?.onSelectModel?(id)
+                },
+                onAccessory: { [weak self] in
+                    self?.onToggleFavorite?(row)
                 }
             )
         }

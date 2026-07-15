@@ -1,0 +1,28 @@
+{
+  "id": "apple_script.scripted-confirm-each",
+  "domain": "apple_script",
+  "label": "AppleScript • scripted confirmEach gate (approve path)",
+  "query": "Set the body of the note 'Standup' to 'Shipped the gate.'",
+  "notes": "Model-free CI anchor for the confirmEach execution mode: the mutating script must pass through the confirm gate (the eval confirm seam approves) and then execute — proving the gate path completes instead of deadlocking or silently skipping, and that the write actually lands in the mock world. Complements the unit tests: this exercises the same wiring the app uses (AppleScriptEvaluator → AppleScriptLoop confirm seam). No tokens.",
+  "fixtures": {},
+  "expect": {
+    "appleScript": {
+      "lane": "scripted",
+      "mode": "automate",
+      "executionMode": "confirmEach",
+      "confirmApproves": true,
+      "harness": { "verifyReadBack": false },
+      "executor": { "kind": "mock", "mockWorld": { "notes": { "Standup": "" } } },
+      "scriptedCalls": [
+        "{\"script\":\"tell application \\\"Notes\\\" to set body of note \\\"Standup\\\" to \\\"Shipped the gate.\\\"\"}"
+      ],
+      "expectStatus": "succeeded",
+      "expectOutcome": ["done"],
+      "expectEffects": ["edit"],
+      "finalState": [
+        { "key": "note:Standup", "equals": "Shipped the gate." }
+      ],
+      "scoredMaxSteps": 1
+    }
+  }
+}
