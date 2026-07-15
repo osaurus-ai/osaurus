@@ -33,10 +33,18 @@ public enum SandboxBackend: Sendable, Equatable {
     /// later, even if the VM fails to boot (a boot failure surfaces
     /// as an error the user can act on; silently downgrading the
     /// isolation tier would not be).
-    public static let current: SandboxBackend =
-        ProcessInfo.processInfo.operatingSystemVersion.majorVersion >= 26
-        ? .virtualMachine
-        : .seatbelt
+    ///
+    /// TEMPORARY (remove before merge): `OSAURUS_FORCE_SEATBELT=1` in
+    /// the environment forces the Seatbelt backend regardless of OS
+    /// version, so the fallback can be exercised on a Tahoe dev machine.
+    public static let current: SandboxBackend = {
+        if ProcessInfo.processInfo.environment["OSAURUS_FORCE_SEATBELT"] == "1" {
+            return .seatbelt
+        }
+        return ProcessInfo.processInfo.operatingSystemVersion.majorVersion >= 26
+            ? .virtualMachine
+            : .seatbelt
+    }()
 }
 
 public enum SeatbeltSandbox {

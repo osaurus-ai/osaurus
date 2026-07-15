@@ -16,6 +16,10 @@ struct SeatbeltSandboxTests {
 
     @Test("seatbelt is never selected on macOS 26 or later")
     func backendSelectionRespectsTahoe() {
+        guard ProcessInfo.processInfo.environment["OSAURUS_FORCE_SEATBELT"] != "1" else {
+            #expect(SandboxBackend.current == .seatbelt)
+            return
+        }
         let major = ProcessInfo.processInfo.operatingSystemVersion.majorVersion
         if major >= 26 {
             #expect(SandboxBackend.current == .virtualMachine)
