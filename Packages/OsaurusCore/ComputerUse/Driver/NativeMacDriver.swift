@@ -217,7 +217,7 @@ public struct NativeMacDriver: MacDriver {
                     ?? AccessibilityManager.shared.mostRecentPid()
 
                 if let elementId = id {
-                    let focusResult = ElementInteraction.shared.focusElement(id: elementId)
+                    let focusResult = ElementInteraction.shared.focusElementWithoutActivation(id: elementId)
                     if !focusResult.success { return mapActionResult(focusResult) }
                     if replace {
                         // Best-effort clear; some fields aren't AX-clearable, in which

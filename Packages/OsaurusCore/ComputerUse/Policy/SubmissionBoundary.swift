@@ -23,6 +23,7 @@ public struct SubmissionApprovalBinding: Sendable, Equatable {
     let snapshotFingerprint: UInt64
     let targetIsSecure: Bool
     let actionFingerprint: UInt64
+    let hadSubmissionSuccessSignal: Bool
 
     init(
         snapshotId: Int,
@@ -40,6 +41,7 @@ public struct SubmissionApprovalBinding: Sendable, Equatable {
         snapshotFingerprint = 0
         targetIsSecure = false
         actionFingerprint = 0
+        hadSubmissionSuccessSignal = false
     }
 
     init(
@@ -51,7 +53,8 @@ public struct SubmissionApprovalBinding: Sendable, Equatable {
         targetFingerprint: UInt64?,
         snapshotFingerprint: UInt64,
         targetIsSecure: Bool,
-        actionFingerprint: UInt64
+        actionFingerprint: UInt64,
+        hadSubmissionSuccessSignal: Bool
     ) {
         self.snapshotId = snapshotId
         self.appName = appName
@@ -62,6 +65,7 @@ public struct SubmissionApprovalBinding: Sendable, Equatable {
         self.snapshotFingerprint = snapshotFingerprint
         self.targetIsSecure = targetIsSecure
         self.actionFingerprint = actionFingerprint
+        self.hadSubmissionSuccessSignal = hadSubmissionSuccessSignal
     }
 }
 
@@ -98,10 +102,15 @@ public struct ComputerUseFormEvidence: Sendable, Equatable {
 /// False positives stop for review; false negatives could cross a trust
 /// boundary, so uncertain Return/Enter actions in a browser are included.
 public enum SubmissionBoundary {
+    enum Revalidation {
+        case valid(CUElement?)
+        case invalid
+    }
+
     static func canPerformSubmission(_ action: AgentAction) -> Bool {
         isActivation(action.verb)
             || (action.verb == .pressKey && isReturnOrEnter(action.key))
-            || (action.verb == .pressKey && isKeyboardActivation(action))
+            || (action.verb == .pressKey && isSpace(action.key))
     }
 
     static func hasSubmitControl(in snapshot: CUSnapshot) -> Bool {
@@ -134,21 +143,34 @@ public enum SubmissionBoundary {
                 action.note,
             ]
                 .compactMap { $0 }
-                .joined(separator: " ")
+                .joined(separator: " "),
+            includeCommitmentOnlySignals: isSubmissionControlRole(element?.role)
         )
-        let isSubmitActivation =
-            (isActivation(action.verb) || isKeyboardActivation(action))
+        let isSpaceControlActivation = action.verb == .pressKey
+            && isSpace(action.key)
             && (
-                effect >= .edit
-                    || isWithinForm(element)
+                isSubmissionControlRole(element?.role)
+                    || isKeyboardControlRole(element?.role)
+                    || targetHasSubmitSignal
+            )
+        let isSubmitActivation =
+            (isActivation(action.verb) || isSpaceControlActivation)
+            && !hasDismissalSignal(
+                [element?.label, element?.roleDescription, action.target?.describe]
+                    .compactMap { $0 }
+                    .joined(separator: " ")
+            )
+            && (
+                targetHasSubmitSignal
+                    || (isSubmissionControlRole(element?.role) && isWithinForm(element))
+                    || (
+                        isSubmissionControlRole(element?.role)
+                            && hasFormInputContext(snapshot)
+                    )
                     || (
                         (isSubmissionControlRole(element?.role)
                             || isButtonRole(element?.roleDescription))
-                            && (
-                                isButtonRole(element?.role)
-                                    || isButtonRole(element?.roleDescription)
-                                    || targetHasSubmitSignal
-                            )
+                            && effect >= .edit
                     )
             )
         let isReturnSubmission = action.verb == .pressKey && isReturnOrEnter(action.key)
@@ -169,26 +191,72 @@ public enum SubmissionBoundary {
             targetFingerprint: element.map(elementFingerprint),
             snapshotFingerprint: snapshotFingerprint(snapshot),
             targetIsSecure: targetIsSecure,
-            actionFingerprint: processKeyedFingerprint([action.feedLabel])
+            actionFingerprint: processKeyedFingerprint([action.feedLabel]),
+            hadSubmissionSuccessSignal: hasSubmissionSuccessSignal(snapshot)
         )
     }
 
     /// Revalidate an approved submission against a fresh AX capture. Returns
     /// the fresh target reference to execute, or nil when the app, form, action,
     /// or target changed while the user was reviewing the prompt.
+    static func revalidation(
+        for binding: SubmissionApprovalBinding,
+        action: AgentAction,
+        snapshot: CUSnapshot
+    ) -> Revalidation {
+        guard action.verb == binding.verb,
+            processKeyedFingerprint([action.feedLabel]) == binding.actionFingerprint,
+            snapshot.app.caseInsensitiveCompare(binding.appName) == .orderedSame,
+            snapshotFingerprint(snapshot) == binding.snapshotFingerprint
+        else { return .invalid }
+
+        guard let targetFingerprint = binding.targetFingerprint else {
+            return .valid(nil)
+        }
+        guard let element = snapshot.elements.first(where: {
+            elementFingerprint($0) == targetFingerprint
+        }) else {
+            return .invalid
+        }
+        return .valid(element)
+    }
+
     public static func revalidatedElement(
         for binding: SubmissionApprovalBinding,
         action: AgentAction,
         snapshot: CUSnapshot
     ) -> CUElement? {
-        guard action.verb == binding.verb,
-            processKeyedFingerprint([action.feedLabel]) == binding.actionFingerprint,
-            snapshot.app.caseInsensitiveCompare(binding.appName) == .orderedSame,
-            snapshotFingerprint(snapshot) == binding.snapshotFingerprint
-        else { return nil }
+        guard case .valid(let element) = revalidation(
+            for: binding,
+            action: action,
+            snapshot: snapshot
+        ) else {
+            return nil
+        }
+        return element
+    }
 
-        guard let targetFingerprint = binding.targetFingerprint else { return nil }
-        return snapshot.elements.first { elementFingerprint($0) == targetFingerprint }
+    static func verifiesSubmission(
+        for binding: SubmissionApprovalBinding,
+        action: AgentAction,
+        snapshot: CUSnapshot
+    ) -> Bool {
+        if case .invalid = revalidation(for: binding, action: action, snapshot: snapshot) {
+            return true
+        }
+        return !binding.hadSubmissionSuccessSignal && hasSubmissionSuccessSignal(snapshot)
+    }
+
+    private static func hasSubmissionSuccessSignal(_ snapshot: CUSnapshot) -> Bool {
+        snapshot.elements.contains { element in
+            let text = [element.label, safeElementValue(element), element.roleDescription]
+                .compactMap { $0 }
+                .joined(separator: " ")
+                .lowercased()
+            return submissionSuccessSignals.contains { signal in
+                text.contains(signal)
+            }
+        }
     }
 
     public static func confirmationPreview(
@@ -201,7 +269,9 @@ public enum SubmissionBoundary {
             actionLabel: binding.actionLabel,
             targetLabel: binding.targetLabel,
             effect: .consequential,
-            note: note ?? "The form is filled and ready for review. Approve only if you want to submit it now.",
+            note: binding.targetIsSecure
+                ? "Protected input is ready. Approve only if you want to submit the form now."
+                : (note ?? "The form is filled and ready for review. Approve only if you want to submit it now."),
             typedText: binding.targetIsSecure ? nil : action.typedTextForPreview,
             approvalScope: .oneShot(binding)
         )
@@ -211,12 +281,17 @@ public enum SubmissionBoundary {
         verb == .click || verb == .doubleClick
     }
 
-    private static func isKeyboardActivation(_ action: AgentAction) -> Bool {
-        guard action.verb == .pressKey else { return false }
-        switch action.key?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
-        case "space", "spacebar", " ", "return", "enter", "\r", "\n": return true
+    private static func isSpace(_ key: String?) -> Bool {
+        switch key?.lowercased() {
+        case "space", "spacebar", " ": return true
         default: return false
         }
+    }
+
+    private static func isKeyboardControlRole(_ role: String?) -> Bool {
+        guard let normalized = role?.lowercased() else { return false }
+        return normalized.contains("checkbox") || normalized.contains("check box")
+            || normalized.contains("radio") || normalized.contains("switch")
     }
 
     private static func isSubmissionControlRole(_ role: String?) -> Bool {
@@ -236,6 +311,18 @@ public enum SubmissionBoundary {
             .lowercased()
             .split { !$0.isLetter && !$0.isNumber }
             .contains("form")
+    }
+
+    private static func hasFormInputContext(_ snapshot: CUSnapshot) -> Bool {
+        snapshot.elements.contains { element in
+            let role = element.role.lowercased()
+            return role.contains("textfield") || role.contains("text field")
+                || role.contains("textarea") || role.contains("text area")
+                || role.contains("securetext") || role.contains("secure text")
+                || role.contains("combobox") || role.contains("combo box")
+                || role.contains("checkbox") || role.contains("check box")
+                || role.contains("radio")
+        }
     }
 
     private static func isReturnOrEnter(_ key: String?) -> Bool {
@@ -261,12 +348,25 @@ public enum SubmissionBoundary {
         }
     }
 
-    private static func hasSubmitSignal(_ text: String) -> Bool {
+    private static func hasSubmitSignal(
+        _ text: String,
+        includeCommitmentOnlySignals: Bool = true
+    ) -> Bool {
         let normalized = text.lowercased()
         let tokens = Set(normalized.split { !$0.isLetter && !$0.isNumber }.map(String.init))
-        return submitSignals.contains { signal in
+        let signals = includeCommitmentOnlySignals
+            ? submitSignals.union(commitmentOnlySignals)
+            : submitSignals
+        return signals.contains { signal in
             signal.contains(" ") ? normalized.contains(signal) : tokens.contains(signal)
         }
+    }
+
+    private static func hasDismissalSignal(_ text: String) -> Bool {
+        let tokens = Set(
+            text.lowercased().split { !$0.isLetter && !$0.isNumber }.map(String.init)
+        )
+        return !tokens.isDisjoint(with: dismissalSignals)
     }
 
     private static func displayLabel(_ element: CUElement) -> String? {
@@ -275,8 +375,6 @@ public enum SubmissionBoundary {
             description += " \"\(label)\""
         } else if let roleDescription = element.roleDescription, !roleDescription.isEmpty {
             description += " \"\(roleDescription)\""
-        } else if let value = safeElementValue(element), !value.isEmpty {
-            description += " \"\(value)\""
         }
         return description.isEmpty ? nil : description
     }
@@ -290,15 +388,29 @@ public enum SubmissionBoundary {
         // Osaurus approval card can change focus, and the freshness capture is
         // AX-only even when the prior resolution escalated to SoM. The actual
         // form controls, values, enabled state, app, and window must stay equal.
+        // Unrelated page content is excluded so clocks, carousels, and ads do
+        // not invalidate an otherwise exact approval.
         var fields = [snapshot.app, snapshot.focusedWindow ?? ""]
-        fields.append(contentsOf: snapshot.elements.flatMap { element in
+        let elementFields = snapshot.elements.filter(isFormStateElement).map { element in
             [
                 element.path ?? "", element.role, element.roleDescription ?? "", element.label ?? "",
                 element.value ?? "",
                 element.placeholder ?? "", element.enabled ? "1" : "0",
             ]
-        })
+        }.sorted { $0.lexicographicallyPrecedes($1) }
+        fields.append(contentsOf: elementFields.flatMap { $0 })
         return processKeyedFingerprint(fields)
+    }
+
+    private static func isFormStateElement(_ element: CUElement) -> Bool {
+        let role = element.role.lowercased()
+        return role.contains("textfield") || role.contains("text field")
+            || role.contains("textarea") || role.contains("text area")
+            || role.contains("securetext") || role.contains("secure text")
+            || role.contains("combobox") || role.contains("combo box")
+            || role.contains("checkbox") || role.contains("check box")
+            || role.contains("radio") || role.contains("button")
+            || isWithinForm(element)
     }
 
     private static func elementFingerprint(_ element: CUElement) -> UInt64 {
@@ -327,6 +439,27 @@ public enum SubmissionBoundary {
     private static let submitSignals: Set<String> = [
         "submit", "send", "continue", "confirm", "register", "checkout", "purchase", "pay", "book", "schedule",
         "post", "publish", "upload", "sign in", "sign up", "log in", "place order", "create account", "save changes",
-        "next", "finish", "complete", "apply", "authorize", "approve", "accept", "agree", "request access",
+        "next", "finish", "complete", "apply", "request access", "subscribe", "get started",
+        "login", "signin", "signup", "signout", "go", "search", "join",
+        "enviar", "envoyer", "senden", "continuar", "invia", "bestellen",
+        "отправить", "продолжить", "войти", "заказать",
+        "送信", "提交", "继续", "登录", "确认", "결제", "제출",
+    ]
+
+    // These labels are consequential on buttons/links, but commonly describe
+    // reversible form controls such as "Agree to terms" checkboxes. Only use
+    // them when accessibility identifies a submission-capable control role.
+    private static let commitmentOnlySignals: Set<String> = [
+        "authorize", "approve", "accept", "agree",
+    ]
+
+    private static let dismissalSignals: Set<String> = [
+        "back", "cancel", "close", "dismiss", "later", "skip",
+    ]
+
+    private static let submissionSuccessSignals: Set<String> = [
+        "submitted", "submission received", "success", "thank you",
+        "request received", "order confirmed", "payment complete",
+        "enviado", "envoyé", "gesendet", "отправлено", "已提交", "제출 완료",
     ]
 }

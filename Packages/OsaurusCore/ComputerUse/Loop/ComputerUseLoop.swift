@@ -449,7 +449,7 @@ public enum ComputerUseLoop {
                 SubagentActivityEvent(
                     step: step,
                     kind: .propose,
-                    title: action.feedLabel,
+                    title: privacySafeActivityLabel(action),
                     detail: action.note
                 )
             )
@@ -502,7 +502,7 @@ public enum ComputerUseLoop {
                         return terminate(
                             .deadEnd(
                                 reason:
-                                    "Repeated the same action (\(action.feedLabel)) "
+                                    "Repeated the same action (\(privacySafeActivityLabel(action))) "
                                     + "\(repeatedActionCount) times without progress."
                             )
                         )
@@ -738,14 +738,21 @@ public enum ComputerUseLoop {
                 )
                 metrics.recordEffect(effect)
                 let targetLabel = resolvedElement.map { describe($0) } ?? action.target?.describe
-                let policyDecision = await gate.evaluate(
+                let rawPolicyDecision = await gate.evaluate(
                     action: action,
                     effect: effect,
                     appName: currentApp,
                     targetLabel: targetLabel
                 )
-                let submissionElement = resolvedElement
-                    ?? (action.verb == .pressKey ? snapshot.elements.first(where: \.focused) : nil)
+                let implicitFocusedElement: CUElement? =
+                    (action.verb == .pressKey || action.verb == .type || action.verb == .setValue)
+                    ? snapshot.elements.first(where: \.focused)
+                    : nil
+                let policyDecision = Self.redactingSensitivePreview(
+                    rawPolicyDecision,
+                    element: resolvedElement ?? implicitFocusedElement
+                )
+                let submissionElement = resolvedElement ?? implicitFocusedElement
                 let submissionBinding = SubmissionBoundary.binding(
                     action: action,
                     element: submissionElement,
@@ -808,7 +815,7 @@ public enum ComputerUseLoop {
                         guard !interrupt.isInterrupted, !Task.isCancelled else {
                             return terminate(.interrupted)
                         }
-                        guard let freshElement = SubmissionBoundary.revalidatedElement(
+                        guard case .valid(let freshElement) = SubmissionBoundary.revalidation(
                             for: submissionBinding,
                             action: action,
                             snapshot: approvalSnapshot
@@ -830,9 +837,9 @@ public enum ComputerUseLoop {
                             )
                             break
                         }
-                        if action.verb != .pressKey {
+                        if action.verb != .pressKey, let freshElement {
                             resolvedElement = freshElement
-                        } else if !freshElement.id.isEmpty, !freshElement.focused {
+                        } else if let freshElement, !freshElement.id.isEmpty, !freshElement.focused {
                             let focusResult = await driver.perform(.focus(id: freshElement.id))
                             guard focusResult.success else {
                                 formEvidence.submissionState = .readyForReview
@@ -870,6 +877,7 @@ public enum ComputerUseLoop {
                         feed: feed,
                         step: step + 1,
                         interrupt: interrupt,
+                        allowCoordinateFallback: submissionBinding == nil,
                         completion: { success, changed in
                             actionSucceeded = success
                             actionVerified = changed
@@ -890,7 +898,19 @@ public enum ComputerUseLoop {
                             formEvidence.submissionState =
                                 actionSucceeded ? .actionExecutedUnverified : .readyForReview
                         } else if actionSucceeded {
-                            formEvidence.submissionState = actionVerified ? .verified : .acted
+                            let exactBoundaryChanged: Bool
+                            if let submissionBinding, let verificationSnapshot = lastSnapshot,
+                               SubmissionBoundary.verifiesSubmission(
+                                   for: submissionBinding,
+                                   action: action,
+                                   snapshot: verificationSnapshot
+                               )
+                            {
+                                exactBoundaryChanged = true
+                            } else {
+                                exactBoundaryChanged = false
+                            }
+                            formEvidence.submissionState = exactBoundaryChanged ? .verified : .acted
                         } else {
                             formEvidence.submissionState = .readyForReview
                         }
@@ -966,7 +986,12 @@ public enum ComputerUseLoop {
         case .reject(let reason):
             metrics.blocked += 1
             feed.emit(
-                SubagentActivityEvent(step: step, kind: .blocked, title: "Blocked: \(action.feedLabel)", detail: reason)
+                SubagentActivityEvent(
+                    step: step,
+                    kind: .blocked,
+                    title: "Blocked: \(privacySafeActivityLabel(action))",
+                    detail: reason
+                )
             )
             toolResult = "That action is not allowed: \(reason). Choose a different action."
             advancedStep = false
@@ -989,11 +1014,23 @@ public enum ComputerUseLoop {
             }
             if approved {
                 metrics.confirmsApproved += 1
-                feed.emit(SubagentActivityEvent(step: step, kind: .confirmed, title: "Approved: \(action.feedLabel)"))
+                feed.emit(
+                    SubagentActivityEvent(
+                        step: step,
+                        kind: .confirmed,
+                        title: "Approved: \(preview.summary)"
+                    )
+                )
                 return .perform
             }
             metrics.confirmsDeclined += 1
-            feed.emit(SubagentActivityEvent(step: step, kind: .denied, title: "Declined: \(action.feedLabel)"))
+            feed.emit(
+                SubagentActivityEvent(
+                    step: step,
+                    kind: .denied,
+                    title: "Declined: \(preview.summary)"
+                )
+            )
             toolResult = "The user declined that action. Try a different approach or ask to stop."
             advancedStep = false
             if case .oneShot = preview.approvalScope {
@@ -1240,6 +1277,7 @@ public enum ComputerUseLoop {
         feed: SubagentFeed,
         step: Int,
         interrupt: InterruptToken? = nil,
+        allowCoordinateFallback: Bool = true,
         completion: ((Bool, Bool) -> Void)? = nil
     ) async -> String {
         guard interrupt?.isInterrupted != true, !Task.isCancelled else {
@@ -1315,6 +1353,18 @@ public enum ComputerUseLoop {
         //     since an id-addressed edit can't survive a stale ref. set_value
         //     and clear are expressed as a wholesale replace (clear = empty).
         if (result.removed || result.stale), let element {
+            guard allowCoordinateFallback else {
+                feed.emit(
+                    SubagentActivityEvent(
+                        step: step,
+                        kind: .blocked,
+                        title: "Approved target became stale",
+                        detail: "The exact approved target could not be reused; no coordinate fallback was attempted.",
+                        success: false
+                    )
+                )
+                return "The approved form target changed before execution. Nothing was submitted."
+            }
             guard interrupt?.isInterrupted != true, !Task.isCancelled else {
                 return "The run was stopped before the fallback action could execute."
             }
@@ -1380,7 +1430,7 @@ public enum ComputerUseLoop {
             SubagentActivityEvent(
                 step: step,
                 kind: .act,
-                title: action.feedLabel,
+                title: privacySafeActivityLabel(action),
                 detail: result.error,
                 success: result.success
             )
@@ -1437,6 +1487,40 @@ public enum ComputerUseLoop {
         out += view.hasChanges ? " The view changed." : " The view looks unchanged."
         out += "\n\nCurrent view:\n" + view.renderForModel()
         return out
+    }
+
+    private static func privacySafeActivityLabel(_ action: AgentAction) -> String {
+        switch action.verb {
+        case .type, .setValue:
+            return "Enter text"
+        case .clear:
+            return "Clear text"
+        default:
+            return action.feedLabel
+        }
+    }
+
+    private static func redactingSensitivePreview(
+        _ decision: GateDecision,
+        element: CUElement?
+    ) -> GateDecision {
+        guard let element, CUSecureFieldRole.contains(element.role),
+              case .confirm(let preview) = decision
+        else {
+            return decision
+        }
+        return .confirm(
+            ActionPreview(
+                appName: preview.appName,
+                actionLabel: "Enter protected text",
+                targetLabel: element.role,
+                effect: preview.effect,
+                note: nil,
+                typedText: nil,
+                scriptBody: preview.scriptBody,
+                approvalScope: preview.approvalScope
+            )
+        )
     }
 
     // MARK: - Model step
