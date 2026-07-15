@@ -140,6 +140,11 @@ public struct AgentConfigSnapshot: Sendable, Equatable {
     /// `propose_knowledge_update` from the model-visible schema. The tool
     /// re-checks the role at execution time.
     public let knowledgeCuratorEnabled: Bool
+    /// Granted collections resolved to enabled ones at capture time
+    /// (name + summary only). Feeds the `## Knowledge` prompt section —
+    /// `knowledgeEnabled` alone only gates the tools into the schema; this
+    /// is what tells the model WHAT the granted corpora contain.
+    public let knowledgeCollections: [KnowledgeGrantDescriptor]
 
     public init(
         agentId: UUID,
@@ -165,7 +170,8 @@ public struct AgentConfigSnapshot: Sendable, Equatable {
         spawnableModelNames: [String] = [],
         spawnableModelNotes: [String: String] = [:],
         knowledgeEnabled: Bool = false,
-        knowledgeCuratorEnabled: Bool = false
+        knowledgeCuratorEnabled: Bool = false,
+        knowledgeCollections: [KnowledgeGrantDescriptor] = []
     ) {
         self.agentId = agentId
         self.toolsDisabled = toolsDisabled
@@ -191,6 +197,7 @@ public struct AgentConfigSnapshot: Sendable, Equatable {
         self.spawnableModelNotes = spawnableModelNotes
         self.knowledgeEnabled = knowledgeEnabled
         self.knowledgeCuratorEnabled = knowledgeCuratorEnabled
+        self.knowledgeCollections = knowledgeCollections
     }
 
     /// Read every `effective*` field in one MainActor batch.
@@ -240,7 +247,12 @@ public struct AgentConfigSnapshot: Sendable, Equatable {
             // spawn tools: enabled with zero grants keeps the tools hidden.
             knowledgeEnabled: caps.knowledgeEnabled && !caps.knowledgeCollectionIds.isEmpty,
             knowledgeCuratorEnabled: caps.knowledgeCuratorEnabled
-                && !caps.knowledgeCollectionIds.isEmpty
+                && !caps.knowledgeCollectionIds.isEmpty,
+            // Same grant resolution the tools use at execution time
+            // (`effectiveKnowledgeCollections`), captured here so the
+            // prompt section can't race a mid-compose grant edit.
+            knowledgeCollections: mgr.effectiveKnowledgeCollections(for: agentId)
+                .map(\.grantDescriptor)
         )
     }
 }

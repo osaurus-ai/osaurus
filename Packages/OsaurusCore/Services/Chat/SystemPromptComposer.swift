@@ -1019,6 +1019,31 @@ public struct SystemPromptComposer: Sendable {
             }
         }
 
+        // Knowledge grant manifest: schema-gated like `spawn` above. The
+        // retrieval tools resolving into the schema is not enough affordance
+        // on its own — their descriptions don't say what the granted corpora
+        // contain, so a small model never connects a domain question to
+        // `search_knowledge` and answers from thin air. Enumerating the
+        // ACTUAL grants (name + summary, captured on `snapshot`) makes the
+        // collection's own description the trigger. Static: the grant set is
+        // session-constant; a grant or summary edit re-renders it (a
+        // one-time cached-prefix bust, like the other config-driven
+        // sections).
+        if !effectiveToolsOff,
+            !resolvedNames.isDisjoint(with: Self.knowledgeToolNames),
+            !snapshot.knowledgeCollections.isEmpty
+        {
+            composer.append(
+                .static(
+                    id: "knowledge",
+                    label: L("Knowledge"),
+                    content: SystemPromptTemplates.knowledgeGuidance(
+                        collections: snapshot.knowledgeCollections
+                    )
+                )
+            )
+        }
+
         // Agent-loop guidance: short cheat-sheet for the chat-layer-
         // intercepted tools (todo / complete / clarify / share_artifact).
         // Always rendered when any loop tool resolves into the schema:

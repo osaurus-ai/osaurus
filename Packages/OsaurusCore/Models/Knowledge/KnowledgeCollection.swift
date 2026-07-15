@@ -91,4 +91,24 @@ public struct KnowledgeCollection: Identifiable, Codable, Equatable, Sendable {
             atPath: folderURL.appendingPathComponent(".git").path
         )
     }
+
+    /// Prompt-facing slice of this grant (see `KnowledgeGrantDescriptor`).
+    public var grantDescriptor: KnowledgeGrantDescriptor {
+        KnowledgeGrantDescriptor(name: name, summary: summary)
+    }
+}
+
+/// Prompt-facing slice of a granted collection — the name + summary pair
+/// the `## Knowledge` system prompt section enumerates so agents know when
+/// to consult the corpus. This is the surfacing the `summary` field's doc
+/// comment promises; without it the model only sees the generic knowledge
+/// tool descriptions and never connects a domain question to the corpus.
+public struct KnowledgeGrantDescriptor: Sendable, Equatable {
+    public let name: String
+    public let summary: String
+
+    public init(name: String, summary: String) {
+        self.name = name
+        self.summary = summary
+    }
 }
