@@ -186,12 +186,21 @@ public enum SubmissionBoundary {
         guard isSubmitActivation || isReturnSubmission || isTypedNewlineSubmission else { return nil }
 
         let targetIsSecure = element.map { CUSecureFieldRole.contains($0.role) } ?? false
+        let publicActionLabel: String
+        switch action.verb {
+        case .type, .setValue:
+            publicActionLabel = targetIsSecure ? "Enter protected text" : "Enter text"
+        case .clear:
+            publicActionLabel = "Clear text"
+        default:
+            publicActionLabel = action.feedLabel
+        }
         return SubmissionApprovalBinding(
             snapshotId: snapshot.snapshotId,
             appName: app,
             verb: action.verb,
             targetLabel: element.flatMap(displayLabel) ?? action.target?.describe,
-            actionLabel: targetIsSecure ? "Enter protected text" : action.feedLabel,
+            actionLabel: publicActionLabel,
             targetFingerprint: element.map(elementFingerprint),
             snapshotFingerprint: snapshotFingerprint(snapshot),
             targetIsSecure: targetIsSecure,
@@ -266,16 +275,19 @@ public enum SubmissionBoundary {
     public static func confirmationPreview(
         action: AgentAction,
         binding: SubmissionApprovalBinding,
-        note: String?
+        note _: String?
     ) -> ActionPreview {
         ActionPreview(
             appName: binding.appName,
             actionLabel: binding.actionLabel,
             targetLabel: binding.targetLabel,
             effect: .consequential,
+            // Model-authored notes are not trusted for persisted confirmation
+            // or activity metadata. They may restate values from another,
+            // secure field even when the submit target itself is non-secure.
             note: binding.targetIsSecure
                 ? "Protected input is ready. Approve only if you want to submit the form now."
-                : (note ?? "The form is filled and ready for review. Approve only if you want to submit it now."),
+                : "The form is filled and ready for review. Approve only if you want to submit it now.",
             typedText: binding.targetIsSecure ? nil : action.typedTextForPreview,
             approvalScope: .oneShot(binding)
         )

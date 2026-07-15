@@ -453,6 +453,67 @@ final class ComputerUseLoopRunTests: XCTestCase {
         XCTAssertFalse(rendered.contains(canary))
     }
 
+    func testBrowserSubmissionNoteNeverAppearsInActivityFeed() async {
+        let canary = "submission-note-secret-canary"
+        let d = driver([el("submit", "button", "Submit request")], app: "Safari")
+        let feed = SubagentFeed(toolCallId: "submit-note", kindId: "computer_use", title: "submit")
+        _ = await run(
+            d,
+            provider: ComputerUseLoop.scriptedProvider([
+                AgentAction(
+                    verb: .click,
+                    target: AgentTarget(mark: 1),
+                    note: canary
+                ),
+            ]),
+            gate: ComputerUseGate(policy: AutonomyPolicy(globalPreset: .autonomous)),
+            confirm: { _ in false },
+            feed: feed
+        )
+
+        let rendered = feed.currentEvents()
+            .flatMap { [$0.title, $0.detail ?? ""] }
+            .joined(separator: "\n")
+        XCTAssertFalse(rendered.contains(canary))
+    }
+
+    func testTypedNewlineSubmissionValueNeverAppearsInActivityFeedOrBindingLabel() async {
+        let canary = "typed-value-secret-canary\n"
+        let field = CUElement(
+            id: "message",
+            role: "AXTextField",
+            label: "Message",
+            focused: true
+        )
+        let d = driver([field], app: "Safari")
+        let feed = SubagentFeed(toolCallId: "typed-submit", kindId: "computer_use", title: "submit")
+        let recorder = ActionPreviewRecorder()
+        _ = await run(
+            d,
+            provider: ComputerUseLoop.scriptedProvider([
+                AgentAction(verb: .type, target: AgentTarget(mark: 1), text: canary),
+            ]),
+            gate: ComputerUseGate(policy: AutonomyPolicy(globalPreset: .autonomous)),
+            confirm: { preview in
+                await recorder.record(preview)
+                return false
+            },
+            feed: feed
+        )
+
+        let rendered = feed.currentEvents()
+            .flatMap { [$0.title, $0.detail ?? ""] }
+            .joined(separator: "\n")
+        XCTAssertFalse(rendered.contains(canary.trimmingCharacters(in: .newlines)))
+        let previews = await recorder.values
+        XCTAssertEqual(previews.first?.actionLabel, "Enter text")
+        guard case .oneShot(let binding) = previews.first?.approvalScope else {
+            return XCTFail("Typed newline submission must remain one-shot")
+        }
+        XCTAssertEqual(binding.actionLabel, "Enter text")
+        XCTAssertFalse(binding.actionLabel.contains(canary.trimmingCharacters(in: .newlines)))
+    }
+
     func testAutonomousBrowserCommitControlsRequireOneShotApproval() async {
         for (role, label) in [
             ("button", "Buy now"),
