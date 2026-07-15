@@ -1511,7 +1511,6 @@ public enum ComputerUseLoop {
                 messages: &messages,
                 imageTokensInContext: &imageTokensInContext,
                 consentGranted: consent.granted,
-                persistentConsent: consent.persistent,
                 metrics: &metrics,
                 feed: feed,
                 step: step
@@ -1581,7 +1580,7 @@ public enum ComputerUseLoop {
         guard
             case .needsScrubForCloud(let img) = VisionAttachment.decide(
                 image: image,
-                context: vision.withConsent(true),
+                context: vision.withConsent(consent.granted),
                 availability: availability
             )
         else { return }
@@ -1592,7 +1591,6 @@ public enum ComputerUseLoop {
             messages: &messages,
             imageTokensInContext: &imageTokensInContext,
             consentGranted: consent.granted,
-            persistentConsent: consent.persistent,
             metrics: &metrics,
             feed: feed,
             step: step
@@ -1610,7 +1608,6 @@ public enum ComputerUseLoop {
         messages: inout [ChatMessage],
         imageTokensInContext: inout Int,
         consentGranted: Bool,
-        persistentConsent: Bool,
         metrics: inout ComputerUseRunMetrics,
         feed: SubagentFeed,
         step: Int
@@ -1637,9 +1634,6 @@ public enum ComputerUseLoop {
             imageTokensInContext: &imageTokensInContext
         )
         metrics.cloudVisionUsed = true
-        if persistentConsent {
-            metrics.cloudVisionConsentPersistent = true
-        }
         feed.emit(
             SubagentActivityEvent(
                 step: step,

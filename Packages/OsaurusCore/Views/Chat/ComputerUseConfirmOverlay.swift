@@ -228,8 +228,9 @@ struct ComputerUseConfirmOverlay: View {
                 .foregroundColor(theme.secondaryText)
                 .fixedSize(horizontal: false, vertical: true)
                 Text(
-                    "Always allow remembers this choice for future Computer Use runs until you turn it off in Settings.",
-                    bundle: .module
+                    L(
+                        "Always allow remembers this choice for future Computer Use runs until you turn it off in Settings."
+                    )
                 )
                 .font(.system(size: 11))
                 .foregroundColor(theme.secondaryText)

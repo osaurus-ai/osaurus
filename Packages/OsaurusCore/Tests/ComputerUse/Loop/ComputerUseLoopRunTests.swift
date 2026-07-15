@@ -589,6 +589,126 @@ final class ComputerUseLoopRunTests: XCTestCase {
         XCTAssertEqual(recordedChoices, [])
     }
 
+    func testCloudVisionDenialPromptsOnlyOnceAcrossMultipleFramesInRun() async {
+        let promptCount = AttemptCounter()
+        let window = CUWindowSummary(id: 1, title: "Main", focused: true, x: 0, y: 0, w: 800, h: 600)
+        let empty = CUSnapshot(
+            snapshotId: 1,
+            pid: 4242,
+            app: "Electron",
+            focusedWindow: "Main",
+            tier: .ax,
+            truncated: false,
+            windows: [window],
+            elements: [],
+            image: nil
+        )
+        let populated = CUSnapshot(
+            snapshotId: 2,
+            pid: 4242,
+            app: "Electron",
+            focusedWindow: "Main",
+            tier: .som,
+            truncated: false,
+            windows: [window],
+            elements: [el("send", "button", "Send")],
+            image: renderLoopCUImage(text: "Visible account number 1234")
+        )
+        let driver = MockMacDriver(
+            availability: MacDriverAvailability(accessibility: true, screenRecording: true, skyLight: true),
+            activeWindow: CUActiveWindow(
+                pid: 4242,
+                app: "Electron",
+                title: "Main",
+                x: 0,
+                y: 0,
+                w: 800,
+                h: 600
+            ),
+            snapshots: [4242: [empty, populated, empty, populated]]
+        )
+        let result = await run(
+            driver,
+            provider: ComputerUseLoop.scriptedProvider([
+                AgentAction(verb: .observe),
+                AgentAction(verb: .done, reason: "ok"),
+            ]),
+            requestCloudVisionConsent: {
+                _ = await promptCount.bump()
+                return .deny
+            },
+            vision: VisionContext(
+                modelAcceptsImages: true,
+                modelIsLocal: false,
+                cloudConsent: false,
+                cloudScrubMode: .allText
+            )
+        )
+
+        XCTAssertTrue(result.outcome.isSuccess)
+        let totalPrompts = await promptCount.value
+        XCTAssertEqual(totalPrompts, 1)
+        XCTAssertTrue(result.metrics.cloudVisionConsentPrompted)
+        XCTAssertFalse(result.metrics.cloudVisionConsentGranted)
+        XCTAssertFalse(result.metrics.cloudVisionUsed)
+    }
+
+    func testCloudVisionPromptTeardownDeniesWithoutUsingOrPersistingCloudVision() async {
+        let recorder = ConsentPersistenceRecorder()
+        let toolCallId = "consent-teardown-\(UUID().uuidString)"
+        let driver = emptyThenPopulated(
+            screenRecording: true,
+            image: renderLoopCUImage(text: "Visible account number 1234")
+        )
+        let provider = ComputerUseLoop.scriptedProvider([AgentAction(verb: .done, reason: "ok")])
+        let task = Task {
+            await ComputerUseLoop.run(
+                goal: "test goal",
+                modelId: "test-model",
+                driver: driver,
+                gate: HardwiredGate(),
+                feed: SubagentFeed(toolCallId: toolCallId, kindId: "computer_use", title: "test goal"),
+                interrupt: InterruptToken(),
+                confirm: { _ in true },
+                requestCloudVisionConsent: {
+                    await ComputerUsePromptQueue.shared.requestCloudVisionConsent(toolCallId: toolCallId)
+                },
+                persistCloudVisionConsent: { choice in await recorder.record(choice) },
+                limits: RunLimits(wallClockSeconds: 30),
+                vision: VisionContext(
+                    modelAcceptsImages: true,
+                    modelIsLocal: false,
+                    cloudConsent: false,
+                    cloudScrubMode: .allText
+                ),
+                sessionId: "cu-test",
+                nextAction: provider
+            )
+        }
+
+        var promptParked = false
+        for _ in 0..<200 where !promptParked {
+            promptParked = await MainActor.run {
+                ComputerUsePromptQueue.shared.pendingConsent.contains { $0.toolCallId == toolCallId }
+            }
+            if !promptParked { await Task.yield() }
+        }
+        XCTAssertTrue(promptParked, "Expected the run to park a cloud-vision consent prompt")
+
+        await MainActor.run {
+            ComputerUsePromptQueue.shared.cancelAll(forToolCallId: toolCallId)
+        }
+        let result = await task.value
+
+        XCTAssertTrue(result.outcome.isSuccess)
+        XCTAssertTrue(result.metrics.cloudVisionConsentPrompted)
+        XCTAssertFalse(result.metrics.cloudVisionConsentGranted)
+        XCTAssertFalse(result.metrics.cloudVisionConsentPersistent)
+        XCTAssertFalse(result.metrics.cloudVisionUsed)
+        let recordedChoices = await recorder.choices()
+        XCTAssertEqual(recordedChoices, [])
+    }
+
     func testPreGrantedCloudVisionReportsPersistentScopeWithoutPrompt() async {
         let recorder = ConsentPersistenceRecorder()
         let d = emptyThenPopulated(
