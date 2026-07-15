@@ -34,9 +34,12 @@ public enum SandboxBackend: Sendable, Equatable {
     /// as an error the user can act on; silently downgrading the
     /// isolation tier would not be).
     ///
-    /// TEMPORARY (remove before merge): `OSAURUS_FORCE_SEATBELT=1` in
-    /// the environment forces the Seatbelt backend regardless of OS
-    /// version, so the fallback can be exercised on a Tahoe dev machine.
+    /// Debug override: launching with `OSAURUS_FORCE_SEATBELT=1` in the
+    /// environment forces the Seatbelt backend regardless of OS version,
+    /// so the fallback can be exercised and debugged on a Tahoe machine.
+    /// Env vars don't survive a normal Finder/Dock launch, so this can't
+    /// be tripped by accident — it requires an Xcode scheme entry or a
+    /// terminal launch.
     public static let current: SandboxBackend = {
         if ProcessInfo.processInfo.environment["OSAURUS_FORCE_SEATBELT"] == "1" {
             return .seatbelt

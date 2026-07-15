@@ -93,6 +93,19 @@
         private var spawnSlotHeld = false
 
         public func start() async throws {
+            // Sandboxed stdio needs the VM's interactive exec bridge, which
+            // the Seatbelt backend doesn't have. Fail up front with guidance
+            // instead of burning a spawn slot to hit the same wall inside
+            // `execInteractive`. Deliberately NOT an automatic fallback to
+            // the host: the user chose sandboxed execution, and silently
+            // running the subprocess unconfined would downgrade isolation
+            // without their consent.
+            guard SandboxBackend.current == .virtualMachine else {
+                throw MCPStdioTransportError.processSpawnFailed(
+                    "Sandboxed MCP servers require macOS 26 or later. To run this provider on this Mac, change its \"Run in\" setting to Host — note it will then run without sandbox protection."
+                )
+            }
+
             // Reserve a global MCP child-spawn slot (shared with the host
             // transport) before doing any container work, so a launch storm
             // can't exhaust resources.
