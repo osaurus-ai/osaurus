@@ -1038,7 +1038,11 @@ public struct SystemPromptComposer: Sendable {
                     id: "knowledge",
                     label: L("Knowledge"),
                     content: SystemPromptTemplates.knowledgeGuidance(
-                        collections: snapshot.knowledgeCollections
+                        collections: snapshot.knowledgeCollections,
+                        // Curator line only when the proposal tool actually
+                        // resolved — mirrors the section's own schema gate.
+                        curator: !resolvedNames.isDisjoint(
+                            with: Self.knowledgeCuratorToolNames)
                     )
                 )
             )

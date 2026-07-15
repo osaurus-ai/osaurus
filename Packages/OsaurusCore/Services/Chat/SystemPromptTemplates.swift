@@ -768,7 +768,10 @@ public enum SystemPromptTemplates {
     /// own description the affordance. Editing a grant or a collection's
     /// name/summary re-renders the block (a one-time cached-prefix bust),
     /// matching the other config-driven sections.
-    public static func knowledgeGuidance(collections: [KnowledgeGrantDescriptor]) -> String {
+    public static func knowledgeGuidance(
+        collections: [KnowledgeGrantDescriptor],
+        curator: Bool = false
+    ) -> String {
         var lines: [String] = ["## Knowledge", ""]
         lines.append("Knowledge collections granted to this agent:")
         for collection in collections {
@@ -789,9 +792,20 @@ public enum SystemPromptTemplates {
                 + "`list_knowledge` browses a collection's documents."
         )
         lines.append(
-            "- If you notice a document is out of date, report it with "
-                + "`flag_knowledge_stale` — you cannot edit collection files directly."
+            "- You cannot edit collection documents. When the user reports a change or "
+                + "asks you to update one — or you find outdated content yourself — file it "
+                + "with `flag_knowledge_stale`; the ticket starts the human-reviewed update "
+                + "and IS the correct way to fulfil an update request. Tell the user the "
+                + "report was filed for review."
         )
+        if curator {
+            lines.append(
+                "- You are a curator: after filing the ticket, draft the corrected document "
+                    + "with `propose_knowledge_update`. The proposal stays pending until the "
+                    + "user approves it in the Knowledge tab — nothing changes on disk before "
+                    + "then."
+            )
+        }
         return lines.joined(separator: "\n")
     }
 
