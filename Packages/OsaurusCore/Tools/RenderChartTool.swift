@@ -2,10 +2,10 @@
 //  RenderChartTool.swift
 //  osaurus
 //
-//  Builds a ChartSpec from attachment content passed directly by the model.
-//  The model passes the raw file content + column references — the tool does
-//  all parsing, type coercion, and downsampling so the model never has to
-//  format individual data points.
+//  Builds a ChartSpec from raw tabular content passed directly by the model.
+//  The data may come from an attachment, web extraction, sandbox/file read,
+//  or computation. The tool handles parsing, type coercion, and downsampling
+//  so the model never has to format individual data points.
 //
 
 import Foundation
@@ -21,9 +21,12 @@ struct RenderChartTool: OsaurusTool {
     private static let chartTypeEnum: JSONValue = .array(sortedChartTypes.map { .string($0) })
 
     var description: String {
-        "Render a chart card inline in the chat from tabular data. Supported chart types: \(Self.chartTypeList). "
-            + "Pass the raw file content + column names; the tool handles parsing, type coercion, and downsampling. "
-            + "Use when the user has attached a data file (CSV/TSV/JSON) — for arbitrary images or saved chart files, use `share_artifact` instead."
+        "Render a chart card inline in the chat from raw CSV, TSV, or JSON data already "
+            + "obtained or generated in this turn. Supported chart types: \(Self.chartTypeList). "
+            + "Pass the raw data and column names; it may come from an attachment, web "
+            + "extraction, sandbox/file read, download, or computation. This tool does not "
+            + "fetch data, so retrieve it first. For arbitrary images or saved chart files, "
+            + "use `share_artifact` instead."
     }
 
     let parameters: JSONValue? = .object([
@@ -39,7 +42,10 @@ struct RenderChartTool: OsaurusTool {
         "properties": .object([
             "data": .object([
                 "type": .string("string"),
-                "description": .string("The raw content of the attached file (CSV, TSV, or JSON array of objects)."),
+                "description": .string(
+                    "Raw CSV, TSV, or JSON array-of-objects content to chart. It may come from "
+                        + "an attachment, web extraction, sandbox/file read, download, or computation."
+                ),
             ]),
             "format": .object([
                 "type": .string("string"),

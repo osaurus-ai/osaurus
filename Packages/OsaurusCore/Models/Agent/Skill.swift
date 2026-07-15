@@ -394,7 +394,7 @@ public struct Skill: Codable, Identifiable, Sendable, Equatable {
             Skill(
                 id: UUID(uuidString: "00000001-0000-0000-0000-000000000007")!,
                 name: L("Data Visualizer"),
-                description: L("Render charts and graphs from data inline or from file attachments"),
+                description: L("Render charts and graphs from attached, retrieved, or computed data"),
                 version: "1.0.0",
                 author: "Osaurus",
                 category: L("productivity"),
@@ -405,10 +405,13 @@ public struct Skill: Codable, Identifiable, Sendable, Equatable {
 
                     ## Choosing the right path
 
-                    **If the data is in a file attachment:** call the `render_chart` tool.
-                    Pass the full raw file content in the `data` field and use `xColumn` /
-                    `series` to specify which columns to plot. The tool handles all parsing
-                    and downsampling — you never need to format individual data points. Example:
+                    **If raw tabular data is available from an attachment, web extraction,
+                    sandbox/file read, download, or computation:** call the `render_chart` tool.
+                    Retrieve or compute the data first, then pass its full raw content in the
+                    `data` field and use `xColumn` / `series` to specify which columns to plot.
+                    The tool does not fetch URLs itself; it handles parsing and downsampling once
+                    data is available. Do not keep rephrasing web searches when retrieval is the
+                    required next step. Example:
                     ```
                     render_chart(
                       data: "<full raw CSV/TSV/JSON content>",

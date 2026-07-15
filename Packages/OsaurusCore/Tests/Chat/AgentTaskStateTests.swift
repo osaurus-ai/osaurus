@@ -653,6 +653,65 @@ struct AgentTaskStateTests {
         }
     }
 
+    /// Bonsai can rephrase the same discovery query indefinitely, so exact
+    /// argument matching is insufficient. Allow three research searches, then
+    /// make the required discovery -> retrieval transition explicit.
+    @Test func webSearchLoop_rewordedQueriesArmTransitionAtFourth() {
+        let state = AgentTaskState()
+        for n in 1 ... 3 {
+            state.record(
+                name: "web_search",
+                argsJSON: #"{"query":"S&P 500 CSV variation \#(n)"}"#,
+                result: ToolEnvelope.success(tool: "web_search", text: "ranked snippets")
+            )
+            #expect(state.nextStepBias() == nil, "search \(n) remains a legitimate research step")
+        }
+
+        state.record(
+            name: "web_search",
+            argsJSON: #"{"query":"S&P historical close dataset"}"#,
+            result: ToolEnvelope.success(tool: "web_search", text: "more ranked snippets")
+        )
+        let bias = state.nextStepBias() ?? ""
+        #expect(bias.contains("discovery-only"))
+        #expect(bias.contains("search_and_extract"))
+        #expect(bias.contains("render_chart"))
+        #expect(bias.contains("Stop searching"))
+    }
+
+    /// A retrieval/processing call is real progress and immediately disarms
+    /// the discovery-run advisory.
+    @Test func webSearchLoop_retrievalDisarmsTransition() {
+        let state = AgentTaskState()
+        for n in 1 ... 4 {
+            state.record(
+                name: "web_search",
+                argsJSON: #"{"query":"dataset \#(n)"}"#,
+                result: ToolEnvelope.success(tool: "web_search", text: "ranked snippets")
+            )
+        }
+        #expect(state.nextStepBias()?.contains("Stop searching") == true)
+
+        state.record(
+            name: "search_and_extract",
+            argsJSON: #"{"query":"selected source"}"#,
+            result: ToolEnvelope.success(tool: "search_and_extract", text: "page body")
+        )
+        #expect(state.nextStepBias() == nil, "retrieval resets the discovery-only run")
+    }
+
+    /// Identical successful web reads are replayable just like file reads;
+    /// re-executing the same query cannot add information to the current turn.
+    @Test func webSearchLoop_identicalSuccessfulSearchIsHeld() {
+        let state = AgentTaskState()
+        let args = #"{"query":"S&P 500 CSV"}"#
+        let envelope = ToolEnvelope.success(tool: "web_search", text: "ranked snippets")
+        state.record(name: "web_search", argsJSON: args, result: envelope)
+
+        #expect(AgentTaskState.isReplayEligible(name: "web_search"))
+        #expect(state.heldResult(name: "web_search", argsJSON: args) == envelope)
+    }
+
     /// A different call between repeats disarms the pending nudge — the
     /// notice describes the MOST RECENT call only.
     @Test func repeatedCall_differentCallDisarms() {

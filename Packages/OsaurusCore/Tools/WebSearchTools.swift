@@ -151,9 +151,12 @@ enum WebSearchResultFormatter {
 final class WebSearchTool: OsaurusTool, @unchecked Sendable {
     let name = "web_search"
     let description =
-        "Search the web. Just pass `query`; results come from the user's configured "
-        + "search providers with automatic fallback. Returns ranked results with "
-        + "title, url, and snippet."
+        "Discover relevant web sources. Just pass `query`; results come from the user's "
+        + "configured search providers with automatic fallback. Returns ranked titles, URLs, "
+        + "and snippets only — it does not fetch page bodies or downloadable data. Once you "
+        + "select a source, retrieve its content with `search_and_extract`; if that tool is not "
+        + "loaded and `capabilities_load` is available, load `tool/search_and_extract`. Do not "
+        + "keep rephrasing `web_search` when you need source content."
 
     var parameters: JSONValue? {
         var properties: [String: JSONValue] = [
@@ -271,7 +274,8 @@ final class SearchAndExtractTool: OsaurusTool, @unchecked Sendable {
     let name = "search_and_extract"
     let description =
         "Search the web and extract the top results' page content as markdown in one step. "
-        + "Use when you need a grounded answer without a separate fetch step."
+        + "Use after `web_search` when you need actual page text or data rather than more "
+        + "titles, URLs, and snippets."
 
     let parameters: JSONValue? = .object([
         "type": .string("object"),

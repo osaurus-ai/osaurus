@@ -37,6 +37,19 @@ struct WebSearchToolTests {
         #expect(!ToolRegistry.defaultAgentAllowedToolNames.contains("search_and_extract"))
     }
 
+    @Test func webSearchContractExplainsDiscoveryToRetrievalTransition() {
+        let description = WebSearchTool().description
+        #expect(description.contains("does not fetch page bodies"))
+        #expect(description.contains("search_and_extract"))
+        #expect(description.contains("tool/search_and_extract"))
+    }
+
+    @Test func searchAndExtractContractProvidesPageContent() {
+        let description = SearchAndExtractTool().description
+        #expect(description.contains("actual page text or data"))
+        #expect(description.contains("rather than more"))
+    }
+
     // MARK: - Dynamic category enum
 
     private func categoryEnum(of tool: WebSearchTool) -> [String]? {
