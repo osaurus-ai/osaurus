@@ -41,18 +41,18 @@ struct TTSEngineRebuildTests {
             src.contains("AVAudioEngineConfigurationChange"),
             "an output-route change must be observed — the engine will not tell you otherwise"
         )
-        #expect(src.contains("engineNeedsRebuild"))
+        #expect(src.contains("needsRebuild"))
 
         // And the early return must consult it. `isRunning` is true even when the graph is dead,
         // so trusting it alone is precisely the silent-audio bug.
-        guard let start = src.range(of: "private func configureEngineIfNeeded()") else {
-            Issue.record("configureEngineIfNeeded not found")
+        guard let start = src.range(of: "private func configureIfNeededLocked()") else {
+            Issue.record("configureIfNeededLocked not found")
             return
         }
         let body = String(src[start.lowerBound...].prefix(1400))
         #expect(
-            body.contains("if engineNeedsRebuild"),
-            "configureEngineIfNeeded must rebuild after a configuration change, not return early"
+            body.contains("if needsRebuild"),
+            "configureIfNeededLocked must rebuild after a configuration change, not return early"
         )
     }
 

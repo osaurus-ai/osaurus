@@ -6307,11 +6307,20 @@ struct AgentDetailView: View {
     // MARK: - Agent Secrets
 
     private func loadAgentSecrets() {
-        let stored = AgentSecretsKeychain.getAllSecrets(agentId: agent.id)
-        agentSecrets =
-            stored
-            .map { AgentSecretEntry(key: $0.key, value: $0.value, isNew: false) }
-            .sorted { $0.key.localizedCaseInsensitiveCompare($1.key) == .orderedAscending }
+        // Keychain reads are securityd IPC round-trips (one per secret) and
+        // hung the appear path for 2+ seconds on slow machines. Fetch off
+        // the main actor, publish the result back.
+        let agentId = agent.id
+        Task {
+            let stored = await Task.detached(priority: .userInitiated) {
+                AgentSecretsKeychain.getAllSecrets(agentId: agentId)
+            }.value
+            guard agentId == agent.id else { return }
+            agentSecrets =
+                stored
+                .map { AgentSecretEntry(key: $0.key, value: $0.value, isNew: false) }
+                .sorted { $0.key.localizedCaseInsensitiveCompare($1.key) == .orderedAscending }
+        }
     }
 
     private func addAgentSecret() {

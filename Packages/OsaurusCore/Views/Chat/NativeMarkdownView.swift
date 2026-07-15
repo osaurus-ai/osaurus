@@ -763,6 +763,30 @@ final class NativeMarkdownView: NSView {
         theme: any ThemeProtocol,
         isStreaming: Bool
     ) {
+        // Traced: this runs per streaming tick and is the entry point of the
+        // markdown streaming app-hang cluster.
+        ChatPerfTrace.shared.time("markdown.applySegments") {
+            applySegmentsImpl(
+                segments,
+                cacheKey: cacheKey,
+                textChanged: textChanged,
+                widthChanged: widthChanged,
+                width: width,
+                theme: theme,
+                isStreaming: isStreaming
+            )
+        }
+    }
+
+    private func applySegmentsImpl(
+        _ segments: [ContentSegment],
+        cacheKey: String?,
+        textChanged: Bool,
+        widthChanged: Bool,
+        width: CGFloat,
+        theme: any ThemeProtocol,
+        isStreaming: Bool
+    ) {
         let isPureText = segments.allSatisfy {
             if case .textGroup = $0.kind { return true }; return false
         }
@@ -790,6 +814,31 @@ final class NativeMarkdownView: NSView {
     // MARK: - Private: Pure Text Path
 
     private func applyPureTextBlocks(
+        _ blocks: [SelectableTextBlock],
+        cacheKey: String?,
+        textChanged: Bool,
+        widthChanged: Bool,
+        width: CGFloat,
+        theme: any ThemeProtocol,
+        isStreaming: Bool
+    ) {
+        // Traced separately from the enclosing `markdown.applySegments`
+        // window so the report splits the pure-text path out of the
+        // segment total.
+        ChatPerfTrace.shared.time("markdown.applyPureTextBlocks") {
+            applyPureTextBlocksImpl(
+                blocks,
+                cacheKey: cacheKey,
+                textChanged: textChanged,
+                widthChanged: widthChanged,
+                width: width,
+                theme: theme,
+                isStreaming: isStreaming
+            )
+        }
+    }
+
+    private func applyPureTextBlocksImpl(
         _ blocks: [SelectableTextBlock],
         cacheKey: String?,
         textChanged: Bool,

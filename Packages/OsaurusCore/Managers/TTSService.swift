@@ -32,6 +32,140 @@ public enum TTSModelState: Equatable {
     case failed(String)
 }
 
+/// Owns the AVAudioEngine + player node and serializes every call to them on a
+/// private queue. Engine construction and `start()` make synchronous XPC
+/// round-trips to coreaudiod that stalled the main thread for seconds in
+/// production, so none of this may run on the main actor.
+/// `@unchecked Sendable`: all mutable state is confined to `queue`.
+final class TTSAudioPipeline: @unchecked Sendable {
+    private let queue = DispatchQueue(label: "ai.osaurus.tts.audio", qos: .userInitiated)
+    private let sourceFormat: AVAudioFormat
+
+    // Lazy so constructing the pipeline stays cheap; the audio stack is only
+    // realized on first playback, on `queue`.
+    private lazy var engine = AVAudioEngine()
+    private lazy var playerNode = AVAudioPlayerNode()
+    private var configured = false
+    private var needsRebuild = false
+    private var changeObserver: NSObjectProtocol?
+
+    /// Invoked (on an arbitrary thread) when the engine reports its graph was
+    /// torn down by an output-route change. The owner rebuilds the graph on
+    /// the new device and resumes playback (or ends it if the rebuild fails).
+    var onConfigurationChange: (@Sendable () -> Void)?
+
+    init(format: AVAudioFormat) {
+        self.sourceFormat = format
+    }
+
+    /// Configure the engine graph if needed, start the engine, and start the
+    /// player node. Runs on the pipeline queue; the caller awaits without
+    /// blocking its thread.
+    func prepareAndPlay() async throws {
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+            queue.async {
+                do {
+                    try self.configureIfNeededLocked()
+                    self.playerNode.play()
+                    continuation.resume()
+                } catch {
+                    continuation.resume(throwing: error)
+                }
+            }
+        }
+    }
+
+    /// Schedule a PCM frame. `completion` fires exactly once — when the buffer
+    /// finishes playing, or immediately if the buffer could not be built — so
+    /// the owner's pending-buffer accounting stays balanced.
+    func schedule(samples: [Float], completion: @escaping @Sendable () -> Void) {
+        queue.async {
+            guard let buffer = self.makeBufferLocked(from: samples) else {
+                completion()
+                return
+            }
+            self.playerNode.scheduleBuffer(buffer) { completion() }
+        }
+    }
+
+    /// Stop and reset the player node (drops any scheduled buffers). The
+    /// engine itself keeps running so the next playback start is cheap.
+    func stopPlayer() {
+        queue.async {
+            guard self.configured else { return }
+            self.playerNode.stop()
+            self.playerNode.reset()
+        }
+    }
+
+    private func configureIfNeededLocked() throws {
+        // Do NOT trust `isRunning` alone.
+        //
+        // When the output device changes — AirPods connecting, the user switching to the
+        // built-in speakers, the default device changing — AVAudioEngine tears its graph
+        // down and posts `.AVAudioEngineConfigurationChange`, but it keeps reporting
+        // `isRunning == true`. Returning early on that would leave the player node wired to
+        // a device that no longer exists: buffers are still consumed, their completion
+        // handlers still fire, the Stop control still flips back on its own — and not a
+        // single sample is audible, with no error anywhere. That is exactly what a silent
+        // TTS looks like from the outside.
+        //
+        // `needsRebuild` is set by the configuration-change observer, so the next
+        // playback re-establishes the graph instead of politely doing nothing.
+        if needsRebuild {
+            if engine.isRunning { engine.stop() }
+            configured = false
+            needsRebuild = false
+        }
+
+        if configured, engine.isRunning { return }
+        if !configured {
+            engine.attach(playerNode)
+            engine.connect(playerNode, to: engine.mainMixerNode, format: sourceFormat)
+            configured = true
+            // Registered against the engine we just built, and only once.
+            observeEngineConfigurationChangesLocked()
+        }
+        if !engine.isRunning {
+            try engine.start()
+        }
+    }
+
+    /// The notification arrives on an arbitrary thread; flag flips hop onto
+    /// `queue`, and the owner is told so it can end playback on its own actor.
+    private func observeEngineConfigurationChangesLocked() {
+        guard changeObserver == nil else { return }
+        changeObserver = NotificationCenter.default.addObserver(
+            forName: .AVAudioEngineConfigurationChange,
+            object: engine,
+            queue: nil
+        ) { [weak self] _ in
+            guard let self else { return }
+            self.queue.async { self.needsRebuild = true }
+            self.onConfigurationChange?()
+        }
+    }
+
+    private func makeBufferLocked(from samples: [Float]) -> AVAudioPCMBuffer? {
+        guard !samples.isEmpty else { return nil }
+        guard
+            let buffer = AVAudioPCMBuffer(
+                pcmFormat: sourceFormat,
+                frameCapacity: AVAudioFrameCount(samples.count)
+            )
+        else {
+            return nil
+        }
+        buffer.frameLength = AVAudioFrameCount(samples.count)
+        if let ptr = buffer.floatChannelData?[0] {
+            samples.withUnsafeBufferPointer { src in
+                ptr.update(from: src.baseAddress!, count: samples.count)
+            }
+        }
+        return buffer
+    }
+}
+
 /// Singleton that owns the PocketTTS manager, audio engine, and playback lifecycle.
 @MainActor
 public final class TTSService: ObservableObject {
@@ -71,33 +205,35 @@ public final class TTSService: ObservableObject {
     private var playbackTask: Task<Void, Never>?
     private var initTask: Task<Void, Never>?
 
-    // Lazy so the singleton can be touched at launch (e.g. `refreshModelState`)
-    // without paying for audio-stack construction on the main thread. Building
-    // `AVAudioPlayerNode` synchronously queries the AudioComponent registrar
-    // over XPC, which can stall launch for seconds under memory pressure. These
-    // are only realized on first playback via `configureEngineIfNeeded`, which
-    // is user-initiated and off the launch critical path.
-    private lazy var audioEngine = AVAudioEngine()
-    private lazy var playerNode = AVAudioPlayerNode()
-    private let sourceFormat: AVAudioFormat = {
-        AVAudioFormat(
+    /// All AVAudioEngine work lives here, serialized on the pipeline's own
+    /// queue, because engine construction and `start()` block on coreaudiod
+    /// XPC. This class keeps only the published UI state and the
+    /// pending-buffer accounting on the main actor.
+    private let pipeline = TTSAudioPipeline(
+        format: AVAudioFormat(
             commonFormat: .pcmFormatFloat32,
             sampleRate: 24_000,
             channels: 1,
             interleaved: false
         )!
-    }()
-    private var engineConfigured = false
+    )
     private var pendingBufferCount = 0
     private var streamFinished = false
 
-    /// Set when AVAudioEngine tells us its graph was torn down (an output-route change).
-    /// The engine keeps claiming `isRunning` afterwards, so this is the only honest signal
-    /// that the next playback must re-establish the connections.
-    private var engineNeedsRebuild = false
-    private var engineChangeObserver: NSObjectProtocol?
+    /// Bumped whenever the buffer accounting is reset (stop, route-change
+    /// rebuild). Completion handlers from buffers scheduled under an older
+    /// generation — including ones wired to a disconnected output device,
+    /// whose callbacks may fire late or not at all — are ignored so they
+    /// can't corrupt the count for the rebuilt node.
+    private var bufferGeneration = 0
 
-    private init() {}
+    private init() {
+        pipeline.onConfigurationChange = {
+            Task { @MainActor in
+                TTSService.shared.handleRouteChange()
+            }
+        }
+    }
 
     // MARK: - Public API
 
@@ -160,11 +296,32 @@ public final class TTSService: ObservableObject {
         playbackTask = nil
         streamFinished = true
         pendingBufferCount = 0
-        if engineConfigured {
-            playerNode.stop()
-            playerNode.reset()
-        }
+        bufferGeneration += 1
+        pipeline.stopPlayer()
         playingMessageId = nil
+    }
+
+    /// The output device changed mid-utterance (e.g. a Bluetooth speaker
+    /// disconnected). The engine graph is dead, but the synthesis stream is
+    /// still producing frames — so rebuild the engine on the new default
+    /// device and keep playing instead of stopping. Buffers already scheduled
+    /// on the old device are lost (a sub-second gap), and their late/missing
+    /// completions are excluded from accounting via `bufferGeneration`.
+    private func handleRouteChange() {
+        guard playingMessageId != nil else { return }
+        bufferGeneration += 1
+        pendingBufferCount = 0
+        Task { [weak self] in
+            do {
+                // `needsRebuild` was already flagged on the pipeline queue
+                // ahead of this call, so this re-establishes the graph.
+                try await self?.pipeline.prepareAndPlay()
+            } catch {
+                // Couldn't rebuild on the new device: end playback honestly
+                // rather than leaving a Stop control over silence.
+                self?.stop()
+            }
+        }
     }
 
     /// Begin a background download/initialize. Safe to call multiple times.
@@ -255,14 +412,6 @@ public final class TTSService: ObservableObject {
     // MARK: - Playback
 
     private func startPlayback(text: String, messageId: UUID, voiceOverride: String? = nil) {
-        do {
-            try configureEngineIfNeeded()
-        } catch {
-            modelState = .failed(error.localizedDescription)
-            playingMessageId = nil
-            return
-        }
-
         guard let manager else {
             playingMessageId = nil
             return
@@ -270,7 +419,6 @@ public final class TTSService: ObservableObject {
 
         streamFinished = false
         pendingBufferCount = 0
-        playerNode.play()
 
         let config = TTSConfigurationStore.load()
         let trimmedOverride = voiceOverride?.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -284,6 +432,17 @@ public final class TTSService: ObservableObject {
         let temperature = Float(config.temperature)
 
         playbackTask = Task { [weak self] in
+            // Engine configure + start makes synchronous XPC round-trips to
+            // coreaudiod; awaiting it here keeps the main actor free while
+            // the pipeline queue pays that cost.
+            do {
+                try await self?.pipeline.prepareAndPlay()
+            } catch {
+                self?.modelState = .failed(error.localizedDescription)
+                self?.playingMessageId = nil
+                return
+            }
+            guard !Task.isCancelled else { return }
             do {
                 let stream = try await manager.synthesizeStreaming(
                     text: text,
@@ -304,20 +463,23 @@ public final class TTSService: ObservableObject {
     }
 
     private func schedule(samples: [Float]) {
-        guard let buffer = makeBuffer(from: samples) else { return }
+        // Incremented before handing off; the pipeline guarantees the
+        // completion fires exactly once even when the buffer can't be built.
         pendingBufferCount += 1
-        playerNode.scheduleBuffer(buffer) { [weak self] in
+        let generation = bufferGeneration
+        pipeline.schedule(samples: samples) { [weak self] in
             Task { @MainActor [weak self] in
-                self?.bufferDidFinish()
+                self?.bufferDidFinish(generation: generation)
             }
         }
     }
 
-    private func bufferDidFinish() {
+    private func bufferDidFinish(generation: Int) {
+        guard generation == bufferGeneration else { return }
         pendingBufferCount = max(0, pendingBufferCount - 1)
         if streamFinished, pendingBufferCount == 0 {
             playingMessageId = nil
-            playerNode.stop()
+            pipeline.stopPlayer()
         }
     }
 
@@ -326,7 +488,7 @@ public final class TTSService: ObservableObject {
         streamFinished = true
         if pendingBufferCount == 0 {
             playingMessageId = nil
-            playerNode.stop()
+            pipeline.stopPlayer()
         }
     }
 
@@ -343,81 +505,6 @@ public final class TTSService: ObservableObject {
         }
     }
 
-    private func makeBuffer(from samples: [Float]) -> AVAudioPCMBuffer? {
-        guard !samples.isEmpty else { return nil }
-        guard
-            let buffer = AVAudioPCMBuffer(
-                pcmFormat: sourceFormat,
-                frameCapacity: AVAudioFrameCount(samples.count)
-            )
-        else {
-            return nil
-        }
-        buffer.frameLength = AVAudioFrameCount(samples.count)
-        if let ptr = buffer.floatChannelData?[0] {
-            samples.withUnsafeBufferPointer { src in
-                ptr.update(from: src.baseAddress!, count: samples.count)
-            }
-        }
-        return buffer
-    }
-
-    private func configureEngineIfNeeded() throws {
-        // Do NOT trust `isRunning` alone.
-        //
-        // When the output device changes — AirPods connecting, the user switching to the
-        // built-in speakers, the default device changing — AVAudioEngine tears its graph
-        // down and posts `.AVAudioEngineConfigurationChange`, but it keeps reporting
-        // `isRunning == true`. Returning early on that would leave the player node wired to
-        // a device that no longer exists: buffers are still consumed, their completion
-        // handlers still fire, the Stop control still flips back on its own — and not a
-        // single sample is audible, with no error anywhere. That is exactly what a silent
-        // TTS looks like from the outside.
-        //
-        // `engineNeedsRebuild` is set by the configuration-change observer, so the next
-        // playback re-establishes the graph instead of politely doing nothing.
-        if engineNeedsRebuild {
-            if audioEngine.isRunning { audioEngine.stop() }
-            engineConfigured = false
-            engineNeedsRebuild = false
-        }
-
-        if engineConfigured, audioEngine.isRunning { return }
-        if !engineConfigured {
-            audioEngine.attach(playerNode)
-            audioEngine.connect(playerNode, to: audioEngine.mainMixerNode, format: sourceFormat)
-            engineConfigured = true
-            // Registered against the engine we just built, and only once.
-            observeEngineConfigurationChanges()
-        }
-        if !audioEngine.isRunning {
-            try audioEngine.start()
-        }
-    }
-
-    /// Rebuild the audio graph on the next playback.
-    ///
-    /// Set from `.AVAudioEngineConfigurationChange`, which fires on every output-route
-    /// change. The notification arrives on an arbitrary thread and we only ever flip a
-    /// flag, so the rebuild happens on the main actor inside `configureEngineIfNeeded`,
-    /// where the rest of the engine lives.
-    private func observeEngineConfigurationChanges() {
-        guard engineChangeObserver == nil else { return }
-        engineChangeObserver = NotificationCenter.default.addObserver(
-            forName: .AVAudioEngineConfigurationChange,
-            object: audioEngine,
-            queue: nil
-        ) { [weak self] _ in
-            Task { @MainActor [weak self] in
-                guard let self else { return }
-                self.engineNeedsRebuild = true
-                // A route change mid-utterance drops the rest of the audio on the floor.
-                // End the playback honestly rather than leaving a Stop control the user has
-                // to press to silence something they cannot hear.
-                if self.playingMessageId != nil { self.stop() }
-            }
-        }
-    }
 }
 
 /// built-in PocketTTS voices (kyutai/pocket-tts on HuggingFace). shared by

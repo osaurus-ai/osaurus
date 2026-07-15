@@ -196,6 +196,11 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
         // cache here rather than racing that read from `ModelDownloadService`.
         HuggingFaceAuth.preloadInBackground()
 
+        // Warm the chat-history database too: the first chat window's
+        // synchronous session load otherwise pays the encrypted SQLite open
+        // on the main thread during launch.
+        ChatSessionStore.preloadInBackground()
+
         // Bring up analytics early so the launch + onboarding funnel is
         // captured. No-ops silently when no Aptabase key is configured.
         TelemetryService.shared.configure()
@@ -1631,8 +1636,15 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
         if info.isLowPowerModeEnabled { return true }
         switch info.thermalState {
         case .serious, .critical: return true
-        default: return false
+        default: break
         }
+        // Memory-starved machines hit the same multi-second SwiftUI
+        // realizations the low-power/thermal guards exist for — the launch
+        // prewarms hung in production on devices with ~200MB free that were
+        // neither. Available here counts free + inactive + speculative +
+        // purgeable, so a healthy machine with a big file cache still
+        // prewarms as before.
+        return ChatResidencyHandoff.availableMemoryBytes() < 2 * 1024 * 1024 * 1024
     }
 
     @MainActor func prewarmStatusPanel() {
@@ -2475,7 +2487,13 @@ extension AppDelegate {
                     .primary(L("Check out the launch")) {
                         campaign.markSeen()
                         FeatureTelemetry.productHuntLaunchDialogClicked(action: "launch")
-                        NSWorkspace.shared.open(ProductHuntLaunchCampaign.launchURL)
+                        // `open` makes a synchronous XPC round-trip to
+                        // LaunchServices that can block for seconds while the
+                        // browser cold-launches and hang the main thread;
+                        // NSWorkspace is thread-safe, so fire it off main.
+                        DispatchQueue.global(qos: .userInitiated).async {
+                            NSWorkspace.shared.open(ProductHuntLaunchCampaign.launchURL)
+                        }
                     },
                 ],
                 width: 400,

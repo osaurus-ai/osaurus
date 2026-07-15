@@ -2461,6 +2461,12 @@
             "state" : "translated",
             "value" : "%@ 本会话已花费。点击添加积分。"
           }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ 本會話已花費。點擊添加積分。"
+          }
         }
       }
     },
@@ -3339,6 +3345,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "%1$lld 核 · %2$lld GB 内存"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%1$lld 核 · %2$lld GB 內存"
           }
         }
       }
@@ -4873,13 +4885,13 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "%1$lld 个提供商%2$@ 已连接 • %3$lld 个免费来源%4$@ 作为备选"
+            "value" : "%1$lld 个提供商已连接 • %3$lld 个免费来源作为备选"
           }
         },
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "%1$lld 個供應商%2$@ 已連線 • %3$lld 個免費來源%4$@ 作為備選"
+            "value" : "%1$lld 個供應商已連線 • %3$lld 個免費來源作為備選"
           }
         }
       }
@@ -8769,6 +8781,12 @@
             "state" : "translated",
             "value" : "为你的小恐龙提供的安全网"
           }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "爲你的小恐龍提供的安全網"
+          }
         }
       }
     },
@@ -8903,6 +8921,12 @@
             "state" : "translated",
             "value" : "一段简短的代码，用于证明你创建的内容确实属于你。"
           }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "一段簡短的代碼，用於證明你創建的內容確實屬於你。"
+          }
         }
       }
     },
@@ -8931,6 +8955,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "一段简短的代码，用于证明你创建的内容确实属于你。我们会将其备份到 iCloud 钥匙串中，以便它在你的各台 Apple 设备间同步。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "一段簡短的代碼，用於證明你創建的內容確實屬於你。我們會將其備份到 iCloud 鑰匙串中，以便它在你的各臺 Apple 設備間同步。"
           }
         }
       }
@@ -9167,6 +9197,12 @@
             "state" : "translated",
             "value" : "约 2.8 GB。检测模型完全在你的 Mac 上运行——检测过程没有任何第三方流量。"
           }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "約 2.8 GB。檢測模型完全在你的 Mac 上運行——檢測過程沒有任何第三方流量。"
+          }
         }
       }
     },
@@ -9196,6 +9232,12 @@
             "state" : "translated",
             "value" : "关于加密存储"
           }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "關於加密存儲"
+          }
         }
       }
     },
@@ -9224,6 +9266,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "关于 Osaurus"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "關於 Osaurus"
           }
         }
       }
@@ -9287,6 +9335,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "关于此模型"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "關於此模型"
           }
         }
       }
@@ -10155,6 +10209,12 @@
             "state" : "translated",
             "value" : "致谢…"
           }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "致謝…"
+          }
         }
       }
     },
@@ -10805,6 +10865,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "添加安全网"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "添加安全網"
           }
         }
       }
@@ -12147,6 +12213,12 @@
             "state" : "translated",
             "value" : "影响停顿检测、唤醒词检测和语音活动阈值"
           }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "影響停頓檢測、喚醒詞檢測和語音活動閾值"
+          }
         }
       }
     },
@@ -12315,6 +12387,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "智能体可以将自己的工具创建为插件"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "智能體可以將自己的工具創建爲插件"
           }
         }
       }
@@ -12592,6 +12670,12 @@
             "state" : "translated",
             "value" : "代理委托已在设置中禁用"
           }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "代理委託已在設置中禁用"
+          }
         }
       }
     },
@@ -12832,6 +12916,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "智能体间验证"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "智能體間驗證"
           }
         }
       }
@@ -13142,6 +13232,12 @@
             "state" : "translated",
             "value" : "激进搜索。最多加载 15 个工具，可能增加提示词长度。"
           }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "激進搜索。最多加載 15 個工具，可能增加提示詞長度。"
+          }
         }
       }
     },
@@ -13174,6 +13270,12 @@
           }
         },
         "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "AI"
+          }
+        },
+        "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "AI"
@@ -13242,6 +13344,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "AI 生成的问候语"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "AI 生成的問候語"
           }
         }
       }
@@ -13442,6 +13550,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "在你创建访问密钥之前，所有 API 端点都受到限制。点击上方的“生成密钥”即可开始。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "在你創建訪問密鑰之前，所有 API 端點都受到限制。點擊上方的“生成密鑰”即可開始。"
           }
         }
       }
@@ -13794,6 +13908,12 @@
             "state" : "translated",
             "value" : "全部模型"
           }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "全部模型"
+          }
         }
       }
     },
@@ -13890,6 +14010,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "一切就绪。继续…"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "一切就緒。繼續…"
           }
         }
       }
@@ -14131,6 +14257,12 @@
             "state" : "translated",
             "value" : "允许智能体在沙盒中运行任意命令"
           }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "允許智能體在沙盒中運行任意命令"
+          }
         }
       }
     },
@@ -14275,7 +14407,38 @@
       }
     },
     "Allow local API access without a key" : {
-
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Allow local API access without a key"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Allow local API access without a key"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Allow local API access without a key"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "允许无需密钥进行本地 API 访问"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "允許無需金鑰進行本機 API 存取"
+          }
+        }
+      }
     },
     "Allow masked screenshots to reach a cloud model" : {
       "comment" : "Label for a toggle that lets users opt in to having a cloud model receive masked screenshots for text recognition.",
@@ -14620,6 +14783,12 @@
             "state" : "translated",
             "value" : "允许摘要"
           }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "允許摘要"
+          }
         }
       }
     },
@@ -14796,7 +14965,39 @@
     },
     "Allowed Domains" : {
       "comment" : "A label for the \"Allowed Domains\" field in the agent detail view.",
-      "isCommentAutoGenerated" : true
+      "isCommentAutoGenerated" : true,
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Allowed Domains"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Allowed Domains"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Allowed Domains"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "允许的域名"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "允許的網域"
+          }
+        }
+      }
     },
     "Allowed models" : {
       "comment" : "Section label for the \"Allowed models\" section in the agent detail view.",
@@ -15384,6 +15585,12 @@
             "state" : "translated",
             "value" : "已经有一个喜欢的AI了吗？轻点一下即可连接。"
           }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已經有一個喜歡的AI了嗎？輕點一下即可連接。"
+          }
         }
       }
     },
@@ -15865,6 +16072,12 @@
             "state" : "translated",
             "value" : "匿名，随时可在此控制。"
           }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "匿名，隨時可在此控制。"
+          }
         }
       }
     },
@@ -16183,6 +16396,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "任何有风险的操作都留在沙盒内。你的文件和应用不会接触到它们。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "任何有風險的操作都留在沙盒內。你的文件和應用不會接觸到它們。"
           }
         }
       }
@@ -17592,6 +17811,12 @@
             "state" : "translated",
             "value" : "在发送前批准每一个匹配项，或在你信任这些选择后自动批准。"
           }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "在發送前批准每一個匹配項，或在你信任這些選擇後自動批准。"
+          }
         }
       }
     },
@@ -18132,6 +18357,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "扩展共享前询问"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "擴展共享前詢問"
           }
         }
       }
@@ -19648,6 +19879,12 @@
             "state" : "translated",
             "value" : "手动停止模式下已禁用自动发送。"
           }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "手動停止模式下已禁用自動發送。"
+          }
         }
       }
     },
@@ -19676,6 +19913,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "静音达到此时长后自动发送或关闭语音输入"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "靜音達到此時長後自動發送或關閉語音輸入"
           }
         }
       }
@@ -20847,6 +21090,12 @@
             "state" : "translated",
             "value" : "头像：%@"
           }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "頭像：%@"
+          }
         }
       }
     },
@@ -21309,6 +21558,12 @@
             "state" : "translated",
             "value" : "由 Apple 备份"
           }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "由 Apple 備份"
+          }
         }
       }
     },
@@ -21372,6 +21627,12 @@
             "state" : "translated",
             "value" : "已备份到 iCloud 钥匙串，以便在你的各台 Apple 设备间同步。"
           }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已備份到 iCloud 鑰匙串，以便在你的各臺 Apple 設備間同步。"
+          }
         }
       }
     },
@@ -21401,6 +21662,12 @@
             "state" : "translated",
             "value" : "已备份到 iCloud 钥匙串。你之后可以在“设置”中管理。"
           }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已備份到 iCloud 鑰匙串。你之後可以在“設置”中管理。"
+          }
         }
       }
     },
@@ -21429,6 +21696,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "已备份到你的 iCloud 钥匙串。你可以随时在“设置”中查看。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已備份到你的 iCloud 鑰匙串。你可以隨時在“設置”中查看。"
           }
         }
       }
@@ -21878,6 +22151,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "备份和密钥"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "備份和密鑰"
           }
         }
       }
@@ -23569,6 +23848,12 @@
             "state" : "translated",
             "value" : "Bonjour 发现；你点击的连接器会显示在你的列表中。"
           }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Bonjour 發現；你點擊的連接器會顯示在你的列表中。"
+          }
         }
       }
     },
@@ -24877,6 +25162,12 @@
             "state" : "translated",
             "value" : "浏览仓库以安装插件"
           }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "瀏覽倉庫以安裝插件"
+          }
         }
       }
     },
@@ -25355,6 +25646,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "从零开始构建 PowerPoint 演示文稿。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "從零開始構建 PowerPoint 演示文稿。"
           }
         }
       }
@@ -26982,6 +27279,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "无法访问文件"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "無法訪問文件"
           }
         }
       }
@@ -29302,6 +29605,12 @@
             "state" : "translated",
             "value" : "ChatGPT、Codex 或平台 API"
           }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ChatGPT、Codex 或平臺 API"
+          }
         }
       }
     },
@@ -29724,7 +30033,39 @@
     },
     "Check out the launch" : {
       "comment" : "Label for a button in the Product Hunt launch dialog that takes the user to the launch page.",
-      "isCommentAutoGenerated" : true
+      "isCommentAutoGenerated" : true,
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Check out the launch"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Check out the launch"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Check out the launch"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "查看发布"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "查看發佈"
+          }
+        }
+      }
     },
     "Check the command, working directory, and environment." : {
       "localizations" : {
@@ -31025,6 +31366,12 @@
             "state" : "translated",
             "value" : "选择你的 OpenAI 访问方式"
           }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "選擇你的 OpenAI 訪問方式"
+          }
         }
       }
     },
@@ -31053,6 +31400,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "选择你的 OpenRouter 访问方式"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "選擇你的 OpenRouter 訪問方式"
           }
         }
       }
@@ -32434,7 +32787,38 @@
       }
     },
     "Cloning base environment" : {
-
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Cloning base environment"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Cloning base environment"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Cloning base environment"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "克隆基础环境"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "複製基礎環境"
+          }
+        }
+      }
     },
     "Close" : {
       "localizations" : {
@@ -32603,6 +32987,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "云端"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "雲端"
           }
         }
       }
@@ -33277,7 +33667,39 @@
     },
     "Comma-separated (e.g. api.github.com, *.example.com). When set, sandbox traffic goes through a host proxy that only permits these domains. Takes effect on next sandbox start." : {
       "comment" : "A description of the format and effect of the \"Allowed Domains\" field in the agent detail view.",
-      "isCommentAutoGenerated" : true
+      "isCommentAutoGenerated" : true,
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Comma-separated (e.g. api.github.com, *.example.com). When set, sandbox traffic goes through a host proxy that only permits these domains. Takes effect on next sandbox start."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Comma-separated (e.g. api.github.com, *.example.com). When set, sandbox traffic goes through a host proxy that only permits these domains. Takes effect on next sandbox start."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Comma-separated (e.g. api.github.com, *.example.com). When set, sandbox traffic goes through a host proxy that only permits these domains. Takes effect on next sandbox start."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "以逗号分隔（例如 api.github.com、*.example.com）。设置后，沙盒流量将通过仅允许这些域名的主机代理。在下次沙盒启动时生效。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "以逗號分隔（例如 api.github.com、*.example.com）。設定後，沙盒流量將通過僅允許這些網域的主機代理。在下次沙盒啟動時生效。"
+          }
+        }
+      }
     },
     "Command" : {
       "comment" : "A label for a command-line argument in a plugin's MCP.",
@@ -33517,6 +33939,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "仅紧凑结果"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "僅緊湊結果"
           }
         }
       }
@@ -34770,6 +35198,12 @@
             "state" : "translated",
             "value" : "配置聊天模式生成回复的方式。"
           }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "配置聊天模式生成回覆的方式。"
+          }
         }
       }
     },
@@ -34799,6 +35233,12 @@
             "state" : "translated",
             "value" : "配置语音消息的处理方式"
           }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "配置語音消息的處理方式"
+          }
         }
       }
     },
@@ -34827,6 +35267,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "配置唤醒词的检测方式"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "配置喚醒詞的檢測方式"
           }
         }
       }
@@ -34997,6 +35443,12 @@
             "state" : "translated",
             "value" : "配置用于外部集成的本地 API 服务器。"
           }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "配置用於外部集成的本地 API 服務器。"
+          }
         }
       }
     },
@@ -35025,6 +35477,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "直接在“语音”标签页中配置语音设置。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "直接在“語音”標籤頁中配置語音設置。"
           }
         }
       }
@@ -35055,6 +35513,12 @@
             "state" : "translated",
             "value" : "配置检测到唤醒词时的行为"
           }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "配置檢測到喚醒詞時的行爲"
+          }
         }
       }
     },
@@ -35083,6 +35547,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "配置你的 Osaurus 设置"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "配置你的 Osaurus 設置"
           }
         }
       }
@@ -35876,6 +36346,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "连接 OpenAI"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "連接 OpenAI"
           }
         }
       }
@@ -36724,6 +37200,12 @@
             "state" : "translated",
             "value" : "正在连接到%@…"
           }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "正在連接到%@…"
+          }
         }
       }
     },
@@ -37056,6 +37538,12 @@
           }
         },
         "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "整合"
+          }
+        },
+        "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "整合"
@@ -37827,6 +38315,12 @@
             "state" : "translated",
             "value" : "在后台继续"
           }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "在後臺繼續"
+          }
         }
       }
     },
@@ -38105,6 +38599,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "控制 AI 的推理和工具调用方式。较低温度可提升可靠性。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "控制 AI 的推理和工具調用方式。較低溫度可提升可靠性。"
           }
         }
       }
@@ -40559,6 +41059,12 @@
             "state" : "translated",
             "value" : "无法生成你的签名。"
           }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "無法生成你的簽名。"
+          }
         }
       }
     },
@@ -41669,6 +42175,12 @@
             "state" : "translated",
             "value" : "当你需要尚不存在的集成或能力时，创建新的沙盒插件"
           }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "當你需要尚不存在的集成或能力時，創建新的沙盒插件"
+          }
         }
       }
     },
@@ -42077,6 +42589,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "创建你的第一个自定义主题"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "創建你的第一個自定義主題"
           }
         }
       }
@@ -43503,6 +44021,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "自定义提供商"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "自定義提供商"
           }
         }
       }
@@ -45195,6 +45719,12 @@
             "state" : "translated",
             "value" : "默认模型、权限和主聊天加载策略位于“图片”标签页。"
           }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "默認模型、權限和主聊天加載策略位於“圖片”標籤頁。"
+          }
         }
       }
     },
@@ -45430,6 +45960,12 @@
             "state" : "translated",
             "value" : "默认步骤"
           }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "默認步驟"
+          }
         }
       }
     },
@@ -45533,6 +46069,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "默认。最多加载 5 个相关工具。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "默認。最多加載 5 個相關工具。"
           }
         }
       }
@@ -45748,6 +46290,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "定义你自己的正则表达式模式——内部代号、客户 ID 等任何 Osaurus 内置规则未覆盖的内容。错误的模式会在保存前进行校验。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "定義你自己的正則表達式模式——內部代號、客戶 ID 等任何 Osaurus 內置規則未覆蓋的內容。錯誤的模式會在保存前進行校驗。"
           }
         }
       }
@@ -46311,6 +46859,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "删除磁盘上的模型捆绑包。若要再次使用隐私过滤器，你需要通过“安装”按钮重新下载它。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "刪除磁盤上的模型捆綁包。若要再次使用隱私過濾器，你需要通過“安裝”按鈕重新下載它。"
           }
         }
       }
@@ -47126,6 +47680,12 @@
             "state" : "translated",
             "value" : "使用自定义颜色、字体和效果，为聊天界面设计独特外观"
           }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "使用自定義顏色、字體和效果，爲聊天界面設計獨特外觀"
+          }
         }
       }
     },
@@ -47402,6 +47962,12 @@
             "state" : "translated",
             "value" : "检测模型"
           }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "檢測模型"
+          }
         }
       }
     },
@@ -47430,6 +47996,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "检测模型"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "檢測模型"
           }
         }
       }
@@ -47495,6 +48067,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "检测灵敏度可在“音频”标签页中配置"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "檢測靈敏度可在“音頻”標籤頁中配置"
           }
         }
       }
@@ -48297,6 +48875,12 @@
             "state" : "translated",
             "value" : "禁用预检搜索。仅使用明确的工具调用。"
           }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "禁用預檢搜索。僅使用明確的工具調用。"
+          }
         }
       }
     },
@@ -48462,6 +49046,12 @@
             "state" : "translated",
             "value" : "禁用工具"
           }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "禁用工具"
+          }
         }
       }
     },
@@ -48490,6 +49080,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "禁用语音检测"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "禁用語音檢測"
           }
         }
       }
@@ -48767,6 +49363,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Discord 社区"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Discord 社區"
           }
         }
       }
@@ -50142,6 +50744,12 @@
             "state" : "translated",
             "value" : "完成 (Esc)"
           }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "完成 (Esc)"
+          }
         }
       }
     },
@@ -50344,6 +50952,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "稍后下载"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "稍後下載"
           }
         }
       }
@@ -51532,6 +52146,12 @@
             "state" : "translated",
             "value" : "重复检测"
           }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "重複檢測"
+          }
         }
       }
     },
@@ -52469,6 +53089,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "每一个都有自己的访问权限，你可以随时收回。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "每一個都有自己的訪問權限，你可以隨時收回。"
           }
         }
       }
@@ -53901,6 +54527,12 @@
             "state" : "translated",
             "value" : "高效"
           }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "高效"
+          }
         }
       }
     },
@@ -53930,12 +54562,50 @@
             "state" : "translated",
             "value" : "高效（QAT）"
           }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "高效（QAT）"
+          }
         }
       }
     },
     "Effort" : {
       "comment" : "Label for the \"Effort\" option in the model options UI.",
-      "isCommentAutoGenerated" : true
+      "isCommentAutoGenerated" : true,
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Effort"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Effort"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Effort"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "努力程度"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "努力程度"
+          }
+        }
+      }
     },
     "Either way, full-text search and all features work the same; encryption only changes how bytes sit on disk." : {
       "extractionState" : "manual",
@@ -54417,6 +55087,12 @@
             "state" : "translated",
             "value" : "启用剪贴板监控"
           }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "啓用剪貼板監控"
+          }
         }
       }
     },
@@ -54591,6 +55267,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "启用记忆"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "啓用記憶"
           }
         }
       }
@@ -55001,6 +55683,12 @@
             "state" : "translated",
             "value" : "启用工具"
           }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "啓用工具"
+          }
         }
       }
     },
@@ -55135,6 +55823,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "启用语音检测"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "啓用語音檢測"
           }
         }
       }
@@ -55383,6 +56077,12 @@
             "state" : "translated",
             "value" : "加密存储"
           }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "加密存儲"
+          }
         }
       }
     },
@@ -55516,6 +56216,12 @@
             "state" : "translated",
             "value" : "已安装加密密钥"
           }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已安裝加密密鑰"
+          }
         }
       }
     },
@@ -55550,6 +56256,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "为你的本地数据提供端到端的静态加密"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "爲你的本地數據提供端到端的靜態加密"
           }
         }
       }
@@ -56202,6 +56914,12 @@
             "state" : "translated",
             "value" : "输入适用于所有聊天的指令..."
           }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "輸入適用於所有聊天的指令..."
+          }
         }
       }
     },
@@ -56793,6 +57511,12 @@
             "state" : "translated",
             "value" : "情节"
           }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "情節"
+          }
         }
       }
     },
@@ -57204,6 +57928,12 @@
             "state" : "translated",
             "value" : "预估的 %@ 超过了可用的 %.0f GB —— 请尝试更小的变体"
           }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "預估的 %@ 超過了可用的 %.0f GB —— 請嘗試更小的變體"
+          }
         }
       }
     },
@@ -57238,6 +57968,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "在 %2$.0f GB 的 Mac 上预估为 %1$@ —— 关闭其他应用以获得最佳效果"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "在 %2$.0f GB 的 Mac 上預估爲 %1$@ —— 關閉其他應用以獲得最佳效果"
           }
         }
       }
@@ -57274,6 +58010,12 @@
             "state" : "translated",
             "value" : "已使用预估的 %@（共 %.0f GB 统一内存）"
           }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已使用預估的 %@（共 %.0f GB 統一內存）"
+          }
         }
       }
     },
@@ -57299,6 +58041,12 @@
           }
         },
         "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "每 %@"
+          }
+        },
+        "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "每 %@"
@@ -57365,6 +58113,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "这里的每个模型都在您的 Mac 上私密运行。不确定？先从推荐的开始——您可以随时切换。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "這裏的每個模型都在您的 Mac 上私密運行。不確定？先從推薦的開始——您可以隨時切換。"
           }
         }
       }
@@ -57862,7 +58616,39 @@
     },
     "Experimental: boot from each agent's own copy-on-write clone of the base image so system packages persist per agent" : {
       "comment" : "Description of a feature that allows containers to be booted from their own copy-on-write clones of the base image, persisting system packages per agent.",
-      "isCommentAutoGenerated" : true
+      "isCommentAutoGenerated" : true,
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Experimental: boot from each agent's own copy-on-write clone of the base image so system packages persist per agent"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Experimental: boot from each agent's own copy-on-write clone of the base image so system packages persist per agent"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Experimental: boot from each agent's own copy-on-write clone of the base image so system packages persist per agent"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "实验性功能：从每个代理自己的基础镜像写时复制克隆启动，使系统包在每个代理之间独立保留"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "實驗性功能：從每個代理自己的基礎映像寫時複製複製啟動，使系統套件在每個代理之間獨立保留"
+          }
+        }
+      }
     },
     "Experimental: when the server eviction policy is Flexible (Multi Model) and memory projections say both fit, load the helper model alongside the chat model instead of unloading and reloading it — skipping the swap round-trip on high-RAM Macs. Tight RAM or the Strict policy always falls back to the normal handoff." : {
       "extractionState" : "manual",
@@ -59556,6 +60342,12 @@
             "state" : "translated",
             "value" : "外部模型"
           }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "外部模型"
+          }
         }
       }
     },
@@ -59661,12 +60453,50 @@
             "state" : "translated",
             "value" : "外部工具访问"
           }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "外部工具訪問"
+          }
         }
       }
     },
     "Extra High" : {
       "comment" : "Human-readable label for a ChatGPT/Codex \"xhigh\" reasoning effort level.",
-      "isCommentAutoGenerated" : true
+      "isCommentAutoGenerated" : true,
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Extra High"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Extra High"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Extra High"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "特别高"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "特別高"
+          }
+        }
+      }
     },
     "Extra ways the agent can present results." : {
       "comment" : "Description of a feature group in the Agent Detail View that includes options for the agent to present its responses in additional ways, such as as inline chart cards or when to speak responses aloud.",
@@ -60112,6 +60942,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "失败 - 点击重试"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "失敗 - 點擊重試"
           }
         }
       }
@@ -61802,6 +62638,12 @@
             "state" : "translated",
             "value" : "稍后完成"
           }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "稍後完成"
+          }
         }
       }
     },
@@ -62982,6 +63824,12 @@
             "state" : "translated",
             "value" : "免费、私密且可离线运行。运行时会占用一些内存。"
           }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "免費、私密且可離線運行。運行時會佔用一些內存。"
+          }
         }
       }
     },
@@ -63182,6 +64030,12 @@
             "state" : "translated",
             "value" : "来自文件"
           }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "來自文件"
+          }
         }
       }
     },
@@ -63244,6 +64098,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "来自 GitHub"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "來自 GitHub"
           }
         }
       }
@@ -63410,6 +64270,12 @@
             "state" : "translated",
             "value" : "Claude、ChatGPT 等前沿模型。无需设置或 API 密钥。按用量付费。"
           }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Claude、ChatGPT 等前沿模型。無需設置或 API 密鑰。按用量付費。"
+          }
         }
       }
     },
@@ -63571,6 +64437,12 @@
           }
         },
         "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "完整精度"
+          }
+        },
+        "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "完整精度"
@@ -65026,6 +65898,12 @@
             "state" : "translated",
             "value" : "从 console.x.ai 获取密钥。"
           }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "從 console.x.ai 獲取密鑰。"
+          }
         }
       }
     },
@@ -65581,6 +66459,12 @@
             "state" : "translated",
             "value" : "给予智能体一个工具，通过辅助功能树来控制 macOS 应用程序——点击、输入和读取屏幕内容。读取和导航操作会自动运行，但编辑和任何重要操作则会暂停，等待您的批准。"
           }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "給予智能體一個工具，通過輔助功能樹來控制 macOS 應用程序——點擊、輸入和讀取屏幕內容。讀取和導航操作會自動運行，但編輯和任何重要操作則會暫停，等待您的批准。"
+          }
         }
       }
     },
@@ -65609,6 +66493,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "赋予代理 spawn / local_delegate / image_generate / image_edit 工具——它可以将有界任务卸载给子代理角色或本地模型，并生成或编辑图片。默认模型、内存安全和权限在“设置 → 生成”中配置。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "賦予代理 spawn / local_delegate / image_generate / image_edit 工具——它可以將有界任務卸載給子代理角色或本地模型，並生成或編輯圖片。默認模型、內存安全和權限在“設置 → 生成”中配置。"
           }
         }
       }
@@ -67693,6 +68583,12 @@
             "state" : "translated",
             "value" : "一起完善 Osaurus"
           }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "一起完善 Osaurus"
+          }
         }
       }
     },
@@ -67732,7 +68628,39 @@
     },
     "Hey! After 10 months of building in public, today is our official launch on Product Hunt.\n\nOsaurus has been shaped by feedback from people like you. If it's been useful to you, come say hi and support the launch. It means a lot to us.\n\nThank you for being here early." : {
       "comment" : "The body text of the \"We're live on",
-      "isCommentAutoGenerated" : true
+      "isCommentAutoGenerated" : true,
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Hey! After 10 months of building in public, today is our official launch on Product Hunt.\n\nOsaurus has been shaped by feedback from people like you. If it's been useful to you, come say hi and support the launch. It means a lot to us.\n\nThank you for being here early."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Hey! After 10 months of building in public, today is our official launch on Product Hunt.\n\nOsaurus has been shaped by feedback from people like you. If it's been useful to you, come say hi and support the launch. It means a lot to us.\n\nThank you for being here early."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Hey! After 10 months of building in public, today is our official launch on Product Hunt.\n\nOsaurus has been shaped by feedback from people like you. If it's been useful to you, come say hi and support the launch. It means a lot to us.\n\nThank you for being here early."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "嘿！经过 10 个月的公开建设，今天我们在 Product Hunt 上正式发布了。\n\nOsaurus 因为像你这样的人的反馈而变得更好。如果它对你有帮助，来打个招呼并支持这次发布吧。这对我们意义重大。\n\n感谢你早期的支持。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "嘿！經過 10 個月的公開建設，今天我們在 Product Hunt 上正式發佈了。\n\nOsaurus 因為像你這樣的人的回饋而變得更好。如果它對你有幫助，來打個招呼並支援這次發佈吧。這對我們意義重大。\n\n感謝你早期的支持。"
+          }
+        }
+      }
     },
     "HF cache path" : {
       "comment" : "A label for the text field that lets the user specify the path to the Hugging Face cache folder.",
@@ -68039,6 +68967,12 @@
             "state" : "translated",
             "value" : "隐藏详情"
           }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "隱藏詳情"
+          }
         }
       }
     },
@@ -68108,6 +69042,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "隐藏其他选项"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "隱藏其他選項"
           }
         }
       }
@@ -68322,6 +69262,12 @@
           }
         },
         "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "高精度"
+          }
+        },
+        "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "高精度"
@@ -69083,6 +70029,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "你想如何连接？"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "你想如何連接？"
           }
         }
       }
@@ -70084,6 +71036,12 @@
           }
         },
         "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "我已保存"
+          }
+        },
+        "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "我已保存"
@@ -71192,6 +72150,12 @@
             "state" : "translated",
             "value" : "图片模型将显示在此处"
           }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "圖片模型將顯示在此處"
+          }
         }
       }
     },
@@ -71649,6 +72613,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "从 Hugging Face 导入 MLX 模型"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "從 Hugging Face 導入 MLX 模型"
           }
         }
       }
@@ -73209,6 +74179,12 @@
             "state" : "translated",
             "value" : "将持久化记忆（身份、固定事实、情节）注入聊天。相关性门控会逐轮判断是否需要记忆，需要时使用约 800 个 token 的单次预算。对于受益于长期上下文的智能体，请启用此项。"
           }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "將持久化記憶（身份、固定事實、情節）注入聊天。相關性門控會逐輪判斷是否需要記憶，需要時使用約 800 個 token 的單次預算。對於受益於長期上下文的智能體，請啓用此項。"
+          }
         }
       }
     },
@@ -74640,6 +75616,12 @@
             "state" : "translated",
             "value" : "安装约 2.8 GB 的设备端模型，可额外捕捉姓名、地址、日期及密钥。规则标签页中的正则规则不依赖此模型，已可独立运行。"
           }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "安裝約 2.8 GB 的設備端模型，可額外捕捉姓名、地址、日期及密鑰。規則標籤頁中的正則規則不依賴此模型，已可獨立運行。"
+          }
         }
       }
     },
@@ -74931,6 +75913,12 @@
             "state" : "translated",
             "value" : "已在沙盒中安装 npm 包"
           }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已在沙盒中安裝 npm 包"
+          }
         }
       }
     },
@@ -75002,6 +75990,12 @@
             "state" : "translated",
             "value" : "已在沙盒中安装 Python 包"
           }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已在沙盒中安裝 Python 包"
+          }
         }
       }
     },
@@ -75040,7 +76034,38 @@
       }
     },
     "Installing bundled kernel" : {
-
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Installing bundled kernel"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Installing bundled kernel"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Installing bundled kernel"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "正在安装捆绑内核"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "正在安裝捆綁核心"
+          }
+        }
+      }
     },
     "Installing dependencies in sandbox" : {
       "localizations" : {
@@ -75136,6 +76161,12 @@
             "state" : "translated",
             "value" : "正在沙盒中安装 npm 包"
           }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "正在沙盒中安裝 npm 包"
+          }
         }
       }
     },
@@ -75164,6 +76195,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "正在沙盒中安装 Python 包"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "正在沙盒中安裝 Python 包"
           }
         }
       }
@@ -75472,6 +76509,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "文件内容无效"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "文件內容無效"
           }
         }
       }
@@ -76105,6 +77148,12 @@
             "state" : "translated",
             "value" : "请稍候——正在生成你的签名。"
           }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "請稍候——正在生成你的簽名。"
+          }
         }
       }
     },
@@ -76625,6 +77674,12 @@
             "state" : "translated",
             "value" : "安全时保持预热"
           }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "安全時保持預熱"
+          }
         }
       }
     },
@@ -76939,6 +77994,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "键盘快捷键"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "鍵盤快捷鍵"
           }
         }
       }
@@ -78031,7 +79092,39 @@
     },
     "Leave empty for unrestricted outbound" : {
       "comment" : "A placeholder text for the \"Leave empty for unrestricted outbound\" field in the agent detail view.",
-      "isCommentAutoGenerated" : true
+      "isCommentAutoGenerated" : true,
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Leave empty for unrestricted outbound"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Leave empty for unrestricted outbound"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Leave empty for unrestricted outbound"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "留空以不限制出站"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "留空以不限制出站"
+          }
+        }
+      }
     },
     "Leave empty to allow Computer Use in any app. Add apps to restrict it to ONLY those — every other app is blocked before any action." : {
       "comment" : "A description of the app allowlist feature, explaining that it allows Computer Use in any app by default, and lets you add specific apps to restrict it to only those.",
@@ -78609,6 +79702,12 @@
             "state" : "translated",
             "value" : "允许智能体使用内置工具和插件工具。关闭此选项，则消息将直接发送给模型，不附带任何工具规格或能力注入（纯聊天模式）。"
           }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "允許智能體使用內置工具和插件工具。關閉此選項，則消息將直接發送給模型，不附帶任何工具規格或能力注入（純聊天模式）。"
+          }
         }
       }
     },
@@ -78889,6 +79988,12 @@
             "state" : "translated",
             "value" : "让智能体为您操作 macOS 应用。"
           }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "讓智能體爲您操作 macOS 應用。"
+          }
         }
       }
     },
@@ -79025,6 +80130,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "让智能体自行安排后续运行并向你发送通知。开启后可选择它的运行频率。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "讓智能體自行安排後續運行並向你發送通知。開啓後可選擇它的運行頻率。"
           }
         }
       }
@@ -79192,6 +80303,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "允许主聊天生成图片和本地模型辅助任务"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "允許主聊天生成圖片和本地模型輔助任務"
           }
         }
       }
@@ -79396,6 +80513,12 @@
             "state" : "translated",
             "value" : "允许此代理生成辅助任务和子代理。"
           }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "允許此代理生成輔助任務和子代理。"
+          }
         }
       }
     },
@@ -79424,6 +80547,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "在不共享密码的情况下允许工具接入"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "在不共享密碼的情況下允許工具接入"
           }
         }
       }
@@ -79465,7 +80594,38 @@
       }
     },
     "Lets local processes route requests through the Osaurus Router (spending credits) via the HTTP API without an access key. Keep this off unless you trust every process on this Mac." : {
-
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Lets local processes route requests through the Osaurus Router (spending credits) via the HTTP API without an access key. Keep this off unless you trust every process on this Mac."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Lets local processes route requests through the Osaurus Router (spending credits) via the HTTP API without an access key. Keep this off unless you trust every process on this Mac."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Lets local processes route requests through the Osaurus Router (spending credits) via the HTTP API without an access key. Keep this off unless you trust every process on this Mac."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "允许本地进程通过 HTTP API 无需访问密钥即可通过 Osaurus Router（消耗积分）路由请求。除非你信任这台 Mac 上的所有进程，否则请保持关闭。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "允許本機程序透過 HTTP API 無需存取金鑰即可透過 Osaurus Router（消耗積分）路由請求。除非你信任這台 Mac 上的所有程序，否則請保持關閉。"
+          }
+        }
+      }
     },
     "Lets Osaurus transact on your behalf - cloud models, provider load-balancing, and future routed services; requests spend credits. Keeping it on helps support Osaurus development - thank you." : {
       "localizations" : {
@@ -79526,6 +80686,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "让你的小恐龙像一台真正的机器一样安装软件包、运行脚本并处理文件。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "讓你的小恐龍像一臺真正的機器一樣安裝軟件包、運行腳本並處理文件。"
           }
         }
       }
@@ -79764,6 +80930,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "用于记忆整合和预检工具选择的轻量级模型。如未设置，将使用你当前的聊天模型作为回退。注意：还必须在当前智能体上启用工具——请查看“智能体 → 能力”。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "用於記憶整合和預檢工具選擇的輕量級模型。如未設置，將使用你當前的聊天模型作爲回退。注意：還必須在當前智能體上啓用工具——請查看“智能體 → 能力”。"
           }
         }
       }
@@ -80551,6 +81723,12 @@
             "state" : "translated",
             "value" : "实时测试"
           }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "實時測試"
+          }
         }
       }
     },
@@ -80582,6 +81760,12 @@
             "state" : "translated",
             "value" : "实时还原"
           }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "實時還原"
+          }
         }
       }
     },
@@ -80612,6 +81796,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "保存在你的 Mac 上。可离线工作。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "保存在你的 Mac 上。可離線工作。"
           }
         }
       }
@@ -81374,6 +82564,12 @@
             "state" : "translated",
             "value" : "正在加载模型..."
           }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "正在加載模型..."
+          }
         }
       }
     },
@@ -81743,6 +82939,12 @@
             "state" : "translated",
             "value" : "本地大脑保存在你的 Mac 上。它们运行时会占用一部分内存，并且可以离线工作。"
           }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "本地大腦保存在你的 Mac 上。它們運行時會佔用一部分內存，並且可以離線工作。"
+          }
         }
       }
     },
@@ -81807,6 +83009,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "本地数据加密"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "本地數據加密"
           }
         }
       }
@@ -82085,6 +83293,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "本地模型计算量大，我们精选的模型所需的统一内存超过了本机的容量。我们建议选择其他方案。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "本地模型計算量大，我們精選的模型所需的統一內存超過了本機的容量。我們建議選擇其他方案。"
           }
         }
       }
@@ -83119,6 +84333,12 @@
             "state" : "translated",
             "value" : "生成我的签名"
           }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "生成我的簽名"
+          }
         }
       }
     },
@@ -83148,6 +84368,12 @@
             "state" : "translated",
             "value" : "打造你的专属"
           }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "打造你的專屬"
+          }
         }
       }
     },
@@ -83176,6 +84402,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "正在生成你的签名…"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "正在生成你的簽名…"
           }
         }
       }
@@ -83487,6 +84719,12 @@
             "state" : "translated",
             "value" : "管理日程…"
           }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "管理日程…"
+          }
         }
       }
     },
@@ -83584,6 +84822,12 @@
             "state" : "translated",
             "value" : "管理主题…"
           }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "管理主題…"
+          }
         }
       }
     },
@@ -83646,6 +84890,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "管理监视器…"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "管理監視器…"
           }
         }
       }
@@ -85322,7 +86572,39 @@
     },
     "Maybe later" : {
       "comment" : "Label for a button that dismisses a dialog without taking an action.",
-      "isCommentAutoGenerated" : true
+      "isCommentAutoGenerated" : true,
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Maybe later"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Maybe later"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Maybe later"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "以后再说"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "以後再說"
+          }
+        }
+      }
     },
     "MCP" : {
       "localizations" : {
@@ -86095,6 +87377,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "内存数据库无法打开。请检查控制台中的SQLCipher错误和存储迁移日志。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "內存數據庫無法打開。請檢查控制檯中的SQLCipher錯誤和存儲遷移日誌。"
           }
         }
       }
@@ -87398,6 +88686,12 @@
             "state" : "translated",
             "value" : "最小化工具注入。最多加载 2 个工具。"
           }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "最小化工具注入。最多加載 2 個工具。"
+          }
         }
       }
     },
@@ -87572,6 +88866,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "为 MCP、插件和远程智能体生成 osk-v1 密钥——可随时撤销。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "爲 MCP、插件和遠程智能體生成 osk-v1 密鑰——可隨時撤銷。"
           }
         }
       }
@@ -88333,6 +89633,12 @@
             "state" : "translated",
             "value" : "模型 ID"
           }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "模型 ID"
+          }
         }
       }
     },
@@ -88398,6 +89704,12 @@
             "state" : "translated",
             "value" : "已安装模型"
           }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已安裝模型"
+          }
         }
       }
     },
@@ -88426,6 +89738,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "模型已加载"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "模型已加載"
           }
         }
       }
@@ -88490,6 +89808,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "模型未加载"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "模型未加載"
           }
         }
       }
@@ -90107,6 +91431,12 @@
             "state" : "translated",
             "value" : "窄"
           }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "窄"
+          }
         }
       }
     },
@@ -90554,6 +91884,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "需要权限"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "需要權限"
           }
         }
       }
@@ -91421,6 +92757,12 @@
             "state" : "translated",
             "value" : "新建日程…"
           }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "新建日程…"
+          }
         }
       }
     },
@@ -91484,6 +92826,12 @@
             "state" : "translated",
             "value" : "新建监视器…"
           }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "新建監視器…"
+          }
         }
       }
     },
@@ -91509,6 +92857,12 @@
           }
         },
         "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "新建窗口"
+          }
+        },
+        "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "新建窗口"
@@ -91541,6 +92895,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "使用智能体新建窗口"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "使用智能體新建窗口"
           }
         }
       }
@@ -93101,6 +94461,12 @@
             "state" : "translated",
             "value" : "未找到加密密钥"
           }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "未找到加密密鑰"
+          }
         }
       }
     },
@@ -93476,6 +94842,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "没有图片模型"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "沒有圖片模型"
           }
         }
       }
@@ -94052,6 +95424,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "没有适合此 Mac 的本地模型"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "沒有適合此 Mac 的本地模型"
           }
         }
       }
@@ -94915,6 +96293,12 @@
             "state" : "translated",
             "value" : "没有已下载模型"
           }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "沒有已下載模型"
+          }
         }
       }
     },
@@ -95249,6 +96633,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "没有可用插件"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "沒有可用插件"
           }
         }
       }
@@ -99731,6 +101121,12 @@
             "state" : "translated",
             "value" : "默认关闭。开启后，每个空白状态都会在配置的核心模型上生成全新的问候语和快捷操作。在 Foundation 等小型模型上，首次生成可能会感觉较慢；静态问候语仍会立即显示。“自定义”标签页中的按智能体覆盖项仍然优先。"
           }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "默認關閉。開啓後，每個空白狀態都會在配置的核心模型上生成全新的問候語和快捷操作。在 Foundation 等小型模型上，首次生成可能會感覺較慢；靜態問候語仍會立即顯示。“自定義”標籤頁中的按智能體覆蓋項仍然優先。"
+          }
         }
       }
     },
@@ -100251,6 +101647,12 @@
             "state" : "translated",
             "value" : "设备端检测"
           }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "設備端檢測"
+          }
         }
       }
     },
@@ -100279,6 +101681,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "设备端图片模型"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "設備端圖片模型"
           }
         }
       }
@@ -102258,6 +103666,12 @@
             "state" : "translated",
             "value" : "打开设置中的图片面板"
           }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "打開設置中的圖片面板"
+          }
         }
       }
     },
@@ -102394,6 +103808,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "打开语音标签页"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "打開語音標籤頁"
           }
         }
       }
@@ -103126,6 +104546,12 @@
             "state" : "translated",
             "value" : "可选。会作为系统消息显示在所有聊天中。"
           }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "可選。會作爲系統消息顯示在所有聊天中。"
+          }
         }
       }
     },
@@ -103291,6 +104717,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "或者运行你自己的大脑"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "或者運行你自己的大腦"
           }
         }
       }
@@ -103557,6 +104989,12 @@
             "state" : "translated",
             "value" : "Osaurus云"
           }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Osaurus雲"
+          }
         }
       }
     },
@@ -103596,7 +105034,39 @@
     },
     "Osaurus dinosaur and the Product Hunt kitty saying thank you" : {
       "comment" : "Accessibility label for the artwork in the Product Hunt launch alert.",
-      "isCommentAutoGenerated" : true
+      "isCommentAutoGenerated" : true,
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Osaurus dinosaur and the Product Hunt kitty saying thank you"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Osaurus dinosaur and the Product Hunt kitty saying thank you"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Osaurus dinosaur and the Product Hunt kitty saying thank you"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Osaurus 恐龙和 Product Hunt 小猫在说谢谢"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Osaurus 恐龍和 Product Hunt 小貓在說謝謝"
+          }
+        }
+      }
     },
     "Osaurus Help" : {
       "extractionState" : "stale",
@@ -103623,6 +105093,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Osaurus 帮助"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Osaurus 幫助"
           }
         }
       }
@@ -103652,6 +105128,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "OSAURUS 身份恢复"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "OSAURUS 身份恢復"
           }
         }
       }
@@ -103717,6 +105199,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Osaurus 还很年轻。了解哪些步骤会让人卡住、哪些功能常被使用，以及何时发生崩溃，能帮助我们把它做得更好。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Osaurus 還很年輕。瞭解哪些步驟會讓人卡住、哪些功能常被使用，以及何時發生崩潰，能幫助我們把它做得更好。"
           }
         }
       }
@@ -103885,6 +105373,12 @@
             "state" : "translated",
             "value" : "Osaurus 仅运行 MLX 模型。请尝试来自 `OsaurusAI` 或 `mlx-community` 的仓库。"
           }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Osaurus 僅運行 MLX 模型。請嘗試來自 `OsaurusAI` 或 `mlx-community` 的倉庫。"
+          }
         }
       }
     },
@@ -103919,6 +105413,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Osaurus 仅支持兼容 MLX 的 Hugging Face 仓库。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Osaurus 僅支持兼容 MLX 的 Hugging Face 倉庫。"
           }
         }
       }
@@ -104350,6 +105850,12 @@
             "state" : "translated",
             "value" : "其他"
           }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "其他"
+          }
         }
       }
     },
@@ -104389,7 +105895,39 @@
     },
     "Outbound limited to the provisioning agent's allowed domains" : {
       "comment" : "Description of the network access option when the sandbox is configured to use a proxy mode, limiting outbound network access to the domains allowed by the provisioning agent.",
-      "isCommentAutoGenerated" : true
+      "isCommentAutoGenerated" : true,
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Outbound limited to the provisioning agent's allowed domains"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Outbound limited to the provisioning agent's allowed domains"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Outbound limited to the provisioning agent's allowed domains"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "出站仅限于配置代理允许的域名"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "出站僅限於配置代理允許的網域"
+          }
+        }
+      }
     },
     "Outbound network disabled" : {
       "localizations" : {
@@ -105184,6 +106722,12 @@
             "state" : "translated",
             "value" : "配对其他设备"
           }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "配對其他設備"
+          }
         }
       }
     },
@@ -105722,6 +107266,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "从 %@ 粘贴"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "從 %@ 粘貼"
           }
         }
       }
@@ -107155,6 +108705,12 @@
             "state" : "translated",
             "value" : "模式以 NSRegularExpression 形式运行。会拒绝灾难性回溯的模式以及匹配空字符串的模式。"
           }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "模式以 NSRegularExpression 形式運行。會拒絕災難性回溯的模式以及匹配空字符串的模式。"
+          }
         }
       }
     },
@@ -107399,6 +108955,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "按需付费。无需API密钥，无需单独注册。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "按需付費。無需API密鑰，無需單獨註冊。"
           }
         }
       }
@@ -107800,7 +109362,39 @@
     },
     "Per-Agent Environments" : {
       "comment" : "Description of a feature that allows containers to be booted from their own copies of the base image, so that system packages persist across different agents.",
-      "isCommentAutoGenerated" : true
+      "isCommentAutoGenerated" : true,
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Per-Agent Environments"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Per-Agent Environments"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Per-Agent Environments"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "每个代理的环境"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "每個代理的環境"
+          }
+        }
+      }
     },
     "Per-Agent Memory" : {
       "localizations" : {
@@ -107862,16 +109456,86 @@
             "state" : "translated",
             "value" : "按智能体的记忆"
           }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "按智能體的記憶"
+          }
         }
       }
     },
     "Per-agent rootfs template" : {
       "comment" : "Description of a location spec for the per-agent rootfs template file.",
-      "isCommentAutoGenerated" : true
+      "isCommentAutoGenerated" : true,
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Per-agent rootfs template"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Per-agent rootfs template"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Per-agent rootfs template"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "每个代理的根文件系统模板"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "每個代理的根檔案系統範本"
+          }
+        }
+      }
     },
     "Per-agent warm restart rootfs" : {
       "comment" : "Title of a location spec that points to the rootfs used for warm restarts in a per-agent sandbox.",
-      "isCommentAutoGenerated" : true
+      "isCommentAutoGenerated" : true,
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Per-agent warm restart rootfs"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Per-agent warm restart rootfs"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Per-agent warm restart rootfs"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "每个代理的热重启根文件系统"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "每個代理的熱重啟根檔案系統"
+          }
+        }
+      }
     },
     "per-app %@ -> %@" : {
       "shouldTranslate" : false
@@ -108812,6 +110476,12 @@
             "state" : "translated",
             "value" : "挑选一个云提供商"
           }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "挑選一個雲提供商"
+          }
         }
       }
     },
@@ -109130,6 +110800,12 @@
             "state" : "translated",
             "value" : "挑选一个起点，然后打造你的专属。当你选择头像、名称和角色时，预览会随之更新。"
           }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "挑選一個起點，然後打造你的專屬。當你選擇頭像、名稱和角色時，預覽會隨之更新。"
+          }
         }
       }
     },
@@ -109335,6 +111011,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "挑选能为你的恐龙提供动力的大脑——随时可以切换。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "挑選能爲你的恐龍提供動力的大腦——隨時可以切換。"
           }
         }
       }
@@ -109578,6 +111260,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "从你上次中断的地方继续。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "從你上次中斷的地方繼續。"
           }
         }
       }
@@ -110001,6 +111689,12 @@
             "state" : "translated",
             "value" : "固定事实"
           }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "固定事實"
+          }
         }
       }
     },
@@ -110278,6 +111972,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "默认明文 — 选择启用SQLCipher静态加密"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "默認明文 — 選擇啓用SQLCipher靜態加密"
           }
         }
       }
@@ -110620,6 +112320,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "接入一个你已经付费的大脑，或使用 Ollama 在本地运行一个。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "接入一個你已經付費的大腦，或使用 Ollama 在本地運行一個。"
           }
         }
       }
@@ -111283,6 +112989,12 @@
             "state" : "translated",
             "value" : "端口、网络暴露、CORS、top-P、模型逐出和空闲驻留现在位于“服务器 → 设置”中，由 vmlx 服务器运行时契约提供支持。"
           }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "端口、網絡暴露、CORS、top-P、模型逐出和空閒駐留現在位於“服務器 → 設置”中，由 vmlx 服務器運行時契約提供支持。"
+          }
         }
       }
     },
@@ -111386,6 +113098,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "预检会在每一轮挑选最相关的项目。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "預檢會在每一輪挑選最相關的項目。"
           }
         }
       }
@@ -114726,6 +116444,12 @@
             "state" : "translated",
             "value" : "约 2.8 GB。完全在此 Mac 上运行——检测过程没有任何第三方流量。"
           }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "約 2.8 GB。完全在此 Mac 上運行——檢測過程沒有任何第三方流量。"
+          }
         }
       }
     },
@@ -114761,6 +116485,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "从 Hugging Face 流式传输捆绑包。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "從 Hugging Face 流式傳輸捆綁包。"
           }
         }
       }
@@ -114798,6 +116528,12 @@
             "state" : "translated",
             "value" : "正在向 Hugging Face 查询此捆绑包包含哪些文件。"
           }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "正在向 Hugging Face 查詢此捆綁包包含哪些文件。"
+          }
         }
       }
     },
@@ -114833,6 +116569,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "点击“重试”以再次尝试下载。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "點擊“重試”以再次嘗試下載。"
           }
         }
       }
@@ -114870,6 +116612,12 @@
             "state" : "translated",
             "value" : "检测在本地运行，且捆绑包已通过验证。"
           }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "檢測在本地運行，且捆綁包已通過驗證。"
+          }
         }
       }
     },
@@ -114905,6 +116653,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "正在对照清单对每个文件计算哈希。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "正在對照清單對每個文件計算哈希。"
           }
         }
       }
@@ -114942,6 +116696,12 @@
             "state" : "translated",
             "value" : "安装设备端检测模型"
           }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "安裝設備端檢測模型"
+          }
         }
       }
     },
@@ -114977,6 +116737,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "正在下载检测模型"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "正在下載檢測模型"
           }
         }
       }
@@ -115014,6 +116780,12 @@
             "state" : "translated",
             "value" : "正在查找捆绑包文件…"
           }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "正在查找捆綁包文件…"
+          }
         }
       }
     },
@@ -115049,6 +116821,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "安装未完成"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "安裝未完成"
           }
         }
       }
@@ -115086,6 +116864,12 @@
             "state" : "translated",
             "value" : "已安装模型"
           }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已安裝模型"
+          }
         }
       }
     },
@@ -115121,6 +116905,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "正在验证完整性…"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "正在驗證完整性…"
           }
         }
       }
@@ -115158,6 +116948,12 @@
             "state" : "translated",
             "value" : "AKIA / ASIA 前缀后跟 16 个 base32 字符。"
           }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "AKIA / ASIA 前綴後跟 16 個 base32 字符。"
+          }
         }
       }
     },
@@ -115193,6 +116989,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "AWS 访问密钥"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "AWS 訪問密鑰"
           }
         }
       }
@@ -115230,6 +117032,12 @@
             "state" : "translated",
             "value" : "以 DL 为前缀的驾照号码（6–12 个字母数字）。"
           }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "以 DL 爲前綴的駕照號碼（6–12 個字母數字）。"
+          }
         }
       }
     },
@@ -115265,6 +117073,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "美国驾照"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "美國駕照"
           }
         }
       }
@@ -115302,6 +117116,12 @@
             "state" : "translated",
             "value" : "个人访问 / 细粒度 / 服务器令牌（ghp_、gho_、ghs_、…）。"
           }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "個人訪問 / 細粒度 / 服務器令牌（ghp_、gho_、ghs_、…）。"
+          }
         }
       }
     },
@@ -115334,6 +117154,12 @@
           }
         },
         "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "GitHub 令牌"
+          }
+        },
+        "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "GitHub 令牌"
@@ -115374,6 +117200,12 @@
             "state" : "translated",
             "value" : "两位国家/地区代码 + 2 位校验位 + 最多 30 个字母数字。"
           }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "兩位國家/地區代碼 + 2 位校驗位 + 最多 30 個字母數字。"
+          }
         }
       }
     },
@@ -115409,6 +117241,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "IBAN（银行账户）"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "IBAN（銀行賬戶）"
           }
         }
       }
@@ -115446,6 +117284,12 @@
             "state" : "translated",
             "value" : "9 位数字，前面可选地带一个字母，以单词“passport”为锚定。"
           }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "9 位數字，前面可選地帶一個字母，以單詞“passport”爲錨定。"
+          }
         }
       }
     },
@@ -115481,6 +117325,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "美国护照号码"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "美國護照號碼"
           }
         }
       }
@@ -116829,6 +118679,12 @@
             "state" : "translated",
             "value" : "处理器核心"
           }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "處理器核心"
+          }
         }
       }
     },
@@ -117375,6 +119231,12 @@
             "state" : "translated",
             "value" : "证明真的是你本人"
           }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "證明真的是你本人"
+          }
         }
       }
     },
@@ -117759,7 +119621,38 @@
       }
     },
     "Pulling init filesystem" : {
-
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Pulling init filesystem"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Pulling init filesystem"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Pulling init filesystem"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "正在拉取初始文件系统"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "正在拉取初始檔案系統"
+          }
+        }
+      }
     },
     "Pulling sandbox image" : {
       "localizations" : {
@@ -118690,6 +120583,12 @@
             "state" : "translated",
             "value" : "已在沙盒中运行代码"
           }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已在沙盒中運行代碼"
+          }
         }
       }
     },
@@ -119033,6 +120932,12 @@
             "state" : "translated",
             "value" : "重新下载以获取缺失的文件。"
           }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "重新下載以獲取缺失的文件。"
+          }
         }
       }
     },
@@ -119131,6 +121036,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "重新运行模型捆绑包的 SHA-256 验证。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "重新運行模型捆綁包的 SHA-256 驗證。"
           }
         }
       }
@@ -119372,6 +121283,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "读取并构建 Excel 电子表格。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "讀取並構建 Excel 電子表格。"
           }
         }
       }
@@ -119811,6 +121728,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "在流式传输完成后朗读回复。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "在流式傳輸完成後朗讀回覆。"
           }
         }
       }
@@ -120613,6 +122536,12 @@
             "state" : "translated",
             "value" : "真实代码，安全运行"
           }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "真實代碼，安全運行"
+          }
         }
       }
     },
@@ -121259,6 +123188,12 @@
             "state" : "translated",
             "value" : "最近的处理日志"
           }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "最近的處理日誌"
+          }
         }
       }
     },
@@ -121329,6 +123264,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "接收方可以验证某条消息确实来自你的智能体。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "接收方可以驗證某條消息確實來自你的智能體。"
           }
         }
       }
@@ -121427,6 +123368,12 @@
             "state" : "translated",
             "value" : "推荐"
           }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "推薦"
+          }
         }
       }
     },
@@ -121455,6 +123402,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "推荐。你可以跳过，稍后从“沙盒”标签页添加。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "推薦。你可以跳過，稍後從“沙盒”標籤頁添加。"
           }
         }
       }
@@ -121623,6 +123576,12 @@
             "state" : "translated",
             "value" : "正在录音"
           }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "正在錄音"
+          }
         }
       }
     },
@@ -121787,6 +123746,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "恢复代码已保存"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "恢復代碼已保存"
           }
         }
       }
@@ -123911,6 +125876,12 @@
             "state" : "translated",
             "value" : "移除捆绑包"
           }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "移除捆綁包"
+          }
         }
       }
     },
@@ -124392,6 +126363,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "移除隐私过滤器模型？"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "移除隱私過濾器模型？"
           }
         }
       }
@@ -125471,6 +127448,12 @@
             "state" : "translated",
             "value" : "报告问题…"
           }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "報告問題…"
+          }
         }
       }
     },
@@ -126166,6 +128149,12 @@
             "state" : "translated",
             "value" : "必需文件"
           }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "必需文件"
+          }
         }
       }
     },
@@ -126539,6 +128528,12 @@
             "state" : "translated",
             "value" : "为显式调度器门控保留的合约标志；目前由并发会话控制活跃的 BatchEngine 槽位数量。"
           }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "爲顯式調度器門控保留的合約標誌；目前由併發會話控制活躍的 BatchEngine 槽位數量。"
+          }
         }
       }
     },
@@ -126669,6 +128664,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "可随时重置"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "可隨時重置"
           }
         }
       }
@@ -128093,6 +130094,12 @@
             "state" : "translated",
             "value" : "将仅影响视图的设置恢复为推荐默认值（不影响已保存配置）"
           }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "將僅影響視圖的設置恢復爲推薦默認值（不影響已保存配置）"
+          }
         }
       }
     },
@@ -128549,7 +130556,38 @@
       }
     },
     "Retry in about %llds." : {
-
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Retry in about %llds."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Retry in about %llds."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Retry in about %llds."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "大约 %lld 秒后重试。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "大約 %lld 秒後重試。"
+          }
+        }
+      }
     },
     "Retry Load" : {
       "localizations" : {
@@ -128725,7 +130763,38 @@
       }
     },
     "Retry shortly." : {
-
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Retry shortly."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Retry shortly."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Retry shortly."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "稍后重试。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "稍後重試。"
+          }
+        }
+      }
     },
     "Retry starting the server" : {
       "localizations" : {
@@ -129172,6 +131241,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "审核脱敏内容"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "審覈脫敏內容"
           }
         }
       }
@@ -130125,6 +132200,12 @@
           }
         },
         "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "路由器均衡"
+          }
+        },
+        "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "路由器均衡"
@@ -131538,6 +133619,12 @@
             "state" : "translated",
             "value" : "正在沙盒中运行代码"
           }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "正在沙盒中運行代碼"
+          }
         }
       }
     },
@@ -131881,6 +133968,12 @@
             "state" : "translated",
             "value" : "在本地运行——你的任何文本都不会接触外部模型。"
           }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "在本地運行——你的任何文本都不會接觸外部模型。"
+          }
         }
       }
     },
@@ -131944,6 +134037,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "直接在你的 Mac 上运行。私密，且可离线使用。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "直接在你的 Mac 上運行。私密，且可離線使用。"
           }
         }
       }
@@ -132491,6 +134590,12 @@
             "state" : "translated",
             "value" : "沙盒清理"
           }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "沙盒清理"
+          }
         }
       }
     },
@@ -132759,6 +134864,12 @@
             "state" : "translated",
             "value" : "沙盒正在启动…"
           }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "沙盒正在啓動…"
+          }
         }
       }
     },
@@ -132891,6 +135002,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "沙盒插件创建助手"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "沙盒插件創建助手"
           }
         }
       }
@@ -134245,6 +136362,12 @@
             "state" : "translated",
             "value" : "和你的小恐龙打个招呼"
           }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "和你的小恐龍打個招呼"
+          }
         }
       }
     },
@@ -134927,6 +137050,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "范围"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "範圍"
           }
         }
       }
@@ -137621,6 +139750,12 @@
             "state" : "translated",
             "value" : "查看其他选项"
           }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "查看其他選項"
+          }
         }
       }
     },
@@ -137656,6 +139791,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "查看其他选项（%lld）"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "查看其他選項（%lld）"
           }
         }
       }
@@ -138863,6 +141004,12 @@
             "state" : "translated",
             "value" : "直接将消息发送给模型，不附带任何工具规格或能力注入。工具默认关闭——在此处或通过聊天栏启用它们，让智能体可以使用内置工具和插件工具。"
           }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "直接將消息發送給模型，不附帶任何工具規格或能力注入。工具默認關閉——在此處或通過聊天欄啓用它們，讓智能體可以使用內置工具和插件工具。"
+          }
         }
       }
     },
@@ -139582,6 +141729,12 @@
             "state" : "translated",
             "value" : "服务器设置已移动"
           }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "服務器設置已移動"
+          }
         }
       }
     },
@@ -139728,7 +141881,38 @@
       }
     },
     "Session expired — please sign in again." : {
-
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Session expired — please sign in again."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Session expired — please sign in again."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Session expired — please sign in again."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "会话已过期 — 请重新登录。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "工作階段已過期 — 請重新登入。"
+          }
+        }
+      }
     },
     "session-end (default)" : {
       "localizations" : {
@@ -139894,6 +142078,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "设为默认"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "設爲默認"
           }
         }
       }
@@ -140235,6 +142425,12 @@
             "state" : "translated",
             "value" : "正在设置沙盒"
           }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "正在設置沙盒"
+          }
         }
       }
     },
@@ -140333,6 +142529,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "设置…"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "設置…"
           }
         }
       }
@@ -140672,6 +142874,12 @@
             "state" : "translated",
             "value" : "共享匿名使用数据"
           }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "共享匿名使用數據"
+          }
         }
       }
     },
@@ -140876,6 +143084,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "与聊天共享屏幕上下文"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "與聊天共享屏幕上下文"
           }
         }
       }
@@ -141718,6 +143932,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "显示详情"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "顯示詳情"
           }
         }
       }
@@ -143322,6 +145542,12 @@
             "state" : "translated",
             "value" : "签名已保存"
           }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "簽名已保存"
+          }
         }
       }
     },
@@ -143350,6 +145576,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "签名已就绪"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "簽名已就緒"
           }
         }
       }
@@ -145226,6 +147458,12 @@
             "state" : "translated",
             "value" : "平滑流式传输"
           }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "平滑流式傳輸"
+          }
         }
       }
     },
@@ -146478,6 +148716,12 @@
             "state" : "translated",
             "value" : "生成与委托"
           }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "生成與委託"
+          }
         }
       }
     },
@@ -146576,6 +148820,12 @@
             "state" : "translated",
             "value" : "说话后可在这里看到你的文字..."
           }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "說話後可在這裏看到你的文字..."
+          }
         }
       }
     },
@@ -146604,6 +148854,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "在你需要时朗读回复。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "在你需要時朗讀回覆。"
           }
         }
       }
@@ -146980,6 +149236,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "本次会话已用时"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "本次會話已用時"
           }
         }
       }
@@ -148261,6 +150523,12 @@
             "state" : "translated",
             "value" : "保留在你的 Mac 上。不会向任何地方发送任何内容。"
           }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "保留在你的 Mac 上。不會向任何地方發送任何內容。"
+          }
         }
       }
     },
@@ -148496,6 +150764,12 @@
           }
         },
         "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "第 %lld 步，共 %lld 步"
+          }
+        },
+        "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "第 %lld 步，共 %lld 步"
@@ -149146,6 +151420,12 @@
             "state" : "translated",
             "value" : "防止任何人冒充你。"
           }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "防止任何人冒充你。"
+          }
         }
       }
     },
@@ -149379,6 +151659,12 @@
             "state" : "translated",
             "value" : "存储在你的 iCloud 钥匙串中，因此新的 Mac 会从你上次中断的地方继续。"
           }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "存儲在你的 iCloud 鑰匙串中，因此新的 Mac 會從你上次中斷的地方繼續。"
+          }
         }
       }
     },
@@ -149546,6 +151832,12 @@
             "state" : "translated",
             "value" : "需注意的商店"
           }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "需注意的商店"
+          }
         }
       }
     },
@@ -149678,6 +151970,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "流式回复会即时还原，使聊天读起来自然流畅。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "流式回覆會即時還原，使聊天讀起來自然流暢。"
           }
         }
       }
@@ -149880,6 +152178,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "严格单任务"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "嚴格單任務"
           }
         }
       }
@@ -152924,6 +155228,12 @@
             "state" : "translated",
             "value" : "通过实时语音转写测试你的音频设置"
           }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "通過實時語音轉寫測試你的音頻設置"
+          }
         }
       }
     },
@@ -153507,6 +155817,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "智能体"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "智能體"
           }
         }
       }
@@ -154824,6 +157140,12 @@
             "state" : "translated",
             "value" : "该模型较大；下载期间请保持此窗口打开。"
           }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "該模型較大；下載期間請保持此窗口打開。"
+          }
         }
       }
     },
@@ -155317,10 +157639,72 @@
       }
     },
     "The provider is temporarily unavailable (HTTP 503)." : {
-
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "The provider is temporarily unavailable (HTTP 503)."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "The provider is temporarily unavailable (HTTP 503)."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "The provider is temporarily unavailable (HTTP 503)."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "提供商暂时不可用（HTTP 503）。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "提供者暫時無法使用（HTTP 503）。"
+          }
+        }
+      }
     },
     "The provider rate-limited this request (HTTP %lld)." : {
-
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "The provider rate-limited this request (HTTP %lld)."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "The provider rate-limited this request (HTTP %lld)."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "The provider rate-limited this request (HTTP %lld)."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "提供商对此请求进行了速率限制（HTTP %lld）。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "提供者對此請求進行了速率限制（HTTP %lld）。"
+          }
+        }
+      }
     },
     "The receiver who accepted this invite will lose access immediately. Their access key will be revoked." : {
       "localizations" : {
@@ -156117,6 +158501,12 @@
             "state" : "translated",
             "value" : "主题"
           }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "主題"
+          }
         }
       }
     },
@@ -156217,6 +158607,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "主题库"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "主題庫"
           }
         }
       }
@@ -156742,6 +159138,12 @@
             "state" : "translated",
             "value" : "这些设置适用于所有语音模式：语音输入、转写和 VAD 模式。"
           }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "這些設置適用於所有語音模式：語音輸入、轉寫和 VAD 模式。"
+          }
         }
       }
     },
@@ -157057,6 +159459,12 @@
             "state" : "translated",
             "value" : "此包尚未就绪"
           }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "此包尚未就緒"
+          }
         }
       }
     },
@@ -157227,6 +159635,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "这将删除磁盘上的模型（约 2.8 GB）。在你重新下载之前，隐私过滤器将停止检测。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "這將刪除磁盤上的模型（約 2.8 GB）。在你重新下載之前，隱私過濾器將停止檢測。"
           }
         }
       }
@@ -157581,10 +159995,40 @@
     },
     "This model needs ~%@ GB, but this Mac can only keep ~%@ GB on the GPU. macOS will page the weights and generation will be extremely slow — pick a smaller model or a lower-precision build." : {
       "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "This model needs ~%1$@ GB, but this Mac can only keep ~%2$@ GB on the GPU. macOS will page the weights and generation will be extremely slow — pick a smaller model or a lower-precision build."
+          }
+        },
         "en" : {
           "stringUnit" : {
             "state" : "new",
             "value" : "This model needs ~%1$@ GB, but this Mac can only keep ~%2$@ GB on the GPU. macOS will page the weights and generation will be extremely slow — pick a smaller model or a lower-precision build."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "This model needs ~%1$@ GB, but this Mac can only keep ~%2$@ GB on the GPU. macOS will page the weights and generation will be extremely slow — pick a smaller model or a lower-precision build."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "This model needs ~%1$@ GB, but this Mac can only keep ~%2$@ GB on the GPU. macOS will page the weights and generation will be extremely slow — pick a smaller model or a lower-precision build."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "此模型需要约 %1$@ GB，但此 Mac 在 GPU 上只能保持约 %2$@ GB。macOS 将会对权重进行分页，生成速度会非常慢 — 请选择更小的模型或更低精度的版本。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "此模型需要約 %1$@ GB，但此 Mac 在 GPU 上只能保持約 %2$@ GB。macOS 將會對權重進行分頁，生成速度會非常慢 — 請選擇更小的模型或更低精度的版本。"
           }
         }
       }
@@ -158916,6 +161360,12 @@
             "state" : "translated",
             "value" : "丢弃它并从“沙盒”标签页重新开始——你的 Mac 不会受到任何影响。"
           }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "丟棄它並從“沙盒”標籤頁重新開始——你的 Mac 不會受到任何影響。"
+          }
         }
       }
     },
@@ -159299,6 +161749,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "消息自动发送前可取消的时间"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "消息自動發送前可取消的時間"
           }
         }
       }
@@ -159758,6 +162214,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "切换语音检测"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "切換語音檢測"
           }
         }
       }
@@ -161658,6 +164120,12 @@
             "state" : "translated",
             "value" : "转写"
           }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "轉寫"
+          }
         }
       }
     },
@@ -162771,33 +165239,6 @@
       }
     },
     "TurboQuant" : {
-      "extractionState" : "stale",
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "TurboQuant"
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "TurboQuant"
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "TurboQuant"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "TurboQuant"
-          }
-        }
-      },
       "shouldTranslate" : false
     },
     "TurboQuant compressions" : {
@@ -163431,7 +165872,39 @@
     },
     "Ultra" : {
       "comment" : "Human-readable label for the \"ultra\" reasoning effort level.",
-      "isCommentAutoGenerated" : true
+      "isCommentAutoGenerated" : true,
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ultra"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ultra"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ultra"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ultra"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ultra"
+          }
+        }
+      }
     },
     "Unarchive" : {
       "localizations" : {
@@ -163918,6 +166391,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "工作后卸载"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "工作後卸載"
           }
         }
       }
@@ -166151,6 +168630,12 @@
             "state" : "translated",
             "value" : "使用 Apple Intelligence"
           }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "使用 Apple Intelligence"
+          }
         }
       }
     },
@@ -166637,6 +169122,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "使用设备端模型捕捉正则规则遗漏的姓名、地址、日期以及自由格式的密钥。模型在本地运行；「规则」标签页中的正则规则无需模型即可正常工作。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "使用設備端模型捕捉正則規則遺漏的姓名、地址、日期以及自由格式的密鑰。模型在本地運行；「規則」標籤頁中的正則規則無需模型即可正常工作。"
           }
         }
       }
@@ -167187,6 +169678,12 @@
             "state" : "translated",
             "value" : "使用你的全局聊天设置"
           }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "使用你的全局聊天設置"
+          }
         }
       }
     },
@@ -167568,6 +170065,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "验证、过滤、去重和恢复已安装的主题。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "驗證、過濾、去重和恢復已安裝的主題。"
           }
         }
       }
@@ -169117,6 +171620,12 @@
             "state" : "translated",
             "value" : "语音输入"
           }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "語音輸入"
+          }
         }
       }
     },
@@ -169181,6 +171690,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "语音输出位于“语音”部分；聊天问候在“自定义”>“空状态”。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "語音輸出位於“語音”部分；聊天問候在“自定義”>“空狀態”。"
           }
         }
       }
@@ -169280,6 +171795,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "语音转写"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "語音轉寫"
           }
         }
       }
@@ -169724,6 +172245,12 @@
             "state" : "translated",
             "value" : "唤醒词设置"
           }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "喚醒詞設置"
+          }
         }
       }
     },
@@ -169786,6 +172313,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "与你的 Mac 隔离"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "與你的 Mac 隔離"
           }
         }
       }
@@ -169885,6 +172418,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "需要更强性能？"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "需要更強性能？"
           }
         }
       }
@@ -170374,6 +172913,12 @@
             "state" : "translated",
             "value" : "我们无法估算此模型的内存需求。"
           }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "我們無法估算此模型的內存需求。"
+          }
         }
       }
     },
@@ -170471,6 +173016,12 @@
             "state" : "translated",
             "value" : "我们会在每一轮从你启用的集合中挑选最相关的项目。"
           }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "我們會在每一輪從你啓用的集合中挑選最相關的項目。"
+          }
         }
       }
     },
@@ -170499,6 +173050,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "我们会保留你已有的那个，这样你已构建的内容都不会受损。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "我們會保留你已有的那個，這樣你已構建的內容都不會受損。"
           }
         }
       }
@@ -170529,12 +173086,50 @@
             "state" : "translated",
             "value" : "我们会保留你现有的签名，这样不会有任何东西出问题。"
           }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "我們會保留你現有的簽名，這樣不會有任何東西出問題。"
+          }
         }
       }
     },
     "We're live on Product Hunt" : {
       "comment" : "Title of a one-time Product Hunt launch thank-you dialog.",
-      "isCommentAutoGenerated" : true
+      "isCommentAutoGenerated" : true,
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "We're live on Product Hunt"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "We're live on Product Hunt"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "We're live on Product Hunt"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "我们在 Product Hunt 上线了"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "我們在 Product Hunt 上線了"
+          }
+        }
+      }
     },
     "Web" : {
       "comment" : "Feature title for enabling the agent to search the web.",
@@ -171895,6 +174490,12 @@
             "state" : "translated",
             "value" : "当你的小恐龙安装软件包、运行脚本或摆弄文件时，它会在一个微小的、与外界隔离的工作区中完成——与你的 Mac 相分离。"
           }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "當你的小恐龍安裝軟件包、運行腳本或擺弄文件時，它會在一個微小的、與外界隔離的工作區中完成——與你的 Mac 相分離。"
+          }
         }
       }
     },
@@ -172135,6 +174736,12 @@
             "state" : "translated",
             "value" : "你的小恐龙在这里运行任何会接触到你系统的内容。"
           }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "你的小恐龍在這裏運行任何會接觸到你係統的內容。"
+          }
         }
       }
     },
@@ -172236,6 +174843,12 @@
             "state" : "translated",
             "value" : "为什么加密是可选的"
           }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "爲什麼加密是可選的"
+          }
         }
       }
     },
@@ -172333,6 +174946,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "宽"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "寬"
           }
         }
       }
@@ -172470,6 +175089,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "清除 macOS 钥匙串，或在未同步 iCloud 钥匙串的情况下迁移到新 Mac，会使加密存储无法恢复。如果你需要迁移，请先进行明文备份。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "清除 macOS 鑰匙串，或在未同步 iCloud 鑰匙串的情況下遷移到新 Mac，會使加密存儲無法恢復。如果你需要遷移，請先進行明文備份。"
           }
         }
       }
@@ -174392,6 +177017,12 @@
             "state" : "translated",
             "value" : "你已经设置完毕"
           }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "你已經設置完畢"
+          }
         }
       }
     },
@@ -174664,6 +177295,12 @@
             "state" : "translated",
             "value" : "您的余额。本会话已花费%@。点击添加积分。"
           }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "您的餘額。本會話已花費%@。點擊添加積分。"
+          }
         }
       }
     },
@@ -174693,6 +177330,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "您的余额。点击添加积分。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "您的餘額。點擊添加積分。"
           }
         }
       }
@@ -175101,6 +177744,12 @@
             "state" : "translated",
             "value" : "你的密钥保留在你的 Mac 上，锁定在钥匙串中。"
           }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "你的密鑰保留在你的 Mac 上，鎖定在鑰匙串中。"
+          }
         }
       }
     },
@@ -175231,6 +177880,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "您的密钥"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "您的密鑰"
           }
         }
       }
@@ -175449,6 +178104,12 @@
             "state" : "translated",
             "value" : "你的秘密签名"
           }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "你的祕密簽名"
+          }
         }
       }
     },
@@ -175511,6 +178172,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "你的签名（预览）"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "你的簽名（預覽）"
           }
         }
       }
