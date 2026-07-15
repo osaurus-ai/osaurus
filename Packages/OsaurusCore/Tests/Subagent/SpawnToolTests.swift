@@ -64,6 +64,15 @@ struct SpawnToolTests {
         #expect(ToolEnvelope.isError(malformed))
     }
 
+    @Test func spawnModelRejectsWhitespaceModelBeforeSpawnabilityGate() async throws {
+        let result = try await SpawnModelTool().execute(
+            argumentsJSON: #"{"input":"do a thing","model":"   \n\t"}"#
+        )
+        #expect(ToolEnvelope.isError(result))
+        #expect(ToolEnvelope.failureMessage(result).contains("cannot be blank"))
+        #expect(!ToolEnvelope.failureMessage(result).contains("Model '' is not spawnable"))
+    }
+
     @Test func bypassesRegistryTimeout() {
         // The nested loop outlives the registry's per-tool wall clock; both spawn
         // tools must opt out so the host owns the deadline.

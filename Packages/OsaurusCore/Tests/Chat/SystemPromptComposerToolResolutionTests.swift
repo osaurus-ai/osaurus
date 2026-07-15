@@ -147,6 +147,20 @@ struct SystemPromptComposerToolResolutionTests {
         return Set(props.keys)
     }
 
+    /// Exact ids published in the request-local `spawn_model.model` enum.
+    private func spawnModelEnum(_ tools: [Tool]) -> [String] {
+        guard let spawn = tools.first(where: { $0.function.name == "spawn_model" }),
+            case .object(let root)? = spawn.function.parameters,
+            case .object(let properties)? = root["properties"],
+            case .object(let model)? = properties["model"],
+            case .array(let values)? = model["enum"]
+        else { return [] }
+        return values.compactMap {
+            if case .string(let value) = $0 { return value }
+            return nil
+        }
+    }
+
     // MARK: - Auto mode
 
     @Test
@@ -776,17 +790,21 @@ struct SystemPromptComposerToolResolutionTests {
             #expect(!withAgents.contains("image"))
 
             // Model pool only → spawn_model, not spawn_agent.
-            let withModels = Set(
-                SystemPromptComposer.resolveTools(
-                    snapshot: makeSnapshot(
-                        spawnDelegationEnabled: true,
-                        spawnableModelNames: ["qwen3-4b-4bit"]
-                    ),
-                    executionMode: .none
-                ).map { $0.function.name }
+            let remoteModelIds = [
+                "openai-chatgpt/gpt-5.6-sol",
+                "anthropic/claude-opus-4-8",
+            ]
+            let modelTools = SystemPromptComposer.resolveTools(
+                snapshot: makeSnapshot(
+                    spawnDelegationEnabled: true,
+                    spawnableModelNames: remoteModelIds
+                ),
+                executionMode: .none
             )
+            let withModels = Set(modelTools.map { $0.function.name })
             #expect(withModels.contains("spawn_model"))
             #expect(!withModels.contains("spawn_agent"))
+            #expect(spawnModelEnum(modelTools) == remoteModelIds)
 
             // Toggle on but BOTH lists empty → nothing to spawn → both hidden.
             let noTargets = Set(
