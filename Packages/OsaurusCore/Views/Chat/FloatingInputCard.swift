@@ -358,6 +358,10 @@ struct FloatingInputCard: View {
     /// is what keeps the sidebar collapse/expand animation smooth; the earlier
     /// `ViewThatFits` rebuilt three candidate clusters every frame instead.
     @State private var chipRegionWidth: CGFloat = 0
+    /// Full width of the selector row. Drives `metaCompact` so the right-edge
+    /// meta cluster (credits CTA + token readout) also sheds its non-essential
+    /// bits when the window is tiled narrow — not just when the sidebar is open.
+    @State private var selectorRowWidth: CGFloat = 0
     @State private var sandboxPulseAmount: CGFloat = 1.0
     @State private var sandboxPulseTask: Task<Void, Never>? = nil
     @State private var isClipboardHovered = false
@@ -2250,6 +2254,20 @@ extension FloatingInputCard {
                 metaCluster
             }
         }
+        .onGeometryChange(for: CGFloat.self) { proxy in
+            proxy.size.width
+        } action: { width in
+            selectorRowWidth = width
+        }
+    }
+
+    /// Whether the right-edge meta cluster should shed its non-essential bits
+    /// (the credits icon, the "tokens" caption). True when the caller asked for
+    /// compact (sidebar open) OR the row itself is narrow — the latter is what
+    /// was missing: tiling the window narrow with the sidebar closed left the
+    /// meta cluster at full width and crowded the chips off the row.
+    private var metaCompact: Bool {
+        isCompact || (selectorRowWidth > 0 && selectorRowWidth < 620)
     }
 
     /// Whether the toggle chips should collapse to icon-only. True once the
@@ -2325,7 +2343,7 @@ extension FloatingInputCard {
 
             // Clipboard / paste chip — last in the left cluster.
             if AppConfiguration.shared.chatConfig.enableClipboardMonitoring && clipboardService.hasNewContent {
-                clipboardToggleChip
+                clipboardToggleChip(compact: compact)
             }
         }
     }
@@ -2482,7 +2500,7 @@ extension FloatingInputCard {
         let caption = CGFloat(theme.captionSize)
         // Hide the icon in compact mode to save width, except the empty-state
         // plus glyph, which signals the chip is actionable.
-        let showIcon = !isCompact || level == .empty
+        let showIcon = !metaCompact || level == .empty
 
         Button {
             // Click pins the wallet panel (rather than jumping straight to the
@@ -2644,7 +2662,7 @@ extension FloatingInputCard {
                 .lineLimit(1)
                 .fixedSize(horizontal: true, vertical: false)
 
-            if !isCompact {
+            if !metaCompact {
                 Text("tokens", bundle: .module)
                     .font(theme.font(size: CGFloat(theme.captionSize) - 1, weight: .regular))
                     .foregroundColor(theme.tertiaryText.opacity(0.7))
@@ -3521,38 +3539,43 @@ extension FloatingInputCard {
         }
     }
 
-    private var clipboardChipLabel: some View {
+    @ViewBuilder
+    private func clipboardChipLabel(compact: Bool) -> some View {
         HStack(spacing: 5) {
             Image(systemName: clipboardChipIcon)
                 .font(.system(size: CGFloat(theme.captionSize) - 2, weight: .medium))
                 .foregroundColor(theme.accentColor)
 
-            // Lead with the action word so the chip reads as "Paste" like its
-            // row-mates ("Sandbox", "Folder"); the source app trails as a quiet
-            // suffix so the "from which app" signal isn't lost.
-            Text("Paste", bundle: .module)
-                .font(theme.font(size: CGFloat(theme.captionSize), weight: .bold))
-                .foregroundColor(theme.accentColor)
-                .lineLimit(1)
-
-            if let source = clipboardService.lastSourceApp {
-                Text(source)
-                    .font(theme.font(size: CGFloat(theme.captionSize), weight: .medium))
-                    .foregroundColor(theme.secondaryText)
+            // Collapsed, the chip is just its icon (hover names it) so it can't
+            // be clipped mid-word in the narrow scroll region. Expanded, lead
+            // with the action word so it reads as "Paste" like its row-mates
+            // ("Sandbox", "Folder"), with the source app as a quiet suffix.
+            if !compact {
+                Text("Paste", bundle: .module)
+                    .font(theme.font(size: CGFloat(theme.captionSize), weight: .bold))
+                    .foregroundColor(theme.accentColor)
                     .lineLimit(1)
-                    .truncationMode(.middle)
-            }
+                    .fixedSize()
 
-            Image(systemName: "chevron.right")
-                .font(theme.font(size: CGFloat(theme.captionSize) - 4, weight: .bold))
-                .foregroundColor(theme.tertiaryText.opacity(0.7))
-                .padding(.leading, 2)
+                if let source = clipboardService.lastSourceApp {
+                    Text(source)
+                        .font(theme.font(size: CGFloat(theme.captionSize), weight: .medium))
+                        .foregroundColor(theme.secondaryText)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                }
+
+                Image(systemName: "chevron.right")
+                    .font(theme.font(size: CGFloat(theme.captionSize) - 4, weight: .bold))
+                    .foregroundColor(theme.tertiaryText.opacity(0.7))
+                    .padding(.leading, 2)
+            }
         }
     }
 
-    private var clipboardToggleChip: some View {
+    private func clipboardToggleChip(compact: Bool) -> some View {
         Button(action: attachClipboardSnippet) {
-            clipboardChipLabel
+            clipboardChipLabel(compact: compact)
                 .padding(.horizontal, 10)
                 .padding(.vertical, 5)
                 .background(
