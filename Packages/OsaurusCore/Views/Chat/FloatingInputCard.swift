@@ -2270,6 +2270,15 @@ extension FloatingInputCard {
         isCompact || (selectorRowWidth > 0 && selectorRowWidth < 620)
     }
 
+    /// A tighter tier for genuinely tiny rows (e.g. minimum window width *with*
+    /// the sidebar open, which leaves the chat pane only ~260pt). Here the meta
+    /// cluster gives up its lowest-priority pieces so the toggle chips still fit
+    /// without being clipped mid-icon: the token readout is dropped and the
+    /// credits CTA shrinks to its glyph (hover/tap still opens the wallet).
+    private var metaUltraCompact: Bool {
+        selectorRowWidth > 0 && selectorRowWidth < 430
+    }
+
     /// Whether the toggle chips should collapse to icon-only. True once the
     /// measured `chipRegionWidth` is narrower than the labeled chips would
     /// need. The per-chip width is a deliberate estimate — the ScrollView
@@ -2362,7 +2371,7 @@ extension FloatingInputCard {
         // agent composes its own system prompt / tools server-side, so a local
         // token breakdown (system prompt, tools, history) doesn't reflect what
         // actually runs and would mislead about the remote agent's budget.
-        let showTokens = displayContextTokens > 0 && !isRemoteAgentRun
+        let showTokens = displayContextTokens > 0 && !isRemoteAgentRun && !metaUltraCompact
         if showCredits || showTokens {
             HStack(alignment: .center, spacing: 8) {
                 if showCredits {
@@ -2499,8 +2508,12 @@ extension FloatingInputCard {
         let style = creditsStyle(for: level)
         let caption = CGFloat(theme.captionSize)
         // Hide the icon in compact mode to save width, except the empty-state
-        // plus glyph, which signals the chip is actionable.
-        let showIcon = !metaCompact || level == .empty
+        // plus glyph, which signals the chip is actionable. In the ultra-compact
+        // tier we always keep the icon, since it becomes the whole chip.
+        let showIcon = !metaCompact || level == .empty || metaUltraCompact
+        // At the tightest width the chip is icon-only (glyph carries the state,
+        // hover/tap opens the wallet) so the row's toggle chips aren't clipped.
+        let showLabel = !metaUltraCompact
 
         Button {
             // Click pins the wallet panel (rather than jumping straight to the
@@ -2524,20 +2537,22 @@ extension FloatingInputCard {
                         .contentTransition(.symbolEffect(.replace))
                 }
 
-                if style.showsAmount {
-                    // Composer shows the overall router balance; this session's
-                    // spend is surfaced only in the hover popover.
-                    Text(verbatim: accountService.formattedBalance)
-                        .font(.system(size: caption - 1, weight: style.weight, design: .monospaced))
-                        .foregroundColor(style.textColor)
-                        .lineLimit(1)
-                        .fixedSize(horizontal: true, vertical: false)
-                } else {
-                    Text("Add credits", bundle: .module)
-                        .font(theme.font(size: caption - 1, weight: style.weight))
-                        .foregroundColor(style.textColor)
-                        .lineLimit(1)
-                        .fixedSize(horizontal: true, vertical: false)
+                if showLabel {
+                    if style.showsAmount {
+                        // Composer shows the overall router balance; this session's
+                        // spend is surfaced only in the hover popover.
+                        Text(verbatim: accountService.formattedBalance)
+                            .font(.system(size: caption - 1, weight: style.weight, design: .monospaced))
+                            .foregroundColor(style.textColor)
+                            .lineLimit(1)
+                            .fixedSize(horizontal: true, vertical: false)
+                    } else {
+                        Text("Add credits", bundle: .module)
+                            .font(theme.font(size: caption - 1, weight: style.weight))
+                            .foregroundColor(style.textColor)
+                            .lineLimit(1)
+                            .fixedSize(horizontal: true, vertical: false)
+                    }
                 }
             }
             // Chrome only appears in the low/empty attention states; the healthy
