@@ -999,6 +999,15 @@ struct CapabilitiesLoadToolTests {
                     manualSkillNames: []
                 )
                 AgentManager.shared.add(deniedAgent)
+                let grantedDiscovery = try await CapabilitiesDiscoverTool(agentId: agent.id).execute(
+                    argumentsJSON: "{\"queries\": [\"Governs the AutoGroup tool group\"]}"
+                )
+                let deniedDiscovery = try await CapabilitiesDiscoverTool(agentId: deniedAgent.id).execute(
+                    argumentsJSON: "{\"queries\": [\"Governs the AutoGroup tool group\"]}"
+                )
+                #expect(grantedDiscovery.contains("skill/\(persistedSkill.name)"))
+                #expect(!deniedDiscovery.contains("skill/\(persistedSkill.name)"))
+
                 let deniedResult = try await ChatExecutionContext.$currentAgentId.withValue(deniedAgent.id) {
                     try await tool.execute(argumentsJSON: "{\"ids\": [\"skill/\(persistedSkill.name)\"]}")
                 }

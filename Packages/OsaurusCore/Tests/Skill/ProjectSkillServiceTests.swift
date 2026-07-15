@@ -678,6 +678,12 @@ struct ProjectSkillServiceTests {
         await manager.setEnabled(true, id: id)
         #expect(manager.isEnabled(id))
         #expect(!manager.isAgentGranted(id, agentID: agent.id))
+        manager.setAgentGranted(true, id: id, agentID: agent.id)
+        try FileManager.default.removeItem(at: directory)
+        await manager.refresh()
+        #expect(!manager.isEnabled(id))
+        #expect(!manager.isAgentGranted(id, agentID: agent.id))
+        #expect((defaults.dictionary(forKey: defaultsKey) as? [String: String])?[id] == nil)
         }
         }
     }
@@ -721,6 +727,50 @@ struct ProjectSkillServiceTests {
                     == .failure(.notGrantedToAgent)
             )
         }
+        }
+    }
+
+    @Test @MainActor func firstEnableMutationDoesNotInventPriorApproval() async throws {
+        try await withProjectSkillCatalog {
+            let root = try temporaryDirectory()
+            let suite = "ProjectSkillFirstEnableMutationTests.\(UUID().uuidString)"
+            let defaults = try #require(UserDefaults(suiteName: suite))
+            defer {
+                try? FileManager.default.removeItem(at: root)
+                defaults.removePersistentDomain(forName: suite)
+            }
+            let directory = try writeSkill(
+                root: root,
+                source: .agents,
+                directory: "review",
+                name: "Review"
+            )
+            let manager = ProjectSkillManager(defaults: defaults)
+            await manager.activate(root)
+            let id = try #require(manager.records.first?.id)
+
+            try """
+                ---
+                name: Review
+                description: Changed after discovery
+                ---
+
+                Review the refreshed package.
+                """.write(
+                    to: directory.appendingPathComponent("SKILL.md"),
+                    atomically: true,
+                    encoding: .utf8
+                )
+
+            #expect(!(await manager.setEnabled(true, id: id)))
+            #expect(!manager.isEnabled(id))
+            #expect(!manager.staleApprovalIDs.contains(id))
+            #expect(
+                manager.diagnostics.contains {
+                    $0.contains("changed since discovery") && $0.contains(id)
+                }
+            )
+            #expect(!manager.diagnostics.contains { $0.contains("changed after approval") })
         }
     }
 

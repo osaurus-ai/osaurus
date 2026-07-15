@@ -29,7 +29,7 @@ enum ProjectSkillSource: String, CaseIterable, Sendable {
     case agents = ".agents/skills"
     case claude = ".claude/skills"
 
-    var trustLabel: String {
+    var sourceDescription: String {
         switch self {
         case .osaurus: return "Project-local Osaurus skill"
         case .agents: return "Agent Skills compatible project skill"
@@ -720,8 +720,8 @@ final class ProjectSkillManager {
         )
         let staleIDs: Set<String> = Set(
             approvedContentHashes.compactMap { id, hash in
-                guard available.contains(id), currentHashes[id] != hash else { return nil }
-                return id
+                guard available.contains(id), currentHashes[id] == hash else { return id }
+                return nil
             }
         )
         staleApprovalIDs = []
@@ -764,7 +764,13 @@ final class ProjectSkillManager {
             if let index = records.firstIndex(where: { $0.id == id }) {
                 records[index] = liveRecord
             }
-            revokeApproval(id: id)
+            if approvedContentHashes[id] != nil || enabledIDs.contains(id) {
+                revokeApproval(id: id)
+            } else {
+                staleApprovalIDs.remove(id)
+                let message = "Project skill package changed since discovery; refresh and review before enabling: \(id)"
+                if !diagnostics.contains(message) { diagnostics.append(message) }
+            }
             return false
         }
 

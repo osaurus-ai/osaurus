@@ -139,6 +139,13 @@ struct SkillStoreFileContainmentTests {
             await #expect(throws: SkillStoreFileError.self) {
                 _ = try await SkillStore.readFile(from: skill, relativePath: "references/linked-secret.txt")
             }
+            await #expect(throws: SkillStoreFileError.self) {
+                _ = try await SkillStore.readFile(
+                    from: skill,
+                    relativePath: "references/linked-secret.txt",
+                    maxBytes: 1_024
+                )
+            }
             #expect(try Data(contentsOf: outsideRead) == Data("keep symlink secret".utf8))
         }
     }

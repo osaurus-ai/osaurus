@@ -219,6 +219,7 @@ final class CapabilitiesDiscoverTool: OsaurusTool, @unchecked Sendable {
         let agentContextId = Self.resolveAgentContextId(explicit: agentId)
         let isDefaultAgent = agentContextId == Agent.defaultId
         let baseAllowedToolNames = await Self.allowedToolNames(for: agentContextId)
+        let allowedSkillNames = await Self.allowedSkillNames(for: agentContextId)
 
         // Phase C scoping:
         //   * Default agent: results restricted to the configure writes
@@ -278,7 +279,12 @@ final class CapabilitiesDiscoverTool: OsaurusTool, @unchecked Sendable {
             return collected
         }
 
-        let hits = Self.mergeHits(perQueryResults)
+        let mergedHits = Self.mergeHits(perQueryResults)
+        let hits = CapabilitySearchResults(
+            methods: mergedHits.methods,
+            tools: mergedHits.tools,
+            skills: mergedHits.skills.filter { allowedSkillNames?.contains($0.skill.name) ?? true }
+        )
         let projectSkillHits: [(record: ProjectSkillRecord, score: Float)]
         let projectSkillSurfaceAllowed =
             !ChatExecutionContext.isExternalSurface
@@ -391,7 +397,7 @@ final class CapabilitiesDiscoverTool: OsaurusTool, @unchecked Sendable {
                     score: Double($0.score),
                     extraLines: [
                         "source: \($0.record.source.rawValue)",
-                        "trust: \($0.record.source.trustLabel)",
+                        "source_kind: \($0.record.source.sourceDescription)",
                     ]
                 )
             }).sorted { $0.score > $1.score }
@@ -434,6 +440,16 @@ final class CapabilitiesDiscoverTool: OsaurusTool, @unchecked Sendable {
         guard let agentId else { return nil }
         return await MainActor.run {
             AgentManager.shared.effectiveEnabledToolNames(for: agentId).map(Set.init)
+        }
+    }
+
+    /// Skill discovery must honor the same explicit agent grant boundary as
+    /// `capabilities_load`. Nil preserves legacy global discovery for
+    /// unseeded agents and direct calls without an agent context.
+    private static func allowedSkillNames(for agentId: UUID?) async -> Set<String>? {
+        guard let agentId else { return nil }
+        return await MainActor.run {
+            AgentManager.shared.effectiveEnabledSkillNames(for: agentId).map(Set.init)
         }
     }
 

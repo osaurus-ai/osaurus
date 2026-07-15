@@ -695,7 +695,7 @@ private struct ProjectSkillRow: View {
                 Divider()
                 detailRow("Capability ID", value: record.id)
                 detailRow("Source", value: record.source.rawValue)
-                detailRow("Trust", value: record.source.trustLabel)
+                detailRow("Source kind", value: record.source.sourceDescription)
                 detailRow("Instructions", value: record.instructionFile)
                 VStack(alignment: .leading, spacing: 4) {
                     Text("Instruction preview", bundle: .module)

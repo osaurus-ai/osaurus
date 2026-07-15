@@ -6,6 +6,7 @@
 //  Directory structure: skills/{skill-name}/SKILL.md with optional references/ and assets/
 //
 
+import Darwin
 import Foundation
 
 /// Errors from skill file path validation before a caller-controlled path can
@@ -268,7 +269,7 @@ public enum SkillStore {
         let skillDir = skillDirectory(for: skill)
         let fileURL = try containedFileURL(for: relativePath, in: skillDir)
         try ensureResolvedContainment(of: fileURL, in: skillDir)
-        return try Data(contentsOf: fileURL)
+        return try readRegularFileNoFollow(fileURL, maxBytes: nil)
     }
 
     static func readFile(
@@ -280,9 +281,7 @@ public enum SkillStore {
         let skillDir = skillDirectory(for: skill)
         let fileURL = try containedFileURL(for: relativePath, in: skillDir)
         try ensureResolvedContainment(of: fileURL, in: skillDir)
-        let handle = try FileHandle(forReadingFrom: fileURL)
-        defer { try? handle.close() }
-        let data = try handle.read(upToCount: maxBytes + 1) ?? Data()
+        let data = try readRegularFileNoFollow(fileURL, maxBytes: maxBytes + 1)
         guard data.count <= maxBytes else {
             throw SkillStoreFileError.fileTooLarge(limitBytes: maxBytes)
         }
@@ -322,6 +321,22 @@ public enum SkillStore {
     }
 
     // MARK: - Private
+
+    private static func readRegularFileNoFollow(_ fileURL: URL, maxBytes: Int?) throws -> Data {
+        let descriptor = Darwin.open(fileURL.path, O_RDONLY | O_CLOEXEC | O_NOFOLLOW)
+        guard descriptor >= 0 else { throw SkillStoreFileError.pathEscapesDirectory }
+        let handle = FileHandle(fileDescriptor: descriptor, closeOnDealloc: true)
+        var metadata = stat()
+        guard fstat(descriptor, &metadata) == 0, metadata.st_mode & S_IFMT == S_IFREG else {
+            try? handle.close()
+            throw SkillStoreFileError.invalidRelativePath
+        }
+        defer { try? handle.close() }
+        if let maxBytes {
+            return try handle.read(upToCount: maxBytes) ?? Data()
+        }
+        return try handle.readToEnd() ?? Data()
+    }
 
     private static func skillsDirectory() -> URL {
         OsaurusPaths.skills()
