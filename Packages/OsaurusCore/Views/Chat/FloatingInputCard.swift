@@ -3011,7 +3011,16 @@ extension FloatingInputCard {
                             ? "brain"
                             : (isEnabled ? "checkmark.square.fill" : "square")
                     )
-                    .font(theme.font(size: CGFloat(theme.captionSize) - 1, weight: .semibold))
+                    // The brain glyph reads visually heavier than the checkbox,
+                    // so drop it a point (to match the sandbox/folder icons at
+                    // captionSize - 2) when collapsed; keep the checkbox at its
+                    // original size when the label is showing.
+                    .font(
+                        theme.font(
+                            size: CGFloat(theme.captionSize) - (compact ? 2 : 1),
+                            weight: .semibold
+                        )
+                    )
                     .foregroundColor(isEnabled ? theme.accentColor : theme.tertiaryText)
                     .contentTransition(.symbolEffect(.replace))
 
