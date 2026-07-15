@@ -111,6 +111,11 @@ public final class BackgroundTaskManager: ObservableObject {
     private let retainedTabsDefaults: UserDefaults
     private static let retainedTabsDefaultsKey = "retainedNotchTabs.v1"
 
+    /// Production managers hold an idle-sleep assertion while work is
+    /// running or queued. Isolated test managers inject nil so unit tests
+    /// never alter the host machine's power state.
+    private let powerManager: AgentRunPowerManager?
+
     /// Tasks whose dispatch() hasn't returned to the plugin yet; events are
     /// buffered in `heldTaskEvents` until `releaseEventsForDispatch` flushes them.
     private var dispatchHoldTasks: Set<UUID> = []
@@ -148,10 +153,12 @@ public final class BackgroundTaskManager: ObservableObject {
 
     private init(
         persistsRetainedTabs: Bool = true,
-        retainedTabsDefaults: UserDefaults = .standard
+        retainedTabsDefaults: UserDefaults = .standard,
+        powerManager: AgentRunPowerManager? = .shared
     ) {
         self.persistsRetainedTabs = persistsRetainedTabs
         self.retainedTabsDefaults = retainedTabsDefaults
+        self.powerManager = powerManager
         viewUpdateCancellable =
             viewUpdateSubject
             .throttle(for: .milliseconds(50), scheduler: DispatchQueue.main, latest: true)
@@ -201,9 +208,21 @@ public final class BackgroundTaskManager: ObservableObject {
                 if ap != bp { return ap < bp }
                 return a.createdAt > b.createdAt
             }
+        refreshPowerAssertion()
     }
 
     // MARK: - Public API
+
+    /// Re-evaluate idle-sleep prevention after task state or the user
+    /// preference changes. Waiting-for-input sessions intentionally do not
+    /// keep the Mac awake indefinitely.
+    func refreshPowerAssertion() {
+        powerManager?.update(for: backgroundTasks.values.map(\.status))
+    }
+
+    var isPreventingIdleSystemSleep: Bool {
+        powerManager?.isPreventingIdleSystemSleep ?? false
+    }
 
     /// Check if a task ID corresponds to a background task
     public func isBackgroundTask(_ id: UUID) -> Bool {
@@ -988,13 +1007,24 @@ public final class BackgroundTaskManager: ObservableObject {
         /// must not run against `.shared`, where they would cancel tasks
         /// registered by other concurrently-running suites.
         static func makeForTesting() -> BackgroundTaskManager {
-            BackgroundTaskManager(persistsRetainedTabs: false)
+            BackgroundTaskManager(
+                persistsRetainedTabs: false,
+                powerManager: nil
+            )
+        }
+
+        static func makeForTesting(powerManager: AgentRunPowerManager) -> BackgroundTaskManager {
+            BackgroundTaskManager(
+                persistsRetainedTabs: false,
+                powerManager: powerManager
+            )
         }
 
         static func makeForTestingRetaining(defaults: UserDefaults) -> BackgroundTaskManager {
             BackgroundTaskManager(
                 persistsRetainedTabs: true,
-                retainedTabsDefaults: defaults
+                retainedTabsDefaults: defaults,
+                powerManager: nil
             )
         }
 
