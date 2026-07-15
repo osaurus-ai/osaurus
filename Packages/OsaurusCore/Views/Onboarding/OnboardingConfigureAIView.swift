@@ -61,6 +61,11 @@ struct ProviderSetupTestIdentity: Equatable {
     let apiKeyInput: String?
 }
 
+enum ProviderSetupOAuthCompletion: Equatable {
+    case apiKey(String)
+    case oauthTokens(RemoteProviderOAuthTokens)
+}
+
 // MARK: - Resolved provider config
 
 struct ResolvedProviderConfig: Equatable {
@@ -654,6 +659,7 @@ final class ConfigureAIState: ObservableObject {
         customForm.reset()
         testResult = nil
         apiTestRequestID = nil
+        isTesting = false
         hasFinalizedAPI = false
     }
 
@@ -733,23 +739,34 @@ final class ConfigureAIState: ObservableObject {
 
         Task { @MainActor [weak self] in
             guard let self = self else { return }
-            let result: APITestResult
             do {
                 switch testedIdentity.authMethod {
                 case .oauth(.openAICodex):
                     let tokens = try await OpenAICodexOAuthService.signIn()
-                    self.oauthTokens = tokens
+                    guard self.applyOAuthCompletionIfCurrent(
+                        .oauthTokens(tokens),
+                        requestID: requestID,
+                        identity: testedIdentity
+                    ) else { return }
                 case .oauth(.openRouter):
                     // The browser sign-in IS the test: it returns a freshly minted
-                    // OpenRouter API key, which we stash in `apiKey` for the save
-                    // step to persist via the standard apiKey path.
+                    // OpenRouter API key. Keep it local until the same form is
+                    // still active, then stash it for the standard save path.
                     let key = try await OpenRouterOAuthService.signIn()
-                    self.apiKey = key
+                    guard self.applyOAuthCompletionIfCurrent(
+                        .apiKey(key),
+                        requestID: requestID,
+                        identity: testedIdentity
+                    ) else { return }
                 case .oauth(.xai):
                     // Grok sign-in returns access/refresh tokens stashed for the
                     // save step to persist via the `.xaiOAuth` path.
                     let tokens = try await XAIOAuthService.signIn()
-                    self.oauthTokens = tokens
+                    guard self.applyOAuthCompletionIfCurrent(
+                        .oauthTokens(tokens),
+                        requestID: requestID,
+                        identity: testedIdentity
+                    ) else { return }
                 case .apiKey, .none:
                     _ = try await RemoteProviderManager.shared.testConnection(
                         host: config.host,
@@ -762,8 +779,11 @@ final class ConfigureAIState: ObservableObject {
                         headers: [:]
                     )
                 }
-                result = .success(testedIdentity)
+                guard self.setupTestIsCurrent(requestID: requestID, identity: testedIdentity) else { return }
+                self.testResult = .success(testedIdentity)
+                self.isTesting = false
             } catch {
+                guard self.setupTestIsCurrent(requestID: requestID, identity: testedIdentity) else { return }
                 let draft = self.setupDraftProvider(config, authMethod: testedIdentity.authMethod)
                 let diagnosticMessage: String?
                 switch testedIdentity.authMethod {
@@ -774,7 +794,7 @@ final class ConfigureAIState: ObservableObject {
                 case .oauth(.openRouter), .apiKey, .none:
                     diagnosticMessage = nil
                 }
-                result = .failure(
+                self.testResult = .failure(
                     ProviderFailureClassifier.classifySetupFailure(
                         provider: draft,
                         error: error,
@@ -784,15 +804,35 @@ final class ConfigureAIState: ObservableObject {
                         diagnosticMessage: diagnosticMessage
                     )
                 )
-            }
-            guard self.apiTestRequestID == requestID else { return }
-            guard self.currentSetupTestIdentity() == testedIdentity else {
                 self.isTesting = false
-                return
             }
-            self.testResult = result
-            self.isTesting = false
         }
+    }
+
+    @discardableResult
+    func applyOAuthCompletionIfCurrent(
+        _ completion: ProviderSetupOAuthCompletion,
+        requestID: UUID,
+        identity: ProviderSetupTestIdentity
+    ) -> Bool {
+        guard setupTestIsCurrent(requestID: requestID, identity: identity) else { return false }
+        switch completion {
+        case .apiKey(let key):
+            apiKey = key
+        case .oauthTokens(let tokens):
+            oauthTokens = tokens
+        }
+        return true
+    }
+
+    @discardableResult
+    func setupTestIsCurrent(requestID: UUID, identity: ProviderSetupTestIdentity) -> Bool {
+        guard apiTestRequestID == requestID else { return false }
+        guard currentSetupTestIdentity() == identity else {
+            isTesting = false
+            return false
+        }
+        return true
     }
 
     private func setupTestIdentity(_ config: ResolvedProviderConfig) -> ProviderSetupTestIdentity {

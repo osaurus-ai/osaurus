@@ -265,7 +265,10 @@ private struct AddProviderFlow: View {
             }
             withAnimation { hasAppeared = true }
         }
-        .onDisappear { testRequestID = nil }
+        .onDisappear {
+            testRequestID = nil
+            isTesting = false
+        }
         .themedAlert(
             "Disable request timeout?",
             isPresented: $showNoTimeoutWarning,
@@ -619,6 +622,8 @@ private struct AddProviderFlow: View {
                 // sub-list) before the reset below clears it.
                 showingAPIKeyPicker = !selectedAuthMethod.isOAuth && selectedPreset != nil
                 selectedPreset = nil
+                testRequestID = nil
+                isTesting = false
                 apiKey = ""
                 oauthTokens = nil
                 selectedAuthMethod = .apiKey
@@ -679,6 +684,8 @@ private struct AddProviderFlow: View {
 
     private func initializeKnownConnection(for preset: ProviderPreset) {
         let config = preset.configuration
+        testRequestID = nil
+        isTesting = false
         knownHost = config.host
         knownProtocol = config.providerProtocol
         knownPort = config.port.map(String.init) ?? ""
@@ -1396,19 +1403,38 @@ private struct AddProviderFlow: View {
                 let models: [String]
                 if oauthKind == .openAICodex {
                     let tokens = try await OpenAICodexOAuthService.signIn()
-                    await MainActor.run {
+                    let didApply = await MainActor.run {
+                        guard knownTestIsCurrent(
+                            requestID: requestID,
+                            preset: preset,
+                            provider: testedProvider,
+                            oauthKind: oauthKind,
+                            apiKeyInput: testedAPIKeyInput,
+                            headers: testedHeaders
+                        ) else { return false }
                         oauthTokens = tokens
+                        return true
                     }
+                    guard didApply else { return }
                     models = await OpenAICodexOAuthService.availableModels(for: tokens)
                 } else if oauthKind == .openRouter {
                     // The browser sign-in mints a regular OpenRouter API key.
-                    // Stash it in `apiKey` so `saveKnownProvider` persists it
-                    // via the same path as a pasted key, then verify by
-                    // running the usual /models probe with the new key.
+                    // Keep it local until this is still the form that launched
+                    // sign-in; only then expose it for the save path.
                     let key = try await OpenRouterOAuthService.signIn()
-                    await MainActor.run {
+                    let didApply = await MainActor.run {
+                        guard knownTestIsCurrent(
+                            requestID: requestID,
+                            preset: preset,
+                            provider: testedProvider,
+                            oauthKind: oauthKind,
+                            apiKeyInput: testedAPIKeyInput,
+                            headers: testedHeaders
+                        ) else { return false }
                         apiKey = key
+                        return true
                     }
+                    guard didApply else { return }
                     models = try await RemoteProviderManager.shared.testConnection(
                         host: connection.host,
                         providerProtocol: connection.providerProtocol,
@@ -1427,9 +1453,19 @@ private struct AddProviderFlow: View {
                     // models (HTTP 403), so we surface the built-in catalog
                     // rather than probing /models.
                     let tokens = try await XAIOAuthService.signIn()
-                    await MainActor.run {
+                    let didApply = await MainActor.run {
+                        guard knownTestIsCurrent(
+                            requestID: requestID,
+                            preset: preset,
+                            provider: testedProvider,
+                            oauthKind: oauthKind,
+                            apiKeyInput: testedAPIKeyInput,
+                            headers: testedHeaders
+                        ) else { return false }
                         oauthTokens = tokens
+                        return true
                     }
+                    guard didApply else { return }
                     models = XAIOAuthService.supportedModels
                 } else {
                     models = try await RemoteProviderManager.shared.testConnection(
@@ -1445,17 +1481,14 @@ private struct AddProviderFlow: View {
                     )
                 }
                 await MainActor.run {
-                    guard testRequestID == requestID else { return }
-                    guard matchesKnownTestInputs(
+                    guard knownTestIsCurrent(
+                        requestID: requestID,
                         preset: preset,
                         provider: testedProvider,
                         oauthKind: oauthKind,
                         apiKeyInput: testedAPIKeyInput,
                         headers: testedHeaders
-                    ) else {
-                        isTesting = false
-                        return
-                    }
+                    ) else { return }
                     withAnimation {
                         testResult = .success(models); isTesting = false
                     }
@@ -1465,9 +1498,9 @@ private struct AddProviderFlow: View {
                 // press. The brief pause lets the green success state register.
                 try? await Task.sleep(nanoseconds: 800_000_000)
                 await MainActor.run {
-                    guard testRequestID == requestID else { return }
                     guard testResult?.isSuccess == true,
-                        matchesKnownTestInputs(
+                        knownTestIsCurrent(
+                            requestID: requestID,
                             preset: preset,
                             provider: testedProvider,
                             oauthKind: oauthKind,
@@ -1478,32 +1511,29 @@ private struct AddProviderFlow: View {
                     saveKnownProvider()
                 }
             } catch {
-                let diagnosticMessage: String?
-                switch oauthKind {
-                case .openAICodex: diagnosticMessage = OpenAICodexOAuthService.diagnosticMessage(for: error)
-                case .xai: diagnosticMessage = XAIOAuthService.diagnosticMessage(for: error)
-                default: diagnosticMessage = nil
-                }
-                let failure = ProviderFailureClassifier.classifySetupFailure(
-                    provider: testedProvider,
-                    error: error,
-                    proxy: GlobalProxySettings.currentDiagnostic(),
-                    apiKeyPresent: !apiKey.isEmpty,
-                    oauthTokensPresent: oauthTokens != nil,
-                    diagnosticMessage: diagnosticMessage
-                )
                 await MainActor.run {
-                    guard testRequestID == requestID else { return }
-                    guard matchesKnownTestInputs(
+                    guard knownTestIsCurrent(
+                        requestID: requestID,
                         preset: preset,
                         provider: testedProvider,
                         oauthKind: oauthKind,
                         apiKeyInput: testedAPIKeyInput,
                         headers: testedHeaders
-                    ) else {
-                        isTesting = false
-                        return
+                    ) else { return }
+                    let diagnosticMessage: String?
+                    switch oauthKind {
+                    case .openAICodex: diagnosticMessage = OpenAICodexOAuthService.diagnosticMessage(for: error)
+                    case .xai: diagnosticMessage = XAIOAuthService.diagnosticMessage(for: error)
+                    default: diagnosticMessage = nil
                     }
+                    let failure = ProviderFailureClassifier.classifySetupFailure(
+                        provider: testedProvider,
+                        error: error,
+                        proxy: GlobalProxySettings.currentDiagnostic(),
+                        apiKeyPresent: !apiKey.isEmpty,
+                        oauthTokensPresent: oauthTokens != nil,
+                        diagnosticMessage: diagnosticMessage
+                    )
                     withAnimation {
                         testResult = .failure(failure); isTesting = false
                     }
@@ -1701,6 +1731,29 @@ private struct AddProviderFlow: View {
         )
     }
 
+    @MainActor
+    private func knownTestIsCurrent(
+        requestID: UUID,
+        preset: ProviderPreset,
+        provider testedProvider: RemoteProvider,
+        oauthKind testedOAuthKind: ProviderOAuthKind?,
+        apiKeyInput testedAPIKeyInput: String,
+        headers testedHeaders: [HeaderEntry]
+    ) -> Bool {
+        guard testRequestID == requestID else { return false }
+        guard matchesKnownTestInputs(
+            preset: preset,
+            provider: testedProvider,
+            oauthKind: testedOAuthKind,
+            apiKeyInput: testedAPIKeyInput,
+            headers: testedHeaders
+        ) else {
+            isTesting = false
+            return false
+        }
+        return true
+    }
+
     private func matchesKnownTestInputs(
         preset: ProviderPreset,
         provider testedProvider: RemoteProvider,
@@ -1837,6 +1890,7 @@ private struct EditProviderFlow: View {
     // OpenRouter re-authorization. Collapsed to a single state so we can't
     // accidentally render both "succeeded" and "failed" feedback at once.
     @State private var reauthorizeState: ReauthorizeState = .idle
+    @State private var reauthorizeRequestID: UUID?
 
     enum ReauthorizeState: Equatable {
         case idle
@@ -1891,7 +1945,10 @@ private struct EditProviderFlow: View {
             Task { await refreshCredentialState() }
             withAnimation { hasAppeared = true }
         }
-        .onDisappear { testRequestID = nil }
+        .onDisappear {
+            testRequestID = nil
+            reauthorizeRequestID = nil
+        }
         .themedAlert(
             "Disable request timeout?",
             isPresented: $showNoTimeoutWarning,
@@ -2007,16 +2064,17 @@ private struct EditProviderFlow: View {
                     .foregroundColor(theme.tertiaryText)
                 }
 
-                ProviderSecureField(placeholder: "Leave blank to keep current", text: $apiKey)
-                    .onChange(of: apiKey) { _, _ in
-                        testResult = nil
-                        // User edited the field manually — clear any prior
-                        // re-authorize confirmation/error so we don't show
-                        // stale feedback against a typed key.
-                        if reauthorizeState != .idle && !reauthorizeState.isSigningIn {
-                            reauthorizeState = .idle
+                    ProviderSecureField(placeholder: "Leave blank to keep current", text: $apiKey)
+                        .onChange(of: apiKey) { _, _ in
+                            testResult = nil
+                            // User edited the field manually — clear any prior
+                            // re-authorize attempt or feedback so a late OAuth
+                            // callback cannot overwrite a typed key.
+                            reauthorizeRequestID = nil
+                            if reauthorizeState != .idle {
+                                reauthorizeState = .idle
+                            }
                         }
-                    }
             }
 
             if preset == .azureOpenAI {
@@ -2131,15 +2189,31 @@ private struct EditProviderFlow: View {
     }
 
     private func reauthorizeOpenRouter() {
+        let requestID = UUID()
+        let testedAPIKeyInput = apiKey
+        let testedAuthType = authType
+        let testedProviderType = providerType
+        reauthorizeRequestID = requestID
         reauthorizeState = .signingIn
         Task { @MainActor in
             do {
                 let key = try await OpenRouterOAuthService.signIn()
+                guard reauthorizeRequestID == requestID else { return }
+                guard apiKey == testedAPIKeyInput,
+                    authType == testedAuthType,
+                    providerType == testedProviderType
+                else {
+                    reauthorizeRequestID = nil
+                    reauthorizeState = .idle
+                    return
+                }
                 apiKey = key
                 reauthorizeState = .succeeded
             } catch {
+                guard reauthorizeRequestID == requestID else { return }
                 reauthorizeState = .failed(error.localizedDescription)
             }
+            reauthorizeRequestID = nil
         }
     }
 
@@ -2756,8 +2830,7 @@ private struct EditProviderFlow: View {
             } catch {
                 let diagnosticMessage: String?
                 if testedProvider.authType == .openAICodexOAuth
-                    || testedProvider.providerType == .openAICodex
-                {
+                    || testedProvider.providerType == .openAICodex {
                     diagnosticMessage = OpenAICodexOAuthService.diagnosticMessage(for: error)
                 } else if testedProvider.authType == .xaiOAuth {
                     diagnosticMessage = XAIOAuthService.diagnosticMessage(for: error)
