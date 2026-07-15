@@ -2681,6 +2681,16 @@ private struct SandboxInstallTool: OsaurusTool, @unchecked Sendable {
 
         switch managerRaw.lowercased() {
         case "apk":
+            guard SandboxBackend.current == .virtualMachine else {
+                return ToolEnvelope.failure(
+                    kind: .invalidArgs,
+                    message:
+                        "`apk` is only available in the Linux VM sandbox (macOS 26+). "
+                        + "This sandbox runs directly on macOS — use `pip` or `npm` instead.",
+                    tool: name,
+                    retryable: false
+                )
+            }
             return try await installApk(packages: packages)
         case "pip":
             return try await installPip(packages: packages)
