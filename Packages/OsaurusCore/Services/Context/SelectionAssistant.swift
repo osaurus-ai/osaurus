@@ -42,12 +42,16 @@ enum SelectionAssistantAction: String, CaseIterable, Identifiable, Sendable {
 }
 
 /// Reads a frontmost app's selected text without changing the pasteboard.
-/// Unsupported accessibility trees deliberately fall back to the bounded
-/// synthetic-copy transaction owned by `ClipboardService`.
+///
+/// When a source app is known, unsupported or unverifiable accessibility
+/// trees fail closed. Synthetic copy is reserved for the rare case where no
+/// source application can be identified, because copying from an unverified
+/// focused element could expose secure or otherwise private content.
 @MainActor
 final class NativeSelectionCapture {
     enum Result: Equatable, Sendable {
         case captured(String)
+        case permissionDenied
         case secureField
         case unverifiedField
         case noSelection
@@ -98,7 +102,7 @@ final class NativeSelectionCapture {
     }
 
     nonisolated private static func readSynchronously(pid: pid_t) -> Result {
-        guard AXIsProcessTrusted() else { return .unavailable }
+        guard AXIsProcessTrusted() else { return .permissionDenied }
 
         let app = AXUIElementCreateApplication(pid)
         AXUIElementSetMessagingTimeout(app, 0.25)

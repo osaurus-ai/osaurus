@@ -171,7 +171,7 @@ struct ClipboardContentDiagnosticsTests {
         )
 
         let accepted = controller.invoke(
-            captureSelection: { copyAttempted in
+            captureSelection: { copyAttempted, _ in
                 await copyGate.wait()
                 copyAttempted()
                 await completionGate.wait()
@@ -179,7 +179,7 @@ struct ClipboardContentDiagnosticsTests {
             toggleOverlay: { toggleCount += 1 }
         )
         let coalesced = controller.invoke(
-            captureSelection: { _ in Issue.record("coalesced capture must not start") },
+            captureSelection: { _, _ in Issue.record("coalesced capture must not start") },
             toggleOverlay: { toggleCount += 1 }
         )
 
@@ -216,7 +216,7 @@ struct ClipboardContentDiagnosticsTests {
         )
 
         let accepted = controller.invoke(
-            captureSelection: { copyAttempted in
+            captureSelection: { copyAttempted, _ in
                 await copyGate.wait()
                 copyAttempted()
                 await completionGate.wait()
@@ -237,6 +237,33 @@ struct ClipboardContentDiagnosticsTests {
 
         completionGate.release()
         for _ in 0 ..< 10 where controller.isProcessing { await Task.yield() }
+        #expect(toggleCount == 1)
+        #expect(!controller.isProcessing)
+    }
+
+    @Test @MainActor func nativeCaptureOpensOverlayAtDeadline() async {
+        let completionGate = SelectionCaptureGate()
+        var toggleCount = 0
+        let controller = SelectionHotkeyIntentController(
+            openDelayNanos: 1,
+            sleep: { _ in await Task.yield() }
+        )
+
+        let accepted = controller.invoke(
+            captureSelection: { _, nativeCaptureStarted in
+                nativeCaptureStarted()
+                await completionGate.wait()
+            },
+            toggleOverlay: { toggleCount += 1 }
+        )
+
+        for _ in 0 ..< 20 where toggleCount == 0 { await Task.yield() }
+        #expect(accepted)
+        #expect(toggleCount == 1)
+        #expect(controller.isProcessing)
+
+        completionGate.release()
+        for _ in 0 ..< 20 where controller.isProcessing { await Task.yield() }
         #expect(toggleCount == 1)
         #expect(!controller.isProcessing)
     }
@@ -415,6 +442,27 @@ struct ClipboardContentDiagnosticsTests {
 
         #expect(report.outcome == .unverifiedFieldDenied)
         #expect(report.captureRoute == nil)
+        #expect(environment.copyCount == 0)
+        #expect(service.currentContent == nil)
+    }
+
+    @Test @MainActor func missingAccessibilityPermissionHasActionableOutcome() async {
+        let environment = ScriptedSelectionEnvironment(
+            copyScripts: [[.init(afterPolls: 1, content: .text("must not be copied"))]]
+        )
+        let native = NativeSelectionCapture(
+            dependencies: .init(read: { _ in .permissionDenied })
+        )
+        let service = ClipboardService(
+            selectionCapture: makeTransaction(environment),
+            nativeSelectionCapture: native,
+            selectionSource: { .init(processIdentifier: 42, displayName: "Notes") }
+        )
+
+        let report = await service.grabSelectionReport()
+
+        #expect(report.outcome == .accessibilityDenied)
+        #expect(report.needsUserAttention)
         #expect(environment.copyCount == 0)
         #expect(service.currentContent == nil)
     }

@@ -417,13 +417,18 @@ public final class ClipboardService: ObservableObject {
     /// caller actually needs the selected payload for composer insertion.
     @discardableResult
     public func grabSelectionReport(
-        onCopyAttempted: (@MainActor () -> Void)? = nil
+        onCopyAttempted: (@MainActor () -> Void)? = nil,
+        onNativeCaptureStarted: (@MainActor () -> Void)? = nil
     ) async -> SelectionGrabReport {
-        await grabSelectionResult(onCopyAttempted: onCopyAttempted).report
+        await grabSelectionResult(
+            onCopyAttempted: onCopyAttempted,
+            onNativeCaptureStarted: onNativeCaptureStarted
+        ).report
     }
 
     private func grabSelectionResult(
-        onCopyAttempted: (@MainActor () -> Void)? = nil
+        onCopyAttempted: (@MainActor () -> Void)? = nil,
+        onNativeCaptureStarted: (@MainActor () -> Void)? = nil
     ) async -> SelectionCaptureTransaction.Result {
         selectionCaptureGeneration &+= 1
         isSelectionCaptureInFlight = true
@@ -434,6 +439,7 @@ public final class ClipboardService: ObservableObject {
         let sourceApp = source?.displayName
         let result: SelectionCaptureTransaction.Result
         if let source {
+            onNativeCaptureStarted?()
             switch await nativeSelectionCapture.capture(pid: source.processIdentifier) {
             case .captured(let text):
                 let content = ClipboardContent.text(text)
@@ -450,6 +456,11 @@ public final class ClipboardService: ObservableObject {
                     text: text,
                     content: content,
                     changeCount: changeCount
+                )
+            case .permissionDenied:
+                result = SelectionCaptureTransaction.failureResult(
+                    .accessibilityDenied,
+                    sourceApp: sourceApp
                 )
             case .secureField:
                 result = SelectionCaptureTransaction.failureResult(

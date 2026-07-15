@@ -1876,7 +1876,10 @@ extension AppDelegate {
 @MainActor
 final class SelectionHotkeyIntentController {
     typealias Sleep = @MainActor (UInt64) async -> Void
-    typealias CaptureSelection = @MainActor (@escaping @MainActor () -> Void) async -> Void
+    typealias CaptureSelection = @MainActor (
+        _ onCopyAttempted: @escaping @MainActor () -> Void,
+        _ onNativeCaptureStarted: @escaping @MainActor () -> Void
+    ) async -> Void
 
     private let openDelayNanos: UInt64
     private let postCopyFocusDelayNanos: UInt64
@@ -1917,6 +1920,7 @@ final class SelectionHotkeyIntentController {
 
             var deadlineElapsed = false
             var copyAttempted = false
+            var nativeCaptureStarted = false
             var postCopyFocusDelayElapsed = false
             var postCopyFocusTask: Task<Void, Never>?
             let deadlineTask = Task { @MainActor [weak self] in
@@ -1924,23 +1928,34 @@ final class SelectionHotkeyIntentController {
                 await sleep(openDelayNanos)
                 guard !Task.isCancelled else { return }
                 deadlineElapsed = true
-                if postCopyFocusDelayElapsed {
+                // Native AX capture does not invoke the copy callback. Open at
+                // the UI deadline unless a synthetic copy is already waiting
+                // for its short focus-preservation grace period.
+                if nativeCaptureStarted || postCopyFocusDelayElapsed {
                     toggleOnce(intentID: intentID, toggleOverlay: toggleOverlay)
                 }
             }
 
-            await captureSelection {
-                copyAttempted = true
-                postCopyFocusTask = Task { @MainActor [weak self] in
-                    guard let self else { return }
-                    await sleep(postCopyFocusDelayNanos)
-                    guard !Task.isCancelled else { return }
-                    postCopyFocusDelayElapsed = true
+            await captureSelection(
+                {
+                    copyAttempted = true
+                    postCopyFocusTask = Task { @MainActor [weak self] in
+                        guard let self else { return }
+                        await sleep(postCopyFocusDelayNanos)
+                        guard !Task.isCancelled else { return }
+                        postCopyFocusDelayElapsed = true
+                        if deadlineElapsed {
+                            toggleOnce(intentID: intentID, toggleOverlay: toggleOverlay)
+                        }
+                    }
+                },
+                {
+                    nativeCaptureStarted = true
                     if deadlineElapsed {
-                        toggleOnce(intentID: intentID, toggleOverlay: toggleOverlay)
+                        self.toggleOnce(intentID: intentID, toggleOverlay: toggleOverlay)
                     }
                 }
-            }
+            )
             if copyAttempted {
                 await deadlineTask.value
                 await postCopyFocusTask?.value
@@ -1984,9 +1999,10 @@ extension AppDelegate {
         let clipboardMonitoringEnabled = ChatConfigurationStore.load().enableClipboardMonitoring
         let captureSelection: SelectionHotkeyIntentController.CaptureSelection?
         if !ChatWindowManager.shared.hasVisibleWindows && clipboardMonitoringEnabled {
-            captureSelection = { onCopyAttempted in
+            captureSelection = { onCopyAttempted, onNativeCaptureStarted in
                 _ = await ClipboardService.shared.grabSelectionReport(
-                    onCopyAttempted: onCopyAttempted
+                    onCopyAttempted: onCopyAttempted,
+                    onNativeCaptureStarted: onNativeCaptureStarted
                 )
             }
         } else {
