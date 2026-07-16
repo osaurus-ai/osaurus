@@ -262,7 +262,7 @@ struct DocumentIntakeSheet: View {
         VStack(alignment: .leading, spacing: 8) {
             sectionTitle("Security and provenance", icon: "checkmark.shield")
             Label(
-                "Inspection: \(preview.inspection.security.inspectionStatus.rawValue)",
+                localized: "Inspection: \(preview.inspection.security.inspectionStatus.rawValue)",
                 systemImage: preview.inspection.security.hasActiveContent ? "exclamationmark.triangle.fill" : "checkmark.circle"
             )
             .foregroundColor(preview.inspection.security.hasActiveContent ? theme.warningColor : theme.secondaryText)
@@ -278,7 +278,7 @@ struct DocumentIntakeSheet: View {
                     .font(theme.font(size: 11))
                     .foregroundColor(theme.secondaryText)
             }
-            Text("Source identity: \(preview.provenance.stableSourceID.prefix(12))", bundle: .module)
+            Text(localized: "Source identity: \(preview.provenance.stableSourceID.prefix(12))")
                 .font(.system(size: 10, design: .monospaced))
                 .foregroundColor(theme.tertiaryText)
         }
