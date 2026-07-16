@@ -858,6 +858,7 @@ struct ModelDownloadView: View {
                     )
                 }
                 imageModelsLinkRow
+                appleScriptModelsLinkRow
             }
         } else {
             modelGrid(models: lists.displayed)
@@ -868,32 +869,59 @@ struct ModelDownloadView: View {
     /// "Images" tab (which navigated away and snapped the selector back) with
     /// an honest link at the end of the catalog.
     private var imageModelsLinkRow: some View {
-        Button {
+        modelsLinkRow(
+            icon: "photo.on.rectangle.angled",
+            title: L("Looking for image models?"),
+            subtitle: L("Image generation and editing models live in Images settings."),
+            cta: L("Open Images")
+        ) {
             ManagementStateManager.shared.selectedTab = .imageGeneration
             ManagementStateManager.shared.imageGenerationSubTabRequest =
                 ImageGenerationTab.models.rawValue
-        } label: {
+        }
+    }
+
+    /// Inline pointer to the AppleScript models browser, which lives under
+    /// Computer Use → Models since it powers the `applescript` subagent.
+    private var appleScriptModelsLinkRow: some View {
+        modelsLinkRow(
+            icon: "applescript",
+            title: L("Looking for AppleScript models?"),
+            subtitle: L("On-device Mac automation models live in Computer Use settings."),
+            cta: L("Open Computer Use")
+        ) {
+            ManagementStateManager.shared.selectedTab = .computerUse
+            ManagementStateManager.shared.computerUseSubTabRequest =
+                ComputerUseTab.models.rawValue
+        }
+    }
+
+    private func modelsLinkRow(
+        icon: String,
+        title: String,
+        subtitle: String,
+        cta: String,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
             HStack(spacing: 10) {
-                Image(systemName: "photo.on.rectangle.angled")
+                Image(systemName: icon)
                     .font(.system(size: 14, weight: .medium))
                     .foregroundColor(theme.secondaryText)
 
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("Looking for image models?", bundle: .module)
+                    Text(title)
                         .font(.system(size: 13, weight: .semibold))
                         .foregroundColor(theme.primaryText)
-                    Text(
-                        "Image generation and editing models live in Images settings.",
-                        bundle: .module
-                    )
-                    .font(.system(size: 11))
-                    .foregroundColor(theme.tertiaryText)
+                    Text(subtitle)
+                        .font(.system(size: 11))
+                        .foregroundColor(theme.tertiaryText)
                 }
 
                 Spacer(minLength: 8)
 
                 HStack(spacing: 4) {
-                    Text("Open Images", bundle: .module)
+                    Text(cta)
                         .font(.system(size: 12, weight: .medium))
                     Image(systemName: "arrow.right")
                         .font(.system(size: 10, weight: .semibold))
