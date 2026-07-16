@@ -1,0 +1,348 @@
+//
+//  ChatSessionImporter.swift
+//  osaurus
+//
+//  Parses conversation exports from other assistants (ChatGPT, Claude,
+//  or a generic JSON schema) into `ChatSessionData` so they can be
+//  continued as native sessions. Pure data transformation — no I/O,
+//  no persistence; the coordinator owns file access and saving.
+//
+
+import Foundation
+
+public enum ChatSessionImporter {
+
+    /// Where an export came from. Drives the `externalSessionKey`
+    /// prefix so re-imports of the same conversation can be detected.
+    public enum SourceFormat: String, Sendable {
+        case chatGPT = "chatgpt"
+        case claude = "claude"
+        case generic = "import"
+    }
+
+    public struct ImportedConversation: Sendable {
+        public let session: ChatSessionData
+        public let format: SourceFormat
+    }
+
+    public enum ImportError: LocalizedError {
+        case invalidJSON
+        case unrecognizedFormat
+        case noConversations
+
+        public var errorDescription: String? {
+            switch self {
+            case .invalidJSON:
+                return L("The file is not valid JSON.")
+            case .unrecognizedFormat:
+                return L(
+                    "Unrecognized export format. Supported: ChatGPT conversations.json, Claude export JSON, or Osaurus generic import JSON."
+                )
+            case .noConversations:
+                return L("No importable conversations were found in the file.")
+            }
+        }
+    }
+
+    // MARK: - Entry point
+
+    /// Detects the export format and parses every conversation in `data`.
+    /// Conversations with no usable messages are dropped rather than
+    /// failing the whole import.
+    public static func parse(data: Data) throws -> [ImportedConversation] {
+        guard let root = try? JSONSerialization.jsonObject(with: data) else {
+            throw ImportError.invalidJSON
+        }
+
+        let conversations: [ImportedConversation]
+        if let array = root as? [[String: Any]] {
+            if array.contains(where: { $0["mapping"] is [String: Any] }) {
+                conversations = array.compactMap { parseChatGPT($0) }
+            } else if array.contains(where: { $0["chat_messages"] is [Any] }) {
+                conversations = array.compactMap { parseClaude($0) }
+            } else {
+                throw ImportError.unrecognizedFormat
+            }
+        } else if let object = root as? [String: Any] {
+            if object["mapping"] is [String: Any] {
+                conversations = [parseChatGPT(object)].compactMap { $0 }
+            } else if object["chat_messages"] is [Any] {
+                conversations = [parseClaude(object)].compactMap { $0 }
+            } else if let list = object["conversations"] as? [[String: Any]] {
+                conversations = list.compactMap { parseGeneric($0) }
+            } else if object["messages"] is [Any] {
+                conversations = [parseGeneric(object)].compactMap { $0 }
+            } else {
+                throw ImportError.unrecognizedFormat
+            }
+        } else {
+            throw ImportError.unrecognizedFormat
+        }
+
+        guard !conversations.isEmpty else { throw ImportError.noConversations }
+        return conversations
+    }
+
+    // MARK: - ChatGPT (conversations.json)
+
+    /// ChatGPT exports store each conversation as a message tree
+    /// (`mapping` of node id → node with `parent`/`children`) plus a
+    /// `current_node` pointer. Only the canonical path — the ancestry of
+    /// `current_node` — is imported; abandoned edit branches are dropped.
+    private static func parseChatGPT(_ conversation: [String: Any]) -> ImportedConversation? {
+        guard let mapping = conversation["mapping"] as? [String: Any] else { return nil }
+
+        let nodes = mapping.compactMapValues { $0 as? [String: Any] }
+        var nodeId = (conversation["current_node"] as? String) ?? deepestLeafId(in: nodes)
+
+        // Walk current_node → root via parent pointers, then reverse.
+        var ordered: [[String: Any]] = []
+        var visited = Set<String>()
+        while let id = nodeId, !visited.contains(id), let node = nodes[id] {
+            visited.insert(id)
+            if let message = node["message"] as? [String: Any] {
+                ordered.append(message)
+            }
+            nodeId = node["parent"] as? String
+        }
+        ordered.reverse()
+
+        var turns: [ChatTurnData] = []
+        for message in ordered {
+            guard
+                let author = message["author"] as? [String: Any],
+                let roleString = author["role"] as? String,
+                let role = importedRole(from: roleString)
+            else { continue }
+            let metadata = message["metadata"] as? [String: Any]
+            if metadata?["is_visually_hidden_from_conversation"] as? Bool == true { continue }
+            let text = chatGPTText(from: message["content"] as? [String: Any])
+            guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { continue }
+            turns.append(
+                ChatTurnData(
+                    role: role,
+                    content: text,
+                    createdAt: (message["create_time"] as? Double).map(Date.init(timeIntervalSince1970:))
+                )
+            )
+        }
+        guard turns.contains(where: { $0.role == .user }) else { return nil }
+
+        let externalId =
+            (conversation["conversation_id"] as? String)
+            ?? (conversation["id"] as? String)
+        return assemble(
+            format: .chatGPT,
+            title: conversation["title"] as? String,
+            externalId: externalId,
+            createdAt: (conversation["create_time"] as? Double).map(Date.init(timeIntervalSince1970:)),
+            updatedAt: (conversation["update_time"] as? Double).map(Date.init(timeIntervalSince1970:)),
+            turns: turns
+        )
+    }
+
+    /// Fallback when `current_node` is absent: the leaf reached by the
+    /// longest chain of "last child" hops from the root, i.e. the most
+    /// recent linearization the ChatGPT UI would show.
+    private static func deepestLeafId(in nodes: [String: [String: Any]]) -> String? {
+        // JSON `"parent": null` decodes as NSNull, so test for the
+        // absence of a string parent rather than a missing key.
+        var rootId = nodes.first(where: { !($0.value["parent"] is String) })?.key
+        if rootId == nil { rootId = nodes.keys.first }
+        var current = rootId
+        var visited = Set<String>()
+        while let id = current, !visited.contains(id),
+            let children = nodes[id]?["children"] as? [String],
+            let last = children.last
+        {
+            visited.insert(id)
+            current = last
+        }
+        return current
+    }
+
+    /// Extracts display text from a ChatGPT `content` object. Text and
+    /// multimodal parts keep their string segments (images become a
+    /// placeholder); code cells are fenced. Everything else — tool
+    /// payloads, thoughts — is dropped.
+    private static func chatGPTText(from content: [String: Any]?) -> String {
+        guard let content else { return "" }
+        let type = content["content_type"] as? String ?? "text"
+        switch type {
+        case "text", "multimodal_text":
+            let parts = content["parts"] as? [Any] ?? []
+            return parts
+                .map { part -> String in
+                    if let text = part as? String { return text }
+                    return "[attachment omitted]"
+                }
+                .joined(separator: "\n")
+        case "code":
+            guard let text = content["text"] as? String, !text.isEmpty else { return "" }
+            let language = content["language"] as? String ?? ""
+            return "```\(language)\n\(text)\n```"
+        default:
+            return ""
+        }
+    }
+
+    // MARK: - Claude (data export)
+
+    /// Claude's data export is an array of conversations with flat
+    /// `chat_messages`, `sender` being `human` or `assistant`.
+    private static func parseClaude(_ conversation: [String: Any]) -> ImportedConversation? {
+        guard let messages = conversation["chat_messages"] as? [[String: Any]] else { return nil }
+
+        var turns: [ChatTurnData] = []
+        for message in messages {
+            guard let sender = message["sender"] as? String else { continue }
+            let role: MessageRole
+            switch sender {
+            case "human": role = .user
+            case "assistant": role = .assistant
+            default: continue
+            }
+            let text = claudeText(from: message)
+            guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { continue }
+            turns.append(
+                ChatTurnData(
+                    role: role,
+                    content: text,
+                    createdAt: isoDate(message["created_at"] as? String)
+                )
+            )
+        }
+        guard turns.contains(where: { $0.role == .user }) else { return nil }
+
+        return assemble(
+            format: .claude,
+            title: conversation["name"] as? String,
+            externalId: conversation["uuid"] as? String,
+            createdAt: isoDate(conversation["created_at"] as? String),
+            updatedAt: isoDate(conversation["updated_at"] as? String),
+            turns: turns
+        )
+    }
+
+    /// Newer Claude exports carry a `content` array of typed blocks;
+    /// older ones only the flat `text` field.
+    private static func claudeText(from message: [String: Any]) -> String {
+        if let blocks = message["content"] as? [[String: Any]], !blocks.isEmpty {
+            let joined =
+                blocks
+                .filter { $0["type"] as? String == "text" }
+                .compactMap { $0["text"] as? String }
+                .joined(separator: "\n")
+            if !joined.isEmpty { return joined }
+        }
+        return message["text"] as? String ?? ""
+    }
+
+    // MARK: - Generic Osaurus import schema
+
+    /// Minimal documented schema any tool (or an agent scraping a WebUI)
+    /// can target:
+    ///
+    /// ```json
+    /// {
+    ///   "conversations": [
+    ///     {
+    ///       "id": "optional-stable-id",
+    ///       "title": "optional title",
+    ///       "createdAt": "2026-01-01T10:00:00Z",
+    ///       "messages": [
+    ///         {"role": "user", "content": "...", "timestamp": "2026-01-01T10:00:00Z"},
+    ///         {"role": "assistant", "content": "..."}
+    ///       ]
+    ///     }
+    ///   ]
+    /// }
+    /// ```
+    ///
+    /// A single top-level `{"messages": [...]}` object is also accepted.
+    /// `role` is one of `system` / `user` / `assistant`; `timestamp`
+    /// accepts ISO-8601 strings or epoch seconds.
+    private static func parseGeneric(_ conversation: [String: Any]) -> ImportedConversation? {
+        guard let messages = conversation["messages"] as? [[String: Any]] else { return nil }
+
+        var turns: [ChatTurnData] = []
+        for message in messages {
+            guard
+                let roleString = message["role"] as? String,
+                let role = importedRole(from: roleString),
+                let content = message["content"] as? String,
+                !content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            else { continue }
+            turns.append(
+                ChatTurnData(role: role, content: content, createdAt: flexibleDate(message["timestamp"]))
+            )
+        }
+        guard turns.contains(where: { $0.role == .user }) else { return nil }
+
+        return assemble(
+            format: .generic,
+            title: conversation["title"] as? String,
+            externalId: conversation["id"] as? String,
+            createdAt: flexibleDate(conversation["createdAt"]),
+            updatedAt: flexibleDate(conversation["updatedAt"]),
+            turns: turns
+        )
+    }
+
+    // MARK: - Shared assembly
+
+    private static func assemble(
+        format: SourceFormat,
+        title: String?,
+        externalId: String?,
+        createdAt: Date?,
+        updatedAt: Date?,
+        turns: [ChatTurnData]
+    ) -> ImportedConversation {
+        let created = createdAt ?? turns.compactMap(\.createdAt).min() ?? Date()
+        let updated = updatedAt ?? turns.compactMap(\.createdAt).max() ?? created
+        let trimmedTitle = title?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let session = ChatSessionData(
+            title: trimmedTitle.flatMap { $0.isEmpty ? nil : $0 }
+                ?? ChatSessionData.generateTitle(from: turns),
+            createdAt: created,
+            updatedAt: updated,
+            // Leave the model unset: the export's model id won't match a
+            // configured Osaurus model, and nil falls back to the agent's
+            // default on load.
+            selectedModel: nil,
+            turns: turns,
+            source: .imported,
+            externalSessionKey: externalId.map { "\(format.rawValue):\($0)" },
+            capabilities: SessionCapability.derive(from: turns)
+        )
+        return ImportedConversation(session: session, format: format)
+    }
+
+    /// Roles that survive an import. Tool traffic from other assistants
+    /// can't be replayed (no matching tool-call ids), so it is dropped.
+    private static func importedRole(from raw: String) -> MessageRole? {
+        switch raw {
+        case "user": return .user
+        case "assistant": return .assistant
+        case "system": return .system
+        default: return nil
+        }
+    }
+
+    // MARK: - Date helpers
+
+    private static func isoDate(_ string: String?) -> Date? {
+        guard let string else { return nil }
+        let fractional = ISO8601DateFormatter()
+        fractional.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        if let date = fractional.date(from: string) { return date }
+        return ISO8601DateFormatter().date(from: string)
+    }
+
+    private static func flexibleDate(_ value: Any?) -> Date? {
+        if let string = value as? String { return isoDate(string) }
+        if let epoch = value as? Double { return Date(timeIntervalSince1970: epoch) }
+        return nil
+    }
+}

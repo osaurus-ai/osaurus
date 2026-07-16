@@ -1,0 +1,190 @@
+//
+//  ChatSessionImporterTests.swift
+//  osaurusTests
+//
+//  Pin the external-export parsers: ChatGPT's message tree must
+//  linearize along current_node, Claude's flat chat_messages must map
+//  sender → role, the generic schema must round-trip, and unrecognized
+//  payloads must fail with a typed error instead of importing garbage.
+//
+
+import Foundation
+import Testing
+
+@testable import OsaurusCore
+
+struct ChatSessionImporterTests {
+
+    // MARK: - ChatGPT
+
+    private let chatGPTExport = """
+        [
+          {
+            "title": "Rust lifetimes",
+            "create_time": 1750000000.0,
+            "update_time": 1750000100.0,
+            "conversation_id": "abc-123",
+            "current_node": "n3",
+            "mapping": {
+              "root": {"id": "root", "parent": null, "children": ["n1"]},
+              "n1": {
+                "id": "n1", "parent": "root", "children": ["n2", "n2b"],
+                "message": {
+                  "author": {"role": "user"},
+                  "create_time": 1750000000.0,
+                  "content": {"content_type": "text", "parts": ["Explain lifetimes"]}
+                }
+              },
+              "n2b": {
+                "id": "n2b", "parent": "n1", "children": [],
+                "message": {
+                  "author": {"role": "assistant"},
+                  "content": {"content_type": "text", "parts": ["Abandoned branch"]}
+                }
+              },
+              "n2": {
+                "id": "n2", "parent": "n1", "children": ["n3"],
+                "message": {
+                  "author": {"role": "assistant"},
+                  "create_time": 1750000050.0,
+                  "content": {"content_type": "text", "parts": ["Lifetimes are…"]}
+                }
+              },
+              "n3": {
+                "id": "n3", "parent": "n2", "children": [],
+                "message": {
+                  "author": {"role": "system"},
+                  "metadata": {"is_visually_hidden_from_conversation": true},
+                  "content": {"content_type": "text", "parts": ["hidden"]}
+                }
+              }
+            }
+          }
+        ]
+        """
+
+    @Test func chatGPTLinearizesCanonicalPath() throws {
+        let imported = try ChatSessionImporter.parse(data: Data(chatGPTExport.utf8))
+        #expect(imported.count == 1)
+        let session = try #require(imported.first).session
+
+        #expect(session.title == "Rust lifetimes")
+        #expect(session.source == .imported)
+        #expect(session.externalSessionKey == "chatgpt:abc-123")
+        // Canonical path only: user + assistant; the abandoned branch and
+        // the visually-hidden system node are dropped.
+        #expect(session.turns.count == 2)
+        #expect(session.turns[0].role == .user)
+        #expect(session.turns[0].content == "Explain lifetimes")
+        #expect(session.turns[1].role == .assistant)
+        #expect(session.turns[1].content == "Lifetimes are…")
+        #expect(session.createdAt == Date(timeIntervalSince1970: 1_750_000_000))
+        #expect(session.updatedAt == Date(timeIntervalSince1970: 1_750_000_100))
+    }
+
+    @Test func chatGPTFallsBackToDeepestLeafWithoutCurrentNode() throws {
+        let export = chatGPTExport.replacingOccurrences(
+            of: "\"current_node\": \"n3\",", with: "")
+        let imported = try ChatSessionImporter.parse(data: Data(export.utf8))
+        let session = try #require(imported.first).session
+        // Deepest "last child" chain is root → n1 → n2b.
+        #expect(session.turns.map(\.content) == ["Explain lifetimes", "Abandoned branch"])
+    }
+
+    // MARK: - Claude
+
+    private let claudeExport = """
+        [
+          {
+            "uuid": "conv-1",
+            "name": "Trip planning",
+            "created_at": "2026-05-01T09:00:00.000000Z",
+            "updated_at": "2026-05-01T09:05:00.000000Z",
+            "chat_messages": [
+              {
+                "sender": "human",
+                "created_at": "2026-05-01T09:00:00.000000Z",
+                "content": [{"type": "text", "text": "Plan a trip to Kyoto"}]
+              },
+              {
+                "sender": "assistant",
+                "created_at": "2026-05-01T09:01:00.000000Z",
+                "text": "Sure — here's a 3-day plan."
+              }
+            ]
+          }
+        ]
+        """
+
+    @Test func claudeMapsSenderToRole() throws {
+        let imported = try ChatSessionImporter.parse(data: Data(claudeExport.utf8))
+        let session = try #require(imported.first).session
+
+        #expect(session.title == "Trip planning")
+        #expect(session.externalSessionKey == "claude:conv-1")
+        #expect(session.turns.count == 2)
+        #expect(session.turns[0].role == .user)
+        #expect(session.turns[0].content == "Plan a trip to Kyoto")
+        #expect(session.turns[1].role == .assistant)
+        #expect(session.turns[1].content == "Sure — here's a 3-day plan.")
+    }
+
+    // MARK: - Generic schema
+
+    @Test func genericSchemaParsesAndTitlesFromFirstUserTurn() throws {
+        let export = """
+            {
+              "conversations": [
+                {
+                  "id": "g1",
+                  "messages": [
+                    {"role": "user", "content": "hello there", "timestamp": 1750000000},
+                    {"role": "assistant", "content": "hi!"}
+                  ]
+                }
+              ]
+            }
+            """
+        let imported = try ChatSessionImporter.parse(data: Data(export.utf8))
+        let session = try #require(imported.first).session
+        #expect(session.externalSessionKey == "import:g1")
+        #expect(session.title == "hello there")
+        #expect(session.turns.count == 2)
+        #expect(session.turns[0].createdAt == Date(timeIntervalSince1970: 1_750_000_000))
+    }
+
+    @Test func genericSingleConversationObjectIsAccepted() throws {
+        let export = """
+            {"messages": [{"role": "user", "content": "solo"}]}
+            """
+        let imported = try ChatSessionImporter.parse(data: Data(export.utf8))
+        #expect(imported.count == 1)
+        #expect(imported.first?.session.turns.first?.content == "solo")
+    }
+
+    // MARK: - Rejection
+
+    @Test func rejectsUnrecognizedJSON() {
+        let export = Data("{\"foo\": 1}".utf8)
+        #expect(throws: ChatSessionImporter.ImportError.self) {
+            _ = try ChatSessionImporter.parse(data: export)
+        }
+    }
+
+    @Test func rejectsNonJSON() {
+        let export = Data("# just markdown".utf8)
+        #expect(throws: ChatSessionImporter.ImportError.self) {
+            _ = try ChatSessionImporter.parse(data: export)
+        }
+    }
+
+    @Test func conversationWithoutUserTurnsIsDropped() {
+        let export = Data(
+            """
+            {"conversations": [{"messages": [{"role": "assistant", "content": "orphan"}]}]}
+            """.utf8)
+        #expect(throws: ChatSessionImporter.ImportError.self) {
+            _ = try ChatSessionImporter.parse(data: export)
+        }
+    }
+}
