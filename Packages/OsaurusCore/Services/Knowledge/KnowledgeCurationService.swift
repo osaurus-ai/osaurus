@@ -16,6 +16,7 @@ public enum KnowledgeCurationError: Error, LocalizedError {
     case proposalNotPending(Int)
     case collectionUnavailable(String)
     case pathEscapesCollection(String)
+    case nonMarkdownTarget(String)
     case writeFailed(String)
 
     public var errorDescription: String? {
@@ -26,6 +27,8 @@ public enum KnowledgeCurationError: Error, LocalizedError {
             return "Collection \(name) is unavailable (deleted, disabled, or its folder is missing)."
         case .pathEscapesCollection(let path):
             return "Proposal path \(path) resolves outside the collection folder."
+        case .nonMarkdownTarget(let path):
+            return "Proposal path \(path) is not a markdown document; only markdown can be updated through curation."
         case .writeFailed(let msg): return "Could not write the document: \(msg)"
         }
     }
@@ -71,6 +74,11 @@ public actor KnowledgeCurationService {
         let folderPrefix = folderURL.path.hasSuffix("/") ? folderURL.path : folderURL.path + "/"
         guard fileURL.path.hasPrefix(folderPrefix) else {
             throw KnowledgeCurationError.pathEscapesCollection(relPath)
+        }
+        // Curation writes plain text; landing it on an adapter-extracted
+        // format (pdf, docx, …) would destroy the binary source of truth.
+        guard KnowledgeIndexService.isMarkdown(fileURL) else {
+            throw KnowledgeCurationError.nonMarkdownTarget(relPath)
         }
 
         let content = overrideContent ?? proposal.newContent

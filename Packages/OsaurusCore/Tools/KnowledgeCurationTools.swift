@@ -495,7 +495,8 @@ final class ProposeKnowledgeUpdateTool: OsaurusTool, PermissionedTool, @unchecke
         if let envelope = KnowledgeCurationToolSupport.validateRelPath(relPath, tool: name) {
             return envelope
         }
-        guard relPath.lowercased().hasSuffix(".md") || relPath.lowercased().hasSuffix(".markdown") else {
+        let relPathExtension = (relPath as NSString).pathExtension.lowercased()
+        guard KnowledgeIndexService.markdownExtensions.contains(relPathExtension) else {
             return ToolEnvelope.failure(
                 kind: .invalidArgs,
                 message: "Proposals must target a markdown document (`.md`).",
