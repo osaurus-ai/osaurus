@@ -32,7 +32,8 @@ public actor KnowledgeIndexService {
     private static let maxFileBytes = 2 * 1024 * 1024
     /// Adapter-extracted formats (pdf, docx, xlsx, …) are legitimately
     /// larger than curated markdown; parity with `DocumentLimits.maxFileSize`.
-    private static let maxAdapterFileBytes = 10 * 1024 * 1024
+    /// Shared with `read_knowledge`, which extracts through the same adapters.
+    static let maxAdapterFileBytes = 10 * 1024 * 1024
     /// Claimed by the plaintext adapter but never indexed: a searchable
     /// index is the wrong place for secrets.
     private static let excludedExtensions: Set<String> = ["env"]

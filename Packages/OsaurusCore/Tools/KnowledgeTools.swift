@@ -327,8 +327,10 @@ final class ReadKnowledgeTool: OsaurusTool, @unchecked Sendable {
             )
         }
 
-        // Read the markdown source of truth from disk, re-checking that
-        // the resolved location is inside the collection folder.
+        // Read the source of truth from disk, re-checking that the
+        // resolved location is inside the collection folder. Markdown is
+        // read verbatim; other formats extract through the same document
+        // adapters the indexer used.
         let folderURL = match.collection.folderURL.standardizedFileURL
         let fileURL = folderURL.appendingPathComponent(relPath).standardizedFileURL
         let folderPrefix = folderURL.path.hasSuffix("/") ? folderURL.path : folderURL.path + "/"
@@ -339,16 +341,34 @@ final class ReadKnowledgeTool: OsaurusTool, @unchecked Sendable {
                 tool: name
             )
         }
-        guard let raw = try? String(contentsOf: fileURL, encoding: .utf8) else {
-            return ToolEnvelope.failure(
-                kind: .unavailable,
-                message: "Document `\(relPath)` is indexed but its file is not readable (moved or unmounted?). Re-index the collection.",
-                tool: name,
-                retryable: true
-            )
+        let body: String
+        if KnowledgeIndexService.isMarkdown(fileURL) {
+            guard let raw = try? String(contentsOf: fileURL, encoding: .utf8) else {
+                return ToolEnvelope.failure(
+                    kind: .unavailable,
+                    message: "Document `\(relPath)` is indexed but its file is not readable (moved or unmounted?). Re-index the collection.",
+                    tool: name,
+                    retryable: true
+                )
+            }
+            body = KnowledgeDocumentParser.parse(markdown: raw).body
+        } else {
+            DocumentAdaptersBootstrap.registerBuiltIns()
+            guard let adapter = DocumentFormatRegistry.shared.adapter(for: fileURL),
+                let document = try? await adapter.parse(
+                    url: fileURL,
+                    sizeLimit: Int64(KnowledgeIndexService.maxAdapterFileBytes)
+                )
+            else {
+                return ToolEnvelope.failure(
+                    kind: .unavailable,
+                    message: "Document `\(relPath)` is indexed but could not be extracted (moved, unmounted, or corrupted?). Re-index the collection.",
+                    tool: name,
+                    retryable: true
+                )
+            }
+            body = document.textFallback
         }
-
-        let (_, body) = KnowledgeDocumentParser.parse(markdown: raw)
         var content = body
         var sectionNote = ""
         if let section = (args["section"] as? String)?.trimmingCharacters(in: .whitespaces),
