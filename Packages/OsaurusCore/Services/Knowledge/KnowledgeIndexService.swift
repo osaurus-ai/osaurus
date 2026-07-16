@@ -30,12 +30,22 @@ public actor KnowledgeIndexService {
     /// Files larger than this are skipped (and logged) — a multi-megabyte
     /// "markdown" file is almost never curated knowledge.
     private static let maxFileBytes = 2 * 1024 * 1024
+    /// Adapter-extracted formats (pdf, docx, xlsx, …) are legitimately
+    /// larger than curated markdown; parity with `DocumentLimits.maxFileSize`.
+    private static let maxAdapterFileBytes = 10 * 1024 * 1024
+    /// Claimed by the plaintext adapter but never indexed: a searchable
+    /// index is the wrong place for secrets.
+    private static let excludedExtensions: Set<String> = ["env"]
     /// Hard cap on files per collection so a mispointed folder (e.g. a
     /// home directory) can't stall indexing for minutes. Overflow is
     /// logged, never silent.
     private static let maxFilesPerCollection = 5000
 
-    private static let markdownExtensions: Set<String> = ["md", "markdown", "mdx"]
+    static let markdownExtensions: Set<String> = ["md", "markdown", "mdx"]
+
+    static func isMarkdown(_ url: URL) -> Bool {
+        markdownExtensions.contains(url.pathExtension.lowercased())
+    }
 
     private var databaseOpened = false
 
@@ -68,7 +78,8 @@ public actor KnowledgeIndexService {
             return summary
         }
 
-        let files = scanMarkdownFiles(in: folderURL)
+        DocumentAdaptersBootstrap.registerBuiltIns()
+        let files = scanIndexableFiles(in: folderURL)
         let existingHashes = (try? KnowledgeDatabase.shared.documentHashes(collectionId: collectionId)) ?? [:]
         var seenPaths: Set<String> = []
 
@@ -77,24 +88,29 @@ public actor KnowledgeIndexService {
             guard !relPath.isEmpty else { continue }
             seenPaths.insert(relPath)
 
-            guard let content = try? String(contentsOf: file, encoding: .utf8) else {
+            // Hash raw bytes so binary formats work too; for valid UTF-8
+            // markdown this matches the previous text hash byte-for-byte,
+            // so existing indexes are not invalidated.
+            guard let data = try? Data(contentsOf: file) else {
                 summary.failed += 1
-                KnowledgeLogger.index.warning("Unreadable markdown skipped: \(relPath, privacy: .public)")
+                KnowledgeLogger.index.warning("Unreadable file skipped: \(relPath, privacy: .public)")
                 continue
             }
 
-            let hash = Self.sha256Hex(content)
+            let hash = Self.sha256Hex(data)
             if !force, existingHashes[relPath] == hash {
                 summary.skipped += 1
                 continue
             }
 
             do {
+                let (frontmatter, body) = try await extractDocument(file: file, data: data)
                 try await indexDocument(
                     collectionId: collectionId,
                     relPath: relPath,
                     fileURL: file,
-                    content: content,
+                    frontmatter: frontmatter,
+                    body: body,
                     contentHash: hash
                 )
                 summary.indexed += 1
@@ -136,9 +152,16 @@ public actor KnowledgeIndexService {
                 limit: Self.maxFilesPerCollection
             )) ?? []
         // OKF reserves index.md / log.md (no frontmatter requirements).
+        // Adapter-extracted formats (pdf, code, …) carry no frontmatter
+        // at all, so the conformance check only applies to markdown.
         let reserved: Set<String> = ["index.md", "log.md"]
         return documents
-            .filter { $0.docType.isEmpty && !reserved.contains($0.relPath.lowercased()) }
+            .filter { document in
+                document.docType.isEmpty
+                    && !reserved.contains(document.relPath.lowercased())
+                    && Self.markdownExtensions.contains(
+                        (document.relPath as NSString).pathExtension.lowercased())
+            }
             .map(\.relPath)
     }
 
@@ -152,14 +175,42 @@ public actor KnowledgeIndexService {
 
     // MARK: - Per-document pass
 
+    private enum ExtractionError: Error {
+        case notUTF8
+        case noAdapter
+    }
+
+    /// Markdown parses in place (frontmatter + body); everything else
+    /// goes through its registered document adapter and indexes the
+    /// extracted plain text with empty facets.
+    private func extractDocument(
+        file: URL,
+        data: Data
+    ) async throws -> (frontmatter: KnowledgeFrontmatter, body: String) {
+        if Self.isMarkdown(file) {
+            guard let content = String(data: data, encoding: .utf8) else {
+                throw ExtractionError.notUTF8
+            }
+            return KnowledgeDocumentParser.parse(markdown: content)
+        }
+        guard let adapter = DocumentFormatRegistry.shared.adapter(for: file) else {
+            throw ExtractionError.noAdapter
+        }
+        let document = try await adapter.parse(
+            url: file,
+            sizeLimit: Int64(Self.maxAdapterFileBytes)
+        )
+        return (KnowledgeFrontmatter(), document.textFallback)
+    }
+
     private func indexDocument(
         collectionId: String,
         relPath: String,
         fileURL: URL,
-        content: String,
+        frontmatter: KnowledgeFrontmatter,
+        body: String,
         contentHash: String
     ) async throws {
-        let (frontmatter, body) = KnowledgeDocumentParser.parse(markdown: content)
         let title = KnowledgeDocumentParser.resolveTitle(
             frontmatter: frontmatter,
             body: body,
@@ -171,7 +222,7 @@ public actor KnowledgeIndexService {
         let modifiedAt = values?.contentModificationDate.map {
             ISO8601DateFormatter().string(from: $0)
         } ?? ""
-        let sizeBytes = values?.fileSize ?? content.utf8.count
+        let sizeBytes = values?.fileSize ?? body.utf8.count
 
         let documentId = try KnowledgeDatabase.shared.upsertDocument(
             collectionId: collectionId,
@@ -217,11 +268,12 @@ public actor KnowledgeIndexService {
 
     // MARK: - Folder scanning
 
-    /// Enumerate markdown files under the collection folder. Hidden
-    /// entries are skipped by the enumerator; symlinks are skipped
-    /// explicitly so a link out of the folder can't smuggle external
-    /// content into the index.
-    private func scanMarkdownFiles(in folderURL: URL) -> [URL] {
+    /// Enumerate indexable files under the collection folder: markdown,
+    /// plus anything a registered document adapter claims (plain text,
+    /// code, pdf, docx, xlsx, …). Hidden entries are skipped by the
+    /// enumerator; symlinks are skipped explicitly so a link out of the
+    /// folder can't smuggle external content into the index.
+    private func scanIndexableFiles(in folderURL: URL) -> [URL] {
         let keys: [URLResourceKey] = [.isRegularFileKey, .isSymbolicLinkKey, .fileSizeKey]
         guard
             let enumerator = FileManager.default.enumerator(
@@ -234,13 +286,19 @@ public actor KnowledgeIndexService {
         var files: [URL] = []
         var overflow = 0
         for case let url as URL in enumerator {
-            guard Self.markdownExtensions.contains(url.pathExtension.lowercased()) else { continue }
+            let ext = url.pathExtension.lowercased()
+            if Self.excludedExtensions.contains(ext) { continue }
+            let isMarkdown = Self.markdownExtensions.contains(ext)
+            guard isMarkdown || DocumentFormatRegistry.shared.adapter(for: url) != nil else {
+                continue
+            }
             guard let values = try? url.resourceValues(forKeys: Set(keys)) else { continue }
             if values.isSymbolicLink == true { continue }
             guard values.isRegularFile == true else { continue }
-            if let size = values.fileSize, size > Self.maxFileBytes {
+            let maxBytes = isMarkdown ? Self.maxFileBytes : Self.maxAdapterFileBytes
+            if let size = values.fileSize, size > maxBytes {
                 KnowledgeLogger.index.warning(
-                    "Oversized markdown skipped (\(size) bytes): \(url.lastPathComponent, privacy: .public)"
+                    "Oversized file skipped (\(size) bytes): \(url.lastPathComponent, privacy: .public)"
                 )
                 continue
             }
@@ -252,7 +310,7 @@ public actor KnowledgeIndexService {
         }
         if overflow > 0 {
             KnowledgeLogger.index.warning(
-                "Collection exceeds \(Self.maxFilesPerCollection) markdown files; \(overflow) files not indexed"
+                "Collection exceeds \(Self.maxFilesPerCollection) indexable files; \(overflow) files not indexed"
             )
         }
         return files.sorted { $0.path < $1.path }
@@ -279,8 +337,8 @@ public actor KnowledgeIndexService {
 
     // MARK: - Hashing
 
-    private static func sha256Hex(_ text: String) -> String {
-        let digest = SHA256.hash(data: Data(text.utf8))
+    private static func sha256Hex(_ data: Data) -> String {
+        let digest = SHA256.hash(data: data)
         return digest.map { String(format: "%02x", $0) }.joined()
     }
 }
