@@ -240,7 +240,9 @@ final class ReadKnowledgeTool: OsaurusTool, @unchecked Sendable {
     let description =
         "Read a document from the agent's granted knowledge collections by "
         + "its relative path (as returned by `search_knowledge` / "
-        + "`list_knowledge`). Optionally narrow to one section by heading."
+        + "`list_knowledge`). Works for any indexed format — markdown, plain "
+        + "text, code, PDF, Word, Excel, PowerPoint, CSV — returning extracted "
+        + "text for binary documents. Optionally narrow to one section by heading."
 
     /// Hard cap on returned content, below the registry's universal cap so
     /// the truncation note survives intact.
@@ -252,7 +254,7 @@ final class ReadKnowledgeTool: OsaurusTool, @unchecked Sendable {
         "properties": .object([
             "path": .object([
                 "type": .string("string"),
-                "description": .string("Document path relative to its collection, e.g. `wordpress/plugins.md`."),
+                "description": .string("Document path relative to its collection, e.g. `wordpress/plugins.md` or `guides/pricing.pdf`."),
             ]),
             "collection": .object([
                 "type": .string("string"),
@@ -272,7 +274,7 @@ final class ReadKnowledgeTool: OsaurusTool, @unchecked Sendable {
         let argsReq = requireArgumentsDictionary(argumentsJSON, tool: name)
         guard case .value(let args) = argsReq else { return argsReq.failureEnvelope ?? "" }
 
-        let pathReq = requireString(args, "path", expected: "collection-relative markdown path", tool: name)
+        let pathReq = requireString(args, "path", expected: "collection-relative document path", tool: name)
         guard case .value(let pathRaw) = pathReq else { return pathReq.failureEnvelope ?? "" }
         let relPath = pathRaw.trimmingCharacters(in: .whitespacesAndNewlines)
 

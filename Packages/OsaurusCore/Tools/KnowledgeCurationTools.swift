@@ -78,7 +78,7 @@ final class FlagKnowledgeStaleTool: OsaurusTool, @unchecked Sendable {
         let argsReq = requireArgumentsDictionary(argumentsJSON, tool: name)
         guard case .value(let args) = argsReq else { return argsReq.failureEnvelope ?? "" }
 
-        let pathReq = requireString(args, "path", expected: "collection-relative markdown path", tool: name)
+        let pathReq = requireString(args, "path", expected: "collection-relative document path", tool: name)
         guard case .value(let pathRaw) = pathReq else { return pathReq.failureEnvelope ?? "" }
         let relPath = pathRaw.trimmingCharacters(in: .whitespacesAndNewlines)
         if let envelope = KnowledgeCurationToolSupport.validateRelPath(relPath, tool: name) {
