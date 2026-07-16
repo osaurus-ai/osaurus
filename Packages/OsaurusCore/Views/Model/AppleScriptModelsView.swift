@@ -52,9 +52,9 @@ struct AppleScriptModelsView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 24) {
                 aboutSection
+                modelsSection
                 permissionSection
                 behaviorSection
-                modelsSection
             }
             .padding(.horizontal, 24)
             .padding(.vertical, 24)
