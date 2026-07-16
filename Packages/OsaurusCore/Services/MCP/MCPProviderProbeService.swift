@@ -288,7 +288,7 @@ public enum MCPProviderProbeService {
             let probe = MCPAuthFailureProbe.evaluate(
                 response: http,
                 body: data,
-                sentAuthorization: headers["Authorization"] != nil
+                sentAuthorization: request.value(forHTTPHeaderField: "Authorization") != nil
             )
         else { return nil }
 
