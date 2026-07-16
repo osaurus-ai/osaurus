@@ -88,6 +88,7 @@ struct ChatSessionSidebar: View {
         .source(.http),
         .source(.schedule),
         .source(.watcher),
+        .source(.imported),
         .archived,
     ]
 
@@ -786,6 +787,7 @@ private struct SessionRow: View {
         case .schedule: return theme.warningColor
         case .watcher: return theme.successColor
         case .selfSchedule: return theme.warningColor.opacity(0.9)
+        case .imported: return theme.accentColorLight.opacity(0.7)
         }
     }
 
@@ -806,6 +808,8 @@ private struct SessionRow: View {
             return Text("Watcher", bundle: .module)
         case .selfSchedule:
             return Text("Self-scheduled", bundle: .module)
+        case .imported:
+            return Text("Imported", bundle: .module)
         }
     }
 

@@ -27,6 +27,10 @@ public enum SessionSource: String, Codable, CaseIterable, Sendable {
     /// from `.schedule` (user-authored recurring schedules) so the
     /// audit trail can tell them apart.
     case selfSchedule = "self_schedule"
+    /// Conversation imported from another assistant's export
+    /// (ChatGPT, Claude, generic JSON). Continues as a normal chat;
+    /// the source tag keeps provenance visible in the sidebar.
+    case imported
 }
 
 // MARK: - UI Helpers
@@ -60,6 +64,8 @@ extension SessionSource {
             return "watcher"
         case .selfSchedule:
             return "self-scheduled"
+        case .imported:
+            return "imported"
         }
     }
 
@@ -72,6 +78,7 @@ extension SessionSource {
         case .schedule: return "clock.fill"
         case .watcher: return "eye.fill"
         case .selfSchedule: return "alarm.fill"
+        case .imported: return "square.and.arrow.down.fill"
         }
     }
 
@@ -84,6 +91,7 @@ extension SessionSource {
         case .schedule: return "Schedule"
         case .watcher: return "Watcher"
         case .selfSchedule: return "Self-scheduled"
+        case .imported: return "Imported"
         }
     }
 }
@@ -125,7 +133,9 @@ extension SessionSource {
     /// window closes.
     var inferenceSource: RequestSource {
         switch self {
-        case .chat: return .chatUI
+        // Imported sessions only reach inference when the user continues
+        // them in the chat window, so they carry chat-UI intent.
+        case .chat, .imported: return .chatUI
         case .http: return .httpAPI
         case .plugin: return .plugin
         case .schedule, .watcher, .selfSchedule: return .scheduled
