@@ -29749,6 +29749,40 @@
         }
       }
     },
+    "Check that the token is valid for this server (plan/scope) and pasted without a Bearer prefix or extra whitespace." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Prüfe, ob der Token für diesen Server gültig ist (Tarif/Scope) und ohne Bearer-Präfix oder zusätzliche Leerzeichen eingefügt wurde."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "토큰이 이 서버에 유효한지(요금제/범위) 확인하고 Bearer 접두사나 불필요한 공백 없이 붙여넣었는지 확인하세요."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Убедитесь, что токен действителен для этого сервера (тариф/область действия) и вставлен без префикса Bearer и лишних пробелов."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "请确认令牌对该服务器有效（套餐/权限范围），并且粘贴时没有 Bearer 前缀或多余的空格。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "請確認權杖對該伺服器有效（方案/權限範圍），並且貼上時沒有 Bearer 前綴或多餘的空格。"
+          }
+        }
+      }
+    },
     "Check the command, working directory, and environment." : {
       "localizations" : {
         "de" : {
@@ -134375,6 +134409,40 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "保存並重試"
+          }
+        }
+      }
+    },
+    "Save an API token or sign in, then test again." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Speichere einen API-Token oder melde dich an und teste dann erneut."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "API 토큰을 저장하거나 로그인한 후 다시 테스트하세요."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Сохраните API-токен или войдите в систему, затем повторите тест."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "保存 API 令牌或登录，然后再次测试。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "保存 API 權杖或登錄，然後再次測試。"
           }
         }
       }
