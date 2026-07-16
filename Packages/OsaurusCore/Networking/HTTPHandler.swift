@@ -1027,7 +1027,8 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
 
             let runtimeSettings = ServerRuntimeSettingsStore.snapshot()
             let memoryStatus = MemoryStatus.snapshot()
-            let memorySafetyPlan = runtimeSettings.resolvedMemorySafetyPlan(
+            let memorySafetyPlan = ServerRuntimeSettingsStore.resolvedMemorySafetyPlan(
+                for: runtimeSettings,
                 baseLoadConfiguration: .osaurusProduction,
                 host: memoryStatus
             )
@@ -1471,6 +1472,8 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         return [
             "mode": memorySafety.mode.rawValue,
             "slider": memorySafety.slider,
+            "automatic_memory_limits_disabled":
+                ServerRuntimeSettingsStore.automaticMemoryLimitsDisabled(for: settings),
             "allowed": plan.blockingIssues.isEmpty,
             "display_summary": plan.displaySummary,
             "resolved_physical_memory_bytes": plan.resolvedPhysicalMemoryBytes,
@@ -4809,10 +4812,22 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             // and older clients send the "default" sentinel. Both resolve to
             // the agent's effective model server-side.
             let model: String
+            var automaticRouteUnavailable = false
             if req.model.isEmpty || req.model == "default" {
-                let agentModel = await MainActor.run { AgentManager.shared.effectiveModel(for: agentId) }
+                let (configuredModel, agentModel) = await MainActor.run {
+                    (
+                        AgentManager.shared.configuredModel(for: agentId),
+                        AgentManager.shared.effectiveModel(for: agentId)
+                    )
+                }
                 if let agentModel {
                     model = agentModel
+                } else if AutomaticModelRoutingPolicy.isAutomatic(configuredModel) {
+                    // Automatic is an explicit on-device privacy boundary. If
+                    // there is no safely fitting local route, never reuse an
+                    // already-loaded cloud model as the generic fallback.
+                    automaticRouteUnavailable = true
+                    model = ""
                 } else {
                     // No configured default model for this agent (e.g. a fresh
                     // install where the user hasn't pinned one). Fall back to the
@@ -4839,8 +4854,9 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             // canonical "agent has no model configured" signal. ("default" is
             // left intact — it resolves to the host's local Foundation model.)
             if model.isEmpty {
-                let msg =
-                    "This agent has no model configured. Set the agent's default model on the host and try again."
+                let msg = automaticRouteUnavailable
+                    ? AutomaticModelRoutingPolicy.failureExplanation(for: .text)
+                    : "This agent has no model configured. Set the agent's default model on the host and try again."
                 RemoteAgentRunLog.serverError(
                     "run agent=\(agentId.uuidString) FAILED reqModel=\(req.model.isEmpty ? "<omitted>" : req.model) error=no_model_resolved"
                 )
@@ -9081,6 +9097,8 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                         "required_available_bytes": f.requiredAvailableBytes,
                         "soft_limit_bytes": f.softLimitBytes,
                         "hard_limit_bytes": f.hardLimitBytes,
+                        "automatic_memory_limits_disabled":
+                            f.automaticMemoryLimitsDisabled,
                         // What Metal actually keeps resident. A load past this
                         // is paged by macOS rather than refused, so support
                         // needs to see it to explain a "fits but crawls" model.

@@ -142,6 +142,32 @@ public enum ModelMediaCapabilities {
         }
     }
 
+    /// Composer descriptor for Automatic routing. A modality is offered only
+    /// when the routing policy already found a compatible installed on-device
+    /// model for it, so accepting a file can never imply a cloud fallback.
+    static func automaticDescriptor(capabilities: Capabilities) -> Descriptor {
+        func modality(
+            _ value: Modality,
+            supported: Bool
+        ) -> ModalityDescriptor {
+            ModalityDescriptor(
+                modality: value,
+                status: supported ? .supported : .unsupported,
+                reason: supported
+                    ? "Automatic can switch to a compatible on-device \(value.label) model."
+                    : "Automatic found no compatible installed on-device model for \(value.label) input."
+            )
+        }
+
+        return Descriptor(
+            modelId: AutomaticModelRoutingPolicy.modelId,
+            capabilities: capabilities,
+            image: modality(.image, supported: capabilities.supportsImage),
+            video: modality(.video, supported: capabilities.supportsVideo),
+            audio: modality(.audio, supported: capabilities.supportsAudio)
+        )
+    }
+
     // MARK: - Detection by model_id (substring + regex)
     //
     // Fast path used by the UI before / without the model being

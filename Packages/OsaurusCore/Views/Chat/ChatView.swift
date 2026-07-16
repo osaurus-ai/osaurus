@@ -241,6 +241,9 @@ final class ChatSession: ObservableObject {
     @Published var input: String = ""
     @Published var pendingAttachments: [Attachment] = []
     @Published var selectedModel: String? = nil
+    /// Concrete route currently chosen for an agent whose persisted model is
+    /// Automatic. The sentinel itself is never sent to a provider or engine.
+    @Published private(set) var automaticRoutingDecision: AutomaticModelRoutingPolicy.Decision?
     /// Proactive model + KV-cache warm-up for faster first-token latency.
     let warmupController = ChatWarmupController()
     @Published var pickerItems: [ModelPickerItem] = []
@@ -480,6 +483,7 @@ final class ChatSession: ObservableObject {
     /// plugins, subagents, other chats). Observe them so a model evicted behind
     /// the window's back cannot keep a stale green warm indicator.
     nonisolated(unsafe) private var runtimeResidencyObserver: NSObjectProtocol?
+    nonisolated(unsafe) private var modelConfigurationCancellable: AnyCancellable?
     /// Flag to prevent auto-persist during initial load or programmatic resets
     private var isLoadingModel: Bool = false
     /// The model the user last picked by hand this session. Picker-list
@@ -613,6 +617,17 @@ final class ChatSession: ObservableObject {
             }
         }
 
+        modelConfigurationCancellable = NotificationCenter.default.publisher(for: .agentUpdated)
+            .receive(on: RunLoop.main)
+            .sink { [weak self] note in
+                guard let self, !self.isStreaming else { return }
+                let sessionAgentId = self.agentId ?? Agent.defaultId
+                if let updatedAgentId = note.object as? UUID, updatedAgentId != sessionAgentId {
+                    return
+                }
+                self.applyEffectiveModel(for: self.agentId)
+            }
+
         // Mirror AgentTodoStore -> currentTodo so the inline UI block
         // updates whenever the agent calls `todo`. Filter by this window's
         // current sessionId so cross-window writes don't leak across.
@@ -697,6 +712,7 @@ final class ChatSession: ObservableObject {
             .sink { [weak self] newModel in
                 guard let self = self, !self.isLoadingModel else { return }
                 guard let model = newModel else { return }
+                self.automaticRoutingDecision = nil
                 self.lastManualModelSelection = model
                 let pid = self.agentId ?? Agent.defaultId
                 // Mode 2 (remote agent run): the model is pinned to the remote
@@ -846,6 +862,7 @@ final class ChatSession: ObservableObject {
         promptQueueCancellable = nil
         contextEstimateCancellable = nil
         modelCacheCancellable = nil
+        modelConfigurationCancellable = nil
         screenContextCancellable = nil
     }
 
@@ -901,8 +918,21 @@ final class ChatSession: ObservableObject {
     /// user had manually changed it.
     private func applyEffectiveModel(for agentId: UUID?) {
         isLoadingModel = true
-        let effectiveModel = AgentManager.shared.effectiveModel(for: agentId ?? Agent.defaultId)
-        if let model = effectiveModel, pickerItems.contains(where: { $0.id == model }) {
+        let resolvedAgentId = agentId ?? Agent.defaultId
+        if AutomaticModelRoutingPolicy.isAutomatic(
+            AgentManager.shared.configuredModel(for: resolvedAgentId)
+        ) {
+            let decision = AgentManager.shared.automaticModelDecision(
+                for: resolvedAgentId,
+                currentModelId: selectedModel,
+                items: pickerItems
+            )
+            automaticRoutingDecision = decision
+            selectedModel = decision?.modelId
+        } else if let model = AgentManager.shared.effectiveModel(for: resolvedAgentId),
+            pickerItems.contains(where: { $0.id == model })
+        {
+            automaticRoutingDecision = nil
             selectedModel = model
         } else if Self.pendingLocalDefaultModelId(for: agentId, in: pickerItems.map(\.id)) != nil {
             // First-run local setup includes temporary Osaurus Cloud access:
@@ -912,6 +942,7 @@ final class ChatSession: ObservableObject {
             // switches over as soon as that bundle lands.
             selectedModel = Self.osaurusRouterValueCandidate(in: pickerItems)?.id
         } else {
+            automaticRoutingDecision = nil
             selectedModel = pickerItems.firstChatCapable?.id
         }
         loadActiveModelOptions(for: selectedModel)
@@ -1088,6 +1119,21 @@ final class ChatSession: ObservableObject {
             // wire, without disturbing the model selection.
             if pickerItems != newOptions {
                 pickerItems = newOptions
+                if AutomaticModelRoutingPolicy.isAutomatic(
+                    AgentManager.shared.configuredModel(for: agentId ?? Agent.defaultId)
+                ) {
+                    let decision = AgentManager.shared.automaticModelDecision(
+                        for: agentId ?? Agent.defaultId,
+                        currentModelId: selectedModel,
+                        items: newOptions
+                    )
+                    automaticRoutingDecision = decision
+                    if selectedModel != decision?.modelId {
+                        isLoadingModel = true
+                        selectedModel = decision?.modelId
+                        isLoadingModel = false
+                    }
+                }
                 loadActiveModelOptions(for: selectedModel)
             }
             return
@@ -1099,16 +1145,29 @@ final class ChatSession: ObservableObject {
         // rebuilds fire on runtime state changes (including the load that the
         // pick itself started), and letting the default win here snapped the
         // chip back to the old model and warm-loaded it over the user's pick.
-        let effectiveModel = AgentManager.shared.effectiveModel(for: agentId ?? Agent.defaultId)
+        let resolvedAgentId = agentId ?? Agent.defaultId
+        let configuredModel = AgentManager.shared.configuredModel(for: resolvedAgentId)
+        let effectiveModel = AgentManager.shared.effectiveModel(for: resolvedAgentId)
         let newSelected: String?
 
-        if let manual = lastManualModelSelection, selectedModel == manual,
+        if AutomaticModelRoutingPolicy.isAutomatic(configuredModel) {
+            let decision = AgentManager.shared.automaticModelDecision(
+                for: resolvedAgentId,
+                currentModelId: selectedModel,
+                items: newOptions
+            )
+            automaticRoutingDecision = decision
+            newSelected = decision?.modelId
+        } else if let manual = lastManualModelSelection, selectedModel == manual,
             newOptionIds.contains(manual)
         {
+            automaticRoutingDecision = nil
             newSelected = manual
         } else if let model = effectiveModel, newOptionIds.contains(model) {
+            automaticRoutingDecision = nil
             newSelected = model
         } else if let prev = selectedModel, newOptionIds.contains(prev) {
+            automaticRoutingDecision = nil
             newSelected = prev
         } else if Self.pendingLocalDefaultModelId(for: agentId, in: newOptionIds) != nil {
             // Pinned local default still downloading: first-run includes
@@ -1116,6 +1175,7 @@ final class ChatSession: ObservableObject {
             // lower-cost capable Router model as soon as it appears.
             newSelected = Self.osaurusRouterValueCandidate(in: newOptions)?.id
         } else {
+            automaticRoutingDecision = nil
             newSelected = newOptions.firstChatCapable?.id
         }
 
@@ -1162,6 +1222,69 @@ final class ChatSession: ObservableObject {
     var selectedModelSupportsVideo: Bool {
         guard let model = selectedModel else { return false }
         return ModelMediaCapabilities.from(modelId: model).supportsVideo
+    }
+
+    var usesAutomaticModelRouting: Bool {
+        AutomaticModelRoutingPolicy.isAutomatic(
+            AgentManager.shared.configuredModel(for: agentId ?? Agent.defaultId)
+        )
+    }
+
+    /// Route model-picker writes through an explicit command rather than only
+    /// observing `$selectedModel`. When Automatic already resolved to the row
+    /// the user clicks, assigning the same concrete id does not publish a new
+    /// value; persist that click anyway so an intentional manual choice always
+    /// exits Automatic.
+    func selectModelFromPicker(_ model: String?) {
+        if usesAutomaticModelRouting, let model {
+            automaticRoutingDecision = nil
+            lastManualModelSelection = model
+            AgentManager.shared.updateDefaultModel(
+                for: agentId ?? Agent.defaultId,
+                model: model
+            )
+        }
+        selectedModel = model
+    }
+
+    /// Resolve Automatic against the actual turn payload. A route change is a
+    /// normal model switch and therefore participates in the existing warm-up
+    /// handshake; the persisted Automatic setting is left untouched.
+    @discardableResult
+    private func resolveAutomaticRoute(for attachments: [Attachment]) -> Bool {
+        guard usesAutomaticModelRouting else { return true }
+        let requirements = AutomaticModelRoutingPolicy.Requirements(attachments: attachments)
+        guard
+            let decision = AgentManager.shared.automaticModelDecision(
+                for: agentId ?? Agent.defaultId,
+                requirements: requirements,
+                currentModelId: selectedModel,
+                items: pickerItems
+            )
+        else {
+            automaticRoutingDecision = nil
+            ToastManager.shared.error(
+                L("Automatic model routing unavailable"),
+                message: AutomaticModelRoutingPolicy.failureExplanation(for: requirements)
+            )
+            return false
+        }
+
+        automaticRoutingDecision = decision
+        guard selectedModel != decision.modelId else { return true }
+        isLoadingModel = true
+        selectedModel = decision.modelId
+        loadActiveModelOptions(for: decision.modelId)
+        applyImageModelDefaults(for: decision.modelId)
+        isLoadingModel = false
+        warmupController.handleSettledModelSelectionChange(
+            session: self,
+            to: decision.modelId,
+            performSwitch: { [weak self] evictOthers in
+                await self?.performModelResidencySwitch(evictOthers: evictOthers)
+            }
+        )
+        return true
     }
 
     /// Get the currently selected ModelPickerItem
@@ -2300,6 +2423,18 @@ final class ChatSession: ObservableObject {
         {
             isLoadingModel = true
             selectedModel = savedModel
+            if AutomaticModelRoutingPolicy.isAutomatic(
+                AgentManager.shared.configuredModel(for: data.agentId ?? Agent.defaultId)
+            ) {
+                automaticRoutingDecision = AgentManager.shared.automaticModelDecision(
+                    for: data.agentId ?? Agent.defaultId,
+                    currentModelId: savedModel,
+                    items: pickerItems
+                )
+                selectedModel = automaticRoutingDecision?.modelId
+            } else {
+                automaticRoutingDecision = nil
+            }
             loadActiveModelOptions(for: selectedModel)
             isLoadingModel = false
         } else {
@@ -3828,6 +3963,11 @@ final class ChatSession: ObservableObject {
         let isRegeneration = !hasContent && !turns.isEmpty
         guard hasContent || isRegeneration else { return }
         guard activeRunId == nil, !isStreaming else {
+            restoreTurnsRollbackAfterAbortedRegeneration()
+            return
+        }
+
+        guard resolveAutomaticRoute(for: attachments) else {
             restoreTurnsRollbackAfterAbortedRegeneration()
             return
         }
@@ -6055,7 +6195,10 @@ struct ChatView: View {
                             // prompt resolution.
                             FloatingInputCard(
                                 text: $observedSession.input,
-                                selectedModel: $observedSession.selectedModel,
+                                selectedModel: Binding(
+                                    get: { observedSession.selectedModel },
+                                    set: { observedSession.selectModelFromPicker($0) }
+                                ),
                                 pendingAttachments: $observedSession.pendingAttachments,
                                 isContinuousVoiceMode: $observedSession.isContinuousVoiceMode,
                                 voiceInputState: $observedSession.voiceInputState,

@@ -72,7 +72,8 @@ struct ModelRuntimeRAMFeasibilityTests {
             inflightOther: inflightOther,
             kvHeadroom: kvHeadroom,
             physical: physical,
-            available: available
+            available: available,
+            automaticMemoryLimitsDisabled: false
         )
     }
 
@@ -237,6 +238,7 @@ struct ModelRuntimeRAMFeasibilityTests {
             requiredAvailableBytes: 95 * gb,
             softLimitBytes: 70 * gb,
             hardLimitBytes: 90 * gb,
+            automaticMemoryLimitsDisabled: false,
             // Isolate the byte math: no budget, so `exceedsGPUBudget` is false.
             gpuBudgetBytes: 0,
             timestamp: Date()
@@ -259,10 +261,29 @@ struct ModelRuntimeRAMFeasibilityTests {
             requiredAvailableBytes: 10 * gb,
             softLimitBytes: 70 * gb,
             hardLimitBytes: 90 * gb,
+            automaticMemoryLimitsDisabled: false,
             gpuBudgetBytes: 75 * gb,
             timestamp: Date()
         )
         #expect(lowAvailableOnly.loadPressureSeverity == .none)
+    }
+
+    @Test("No Automatic Limits downgrades the send block to visible guidance")
+    func noAutomaticLimitsDoesNotBlockSend() {
+        let f = ModelRuntime.buildRAMFeasibility(
+            modelName: "dangerous-test-model",
+            incomingWeightsBytes: 110 * gb,
+            incomingLoadFootprintBytes: 110 * gb,
+            resident: 0,
+            inflightOther: 0,
+            kvHeadroom: 0,
+            physical: 100 * gb,
+            available: 20 * gb,
+            automaticMemoryLimitsDisabled: true
+        )
+
+        #expect(f.automaticMemoryLimitsDisabled)
+        #expect(f.loadPressureSeverity == .warn)
     }
 
     // MARK: - GPU working-set budget
@@ -286,7 +307,8 @@ struct ModelRuntimeRAMFeasibilityTests {
             kvHeadroom: required - weights,
             physical: physical,
             // 77% "used" — an ordinary idle macOS desktop.
-            available: Int64(0.23 * Double(physical))
+            available: Int64(0.23 * Double(physical)),
+            automaticMemoryLimitsDisabled: false
         )
         #expect(f.requiredAvailableBytes == required)
         #expect(!f.exceedsGPUBudget)
@@ -309,7 +331,8 @@ struct ModelRuntimeRAMFeasibilityTests {
             inflightOther: 0,
             kvHeadroom: 0,
             physical: physical,
-            available: physical
+            available: physical,
+            automaticMemoryLimitsDisabled: false
         )
         #expect(f.exceedsGPUBudget)
         #expect(f.loadPressureSeverity == .warn)

@@ -31,6 +31,9 @@ struct ChatSettingsView: View {
 
     // Chat settings state
     @State private var tempSystemPrompt: String = ""
+    @State private var tempDefaultModel: String?
+    @State private var pickerItems: [ModelPickerItem] = []
+    @State private var showModelPicker = false
     @State private var tempChatTemperature: String = ""
     @State private var tempChatMaxTokens: String = ""
     @State private var tempChatContextLength: String = ""
@@ -150,6 +153,7 @@ struct ChatSettingsView: View {
         }
         // Persist a pending edit if the user leaves before the debounce fires.
         .onDisappear { flushPendingSave() }
+        .onReceive(ModelPickerItemCache.shared.$items) { pickerItems = $0 }
     }
 
     /// Bridges the string-backed placement preference to the boolean
@@ -250,6 +254,8 @@ struct ChatSettingsView: View {
     @ViewBuilder private var chatSection: some View {
         SettingsSection(title: "Chat", icon: "text.bubble") {
             VStack(alignment: .leading, spacing: 20) {
+                defaultModelControl
+
                 // System Prompt
                 StyledSettingsTextArea(
                     label: "System Prompt",
@@ -311,6 +317,86 @@ struct ChatSettingsView: View {
                 }
             }
         }
+    }
+
+    private var defaultModelControl: some View {
+        VStack(alignment: .leading, spacing: 7) {
+            Text("Default Model", bundle: .module)
+                .font(.system(size: 11, weight: .medium))
+                .foregroundColor(theme.secondaryText)
+
+            Button { showModelPicker.toggle() } label: {
+                HStack(spacing: 8) {
+                    Image(systemName: AutomaticModelRoutingPolicy.isAutomatic(tempDefaultModel) ? "sparkles" : "cube.fill")
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundColor(theme.accentColor)
+                    Text(defaultModelDisplayName)
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundColor(theme.primaryText)
+                        .lineLimit(1)
+                    Spacer()
+                    Image(systemName: "chevron.up.chevron.down")
+                        .font(.system(size: 10, weight: .medium))
+                        .foregroundColor(theme.tertiaryText)
+                }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 10)
+                .background(
+                    RoundedRectangle(cornerRadius: 10)
+                        .fill(theme.inputBackground)
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 10)
+                                .stroke(theme.inputBorder, lineWidth: 1)
+                        )
+                )
+            }
+            .buttonStyle(.plain)
+            .popover(isPresented: $showModelPicker, arrowEdge: .bottom) {
+                ModelPickerView(
+                    options: pickerItems.withAutomaticOnDeviceChoice,
+                    selectedModel: $tempDefaultModel,
+                    agentId: Agent.defaultId,
+                    onDismiss: { showModelPicker = false }
+                )
+            }
+
+            if AutomaticModelRoutingPolicy.isAutomatic(tempDefaultModel) {
+                if let route = AutomaticModelRoutingPolicy.resolve(items: pickerItems) {
+                    Text(verbatim: "Automatic currently selects \(route.displayName). \(route.explanation)")
+                        .font(.system(size: 10))
+                        .foregroundColor(theme.secondaryText)
+                } else {
+                    Text(AutomaticModelRoutingPolicy.failureExplanation(for: .text))
+                        .font(.system(size: 10))
+                        .foregroundColor(theme.warningColor)
+                }
+            } else if let tempDefaultModel,
+                let guidance = pickerItems.first(where: { $0.id == tempDefaultModel })?.hardwareGuidance
+            {
+                Text(guidance)
+                    .font(.system(size: 10))
+                    .foregroundColor(theme.secondaryText)
+            }
+
+            if let budget = ModelHardwareGuidance.budgetSummary(
+                physicalMemoryGB: GPUMemoryBudget.hostPhysicalMemoryGB
+            ) {
+                Text("\(budget). Current free memory is checked again before loading.")
+                    .font(.system(size: 10))
+                    .foregroundColor(theme.tertiaryText)
+            }
+        }
+        .settingsLandingAnchor("settings.chat.defaultModel")
+    }
+
+    private var defaultModelDisplayName: String {
+        guard let tempDefaultModel else { return L("Choose a model") }
+        if AutomaticModelRoutingPolicy.isAutomatic(tempDefaultModel) {
+            return L("Automatic (on device)")
+        }
+        return pickerItems.first(where: { $0.id == tempDefaultModel })?.displayName
+            ?? tempDefaultModel.split(separator: "/").last.map(String.init)
+            ?? tempDefaultModel
     }
 
     // MARK: - Generation Section
@@ -459,6 +545,7 @@ struct ChatSettingsView: View {
         // agent's tools toggle lives in the Agents tab and the global memory
         // switch lives in the Memory tab.
         tempSystemPrompt = defaultAgent.systemPrompt
+        tempDefaultModel = defaultAgent.defaultModel
         tempChatTemperature = defaultAgent.temperature.map { String($0) } ?? ""
         tempChatMaxTokens = defaultAgent.maxTokens.map(String.init) ?? ""
         tempChatContextLength = chat.contextLength.map(String.init) ?? ""
@@ -487,6 +574,7 @@ struct ChatSettingsView: View {
         let chatDefaults = ChatConfiguration.default
 
         tempSystemPrompt = ""
+        tempDefaultModel = nil
         tempChatTemperature = ""
         tempChatMaxTokens = ""
         tempChatContextLength = ""
@@ -504,6 +592,7 @@ struct ChatSettingsView: View {
     /// Snapshot of exactly the fields that `saveConfiguration` persists.
     private struct SaveableFormState: Equatable {
         var systemPrompt: String
+        var defaultModel: String?
         var temperature: String
         var maxTokens: String
         var contextLength: String
@@ -517,6 +606,7 @@ struct ChatSettingsView: View {
     private var currentFormState: SaveableFormState {
         SaveableFormState(
             systemPrompt: tempSystemPrompt,
+            defaultModel: tempDefaultModel,
             temperature: tempChatTemperature,
             maxTokens: tempChatMaxTokens,
             contextLength: tempChatContextLength,
@@ -612,10 +702,14 @@ struct ChatSettingsView: View {
         // agent's tools toggle lives in the Agents tab, and the global memory
         // switch lives in the Memory tab; this view leaves both untouched.
         var defaultAgentCfg = DefaultAgentConfigurationStore.load()
+        let defaultModelChanged = defaultAgentCfg.defaultModel != tempDefaultModel
         defaultAgentCfg.systemPrompt = tempSystemPrompt
         defaultAgentCfg.temperature = parsedTemp
         defaultAgentCfg.maxTokens = parsedMax
         DefaultAgentConfigurationStore.save(defaultAgentCfg)
+        if defaultModelChanged {
+            AgentManager.shared.updateDefaultModel(for: Agent.defaultId, model: tempDefaultModel)
+        }
 
         // Re-baseline so the dirty check clears now that the live form matches
         // what's persisted.

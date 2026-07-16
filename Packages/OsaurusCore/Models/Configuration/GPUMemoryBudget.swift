@@ -28,15 +28,21 @@ enum GPUMemoryBudget {
 
     /// Apple's default split between the GPU working set and everything else.
     /// Machines at or below 36 GB hold back proportionally more for the OS.
+    /// The 128 GB-and-up tier follows the 84% working-set ceiling Metal
+    /// advertises on current high-memory Apple silicon, leaving roughly 20 GB
+    /// for macOS and app/runtime overhead while still allowing explicit
+    /// 105–109 GB-class loads. Mid-memory machines retain the conservative 75%
+    /// split that prevents the proven 48 GB paging regression.
     ///
-    /// This is deliberately the long-standing documented split rather than the
-    /// (larger) figure recent macOS releases advertise — an M5 Max on macOS 26
-    /// reports 84% of RAM. Pinning the catalog verdict to the conservative
-    /// number keeps it stable across OS releases and never optimistic, and the
-    /// `.tight` band below absorbs the difference.
+    /// The tier boundary is deliberate: current 128 GB hardware advertises an
+    /// 84% Metal working set, while the smaller-machine paging regression was
+    /// reproduced under the older 75% split. Host calculations are still
+    /// capped by Metal's live advertised value below.
     static func defaultBudgetGB(physicalMemoryGB: Double) -> Double {
         guard physicalMemoryGB > 0 else { return 0 }
-        return physicalMemoryGB * (physicalMemoryGB <= 36.5 ? (2.0 / 3.0) : 0.75)
+        if physicalMemoryGB <= 36.5 { return physicalMemoryGB * (2.0 / 3.0) }
+        if physicalMemoryGB >= 127.5 { return physicalMemoryGB * 0.84 }
+        return physicalMemoryGB * 0.75
     }
 
     /// Physical memory of the machine we're running on, in GB.
@@ -74,5 +80,103 @@ enum GPUMemoryBudget {
             let advertised = hostAdvertisedBudgetGB
         else { return base }
         return min(base, advertised)
+    }
+}
+
+/// User-facing wording for the exact budget that powers model compatibility
+/// and automatic routing. Keeping this beside `GPUMemoryBudget` prevents UI
+/// copy from drifting back to raw physical RAM while the policy uses the
+/// smaller GPU working-set ceiling.
+enum ModelHardwareGuidance {
+    /// Native image jobs use a separate MLX graph with denoise/VAE buffers.
+    /// Keep their catalog estimate identical to the existing execution-time
+    /// RAM preflight (`ChatResidencyHandoff.memoryPreflight`) so Automatic and
+    /// the visible fit label never approve a graph the final gate estimates
+    /// differently.
+    private static let delegatedModelRuntimeInflation = 1.3
+    private static let delegatedModelRuntimeHeadroomGB = 3.0
+
+    /// The same fit bands used by chat-model cards, image-model defaults, and
+    /// Automatic routing. Explicit tight-fit choices remain selectable; only
+    /// `.compatible` is eligible for an unattended automatic route.
+    static func compatibility(
+        estimatedMemoryGB: Double?,
+        physicalMemoryGB: Double
+    ) -> ModelCompatibility {
+        guard let required = estimatedMemoryGB, required > 0, physicalMemoryGB > 0 else {
+            return .unknown
+        }
+        let budget = GPUMemoryBudget.budgetGB(physicalMemoryGB: physicalMemoryGB)
+        guard budget > 0 else { return .unknown }
+        let ratio = required / budget
+        if ratio <= 0.85 { return .compatible }
+        if ratio <= 1.10 { return .tight }
+        return .tooLarge
+    }
+
+    static func formattedGB(_ value: Double) -> String {
+        guard value.isFinite, value > 0 else { return "0 GB" }
+        if abs(value.rounded() - value) < 0.05 {
+            return String(format: "%.0f GB", value)
+        }
+        return String(format: "%.1f GB", value)
+    }
+
+    static func estimatedImageWorkingSetGB(onDiskBytes: UInt64) -> Double? {
+        guard onDiskBytes > 0 else { return nil }
+        let onDiskGB = Double(onDiskBytes) / (1024 * 1024 * 1024)
+        return onDiskGB * delegatedModelRuntimeInflation
+            + delegatedModelRuntimeHeadroomGB
+    }
+
+    static func delegatedModelPreflightRequiredBytes(onDiskBytes: Int64) -> Int64 {
+        guard onDiskBytes > 0 else { return 0 }
+        let headroomBytes = Int64(
+            delegatedModelRuntimeHeadroomGB * 1024 * 1024 * 1024
+        )
+        return Int64(Double(onDiskBytes) * delegatedModelRuntimeInflation)
+            + headroomBytes
+    }
+
+    static func budgetSummary(physicalMemoryGB: Double) -> String? {
+        guard physicalMemoryGB > 0 else { return nil }
+        let budget = GPUMemoryBudget.budgetGB(physicalMemoryGB: physicalMemoryGB)
+        guard budget > 0 else { return nil }
+        return "\(formattedGB(physicalMemoryGB)) unified memory · \(formattedGB(budget)) recommended local-model budget"
+    }
+
+    static func fitSummary(
+        estimatedMemoryGB: Double?,
+        compatibility: ModelCompatibility?,
+        physicalMemoryGB: Double
+    ) -> String? {
+        guard let compatibility else { return nil }
+        let verdict: String
+        switch compatibility {
+        case .compatible: verdict = "Comfortable fit"
+        case .tight: verdict = "Tight fit"
+        case .tooLarge: verdict = "Too large"
+        case .unknown: verdict = "Fit unknown"
+        }
+
+        guard
+            let workingSet = workingSetSummary(
+                estimatedMemoryGB: estimatedMemoryGB,
+                physicalMemoryGB: physicalMemoryGB
+            )
+        else { return verdict }
+        return "\(verdict) · \(workingSet)"
+    }
+
+    static func workingSetSummary(
+        estimatedMemoryGB: Double?,
+        physicalMemoryGB: Double
+    ) -> String? {
+        guard let estimatedMemoryGB, estimatedMemoryGB > 0 else { return nil }
+        let budget = GPUMemoryBudget.budgetGB(physicalMemoryGB: physicalMemoryGB)
+        guard budget > 0 else {
+            return "~\(formattedGB(estimatedMemoryGB)) working set"
+        }
+        return "~\(formattedGB(estimatedMemoryGB)) working set · \(formattedGB(budget)) budget"
     }
 }

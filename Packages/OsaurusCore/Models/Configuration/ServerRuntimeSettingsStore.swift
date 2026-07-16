@@ -55,6 +55,8 @@ public enum ServerRuntimeSettingsStore {
         ".server-runtime-cache-defaults-v2-migrated"
     private static let pagedCacheDefaultOffMigrationMarkerName =
         ".server-runtime-paged-cache-default-off-v3-migrated"
+    private static let memorySafetyOwnedCacheDefaultsMigrationMarkerName =
+        ".server-runtime-memory-safety-cache-defaults-v4-migrated"
 
     // MARK: - Load / Save
 
@@ -160,12 +162,102 @@ public enum ServerRuntimeSettingsStore {
         cachedSnapshot = settings
     }
 
-    public nonisolated static func modelLoadRAMThresholds() -> (soft: Double, hard: Double) {
+    /// Whether the user explicitly selected the dangerous profile with no
+    /// replacement physical-memory ceiling. This is the shared switch for
+    /// Osaurus-owned load refusal/send/eviction gates; keeping it here prevents
+    /// the settings UI and runtime from assigning different meanings to the
+    /// final slider position.
+    public nonisolated static func automaticMemoryLimitsDisabled(
+        for settings: VMLXServerRuntimeSettings? = nil
+    ) -> Bool {
+        let settings = settings ?? snapshot()
+        return settings.memorySafety.mode == .diagnosticDangerous
+            && settings.memorySafety.customPhysicalMemoryFraction == nil
+    }
+
+    public nonisolated static func modelLoadRAMThresholds(
+        for settings: VMLXServerRuntimeSettings? = nil
+    ) -> (soft: Double, hard: Double) {
+        // These thresholds remain useful telemetry in dangerous mode, but
+        // must not retain the legacy 80%/95% assumptions after the user has
+        // explicitly removed automatic memory limits.
+        if automaticMemoryLimitsDisabled(for: settings) {
+            return (soft: 1.0, hard: 1.0)
+        }
         let configuration = diskBackedServerConfiguration() ?? .default
         return ServerConfiguration.normalizedModelLoadRAMThresholds(
             soft: configuration.modelLoadRAMSoftThreshold,
             hard: configuration.modelLoadRAMHardThreshold
         )
+    }
+
+    /// The one Osaurus-owned memory-plan resolver used by the settings UI,
+    /// diagnostics, cache construction, and every model load. vMLX's
+    /// `diagnostic_dangerous` profile deliberately removes allocator/KV caps,
+    /// but its generic resolver still expresses the load ceiling as 100% of
+    /// physical memory and supplies a single-sequence fallback. In Osaurus the
+    /// final slider position is the explicit "no automatic limits" choice:
+    /// when its advanced fields are blank, do not silently retain those two
+    /// host assumptions. Explicit cache/concurrency/custom-fraction overrides
+    /// remain authoritative. Detected physical/Metal working-set sizes remain
+    /// visible as guidance, but Osaurus does not turn them into a refusal in
+    /// this explicitly dangerous mode; engine/platform allocation failures can
+    /// still occur.
+    public nonisolated static func resolvedMemorySafetyPlan(
+        for settings: VMLXServerRuntimeSettings,
+        baseLoadConfiguration: LoadConfiguration = .default,
+        bundleFacts: LoadBundleFacts? = nil,
+        host: MemoryStatus? = nil,
+        request: VMLXMemoryRequestEstimate? = nil
+    ) -> VMLXResolvedMemorySafetyPlan {
+        var plan = settings.resolvedMemorySafetyPlan(
+            baseLoadConfiguration: baseLoadConfiguration,
+            bundleFacts: bundleFacts,
+            host: host,
+            request: request
+        )
+        guard settings.memorySafety.mode == .diagnosticDangerous else {
+            return plan
+        }
+
+        if settings.memorySafety.customPhysicalMemoryFraction == nil {
+            plan.loadConfiguration.memoryLimit = .unlimited
+            plan.resolvedLoadBudgetBytes = nil
+        }
+        if settings.memorySafety.customMaxConcurrentSequences == nil,
+            settings.concurrency.maxConcurrentSequences == nil
+        {
+            plan.concurrency.maxConcurrentSequences = nil
+        }
+
+        plan.warnings.append(
+            "No automatic Osaurus memory caps, load refusals, or percentage-based evictions are applied. Explicit advanced/cache/concurrency overrides remain in force; physical and Metal working-set guidance stays visible, and engine/platform allocations can still fail."
+        )
+        plan.displaySummary = memorySafetyDisplaySummary(
+            settings: settings,
+            plan: plan
+        )
+        return plan
+    }
+
+    private nonisolated static func memorySafetyDisplaySummary(
+        settings: VMLXServerRuntimeSettings,
+        plan: VMLXResolvedMemorySafetyPlan
+    ) -> String {
+        let concurrency = plan.concurrency.maxConcurrentSequences.map(String.init) ?? "default"
+        let kv = plan.cache.defaultMaxKVSize.map(String.init) ?? "unlimited"
+        return "mode=\(settings.memorySafety.mode.rawValue) slider=\(settings.memorySafety.slider) load_cap=\(residentCapSummary(plan.loadConfiguration.memoryLimit)) allocator_cap=\(residentCapSummary(plan.loadConfiguration.maxResidentBytes)) max_concurrent=\(concurrency) kv_cap=\(kv)"
+    }
+
+    private nonisolated static func residentCapSummary(_ cap: ResidentCap) -> String {
+        switch cap {
+        case .unlimited:
+            return "unlimited"
+        case .fraction(let fraction):
+            return String(format: "%.2f", fraction)
+        case .absolute(let bytes):
+            return String(bytes)
+        }
     }
 
     private nonisolated static func normalizeLoadedSettings(
@@ -225,6 +317,15 @@ public enum ServerRuntimeSettingsStore {
         if shouldRepairPagedCacheDefault(normalized.cache) {
             normalized.cache.pagedKV.enabled = false
             writePagedCacheDefaultOffMigrationMarker()
+        }
+        if shouldRepairMemorySafetyOwnedCacheDefaults(normalized.cache) {
+            // The persisted 15% prefix-cache value was an old product default,
+            // not a user-selected override. Leaving it non-nil makes every
+            // Memory Safety mode inherit 15%, so Performance/Strict cannot
+            // apply 20%/10% and No Automatic Limits cannot remove the cap.
+            // A non-default percentage or an explicit MiB cap is preserved.
+            normalized.cache.prefix.memoryPercent = nil
+            writeMemorySafetyOwnedCacheDefaultsMigrationMarker()
         }
         return normalized
     }
@@ -293,6 +394,36 @@ public enum ServerRuntimeSettingsStore {
 
     private nonisolated static func writePagedCacheDefaultOffMigrationMarker() {
         let url = pagedCacheDefaultOffMigrationMarkerURL()
+        OsaurusPaths.ensureExistsSilent(url.deletingLastPathComponent())
+        try? Data().write(to: url, options: [.atomic])
+    }
+
+    private nonisolated static func shouldRepairMemorySafetyOwnedCacheDefaults(
+        _ cache: VMLXServerCacheSettings
+    ) -> Bool {
+        guard
+            !FileManager.default.fileExists(
+                atPath: memorySafetyOwnedCacheDefaultsMigrationMarkerURL().path
+            )
+        else { return false }
+        return cache.prefix.enabled
+            && cache.prefix.legacyEntryCountCache == false
+            && cache.prefix.memoryLimitMB == nil
+            && cache.prefix.memoryPercent == 15.0
+            && cache.prefix.ttlMinutes == nil
+            && cache.pagedKV.enabled == false
+            && (cache.liveKVCodec == .engineSelected || cache.liveKVCodec == .none)
+            && cache.turboQuantKeyBits == nil
+            && cache.turboQuantValueBits == nil
+            && (cache.defaultMaxKVSize == nil || cache.defaultMaxKVSize == 65536)
+            && cache.longPromptMultiplier == 2.0
+            && cache.legacyDisk.enabled == false
+            && cache.blockDisk.enabled
+            && cache.enableSSMReDerive
+    }
+
+    private nonisolated static func writeMemorySafetyOwnedCacheDefaultsMigrationMarker() {
+        let url = memorySafetyOwnedCacheDefaultsMigrationMarkerURL()
         OsaurusPaths.ensureExistsSilent(url.deletingLastPathComponent())
         try? Data().write(to: url, options: [.atomic])
     }
@@ -368,7 +499,11 @@ public enum ServerRuntimeSettingsStore {
                 enabled: true,
                 legacyEntryCountCache: false,
                 memoryLimitMB: nil,
-                memoryPercent: 15,
+                // nil lets the selected Memory Safety profile own this default
+                // (Performance 20%, Safe Auto/Balanced 15%, Strict 10%, and
+                // No Automatic Limits uncapped). An explicit Cache-setting
+                // value remains non-nil and therefore wins in the resolver.
+                memoryPercent: nil,
                 ttlMinutes: nil
             ),
             pagedKV: VMLXPagedKVCacheSettings(
@@ -497,6 +632,10 @@ public enum ServerRuntimeSettingsStore {
 
     private nonisolated static func pagedCacheDefaultOffMigrationMarkerURL() -> URL {
         directoryURL().appendingPathComponent(pagedCacheDefaultOffMigrationMarkerName)
+    }
+
+    private nonisolated static func memorySafetyOwnedCacheDefaultsMigrationMarkerURL() -> URL {
+        directoryURL().appendingPathComponent(memorySafetyOwnedCacheDefaultsMigrationMarkerName)
     }
 
     private nonisolated static func legacyConfigurationFileURL() -> URL {

@@ -100,7 +100,11 @@ struct ConcurrencySection: View {
     }
 
     private func syncFromDraft() {
-        let desired = draft.concurrency.maxConcurrentSequences.map(String.init) ?? "1"
+        // Preserve nil as "engine selected" while merely viewing Settings.
+        // Writing the displayed fallback of 1 back through `onChange` made a
+        // clean profile acquire an Osaurus-owned concurrency cap before the
+        // user touched this control, which also made No Automatic Limits lie.
+        let desired = draft.concurrency.maxConcurrentSequences.map(String.init) ?? ""
         if maxConcurrentText != desired { maxConcurrentText = desired }
     }
 

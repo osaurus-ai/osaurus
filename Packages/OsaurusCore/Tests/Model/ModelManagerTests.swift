@@ -306,6 +306,27 @@ struct ModelManagerTests {
         #expect(detected.map(\.id).contains("JANGQ-AI/Step-3.7-Flash-JANGTQ_K"))
     }
 
+    @Test func scanLocalModels_readsShardedWeightTotalForNearRAMGuidance() throws {
+        let fm = FileManager.default
+        let root = fm.temporaryDirectory.appendingPathComponent("osu-sharded-size-\(UUID().uuidString)")
+        let repo = root.appendingPathComponent("JANGQ-AI").appendingPathComponent("Hy3-JANG_2K-MTP")
+        try fm.createDirectory(at: repo, withIntermediateDirectories: true)
+        defer { try? fm.removeItem(at: root) }
+
+        try Data("{}".utf8).write(to: repo.appendingPathComponent("config.json"))
+        try Data("{}".utf8).write(to: repo.appendingPathComponent("tokenizer.json"))
+        let weightBytes: Int64 = 105_275_271_344
+        let index = #"{"metadata":{"total_size":105275271344},"weight_map":{}}"#
+        try Data(index.utf8).write(to: repo.appendingPathComponent("model.safetensors.index.json"))
+
+        let detected = ModelManager.scanLocalModels(at: root)
+        let model = try #require(detected.first)
+        #expect(model.id == "JANGQ-AI/Hy3-JANG_2K-MTP")
+        #expect(model.downloadSizeBytes == weightBytes)
+        #expect(abs((model.estimatedMemoryGB(totalMemoryGB: 128) ?? 0) - 102.04) < 0.02)
+        #expect(model.compatibility(totalMemoryGB: 128) == .tight)
+    }
+
     @Test func scanLocalModels_detectsHighShardCountWithoutFixedMissLoop() async throws {
         let fm = FileManager.default
         let root = fm.temporaryDirectory.appendingPathComponent("osu-high-shard-scan-\(UUID().uuidString)")

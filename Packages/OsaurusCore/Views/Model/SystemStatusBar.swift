@@ -21,29 +21,37 @@ struct SystemStatusBar: View {
     let totalStorageGB: Double
 
     var body: some View {
-        HStack(spacing: 20) {
-            ResourceGauge(
-                label: L("RAM"),
-                icon: "memorychip",
-                usedFraction: totalMemoryGB > 0 ? usedMemoryGB / totalMemoryGB : 0,
-                detail: String(
-                    format: L("%.0f GB free / %.0f GB"),
-                    max(0, totalMemoryGB - usedMemoryGB),
-                    totalMemoryGB
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 20) {
+                ResourceGauge(
+                    label: L("RAM"),
+                    icon: "memorychip",
+                    usedFraction: totalMemoryGB > 0 ? usedMemoryGB / totalMemoryGB : 0,
+                    detail: String(
+                        format: L("%.0f GB free / %.0f GB"),
+                        max(0, totalMemoryGB - usedMemoryGB),
+                        totalMemoryGB
+                    )
                 )
-            )
 
-            ResourceGauge(
-                label: L("Storage"),
-                icon: DirectoryPickerService.shared.hasValidDirectory ? "externaldrive" : "internaldrive",
-                usedFraction: totalStorageGB > 0
-                    ? (totalStorageGB - availableStorageGB) / totalStorageGB : 0,
-                detail: String(
-                    format: L("%.0f GB free / %.0f GB"),
-                    availableStorageGB,
-                    totalStorageGB
+                ResourceGauge(
+                    label: L("Storage"),
+                    icon: DirectoryPickerService.shared.hasValidDirectory ? "externaldrive" : "internaldrive",
+                    usedFraction: totalStorageGB > 0
+                        ? (totalStorageGB - availableStorageGB) / totalStorageGB : 0,
+                    detail: String(
+                        format: L("%.0f GB free / %.0f GB"),
+                        availableStorageGB,
+                        totalStorageGB
+                    )
                 )
-            )
+            }
+
+            if let budget = ModelHardwareGuidance.budgetSummary(physicalMemoryGB: totalMemoryGB) {
+                Text("\(budget). Model estimates use this working-set budget; live free RAM is checked before load.")
+                    .font(.system(size: 10))
+                    .foregroundColor(theme.tertiaryText)
+            }
         }
         .padding(.horizontal, 24)
         .padding(.vertical, 10)

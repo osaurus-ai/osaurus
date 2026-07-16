@@ -2756,6 +2756,21 @@ extension FloatingInputCard {
         return pickerItems.first { $0.id == id }
     }
 
+    private var usesAutomaticModelRouting: Bool {
+        guard !isRemoteAgentRun else { return false }
+        return AutomaticModelRoutingPolicy.isAutomatic(
+            agentManager.configuredModel(for: agentId ?? Agent.defaultId)
+        )
+    }
+
+    private var automaticRoutingDecision: AutomaticModelRoutingPolicy.Decision? {
+        guard usesAutomaticModelRouting else { return nil }
+        return AutomaticModelRoutingPolicy.resolve(
+            items: pickerItems,
+            currentModelId: selectedModel
+        )
+    }
+
     private var selectedImagePickerItem: ModelPickerItem? {
         guard selectedPickerItem?.source.isImageGeneration == true else { return nil }
         return selectedPickerItem
@@ -2861,7 +2876,11 @@ extension FloatingInputCard {
             showModelPicker.toggle()
         } content: {
             HStack(spacing: 6) {
-                if isSelectedModelDeprecated {
+                if usesAutomaticModelRouting, automaticRoutingDecision == nil {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .font(theme.font(size: CGFloat(theme.captionSize) - 2))
+                        .foregroundColor(theme.warningColor)
+                } else if isSelectedModelDeprecated {
                     Image(systemName: "exclamationmark.triangle.fill")
                         .font(theme.font(size: CGFloat(theme.captionSize) - 2))
                         .foregroundColor(.orange)
@@ -2877,10 +2896,14 @@ extension FloatingInputCard {
                 // Model name with metadata badges
                 if let option = selectedPickerItem {
                     HStack(spacing: 4) {
-                        Text(option.displayName)
-                            .font(theme.font(size: CGFloat(theme.captionSize), weight: .medium))
-                            .foregroundColor(isSelectedModelDeprecated ? .orange : theme.secondaryText)
-                            .lineLimit(1)
+                        Text(
+                            usesAutomaticModelRouting
+                                ? "Auto → \(option.displayName)"
+                                : option.displayName
+                        )
+                        .font(theme.font(size: CGFloat(theme.captionSize), weight: .medium))
+                        .foregroundColor(isSelectedModelDeprecated ? .orange : theme.secondaryText)
+                        .lineLimit(1)
 
                         // Effective reasoning effort/mode for models with a
                         // segmented reasoning option (Codex catalog, official
@@ -2915,9 +2938,15 @@ extension FloatingInputCard {
                         }
                     }
                 } else {
-                    Text("Select Model", bundle: .module)
-                        .font(theme.font(size: CGFloat(theme.captionSize), weight: .medium))
-                        .foregroundColor(theme.secondaryText)
+                    Group {
+                        if usesAutomaticModelRouting {
+                            Text("Automatic unavailable", bundle: .module)
+                        } else {
+                            Text("Select Model", bundle: .module)
+                        }
+                    }
+                    .font(theme.font(size: CGFloat(theme.captionSize), weight: .medium))
+                    .foregroundColor(theme.secondaryText)
                 }
 
                 Image(systemName: "chevron.up.chevron.down")
@@ -2927,9 +2956,12 @@ extension FloatingInputCard {
         }
         // Chip-wide hover target: the 6px dot alone is too small to hover.
         .help(
-            isSelectedModelDeprecated
-                ? String(localized: "This model is outdated. Click to switch to a newer version.", bundle: .module)
-                : modelWarmupDotHelp
+            usesAutomaticModelRouting
+                ? (automaticRoutingDecision?.explanation
+                    ?? AutomaticModelRoutingPolicy.failureExplanation(for: .text))
+                : isSelectedModelDeprecated
+                    ? String(localized: "This model is outdated. Click to switch to a newer version.", bundle: .module)
+                    : modelWarmupDotHelp
         )
         .popover(isPresented: $showModelPicker, arrowEdge: .top) {
             ModelPickerView(
@@ -4358,6 +4390,13 @@ extension FloatingInputCard {
     /// substring/regex matcher; tests pin the boundary at
     /// `ModelMediaCapabilitiesMCDCTests`.
     private var mediaCapabilityDescriptor: ModelMediaCapabilities.Descriptor {
+        if usesAutomaticModelRouting {
+            return ModelMediaCapabilities.automaticDescriptor(
+                capabilities: AutomaticModelRoutingPolicy.availableMediaCapabilities(
+                    items: pickerItems
+                )
+            )
+        }
         // The local-model scan runs off-main and records config.json's
         // model_type. Read only its non-blocking snapshot here: this getter is
         // evaluated from SwiftUI body/layout and must never trigger a disk

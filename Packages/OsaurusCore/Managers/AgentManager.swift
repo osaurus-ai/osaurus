@@ -756,9 +756,11 @@ extension AgentManager {
         return agent.systemPrompt
     }
 
-    /// Get the effective model for an agent
-    /// For custom agents without a model set, falls back to global "new agent" default
-    public func effectiveModel(for agentId: UUID) -> String? {
+    /// Get the persisted model choice after applying agent inheritance, without
+    /// resolving synthetic choices such as Automatic. Settings and chat use
+    /// this to distinguish an explicitly automatic agent from one pinned to a
+    /// concrete model.
+    func configuredModel(for agentId: UUID) -> String? {
         let defaultAgentModel = DefaultAgentConfigurationStore.load().defaultModel
         guard let agent = agent(for: agentId) else {
             return defaultAgentModel ?? ChatConfigurationStore.load().defaultModel
@@ -775,6 +777,33 @@ extension AgentManager {
         return agent.defaultModel
             ?? ChatConfigurationStore.load().defaultModel
             ?? defaultAgentModel
+    }
+
+    /// Get the concrete effective model for an agent. An explicit Automatic
+    /// choice resolves only to an installed, compatible on-device chat model;
+    /// it never falls through to a connected cloud provider. Callers that need
+    /// media-aware routing should use `automaticModelDecision` with the turn's
+    /// requirements before dispatch.
+    public func effectiveModel(for agentId: UUID) -> String? {
+        let configured = configuredModel(for: agentId)
+        guard AutomaticModelRoutingPolicy.isAutomatic(configured) else { return configured }
+        return automaticModelDecision(for: agentId)?.modelId
+    }
+
+    func automaticModelDecision(
+        for agentId: UUID,
+        requirements: AutomaticModelRoutingPolicy.Requirements = .text,
+        currentModelId: String? = nil,
+        items: [ModelPickerItem]? = nil
+    ) -> AutomaticModelRoutingPolicy.Decision? {
+        guard AutomaticModelRoutingPolicy.isAutomatic(configuredModel(for: agentId)) else {
+            return nil
+        }
+        return AutomaticModelRoutingPolicy.resolve(
+            items: items ?? ModelPickerItemCache.shared.items,
+            requirements: requirements,
+            currentModelId: currentModelId
+        )
     }
 
     /// Get the effective temperature for an agent

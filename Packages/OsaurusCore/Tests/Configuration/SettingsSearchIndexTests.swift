@@ -112,4 +112,14 @@ struct SettingsSearchIndexTests {
         let killSwitchHits = SettingsSearchIndex.search("kill switch")
         #expect(killSwitchHits.contains { $0.id == "agentChannels.globalWrites" && $0.tab == .agentChannels })
     }
+
+    @Test func searchFindsAutomaticRoutingAndHardwareGuidance() {
+        for query in ["automatic model", "automatic routing", "hardware guidance", "memory budget"] {
+            let hits = SettingsSearchIndex.search(query)
+            #expect(
+                hits.contains { $0.id == "settings.chat.defaultModel" && $0.tab == .chat },
+                "Default Model should be reachable for query: \(query)"
+            )
+        }
+    }
 }

@@ -136,6 +136,76 @@ struct NativeImageJobCoordinatorTests {
         #expect(resolved == "ready-edit")
     }
 
+    @Test func automaticResolverIsRAMSafeAndIndependentOfScanOrder() throws {
+        let gb: UInt64 = 1024 * 1024 * 1024
+        let large = imageModel(
+            id: "large",
+            ready: true,
+            textToImage: true,
+            totalBytes: 20 * gb
+        )
+        let small = imageModel(
+            id: "small",
+            ready: true,
+            textToImage: true,
+            totalBytes: 4 * gb
+        )
+        let tooLarge = imageModel(
+            id: "too-large",
+            ready: true,
+            textToImage: true,
+            totalBytes: 15 * gb
+        )
+
+        #expect(
+            try NativeImageJobModelResolver.resolve(
+                requested: nil,
+                configured: nil,
+                available: [large, tooLarge, small],
+                kind: .imageGeneration,
+                physicalMemoryGB: 16
+            ) == "small"
+        )
+        #expect(
+            try NativeImageJobModelResolver.resolve(
+                requested: nil,
+                configured: nil,
+                available: [small, large, tooLarge],
+                kind: .imageGeneration,
+                physicalMemoryGB: 16
+            ) == "small"
+        )
+    }
+
+    @Test func automaticResolverRejectsOnlyTightImageModelsButExplicitSelectionRemainsAvailable() throws {
+        let gb: UInt64 = 1024 * 1024 * 1024
+        let tight = imageModel(
+            id: "tight-explicit",
+            ready: true,
+            textToImage: true,
+            totalBytes: 5 * gb
+        )
+
+        #expect(throws: NativeImageJobCoordinatorError.self) {
+            _ = try NativeImageJobModelResolver.resolve(
+                requested: nil,
+                configured: nil,
+                available: [tight],
+                kind: .imageGeneration,
+                physicalMemoryGB: 16
+            )
+        }
+        #expect(
+            try NativeImageJobModelResolver.resolve(
+                requested: tight.id,
+                configured: nil,
+                available: [tight],
+                kind: .imageGeneration,
+                physicalMemoryGB: 16
+            ) == tight.id
+        )
+    }
+
     @Test func chatResidencyPolicyOnlyEvictsForAgentSingleResidency() {
         // The image-job residency decision now lives on the config as the single
         // source consumed by the shared `ChatResidencyHandoff` dedup.
@@ -218,7 +288,8 @@ struct NativeImageJobCoordinatorTests {
         id: String,
         ready: Bool,
         textToImage: Bool,
-        imageEdit: Bool = false
+        imageEdit: Bool = false,
+        totalBytes: UInt64 = 0
     ) -> ImageModelInfo {
         ImageModelInfo(
             id: id,
@@ -231,7 +302,7 @@ struct NativeImageJobCoordinatorTests {
             defaultGuidance: nil,
             capabilities: ImageModelCapabilities(textToImage: textToImage, imageEdit: imageEdit),
             blockedReasons: ready ? [] : ["missing weights"],
-            totalBytes: 0
+            totalBytes: totalBytes
         )
     }
 }

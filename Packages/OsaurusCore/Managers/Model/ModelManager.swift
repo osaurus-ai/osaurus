@@ -1991,6 +1991,37 @@ extension ModelManager {
                 || exists(dir, "video_config.json")
         }
 
+        /// Read the weight total from bounded bundle metadata while the local
+        /// discovery scan is already off-main. Hugging Face sharded exports
+        /// publish the exact logical byte count in
+        /// `model.safetensors.index.json`; single-file exports can be sized
+        /// with one stat call. This avoids recursively walking every shard of
+        /// 100+ GB bundles while still giving RAM guidance an authoritative
+        /// local size even when the repo was copied in manually and has no HF
+        /// `ModelSizeCache` entry.
+        func localWeightSizeBytes(_ dir: URL) -> Int64? {
+            let index = dir.appendingPathComponent("model.safetensors.index.json")
+            if exists(dir, "model.safetensors.index.json"),
+                let data = try? Data(contentsOf: index, options: [.mappedIfSafe]),
+                let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                let metadata = object["metadata"] as? [String: Any],
+                let number = metadata["total_size"] as? NSNumber
+            {
+                let bytes = number.int64Value
+                if bytes > 0 { return bytes }
+            }
+
+            let single = dir.appendingPathComponent("model.safetensors")
+            if exists(dir, "model.safetensors"),
+                let attributes = try? fm.attributesOfItem(atPath: single.path),
+                let number = attributes[.size] as? NSNumber
+            {
+                let bytes = number.int64Value
+                if bytes > 0 { return bytes }
+            }
+            return nil
+        }
+
         func shouldDescendIntoLocalModelCandidate(_ entry: URL) -> Bool {
             let name = entry.lastPathComponent.lowercased()
             let skippedInfrastructureDirectories: Set<String> = [
@@ -2072,6 +2103,7 @@ extension ModelManager {
                         name: ModelMetadataParser.friendlyName(from: id),
                         description: L("Local model (detected)"),
                         downloadURL: "https://huggingface.co/\(id)",
+                        downloadSizeBytes: localWeightSizeBytes(resolved),
                         // The scan already runs off-main. Preserve the bundle's
                         // architecture tag here so hot UI paths can distinguish
                         // image-only from video-capable local VLMs without

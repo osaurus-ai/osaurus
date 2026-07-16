@@ -1050,9 +1050,16 @@ public actor ModelRuntime {
     /// `SubagentResidency`'s coexistence gate, which must stay under it —
     /// loading past this triggers `unloadForFlexibleResidentBudget`'s own
     /// eviction, which would evict the orchestrator with no restore lease.
-    static func flexibleResidentBudgetBytes() -> Int64 {
+    static func flexibleResidentBudgetBytes(
+        physicalMemoryBytes: Int64 = Int64(ProcessInfo.processInfo.physicalMemory),
+        automaticMemoryLimitsDisabled: Bool =
+            ServerRuntimeSettingsStore.automaticMemoryLimitsDisabled()
+    ) -> Int64 {
+        if automaticMemoryLimitsDisabled {
+            return .max
+        }
         let thresholds = ServerRuntimeSettingsStore.modelLoadRAMThresholds()
-        return Int64(Double(ProcessInfo.processInfo.physicalMemory) * thresholds.soft)
+        return Int64(Double(physicalMemoryBytes) * thresholds.soft)
     }
 
     /// Snapshot of the most recent pre-load RAM feasibility assessment.
@@ -1079,6 +1086,10 @@ public actor ModelRuntime {
         public let requiredAvailableBytes: Int64
         public let softLimitBytes: Int64
         public let hardLimitBytes: Int64
+        /// The user explicitly selected the dangerous setting that turns the
+        /// physical/Metal projections into guidance instead of an Osaurus
+        /// send/load refusal.
+        public let automaticMemoryLimitsDisabled: Bool
         /// What Metal will actually keep resident on this machine. Zero when
         /// it can't be determined.
         public let gpuBudgetBytes: Int64
@@ -1129,7 +1140,7 @@ public actor ModelRuntime {
             if residentProjection > hardLimitBytes
                 || incomingLoadFootprintBytes > physicalMemoryBytes
             {
-                return .block
+                return automaticMemoryLimitsDisabled ? .warn : .block
             }
             // A working set past the GPU budget gets paged even on an
             // otherwise idle Mac, so it warns no matter how much RAM happens
@@ -1358,7 +1369,9 @@ public actor ModelRuntime {
         inflightOther: Int64,
         kvHeadroom: Int64,
         physical: Int64,
-        available: Int64
+        available: Int64,
+        automaticMemoryLimitsDisabled: Bool =
+            ServerRuntimeSettingsStore.automaticMemoryLimitsDisabled()
     ) -> RAMFeasibility {
         let requiredAvailable = incomingLoadFootprintBytes + kvHeadroom
         let projected = resident + inflightOther + incomingLoadFootprintBytes + kvHeadroom
@@ -1393,6 +1406,7 @@ public actor ModelRuntime {
             requiredAvailableBytes: requiredAvailable,
             softLimitBytes: softLimit,
             hardLimitBytes: hardLimit,
+            automaticMemoryLimitsDisabled: automaticMemoryLimitsDisabled,
             gpuBudgetBytes: Self.gpuBudgetBytes(physicalMemoryBytes: physical),
             timestamp: Date()
         )
@@ -1423,7 +1437,9 @@ public actor ModelRuntime {
         incomingLoadFootprintBytes: Int64,
         excludingResident excludedName: String?,
         modelDirectory: URL? = nil,
-        refuseOnShortfall: Bool = false
+        refuseOnShortfall: Bool = false,
+        automaticMemoryLimitsDisabled: Bool =
+            ServerRuntimeSettingsStore.automaticMemoryLimitsDisabled()
     ) throws {
         let physical = Int64(ProcessInfo.processInfo.physicalMemory)
         guard physical > 0, incomingWeightsBytes > 0 else { return }
@@ -1446,7 +1462,8 @@ public actor ModelRuntime {
             inflightOther: inflightOther,
             kvHeadroom: kvHeadroom,
             physical: physical,
-            available: Self.availableMemoryBytes()
+            available: Self.availableMemoryBytes(),
+            automaticMemoryLimitsDisabled: automaticMemoryLimitsDisabled
         )
 
         lastRAMFeasibility = assessment
@@ -2023,11 +2040,16 @@ public actor ModelRuntime {
         // reclaims file cache, so proceeding into a shortfall dies as a
         // Metal command-buffer abort mid-load, not graceful pressure
         // (observed live: available 101 GB loaded clean, 89 GB crashed).
+        let preloadServerSettings = ServerRuntimeSettingsStore.snapshot()
+        let automaticMemoryLimitsDisabled =
+            ServerRuntimeSettingsStore.automaticMemoryLimitsDisabled(
+                for: preloadServerSettings
+            )
         let willMaterialize =
             !Self.resolveMemorySafetyLoadPlan(
                 modelName: name,
                 modelDirectory: localURL,
-                settings: ServerRuntimeSettingsStore.snapshot(),
+                settings: preloadServerSettings,
                 baseLoadConfiguration: .osaurusProduction,
                 inspectBundleFacts: true
             ).loadConfiguration.useMmapSafetensors
@@ -2068,15 +2090,17 @@ public actor ModelRuntime {
         // eviction / flexible budget trimming above, `resident` reflects what
         // will still be alive when this load lands. Pressure is reported via
         // health/logs; for mmap loads RAM fullness is not a user-requested
-        // load block, but a materialized load short on free memory is
-        // refused outright — see `willMaterialize` above.
+        // load block. A materialized load short on free memory is normally
+        // refused outright, but the explicit No Automatic Limits setting
+        // turns that Osaurus-owned refusal into guidance as advertised.
         try checkRAMFeasibility(
             modelName: name,
             incomingWeightsBytes: weightsBytes,
             incomingLoadFootprintBytes: loadFootprintBytes,
             excludingResident: name,
             modelDirectory: localURL,
-            refuseOnShortfall: willMaterialize
+            refuseOnShortfall: willMaterialize && !automaticMemoryLimitsDisabled,
+            automaticMemoryLimitsDisabled: automaticMemoryLimitsDisabled
         )
 
         // Tool-call format + reasoning parser are stamped automatically by
@@ -2279,7 +2303,8 @@ public actor ModelRuntime {
         // the two diverged and the slider never reached the coordinator.
         var resolvedSettings = settings
         resolvedSettings.cache =
-            settings.resolvedMemorySafetyPlan(
+            ServerRuntimeSettingsStore.resolvedMemorySafetyPlan(
+                for: settings,
                 host: MemoryStatus.snapshot()
             ).cache
         let diskCacheDir = Self.cacheDiskDirectoryOverride(for: resolvedSettings.cache)
@@ -3325,7 +3350,23 @@ public actor ModelRuntime {
         } else {
             unsetenv("VMLX_ENABLE_UNSAFE_COMPILE")
         }
-        CacheStoreBudget.policy = settings.memorySafety.mode.cacheStorePolicy
+        CacheStoreBudget.policy = cacheStorePolicy(for: settings)
+    }
+
+    /// The engine's diagnostic profile still reserves 45% of remaining RAM
+    /// before storing a prefix snapshot. That is a sensible dangerous-mode
+    /// default for generic hosts, but it is still an automatic percentage cap.
+    /// Osaurus's explicitly named No Automatic Limits choice therefore allows
+    /// a store to use all *measured* remaining physical headroom; the engine's
+    /// final physical-fit check remains intact so a cache optimization cannot
+    /// knowingly allocate beyond the machine.
+    nonisolated static func cacheStorePolicy(
+        for settings: VMLXServerRuntimeSettings
+    ) -> CacheStorePolicy {
+        if ServerRuntimeSettingsStore.automaticMemoryLimitsDisabled(for: settings) {
+            return CacheStorePolicy(headroomFraction: 1.0)
+        }
+        return settings.memorySafety.mode.cacheStorePolicy
     }
 
     nonisolated static func makeGenerateParameters(
@@ -3484,7 +3525,8 @@ public actor ModelRuntime {
             inspectBundleFacts
             ? LoadBundleFacts.inspect(bundleURL: modelDirectory)
             : nil
-        let plan = settings.resolvedMemorySafetyPlan(
+        let plan = ServerRuntimeSettingsStore.resolvedMemorySafetyPlan(
+            for: settings,
             baseLoadConfiguration: baseLoadConfiguration,
             bundleFacts: bundleFacts,
             host: MemoryStatus.snapshot(),

@@ -31,7 +31,8 @@ struct GPUMemoryBudgetTests {
         #expect(GPUMemoryBudget.defaultBudgetGB(physicalMemoryGB: 16) == 16 * (2.0 / 3.0))
         #expect(GPUMemoryBudget.defaultBudgetGB(physicalMemoryGB: 36) == 36 * (2.0 / 3.0))
         #expect(GPUMemoryBudget.defaultBudgetGB(physicalMemoryGB: 48) == 36.0)
-        #expect(GPUMemoryBudget.defaultBudgetGB(physicalMemoryGB: 128) == 96.0)
+        #expect(GPUMemoryBudget.defaultBudgetGB(physicalMemoryGB: 96) == 72.0)
+        #expect(GPUMemoryBudget.defaultBudgetGB(physicalMemoryGB: 128) == 107.52)
     }
 
     @Test("No physical memory yields no budget")
@@ -83,6 +84,17 @@ struct GPUMemoryBudgetTests {
         #expect(ornith.compatibility(totalMemoryGB: 64) == .tight)
         #expect(ornith.compatibility(totalMemoryGB: 96) == .compatible)
         #expect(ornith.compatibility(totalMemoryGB: 128) == .compatible)
+    }
+
+    @Test("A 105 GB-class bundle is offered as a tight explicit load on a 128 GB Mac")
+    func nearRAMScaleModelFits128GBWithWarning() throws {
+        // 105 GB decimal is about 97.8 GiB. The near-RAM load plan uses the
+        // materialized weights plus a 4 GiB working margin, not a fake 25%
+        // expansion that would classify it as impossible.
+        let nearRAM = Self.model("hy3-105gb", gbOnDisk: 97.8)
+        let estimate = try #require(nearRAM.estimatedMemoryGB(totalMemoryGB: 128))
+        #expect(abs(estimate - 101.8) < 0.001)
+        #expect(nearRAM.compatibility(totalMemoryGB: 128) == .tight)
     }
 
     @Test("Small bundles stay comfortable on base-RAM Macs")

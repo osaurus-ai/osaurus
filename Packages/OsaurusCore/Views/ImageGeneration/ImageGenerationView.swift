@@ -169,18 +169,34 @@ private struct ImageGenerationSettingsTab: View {
                             "The models image jobs fall back to. Each agent can override these in its own Subagents settings."
                         )
 
+                        if let budget = ModelHardwareGuidance.budgetSummary(
+                            physicalMemoryGB: GPUMemoryBudget.hostPhysicalMemoryGB
+                        ) {
+                            sectionBlurb(
+                                "\(budget). Automatic uses the smallest ready image model that comfortably fits; tight-fit models require an explicit choice."
+                            )
+                        }
+
                         controlRow("Generation model") {
                             modelDropdown(
                                 \.defaultImageGenerationModelId,
                                 candidates: pickerItems.imageGenerationDelegateCandidates
                             )
                         }
+                        imageModelGuidance(
+                            currentId: configuration.defaultImageGenerationModelId,
+                            candidates: pickerItems.imageGenerationDelegateCandidates
+                        )
                         controlRow("Edit model") {
                             modelDropdown(
                                 \.defaultImageEditModelId,
                                 candidates: pickerItems.imageEditDelegateCandidates
                             )
                         }
+                        imageModelGuidance(
+                            currentId: configuration.defaultImageEditModelId,
+                            candidates: pickerItems.imageEditDelegateCandidates
+                        )
                         if pickerItems.imageEditDelegateCandidates.isEmpty {
                             editModelEmptyStateHint
                         }
@@ -342,6 +358,45 @@ private struct ImageGenerationSettingsTab: View {
             options: modelOptions(candidates: candidates, currentId: configuration[keyPath: keyPath]),
             selection: modelBinding(keyPath)
         )
+    }
+
+    @ViewBuilder
+    private func imageModelGuidance(
+        currentId: String?,
+        candidates: [ModelPickerItem]
+    ) -> some View {
+        let selected: ModelPickerItem? = {
+            if let currentId, !currentId.isEmpty {
+                return candidates.first { $0.id == currentId }
+            }
+            return candidates
+                .filter { $0.hardwareCompatibility == .compatible }
+                .min {
+                    let lhs = $0.estimatedMemoryGB ?? .greatestFiniteMagnitude
+                    let rhs = $1.estimatedMemoryGB ?? .greatestFiniteMagnitude
+                    if lhs != rhs { return lhs < rhs }
+                    return $0.displayName.localizedCaseInsensitiveCompare($1.displayName)
+                        == .orderedAscending
+                }
+        }()
+
+        if let selected, let guidance = selected.hardwareGuidance {
+            let prefix = (currentId?.isEmpty == false) ? "Selected" : "Automatic"
+            Text("\(prefix): \(selected.displayName) · \(guidance)", bundle: .module)
+                .font(.system(size: 11))
+                .foregroundColor(theme.tertiaryText)
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        } else if currentId == nil || currentId?.isEmpty == true {
+            Text(
+                "Automatic has no ready image model that comfortably fits this Mac.",
+                bundle: .module
+            )
+            .font(.system(size: 11))
+            .foregroundColor(theme.warningColor)
+            .fixedSize(horizontal: false, vertical: true)
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
     }
 
     /// The dropdown rows for a model picker: "Choose automatically" first, a

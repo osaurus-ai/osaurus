@@ -247,6 +247,7 @@ struct NativeImageJobResult: Sendable, Equatable {
 
 enum NativeImageJobCoordinatorError: Error, CustomStringConvertible {
     case noReadyModel(kind: SubagentModelKind)
+    case noSafeAutomaticModel(kind: SubagentModelKind)
     case selectedModelUnavailable(model: String, kind: SubagentModelKind)
     case selectedModelIncomplete(model: String, reasons: [String])
     case selectedModelWrongKind(model: String, expected: SubagentModelKind)
@@ -257,6 +258,8 @@ enum NativeImageJobCoordinatorError: Error, CustomStringConvertible {
         switch self {
         case .noReadyModel(let kind):
             return "no ready local model configured or installed for \(kind.rawValue)"
+        case .noSafeAutomaticModel(let kind):
+            return "no ready local model comfortably fits this Mac for automatic \(kind.rawValue); choose a tight-fit model explicitly if you want to try it"
         case .selectedModelUnavailable(let model, let kind):
             return "selected local image model '\(model)' is not installed for \(kind.rawValue)"
         case .selectedModelIncomplete(let model, let reasons):
@@ -277,7 +280,8 @@ enum NativeImageJobModelResolver {
         requested: String?,
         configured: String?,
         available: [ImageModelInfo],
-        kind: SubagentModelKind
+        kind: SubagentModelKind,
+        physicalMemoryGB: Double = GPUMemoryBudget.hostPhysicalMemoryGB
     ) throws -> String {
         if let requested = normalizedID(requested) {
             return try requireReadyModel(requested, available: available, kind: kind)
@@ -285,10 +289,42 @@ enum NativeImageJobModelResolver {
         if let configured = normalizedID(configured) {
             return try requireReadyModel(configured, available: available, kind: kind)
         }
-        if let candidate = available.first(where: { isReady($0, for: kind) }) {
+        let ready = available.filter { isReady($0, for: kind) }
+        guard !ready.isEmpty else {
+            throw NativeImageJobCoordinatorError.noReadyModel(kind: kind)
+        }
+
+        // A nil model means Automatic. Filesystem scan order is not a routing
+        // policy: it changed with installs/deletes and could silently pick the
+        // largest image graph. Choose the smallest ready model that comfortably
+        // fits the same hardware budget used by the UI. Unknown-size legacy
+        // rows remain a deterministic fallback, but tight/oversized rows must
+        // be selected explicitly so the user sees and accepts the RAM warning.
+        let candidates = ready.filter { model in
+            guard model.totalBytes > 0 else { return true }
+            let estimated = ModelHardwareGuidance.estimatedImageWorkingSetGB(
+                onDiskBytes: model.totalBytes
+            )
+            return ModelHardwareGuidance.compatibility(
+                estimatedMemoryGB: estimated,
+                physicalMemoryGB: physicalMemoryGB
+            ) == .compatible
+        }
+        if let candidate = candidates.min(by: automaticImageOrder) {
             return candidate.id
         }
-        throw NativeImageJobCoordinatorError.noReadyModel(kind: kind)
+        throw NativeImageJobCoordinatorError.noSafeAutomaticModel(kind: kind)
+    }
+
+    private static func automaticImageOrder(_ lhs: ImageModelInfo, _ rhs: ImageModelInfo) -> Bool {
+        // Known measured sizes outrank unknown legacy rows; then prefer the
+        // lower-footprint graph. Names/ids make the result stable across scan
+        // order and app restarts.
+        if (lhs.totalBytes > 0) != (rhs.totalBytes > 0) { return lhs.totalBytes > 0 }
+        if lhs.totalBytes != rhs.totalBytes { return lhs.totalBytes < rhs.totalBytes }
+        let byName = lhs.displayName.localizedCaseInsensitiveCompare(rhs.displayName)
+        if byName != .orderedSame { return byName == .orderedAscending }
+        return lhs.id.localizedCaseInsensitiveCompare(rhs.id) == .orderedAscending
     }
 
     private static func normalizedID(_ value: String?) -> String? {

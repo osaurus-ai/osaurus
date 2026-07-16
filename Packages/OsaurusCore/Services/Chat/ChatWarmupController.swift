@@ -188,6 +188,22 @@ final class ChatWarmupController: ObservableObject {
         }
     }
 
+    /// Automatic routing changes `selectedModel` under an explicit
+    /// `isLoadingModel` guard, after the published property has settled. Start
+    /// that switch synchronously so `needsPreSendHandshake` is already true
+    /// before the same send call decides whether it may dispatch immediately.
+    func handleSettledModelSelectionChange(
+        session: ChatWarmupSessionContext,
+        to newModel: String?,
+        performSwitch: @escaping @MainActor (_ evictOthers: Bool) async -> Void
+    ) {
+        performModelSelectionChange(
+            session: session,
+            to: newModel,
+            performSwitch: performSwitch
+        )
+    }
+
     private func performModelSelectionChange(
         session: ChatWarmupSessionContext,
         to newModel: String?,

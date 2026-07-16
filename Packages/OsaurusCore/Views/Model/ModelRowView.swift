@@ -427,22 +427,22 @@ struct ModelRowView: View {
         .frame(height: 14)
     }
 
-    /// Plain-language fit verdict. When the RAM estimate is known it reads
-    /// as "Runs Well · needs ~10 GB" so new users get the "will this work on
-    /// my Mac" answer without decoding quant/param jargon.
+    /// Plain-language fit verdict. Keep this wording aligned with the picker
+    /// and detail view so a model never changes from "Comfortable" to "Runs
+    /// Well" merely because the user opened a different surface.
     @ViewBuilder
     private var compatibilityBadge: some View {
         switch content.compatibility {
         case .compatible:
             TintedPill(
                 icon: "checkmark.shield",
-                label: Text(fitText(verdict: L("Runs Well"))),
+                label: Text(fitText(verdict: L("Comfortable fit"))),
                 color: theme.successColor
             )
         case .tight:
             TintedPill(
                 icon: "exclamationmark.triangle",
-                label: Text(fitText(verdict: L("Tight Fit"))),
+                label: Text(fitText(verdict: L("Tight fit"))),
                 color: theme.warningColor
             )
         case .tooLarge:
@@ -458,7 +458,7 @@ struct ModelRowView: View {
 
     private func fitText(verdict: String) -> String {
         guard let memory = content.memoryNeeded else { return verdict }
-        return "\(verdict) · \(L("needs \(memory)"))"
+        return "\(verdict) · \(memory)"
     }
 
     /// Badge showing whether the model is an LLM, VLM, or image generator.

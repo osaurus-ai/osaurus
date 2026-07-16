@@ -684,36 +684,32 @@ struct ModelDetailView: View, Identifiable {
     /// decision.
     private var compatibilityLine: some View {
         let verdict = model.compatibility(totalMemoryGB: systemMonitor.totalMemoryGB)
-        let totalMem = systemMonitor.totalMemoryGB
-
-        // The memory estimate reads the same for every verdict except
-        // `.unknown` (where we have nothing to show), so compute it once.
-        let memoryDetail = String(
-            format: L("~%@ of %.0f GB"),
-            model.formattedEstimatedMemory ?? "—",
-            totalMem
-        )
+        let memoryDetail =
+            ModelHardwareGuidance.workingSetSummary(
+                estimatedMemoryGB: model.estimatedMemoryGB,
+                physicalMemoryGB: systemMonitor.totalMemoryGB
+            ) ?? ""
 
         let (icon, title, detail, tint): (String, String, String, Color) = {
             switch verdict {
             case .compatible:
                 return (
                     "checkmark.shield.fill",
-                    L("Should run smoothly on this Mac"),
+                    L("Fits this Mac's recommended model budget"),
                     memoryDetail,
                     theme.successColor
                 )
             case .tight:
                 return (
                     "exclamationmark.triangle.fill",
-                    L("Will be a tight fit"),
+                    L("Tight against this Mac's recommended model budget"),
                     memoryDetail,
                     theme.warningColor
                 )
             case .tooLarge:
                 return (
                     "xmark.octagon.fill",
-                    L("Too large for this Mac"),
+                    L("Exceeds this Mac's recommended model budget"),
                     memoryDetail,
                     theme.errorColor
                 )
@@ -836,11 +832,11 @@ struct ModelDetailView: View, Identifiable {
             let memory = variant.formattedEstimatedMemory
             switch variant.compatibility(totalMemoryGB: totalMemoryGB) {
             case .compatible:
-                return (memory.map { L("Runs Well · needs \($0)") } ?? L("Runs Well"), theme.successColor)
+                return (memory.map { "\(L("Comfortable fit")) · \($0)" } ?? L("Comfortable fit"), theme.successColor)
             case .tight:
-                return (memory.map { L("Tight Fit · needs \($0)") } ?? L("Tight Fit"), theme.warningColor)
+                return (memory.map { "\(L("Tight fit")) · \($0)" } ?? L("Tight fit"), theme.warningColor)
             case .tooLarge:
-                return (memory.map { L("Too Large · needs \($0)") } ?? L("Too Large"), theme.errorColor)
+                return (memory.map { "\(L("Too large")) · \($0)" } ?? L("Too large"), theme.errorColor)
             case .unknown:
                 return (nil, theme.tertiaryText)
             }

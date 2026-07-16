@@ -539,22 +539,41 @@ struct MLXModel: Identifiable, Codable {
         }
     }
 
-    /// Estimated memory required to run this model (in GB), including overhead
-    /// for KV cache, activations, and runtime buffers.
+    /// Estimated memory required to load this model (in GB), including runtime
+    /// headroom.
     ///
     /// Prefers the **measured** on-disk size (folded in from `ModelSizeCache`
     /// via `withDownloadSize`) when known — weights dominate the footprint, so
     /// the real byte count plus the headroom multiplier is more honest than
     /// the `params × bytesPerParameter` constant heuristic. The heuristic is
     /// only the fallback for entries we haven't sized yet.
-    var estimatedMemoryGB: Double? {
+    /// Near-RAM-scale loads on 128 GB-and-up Macs are materialized by the real
+    /// vMLX memory-safety plan (rather than mmap-streamed) when the weights fit.
+    /// For that lane the runtime's authoritative preflight is weights plus a
+    /// fixed 4 GiB working margin; multiplying a 98 GiB bundle by the generic
+    /// 1.25 factor falsely reports 122.5 GiB and blocks the 105–109 GB-class
+    /// bundles these machines can load. Smaller models and smaller Macs keep
+    /// the conservative percentage headroom that caught the 48 GB paging
+    /// regression.
+    func estimatedMemoryGB(totalMemoryGB: Double) -> Double? {
         if let dlBytes = downloadSizeBytes, dlBytes > 0 {
-            return Double(dlBytes) * Self.overheadMultiplier / Self.bytesPerGB
+            let weightsGB = Double(dlBytes) / Self.bytesPerGB
+            if totalMemoryGB >= 127.5 {
+                let fraction = weightsGB / totalMemoryGB
+                if fraction > 0.55, fraction <= 0.86 {
+                    return weightsGB + 4.0
+                }
+            }
+            return weightsGB * Self.overheadMultiplier
         }
         if let params = parameterCountBillions {
             return params * bytesPerParameter * 1e9 * Self.overheadMultiplier / Self.bytesPerGB
         }
         return nil
+    }
+
+    var estimatedMemoryGB: Double? {
+        estimatedMemoryGB(totalMemoryGB: GPUMemoryBudget.hostPhysicalMemoryGB)
     }
 
     /// Formatted estimated memory string (e.g. "~3.5 GB")
@@ -564,17 +583,6 @@ struct MLXModel: Identifiable, Codable {
             ? String(format: "~%.0f MB", gb * 1024)
             : String(format: "~%.1f GB", gb)
     }
-
-    /// Comfortably inside the GPU working set, with room for a long-context KV
-    /// cache to grow.
-    private static let comfortableBudgetRatio: Double = 0.85
-    /// The most a working set may overshoot the budget and still be offered.
-    /// `GPUMemoryBudget.defaultBudgetGB` is the conservative split rather than
-    /// the larger one modern macOS advertises, and the recommended working set
-    /// is a recommendation rather than a cliff, so a small overshoot is
-    /// survivable — it just leaves nothing for other apps. Past this the
-    /// weights get paged.
-    private static let maxBudgetRatio: Double = 1.10
 
     /// Assess whether this model can run on a Mac with `totalMemoryGB` of
     /// unified memory.
@@ -587,13 +595,10 @@ struct MLXModel: Identifiable, Codable {
     /// 48 GB Mac budgets only ~36 GB to the GPU: 89% of RAM, but 119% of what
     /// it can actually hold.
     func compatibility(totalMemoryGB: Double) -> ModelCompatibility {
-        guard let required = estimatedMemoryGB, totalMemoryGB > 0 else { return .unknown }
-        let budget = GPUMemoryBudget.budgetGB(physicalMemoryGB: totalMemoryGB)
-        guard budget > 0 else { return .unknown }
-        let ratio = required / budget
-        if ratio <= Self.comfortableBudgetRatio { return .compatible }
-        if ratio <= Self.maxBudgetRatio { return .tight }
-        return .tooLarge
+        ModelHardwareGuidance.compatibility(
+            estimatedMemoryGB: estimatedMemoryGB(totalMemoryGB: totalMemoryGB),
+            physicalMemoryGB: totalMemoryGB
+        )
     }
 
     /// Compact "MMM yyyy" form of `releasedAt`, e.g. "Apr 2026". Locale
@@ -613,7 +618,7 @@ struct MLXModel: Identifiable, Codable {
 }
 
 /// Hardware compatibility assessment for a model.
-enum ModelCompatibility {
+enum ModelCompatibility: Hashable, Sendable {
     case compatible
     case tight
     case tooLarge

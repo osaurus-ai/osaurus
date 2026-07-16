@@ -138,6 +138,17 @@ public enum SettingsSearchIndex {
 
         // MARK: Chat (generation knobs now live in the dedicated Chat tab)
         .init(
+            id: "settings.chat.defaultModel",
+            tab: .chat,
+            section: "Chat",
+            title: "Default Model",
+            keywords: [
+                "automatic", "automatic model", "automatic routing",
+                "on device", "local model", "model routing",
+                "hardware", "hardware guidance", "memory budget",
+            ]
+        ),
+        .init(
             id: "settings.chat.systemPrompt",
             tab: .chat,
             section: "Chat",

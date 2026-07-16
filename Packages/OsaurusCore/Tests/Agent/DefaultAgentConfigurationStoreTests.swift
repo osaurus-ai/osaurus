@@ -86,4 +86,37 @@ struct DefaultAgentConfigurationStoreTests {
         #expect(decoded.manualToolNames == nil)
         #expect(decoded.manualSkillNames == nil)
     }
+
+    @Test("Automatic persists as a setting but effectiveModel returns a concrete local route")
+    @MainActor
+    func automaticSettingResolvesConcreteLocalModel() async throws {
+        try await StoragePathsTestLock.shared.run {
+            try await Self.withTempOverride {
+                var config = DefaultAgentConfigurationStore.load()
+                config.defaultModel = AutomaticModelRoutingPolicy.modelId
+                DefaultAgentConfigurationStore.save(config)
+
+                let local = ModelPickerItem(
+                    id: "local/compatible",
+                    displayName: "Compatible",
+                    source: .local,
+                    estimatedMemoryGB: 4,
+                    hardwareCompatibility: .compatible
+                )
+                let remote = ModelPickerItem.fromRemoteModel(
+                    modelId: "cloud/frontier",
+                    providerName: "Cloud",
+                    providerId: UUID()
+                )
+                let previous = ModelPickerItemCache.shared._setItemsForTesting([remote, local])
+                defer { ModelPickerItemCache.shared._setItemsForTesting(previous) }
+
+                #expect(
+                    AgentManager.shared.configuredModel(for: Agent.defaultId)
+                        == AutomaticModelRoutingPolicy.modelId
+                )
+                #expect(AgentManager.shared.effectiveModel(for: Agent.defaultId) == local.id)
+            }
+        }
+    }
 }

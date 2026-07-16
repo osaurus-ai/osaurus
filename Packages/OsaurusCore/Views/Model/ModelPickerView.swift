@@ -225,13 +225,14 @@ struct ModelPickerView: View {
             modelId: model.id,
             sourceKey: model.source.uniqueKey,
             displayName: model.displayName,
-            description: model.description,
+            description: model.hardwareGuidance ?? model.description,
             parameterCount: model.parameterCount,
             quantization: model.quantization,
             isVLM: model.isVLM,
             isMLXFormat: model.isMLXFormat,
             providerLabel: providerLabel,
-            isFavorite: favoritesStore.isFavorite(model.favoriteKey)
+            isFavorite: model.isFavoriteEligible && favoritesStore.isFavorite(model.favoriteKey),
+            isFavoriteEligible: model.isFavoriteEligible
         )
     }
 
@@ -324,6 +325,7 @@ struct ModelPickerView: View {
         // with pricing) and not while the cross-provider search is active.
         let activeTab = tabs.first { $0.key == effectiveSelectedTabKey(in: tabs) }
         let showSort = !isSearching && (activeTab?.isOsaurus ?? false)
+        let showHardwareBudget = !isSearching && activeTab?.key == ModelPickerItem.Source.local.uniqueKey
         VStack(spacing: 0) {
             header(showSort: showSort)
             Divider().background(theme.primaryBorder.opacity(0.3))
@@ -333,6 +335,10 @@ struct ModelPickerView: View {
             if !isSearching, tabs.count > 1 {
                 tabBar(tabs: tabs)
                 Divider().background(theme.primaryBorder.opacity(0.3))
+            }
+
+            if showHardwareBudget {
+                hardwareBudgetBanner
             }
 
             if let replacement = selectedModelReplacement {
@@ -358,8 +364,9 @@ struct ModelPickerView: View {
         .frame(
             width: 380,
             height: min(
-                CGFloat(visibleOptions.count * 48 + 160) + optionsSectionHeight,
-                optionsSectionHeight > 0 ? 480 + min(optionsSectionHeight, 200) : 480
+                CGFloat(visibleOptions.count * 48 + 160) + optionsSectionHeight
+                    + (showHardwareBudget ? 46 : 0),
+                optionsSectionHeight > 0 ? 526 + min(optionsSectionHeight, 200) : 526
             )
         )
         .background(popoverBackground)
@@ -387,6 +394,33 @@ struct ModelPickerView: View {
         .onChange(of: options) { _, _ in
             ensureSelectedTabValid()
         }
+    }
+
+    private var hardwareBudgetBanner: some View {
+        HStack(alignment: .top, spacing: 8) {
+            Image(systemName: "memorychip")
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundColor(theme.accentColor)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(
+                    ModelHardwareGuidance.budgetSummary(
+                        physicalMemoryGB: GPUMemoryBudget.hostPhysicalMemoryGB
+                    ) ?? L("Local-model budget unavailable")
+                )
+                .font(.system(size: 10, weight: .semibold))
+                .foregroundColor(theme.secondaryText)
+                Text(
+                    "This is a recommended working-set budget; current free memory is checked again at load time.",
+                    bundle: .module
+                )
+                .font(.system(size: 9))
+                .foregroundColor(theme.tertiaryText)
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 7)
+        .background(theme.accentColor.opacity(0.06))
     }
 
     // MARK: - Background & Border

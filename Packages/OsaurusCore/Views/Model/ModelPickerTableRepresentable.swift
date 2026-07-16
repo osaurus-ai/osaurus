@@ -48,6 +48,7 @@ struct ModelPickerRow: Equatable, Identifiable {
     /// so favourited rows read as favourited everywhere, not only in the
     /// Favourites tab.
     let isFavorite: Bool
+    let isFavoriteEligible: Bool
 
     init(
         modelId: String,
@@ -59,7 +60,8 @@ struct ModelPickerRow: Equatable, Identifiable {
         isVLM: Bool,
         isMLXFormat: Bool = true,
         providerLabel: String? = nil,
-        isFavorite: Bool = false
+        isFavorite: Bool = false,
+        isFavoriteEligible: Bool = true
     ) {
         self.modelId = modelId
         self.sourceKey = sourceKey
@@ -71,6 +73,7 @@ struct ModelPickerRow: Equatable, Identifiable {
         self.isMLXFormat = isMLXFormat
         self.providerLabel = providerLabel
         self.isFavorite = isFavorite
+        self.isFavoriteEligible = isFavoriteEligible
     }
 
     var id: String { "model-\(sourceKey)-\(modelId)" }
@@ -439,6 +442,7 @@ private final class ModelRowCellView: NSTableCellView, NSGestureRecognizerDelega
         isHighlighted: Bool,
         isHovered: Bool,
         isFavorite: Bool,
+        isFavoriteEligible: Bool,
         favoritesMode: Bool,
         colors: ThemeColorCache,
         checkmarkImage: NSImage?,
@@ -582,7 +586,9 @@ private final class ModelRowCellView: NSTableCellView, NSGestureRecognizerDelega
         // against the last value so an unchanged hover/selection pass skips the
         // image swap and the relayout.
         let newAccessoryKind: RowAccessoryKind
-        if favoritesMode {
+        if !isFavoriteEligible {
+            newAccessoryKind = .none
+        } else if favoritesMode {
             newAccessoryKind = .favoritesRemove
         } else if isFavorite {
             newAccessoryKind = .heartFill
@@ -1057,6 +1063,7 @@ extension ModelPickerTableRepresentable {
                 isHighlighted: highlightedRowId == row.id,
                 isHovered: hoveredRowId == row.id,
                 isFavorite: row.isFavorite,
+                isFavoriteEligible: row.isFavoriteEligible,
                 favoritesMode: isFavoritesTab,
                 colors: colors,
                 checkmarkImage: checkmarkImage,
@@ -1073,6 +1080,7 @@ extension ModelPickerTableRepresentable {
                     self?.onSelectModel?(id)
                 },
                 onAccessory: { [weak self] in
+                    guard row.isFavoriteEligible else { return }
                     self?.onToggleFavorite?(row)
                 }
             )

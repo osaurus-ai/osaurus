@@ -78,6 +78,13 @@ struct ModelPickerItem: Identifiable, Hashable {
     /// Whether this is a Vision Language Model
     let isVLM: Bool
 
+    /// Per-modality media support used by Automatic routing. These are
+    /// concrete bundle/provider facts, not an inference from the generic VLM
+    /// bit, so video/audio upgrades never target an image-only model.
+    let supportsImageInput: Bool
+    let supportsVideoInput: Bool
+    let supportsAudioInput: Bool
+
     /// Whether the local bundle is in MLX format and therefore loadable by the
     /// local engine. Set from `MLXModel.isMLXFormat` for local items so the
     /// picker can grey out (and refuse to select) co-mingled non-MLX bundles
@@ -92,6 +99,16 @@ struct ModelPickerItem: Identifiable, Hashable {
 
     /// Description of the model (optional)
     let description: String?
+
+    /// Estimated local working set, including runtime overhead. Populated for
+    /// installed MLX models so automatic routing and the picker use the same
+    /// hardware facts as the catalog instead of guessing from parameter names.
+    let estimatedMemoryGB: Double?
+
+    /// Host-specific fit verdict for an installed local model. Nil for cloud,
+    /// Foundation, image-generation, and legacy/test items without a measured
+    /// local working set.
+    let hardwareCompatibility: ModelCompatibility?
 
     /// Input price in micro-USD per million tokens, parsed from the Osaurus
     /// router metadata. Used only to sort the Osaurus tab by price; `nil` for
@@ -125,6 +142,10 @@ struct ModelPickerItem: Identifiable, Hashable {
     let imageDefaultGuidance: Float?
     let imageReady: Bool
 
+    /// Synthetic settings choices such as Automatic are not real models and
+    /// therefore should not appear in the user's favourites list.
+    let isFavoriteEligible: Bool
+
     init(
         id: String,
         displayName: String,
@@ -132,9 +153,14 @@ struct ModelPickerItem: Identifiable, Hashable {
         parameterCount: String? = nil,
         quantization: String? = nil,
         isVLM: Bool = false,
+        supportsImageInput: Bool = false,
+        supportsVideoInput: Bool = false,
+        supportsAudioInput: Bool = false,
         isMLXFormat: Bool = true,
         isEmbedding: Bool = false,
         description: String? = nil,
+        estimatedMemoryGB: Double? = nil,
+        hardwareCompatibility: ModelCompatibility? = nil,
         inputPriceMicroPerMTok: Int64? = nil,
         outputPriceMicroPerMTok: Int64? = nil,
         contextLength: Int? = nil,
@@ -144,7 +170,8 @@ struct ModelPickerItem: Identifiable, Hashable {
         imageCapabilities: ImageModelCapabilities? = nil,
         imageDefaultSteps: Int? = nil,
         imageDefaultGuidance: Float? = nil,
-        imageReady: Bool = false
+        imageReady: Bool = false,
+        isFavoriteEligible: Bool = true
     ) {
         self.id = id
         self.displayName = displayName
@@ -152,9 +179,14 @@ struct ModelPickerItem: Identifiable, Hashable {
         self.parameterCount = parameterCount
         self.quantization = quantization
         self.isVLM = isVLM
+        self.supportsImageInput = supportsImageInput
+        self.supportsVideoInput = supportsVideoInput
+        self.supportsAudioInput = supportsAudioInput
         self.isMLXFormat = isMLXFormat
         self.isEmbedding = isEmbedding
         self.description = description
+        self.estimatedMemoryGB = estimatedMemoryGB
+        self.hardwareCompatibility = hardwareCompatibility
         self.inputPriceMicroPerMTok = inputPriceMicroPerMTok
         self.outputPriceMicroPerMTok = outputPriceMicroPerMTok
         self.contextLength = contextLength
@@ -165,6 +197,7 @@ struct ModelPickerItem: Identifiable, Hashable {
         self.imageDefaultSteps = imageDefaultSteps
         self.imageDefaultGuidance = imageDefaultGuidance
         self.imageReady = imageReady
+        self.isFavoriteEligible = isFavoriteEligible
     }
 
     /// Check if model matches search query using fuzzy matching.
@@ -186,7 +219,7 @@ struct ModelPickerItem: Identifiable, Hashable {
 extension ModelPickerItem {
     /// Create a Foundation model picker item
     static func foundation() -> ModelPickerItem {
-        ModelPickerItem(
+        return ModelPickerItem(
             id: "foundation",
             displayName: "Foundation",
             source: .foundation,
@@ -194,29 +227,63 @@ extension ModelPickerItem {
         )
     }
 
+    /// Synthetic agent-settings choice. It is injected only into model
+    /// settings pickers; the shared runtime cache continues to contain only
+    /// concrete models, so API listings and subagent allow-lists never expose
+    /// this internal routing sentinel as if it were loadable.
+    static func automaticOnDevice() -> ModelPickerItem {
+        return ModelPickerItem(
+            id: AutomaticModelRoutingPolicy.modelId,
+            displayName: "Automatic",
+            source: .foundation,
+            description: "Chooses the strongest compatible model on this Mac and stays on device",
+            isFavoriteEligible: false
+        )
+    }
+
     /// Create a local MLX model picker item from an MLXModel.
     static func fromMLXModel(_ model: MLXModel) -> ModelPickerItem {
-        ModelPickerItem(
+        let media = ModelMediaCapabilities.composerCapabilities(
+            modelId: model.id,
+            fallbackSupportsImages: model.isVLM,
+            localModelType: model.modelType
+        )
+        return ModelPickerItem(
             id: model.id,
             displayName: model.name,
             source: .local,
             parameterCount: model.parameterCount,
             quantization: model.quantization,
             isVLM: model.isVLM,
+            supportsImageInput: media.supportsImage,
+            supportsVideoInput: media.supportsVideo,
+            supportsAudioInput: media.supportsAudio,
             isMLXFormat: model.isMLXFormat,
             isEmbedding: model.isEmbedding,
-            description: model.description
+            description: model.description,
+            estimatedMemoryGB: model.estimatedMemoryGB,
+            hardwareCompatibility: model.compatibility(
+                totalMemoryGB: GPUMemoryBudget.hostPhysicalMemoryGB
+            )
         )
     }
 
     /// Create an on-device image-generation model picker item.
     static func fromImageModel(_ model: ImageModelInfo) -> ModelPickerItem {
-        ModelPickerItem(
+        let estimatedMemoryGB = ModelHardwareGuidance.estimatedImageWorkingSetGB(
+            onDiskBytes: model.totalBytes
+        )
+        return ModelPickerItem(
             id: model.id,
             displayName: model.displayName,
             source: .imageGeneration,
             quantization: model.quantizationBits.map { "\($0)-bit" },
             description: model.ready ? nil : model.blockedReasons.first,
+            estimatedMemoryGB: estimatedMemoryGB,
+            hardwareCompatibility: ModelHardwareGuidance.compatibility(
+                estimatedMemoryGB: estimatedMemoryGB,
+                physicalMemoryGB: GPUMemoryBudget.hostPhysicalMemoryGB
+            ),
             imageKind: model.kind,
             imageCapabilities: model.capabilities,
             imageDefaultSteps: model.defaultSteps,
@@ -235,6 +302,21 @@ extension ModelPickerItem {
             id: modelId,
             displayName: displayName(fromModelId: modelId),
             source: .remote(providerName: providerName, providerId: providerId)
+        )
+    }
+
+    func supports(_ requirements: AutomaticModelRoutingPolicy.Requirements) -> Bool {
+        if requirements.contains(.image), !supportsImageInput { return false }
+        if requirements.contains(.video), !supportsVideoInput { return false }
+        if requirements.contains(.audio), !supportsAudioInput { return false }
+        return true
+    }
+
+    var hardwareGuidance: String? {
+        ModelHardwareGuidance.fitSummary(
+            estimatedMemoryGB: estimatedMemoryGB,
+            compatibility: hardwareCompatibility,
+            physicalMemoryGB: GPUMemoryBudget.hostPhysicalMemoryGB
         )
     }
 
@@ -575,6 +657,12 @@ enum ModelPickerVisionFilter: CaseIterable, Identifiable, Hashable {
 }
 
 extension Array where Element == ModelPickerItem {
+    /// Agent settings include an explicit Automatic choice without polluting
+    /// the shared runtime/catalog list with a non-loadable sentinel.
+    var withAutomaticOnDeviceChoice: [ModelPickerItem] {
+        [.automaticOnDevice()] + filter { $0.id != AutomaticModelRoutingPolicy.modelId }
+    }
+
     /// Keep only models whose context window meets the filter's minimum. Items
     /// with unknown context are dropped when a minimum is set; `.any` is a
     /// no-op that returns the receiver unchanged.

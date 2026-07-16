@@ -11,6 +11,9 @@ func agentColorFor(_ name: String) -> Color {
 }
 
 private func formatModelName(_ model: String) -> String {
+    if AutomaticModelRoutingPolicy.isAutomatic(model) {
+        return L("Automatic (on device)")
+    }
     if let last = model.split(separator: "/").last {
         return String(last)
     }
@@ -2390,6 +2393,13 @@ struct AgentDetailView: View {
                                 .font(.system(size: 13, weight: .medium))
                                 .foregroundColor(theme.primaryText)
                                 .lineLimit(1)
+                        } else if agent.id != Agent.defaultId,
+                            let inherited = agentManager.configuredModel(for: agent.id)
+                        {
+                            Text(verbatim: "Default → \(formatModelName(inherited))")
+                                .font(.system(size: 13))
+                                .foregroundColor(theme.placeholderText)
+                                .lineLimit(1)
                         } else {
                             Text("Default (from global settings)", bundle: .module)
                                 .font(.system(size: 13))
@@ -2414,7 +2424,7 @@ struct AgentDetailView: View {
                 .buttonStyle(PlainButtonStyle())
                 .popover(isPresented: $showModelPicker, arrowEdge: .bottom) {
                     ModelPickerView(
-                        options: pickerItems,
+                        options: pickerItems.withAutomaticOnDeviceChoice,
                         selectedModel: Binding(
                             get: { selectedModel },
                             set: { newModel in
@@ -2427,6 +2437,14 @@ struct AgentDetailView: View {
                         onDismiss: { showModelPicker = false }
                     )
                 }
+
+                agentModelGuidance(
+                    selectedModel: selectedModel
+                        ?? (agent.id == Agent.defaultId
+                            ? nil : agentManager.configuredModel(for: agent.id)),
+                    pickerItems: pickerItems,
+                    inherited: selectedModel == nil && agent.id != Agent.defaultId
+                )
 
                 if selectedModel != nil {
                     Button {
@@ -2445,6 +2463,48 @@ struct AgentDetailView: View {
                     .buttonStyle(PlainButtonStyle())
                 }
             }
+        }
+    }
+
+    @ViewBuilder
+    private func agentModelGuidance(
+        selectedModel: String?,
+        pickerItems: [ModelPickerItem],
+        inherited: Bool
+    ) -> some View {
+        if AutomaticModelRoutingPolicy.isAutomatic(selectedModel) {
+            if let route = AutomaticModelRoutingPolicy.resolve(items: pickerItems) {
+                Label {
+                    Text(
+                        "\(inherited ? "Inherited Automatic" : "Automatic") currently selects \(route.displayName). \(route.explanation)"
+                    )
+                } icon: {
+                    Image(systemName: "sparkles")
+                }
+                .font(.system(size: 11))
+                .foregroundColor(theme.secondaryText)
+            } else {
+                Label(
+                    AutomaticModelRoutingPolicy.failureExplanation(for: .text),
+                    systemImage: "exclamationmark.triangle.fill"
+                )
+                .font(.system(size: 11))
+                .foregroundColor(theme.warningColor)
+            }
+        } else if let selectedModel,
+            let guidance = pickerItems.first(where: { $0.id == selectedModel })?.hardwareGuidance
+        {
+            Text(inherited ? "Inherited model · \(guidance)" : guidance)
+                .font(.system(size: 11))
+                .foregroundColor(theme.secondaryText)
+        }
+
+        if let budget = ModelHardwareGuidance.budgetSummary(
+            physicalMemoryGB: GPUMemoryBudget.hostPhysicalMemoryGB
+        ) {
+            Text("\(budget). Current free memory is checked again before loading.")
+                .font(.system(size: 10))
+                .foregroundColor(theme.tertiaryText)
         }
     }
 
@@ -7413,12 +7473,35 @@ private struct AgentEditorSheet: View {
             .buttonStyle(PlainButtonStyle())
             .popover(isPresented: $showModelPicker, arrowEdge: .bottom) {
                 ModelPickerView(
-                    options: pickerItems,
+                    options: pickerItems.withAutomaticOnDeviceChoice,
                     selectedModel: $selectedModel,
                     agentId: nil,
                     onDismiss: { showModelPicker = false }
                 )
             }
+
+            editorModelGuidance
+        }
+    }
+
+    @ViewBuilder
+    private var editorModelGuidance: some View {
+        if AutomaticModelRoutingPolicy.isAutomatic(selectedModel) {
+            if let route = AutomaticModelRoutingPolicy.resolve(items: pickerItems) {
+                Text(verbatim: "Automatic currently selects \(route.displayName). \(route.explanation)")
+                    .font(.system(size: 10))
+                    .foregroundColor(theme.secondaryText)
+            } else {
+                Text(AutomaticModelRoutingPolicy.failureExplanation(for: .text))
+                    .font(.system(size: 10))
+                    .foregroundColor(theme.warningColor)
+            }
+        } else if let selectedModel,
+            let guidance = pickerItems.first(where: { $0.id == selectedModel })?.hardwareGuidance
+        {
+            Text(guidance)
+                .font(.system(size: 10))
+                .foregroundColor(theme.secondaryText)
         }
     }
 

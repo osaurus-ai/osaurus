@@ -1756,13 +1756,18 @@ struct ConfigureModelChooserModal: View {
             return L("Bigger models are smarter but use more memory.")
         }
         let memoryGB = Int(totalMemoryGB.rounded())
+        let budgetText = ModelHardwareGuidance.formattedGB(
+            GPUMemoryBudget.budgetGB(physicalMemoryGB: totalMemoryGB)
+        )
         if let free = state.freeDiskBytes {
             let freeText = free.formatted(.byteCount(style: .file, allowedUnits: [.gb, .mb]))
             return L(
-                "Bigger models are smarter but need more memory — your Mac has \(memoryGB) GB memory and \(freeText) free storage."
+                "Bigger models are smarter but need more memory — your Mac has \(memoryGB) GB unified memory, a \(budgetText) recommended local-model budget, and \(freeText) free storage."
             )
         }
-        return L("Bigger models are smarter but need more memory — your Mac has \(memoryGB) GB memory.")
+        return L(
+            "Bigger models are smarter but need more memory — your Mac has \(memoryGB) GB unified memory and a \(budgetText) recommended local-model budget."
+        )
     }
 
     // MARK: Catalog (modal-local)

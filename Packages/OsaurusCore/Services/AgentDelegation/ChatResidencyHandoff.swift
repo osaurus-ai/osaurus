@@ -108,10 +108,11 @@ enum ChatResidencyHandoff {
     ) async throws {
         guard enabled, requiredBytes > 0 else { return }
         // Models occupy more resident RAM than their on-disk weights (KV +
-        // activations + framework overhead); inflate the on-disk estimate.
-        let inflation = 1.3
-        let headroom: Int64 = 3 * 1024 * 1024 * 1024  // keep 3 GB for the OS/app
-        let needed = Int64(Double(requiredBytes) * inflation) + headroom
+        // activations + framework overhead). This shared estimate also powers
+        // image-model guidance and Automatic eligibility.
+        let needed = ModelHardwareGuidance.delegatedModelPreflightRequiredBytes(
+            onDiskBytes: requiredBytes
+        )
         let residentChatBytes = await ModelRuntime.shared.cachedModelSummaries()
             .reduce(Int64(0)) { $0 + $1.bytes }
         let projected = availableMemoryBytes() + residentChatBytes
