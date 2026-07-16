@@ -19,19 +19,24 @@ Packages/OsaurusEvals/
     OsaurusEvalsKitTests/ — harness unit tests (fixture decode, scorers, labs; token-free)
   Suites/
     AgentDB/            — E2E db_* tool workflows against an isolated agent DB (LLM)
+    AgentChannels/      — deterministic agent/MCP channel and tool-policy fixtures
     AgentLoop/          — E2E agentic outcomes in a seeded workspace (LLM)
     AgentLoopFrontier/  — harder agent-loop tasks for the local-vs-frontier proof lane (LLM)
     AppleScript/        — AppleScript tool discipline: scripted CI lane + live lane (LLM or scripted)
     ArgumentCoercion/   — ArgumentCoercion.{stringArray,int,bool} pinning
     CapabilityClaims/   — agent-loop "do you have X" behaviour + LLM judge (LLM)
     CapabilitySearch/   — index-only recall measurements (no LLM)
+    CacheProof/         — live prefix/KV/L2 cache behavior and telemetry (LLM)
     ComputerUse/        — single-action gate / effect classification (no LLM)
     ComputerUseLoop/    — E2E Computer Use over a scripted screen (LLM or scripted)
     DefaultAgent/       — built-in "Configuring Osaurus" agent: read/write config tools + judge (LLM)
+    HTTPAPI/            — live HTTP chat/agent-run request behavior (LLM)
     JudgeCalibration/   — known-verdict fixtures that grade the JUDGE itself (judge LLM only)
+    Memory/             — multi-turn memory injection and recall behavior (LLM)
     MicroPerf/          — fixed-shape decode/TTFT/prefill micro-benchmarks, median ± stdev (LLM)
     PrefixHash/         — KV-cache prefix-hash stability
     PromptInjection/    — indirect-injection resistance over seeded agent_loop fixtures (LLM)
+    ReasoningChannel/   — visible-answer/reasoning-boundary behavior (LLM)
     SandboxDiagnostics/ — sandbox self-heal hint layer over canned stderr (no LLM, no VM)
     SandboxFrontier/    — live Linux-VM sandbox tools; skips without Apple Containerization (LLM)
     ScreenContext/      — deterministic AX-text screen-context distillation (no LLM)

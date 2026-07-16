@@ -69,6 +69,87 @@ struct EnabledCapabilitiesManifestTests {
         #expect(skillIndex.lowerBound < toolIndex.lowerBound)
     }
 
+    @Test("skill governance is emitted only for verbose mixed groups")
+    func skillGovernanceGateMatchesManifestShape() throws {
+        let mixed = try #require(
+            SystemPromptTemplates.enabledCapabilitiesManifest(
+                groups: [
+                    Group(
+                        groupId: "browser",
+                        pluginDisplay: "Browser",
+                        skills: [Cap(name: "Browser Guide", description: "Use browser tools")],
+                        tools: [Cap(name: "browser_open", description: "Open a page")]
+                    )
+                ]
+            )
+        )
+        let toolsOnly = try #require(
+            SystemPromptTemplates.enabledCapabilitiesManifest(
+                groups: [
+                    Group(
+                        pluginDisplay: "Channels",
+                        skills: [],
+                        tools: [Cap(name: "list_channels", description: "List channels")]
+                    )
+                ]
+            )
+        )
+        let skillsOnly = try #require(
+            SystemPromptTemplates.enabledCapabilitiesManifest(
+                groups: [
+                    Group(
+                        pluginDisplay: "Standalone skills",
+                        skills: [Cap(name: "review", description: "Review code")],
+                        tools: []
+                    )
+                ]
+            )
+        )
+        let compactMixed = try #require(
+            SystemPromptTemplates.enabledCapabilitiesManifest(
+                groups: [
+                    Group(
+                        groupId: "browser",
+                        pluginDisplay: "Browser",
+                        skills: [Cap(name: "Browser Guide", description: "Use browser tools")],
+                        tools: [Cap(name: "browser_open", description: "Open a page")]
+                    )
+                ],
+                compact: true
+            )
+        )
+        let skillCap = SystemPromptTemplates.enabledManifestSkillCap
+        let overflowGoverned = try #require(
+            SystemPromptTemplates.enabledCapabilitiesManifest(
+                groups: [
+                    Group(
+                        pluginDisplay: "Earlier skills",
+                        skills: (0 ..< skillCap).map {
+                            Cap(name: "earlier_\($0)", description: "Earlier skill")
+                        },
+                        tools: []
+                    ),
+                    Group(
+                        pluginDisplay: "Overflow Browser",
+                        skills: [Cap(name: "Hidden Guide", description: "Use browser tools")],
+                        tools: [Cap(name: "browser_open", description: "Open a page")]
+                    ),
+                ]
+            )
+        )
+
+        #expect(SystemPromptTemplates.enabledManifestNeedsSkillGovernance(mixed, compact: false))
+        #expect(!SystemPromptTemplates.enabledManifestNeedsSkillGovernance(toolsOnly, compact: false))
+        #expect(!SystemPromptTemplates.enabledManifestNeedsSkillGovernance(skillsOnly, compact: false))
+        #expect(!SystemPromptTemplates.enabledManifestNeedsSkillGovernance(compactMixed, compact: true))
+        #expect(
+            SystemPromptTemplates.enabledManifestNeedsSkillGovernance(
+                overflowGoverned,
+                compact: false
+            )
+        )
+    }
+
     @Test("standalone skills render as a skills-only group with the loader intro")
     func standaloneSkillsGroupRenders() throws {
         // The composer enumerates every enabled non-plugin skill into a

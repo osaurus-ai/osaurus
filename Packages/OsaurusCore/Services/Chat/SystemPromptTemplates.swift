@@ -157,9 +157,9 @@ public enum SystemPromptTemplates {
         ## Discovering more tools
 
         Your current tool list is a fixed starting set, not an exhaustive \
-        one. The Enabled capabilities list below names more you can pull in on \
-        demand and shows exactly how to load by id with capabilities_load. \
-        When a capability seems missing and is NOT named there, \
+        one. If an Enabled capabilities list appears below, its ids can be \
+        pulled in on demand with capabilities_load. When no list appears, or \
+        when a capability seems missing and is NOT named there, \
         `capabilities_discover({"query": "<what you need>"})` searches beyond \
         the listed set and returns IDs like `tool/sandbox_exec` or \
         `skill/plot-data` that you load the same way.
@@ -656,6 +656,40 @@ public enum SystemPromptTemplates {
         the tools directly afterward without a separate capabilities_load per \
         tool.
         """
+
+    /// Whether the rendered manifest needs the verbose skill-first teaching
+    /// block above. Compact manifests already collapse a governed plugin to a
+    /// single `plugin/<id> — skill-governed` load action, so repeating the
+    /// skill-loading workflow there is redundant. Verbose manifests need the
+    /// block only when one plugin actually contains both a skill and tools.
+    static func enabledManifestNeedsSkillGovernance(
+        _ manifest: String,
+        compact: Bool
+    ) -> Bool {
+        guard !compact else { return false }
+
+        var groupHasSkill = false
+        var groupHasTools = false
+
+        func currentGroupNeedsGuidance() -> Bool {
+            groupHasSkill && groupHasTools
+        }
+
+        for rawLine in manifest.split(separator: "\n", omittingEmptySubsequences: false) {
+            let line = rawLine.trimmingCharacters(in: .whitespaces)
+            if line.hasPrefix("<plugin:") || (line.hasPrefix("<") && line.hasSuffix(">")) {
+                if currentGroupNeedsGuidance() { return true }
+                groupHasSkill = false
+                groupHasTools = false
+            } else if line.hasPrefix("skill/") || line.contains("more skill(s)") {
+                groupHasSkill = true
+            } else if line.hasPrefix("tool/") || line.contains("more tool(s)") {
+                groupHasTools = true
+            }
+        }
+
+        return currentGroupNeedsGuidance()
+    }
 
     // MARK: - Cross-cutting Engineering Discipline
 

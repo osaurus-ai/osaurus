@@ -1535,7 +1535,8 @@ public enum EvalRunner {
                     outcome: .errored,
                     notes: ["agent loop error: \(err)"],
                     modelId: modelId,
-                    latencyMs: elapsed
+                    latencyMs: elapsed,
+                    telemetry: claimsTelemetry(from: transcript)
                 ),
                 query: testCase.query
             )
@@ -1607,6 +1608,7 @@ public enum EvalRunner {
                 modelId: modelId,
                 latencyMs: elapsed,
                 judgeLatencyMs: judgeElapsed,
+                telemetry: claimsTelemetry(from: transcript),
                 judge: judgeAudit
             ),
             query: testCase.query
@@ -1640,6 +1642,27 @@ public enum EvalRunner {
             )
         )
         return report
+    }
+
+    /// Project shared capability-claims/default-agent loop telemetry into the
+    /// persisted report. Input estimates are deterministic and therefore
+    /// available for local and remote models even when runtime usage omits
+    /// completion/decode statistics.
+    private static func claimsTelemetry(
+        from transcript: CapabilityClaimsTranscript
+    ) -> EvalCaseTelemetry? {
+        let total = transcript.promptTokensTotal.map {
+            $0 + (transcript.completionTokens ?? 0)
+        }
+        let telemetry = EvalCaseTelemetry(
+            decodeTokensPerSecond: transcript.decodeTokensPerSecond,
+            completionTokens: transcript.completionTokens,
+            promptTokensTotal: transcript.promptTokensTotal,
+            peakContextTokens: transcript.peakContextTokens,
+            totalModelTokens: total,
+            modelSteps: transcript.modelSteps
+        )
+        return telemetry.isEmpty ? nil : telemetry
     }
 
     /// Agent-loop evaluator for `domain == "default_agent"`. Drives the
@@ -1735,7 +1758,8 @@ public enum EvalRunner {
                     outcome: .errored,
                     notes: ["agent loop error: \(err)"],
                     modelId: modelId,
-                    latencyMs: elapsed
+                    latencyMs: elapsed,
+                    telemetry: claimsTelemetry(from: transcript)
                 ),
                 query: testCase.query
             )
@@ -1834,10 +1858,7 @@ public enum EvalRunner {
                 modelId: modelId,
                 latencyMs: elapsed,
                 judgeLatencyMs: judgeElapsed,
-                telemetry: EvalCaseTelemetry(
-                    decodeTokensPerSecond: transcript.decodeTokensPerSecond,
-                    completionTokens: transcript.completionTokens
-                ),
+                telemetry: claimsTelemetry(from: transcript),
                 judge: judgeAudit
             ),
             query: testCase.query

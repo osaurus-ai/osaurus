@@ -687,7 +687,8 @@ public struct SystemPromptComposer: Sendable {
     ///                                (sandbox: build-ladder variant, canCreatePlugins-aware)
     ///  15. enabledManifest           static, frozen, gated on capabilities_load
     ///                                (all enabled tools + plugin skills + standalone skills)
-    ///  16. skillsGovern              static body, paired with enabledManifest
+    ///  16. skillsGovern              static body, only for verbose manifests
+    ///                                with a skill-governed tool group
     ///  17. pluginCreator             static, injected when plugin creation is enabled
     ///                                (session-constant gate — joins the cached prefix)
     ///  18. agentDBSchema             dynamic, live schema snapshot (mutates mid-session)
@@ -1133,26 +1134,32 @@ public struct SystemPromptComposer: Sendable {
             !effectiveToolsOff,
             tools.contains(where: { $0.function.name == "capabilities_discover" })
         {
-            // Sandbox mode swaps the terminus ("tell the user it is
-            // unavailable") for an escalation ladder that ends in a build
-            // step, not denial — the sandbox can assemble most integrations
-            // from primitives. Outside sandbox there are no such primitives,
-            // so the original nudge (with its terminus) stays. The ladder's
-            // plugin-build rung is further gated on `canCreatePlugins`.
-            let nudge =
-                executionMode.usesSandboxTools
-                ? SystemPromptTemplates.capabilityDiscoveryNudgeSandbox(
+            // Sandbox mode needs its explicit build/escalation ladder.
+            // Verbose non-sandbox prompts retain the discover/load tutorial.
+            // Compact non-sandbox prompts already carry the complete contract
+            // in compact Grounding + the discovery/load tool schemas, so a
+            // second prose section would only repeat those instructions.
+            let nudge: String?
+            if executionMode.usesSandboxTools {
+                nudge = SystemPromptTemplates.capabilityDiscoveryNudgeSandbox(
                     canCreatePlugins: snapshot.canCreatePlugins,
                     compact: toolset.prefersCompactPrompt
                 )
-                : SystemPromptTemplates.capabilityDiscoveryNudge
-            composer.append(
-                .static(
-                    id: "capabilityNudge",
-                    label: L("Capability Discovery"),
-                    content: nudge
+            } else {
+                nudge =
+                    toolset.prefersCompactPrompt
+                    ? nil
+                    : SystemPromptTemplates.capabilityDiscoveryNudge
+            }
+            if let nudge {
+                composer.append(
+                    .static(
+                        id: "capabilityNudge",
+                        label: L("Capability Discovery"),
+                        content: nudge
+                    )
                 )
-            )
+            }
         }
 
         // Enabled capabilities manifest: the grounded answer to "do you
@@ -1167,12 +1174,12 @@ public struct SystemPromptComposer: Sendable {
         // the old "Plugin Companions" and "Skill Suggestions" sections.
         //
         // The string is rendered+frozen in `resolveEnabledManifest` and
-        // injected as a STATIC section (paired with `skillsGovern`) so it
-        // joins the cached KV prefix and stays byte-stable across turns —
-        // the manifest no longer shrinks as the agent loads tools. Together
-        // with `pluginCreator` below it closes out the static block, so both
-        // must precede every dynamic section (the static prefix ends at the
-        // first dynamic section).
+        // injected as a STATIC section so it joins the cached KV prefix and
+        // stays byte-stable across turns — the manifest no longer shrinks as
+        // the agent loads tools. Verbose manifests receive the companion
+        // `skillsGovern` block only when a plugin actually contains both a
+        // skill and tools; compact manifests already encode that workflow in
+        // their single `plugin/<id> — skill-governed` load action.
         if let manifestSection = toolset.enabledManifest, !manifestSection.isEmpty {
             composer.append(
                 .static(
@@ -1181,13 +1188,18 @@ public struct SystemPromptComposer: Sendable {
                     content: manifestSection
                 )
             )
-            composer.append(
-                .static(
-                    id: "skillsGovern",
-                    label: L("Skills that govern tool groups"),
-                    content: SystemPromptTemplates.skillsGovernToolGroups
+            if SystemPromptTemplates.enabledManifestNeedsSkillGovernance(
+                manifestSection,
+                compact: toolset.prefersCompactPrompt
+            ) {
+                composer.append(
+                    .static(
+                        id: "skillsGovern",
+                        label: L("Skills that govern tool groups"),
+                        content: SystemPromptTemplates.skillsGovernToolGroups
+                    )
                 )
-            )
+            }
         }
 
         // Plugin-creator injection: inject the `## Building new tools` section
@@ -1319,8 +1331,13 @@ public struct SystemPromptComposer: Sendable {
         // no enabled-minus-loaded subtraction, so the manifest stays constant
         // as the agent loads tools mid-session.
         var toolsByGroup: [String: [SystemPromptTemplates.ManifestCapability]] = [:]
+        let hasEnabledAgentChannel = AgentChannelConfigurationStore.load()
+            .connections
+            .contains(where: \.enabled)
         for entry in ToolRegistry.shared.listDynamicTools() {
             guard allowedTools?.contains(entry.name) ?? true,
+                hasEnabledAgentChannel
+                    || !ToolRegistry.agentChannelToolNames.contains(entry.name),
                 let group = ToolRegistry.shared.groupName(for: entry.name),
                 !group.isEmpty
             else { continue }

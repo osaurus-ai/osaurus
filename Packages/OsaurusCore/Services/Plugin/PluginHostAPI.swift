@@ -806,10 +806,17 @@ final class PluginHostContext: @unchecked Sendable {
         activeAgentId: UUID? = nil
     ) async -> PreparedInference {
         let options = InferenceOptions(from: rawJSON)
+        let requestedModel = request.model.trimmingCharacters(in: .whitespacesAndNewlines)
+        let contextModelOverride =
+            requestedModel.isEmpty
+                || requestedModel.caseInsensitiveCompare("default") == .orderedSame
+            ? nil
+            : requestedModel
         let agentCtx = await resolveAgentContext(
             agentId: activeAgentId,
             messages: request.messages,
-            sessionId: request.session_id
+            sessionId: request.session_id,
+            modelOverride: contextModelOverride
         )
         let execMode = agentCtx?.executionMode ?? .none
         // Session-stable memory injection (parity with the chat surface's
@@ -900,7 +907,8 @@ final class PluginHostContext: @unchecked Sendable {
     static func resolveAgentContext(
         agentId: UUID?,
         messages: [ChatMessage] = [],
-        sessionId: String? = nil
+        sessionId: String? = nil,
+        modelOverride: String? = nil
     ) async -> AgentContext? {
         guard let agentId else { return nil }
 
@@ -951,7 +959,7 @@ final class PluginHostContext: @unchecked Sendable {
         let composed = await SystemPromptComposer.composeChatContext(
             agentId: agentId,
             executionMode: execMode,
-            model: agentModel,
+            model: modelOverride ?? agentModel,
             query: extractLatestUserQuery(from: messages),
             messages: messages,
             additionalToolNames: cachedSession?.loadedToolNames ?? [],

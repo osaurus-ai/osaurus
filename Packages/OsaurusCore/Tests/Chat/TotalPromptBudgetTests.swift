@@ -154,7 +154,6 @@ struct TotalPromptBudgetTests {
             ),
             SystemPromptTemplates.capabilityDiscoveryNudgeSandbox(canCreatePlugins: true),
             manifest,
-            SystemPromptTemplates.skillsGovernToolGroups,
             PluginCreatorGate.section(
                 instructions: SystemPromptTemplates.pluginCreatorInstructions
             ),
@@ -196,7 +195,6 @@ struct TotalPromptBudgetTests {
             ),
             SystemPromptTemplates.capabilityDiscoveryNudgeSandbox(canCreatePlugins: false),
             manifest,
-            SystemPromptTemplates.skillsGovernToolGroups,
         ]
         return sections.joined(separator: "\n\n")
     }

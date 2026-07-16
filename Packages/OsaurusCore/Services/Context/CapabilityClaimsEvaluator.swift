@@ -77,6 +77,13 @@ public struct CapabilityClaimsTranscript: Sendable, Codable {
     /// Total generated tokens summed across the run's model steps. nil
     /// when no step reported a completion-token count.
     public let completionTokens: Int?
+    /// Estimated input tokens (messages + frozen tool schema) summed across
+    /// every model step. Deterministic and provider-independent.
+    public let promptTokensTotal: Int?
+    /// Largest single-step input estimate for the run.
+    public let peakContextTokens: Int?
+    /// Number of model requests included in the context-cost totals.
+    public let modelSteps: Int?
 
     public init(
         toolCalls: [ToolInvocation],
@@ -87,7 +94,10 @@ public struct CapabilityClaimsTranscript: Sendable, Codable {
         loadedToolNames: [String],
         error: String?,
         decodeTokensPerSecond: Double? = nil,
-        completionTokens: Int? = nil
+        completionTokens: Int? = nil,
+        promptTokensTotal: Int? = nil,
+        peakContextTokens: Int? = nil,
+        modelSteps: Int? = nil
     ) {
         self.toolCalls = toolCalls
         self.finalText = finalText
@@ -98,6 +108,9 @@ public struct CapabilityClaimsTranscript: Sendable, Codable {
         self.error = error
         self.decodeTokensPerSecond = decodeTokensPerSecond
         self.completionTokens = completionTokens
+        self.promptTokensTotal = promptTokensTotal
+        self.peakContextTokens = peakContextTokens
+        self.modelSteps = modelSteps
     }
 }
 
@@ -206,6 +219,9 @@ public enum CapabilityClaimsEvaluator {
         var decodeTpsWeightedSum = 0.0
         var decodeTpsTokenWeight = 0
         var completionTokensTotal = 0
+        var promptTokensTotal = 0
+        var peakContextTokens = 0
+        var modelStepCount = 0
         // Stable per-run session id so the engine's content-addressed KV
         // grouping sees one coherent conversation instead of N anonymous
         // requests.
@@ -265,6 +281,12 @@ public enum CapabilityClaimsEvaluator {
                         session_id: runSessionId
                     )
 
+                    let stepInputTokens =
+                        ContextBudgetManager.estimateTokens(for: requestMessages)
+                        + composed.toolTokens
+                    promptTokensTotal += stepInputTokens
+                    peakContextTokens = max(peakContextTokens, stepInputTokens)
+                    modelStepCount += 1
                     let response = try await engine.completeChat(request: request)
                     // Fold this step's authoritative runtime stats into the
                     // token-weighted decode-speed accumulators.
@@ -382,6 +404,12 @@ public enum CapabilityClaimsEvaluator {
                         tool_choice: nil,
                         session_id: runSessionId
                     )
+                    let wrapUpInputTokens = ContextBudgetManager.estimateTokens(
+                        for: wrapUpRequest.messages
+                    )
+                    promptTokensTotal += wrapUpInputTokens
+                    peakContextTokens = max(peakContextTokens, wrapUpInputTokens)
+                    modelStepCount += 1
                     // Same non-streaming call shape as this evaluator's own
                     // loop steps. A wrap-up failure must not sink the whole
                     // case (the loop itself succeeded) — but it must be
@@ -416,7 +444,10 @@ public enum CapabilityClaimsEvaluator {
                 decodeTokensPerSecond: decodeTpsTokenWeight > 0
                     ? decodeTpsWeightedSum / Double(decodeTpsTokenWeight)
                     : nil,
-                completionTokens: completionTokensTotal > 0 ? completionTokensTotal : nil
+                completionTokens: completionTokensTotal > 0 ? completionTokensTotal : nil,
+                promptTokensTotal: modelStepCount > 0 ? promptTokensTotal : nil,
+                peakContextTokens: modelStepCount > 0 ? peakContextTokens : nil,
+                modelSteps: modelStepCount > 0 ? modelStepCount : nil
             )
         }
 
@@ -431,7 +462,10 @@ public enum CapabilityClaimsEvaluator {
             decodeTokensPerSecond: decodeTpsTokenWeight > 0
                 ? decodeTpsWeightedSum / Double(decodeTpsTokenWeight)
                 : nil,
-            completionTokens: completionTokensTotal > 0 ? completionTokensTotal : nil
+            completionTokens: completionTokensTotal > 0 ? completionTokensTotal : nil,
+            promptTokensTotal: modelStepCount > 0 ? promptTokensTotal : nil,
+            peakContextTokens: modelStepCount > 0 ? peakContextTokens : nil,
+            modelSteps: modelStepCount > 0 ? modelStepCount : nil
         )
     }
 

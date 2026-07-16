@@ -116,7 +116,7 @@ fi
 # `read -ra` is the robust, SC2206-clean way to split the space-separated
 # override/default into the array (and is bash 3.2-safe). The `${VAR:-...}`
 # default is expanded before `read` reassigns the same name.
-read -ra DET_SUITES <<< "${DET_SUITES:-ArgumentCoercion CapabilitySearch ComputerUse PrefixHash RequestValidation SandboxDiagnostics Schema ScreenContext StreamingHint ToolEnvelope}"
+read -ra DET_SUITES <<< "${DET_SUITES:-AgentChannels ArgumentCoercion CapabilitySearch ComputerUse PrefixHash SandboxDiagnostics Schema ScreenContext ToolEnvelope ToolResultGrounding}"
 # Suites that drive a model (or the sandbox VM) — run PER model.
 # `Subagent` runs all subagent flows through the one SubagentSession host:
 # its scripted cases are model-independent (identical per model) while the live
@@ -129,9 +129,35 @@ read -ra DET_SUITES <<< "${DET_SUITES:-ArgumentCoercion CapabilitySearch Compute
 # (real-model + mock/real executor) vary with the run model, so it lands real
 # `apple_script` rows in the cross-model matrix (same rationale as `Subagent`).
 # `read -ra` splits the override/default into the array (SC2206-clean, bash 3.2-safe).
-read -ra LLM_SUITES <<< "${LLM_SUITES:-AgentLoop AgentLoopFrontier AgentDB AppleScript CapabilityClaims ComputerUseLoop DefaultAgent MicroPerf PromptInjection SandboxFrontier Subagent}"
+read -ra LLM_SUITES <<< "${LLM_SUITES:-AgentDB AgentLoop AgentLoopFrontier AppleScript CacheProof CapabilityClaims ComputerUseLoop DefaultAgent HTTPAPI Memory MicroPerf PromptInjection ReasoningChannel SandboxFrontier Subagent}"
 
 log() { printf '[opt-loop] %s\n' "$*"; }
+
+# Fail before a long build/model load when a configured suite was renamed or
+# removed. A stale name previously produced only a late "no report" warning,
+# silently shrinking the optimization gate.
+validate_suite_list() {
+  local missing=0 suite
+  if [[ "${SKIP_DET}" != "1" ]]; then
+    for suite in "${DET_SUITES[@]}"; do
+      if [[ ! -d "${EVALS_PKG}/Suites/${suite}" ]]; then
+        log "ERROR: configured suite does not exist: Suites/${suite}"
+        missing=1
+      fi
+    done
+  fi
+  for suite in "${LLM_SUITES[@]}"; do
+    if [[ ! -d "${EVALS_PKG}/Suites/${suite}" ]]; then
+      log "ERROR: configured suite does not exist: Suites/${suite}"
+      missing=1
+    fi
+  done
+  [[ ${missing} -eq 0 ]]
+}
+
+if ! validate_suite_list; then
+  exit 2
+fi
 
 # ── 1. Prep + build ──────────────────────────────────────────────────────
 if [[ "${OSAURUS_EVALS_SKIP_PREP:-0}" != "1" ]]; then
