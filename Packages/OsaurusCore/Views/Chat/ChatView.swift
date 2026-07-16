@@ -476,6 +476,10 @@ final class ChatSession: ObservableObject {
     /// remote provider shows up in the picker live, without reopening the
     /// window (mirrors `AgentsView`'s `$items` subscription).
     nonisolated(unsafe) private var modelCacheCancellable: AnyCancellable?
+    /// Runtime residency changes can originate outside this window (HTTP,
+    /// plugins, subagents, other chats). Observe them so a model evicted behind
+    /// the window's back cannot keep a stale green warm indicator.
+    nonisolated(unsafe) private var runtimeResidencyObserver: NSObjectProtocol?
     /// Flag to prevent auto-persist during initial load or programmatic resets
     private var isLoadingModel: Bool = false
     /// The model the user last picked by hand this session. Picker-list
@@ -593,6 +597,21 @@ final class ChatSession: ObservableObject {
             .sink { [weak self] items in
                 Task { @MainActor in self?.applyPickerItems(items) }
             }
+
+        runtimeResidencyObserver = NotificationCenter.default.addObserver(
+            forName: .modelRuntimeResidencyChanged,
+            object: nil,
+            queue: .main
+        ) { [weak self] note in
+            let residentModelNames = note.object as? [String] ?? []
+            Task { @MainActor in
+                guard let self else { return }
+                self.warmupController.reconcileRuntimeResidency(
+                    selectedModel: self.selectedModel,
+                    residentModelNames: residentModelNames
+                )
+            }
+        }
 
         // Mirror AgentTodoStore -> currentTodo so the inline UI block
         // updates whenever the agent calls `todo`. Filter by this window's
@@ -816,6 +835,9 @@ final class ChatSession: ObservableObject {
             NotificationCenter.default.removeObserver(observer)
         }
         if let observer = storageMutationObserver {
+            NotificationCenter.default.removeObserver(observer)
+        }
+        if let observer = runtimeResidencyObserver {
             NotificationCenter.default.removeObserver(observer)
         }
         modelSelectionCancellable = nil

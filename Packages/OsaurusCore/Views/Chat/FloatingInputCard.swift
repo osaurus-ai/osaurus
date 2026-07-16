@@ -2785,7 +2785,11 @@ extension FloatingInputCard {
 
     private var modelWarmupDotColor: Color {
         if warmModelsOnLoadEnabled, isSelectedModelLocal, !isRemoteAgentRun {
-            return warmupController.isWarmForDisplay ? .green : .yellow
+            switch warmupController.state {
+            case .cold: return .gray
+            case .warming: return .yellow
+            case .warm: return .green
+            }
         }
         return .green
     }
@@ -2794,25 +2798,29 @@ extension FloatingInputCard {
         guard warmModelsOnLoadEnabled, isSelectedModelLocal, !isRemoteAgentRun else {
             return String(localized: "Model ready", bundle: .module)
         }
-        if warmupController.isWarmForDisplay {
+        switch warmupController.state {
+        case .warm:
             return String(localized: "Model warm — ready for a fast first response", bundle: .module)
-        }
-        guard let model = selectedModel, let phase = warmupProgressHub.phases[model] else {
-            return String(localized: "Warming up…", bundle: .module)
-        }
-        switch phase {
-        case .loadingModel:
-            return String(localized: "Warming up — loading model…", bundle: .module)
-        case .prefilling(let state):
-            guard state.totalUnitCount > 0 else {
-                return String(localized: "Warming up — prefilling context…", bundle: .module)
+        case .cold:
+            return String(localized: "Model cold — will load on next response", bundle: .module)
+        case .warming:
+            guard let model = selectedModel, let phase = warmupProgressHub.phases[model] else {
+                return String(localized: "Warming up…", bundle: .module)
             }
-            let percent = Int(state.percentCompleted.rounded())
-            return String(
-                localized:
-                    "Warming up — prefilling context \(percent)% (\(state.completedUnitCount)/\(state.totalUnitCount) tokens)",
-                bundle: .module
-            )
+            switch phase {
+            case .loadingModel:
+                return String(localized: "Warming up — loading model…", bundle: .module)
+            case .prefilling(let state):
+                guard state.totalUnitCount > 0 else {
+                    return String(localized: "Warming up — prefilling context…", bundle: .module)
+                }
+                let percent = Int(state.percentCompleted.rounded())
+                return String(
+                    localized:
+                        "Warming up — prefilling context \(percent)% (\(state.completedUnitCount)/\(state.totalUnitCount) tokens)",
+                    bundle: .module
+                )
+            }
         }
     }
 

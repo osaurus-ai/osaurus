@@ -133,6 +133,35 @@ final class ChatWarmupController: ObservableObject {
         if state == .warm { state = .cold }
     }
 
+    /// A load from another surface (HTTP, plugin, subagent, another window)
+    /// can evict this session's selected model without touching its warm-up
+    /// controller. Drop the green-dot claim and its fingerprint when the
+    /// runtime snapshot no longer contains the selected model. Do not schedule
+    /// a replacement warm-up here: doing so would immediately evict the model
+    /// the other surface intentionally loaded.
+    func reconcileRuntimeResidency(
+        selectedModel: String?,
+        residentModelNames: [String]
+    ) {
+        guard state == .warm, let selectedModel, !selectedModel.isEmpty else { return }
+        guard !Self.isSelectedModelResident(selectedModel, in: residentModelNames) else { return }
+        invalidateWarmState()
+    }
+
+    nonisolated static func isSelectedModelResident(
+        _ selectedModel: String,
+        in residentModelNames: [String]
+    ) -> Bool {
+        let selectedTail = selectedModel.split(separator: "/").last.map(String.init) ?? selectedModel
+        return residentModelNames.contains { resident in
+            let residentTail = resident.split(separator: "/").last.map(String.init) ?? resident
+            return resident.caseInsensitiveCompare(selectedModel) == .orderedSame
+                || resident.caseInsensitiveCompare(selectedTail) == .orderedSame
+                || residentTail.caseInsensitiveCompare(selectedModel) == .orderedSame
+                || residentTail.caseInsensitiveCompare(selectedTail) == .orderedSame
+        }
+    }
+
     // MARK: - Model switch
 
     /// Handle a model selection change immediately: cancel any warm-up still

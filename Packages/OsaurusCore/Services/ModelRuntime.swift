@@ -20,6 +20,12 @@ import os.log
 
 private let genLog = Logger(subsystem: "com.dinoki.osaurus", category: "Generation")
 
+extension Notification.Name {
+    /// Posted after the set of resident local model containers changes.
+    /// The object is the complete `[String]` resident-name snapshot.
+    static let modelRuntimeResidencyChanged = Notification.Name("modelRuntimeResidencyChanged")
+}
+
 // Force-link both trampolines so ModelFactoryRegistry discovers them at runtime.
 // `loadModelContainer` iterates factories in order — without touching each
 // `.shared` the trampoline's static initializer may never run, and a model
@@ -750,6 +756,7 @@ public actor ModelRuntime {
         genLog.info(
             "loadContainer: loaded \(name, privacy: .public) isVLM=\(holder.isVLM, privacy: .public)"
         )
+        publishResidencyChange()
         return holder
     }
 
@@ -797,11 +804,12 @@ public actor ModelRuntime {
         // here forces the buffer to complete while its weights are still valid.
         Stream.gpu.synchronize()
 
-        autoreleasepool {
-            _ = modelCache.removeValue(forKey: name)
+        let didRemove = autoreleasepool {
+            modelCache.removeValue(forKey: name) != nil
         }
         lastUseSource.removeValue(forKey: name)
         if currentModelName == name { currentModelName = nil }
+        if didRemove { publishResidencyChange() }
 
         Memory.cacheLimit = mlxCacheLimit()
         // Fully settle the teardown before returning so the NEXT GPU producer
@@ -957,6 +965,7 @@ public actor ModelRuntime {
         supersededLoadingTaskIDs.removeAll()
         currentModelName = nil
         cachedConfig = nil
+        publishResidencyChange()
 
         // `clearAll` empties `modelCache`, so `mlxCacheLimit()` returns 0
         // anyway — but route through the shared helper so the policy stays
@@ -966,6 +975,16 @@ public actor ModelRuntime {
         Stream.gpu.synchronize()
         Memory.clearCache()
         if !quit { await MetalGate.shared.exitModelTeardown(model: "all-models") }
+    }
+
+    /// Broadcast a value snapshot rather than the actor-owned dictionary so
+    /// UI observers can invalidate stale warm indicators without crossing
+    /// actor isolation or polling the runtime.
+    private func publishResidencyChange() {
+        NotificationCenter.default.post(
+            name: .modelRuntimeResidencyChanged,
+            object: Array(modelCache.keys)
+        )
     }
 
     /// Invalidates the cached RuntimeConfig so the next request reads fresh values.

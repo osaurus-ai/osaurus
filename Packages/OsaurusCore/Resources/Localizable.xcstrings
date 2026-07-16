@@ -88758,6 +88758,40 @@
         }
       }
     },
+    "Model cold — will load on next response" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Modell nicht geladen — wird bei der nächsten Antwort geladen"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "모델이 로드되지 않음 — 다음 응답 시 로드됩니다"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Модель не загружена — загрузится при следующем ответе"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "模型未加载 — 将在下次响应时加载"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "模型未載入 — 將在下次回應時載入"
+          }
+        }
+      }
+    },
     "Model ready" : {
       "localizations" : {
         "de" : {
