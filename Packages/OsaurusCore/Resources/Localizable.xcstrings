@@ -97161,6 +97161,40 @@
         }
       }
     },
+    "No Automatic Limits (Dangerous)" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Keine automatischen Limits (Gefährlich)"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "자동 제한 없음(위험)"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Без автоматических ограничений (опасно)"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "无自动限制（危险）"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "無自動限制（危險）"
+          }
+        }
+      }
+    },
     "No token saved" : {
       "localizations" : {
         "de" : {

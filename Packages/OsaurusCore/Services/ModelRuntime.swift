@@ -229,6 +229,10 @@ public actor ModelRuntime {
     /// show why a load was flagged as tight without re-scanning.
     private var lastRAMFeasibility: RAMFeasibility?
 
+    /// Exact bundle-aware Memory Safety result for the most recent cold load
+    /// attempt, including refused attempts.
+    private var lastMemorySafetyLoadDecision: MemorySafetyLoadDecision?
+
     /// Every in-flight generation wrapper task, keyed by a monotonic id.
     /// `ModelLease` is the authoritative "is anyone still using the model"
     /// signal; these records exist so shutdown / same-model unload can
@@ -1050,9 +1054,16 @@ public actor ModelRuntime {
     /// `SubagentResidency`'s coexistence gate, which must stay under it —
     /// loading past this triggers `unloadForFlexibleResidentBudget`'s own
     /// eviction, which would evict the orchestrator with no restore lease.
-    static func flexibleResidentBudgetBytes() -> Int64 {
+    static func flexibleResidentBudgetBytes(
+        physicalMemoryBytes: Int64 = Int64(ProcessInfo.processInfo.physicalMemory),
+        automaticMemoryLimitsDisabled: Bool =
+            ServerRuntimeSettingsStore.automaticMemoryLimitsDisabled()
+    ) -> Int64 {
+        if automaticMemoryLimitsDisabled {
+            return .max
+        }
         let thresholds = ServerRuntimeSettingsStore.modelLoadRAMThresholds()
-        return Int64(Double(ProcessInfo.processInfo.physicalMemory) * thresholds.soft)
+        return Int64(Double(physicalMemoryBytes) * thresholds.soft)
     }
 
     /// Snapshot of the most recent pre-load RAM feasibility assessment.
@@ -1079,6 +1090,7 @@ public actor ModelRuntime {
         public let requiredAvailableBytes: Int64
         public let softLimitBytes: Int64
         public let hardLimitBytes: Int64
+        public let automaticMemoryLimitsDisabled: Bool
         /// What Metal will actually keep resident on this machine. Zero when
         /// it can't be determined.
         public let gpuBudgetBytes: Int64
@@ -1129,7 +1141,7 @@ public actor ModelRuntime {
             if residentProjection > hardLimitBytes
                 || incomingLoadFootprintBytes > physicalMemoryBytes
             {
-                return .block
+                return automaticMemoryLimitsDisabled ? .warn : .block
             }
             // A working set past the GPU budget gets paged even on an
             // otherwise idle Mac, so it warns no matter how much RAM happens
@@ -1144,6 +1156,17 @@ public actor ModelRuntime {
             if projectedBytes > softLimitBytes { return .warn }
             return .none
         }
+    }
+
+    public struct MemorySafetyLoadDecision: Sendable, Equatable {
+        public let modelName: String
+        public let estimatedWorkingSetBytes: UInt64?
+        public let resolvedLoadBudgetBytes: UInt64?
+        public let allowed: Bool
+        public let displaySummary: String
+        public let useMmapSafetensors: Bool
+        public let blockingIssues: [String]
+        public let timestamp: Date
     }
 
     /// Estimated KV-cache + activation headroom an incoming load needs beyond
@@ -1337,6 +1360,38 @@ public actor ModelRuntime {
         lastRAMFeasibility
     }
 
+    public func lastMemorySafetyLoadDecisionSnapshot() -> MemorySafetyLoadDecision? {
+        lastMemorySafetyLoadDecision
+    }
+
+    static func estimatedMemorySafetyWorkingSetBytes(
+        loadFootprintBytes: Int64,
+        physicalMemoryBytes: UInt64
+    ) -> UInt64? {
+        guard physicalMemoryBytes > 0 else { return nil }
+        return GPUMemoryBudget.estimatedChatWorkingSetBytes(
+            onDiskBytes: loadFootprintBytes
+        )
+    }
+
+    static func memorySafetyRequestEstimateMessage(
+        estimatedWorkingSetBytes: UInt64?,
+        resolvedLoadBudgetBytes: UInt64?
+    ) -> String {
+        guard let estimatedWorkingSetBytes, let resolvedLoadBudgetBytes else {
+            return "The request exceeds the selected Memory Safety load budget."
+        }
+        let bytesPerGB = Double(1 << 30)
+        let estimatedGB = Double(estimatedWorkingSetBytes) / bytesPerGB
+        let budgetGB = Double(resolvedLoadBudgetBytes) / bytesPerGB
+        return String(
+            format:
+                "Estimated request working set ~%.1f GB exceeds the selected ~%.1f GB load budget.",
+            estimatedGB,
+            budgetGB
+        )
+    }
+
     /// Shared verdict math for the pre-load advisory gate
     /// (`checkRAMFeasibility`) and the chat input's candidate-load projection
     /// (`projectedLoadFeasibility`), so the two assessments can't drift.
@@ -1358,7 +1413,9 @@ public actor ModelRuntime {
         inflightOther: Int64,
         kvHeadroom: Int64,
         physical: Int64,
-        available: Int64
+        available: Int64,
+        automaticMemoryLimitsDisabled: Bool =
+            ServerRuntimeSettingsStore.automaticMemoryLimitsDisabled()
     ) -> RAMFeasibility {
         let requiredAvailable = incomingLoadFootprintBytes + kvHeadroom
         let projected = resident + inflightOther + incomingLoadFootprintBytes + kvHeadroom
@@ -1393,6 +1450,7 @@ public actor ModelRuntime {
             requiredAvailableBytes: requiredAvailable,
             softLimitBytes: softLimit,
             hardLimitBytes: hardLimit,
+            automaticMemoryLimitsDisabled: automaticMemoryLimitsDisabled,
             gpuBudgetBytes: Self.gpuBudgetBytes(physicalMemoryBytes: physical),
             timestamp: Date()
         )
@@ -1423,7 +1481,9 @@ public actor ModelRuntime {
         incomingLoadFootprintBytes: Int64,
         excludingResident excludedName: String?,
         modelDirectory: URL? = nil,
-        refuseOnShortfall: Bool = false
+        refuseOnShortfall: Bool = false,
+        automaticMemoryLimitsDisabled: Bool =
+            ServerRuntimeSettingsStore.automaticMemoryLimitsDisabled()
     ) throws {
         let physical = Int64(ProcessInfo.processInfo.physicalMemory)
         guard physical > 0, incomingWeightsBytes > 0 else { return }
@@ -1446,7 +1506,8 @@ public actor ModelRuntime {
             inflightOther: inflightOther,
             kvHeadroom: kvHeadroom,
             physical: physical,
-            available: Self.availableMemoryBytes()
+            available: Self.availableMemoryBytes(),
+            automaticMemoryLimitsDisabled: automaticMemoryLimitsDisabled
         )
 
         lastRAMFeasibility = assessment
@@ -2023,14 +2084,20 @@ public actor ModelRuntime {
         // reclaims file cache, so proceeding into a shortfall dies as a
         // Metal command-buffer abort mid-load, not graceful pressure
         // (observed live: available 101 GB loaded clean, 89 GB crashed).
+        let preloadServerSettings = ServerRuntimeSettingsStore.snapshot()
+        let automaticMemoryLimitsDisabled =
+            ServerRuntimeSettingsStore.automaticMemoryLimitsDisabled(
+                for: preloadServerSettings
+            )
+        let preliminaryMemorySafetyPlan = Self.resolveMemorySafetyLoadPlan(
+            modelName: name,
+            modelDirectory: localURL,
+            settings: preloadServerSettings,
+            baseLoadConfiguration: .osaurusProduction,
+            inspectBundleFacts: true
+        )
         let willMaterialize =
-            !Self.resolveMemorySafetyLoadPlan(
-                modelName: name,
-                modelDirectory: localURL,
-                settings: ServerRuntimeSettingsStore.snapshot(),
-                baseLoadConfiguration: .osaurusProduction,
-                inspectBundleFacts: true
-            ).loadConfiguration.useMmapSafetensors
+            !preliminaryMemorySafetyPlan.loadConfiguration.useMmapSafetensors
         let loadFootprintBytes =
             willMaterialize
             ? weightsBytes
@@ -2042,6 +2109,52 @@ public actor ModelRuntime {
         genLog.info(
             "loadContainer: pre-load checks done model=\(name, privacy: .public) weightsBytes=\(weightsBytes, privacy: .public) loadFootprintBytes=\(loadFootprintBytes, privacy: .public) materialized=\(willMaterialize, privacy: .public)"
         )
+
+        let estimatedWorkingSetBytes = Self.estimatedMemorySafetyWorkingSetBytes(
+            loadFootprintBytes: loadFootprintBytes,
+            physicalMemoryBytes: ProcessInfo.processInfo.physicalMemory
+        )
+        let admissionPlan = Self.resolveMemorySafetyLoadPlan(
+            modelName: name,
+            modelDirectory: localURL,
+            settings: preloadServerSettings,
+            baseLoadConfiguration: .osaurusProduction,
+            inspectBundleFacts: true,
+            request: VMLXMemoryRequestEstimate(
+                workingSetBytes: estimatedWorkingSetBytes
+            )
+        )
+        let blockingIssueMessages = admissionPlan.blockingIssues.map { issue in
+            if issue.field == "memorySafety.requestEstimate" {
+                return
+                    "\(issue.field): \(Self.memorySafetyRequestEstimateMessage(estimatedWorkingSetBytes: estimatedWorkingSetBytes, resolvedLoadBudgetBytes: admissionPlan.resolvedLoadBudgetBytes))"
+            }
+            return "\(issue.field): \(issue.message)"
+        }
+        lastMemorySafetyLoadDecision = MemorySafetyLoadDecision(
+            modelName: name,
+            estimatedWorkingSetBytes: estimatedWorkingSetBytes,
+            resolvedLoadBudgetBytes: admissionPlan.resolvedLoadBudgetBytes,
+            allowed: blockingIssueMessages.isEmpty,
+            displaySummary: admissionPlan.displaySummary,
+            useMmapSafetensors: admissionPlan.loadConfiguration.useMmapSafetensors,
+            blockingIssues: blockingIssueMessages,
+            timestamp: Date()
+        )
+        if !blockingIssueMessages.isEmpty {
+            let issueSummary = blockingIssueMessages.joined(separator: "; ")
+            genLog.error(
+                "loadContainer: memory safety refused \(name, privacy: .public): \(issueSummary, privacy: .public)"
+            )
+            throw NSError(
+                domain: "ModelRuntime",
+                code: 507,
+                userInfo: [
+                    NSLocalizedDescriptionKey:
+                        "Memory Safety refused to load \(name). \(issueSummary) Increase the selected budget or choose Safe Auto / No Automatic Limits in Server Settings, then retry."
+                ]
+            )
+        }
 
         // Reserve this load's footprint the instant it's known, BEFORE the
         // feasibility gate and the task registration below, so a concurrent
@@ -2076,7 +2189,8 @@ public actor ModelRuntime {
             incomingLoadFootprintBytes: loadFootprintBytes,
             excludingResident: name,
             modelDirectory: localURL,
-            refuseOnShortfall: willMaterialize
+            refuseOnShortfall: willMaterialize && !automaticMemoryLimitsDisabled,
+            automaticMemoryLimitsDisabled: automaticMemoryLimitsDisabled
         )
 
         // Tool-call format + reasoning parser are stamped automatically by
@@ -2279,7 +2393,8 @@ public actor ModelRuntime {
         // the two diverged and the slider never reached the coordinator.
         var resolvedSettings = settings
         resolvedSettings.cache =
-            settings.resolvedMemorySafetyPlan(
+            ServerRuntimeSettingsStore.resolvedMemorySafetyPlan(
+                for: settings,
                 host: MemoryStatus.snapshot()
             ).cache
         let diskCacheDir = Self.cacheDiskDirectoryOverride(for: resolvedSettings.cache)
@@ -3325,7 +3440,16 @@ public actor ModelRuntime {
         } else {
             unsetenv("VMLX_ENABLE_UNSAFE_COMPILE")
         }
-        CacheStoreBudget.policy = settings.memorySafety.mode.cacheStorePolicy
+        CacheStoreBudget.policy = cacheStorePolicy(for: settings)
+    }
+
+    nonisolated static func cacheStorePolicy(
+        for settings: VMLXServerRuntimeSettings
+    ) -> CacheStorePolicy {
+        if ServerRuntimeSettingsStore.automaticMemoryLimitsDisabled(for: settings) {
+            return CacheStorePolicy(headroomFraction: 1.0)
+        }
+        return settings.memorySafety.mode.cacheStorePolicy
     }
 
     nonisolated static func makeGenerateParameters(
@@ -3478,24 +3602,26 @@ public actor ModelRuntime {
         modelDirectory: URL,
         settings: VMLXServerRuntimeSettings,
         baseLoadConfiguration: LoadConfiguration,
-        inspectBundleFacts: Bool
+        inspectBundleFacts: Bool,
+        request: VMLXMemoryRequestEstimate? = nil
     ) -> VMLXResolvedMemorySafetyPlan {
         let bundleFacts =
             inspectBundleFacts
             ? LoadBundleFacts.inspect(bundleURL: modelDirectory)
             : nil
-        let plan = settings.resolvedMemorySafetyPlan(
+        let plan = ServerRuntimeSettingsStore.resolvedMemorySafetyPlan(
+            for: settings,
             baseLoadConfiguration: baseLoadConfiguration,
             bundleFacts: bundleFacts,
             host: MemoryStatus.snapshot(),
-            request: nil
+            request: request
         )
         if !plan.blockingIssues.isEmpty {
             let issueSummary = plan.blockingIssues
                 .map { "\($0.field): \($0.message)" }
                 .joined(separator: "; ")
             genLog.warning(
-                "loadContainer: memory safety plan produced advisory blocking issues for \(modelName, privacy: .public): \(issueSummary, privacy: .public)"
+                "loadContainer: memory safety plan produced blocking issues for \(modelName, privacy: .public): \(issueSummary, privacy: .public)"
             )
         }
         return plan

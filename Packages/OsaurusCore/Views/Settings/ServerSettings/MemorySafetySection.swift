@@ -15,7 +15,8 @@ struct MemorySafetySection: View {
     @Binding var draft: VMLXServerRuntimeSettings
 
     private var resolvedPlan: VMLXResolvedMemorySafetyPlan {
-        draft.resolvedMemorySafetyPlan(
+        ServerRuntimeSettingsStore.resolvedMemorySafetyPlan(
+            for: draft,
             baseLoadConfiguration: .osaurusProduction,
             host: MemoryStatus.snapshot()
         )
@@ -33,7 +34,7 @@ struct MemorySafetySection: View {
                 hint:
                     "Safe Auto is the default. Strict can refuse before load when a request cannot fit the selected budget."
             ) {
-                Picker("", selection: $draft.memorySafety.mode) {
+                Picker("", selection: memorySafetyModeBinding) {
                     ForEach(VMLXMemorySafetyMode.allCases, id: \.self) { mode in
                         Text(modeTitle(mode)).tag(mode)
                     }
@@ -45,7 +46,7 @@ struct MemorySafetySection: View {
             SettingsField(
                 label: "Safety Level",
                 hint:
-                    "0 favors performance, 2 is Safe Auto, 3 is strict, and 4 is diagnostic/custom."
+                    "0 favors performance, 2 is Safe Auto, 3 is strict, and 4 removes automatic Osaurus caps."
             ) {
                 VStack(alignment: .leading, spacing: 8) {
                     Slider(value: sliderBinding, in: 0 ... 4, step: 1)
@@ -136,7 +137,23 @@ struct MemorySafetySection: View {
         Binding(
             get: { Double(draft.memorySafety.slider) },
             set: { newValue in
-                draft.memorySafety.slider = Int(newValue.rounded()).clamped(to: 0 ... 4)
+                let level = Int(newValue.rounded()).clamped(to: 0 ... 4)
+                draft.memorySafety.slider = level
+                if level == 4 {
+                    draft.memorySafety.customPhysicalMemoryFraction = nil
+                }
+            }
+        )
+    }
+
+    private var memorySafetyModeBinding: Binding<VMLXMemorySafetyMode> {
+        Binding(
+            get: { draft.memorySafety.mode },
+            set: { newMode in
+                draft.memorySafety.mode = newMode
+                if newMode == .diagnosticDangerous {
+                    draft.memorySafety.customPhysicalMemoryFraction = nil
+                }
             }
         )
     }
@@ -164,7 +181,7 @@ struct MemorySafetySection: View {
         case 1: return L("Balanced")
         case 2: return L("Safe Auto")
         case 3: return L("Strict")
-        default: return L("Diagnostic / Custom")
+        default: return L("No Automatic Limits (Dangerous)")
         }
     }
 
@@ -177,7 +194,8 @@ struct MemorySafetySection: View {
     }
 
     private var kvCapSummary: String {
-        resolvedPlan.cache.defaultMaxKVSize.map(String.init) ?? "default"
+        resolvedPlan.cache.defaultMaxKVSize.map(String.init)
+            ?? (draft.memorySafety.mode == .diagnosticDangerous ? "unlimited" : "default")
     }
 
     private var concurrencySummary: String {
@@ -218,7 +236,7 @@ struct MemorySafetySection: View {
         case .balanced: return L("Balanced")
         case .safeAuto: return L("Safe Auto")
         case .strict: return L("Strict")
-        case .diagnosticDangerous: return L("Diagnostic / Dangerous")
+        case .diagnosticDangerous: return L("No Automatic Limits (Dangerous)")
         }
     }
 }

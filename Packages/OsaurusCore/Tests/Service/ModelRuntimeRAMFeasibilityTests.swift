@@ -72,7 +72,8 @@ struct ModelRuntimeRAMFeasibilityTests {
             inflightOther: inflightOther,
             kvHeadroom: kvHeadroom,
             physical: physical,
-            available: available
+            available: available,
+            automaticMemoryLimitsDisabled: false
         )
     }
 
@@ -237,6 +238,7 @@ struct ModelRuntimeRAMFeasibilityTests {
             requiredAvailableBytes: 95 * gb,
             softLimitBytes: 70 * gb,
             hardLimitBytes: 90 * gb,
+            automaticMemoryLimitsDisabled: false,
             // Isolate the byte math: no budget, so `exceedsGPUBudget` is false.
             gpuBudgetBytes: 0,
             timestamp: Date()
@@ -259,10 +261,29 @@ struct ModelRuntimeRAMFeasibilityTests {
             requiredAvailableBytes: 10 * gb,
             softLimitBytes: 70 * gb,
             hardLimitBytes: 90 * gb,
+            automaticMemoryLimitsDisabled: false,
             gpuBudgetBytes: 75 * gb,
             timestamp: Date()
         )
         #expect(lowAvailableOnly.loadPressureSeverity == .none)
+    }
+
+    @Test("No Automatic Limits downgrades the send block to visible guidance")
+    func noAutomaticLimitsDoesNotBlockSend() {
+        let f = ModelRuntime.buildRAMFeasibility(
+            modelName: "dangerous-test-model",
+            incomingWeightsBytes: 110 * gb,
+            incomingLoadFootprintBytes: 110 * gb,
+            resident: 0,
+            inflightOther: 0,
+            kvHeadroom: 0,
+            physical: 100 * gb,
+            available: 20 * gb,
+            automaticMemoryLimitsDisabled: true
+        )
+
+        #expect(f.automaticMemoryLimitsDisabled)
+        #expect(f.loadPressureSeverity == .warn)
     }
 
     // MARK: - GPU working-set budget
@@ -286,7 +307,8 @@ struct ModelRuntimeRAMFeasibilityTests {
             kvHeadroom: required - weights,
             physical: physical,
             // 77% "used" — an ordinary idle macOS desktop.
-            available: Int64(0.23 * Double(physical))
+            available: Int64(0.23 * Double(physical)),
+            automaticMemoryLimitsDisabled: false
         )
         #expect(f.requiredAvailableBytes == required)
         #expect(!f.exceedsGPUBudget)
@@ -309,7 +331,8 @@ struct ModelRuntimeRAMFeasibilityTests {
             inflightOther: 0,
             kvHeadroom: 0,
             physical: physical,
-            available: physical
+            available: physical,
+            automaticMemoryLimitsDisabled: false
         )
         #expect(f.exceedsGPUBudget)
         #expect(f.loadPressureSeverity == .warn)
@@ -336,6 +359,39 @@ struct ModelRuntimeRAMFeasibilityTests {
     @Test("A 48 GB Mac budgets 36 GB to the GPU")
     func gpuBudgetForFortyEightGigMac() {
         #expect(ModelRuntime.gpuBudgetBytes(physicalMemoryBytes: 48 * gb) == 36 * gb)
+    }
+
+    @Test("Strict admission estimate includes picker-equivalent runtime headroom")
+    func strictAdmissionEstimateIncludesHeadroom() throws {
+        let footprint = Int64(12.48 * Double(gb))
+        let estimated = try #require(
+            ModelRuntime.estimatedMemorySafetyWorkingSetBytes(
+                loadFootprintBytes: footprint,
+                physicalMemoryBytes: UInt64(128 * gb)
+            )
+        )
+
+        #expect(Double(estimated) / Double(gb) > 15.59)
+        #expect(Double(estimated) / Double(gb) < 15.61)
+        #expect(
+            ModelRuntime.estimatedMemorySafetyWorkingSetBytes(
+                loadFootprintBytes: 0,
+                physicalMemoryBytes: UInt64(128 * gb)
+            ) == nil
+        )
+    }
+
+    @Test("Admission error does not advertise an unproven cache codec")
+    func admissionErrorUsesArchitectureNeutralAdvice() {
+        let message = ModelRuntime.memorySafetyRequestEstimateMessage(
+            estimatedWorkingSetBytes: 16_700_329_790,
+            resolvedLoadBudgetBytes: 13_743_895_347
+        )
+
+        #expect(message.contains("~15.6 GB"))
+        #expect(message.contains("~12.8 GB"))
+        #expect(!message.localizedCaseInsensitiveContains("TurboQuant"))
+        #expect(!message.localizedCaseInsensitiveContains("cache codec"))
     }
 
     // MARK: - projectedLoadFeasibility guards

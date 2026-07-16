@@ -160,6 +160,7 @@ struct ChatWarmupControllerRAMGateTests {
             requiredAvailableBytes: requiredAvailable,
             softLimitBytes: soft,
             hardLimitBytes: hard,
+            automaticMemoryLimitsDisabled: false,
             // Budget unknown, so it never influences these warmup assertions.
             gpuBudgetBytes: 0,
             timestamp: Date()

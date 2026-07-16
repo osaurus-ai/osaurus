@@ -85,6 +85,22 @@ struct GPUMemoryBudgetTests {
         #expect(ornith.compatibility(totalMemoryGB: 128) == .compatible)
     }
 
+    @Test("Picker and runtime share the exact chat working-set estimate")
+    func pickerAndRuntimeWorkingSetMatch() throws {
+        let onDiskBytes = Int64(12.48 * Self.bytesPerGB)
+        let model = Self.model("gemma-12b-mxfp8", gbOnDisk: 12.48)
+        let pickerGB = try #require(model.estimatedMemoryGB)
+        let runtimeBytes = try #require(
+            ModelRuntime.estimatedMemorySafetyWorkingSetBytes(
+                loadFootprintBytes: onDiskBytes,
+                physicalMemoryBytes: UInt64(128 * Self.bytesPerGB)
+            )
+        )
+
+        #expect(abs(pickerGB - Double(runtimeBytes) / Self.bytesPerGB) < 0.001)
+        #expect(abs(pickerGB - 15.6) < 0.001)
+    }
+
     @Test("Small bundles stay comfortable on base-RAM Macs")
     func smallModelsRemainCompatible() {
         // A ~2 GB 4-bit bundle: 2.5 GB resident against a 5.33 GB budget.
