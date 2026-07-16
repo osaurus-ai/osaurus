@@ -865,6 +865,32 @@ extension ModelManager {
             useCase: .vision
         ),
 
+        // MARK: Bonsai (prism-ml, Qwen 3.5 dense backbone)
+        //
+        // Extreme low-bit dense 27B vision-language models converted from
+        // prism-ml's Bonsai checkpoints. Text matrices use affine JANG
+        // (schema-2 discrete storage — not JANGTQ/MXTQ or a codebook
+        // sidecar); vision components stay 4-bit affine. Same `qwen3_5`
+        // runtime class as Qwen 3.6 / Ornith dense builds.
+
+        curated(
+            id: "OsaurusAI/Bonsai-27b-Ternary-JANG",
+            description:
+                "Bonsai 27B dense vision model on a Qwen 3.5 backbone. Ternary (2-bit slot) affine JANG text weights — ~8 GB on disk.",
+            modelType: "qwen3_5",
+            releasedAt: date("2026-07-14"),
+            useCase: .vision
+        ),
+
+        curated(
+            id: "OsaurusAI/Bonsai-27b-1bit-JANG",
+            description:
+                "Bonsai 27B dense vision model on a Qwen 3.5 backbone. 1-bit affine JANG text weights — smallest of the family at ~4.7 GB.",
+            modelType: "qwen3_5",
+            releasedAt: date("2026-07-14"),
+            useCase: .vision
+        ),
+
         // MARK: MiniMax M2.7 (JANGTQ MoE)
         //
         // 228.7B total / ~1.4B active MoE (256 experts, top-8) with 192K context.
@@ -2045,7 +2071,12 @@ extension ModelManager {
                         id: id,
                         name: ModelMetadataParser.friendlyName(from: id),
                         description: L("Local model (detected)"),
-                        downloadURL: "https://huggingface.co/\(id)"
+                        downloadURL: "https://huggingface.co/\(id)",
+                        // The scan already runs off-main. Preserve the bundle's
+                        // architecture tag here so hot UI paths can distinguish
+                        // image-only from video-capable local VLMs without
+                        // re-reading config.json during SwiftUI layout.
+                        modelType: VLMDetection.readModelType(at: resolved)
                     )
                     models.append(model)
                 }

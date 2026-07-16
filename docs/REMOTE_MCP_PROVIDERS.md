@@ -260,6 +260,8 @@ The implementation lives in [`Packages/OsaurusCore/Services/MCP/OAuth/`](../Pack
 - Access tokens are refreshed proactively before they expire.
 - If a request returns `401 Unauthorized`, Osaurus probes the response's `WWW-Authenticate: Bearer` challenge, refreshes once, and retries. If that also fails, the provider's row surfaces a "Sign in again" prompt.
 - All tokens (access + refresh) live in Keychain; `mcp.json` only stores client IDs and metadata.
+- A `401`/`403` **without** a `WWW-Authenticate` header (common on servers that only accept static API tokens) is still classified as an auth failure — the provider row shows an auth-specific message including the server's JSON-RPC error, instead of a generic connection error.
+- An OAuth challenge on a provider configured with an **API Key** never converts it to OAuth: the row keeps the inline token field and reports that the saved token was rejected. Servers like `runalyze.com/mcp` advertise OAuth in their 401 challenge while also accepting personal API tokens.
 
 ### Session Expiry Recovery (tool calls)
 

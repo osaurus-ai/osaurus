@@ -218,6 +218,24 @@ struct ModelManagerTests {
         #expect(detected.count == 4)
     }
 
+    @Test func scanLocalModels_preservesModelTypeForComposerMediaGating() throws {
+        let fm = FileManager.default
+        let root = fm.temporaryDirectory.appendingPathComponent("osu-media-type-\(UUID().uuidString)")
+        let bundle = root.appendingPathComponent("Bonsai-27b-1bit-JANG")
+        try fm.createDirectory(at: bundle, withIntermediateDirectories: true)
+        defer { try? fm.removeItem(at: root) }
+
+        try Data(#"{"model_type":"qwen3_5","vision_config":{}}"#.utf8)
+            .write(to: bundle.appendingPathComponent("config.json"))
+        try Data("{}".utf8).write(to: bundle.appendingPathComponent("tokenizer.json"))
+        try Data().write(to: bundle.appendingPathComponent("model.safetensors"))
+
+        let detected = ModelManager.scanLocalModels(at: root)
+        let model = try #require(detected.first)
+        #expect(model.id == "Bonsai-27b-1bit-JANG")
+        #expect(model.modelType == "qwen3_5")
+    }
+
     @Test func scanLocalModels_detectsFlatAndNestedLayouts() async throws {
         let fm = FileManager.default
         let root = fm.temporaryDirectory.appendingPathComponent("osu-scan-\(UUID().uuidString)")

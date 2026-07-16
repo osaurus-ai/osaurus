@@ -146,6 +146,33 @@ struct AgentToolLoopTests {
         #expect(surface.batchOutcomes[0].allSatisfy { !$0.wasDeduped && !$0.wasError })
     }
 
+    @Test func fifthRephrasedWebSearchReturnsTransitionWithoutExecutingProvider() async throws {
+        let surface = ScriptedLoopSurface(steps: [
+            .toolCalls([inv("web_search", #"{"query":"source 1"}"#)]),
+            .toolCalls([inv("web_search", #"{"query":"source 2"}"#)]),
+            .toolCalls([inv("web_search", #"{"query":"source 3"}"#)]),
+            .toolCalls([inv("web_search", #"{"query":"source 4"}"#)]),
+            .toolCalls([inv("web_search", #"{"query":"source 5"}"#)]),
+            .finalResponse,
+        ])
+        surface.toolResults["web_search"] = AgentLoopToolExecution(
+            result: ToolEnvelope.success(tool: "web_search", text: "ranked snippets")
+        )
+
+        let result = try await AgentToolLoop.run(
+            policy: chatPolicy(maxIterations: 6),
+            state: AgentTaskState(),
+            hooks: surface.makeHooks()
+        )
+
+        #expect(result.exit == .finalResponse)
+        #expect(surface.executedCalls.count == 4)
+        let guarded = try #require(surface.batchOutcomes.last?.first)
+        #expect(guarded.result.contains("transition_required"))
+        #expect(!guarded.wasDeduped)
+        #expect(!guarded.wasError)
+    }
+
     @Test func capabilitiesLoadKeepsToolSchemaFrozenAndCallableSameTurn() async throws {
         // KV-prefix stability: the surface advertises the SAME <tools> set on
         // every iteration, even after `capabilities_load`. The loaded tool is

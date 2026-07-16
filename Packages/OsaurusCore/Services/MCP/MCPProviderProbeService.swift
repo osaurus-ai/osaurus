@@ -242,7 +242,73 @@ public enum MCPProviderProbeService {
             discoveryTimeout: discoveryTimeout,
             toolCallTimeout: discoveryTimeout
         )
-        return await runProbe(provider: provider, transport: transport, startedAt: startedAt)
+        let result = await runProbe(provider: provider, transport: transport, startedAt: startedAt)
+
+        // The SDK error text is often too vague to classify (mapFailure falls
+        // back to string matching), so for generically-classified failures
+        // re-probe the endpoint directly and check the HTTP status. A bare
+        // 401/403 — with or without a `WWW-Authenticate` header — becomes an
+        // auth-specific result instead of "connection failed".
+        guard
+            !result.succeeded,
+            result.reasonCode == .connectionFailed
+                || result.reasonCode == .unknownFailure
+                || result.reasonCode == .authRequired
+        else { return result }
+        if let refined = await refineHTTPAuthFailure(
+            provider: provider,
+            endpoint: endpoint,
+            headers: allHeaders,
+            startedAt: startedAt
+        ) {
+            return refined
+        }
+        return result
+    }
+
+    private static func refineHTTPAuthFailure(
+        provider: MCPProvider,
+        endpoint: URL,
+        headers: [String: String],
+        startedAt: Date
+    ) async -> MCPProviderProbeResult? {
+        var request = URLRequest(url: endpoint)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue("application/json, text/event-stream", forHTTPHeaderField: "Accept")
+        for (key, value) in headers {
+            request.setValue(value, forHTTPHeaderField: key)
+        }
+        request.httpBody = MCPAuthFailureProbe.handshakeBody()
+        request.timeoutInterval = 10
+
+        guard
+            let (data, response) = try? await GlobalProxySettings.sharedSession().data(for: request),
+            let http = response as? HTTPURLResponse,
+            let probe = MCPAuthFailureProbe.evaluate(
+                response: http,
+                body: data,
+                sentAuthorization: request.value(forHTTPHeaderField: "Authorization") != nil
+            )
+        else { return nil }
+
+        let action =
+            probe.sentAuthorization
+            ? L(
+                "Check that the token is valid for this server (plan/scope) and pasted without a Bearer prefix or extra whitespace."
+            )
+            : L("Save an API token or sign in, then test again.")
+        return failure(
+            provider: provider,
+            startedAt: startedAt,
+            stage: .connect,
+            reasonCode: .authRequired,
+            message: MCPAuthFailureProbe.failureDescription(
+                authType: provider.authType,
+                probe: probe
+            ),
+            action: action
+        )
     }
 
     public static func probeStdio(provider: MCPProvider) async -> MCPProviderProbeResult {

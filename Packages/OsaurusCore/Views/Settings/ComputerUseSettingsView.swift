@@ -35,6 +35,7 @@ struct ComputerUseSettingsView: View {
     @ObservedObject private var themeManager = ThemeManager.shared
     @ObservedObject private var permissionService = SystemPermissionService.shared
     @ObservedObject private var cloudVisionConsent = CloudVisionConsent.shared
+    @ObservedObject private var managementState = ManagementStateManager.shared
 
     private var theme: ThemeProtocol { themeManager.currentTheme }
 
@@ -80,7 +81,11 @@ struct ComputerUseSettingsView: View {
         .onReceive(NotificationCenter.default.publisher(for: .localModelsChanged)) { _ in
             Task { await refreshAppleScriptInstalledCount() }
         }
+        .onChange(of: managementState.computerUseSubTabRequest) { _, _ in
+            applySubTabRequestIfNeeded()
+        }
         .onAppear {
+            applySubTabRequestIfNeeded()
             policy = ComputerUsePolicyStore.load()
             permissionService.startPeriodicRefresh(interval: 2.0)
             withAnimation(.easeOut(duration: 0.25).delay(0.05)) {
@@ -90,6 +95,14 @@ struct ComputerUseSettingsView: View {
         .onDisappear {
             permissionService.stopPeriodicRefresh()
         }
+    }
+
+    private func applySubTabRequestIfNeeded() {
+        guard let requested = managementState.computerUseSubTabRequest else { return }
+        if let tab = ComputerUseTab(rawValue: requested) {
+            selectedTab = tab
+        }
+        managementState.computerUseSubTabRequest = nil
     }
 
     /// The original Computer Use content: about, setup/permissions, per-agent

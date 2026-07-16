@@ -3,6 +3,46 @@
   <channel>
     <title>Osaurus</title>
         <item>
+            <title>0.22.4</title>
+            <pubDate>Wed, 15 Jul 2026 14:09:45 +0000</pubDate>
+            <sparkle:channel>release</sparkle:channel>
+            <sparkle:version>0.22.4</sparkle:version>
+            <sparkle:shortVersionString>0.22.4</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
+            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+            <enclosure url="https://github.com/osaurus-ai/osaurus/releases/download/0.22.4/Osaurus-0.22.4.dmg" length="65347438" type="application/octet-stream" sparkle:edSignature="zGBsWFE9Cu8mDcp5kWYjFuvC9FlAELa0C7UxSl/pyY/Ze0x3KSy5A5SCrVVYquvowuJX6UbjxsXK+JnmNbpLBg=="/>
+            <description sparkle:format="markdown"><![CDATA[
+## What's Changed
+
+- added bonsai models (#2040) by @RaajeevChandran
+- Pin vmlx for native 1-bit JANG support (#2037) by @jjang-ai
+- Update Simplified Chinese and Traditional Chinese translations (#2034) by @ftzahao
+- fixed window maximize bug (#2028) by @RaajeevChandran
+- updated readme (#2025) by @RaajeevChandran
+- Update README.md (#2024) by @RaajeevChandran
+
+## 🚀 Features
+
+- Upgrade notch task navigation and follow-ups (#2036) by @tpae
+
+## 🐛 Bug Fixes
+
+- Fix spawn\_model target contract (#2033) by @jjang-ai
+- Computer Use: open apps foreground so the window is visible and the model doesn't misreport failure (#2032) by @jjang-ai
+- fixed main thread hangs across launch, storage, tts, and streaming (#2030) by @RaajeevChandran
+- fix scheduled runs never completing by evicting finished headless tasks (#2031) by @RaajeevChandran
+- Computer Use AX bounding + AccessibilityBoundedElement test fix + vmlx repin (SpecDec tail flush #148) (#2029) by @jjang-ai
+- read the hugging face keychain outside the token cache lock (#2027) by @RaajeevChandran
+
+## 🧰 Maintenance
+
+- make the chat window responsive down to narrow widths (#2038) by @RaajeevChandran
+- Agent request lifecycles independent of the chat window (#2023) by @tpae
+
+**Full Changelog**: https://github.com/osaurus-ai/osaurus/compare/0.22.3...0.22.4
+]]></description>
+        </item>
+        <item>
             <title>0.22.3</title>
             <pubDate>Mon, 13 Jul 2026 08:05:10 +0000</pubDate>
             <sparkle:channel>release</sparkle:channel>

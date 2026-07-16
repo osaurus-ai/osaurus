@@ -855,6 +855,8 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
 
         runRequestTask(priority: .userInitiated) {
             let cached = await ModelRuntime.shared.cachedModelSummaries(refreshTopology: true)
+            let lastMemorySafetyLoadDecision =
+                await ModelRuntime.shared.lastMemorySafetyLoadDecisionSnapshot()
             let batchDiagnostics = await MLXBatchAdapter.snapshotDiagnostics()
             let lastEffectiveGenerationSettings =
                 await MLXBatchAdapter.lastEffectiveGenerationSettingsSnapshot()
@@ -1027,7 +1029,8 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
 
             let runtimeSettings = ServerRuntimeSettingsStore.snapshot()
             let memoryStatus = MemoryStatus.snapshot()
-            let memorySafetyPlan = runtimeSettings.resolvedMemorySafetyPlan(
+            let memorySafetyPlan = ServerRuntimeSettingsStore.resolvedMemorySafetyPlan(
+                for: runtimeSettings,
                 baseLoadConfiguration: .osaurusProduction,
                 host: memoryStatus
             )
@@ -1040,7 +1043,8 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 "memory_safety": Self.memorySafetyJSONObject(
                     settings: runtimeSettings,
                     plan: memorySafetyPlan,
-                    memoryStatus: memoryStatus
+                    memoryStatus: memoryStatus,
+                    lastLoadDecision: lastMemorySafetyLoadDecision
                 ),
                 "storage_locations": Self.storageLocationsJSONObject(),
             ]
@@ -1463,14 +1467,17 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
     private static func memorySafetyJSONObject(
         settings: VMLXServerRuntimeSettings,
         plan: VMLXResolvedMemorySafetyPlan,
-        memoryStatus: MemoryStatus
+        memoryStatus: MemoryStatus,
+        lastLoadDecision: ModelRuntime.MemorySafetyLoadDecision?
     ) -> [String: Any] {
         let memorySafety = settings.memorySafety
         let validationIssues = memorySafety.validationIssues()
         let issues = validationIssues + plan.blockingIssues
-        return [
+        var object: [String: Any] = [
             "mode": memorySafety.mode.rawValue,
             "slider": memorySafety.slider,
+            "automatic_memory_limits_disabled":
+                ServerRuntimeSettingsStore.automaticMemoryLimitsDisabled(for: settings),
             "allowed": plan.blockingIssues.isEmpty,
             "display_summary": plan.displaySummary,
             "resolved_physical_memory_bytes": plan.resolvedPhysicalMemoryBytes,
@@ -1484,6 +1491,24 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             "validation_issues": validationIssues.map(settingsIssueJSONObject),
             "issues": issues.map(settingsIssueJSONObject),
         ]
+        if let decision = lastLoadDecision {
+            object["last_load_decision"] =
+                [
+                    "model": decision.modelName,
+                    "estimated_working_set_bytes":
+                        decision.estimatedWorkingSetBytes as Any? ?? NSNull(),
+                    "resolved_load_budget_bytes":
+                        decision.resolvedLoadBudgetBytes as Any? ?? NSNull(),
+                    "allowed": decision.allowed,
+                    "display_summary": decision.displaySummary,
+                    "use_mmap_safetensors": decision.useMmapSafetensors,
+                    "blocking_issues": decision.blockingIssues,
+                    "timestamp": decision.timestamp.ISO8601Format(),
+                ] as [String: Any]
+        } else {
+            object["last_load_decision"] = NSNull()
+        }
+        return object
     }
 
     private static func loadConfigurationJSONObject(
@@ -9081,6 +9106,8 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                         "required_available_bytes": f.requiredAvailableBytes,
                         "soft_limit_bytes": f.softLimitBytes,
                         "hard_limit_bytes": f.hardLimitBytes,
+                        "automatic_memory_limits_disabled":
+                            f.automaticMemoryLimitsDisabled,
                         // What Metal actually keeps resident. A load past this
                         // is paged by macOS rather than refused, so support
                         // needs to see it to explain a "fits but crawls" model.

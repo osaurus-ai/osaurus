@@ -40,6 +40,7 @@ struct ServerRuntimeSettingsStoreTests {
             #expect(migrated.cache.blockDisk.enabled == true)
             #expect(migrated.cache.legacyDisk.enabled == false)
             #expect(migrated.cache.liveKVCodec == .engineSelected)
+            #expect(migrated.cache.prefix.memoryPercent == nil)
             // nil: the seed leaves the default KV cap to the RAM-safety slider
             // (safe_auto resolves to 65536 in vmlx, so the effective out-of-box
             // cap is unchanged, but the slider now governs it).
@@ -54,6 +55,13 @@ struct ServerRuntimeSettingsStoreTests {
             // File should now exist.
             let url = dir.appendingPathComponent("server-runtime.json")
             #expect(FileManager.default.fileExists(atPath: url.path))
+            #expect(
+                FileManager.default.fileExists(
+                    atPath: dir.appendingPathComponent(
+                        ".server-runtime-memory-safety-cache-defaults-v4-migrated"
+                    ).path
+                )
+            )
         }
     }
 
@@ -72,6 +80,7 @@ struct ServerRuntimeSettingsStoreTests {
             #expect(snapshot.cache.blockDisk.enabled == true)
             #expect(snapshot.cache.legacyDisk.enabled == false)
             #expect(snapshot.cache.liveKVCodec == .engineSelected)
+            #expect(snapshot.cache.prefix.memoryPercent == nil)
             // nil: slider governs the default KV cap (see migrate test above).
             #expect(snapshot.cache.defaultMaxKVSize == nil)
             #expect(snapshot.cache.longPromptMultiplier == 2.0)
@@ -80,6 +89,156 @@ struct ServerRuntimeSettingsStoreTests {
             #expect(snapshot.memorySafety.mode == .safeAuto)
             #expect(snapshot.memorySafety.slider == 2)
             #expect(snapshot.memorySafety.allowExperimentalMLXPress == false)
+        }
+    }
+
+    @Test func noAutomaticLimitsRemovesOnlyImplicitCaps() {
+        var settings = VMLXServerRuntimeSettings()
+        settings.memorySafety.mode = .diagnosticDangerous
+        settings.cache.prefix.memoryPercent = nil
+        settings.cache.defaultMaxKVSize = nil
+        settings.concurrency.maxConcurrentSequences = nil
+
+        let plan = ServerRuntimeSettingsStore.resolvedMemorySafetyPlan(for: settings)
+
+        #expect(plan.loadConfiguration.memoryLimit == .unlimited)
+        #expect(plan.loadConfiguration.maxResidentBytes == .unlimited)
+        #expect(plan.resolvedLoadBudgetBytes == nil)
+        #expect(plan.cache.prefix.memoryPercent == nil)
+        #expect(plan.cache.defaultMaxKVSize == nil)
+        #expect(plan.concurrency.maxConcurrentSequences == nil)
+        #expect(plan.displaySummary.contains("load_cap=unlimited"))
+        #expect(plan.displaySummary.contains("allocator_cap=unlimited"))
+        #expect(plan.displaySummary.contains("max_concurrent=default"))
+        #expect(plan.displaySummary.contains("kv_cap=unlimited"))
+    }
+
+    @Test func noAutomaticLimitsDisablesOsaurusOwnedPercentageGates() {
+        var settings = VMLXServerRuntimeSettings()
+        settings.memorySafety.mode = .diagnosticDangerous
+        settings.memorySafety.customPhysicalMemoryFraction = nil
+
+        #expect(ServerRuntimeSettingsStore.automaticMemoryLimitsDisabled(for: settings))
+        #expect(ServerRuntimeSettingsStore.modelLoadRAMThresholds(for: settings).soft == 1.0)
+        #expect(ServerRuntimeSettingsStore.modelLoadRAMThresholds(for: settings).hard == 1.0)
+        #expect(
+            ModelRuntime.flexibleResidentBudgetBytes(
+                physicalMemoryBytes: 128 << 30,
+                automaticMemoryLimitsDisabled: true
+            ) == .max
+        )
+        #expect(ModelRuntime.cacheStorePolicy(for: settings).headroomFraction == 1.0)
+    }
+
+    @Test func explicitPhysicalFractionKeepsAUserSelectedLimit() {
+        var settings = VMLXServerRuntimeSettings()
+        settings.memorySafety.mode = .diagnosticDangerous
+        settings.memorySafety.customPhysicalMemoryFraction = 0.82
+
+        #expect(!ServerRuntimeSettingsStore.automaticMemoryLimitsDisabled(for: settings))
+    }
+
+    @Test func noAutomaticLimitsPreservesExplicitOverrides() {
+        var settings = VMLXServerRuntimeSettings()
+        settings.memorySafety.mode = .diagnosticDangerous
+        settings.memorySafety.customPhysicalMemoryFraction = 0.82
+        settings.memorySafety.customAllocatorCacheBytes = 256 << 20
+        settings.memorySafety.customDefaultMaxKVSize = 32_768
+        settings.memorySafety.customMaxConcurrentSequences = 3
+        settings.cache.prefix.memoryPercent = 12
+
+        let plan = ServerRuntimeSettingsStore.resolvedMemorySafetyPlan(for: settings)
+
+        #expect(plan.loadConfiguration.memoryLimit == .fraction(0.82))
+        #expect(plan.loadConfiguration.maxResidentBytes == .absolute(256 << 20))
+        #expect(plan.resolvedLoadBudgetBytes != nil)
+        #expect(plan.cache.prefix.memoryPercent == 12)
+        #expect(plan.cache.defaultMaxKVSize == 32_768)
+        #expect(plan.concurrency.maxConcurrentSequences == 3)
+    }
+
+    @Test func bundleSpecificPlanReportsItsActualRaisedLoadBudget() throws {
+        let physical: UInt64 = 128 << 30
+        let weights: UInt64 = 94 << 30
+        let facts = LoadBundleFacts(
+            totalSafetensorsBytes: weights,
+            isRouted: true,
+            physicalMemory: physical,
+            modelType: "hy_v3",
+            weightFormat: "jang-affine-mixed"
+        )
+
+        let plan = ServerRuntimeSettingsStore.resolvedMemorySafetyPlan(
+            for: VMLXServerRuntimeSettings(),
+            baseLoadConfiguration: .osaurusProduction,
+            bundleFacts: facts
+        )
+        guard case .fraction(let actualFraction) = plan.loadConfiguration.memoryLimit else {
+            Issue.record("Near-RAM Safe Auto plan must resolve to a fractional load budget.")
+            return
+        }
+        let expectedBudget = UInt64(Double(physical) * actualFraction)
+
+        #expect(!plan.loadConfiguration.useMmapSafetensors)
+        #expect(plan.resolvedLoadBudgetBytes == expectedBudget)
+        #expect(plan.displaySummary.contains("load_cap=0.79"))
+    }
+
+    @Test @MainActor func load_movesLegacyImplicitPrefixCapUnderMemorySafety() async throws {
+        let dir = try makeTempDirectory()
+        try await withOverriddenDirectory(dir) {
+            var oldDefault = VMLXServerRuntimeSettings()
+            oldDefault.cache.pagedKV.enabled = true
+            oldDefault.cache.liveKVCodec = .none
+            oldDefault.cache.enableSSMReDerive = false
+            oldDefault.cache.defaultMaxKVSize = 65_536
+            try writeSettings(oldDefault, to: dir)
+
+            ServerRuntimeSettingsStore.invalidateSnapshot()
+            let loaded = try #require(ServerRuntimeSettingsStore.load())
+
+            #expect(loaded.cache.prefix.memoryPercent == nil)
+            #expect(
+                FileManager.default.fileExists(
+                    atPath: dir.appendingPathComponent(
+                        ".server-runtime-memory-safety-cache-defaults-v4-migrated"
+                    ).path
+                )
+            )
+        }
+    }
+
+    @Test @MainActor func load_preservesExplicitPrefixCap() async throws {
+        let dir = try makeTempDirectory()
+        try await withOverriddenDirectory(dir) {
+            var explicit = ServerRuntimeSettingsStore.migratedFromLegacy(
+                serverConfiguration: .default,
+                userDefaults: throwawayDefaults()
+            )
+            explicit.cache.prefix.memoryPercent = 12
+            try writeSettings(explicit, to: dir)
+
+            ServerRuntimeSettingsStore.invalidateSnapshot()
+            let loaded = try #require(ServerRuntimeSettingsStore.load())
+
+            #expect(loaded.cache.prefix.memoryPercent == 12)
+        }
+    }
+
+    @Test @MainActor func freshInstall_preservesLaterExplicitFifteenPercentCap() async throws {
+        let dir = try makeTempDirectory()
+        try await withOverriddenDirectory(dir) {
+            var settings = ServerRuntimeSettingsStore.migratedFromLegacy(
+                serverConfiguration: .default,
+                userDefaults: throwawayDefaults()
+            )
+            settings.cache.prefix.memoryPercent = 15
+            try writeSettings(settings, to: dir)
+
+            ServerRuntimeSettingsStore.invalidateSnapshot()
+            let loaded = try #require(ServerRuntimeSettingsStore.load())
+
+            #expect(loaded.cache.prefix.memoryPercent == 15)
         }
     }
 

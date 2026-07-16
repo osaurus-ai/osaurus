@@ -88,12 +88,16 @@ public final class AgentTaskState {
     /// whose `path` freshness is invalidated by a write to the same path.
     private static let readLikeTools: Set<String> = [
         "file_read", "file_search", "sandbox_read_file", "sandbox_search_files",
+        "web_search", "search_and_extract",
     ]
 
-    /// Search tools' results depend on MANY paths, so any write — not just
-    /// one to the searched path — invalidates their fresh entries.
+    /// Search tools have path-less freshness entries. Local search results
+    /// depend on MANY paths, so any write — not just one to the searched path
+    /// — invalidates them. Applying the same conservative invalidation to web
+    /// results permits a deliberate refresh after intervening work while still
+    /// replaying an immediate identical re-issue.
     private static let searchLikeTools: Set<String> = [
-        "file_search", "sandbox_search_files",
+        "file_search", "sandbox_search_files", "web_search", "search_and_extract",
     ]
 
     /// Tools that mutate a path; recording one invalidates any fresh read
@@ -154,6 +158,23 @@ public final class AgentTaskState {
     /// model just gets told it's looping.
     private static let repeatedCallThreshold = 3
 
+    /// `web_search` is discovery-only: it returns ranked URLs and snippets,
+    /// not the page body or downloadable dataset. Several searches can be
+    /// legitimate research, but a longer uninterrupted run — especially with
+    /// reworded queries — means the model is failing to transition to
+    /// extraction/download. Keep this separate from the generic planning
+    /// detector so productive consecutive calls to other web tools stay valid.
+    private static let webDiscoveryRunThreshold = 4
+
+    /// Concrete transitions that consume or process discovered data. Meta
+    /// operations such as capability discovery/loading and provider
+    /// configuration deliberately do not reset the search budget: the live
+    /// Bonsai loop used those as a detour and resumed rephrased discovery.
+    private static let webDiscoveryProgressTools: Set<String> = [
+        "search_and_extract", "render_chart", "browser_do", "http_request",
+        "file_read", "sandbox_read_file", "shell_run", "sandbox_exec",
+    ]
+
     // MARK: State
 
     /// A read result still considered fresh: the canonical path it read and
@@ -210,6 +231,9 @@ public final class AgentTaskState {
     /// reworded-planning-loop nudge (e.g. `todo` re-issued every turn).
     private var planningRunName: String?
     private var planningRunCount = 0
+    /// `web_search` executions since the last concrete retrieval/processing
+    /// action, regardless of argument changes or intervening meta tools.
+    private var webDiscoveryRunCount = 0
 
     public init(biasEnabled: Bool = true) {
         self.biasEnabled = biasEnabled
@@ -233,6 +257,7 @@ public final class AgentTaskState {
         repeatedCallName = nil
         planningRunName = nil
         planningRunCount = 0
+        webDiscoveryRunCount = 0
     }
 
     // MARK: Dedupe
@@ -272,6 +297,31 @@ public final class AgentTaskState {
             return held.envelope
         }
         return nil
+    }
+
+    /// Return a synthetic, structured transition result when the model keeps
+    /// issuing discovery searches after the bounded research window. Unlike
+    /// the bias notice, this is load-bearing: the next `web_search` is not sent
+    /// to a provider, so a small model cannot burn the rest of the run on
+    /// rephrased discovery queries and network latency. It remains a success
+    /// envelope because this is an agent-loop routing decision, not a provider
+    /// failure; the model can continue immediately with retrieval or report a
+    /// truthful blocker when retrieval is unavailable.
+    public func guardedResult(name: String) -> String? {
+        guard name == "web_search", webDiscoveryRunCount >= Self.webDiscoveryRunThreshold else {
+            return nil
+        }
+        return ToolEnvelope.success(
+            tool: name,
+            result: [
+                "kind": "transition_required",
+                "executed": false,
+                "reason": "discovery_limit_reached",
+                "message":
+                    "Discovery is complete. Do not issue another web_search. Retrieve a selected result with search_and_extract using its direct url, then process it and call render_chart when requested. If retrieval or chart rendering is unavailable, report that blocker now.",
+                "next_tools": ["search_and_extract", "render_chart"],
+            ]
+        )
     }
 
     /// Convenience boolean mirror of `heldResult`.
@@ -376,6 +426,17 @@ public final class AgentTaskState {
             planningRunCount = 0
         }
 
+        // Discovery-to-retrieval transition guard. Different query text and
+        // meta-tool detours must not defeat it: the observed Bonsai failure
+        // repeatedly rephrased the same request, then loaded/discovered more
+        // capabilities, then resumed searching. Only real retrieval or
+        // processing disarms the budget.
+        if name == "web_search" {
+            webDiscoveryRunCount += 1
+        } else if Self.webDiscoveryProgressTools.contains(name), ToolEnvelope.isSuccess(result) {
+            webDiscoveryRunCount = 0
+        }
+
         // Wandering counter: a listing is a step that hasn't reached a file
         // yet, so it increments. ONLY a successful file read counts as
         // progress and resets it. A `not_found` / `error` is a FAILED read —
@@ -438,6 +499,16 @@ public final class AgentTaskState {
         if let name = planningRunName {
             return
                 "You have called `\(name)` \(Self.repeatedCallThreshold)+ times in a row without taking any other action. Re-planning is not progress — if you already have what you need, execute the next concrete step or finish the task; otherwise call a different tool. Do not issue another `\(name)` now."
+        }
+
+        // Reworded discovery loop: the model has URLs/snippets but keeps
+        // searching instead of retrieving or processing a selected source.
+        // Name the real tool boundary and the dynamic-load path; if those
+        // capabilities are unavailable, require a truthful blocker instead of
+        // another cosmetic query rewrite.
+        if webDiscoveryRunCount >= Self.webDiscoveryRunThreshold {
+            return
+                "You have called `web_search` \(Self.webDiscoveryRunThreshold)+ times in a row. `web_search` is discovery-only and returns URLs/snippets, not page bodies or downloadable data. Stop searching. Use a returned source with an available extraction, download, or file tool; if available, load `tool/search_and_extract` with `capabilities_load`, then process the retrieved data and call `render_chart` when that tool is available. If retrieval or chart rendering is unavailable, report that blocker clearly instead of rephrasing the search again."
         }
 
         // Listing nudges are reactive: suppressed until the model is observed

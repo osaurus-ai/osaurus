@@ -25,6 +25,16 @@ import Foundation
 enum GPUMemoryBudget {
 
     private static let bytesPerGB: Double = 1024 * 1024 * 1024
+    private static let chatRuntimeInflation = 1.25
+
+    /// Shared picker/load-admission estimate for static weights plus ordinary
+    /// chat activations and runtime buffers.
+    static func estimatedChatWorkingSetBytes(onDiskBytes: Int64) -> UInt64? {
+        guard onDiskBytes > 0 else { return nil }
+        let bytes = Double(onDiskBytes) * chatRuntimeInflation
+        guard bytes.isFinite, bytes > 0 else { return nil }
+        return UInt64(min(Double(UInt64.max), bytes.rounded(.up)))
+    }
 
     /// Apple's default split between the GPU working set and everything else.
     /// Machines at or below 36 GB hold back proportionally more for the OS.

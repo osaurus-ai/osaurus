@@ -351,6 +351,17 @@ struct FloatingInputCard: View {
     /// own hover cancels it so its buttons stay clickable.
     @State private var walletDismissTask: Task<Void, Never>?
     @State private var isSandboxHovered = false
+    /// Width available to the toggle-chip region (the space between the model
+    /// chip and the meta cluster). Measured cheaply via `onGeometryChange` and
+    /// used to decide whether the chips collapse to icon-only — see
+    /// `chipsCompact`. Doing a single width read + one cluster build per frame
+    /// is what keeps the sidebar collapse/expand animation smooth; the earlier
+    /// `ViewThatFits` rebuilt three candidate clusters every frame instead.
+    @State private var chipRegionWidth: CGFloat = 0
+    /// Full width of the selector row. Drives `metaCompact` so the right-edge
+    /// meta cluster (credits CTA + token readout) also sheds its non-essential
+    /// bits when the window is tiled narrow — not just when the sidebar is open.
+    @State private var selectorRowWidth: CGFloat = 0
     @State private var sandboxPulseAmount: CGFloat = 1.0
     @State private var sandboxPulseTask: Task<Void, Never>? = nil
     @State private var isClipboardHovered = false
@@ -2215,43 +2226,133 @@ extension FloatingInputCard {
                     negativePromptButton
                 }
             } else {
-                // Mode 2 owns its own generation config (thinking + sampler
-                // options) server-side; the local toggles wouldn't reach the
-                // remote agent, so hide them rather than imply they apply.
-                if !isRemoteAgentRun {
-                    thinkingToggleChip
+                // The interactive toggle chips collapse to icon-only when the
+                // chat area is too narrow to show every label (e.g. the sidebar
+                // is open) — `chipsCompact`, derived from the measured region
+                // width below, drives that. Chips carrying live state (folder
+                // name, sandbox download %) keep their text regardless; every
+                // collapsed chip still names itself on hover via help(). The
+                // ScrollView is the no-wrap safety net: it fills the space
+                // between the model chip and the meta cluster (so the meta
+                // cluster stays right-aligned, just like a Spacer would), and
+                // guarantees the labels never wrap character-by-character even
+                // at the minimum window width. We measure this region rather
+                // than probe layout candidates so the sidebar animation, which
+                // changes this width every frame, only triggers one cheap
+                // cluster build per frame instead of ViewThatFits's three.
+                ScrollView(.horizontal, showsIndicators: false) {
+                    toggleChipCluster(compact: chipsCompact)
+                        .padding(.vertical, 1)
                 }
-
-                if autoSpeakAssistant {
-                    autoSpeakToggleChip
+                .onGeometryChange(for: CGFloat.self) { proxy in
+                    proxy.size.width
+                } action: { width in
+                    chipRegionWidth = width
                 }
-
-                // Sandbox toggle: visible whenever the sandbox is available on
-                // this system. Hidden for the Default agent (configuration-only).
-                // Hidden in Mode 2: the remote agent runs its own tools server-side.
-                if !isRemoteAgentRun, !isDefaultConfigAgent, isSandboxAvailable {
-                    sandboxToggleChip
-                }
-
-                // Folder context selector: the Default (configuration) agent shows
-                // a quiet "Configuration" indicator instead. Hidden in Mode 2.
-                if !isRemoteAgentRun {
-                    if isDefaultConfigAgent {
-                        configurationOnlyChip
-                    } else {
-                        folderContextChip
-                    }
-                }
-
-                // Clipboard / paste chip — last in the left cluster.
-                if AppConfiguration.shared.chatConfig.enableClipboardMonitoring && clipboardService.hasNewContent {
-                    clipboardToggleChip
-                }
-
-                Spacer()
 
                 // Right-aligned "meta" cluster: balance + token usage.
                 metaCluster
+            }
+        }
+        .onGeometryChange(for: CGFloat.self) { proxy in
+            proxy.size.width
+        } action: { width in
+            selectorRowWidth = width
+        }
+    }
+
+    /// Whether the right-edge meta cluster should shed its non-essential bits
+    /// (the credits icon, the "tokens" caption). True when the caller asked for
+    /// compact (sidebar open) OR the row itself is narrow — the latter is what
+    /// was missing: tiling the window narrow with the sidebar closed left the
+    /// meta cluster at full width and crowded the chips off the row.
+    private var metaCompact: Bool {
+        isCompact || (selectorRowWidth > 0 && selectorRowWidth < 620)
+    }
+
+    /// A tighter tier for genuinely tiny rows (e.g. minimum window width *with*
+    /// the sidebar open, which leaves the chat pane only ~260pt). Here the meta
+    /// cluster gives up its lowest-priority pieces so the toggle chips still fit
+    /// without being clipped mid-icon: the token readout is dropped and the
+    /// credits CTA shrinks to its glyph (hover/tap still opens the wallet).
+    private var metaUltraCompact: Bool {
+        selectorRowWidth > 0 && selectorRowWidth < 430
+    }
+
+    /// Whether the toggle chips should collapse to icon-only. True once the
+    /// measured `chipRegionWidth` is narrower than the labeled chips would
+    /// need. The per-chip width is a deliberate estimate — the ScrollView
+    /// safety net absorbs any error, so this only has to be in the ballpark to
+    /// flip the row to icons a beat before the labels would otherwise scroll.
+    private var chipsCompact: Bool {
+        guard chipRegionWidth > 0 else { return false }
+        let perLabeledChip: CGFloat = 96
+        return chipRegionWidth < CGFloat(visibleToggleChipCount) * perLabeledChip
+    }
+
+    /// Count of toggle chips currently in the cluster, mirroring the visibility
+    /// conditions in `toggleChipCluster`. Drives the `chipsCompact` width
+    /// budget so the collapse point scales with how many chips are actually on
+    /// screen (a remote-agent run, for instance, hides most of them).
+    private var visibleToggleChipCount: Int {
+        var count = 0
+        if !isRemoteAgentRun,
+            let model = selectedModel,
+            ModelProfileRegistry.profile(for: model)?.thinkingOption != nil
+        {
+            count += 1
+        }
+        if autoSpeakAssistant { count += 1 }
+        if !isRemoteAgentRun, !isDefaultConfigAgent, isSandboxAvailable { count += 1 }
+        if !isRemoteAgentRun { count += 1 }  // folder or configuration chip
+        if AppConfiguration.shared.chatConfig.enableClipboardMonitoring
+            && clipboardService.hasNewContent
+        {
+            count += 1
+        }
+        return count
+    }
+
+    /// The interactive toggle chips (thinking, auto-speak, sandbox, folder,
+    /// clipboard) as one horizontal group. `compact` drops each chip's text
+    /// label to icon-only unless the chip has live state worth spelling out;
+    /// `selectorRow` renders one rendering of this cluster, choosing `compact`
+    /// from the measured region width so the row degrades gracefully as it
+    /// narrows without re-measuring layout candidates every frame.
+    @ViewBuilder
+    private func toggleChipCluster(compact: Bool) -> some View {
+        HStack(spacing: 6) {
+            // Mode 2 owns its own generation config (thinking + sampler
+            // options) server-side; the local toggles wouldn't reach the
+            // remote agent, so hide them rather than imply they apply.
+            if !isRemoteAgentRun {
+                thinkingToggleChip(compact: compact)
+            }
+
+            if autoSpeakAssistant {
+                autoSpeakToggleChip(compact: compact)
+            }
+
+            // Sandbox toggle: visible whenever the sandbox is available on
+            // this system. Hidden for the Default agent (configuration-only).
+            // Hidden in Mode 2: the remote agent runs its own tools server-side.
+            if !isRemoteAgentRun, !isDefaultConfigAgent, isSandboxAvailable {
+                sandboxToggleChip(compact: compact)
+            }
+
+            // Folder context selector: the Default (configuration) agent shows
+            // a quiet "Configuration" indicator instead. Hidden in Mode 2.
+            if !isRemoteAgentRun {
+                if isDefaultConfigAgent {
+                    configurationOnlyChip(compact: compact)
+                } else {
+                    folderContextChip(compact: compact)
+                }
+            }
+
+            // Clipboard / paste chip — last in the left cluster.
+            if AppConfiguration.shared.chatConfig.enableClipboardMonitoring && clipboardService.hasNewContent {
+                clipboardToggleChip(compact: compact)
             }
         }
     }
@@ -2270,7 +2371,7 @@ extension FloatingInputCard {
         // agent composes its own system prompt / tools server-side, so a local
         // token breakdown (system prompt, tools, history) doesn't reflect what
         // actually runs and would mislead about the remote agent's budget.
-        let showTokens = displayContextTokens > 0 && !isRemoteAgentRun
+        let showTokens = displayContextTokens > 0 && !isRemoteAgentRun && !metaUltraCompact
         if showCredits || showTokens {
             HStack(alignment: .center, spacing: 8) {
                 if showCredits {
@@ -2407,8 +2508,12 @@ extension FloatingInputCard {
         let style = creditsStyle(for: level)
         let caption = CGFloat(theme.captionSize)
         // Hide the icon in compact mode to save width, except the empty-state
-        // plus glyph, which signals the chip is actionable.
-        let showIcon = !isCompact || level == .empty
+        // plus glyph, which signals the chip is actionable. In the ultra-compact
+        // tier we always keep the icon, since it becomes the whole chip.
+        let showIcon = !metaCompact || level == .empty || metaUltraCompact
+        // At the tightest width the chip is icon-only (glyph carries the state,
+        // hover/tap opens the wallet) so the row's toggle chips aren't clipped.
+        let showLabel = !metaUltraCompact
 
         Button {
             // Click pins the wallet panel (rather than jumping straight to the
@@ -2432,20 +2537,22 @@ extension FloatingInputCard {
                         .contentTransition(.symbolEffect(.replace))
                 }
 
-                if style.showsAmount {
-                    // Composer shows the overall router balance; this session's
-                    // spend is surfaced only in the hover popover.
-                    Text(verbatim: accountService.formattedBalance)
-                        .font(.system(size: caption - 1, weight: style.weight, design: .monospaced))
-                        .foregroundColor(style.textColor)
-                        .lineLimit(1)
-                        .fixedSize(horizontal: true, vertical: false)
-                } else {
-                    Text("Add credits", bundle: .module)
-                        .font(theme.font(size: caption - 1, weight: style.weight))
-                        .foregroundColor(style.textColor)
-                        .lineLimit(1)
-                        .fixedSize(horizontal: true, vertical: false)
+                if showLabel {
+                    if style.showsAmount {
+                        // Composer shows the overall router balance; this session's
+                        // spend is surfaced only in the hover popover.
+                        Text(verbatim: accountService.formattedBalance)
+                            .font(.system(size: caption - 1, weight: style.weight, design: .monospaced))
+                            .foregroundColor(style.textColor)
+                            .lineLimit(1)
+                            .fixedSize(horizontal: true, vertical: false)
+                    } else {
+                        Text("Add credits", bundle: .module)
+                            .font(theme.font(size: caption - 1, weight: style.weight))
+                            .foregroundColor(style.textColor)
+                            .lineLimit(1)
+                            .fixedSize(horizontal: true, vertical: false)
+                    }
                 }
             }
             // Chrome only appears in the low/empty attention states; the healthy
@@ -2570,7 +2677,7 @@ extension FloatingInputCard {
                 .lineLimit(1)
                 .fixedSize(horizontal: true, vertical: false)
 
-            if !isCompact {
+            if !metaCompact {
                 Text("tokens", bundle: .module)
                     .font(theme.font(size: CGFloat(theme.captionSize) - 1, weight: .regular))
                     .foregroundColor(theme.tertiaryText.opacity(0.7))
@@ -2678,7 +2785,11 @@ extension FloatingInputCard {
 
     private var modelWarmupDotColor: Color {
         if warmModelsOnLoadEnabled, isSelectedModelLocal, !isRemoteAgentRun {
-            return warmupController.isWarmForDisplay ? .green : .yellow
+            switch warmupController.state {
+            case .cold: return .gray
+            case .warming: return .yellow
+            case .warm: return .green
+            }
         }
         return .green
     }
@@ -2687,25 +2798,29 @@ extension FloatingInputCard {
         guard warmModelsOnLoadEnabled, isSelectedModelLocal, !isRemoteAgentRun else {
             return String(localized: "Model ready", bundle: .module)
         }
-        if warmupController.isWarmForDisplay {
+        switch warmupController.state {
+        case .warm:
             return String(localized: "Model warm — ready for a fast first response", bundle: .module)
-        }
-        guard let model = selectedModel, let phase = warmupProgressHub.phases[model] else {
-            return String(localized: "Warming up…", bundle: .module)
-        }
-        switch phase {
-        case .loadingModel:
-            return String(localized: "Warming up — loading model…", bundle: .module)
-        case .prefilling(let state):
-            guard state.totalUnitCount > 0 else {
-                return String(localized: "Warming up — prefilling context…", bundle: .module)
+        case .cold:
+            return String(localized: "Model cold — will load on next response", bundle: .module)
+        case .warming:
+            guard let model = selectedModel, let phase = warmupProgressHub.phases[model] else {
+                return String(localized: "Warming up…", bundle: .module)
             }
-            let percent = Int(state.percentCompleted.rounded())
-            return String(
-                localized:
-                    "Warming up — prefilling context \(percent)% (\(state.completedUnitCount)/\(state.totalUnitCount) tokens)",
-                bundle: .module
-            )
+            switch phase {
+            case .loadingModel:
+                return String(localized: "Warming up — loading model…", bundle: .module)
+            case .prefilling(let state):
+                guard state.totalUnitCount > 0 else {
+                    return String(localized: "Warming up — prefilling context…", bundle: .module)
+                }
+                let percent = Int(state.percentCompleted.rounded())
+                return String(
+                    localized:
+                        "Warming up — prefilling context \(percent)% (\(state.completedUnitCount)/\(state.totalUnitCount) tokens)",
+                    bundle: .module
+                )
+            }
         }
     }
 
@@ -2896,7 +3011,7 @@ extension FloatingInputCard {
     // MARK: - Thinking Toggle
 
     @ViewBuilder
-    private var thinkingToggleChip: some View {
+    private func thinkingToggleChip(compact: Bool) -> some View {
         if let model = selectedModel,
             let thinkingOpt = ModelProfileRegistry.profile(for: model)?.thinkingOption
         {
@@ -2908,14 +3023,37 @@ extension FloatingInputCard {
                 toggleThinking(id: thinkingOpt.id)
             } content: {
                 HStack(spacing: 5) {
-                    Image(systemName: isEnabled ? "checkmark.square.fill" : "square")
-                        .font(theme.font(size: CGFloat(theme.captionSize) - 1, weight: .semibold))
-                        .foregroundColor(isEnabled ? theme.accentColor : theme.tertiaryText)
-                        .contentTransition(.symbolEffect(.replace))
+                    // Collapsed, a lone checkbox is ambiguous — it reads as a
+                    // generic toggle, not "thinking". Swap in the brain glyph
+                    // (the same one NativeThinkingView uses) so the icon-only
+                    // chip is self-explanatory; on/off is carried by the accent
+                    // vs. muted color. Expanded, the checkbox + label pairing
+                    // already spells it out, so keep it.
+                    Image(
+                        systemName: compact
+                            ? "brain"
+                            : (isEnabled ? "checkmark.square.fill" : "square")
+                    )
+                    // The brain glyph reads visually heavier than the checkbox,
+                    // so drop it a point (to match the sandbox/folder icons at
+                    // captionSize - 2) when collapsed; keep the checkbox at its
+                    // original size when the label is showing.
+                    .font(
+                        theme.font(
+                            size: CGFloat(theme.captionSize) - (compact ? 2 : 1),
+                            weight: .semibold
+                        )
+                    )
+                    .foregroundColor(isEnabled ? theme.accentColor : theme.tertiaryText)
+                    .contentTransition(.symbolEffect(.replace))
 
-                    Text("Thinking", bundle: .module)
-                        .font(theme.font(size: CGFloat(theme.captionSize), weight: .medium))
-                        .foregroundColor(isEnabled ? theme.secondaryText : theme.tertiaryText)
+                    if !compact {
+                        Text("Thinking", bundle: .module)
+                            .font(theme.font(size: CGFloat(theme.captionSize), weight: .medium))
+                            .foregroundColor(isEnabled ? theme.secondaryText : theme.tertiaryText)
+                            .lineLimit(1)
+                            .fixedSize()
+                    }
                 }
             }
             .localizedHelp("Toggle model reasoning mode")
@@ -2925,7 +3063,7 @@ extension FloatingInputCard {
     // MARK: - Auto-Speak Toggle
 
     @ViewBuilder
-    private var autoSpeakToggleChip: some View {
+    private func autoSpeakToggleChip(compact: Bool) -> some View {
         SelectorChip(isActive: autoSpeakAssistant) {
             withAnimation(.spring(response: 0.2, dampingFraction: 0.7)) {
                 autoSpeakAssistant.toggle()
@@ -2937,9 +3075,13 @@ extension FloatingInputCard {
                     .foregroundColor(autoSpeakAssistant ? theme.accentColor : theme.tertiaryText)
                     .contentTransition(.symbolEffect(.replace))
 
-                Text("Auto-speak", bundle: .module)
-                    .font(theme.font(size: CGFloat(theme.captionSize), weight: .medium))
-                    .foregroundColor(autoSpeakAssistant ? theme.secondaryText : theme.tertiaryText)
+                if !compact {
+                    Text("Auto-speak", bundle: .module)
+                        .font(theme.font(size: CGFloat(theme.captionSize), weight: .medium))
+                        .foregroundColor(autoSpeakAssistant ? theme.secondaryText : theme.tertiaryText)
+                        .lineLimit(1)
+                        .fixedSize()
+                }
             }
         }
         .localizedHelp("Auto-speak every reply in this chat")
@@ -3231,7 +3373,7 @@ extension FloatingInputCard {
         return theme.tertiaryText
     }
 
-    private var sandboxToggleChip: some View {
+    private func sandboxToggleChip(compact: Bool) -> some View {
         Button(action: handleSandboxChipTap) {
             HStack(spacing: 5) {
                 if isSandboxFailed {
@@ -3254,17 +3396,23 @@ extension FloatingInputCard {
                     .font(.system(size: CGFloat(theme.captionSize) - 2, weight: .medium))
                     .foregroundColor(sandboxChipAccent)
 
-                Text(sandboxChipLabel, bundle: .module)
-                    .font(theme.font(size: CGFloat(theme.captionSize), weight: .medium))
-                    .foregroundColor(
-                        isSandboxFailed
-                            ? .red
-                            : (isSandboxEnabled
-                                ? (isSandboxRunning ? theme.primaryText : theme.secondaryText)
-                                : theme.tertiaryText)
-                    )
-                    .lineLimit(1)
-                    .opacity(isSandboxLoading ? sandboxPulseAmount : 1.0)
+                // Keep the label whenever it's carrying live status the icon
+                // alone can't convey ("Downloading runtime…", a failure), even
+                // in the compact row; otherwise collapse to the box icon.
+                if !compact || isSandboxLoading || isSandboxFailed {
+                    Text(sandboxChipLabel, bundle: .module)
+                        .font(theme.font(size: CGFloat(theme.captionSize), weight: .medium))
+                        .foregroundColor(
+                            isSandboxFailed
+                                ? .red
+                                : (isSandboxEnabled
+                                    ? (isSandboxRunning ? theme.primaryText : theme.secondaryText)
+                                    : theme.tertiaryText)
+                        )
+                        .lineLimit(1)
+                        .fixedSize()
+                        .opacity(isSandboxLoading ? sandboxPulseAmount : 1.0)
+                }
 
                 // Inline cold-path download/unpack progress.
                 if let pct = sandboxProgressPercent {
@@ -3423,38 +3571,43 @@ extension FloatingInputCard {
         }
     }
 
-    private var clipboardChipLabel: some View {
+    @ViewBuilder
+    private func clipboardChipLabel(compact: Bool) -> some View {
         HStack(spacing: 5) {
             Image(systemName: clipboardChipIcon)
                 .font(.system(size: CGFloat(theme.captionSize) - 2, weight: .medium))
                 .foregroundColor(theme.accentColor)
 
-            // Lead with the action word so the chip reads as "Paste" like its
-            // row-mates ("Sandbox", "Folder"); the source app trails as a quiet
-            // suffix so the "from which app" signal isn't lost.
-            Text("Paste", bundle: .module)
-                .font(theme.font(size: CGFloat(theme.captionSize), weight: .bold))
-                .foregroundColor(theme.accentColor)
-                .lineLimit(1)
-
-            if let source = clipboardService.lastSourceApp {
-                Text(source)
-                    .font(theme.font(size: CGFloat(theme.captionSize), weight: .medium))
-                    .foregroundColor(theme.secondaryText)
+            // Collapsed, the chip is just its icon (hover names it) so it can't
+            // be clipped mid-word in the narrow scroll region. Expanded, lead
+            // with the action word so it reads as "Paste" like its row-mates
+            // ("Sandbox", "Folder"), with the source app as a quiet suffix.
+            if !compact {
+                Text("Paste", bundle: .module)
+                    .font(theme.font(size: CGFloat(theme.captionSize), weight: .bold))
+                    .foregroundColor(theme.accentColor)
                     .lineLimit(1)
-                    .truncationMode(.middle)
-            }
+                    .fixedSize()
 
-            Image(systemName: "chevron.right")
-                .font(theme.font(size: CGFloat(theme.captionSize) - 4, weight: .bold))
-                .foregroundColor(theme.tertiaryText.opacity(0.7))
-                .padding(.leading, 2)
+                if let source = clipboardService.lastSourceApp {
+                    Text(source)
+                        .font(theme.font(size: CGFloat(theme.captionSize), weight: .medium))
+                        .foregroundColor(theme.secondaryText)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                }
+
+                Image(systemName: "chevron.right")
+                    .font(theme.font(size: CGFloat(theme.captionSize) - 4, weight: .bold))
+                    .foregroundColor(theme.tertiaryText.opacity(0.7))
+                    .padding(.leading, 2)
+            }
         }
     }
 
-    private var clipboardToggleChip: some View {
+    private func clipboardToggleChip(compact: Bool) -> some View {
         Button(action: attachClipboardSnippet) {
-            clipboardChipLabel
+            clipboardChipLabel(compact: compact)
                 .padding(.horizontal, 10)
                 .padding(.vertical, 5)
                 .background(
@@ -3675,16 +3828,19 @@ extension FloatingInputCard {
     /// agent's job is to configure Osaurus — it doesn't execute code in a
     /// sandbox or work against a host folder — so the controls are absent
     /// by design rather than missing.
-    private var configurationOnlyChip: some View {
+    private func configurationOnlyChip(compact: Bool) -> some View {
         HStack(spacing: 4) {
             Image(systemName: "gearshape.fill")
                 .font(theme.font(size: CGFloat(theme.captionSize) - 2))
                 .foregroundColor(theme.accentColor)
 
-            Text("Configuration", bundle: .module)
-                .font(theme.font(size: CGFloat(theme.captionSize), weight: .medium))
-                .foregroundColor(theme.secondaryText)
-                .lineLimit(1)
+            if !compact {
+                Text("Configuration", bundle: .module)
+                    .font(theme.font(size: CGFloat(theme.captionSize), weight: .medium))
+                    .foregroundColor(theme.secondaryText)
+                    .lineLimit(1)
+                    .fixedSize()
+            }
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 5)
@@ -3960,12 +4116,12 @@ extension FloatingInputCard {
 
     // MARK: - Folder Context Chip
 
-    private var folderContextChip: some View {
+    private func folderContextChip(compact: Bool) -> some View {
         let hasFolder = folderContextService.hasActiveFolder
 
         return HStack(spacing: 4) {
             Button(action: selectFolder) {
-                folderChipContent(hasFolder: hasFolder, canEdit: true)
+                folderChipContent(hasFolder: hasFolder, canEdit: true, compact: compact)
             }
             .buttonStyle(.plain)
             .pointingHandCursor()
@@ -4024,26 +4180,32 @@ extension FloatingInputCard {
     }
 
     @ViewBuilder
-    private func folderChipContent(hasFolder: Bool, canEdit: Bool) -> some View {
+    private func folderChipContent(hasFolder: Bool, canEdit: Bool, compact: Bool = false) -> some View {
         HStack(spacing: 4) {
             Image(systemName: hasFolder ? "folder.fill" : "folder.badge.plus")
                 .font(theme.font(size: CGFloat(theme.captionSize) - 2))
                 .foregroundColor(hasFolder ? theme.accentColor : theme.tertiaryText)
                 .opacity(canEdit ? 1.0 : 0.7)
 
+            // The selected folder name is live state, so keep it even when
+            // compact; only the "Folder" placeholder collapses to the icon.
             if let context = folderContextService.currentContext {
                 Text(context.rootPath.lastPathComponent)
                     .font(theme.font(size: CGFloat(theme.captionSize), weight: .medium))
                     .foregroundColor(canEdit ? theme.secondaryText : theme.tertiaryText)
                     .lineLimit(1)
                     .truncationMode(.middle)
-            } else if canEdit {
+            } else if canEdit && !compact {
                 Text("Folder", bundle: .module)
                     .font(theme.font(size: CGFloat(theme.captionSize), weight: .medium))
                     .foregroundColor(theme.tertiaryText)
+                    .fixedSize()
             }
 
-            if canEdit {
+            // Drop the picker chevron in the compact placeholder state so the
+            // chip shrinks to just the folder glyph; keep it whenever a name
+            // is shown so the affordance to change folders stays visible.
+            if canEdit && (!compact || folderContextService.currentContext != nil) {
                 Image(systemName: "chevron.up.chevron.down")
                     .font(theme.font(size: CGFloat(theme.captionSize) - 3, weight: .semibold))
                     .foregroundColor(theme.tertiaryText)
@@ -4196,9 +4358,17 @@ extension FloatingInputCard {
     /// substring/regex matcher; tests pin the boundary at
     /// `ModelMediaCapabilitiesMCDCTests`.
     private var mediaCapabilityDescriptor: ModelMediaCapabilities.Descriptor {
-        ModelMediaCapabilities.composerDescriptor(
+        // The local-model scan runs off-main and records config.json's
+        // model_type. Read only its non-blocking snapshot here: this getter is
+        // evaluated from SwiftUI body/layout and must never trigger a disk
+        // scan or synchronously parse a model bundle.
+        let localModelType = selectedModel.flatMap {
+            ModelManager.findInstalledMLXModelFromCache(named: $0)?.modelType
+        }
+        return ModelMediaCapabilities.composerDescriptor(
             modelId: selectedModel,
-            fallbackSupportsImages: supportsImages
+            fallbackSupportsImages: supportsImages,
+            localModelType: localModelType
         )
     }
 

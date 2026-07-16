@@ -226,7 +226,10 @@ class SystemMonitorService: ObservableObject {
         isRefreshingStorage = true
         let path = storagePath
         Task.detached(priority: .utility) {
-            let gb = 1024.0 * 1024.0 * 1024.0
+            // Decimal GB (10^9 bytes) to match how Finder and drive vendors
+            // report storage capacity — a "2 TB" SSD should read 2 TB, not
+            // the 1.9 TB it comes out to in binary GiB. RAM stays binary.
+            let gb = 1_000_000_000.0
             let freeBytes = OsaurusPaths.volumeFreeBytes(forPath: path) ?? 0
             let totalBytes = OsaurusPaths.volumeTotalBytes(forPath: path) ?? 0
             let available = Self.rounded(Double(freeBytes) / gb)

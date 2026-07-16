@@ -58,10 +58,14 @@ let package = Package(
         // scope; the compile() overloads and innerCall degrade to empty
         // results instead of trapping on a failed closure evaluation — so a
         // recorded MLX error reaches the error-scope exit instead of dying in
-        // a Swift bounds check. Contains the previous ff714f1 pin.
+        // a Swift bounds check. Contains the previous ff714f1 pin. Now also
+        // carries #149: native schema-2 affine1 JANG loading and Metal kernels,
+        // Qwen3-VL tool-schema preservation, and bounded media-cache cleanup.
+        // Also carries #153: fail-closed support for historical schema-1 JANG
+        // affine manifests.
         .package(
             url: "https://github.com/osaurus-ai/vmlx-swift",
-            revision: "a9b10f60e330337a9de2d8ebe3ca74a7370525e4"
+            revision: "a26c7ecec950f18e3d07c8402fbd8c80f40ac764"
         ),
         // FluidAudio 0.14.3 added a breaking `language:` parameter to TTS
         // calls that osaurus's `TTSService` doesn't pass. Pinning to the

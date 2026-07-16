@@ -136,6 +136,67 @@ struct SearchDiagnosticsExtractionTests {
         #expect(extraction.message?.contains("\(SearchReadability.maxHTMLBytes)") == true)
     }
 
+    @Test func extractionPreservesRawCSVHeaderAndRows() async {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [SearchExtractionHTTPStubProtocol.self]
+        SearchExtractionHTTPStubProtocol.handler = { request in
+            #expect(request.value(forHTTPHeaderField: "Accept")?.contains("text/csv") == true)
+            let response = HTTPURLResponse(
+                url: try #require(request.url),
+                statusCode: 200,
+                httpVersion: nil,
+                headerFields: ["Content-Type": "text/csv; charset=utf-8"]
+            )
+            return (
+                try #require(response),
+                Data("Date,Close\n2026-07-13,6234.49\n2026-07-14,6243.76".utf8)
+            )
+        }
+        defer { SearchExtractionHTTPStubProtocol.handler = nil }
+
+        let extraction = await SearchReadability.extract(
+            url: "https://198.51.100.1/sp500.csv",
+            timeout: 1,
+            configuration: configuration
+        )
+
+        #expect(extraction.status == .ok)
+        #expect(extraction.extracted)
+        #expect(extraction.markdown.hasPrefix("Date,Close\n"))
+        #expect(extraction.markdown.contains("2026-07-14,6243.76"))
+    }
+
+    @Test func structuredDataUsesTheLargerBound() {
+        let csv = "Date,Close\n" + (0 ..< 1_500).map { "2026-01-01,\($0)" }.joined(separator: "\n")
+        let extraction = SearchReadability.extract(
+            responseText: csv,
+            contentType: "text/csv",
+            sourceURL: URL(string: "https://example.com/data.csv")
+        )
+
+        #expect(extraction.status == .ok)
+        #expect(extraction.markdown.count > SearchReadability.maxMarkdownCharacters)
+        #expect(extraction.markdown.count <= SearchReadability.maxStructuredTextCharacters)
+        #expect(extraction.structuredFormat == "csv")
+        #expect(extraction.structuredData == csv)
+    }
+
+    @Test func extractionDoesNotTreatHTMLMislabeledAsPlainTextAsRawData() {
+        let html = """
+            <!doctype html><html><head><title>Article</title></head>
+            <body><main><p>\(Array(repeating: "content", count: 30).joined(separator: " "))</p></main></body></html>
+            """
+        let extraction = SearchReadability.extract(
+            responseText: html,
+            contentType: "text/plain",
+            sourceURL: URL(string: "https://example.com/page")
+        )
+
+        #expect(extraction.status == .ok)
+        #expect(extraction.title == "Article")
+        #expect(!extraction.markdown.contains("<!doctype"))
+    }
+
     @Test func extractionClassifiesChallengePage() {
         let html = """
             <!doctype html>
@@ -163,7 +224,7 @@ struct SearchDiagnosticsExtractionTests {
     }
 
     @Test func extractionIncludesCanonicalURLAndTruncatesMarkdown() {
-        let words = (0..<3_000).map { "word\($0)" }.joined(separator: " ")
+        let words = (0 ..< 3_000).map { "word\($0)" }.joined(separator: " ")
         let html = """
             <!doctype html>
             <html lang="en">

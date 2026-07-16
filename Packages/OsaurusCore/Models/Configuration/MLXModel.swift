@@ -502,11 +502,6 @@ struct MLXModel: Identifiable, Codable {
     // MARK: - Memory Estimation & Hardware Compatibility
 
     private static let bytesPerGB: Double = 1024 * 1024 * 1024
-    /// Runtime headroom over raw weight size — covers KV cache, activations,
-    /// and Metal/runtime buffers. Bumped from 1.2 → 1.25 so the onboarding
-    /// default leaves more slack and stops landing users on a model that
-    /// "fits" the estimate but chokes once a long-context KV cache grows.
-    private static let overheadMultiplier: Double = 1.25
 
     /// Numeric parameter count in billions (e.g. "7B" -> 7.0, "270M" -> 0.27)
     var parameterCountBillions: Double? {
@@ -549,10 +544,12 @@ struct MLXModel: Identifiable, Codable {
     /// only the fallback for entries we haven't sized yet.
     var estimatedMemoryGB: Double? {
         if let dlBytes = downloadSizeBytes, dlBytes > 0 {
-            return Double(dlBytes) * Self.overheadMultiplier / Self.bytesPerGB
+            return GPUMemoryBudget.estimatedChatWorkingSetBytes(
+                onDiskBytes: dlBytes
+            ).map { Double($0) / Self.bytesPerGB }
         }
         if let params = parameterCountBillions {
-            return params * bytesPerParameter * 1e9 * Self.overheadMultiplier / Self.bytesPerGB
+            return params * bytesPerParameter * 1e9 * 1.25 / Self.bytesPerGB
         }
         return nil
     }

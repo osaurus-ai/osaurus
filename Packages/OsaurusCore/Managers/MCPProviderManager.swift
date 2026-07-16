@@ -250,14 +250,14 @@ public final class MCPProviderManager: ObservableObject {
 
         } catch {
             // Stdio transports talk to a local subprocess, not an HTTP server,
-            // so there's no `WWW-Authenticate` 401 to probe — the error is
-            // either a spawn failure or a protocol mismatch.
-            let challenge: MCPBearerChallenge? =
+            // so there's no 401 to probe — the error is either a spawn
+            // failure or a protocol mismatch.
+            let authFailure: MCPAuthFailureProbeResult? =
                 provider.transport == .http
-                ? await probeAuthChallenge(for: provider)
+                ? await probeAuthFailure(for: provider)
                 : nil
 
-            if let challenge {
+            if let authFailure {
                 // Try one refresh+retry for OAuth providers when we already have tokens.
                 // Off the main actor: the Keychain read blocks on securityd XPC + decrypt.
                 if allowOAuthRetry,
@@ -282,9 +282,11 @@ public final class MCPProviderManager: ObservableObject {
                 }
 
                 state.requiresAuth = true
-                state.resourceMetadataURL = challenge.resourceMetadataURL
-                state.lastError =
-                    challenge.errorDescription ?? challenge.error ?? "Server requires sign in"
+                state.resourceMetadataURL = authFailure.challenge?.resourceMetadataURL
+                state.lastError = MCPAuthFailureProbe.failureDescription(
+                    authType: provider.authType,
+                    probe: authFailure
+                )
             } else {
                 state.lastError = error.localizedDescription
             }
@@ -953,11 +955,13 @@ public final class MCPProviderManager: ObservableObject {
         }
     }
 
-    /// Issue a low-cost POST against the server's MCP endpoint to capture an auth
-    /// challenge, if any. The Swift MCP SDK doesn't expose response headers on its
-    /// error type, so this is the cheapest correct way to know whether a 401 came
-    /// from an OAuth-protected server.
-    private nonisolated func probeAuthChallenge(for provider: MCPProvider) async -> MCPBearerChallenge? {
+    /// Issue a low-cost POST against the server's MCP endpoint to classify an
+    /// auth failure, if any. The Swift MCP SDK doesn't expose response status
+    /// or headers on its error type, so this is the cheapest correct way to
+    /// know whether the connect failed on a 401/403. Returns a result for any
+    /// 401/403 — including a bare one with no `WWW-Authenticate` header, which
+    /// token-only servers commonly send.
+    private nonisolated func probeAuthFailure(for provider: MCPProvider) async -> MCPAuthFailureProbeResult? {
         guard let endpoint = URL(string: provider.url) else { return nil }
 
         var request = URLRequest(url: endpoint)
@@ -982,19 +986,20 @@ public final class MCPProviderManager: ObservableObject {
         case .none:
             break
         }
-        // A minimal JSON-RPC initialize payload — most MCP servers will hit auth
-        // before they even attempt to parse it, so the body is mostly cosmetic.
-        request.httpBody = Data("{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\"}".utf8)
+        // A spec-complete initialize payload: some servers validate the
+        // request shape before auth, and a params-less shorthand would turn
+        // an auth failure into a protocol error.
+        request.httpBody = MCPAuthFailureProbe.handshakeBody()
         request.timeoutInterval = 10
 
         do {
-            let (_, response) = try await GlobalProxySettings.sharedSession().data(for: request)
+            let (data, response) = try await GlobalProxySettings.sharedSession().data(for: request)
             guard let http = response as? HTTPURLResponse else { return nil }
-            guard http.statusCode == 401 || http.statusCode == 403 else { return nil }
-            let header =
-                http.value(forHTTPHeaderField: "WWW-Authenticate")
-                ?? http.value(forHTTPHeaderField: "www-authenticate")
-            return MCPWWWAuthenticate.parseBearer(header)
+            return MCPAuthFailureProbe.evaluate(
+                response: http,
+                body: data,
+                sentAuthorization: request.value(forHTTPHeaderField: "Authorization") != nil
+            )
         } catch {
             return nil
         }

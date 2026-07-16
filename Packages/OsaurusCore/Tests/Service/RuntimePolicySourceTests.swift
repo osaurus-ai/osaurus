@@ -693,6 +693,10 @@ struct RuntimePolicySourceTests {
         // store (#141) -- the "Safety Level" slider used to be a stored field no
         // resolver read, so it moved nothing.
         //
+        // Now also carries native schema-2 affine1 JANG loading and Metal
+        // execution, Qwen3-VL tool-schema preservation, and bounded media-cache
+        // cleanup (vmlx-swift#149).
+        //
         // This assertion is a repin tripwire, and it earned its keep: PR #1986
         // shipped titled "(+ vmlx repin)" carrying no repin at all, and the live
         // gate run against that build proved only the osaurus-side change while
@@ -700,7 +704,7 @@ struct RuntimePolicySourceTests {
         // files -- Package.swift, Packages/OsaurusCore/Package.resolved, and both
         // xcworkspace Package.resolved files. Miss one and the app resolves a
         // revision nobody proved.
-        let expectedRuntimeHardenedRevision = "a9b10f60e330337a9de2d8ebe3ca74a7370525e4"
+        let expectedRuntimeHardenedRevision = "a26c7ecec950f18e3d07c8402fbd8c80f40ac764"
         let manifestRevision = try Self.vmlxPinRevision(in: manifest)
         let workspaceRevision = try Self.vmlxPinRevision(in: workspaceResolved)
         let appRevision = try Self.vmlxPinRevision(in: appResolved)
@@ -708,7 +712,7 @@ struct RuntimePolicySourceTests {
         #expect(manifestRevision == appRevision)
         #expect(
             manifestRevision == expectedRuntimeHardenedRevision,
-            "Osaurus must consume the pushed vmlx-swift revision proven for this Gemma QAT correctness checkpoint: Gemma 4 QAT loader/parser fixes, paged-cache default policy, prefill progress wiring, Model2Vec static embedding APIs, and the post-merge pin/readiness proof. An internally-consistent older pin is still not wired"
+            "Osaurus must consume the pushed vmlx-swift revision proven for the native affine1 JANG, Qwen3-VL tool-schema, and bounded media-cache checkpoint. An internally-consistent older pin is still not wired"
         )
         #expect(manifest.contains("https://github.com/osaurus-ai/vmlx-swift"))
         #expect(!manifest.contains("https://github.com/osaurus-ai/vmlx-swift-lm"))
@@ -1147,7 +1151,7 @@ struct RuntimePolicySourceTests {
         #expect(runtime.contains("flexibleResidentBudgetBytes"))
         #expect(serverConfig.contains("defaultModelLoadRAMSoftThreshold"))
         #expect(serverConfig.contains("defaultModelLoadRAMHardThreshold"))
-        #expect(runtimeSettings.contains("modelLoadRAMThresholds()"))
+        #expect(runtimeSettings.contains("modelLoadRAMThresholds("))
         #expect(runtime.contains("unloadForFlexibleResidentBudget"))
         #expect(runtime.contains("policy == .manualMultiModel"))
         #expect(runtime.contains("flexible budget eviction"))
@@ -2027,9 +2031,13 @@ struct RuntimePolicySourceTests {
         #expect(runtime.contains("loadConfiguration: mtpPlan.loadConfiguration"))
         #expect(runtime.contains("resolvedLoadConfiguration("))
         #expect(runtime.contains("resolveMemorySafetyLoadPlan("))
-        #expect(runtime.contains("settings.resolvedMemorySafetyPlan("))
+        #expect(runtime.contains("ServerRuntimeSettingsStore.resolvedMemorySafetyPlan("))
         #expect(runtime.contains("baseLoadConfiguration: loadConfiguration"))
-        #expect(runtime.contains("request: nil"))
+        #expect(runtime.contains("request: request"))
+        #expect(runtime.contains("VMLXMemoryRequestEstimate("))
+        #expect(runtime.contains("estimatedMemorySafetyWorkingSetBytes("))
+        #expect(runtime.contains("lastMemorySafetyLoadDecision = MemorySafetyLoadDecision("))
+        #expect(runtime.contains("if !blockingIssueMessages.isEmpty"))
         #expect(runtime.contains("memorySafetySummary: memorySafetyPlan.displaySummary"))
         #expect(runtime.contains("base: .osaurusProduction"))
         #expect(runtime.contains("baseLoadConfiguration: .osaurusProduction"))
@@ -2102,9 +2110,25 @@ struct RuntimePolicySourceTests {
             "Routed mmap/JANGTQ loads must feed the RAM gate with vMLX's effective hot working set; materialized near-RAM-scale loads must budget the full weight size instead."
         )
         #expect(
-            loadPreflight.contains("!Self.resolveMemorySafetyLoadPlan(")
-                && loadPreflight.contains("refuseOnShortfall: willMaterialize"),
-            "Whether a load materializes must come from the resolved memory-safety plan (single source of truth with vmlx), and materialized loads must make the RAM verdict authoritative — proceeding into a shortfall aborts in a Metal completion handler instead of degrading."
+            loadPreflight.contains(
+                "let preliminaryMemorySafetyPlan = Self.resolveMemorySafetyLoadPlan("
+            )
+                && loadPreflight.contains(
+                    "!preliminaryMemorySafetyPlan.loadConfiguration.useMmapSafetensors"
+                )
+                && loadPreflight.contains(
+                    "refuseOnShortfall: willMaterialize && !automaticMemoryLimitsDisabled"
+                )
+                && loadPreflight.contains(
+                    "ServerRuntimeSettingsStore.automaticMemoryLimitsDisabled("
+                ),
+            "Materialization and load refusal must follow the same resolved Memory Safety plan and explicit No Automatic Limits setting as the settings UI."
+        )
+        #expect(
+            loadPreflight.contains("request: VMLXMemoryRequestEstimate(")
+                && loadPreflight.contains("workingSetBytes: estimatedWorkingSetBytes")
+                && loadPreflight.contains("throw NSError("),
+            "Strict/custom-budget blocking issues must be enforced from the real pre-load working-set estimate before vMLX begins loading."
         )
         // Feasibility gate + concurrent-load reservation must run before the
         // load task is allocated, so a cold load can't bypass RAM accounting.
@@ -2125,7 +2149,7 @@ struct RuntimePolicySourceTests {
             "All policies must record the pre-load RAM feasibility assessment before vmlx starts loading."
         )
         #expect(
-            runtime.contains("ServerRuntimeSettingsStore.modelLoadRAMThresholds()")
+            runtime.contains("ServerRuntimeSettingsStore.modelLoadRAMThresholds(")
                 && !runtime.contains("ramHardThreshold = 0.90")
                 && !runtime.contains("ramSoftThreshold = 0.70")
                 && !runtime.contains("* 0.70"),
@@ -2169,6 +2193,10 @@ struct RuntimePolicySourceTests {
         #expect(health.contains("\"available_memory_bytes\": f.availableMemoryBytes"))
         #expect(health.contains("\"required_available_bytes\": f.requiredAvailableBytes"))
         #expect(health.contains("\"incoming_load_footprint_bytes\": f.incomingLoadFootprintBytes"))
+        #expect(
+            health.contains("\"automatic_memory_limits_disabled\":")
+                && health.contains("f.automaticMemoryLimitsDisabled")
+        )
     }
 
     @Test("MiMo and N2 text runtime metadata avoids VLM bundle reads")
@@ -2290,7 +2318,7 @@ struct RuntimePolicySourceTests {
         #expect(runtime.contains("MLXBatchAdapter.recordPendingEffectiveGenerationSettings("))
     }
 
-    @Test("admin cache stats exposes resolved memory safety status without load refusal")
+    @Test("admin cache stats exposes resolved and per-load memory safety status")
     func adminCacheStatsExposesResolvedMemorySafetyStatus() throws {
         let httpHandler = try Self.source("Networking/HTTPHandler.swift")
         let runtimeSettingsTests = try Self.source("Tests/Networking/ServerRuntimeSettingsStoreTests.swift")
@@ -2298,7 +2326,7 @@ struct RuntimePolicySourceTests {
         #expect(httpHandler.contains("@preconcurrency import MLXLMCommon"))
         #expect(httpHandler.contains("let runtimeSettings = ServerRuntimeSettingsStore.snapshot()"))
         #expect(httpHandler.contains("let memoryStatus = MemoryStatus.snapshot()"))
-        #expect(httpHandler.contains("resolvedMemorySafetyPlan("))
+        #expect(httpHandler.contains("ServerRuntimeSettingsStore.resolvedMemorySafetyPlan("))
         #expect(httpHandler.contains("\"memory_safety\""))
         #expect(httpHandler.contains("\"mode\": memorySafety.mode.rawValue"))
         #expect(httpHandler.contains("\"slider\": memorySafety.slider"))
@@ -2307,6 +2335,9 @@ struct RuntimePolicySourceTests {
         #expect(httpHandler.contains("\"memory_status\": memoryStatusJSONObject(memoryStatus)"))
         #expect(httpHandler.contains("\"warnings\": plan.warnings"))
         #expect(httpHandler.contains("\"blocking_issues\": plan.blockingIssues.map(settingsIssueJSONObject)"))
+        #expect(httpHandler.contains("lastMemorySafetyLoadDecisionSnapshot()"))
+        #expect(httpHandler.contains("\"last_load_decision\""))
+        #expect(httpHandler.contains("\"estimated_working_set_bytes\""))
         #expect(httpHandler.contains("case .disabled:"))
         #expect(httpHandler.contains("case .enabled(let coldFraction):"))
         #expect(httpHandler.contains("case .auto(let envFallback):"))
@@ -2976,6 +3007,20 @@ struct RuntimePolicySourceTests {
         #expect(runtimeDoc.contains("AGX::ComputeContext::endComputePass"))
         #expect(lingDoc.contains("EXC_BAD_ACCESS"))
         #expect(lingDoc.contains("BatchEngine.stepPrefill"))
+    }
+
+    @Test("No Automatic Limits clears stale physical load cap from both controls")
+    func noAutomaticLimitsClearsStalePhysicalLoadCap() throws {
+        let source = try Self.source("Views/Settings/ServerSettings/MemorySafetySection.swift")
+
+        #expect(source.contains("Picker(\"\", selection: memorySafetyModeBinding)"))
+        #expect(source.contains("if level == 4"))
+        #expect(source.contains("if newMode == .diagnosticDangerous"))
+        #expect(
+            source.components(separatedBy: "draft.memorySafety.customPhysicalMemoryFraction = nil")
+                .count == 3,
+            "Both the slider and mode picker must clear the stale custom fraction."
+        )
     }
 
     @Test("SwiftUI previews are gated out of CLI SwiftPM builds")

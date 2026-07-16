@@ -68,7 +68,8 @@ enum WebSearchArgs {
         if let mapped = synonyms[s], available.contains(mapped) { return mapped }
         warnings.append(
             "Ignored unknown category '\(s)'; searched the web instead. "
-                + "Available: \(available.joined(separator: ", ")).")
+                + "Available: \(available.joined(separator: ", "))."
+        )
         return SearchCategory.web
     }
 
@@ -90,10 +91,17 @@ enum WebSearchResultFormatter {
         request: SearchRequest,
         outcome: SearchEngineOutcome
     ) -> [String: Any] {
+        let candidateURLs = outcome.hits.prefix(3).map(\.url).filter { !$0.isEmpty }
         var out: [String: Any] = [
             "query": request.query,
             "category": request.category,
             "provider": outcome.provider ?? "",
+            "next_action": [
+                "tool": "search_and_extract",
+                "instruction":
+                    "Pass a selected result URL in `url` to retrieve its actual page text or raw CSV/JSON before processing or charting it. Do not rephrase the discovery query.",
+                "candidate_urls": candidateURLs,
+            ],
             "results": outcome.hits.enumerated().map { index, hit -> [String: Any] in
                 var d = hit.toDict(rank: index + 1)
                 if let snippet = d["snippet"] as? String, snippet.count > maxSnippetLength {
@@ -151,9 +159,12 @@ enum WebSearchResultFormatter {
 final class WebSearchTool: OsaurusTool, @unchecked Sendable {
     let name = "web_search"
     let description =
-        "Search the web. Just pass `query`; results come from the user's configured "
-        + "search providers with automatic fallback. Returns ranked results with "
-        + "title, url, and snippet."
+        "Discover relevant web sources. Just pass `query`; results come from the user's "
+        + "configured search providers with automatic fallback. Returns ranked titles, URLs, "
+        + "and snippets only — it does not fetch page bodies or downloadable data. Once you "
+        + "select a source, retrieve its content with `search_and_extract`; if that tool is not "
+        + "loaded and `capabilities_load` is available, load `tool/search_and_extract`. Do not "
+        + "keep rephrasing `web_search` when you need source content."
 
     var parameters: JSONValue? {
         var properties: [String: JSONValue] = [
@@ -195,7 +206,8 @@ final class WebSearchTool: OsaurusTool, @unchecked Sendable {
                 "type": .string("string"),
                 "enum": .array(categories.map { .string($0) }),
                 "description": .string(
-                    "What to search: \(categories.joined(separator: " | ")). Default web."),
+                    "What to search: \(categories.joined(separator: " | ")). Default web."
+                ),
             ])
         }
         return .object([
@@ -226,7 +238,10 @@ final class WebSearchTool: OsaurusTool, @unchecked Sendable {
         var warnings: [String] = []
         let available = await SearchProviderManager.shared.availableCategories()
         let category = WebSearchArgs.sanitizeCategory(
-            args["category"], available: available, warnings: &warnings)
+            args["category"],
+            available: available,
+            warnings: &warnings
+        )
         let timeRange = WebSearchArgs.sanitizeTimeRange(args["time_range"], warnings: &warnings)
         let region = WebSearchArgs.sanitizeRegion(args["region"], warnings: &warnings)
         let maxCap = category == SearchCategory.images ? 100 : 50
@@ -268,17 +283,37 @@ final class WebSearchTool: OsaurusTool, @unchecked Sendable {
 // MARK: - search_and_extract
 
 final class SearchAndExtractTool: OsaurusTool, @unchecked Sendable {
+    private static let inlineStructuredCharacterLimit = 8_000
+
     let name = "search_and_extract"
     let description =
-        "Search the web and extract the top results' page content as markdown in one step. "
-        + "Use when you need a grounded answer without a separate fetch step."
+        "Fetch a specific URL and return its actual page text or data, preserving raw CSV/TSV/JSON. "
+        + "Large structured data is returned as a compact `data_ref` with an exact `render_chart` "
+        + "next action so the raw payload moves tool-to-tool without flooding the model context. "
+        + "After `web_search`, pass the selected result's URL in `url`; do not search for the "
+        + "URL as a query. If no URL is known, `query` can search and extract top results in "
+        + "one step."
 
     let parameters: JSONValue? = .object([
         "type": .string("object"),
         "properties": .object([
             "query": .object([
                 "type": .string("string"),
-                "description": .string("Plain-language search query."),
+                "description": .string(
+                    "Plain-language search query. Use only when no source URL is known."
+                ),
+            ]),
+            "url": .object([
+                "type": .string("string"),
+                "description": .string(
+                    "Direct http(s) source URL to fetch. Preferred after web_search."
+                ),
+            ]),
+            "urls": .object([
+                "type": .string("array"),
+                "items": .object(["type": .string("string")]),
+                "maxItems": .number(5),
+                "description": .string("Up to 5 direct http(s) source URLs to fetch."),
             ]),
             "max_results": .object([
                 "type": .string("integer"),
@@ -306,7 +341,6 @@ final class SearchAndExtractTool: OsaurusTool, @unchecked Sendable {
                 "description": .string("Per-page extraction timeout in seconds. Default 25."),
             ]),
         ]),
-        "required": .array([.string("query")]),
         "additionalProperties": .bool(false),
     ])
 
@@ -314,16 +348,50 @@ final class SearchAndExtractTool: OsaurusTool, @unchecked Sendable {
         let argsReq = requireArgumentsDictionary(argumentsJSON, tool: name)
         guard case .value(let args) = argsReq else { return argsReq.failureEnvelope ?? "" }
 
-        let queryReq = requireString(args, "query", expected: "non-empty search query", tool: name)
-        guard case .value(let queryRaw) = queryReq else { return queryReq.failureEnvelope ?? "" }
-        let query = queryRaw.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !query.isEmpty else {
+        var directURLs: [String] = []
+        if let url = WebSearchArgs.optionalTrimmedString(args["url"]) {
+            directURLs.append(url)
+        }
+        if let urls = args["urls"] as? [Any] {
+            directURLs.append(contentsOf: urls.compactMap(WebSearchArgs.optionalTrimmedString))
+        }
+        var seenURLs: Set<String> = []
+        directURLs = Array(
+            directURLs.filter { seenURLs.insert($0).inserted }.prefix(5)
+        )
+
+        let query = WebSearchArgs.optionalTrimmedString(args["query"])
+        guard !directURLs.isEmpty || query != nil else {
             return ToolEnvelope.failure(
                 kind: .invalidArgs,
-                message: "Argument `query` must not be whitespace-only.",
-                field: "query",
-                expected: "non-empty search query",
+                message: "Provide a direct `url`/`urls` value or a non-empty `query`.",
+                expected: "url, urls, or query",
                 tool: name
+            )
+        }
+
+        let timeout: TimeInterval = {
+            if let n = args["timeout"] as? NSNumber { return n.doubleValue }
+            if let s = args["timeout"] as? String, let d = Double(s) { return d }
+            return 25
+        }()
+
+        if !directURLs.isEmpty {
+            let hits = directURLs.map {
+                SearchHit(title: $0, url: $0, snippet: "", engine: "direct_url")
+            }
+            let results = await enrichedResults(
+                hits: hits,
+                extractCount: directURLs.count,
+                timeout: timeout
+            )
+            return ToolEnvelope.success(
+                tool: name,
+                result: [
+                    "mode": "direct_url",
+                    "provider": "direct_url",
+                    "results": results,
+                ]
             )
         }
 
@@ -331,14 +399,8 @@ final class SearchAndExtractTool: OsaurusTool, @unchecked Sendable {
         let timeRange = WebSearchArgs.sanitizeTimeRange(args["time_range"], warnings: &warnings)
         let maxResults = max(1, min(ArgumentCoercion.int(args["max_results"]) ?? 5, 20))
         let extractCount = max(1, min(ArgumentCoercion.int(args["extract_count"]) ?? 3, maxResults))
-        let timeout: TimeInterval = {
-            if let n = args["timeout"] as? NSNumber { return n.doubleValue }
-            if let s = args["timeout"] as? String, let d = Double(s) { return d }
-            return 25
-        }()
-
         let request = SearchRequest(
-            query: query,
+            query: query ?? "",
             category: SearchCategory.web,
             maxResults: maxResults,
             site: WebSearchArgs.optionalTrimmedString(args["site"]),
@@ -359,8 +421,28 @@ final class SearchAndExtractTool: OsaurusTool, @unchecked Sendable {
         }
 
         var payload = WebSearchResultFormatter.resultsPayload(request: request, outcome: outcome)
+        payload.removeValue(forKey: "next_action")
+        payload["mode"] = "search_and_extract"
+        payload["results"] = await enrichedResults(
+            hits: outcome.hits,
+            extractCount: extractCount,
+            timeout: timeout
+        )
+
+        return ToolEnvelope.success(
+            tool: name,
+            result: payload,
+            warnings: warnings.isEmpty ? nil : warnings
+        )
+    }
+
+    private func enrichedResults(
+        hits: [SearchHit],
+        extractCount: Int,
+        timeout: TimeInterval
+    ) async -> [[String: Any]] {
         var enriched: [[String: Any]] = []
-        for (index, hit) in outcome.hits.enumerated() {
+        for (index, hit) in hits.enumerated() {
             var entry = hit.toDict(rank: index + 1)
             let shouldExtract = index < extractCount && !hit.url.isEmpty && !Task.isCancelled
             if shouldExtract {
@@ -376,8 +458,58 @@ final class SearchAndExtractTool: OsaurusTool, @unchecked Sendable {
                 }
                 entry["extracted"] = extraction.extracted
                 if extraction.extracted {
-                    entry["markdown"] = extraction.markdown
-                    entry["truncated"] = extraction.truncated
+                    if let structuredData = extraction.structuredData,
+                        let structuredFormat = extraction.structuredFormat,
+                        structuredData.count > Self.inlineStructuredCharacterLimit,
+                        let dataRef = await SearchStructuredDataStore.shared.store(
+                            raw: structuredData,
+                            format: structuredFormat,
+                            sourceURL: extraction.canonicalURL ?? hit.url,
+                            sessionId: ChatExecutionContext.currentSessionId
+                        )
+                    {
+                        entry["data_ref"] = dataRef
+                        entry["format"] = structuredFormat
+                        entry["character_count"] = structuredData.count
+                        entry["content_omitted_from_prompt"] = true
+                        entry["truncated"] = false
+
+                        if structuredFormat == "json" {
+                            let descriptors = SearchStructuredDataInspector.jsonArrayDescriptors(
+                                structuredData
+                            )
+                            entry["structure"] = descriptors.map(\.payload)
+                            if let suggestion = SearchStructuredDataInspector.suggestedJSONChart(
+                                descriptors: descriptors
+                            ) {
+                                entry["next_action"] = [
+                                    "tool": "render_chart",
+                                    "arguments": suggestion.toolArguments(
+                                        dataRef: dataRef,
+                                        title: entry["title"] as? String
+                                    ),
+                                    "instruction":
+                                        "Call render_chart with these arguments; it reads the raw data_ref directly. Do not copy the raw payload through the model.",
+                                ]
+                            }
+                        } else {
+                            let separator: Character = structuredFormat == "tsv" ? "\t" : ","
+                            let metadata = SearchStructuredDataInspector.delimitedMetadata(
+                                structuredData,
+                                separator: separator,
+                                format: structuredFormat,
+                                dataRef: dataRef
+                            )
+                            entry["columns"] = metadata.columns
+                            entry["row_count"] = metadata.rowCount
+                            if let nextAction = metadata.nextAction {
+                                entry["next_action"] = nextAction
+                            }
+                        }
+                    } else {
+                        entry["markdown"] = extraction.markdown
+                        entry["truncated"] = extraction.truncated
+                    }
                     if let byline = extraction.byline { entry["byline"] = byline }
                     if let lang = extraction.lang { entry["lang"] = lang }
                 } else if let message = extraction.message, !message.isEmpty {
@@ -389,12 +521,6 @@ final class SearchAndExtractTool: OsaurusTool, @unchecked Sendable {
             }
             enriched.append(entry)
         }
-        payload["results"] = enriched
-
-        return ToolEnvelope.success(
-            tool: name,
-            result: payload,
-            warnings: warnings.isEmpty ? nil : warnings
-        )
+        return enriched
     }
 }

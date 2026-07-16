@@ -73,6 +73,82 @@ private struct GenerativeGreetingTrigger: ViewModifier {
     }
 }
 
+/// Equatable wrapper around `ChatEmptyState` so it only re-renders when one of
+/// its actual inputs changes. `ChatView` observes the whole `ChatSession`
+/// object, so its body re-evaluates on any `@Published` mutation — including
+/// ones the empty state doesn't care about (a thinking-chip toggle republishes
+/// `activeModelOptions`). Applying `.equatable()` to this view lets SwiftUI
+/// compare the value inputs and skip the subtree when they're unchanged.
+///
+/// The closures are intentionally excluded from `==`: they're recreated on
+/// every parent body pass but capture stable references (`ChatSession`,
+/// `ChatWindowState`, `AppDelegate.shared`), so an older instance behaves
+/// identically to a freshly built one. Comparing them would defeat the
+/// isolation, since two structurally identical closures are never `==`.
+private struct EmptyStateContent: View, Equatable {
+    let selectedModel: String?
+    let agents: [Agent]
+    let activeAgentId: UUID
+    let quickActions: [AgentQuickAction]
+    let generativeGreetingState: GenerativeGreetingState
+    let pendingLocalModelId: String?
+    let temporaryCloudModelName: String?
+    let activeDiscoveredAgent: DiscoveredAgent?
+    let activeRelayAgent: PairedRelayAgent?
+    let remoteAgentAvatar: String?
+    let remoteAgentDescription: String?
+    let remoteAgentQuickActions: [AgentQuickAction]?
+    let isConnecting: Bool
+
+    let onOpenModelManager: () -> Void
+    let onUseFoundation: (() -> Void)?
+    let onQuickAction: (String) -> Void
+    let onUseHostedWhilePending: (() async -> Bool)?
+
+    // `nonisolated` because Equatable's `==` is a non-isolated requirement but
+    // this view type is main-actor-isolated. Every compared field is a Sendable
+    // value type, so reading them off the main actor is race-free.
+    nonisolated static func == (lhs: EmptyStateContent, rhs: EmptyStateContent) -> Bool {
+        lhs.selectedModel == rhs.selectedModel
+            && lhs.agents == rhs.agents
+            && lhs.activeAgentId == rhs.activeAgentId
+            && lhs.quickActions == rhs.quickActions
+            && lhs.generativeGreetingState == rhs.generativeGreetingState
+            && lhs.pendingLocalModelId == rhs.pendingLocalModelId
+            && lhs.temporaryCloudModelName == rhs.temporaryCloudModelName
+            && lhs.activeDiscoveredAgent == rhs.activeDiscoveredAgent
+            && lhs.activeRelayAgent == rhs.activeRelayAgent
+            && lhs.remoteAgentAvatar == rhs.remoteAgentAvatar
+            && lhs.remoteAgentDescription == rhs.remoteAgentDescription
+            && lhs.remoteAgentQuickActions == rhs.remoteAgentQuickActions
+            && lhs.isConnecting == rhs.isConnecting
+    }
+
+    var body: some View {
+        ChatEmptyState(
+            hasModels: true,
+            selectedModel: selectedModel,
+            agents: agents,
+            activeAgentId: activeAgentId,
+            quickActions: quickActions,
+            generativeGreetingState: generativeGreetingState,
+            onOpenModelManager: onOpenModelManager,
+            onUseFoundation: onUseFoundation,
+            onQuickAction: onQuickAction,
+            onOpenOnboarding: nil,
+            pendingLocalModelId: pendingLocalModelId,
+            temporaryCloudModelName: temporaryCloudModelName,
+            onUseHostedWhilePending: onUseHostedWhilePending,
+            activeDiscoveredAgent: activeDiscoveredAgent,
+            activeRelayAgent: activeRelayAgent,
+            remoteAgentAvatar: remoteAgentAvatar,
+            remoteAgentDescription: remoteAgentDescription,
+            remoteAgentQuickActions: remoteAgentQuickActions,
+            isConnecting: isConnecting
+        )
+    }
+}
+
 #if DEBUG
     /// Debug-only switch for the canned tool-call timeline used to test the
     /// tool-call rail animation. With `forceEnabled = true`, every send streams
@@ -400,6 +476,10 @@ final class ChatSession: ObservableObject {
     /// remote provider shows up in the picker live, without reopening the
     /// window (mirrors `AgentsView`'s `$items` subscription).
     nonisolated(unsafe) private var modelCacheCancellable: AnyCancellable?
+    /// Runtime residency changes can originate outside this window (HTTP,
+    /// plugins, subagents, other chats). Observe them so a model evicted behind
+    /// the window's back cannot keep a stale green warm indicator.
+    nonisolated(unsafe) private var runtimeResidencyObserver: NSObjectProtocol?
     /// Flag to prevent auto-persist during initial load or programmatic resets
     private var isLoadingModel: Bool = false
     /// The model the user last picked by hand this session. Picker-list
@@ -517,6 +597,21 @@ final class ChatSession: ObservableObject {
             .sink { [weak self] items in
                 Task { @MainActor in self?.applyPickerItems(items) }
             }
+
+        runtimeResidencyObserver = NotificationCenter.default.addObserver(
+            forName: .modelRuntimeResidencyChanged,
+            object: nil,
+            queue: .main
+        ) { [weak self] note in
+            let residentModelNames = note.object as? [String] ?? []
+            Task { @MainActor in
+                guard let self else { return }
+                self.warmupController.reconcileRuntimeResidency(
+                    selectedModel: self.selectedModel,
+                    residentModelNames: residentModelNames
+                )
+            }
+        }
 
         // Mirror AgentTodoStore -> currentTodo so the inline UI block
         // updates whenever the agent calls `todo`. Filter by this window's
@@ -740,6 +835,9 @@ final class ChatSession: ObservableObject {
             NotificationCenter.default.removeObserver(observer)
         }
         if let observer = storageMutationObserver {
+            NotificationCenter.default.removeObserver(observer)
+        }
+        if let observer = runtimeResidencyObserver {
             NotificationCenter.default.removeObserver(observer)
         }
         modelSelectionCancellable = nil
@@ -3800,7 +3898,9 @@ final class ChatSession: ObservableObject {
     ) {
         guard activeRunId == nil, !isStreaming else {
             rollbackPreAppendedUserTurn(
-                preAppendedUserTurn, restoringDraft: (trimmed, attachments))
+                preAppendedUserTurn,
+                restoringDraft: (trimmed, attachments)
+            )
             restoreTurnsRollbackAfterAbortedRegeneration()
             return
         }
@@ -4263,11 +4363,11 @@ final class ChatSession: ObservableObject {
 
                     ttftTrace?.mark("pre_ttft_done")
 
-                    // Per-call card override for native image results: the model
-                    // keeps the compact `toolPayload` (a small quantized model
-                    // parrots the enriched metadata JSON as its answer), while the
-                    // artifact card needs the enriched SHARED_ARTIFACT block.
-                    var nativeImageCardOverrides: [String: String] = [:]
+                    // Per-call presentation override: the model keeps a compact
+                    // result while the card retains the full chart/image payload.
+                    // This prevents a large display artifact from being re-prefilled
+                    // through the model on the next agent-loop iteration.
+                    var toolCardOverrides: [String: String] = [:]
 
                     // Build the matching tool-result turn for a call. Every
                     // assistant `tool_use` MUST be paired with a tool turn
@@ -4294,7 +4394,7 @@ final class ChatSession: ObservableObject {
                             }) ?? assistantTurn
                         // Card uses the override when present (native image);
                         // every other tool falls back to the model-facing result.
-                        owner.setToolResult(nativeImageCardOverrides[callId] ?? result, for: callId)
+                        owner.setToolResult(toolCardOverrides[callId] ?? result, for: callId)
                         let toolTurn = ChatTurn(role: .tool, content: result)
                         toolTurn.toolCallId = callId
                         return toolTurn
@@ -4428,7 +4528,16 @@ final class ChatSession: ObservableObject {
                             }
                         }
 
-                        if inv.toolName == "share_artifact" {
+                        if inv.toolName == "render_chart",
+                            let compactResult = RenderChartTool.compactModelResult(from: resultText)
+                        {
+                            // The full marker renders the chart card, while the
+                            // model gets a compact confirmation instead of
+                            // re-prefilling every category/value and inventing
+                            // a second artifact-sharing step.
+                            toolCardOverrides[callId] = resultText
+                            resultText = compactResult
+                        } else if inv.toolName == "share_artifact" {
                             resultText = await self.processShareArtifactResult(
                                 toolResult: resultText,
                                 executionMode: executionMode
@@ -4446,7 +4555,7 @@ final class ChatSession: ObservableObject {
                                 toolResult: resultText
                             )
                             if enriched != resultText {
-                                nativeImageCardOverrides[callId] = enriched
+                                toolCardOverrides[callId] = enriched
                                 if let artifact = SharedArtifact.fromEnrichedToolResult(enriched) {
                                     await PluginManager.shared.notifyArtifactHandlers(artifact: artifact)
                                 }
@@ -4696,7 +4805,8 @@ final class ChatSession: ObservableObject {
                             ) { inv, callId in
                                 try await ChatExecutionContext.$toolExecutionScope.withValue(toolScope) {
                                     try await ChatExecutionContext.$currentSessionId.withValue(sessionIdForTools) {
-                                        try await ChatExecutionContext.$currentAssistantTurnId.withValue(turnIdForTools) {
+                                        try await ChatExecutionContext.$currentAssistantTurnId.withValue(turnIdForTools)
+                                        {
                                             try await ChatExecutionContext.$currentToolCallId.withValue(callId) {
                                                 try await ToolRegistry.shared.execute(
                                                     name: inv.toolName,
@@ -6066,8 +6176,13 @@ struct ChatView: View {
                 }
             }
         }
+        // Allow the window to narrow down to 550pt so it tiles comfortably
+        // beside other windows. The content is responsive (the selector chips
+        // collapse to icons, the thread is width-capped and centered), so a
+        // narrow width just reflows the same UI rather than clipping it. Ideal
+        // width stays wide for the default/unconstrained window size.
         .frame(
-            minWidth: 800,
+            minWidth: 550,
             idealWidth: 950,
             maxWidth: .infinity,
             minHeight: 575,
@@ -6503,13 +6618,28 @@ struct ChatView: View {
 
     @ViewBuilder
     private var emptyStateView: some View {
-        ChatEmptyState(
-            hasModels: true,
+        // Wrapped in an Equatable view so a `ChatSession` mutation that doesn't
+        // touch any empty-state input (e.g. toggling thinking, which republishes
+        // `activeModelOptions`) can't re-render the greeting. `ChatView` observes
+        // the whole session object, so its body re-evaluates on every published
+        // change; `.equatable()` lets SwiftUI skip this subtree when the inputs
+        // below are unchanged. The `GenerativeGreetingTrigger` stays *outside*
+        // the equatable boundary so it keeps observing the session and still
+        // fires its onAppear / onChange greeting hooks.
+        EmptyStateContent(
             selectedModel: session.selectedModel,
             agents: windowState.agents,
             activeAgentId: windowState.agentId,
             quickActions: emptyStateQuickActions,
             generativeGreetingState: session.generativeGreetingState,
+            pendingLocalModelId: session.pendingLocalSetupModelId,
+            temporaryCloudModelName: session.temporaryCloudModelDisplayName,
+            activeDiscoveredAgent: windowState.selectedDiscoveredAgent,
+            activeRelayAgent: windowState.selectedRelayAgent,
+            remoteAgentAvatar: windowState.pinnedRemoteAgentAvatar,
+            remoteAgentDescription: remoteAgentDescriptionForEmptyState,
+            remoteAgentQuickActions: windowState.pinnedRemoteAgentQuickActions,
+            isConnecting: windowState.remoteAgentConnectionPhase == .connecting,
             onOpenModelManager: {
                 AppDelegate.shared?.showManagementWindow(initialTab: .models)
             },
@@ -6522,19 +6652,11 @@ struct ChatView: View {
             onQuickAction: { prompt in
                 session.input = prompt
             },
-            onOpenOnboarding: nil,
-            pendingLocalModelId: session.pendingLocalSetupModelId,
-            temporaryCloudModelName: session.temporaryCloudModelDisplayName,
             // Automatic while local setup is pending: connects the Router on
             // demand, with recovery UI if it cannot be reached.
-            onUseHostedWhilePending: { await session.adoptOsaurusRouterModelWhileLocalSetupPending() },
-            activeDiscoveredAgent: windowState.selectedDiscoveredAgent,
-            activeRelayAgent: windowState.selectedRelayAgent,
-            remoteAgentAvatar: windowState.pinnedRemoteAgentAvatar,
-            remoteAgentDescription: remoteAgentDescriptionForEmptyState,
-            remoteAgentQuickActions: windowState.pinnedRemoteAgentQuickActions,
-            isConnecting: windowState.remoteAgentConnectionPhase == .connecting
+            onUseHostedWhilePending: { await session.adoptOsaurusRouterModelWhileLocalSetupPending() }
         )
+        .equatable()
         .transition(.opacity.combined(with: .scale(scale: 0.98)))
         .modifier(
             GenerativeGreetingTrigger(
