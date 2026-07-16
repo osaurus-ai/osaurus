@@ -269,10 +269,10 @@ public enum ChatSessionImporter {
         for message in messages {
             guard
                 let roleString = message["role"] as? String,
-                let role = importedRole(from: roleString),
-                let content = message["content"] as? String,
-                !content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                let role = importedRole(from: roleString)
             else { continue }
+            let content = genericText(from: message["content"])
+            guard !content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { continue }
             turns.append(
                 ChatTurnData(role: role, content: content, createdAt: flexibleDate(message["timestamp"]))
             )
@@ -287,6 +287,26 @@ public enum ChatSessionImporter {
             updatedAt: flexibleDate(conversation["updatedAt"]),
             turns: turns
         )
+    }
+
+    /// Generic-schema `content` accepts a plain string, an array of
+    /// strings (joined as paragraphs), or an array of typed text blocks
+    /// (`{"type": "text", "text": …}`), since hand-rolled exports use
+    /// all three shapes.
+    private static func genericText(from content: Any?) -> String {
+        if let text = content as? String { return text }
+        if let parts = content as? [Any] {
+            return parts
+                .compactMap { part -> String? in
+                    if let text = part as? String { return text }
+                    if let block = part as? [String: Any] {
+                        return block["text"] as? String
+                    }
+                    return nil
+                }
+                .joined(separator: "\n\n")
+        }
+        return ""
     }
 
     // MARK: - Shared assembly

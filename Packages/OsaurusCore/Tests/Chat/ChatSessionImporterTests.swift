@@ -153,6 +153,29 @@ struct ChatSessionImporterTests {
         #expect(session.turns[0].createdAt == Date(timeIntervalSince1970: 1_750_000_000))
     }
 
+    @Test func genericContentAcceptsStringArraysAndTextBlocks() throws {
+        // Regression: hand-rolled exports carry assistant content as an
+        // array of strings (or typed text blocks); those turns were
+        // silently dropped, importing a user-only conversation.
+        let export = """
+            {
+              "title": "Quotes",
+              "messages": [
+                {"role": "user", "content": "write quotes"},
+                {"role": "assistant", "content": ["first quote", "second quote"]},
+                {"role": "user", "content": "more"},
+                {"role": "assistant", "content": [{"type": "text", "text": "third quote"}]}
+              ]
+            }
+            """
+        let imported = try ChatSessionImporter.parse(data: Data(export.utf8))
+        let session = try #require(imported.first).session
+        #expect(session.turns.count == 4)
+        #expect(session.turns[1].role == .assistant)
+        #expect(session.turns[1].content == "first quote\n\nsecond quote")
+        #expect(session.turns[3].content == "third quote")
+    }
+
     @Test func genericSingleConversationObjectIsAccepted() throws {
         let export = """
             {"messages": [{"role": "user", "content": "solo"}]}
