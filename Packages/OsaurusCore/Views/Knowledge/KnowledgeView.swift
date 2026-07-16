@@ -722,41 +722,59 @@ private struct KnowledgeCollectionEditorSheet: View {
                 .font(.system(size: 15, weight: .semibold))
                 .foregroundColor(theme.primaryText)
 
-            VStack(alignment: .leading, spacing: 6) {
-                Text("Name", bundle: .module)
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundColor(theme.secondaryText)
-                TextField("WordPress Development", text: $name)
-                    .textFieldStyle(.roundedBorder)
-            }
+            StyledSettingsTextField(
+                label: "Name",
+                text: $name,
+                placeholder: "WordPress Development",
+                help: ""
+            )
 
-            VStack(alignment: .leading, spacing: 6) {
-                Text("Summary", bundle: .module)
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundColor(theme.secondaryText)
-                TextField("What this corpus contains, shown to agents", text: $summary)
-                    .textFieldStyle(.roundedBorder)
-            }
+            StyledSettingsTextField(
+                label: "Summary",
+                text: $summary,
+                placeholder: "What this corpus contains, shown to agents",
+                help: ""
+            )
 
             VStack(alignment: .leading, spacing: 6) {
                 Text("Folder", bundle: .module)
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundColor(theme.secondaryText)
-                HStack(spacing: 8) {
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundColor(theme.primaryText)
+                HStack(spacing: 10) {
                     TextField("/path/to/markdown-folder", text: $folderPath)
-                        .textFieldStyle(.roundedBorder)
-                        .font(.system(size: 12, design: .monospaced))
+                        .textFieldStyle(.plain)
+                        .font(.system(size: 13, design: .monospaced))
+                        .foregroundColor(theme.primaryText)
                     Button {
                         chooseFolder()
                     } label: {
                         Text("Choose…", bundle: .module)
+                            .font(.system(size: 12, weight: .medium))
+                            .foregroundColor(theme.accentColor)
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 6)
+                            .background(
+                                RoundedRectangle(cornerRadius: 6)
+                                    .fill(theme.accentColor.opacity(0.1))
+                            )
                     }
+                    .buttonStyle(.plain)
                 }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 6)
+                .background(
+                    RoundedRectangle(cornerRadius: 10)
+                        .fill(theme.inputBackground)
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 10)
+                                .stroke(theme.inputBorder, lineWidth: 1)
+                        )
+                )
                 Text(
                     "Markdown files in this folder are indexed in place and never modified. YAML frontmatter (`type`, `tags`, …) is used for filtering.",
                     bundle: .module
                 )
-                .font(.system(size: 10))
+                .font(.system(size: 11))
                 .foregroundColor(theme.tertiaryText)
                 .fixedSize(horizontal: false, vertical: true)
             }
@@ -793,6 +811,7 @@ private struct KnowledgeCollectionEditorSheet: View {
                 } label: {
                     Text("Cancel", bundle: .module)
                 }
+                .buttonStyle(SettingsButtonStyle())
                 .keyboardShortcut(.cancelAction)
                 Button {
                     onSave(
@@ -804,6 +823,7 @@ private struct KnowledgeCollectionEditorSheet: View {
                 } label: {
                     Text(collection == nil ? "Add" : "Save", bundle: .module)
                 }
+                .buttonStyle(SettingsButtonStyle(isPrimary: true))
                 .keyboardShortcut(.defaultAction)
                 .disabled(!canSave)
             }
@@ -820,7 +840,8 @@ private struct KnowledgeCollectionEditorSheet: View {
         panel.canChooseFiles = false
         panel.allowsMultipleSelection = false
         panel.prompt = L("Choose")
-        if panel.runModal() == .OK, let url = panel.url {
+        Task { @MainActor in
+            guard await panel.beginModal() == .OK, let url = panel.url else { return }
             folderPath = url.path
         }
     }
