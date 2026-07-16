@@ -74,10 +74,10 @@ struct ImageGenerationBridgeContractTests {
             encoding: .utf8
         )
 
-        #expect(packageSwift.contains(#"revision: "1ca402953bf941341889bb00b186e46bf0c18d6f""#))
-        #expect(packageResolved.contains(#""revision" : "1ca402953bf941341889bb00b186e46bf0c18d6f""#))
-        #expect(workspaceResolved.contains(#""revision" : "1ca402953bf941341889bb00b186e46bf0c18d6f""#))
-        #expect(appResolved.contains(#""revision" : "1ca402953bf941341889bb00b186e46bf0c18d6f""#))
+        #expect(packageSwift.contains(#"revision: "a26c7ecec950f18e3d07c8402fbd8c80f40ac764""#))
+        #expect(packageResolved.contains(#""revision" : "a26c7ecec950f18e3d07c8402fbd8c80f40ac764""#))
+        #expect(workspaceResolved.contains(#""revision" : "a26c7ecec950f18e3d07c8402fbd8c80f40ac764""#))
+        #expect(appResolved.contains(#""revision" : "a26c7ecec950f18e3d07c8402fbd8c80f40ac764""#))
         #expect(service.contains("import vMLXFlux"))
         #expect(service.contains("await MetalGate.shared.enterImageGeneration()"))
         #expect(service.contains("await MetalGate.shared.exitImageGeneration()"))
