@@ -890,9 +890,7 @@ struct ModelDownloadView: View {
             subtitle: L("On-device Mac automation models live in Computer Use settings."),
             cta: L("Open Computer Use")
         ) {
-            ManagementStateManager.shared.selectedTab = .computerUse
-            ManagementStateManager.shared.computerUseSubTabRequest =
-                ComputerUseTab.models.rawValue
+            openComputerUseModels()
         }
     }
 
@@ -1287,6 +1285,32 @@ struct ModelDownloadView: View {
                 .font(.system(size: 15, weight: .medium))
                 .foregroundColor(theme.secondaryText)
 
+            if searchLooksLikeAppleScript {
+                Text(
+                    "AppleScript models are made exclusively for Mac automation, so they live under Computer Use instead of the chat catalog.",
+                    bundle: .module
+                )
+                .font(.system(size: 12))
+                .foregroundColor(theme.tertiaryText)
+                .multilineTextAlignment(.center)
+                .frame(maxWidth: 380)
+
+                Button(action: openComputerUseModels) {
+                    HStack(spacing: 6) {
+                        Image(systemName: "applescript")
+                            .font(.system(size: 12, weight: .semibold))
+                        Text("Open Computer Use models", bundle: .module)
+                            .font(.system(size: 13, weight: .semibold))
+                    }
+                    .foregroundColor(.white)
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 8)
+                    .background(RoundedRectangle(cornerRadius: 8).fill(theme.accentColor))
+                }
+                .buttonStyle(PlainButtonStyle())
+                .padding(.top, 4)
+            }
+
             if !searchText.isEmpty {
                 Button(action: { searchText = "" }) {
                     Text("Clear search", bundle: .module)
@@ -1317,7 +1341,25 @@ struct ModelDownloadView: View {
         .padding(.vertical, 60)
     }
 
+    /// Whether the current search reads as a hunt for AppleScript models,
+    /// which are intentionally excluded from this catalog (they only emit
+    /// AppleScript, so they aren't useful as chat models) and live under
+    /// Computer Use → Models instead.
+    private var searchLooksLikeAppleScript: Bool {
+        let query = searchText.lowercased()
+        return query.contains("applescript") || query.contains("apple script")
+    }
+
+    private func openComputerUseModels() {
+        ManagementStateManager.shared.selectedTab = .computerUse
+        ManagementStateManager.shared.computerUseSubTabRequest =
+            ComputerUseTab.models.rawValue
+    }
+
     private var emptyStateIcon: String {
+        if searchLooksLikeAppleScript {
+            return "applescript"
+        }
         switch selectedTab {
         case .all:
             return "cube.box"
@@ -1327,6 +1369,9 @@ struct ModelDownloadView: View {
     }
 
     private var emptyStateTitle: String {
+        if searchLooksLikeAppleScript {
+            return L("Looking for AppleScript models?")
+        }
         if !searchText.isEmpty {
             return L("No models match your search")
         }
@@ -2180,6 +2225,18 @@ struct HuggingFaceImportSheet: View {
             errorMessage = L(
                 "That doesn't look like a Hugging Face repo. Use the format org/repo or paste a huggingface.co URL."
             )
+            return
+        }
+        // AppleScript bundles are Computer-Use-exclusive (they only emit
+        // AppleScript, so they aren't useful as chat models) and are filtered
+        // out of this catalog — route the user to Computer Use → Models
+        // instead of failing the MLX compatibility check below.
+        if AppleScriptModelCatalog.isAppleScriptModel(id: repoId) {
+            errorMessage = nil
+            dismiss()
+            ManagementStateManager.shared.selectedTab = .computerUse
+            ManagementStateManager.shared.computerUseSubTabRequest =
+                ComputerUseTab.models.rawValue
             return
         }
         errorMessage = nil
