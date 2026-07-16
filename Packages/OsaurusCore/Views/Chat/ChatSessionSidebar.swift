@@ -370,6 +370,18 @@ struct ChatSessionSidebar: View {
 
             Spacer()
 
+            Button {
+                ChatSessionImportCoordinator.run(
+                    agentId: agentId == Agent.defaultId ? nil : agentId
+                )
+            } label: {
+                Image(systemName: "square.and.arrow.down")
+                    .font(.system(size: 14, weight: .medium))
+                    .foregroundColor(theme.secondaryText)
+            }
+            .buttonStyle(.plain)
+            .localizedHelp("Import Conversations")
+
             Button(action: onNewChat) {
                 Image(systemName: "square.and.pencil")
                     .font(.system(size: 14, weight: .medium))
