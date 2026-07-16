@@ -162,7 +162,7 @@ public enum CapabilitySearchDiagnostics {
     /// `nonisolated` so non-main-actor callers (e.g.
     /// `CapabilitySearch.search`) don't have to hop the main actor
     /// just to stringify a `Sendable` struct.
-    public nonisolated static func formatSummary(_ health: CapabilitySearchHealth) -> String {
+    nonisolated public static func formatSummary(_ health: CapabilitySearchHealth) -> String {
         var parts: [String] = [
             "registry=\(health.registryToolCount)",
             "index=\(health.indexedToolCount)",
@@ -189,8 +189,7 @@ public enum CapabilitySearchDiagnostics {
     /// that don't need the name array.
     private static func registrySnapshotNames() -> (names: [String], count: Int) {
         let all = ToolRegistry.shared.listTools()
-        let excluded = ToolRegistry.capabilityToolNames
-            .union(ToolRegistry.shared.runtimeManagedToolNames)
+        let excluded = ToolRegistry.shared.capabilitySearchExcludedToolNames
         let indexable = all.filter { $0.enabled && !excluded.contains($0.name) }
         return (indexable.map(\.name), indexable.count)
     }

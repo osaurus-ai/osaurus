@@ -139,6 +139,13 @@ struct SkillStoreFileContainmentTests {
             await #expect(throws: SkillStoreFileError.self) {
                 _ = try await SkillStore.readFile(from: skill, relativePath: "references/linked-secret.txt")
             }
+            await #expect(throws: SkillStoreFileError.self) {
+                _ = try await SkillStore.readFile(
+                    from: skill,
+                    relativePath: "references/linked-secret.txt",
+                    maxBytes: 1_024
+                )
+            }
             #expect(try Data(contentsOf: outsideRead) == Data("keep symlink secret".utf8))
         }
     }
@@ -155,6 +162,26 @@ struct SkillStoreFileContainmentTests {
                 try await SkillStore.addReference(to: skill, name: "leak.md", content: Data("bad".utf8))
             }
             #expect(!FileManager.default.fileExists(atPath: outsideReferences.appendingPathComponent("leak.md").path))
+        }
+    }
+
+    @Test func supportFilesListOnlyPackageDirectoriesAndSkipSymlinks() async throws {
+        try await Self.withTempSkill { _, skill in
+            let skillDir = SkillStore.skillDirectory(for: skill)
+            let scriptsDir = skillDir.appendingPathComponent("scripts", isDirectory: true)
+            let outsideScript = OsaurusPaths.skills().appendingPathComponent("outside-script.sh")
+
+            try FileManager.default.createDirectory(at: scriptsDir, withIntermediateDirectories: true)
+            try Data("visible".utf8).write(to: scriptsDir.appendingPathComponent("visible.sh"))
+            try Data("root secret".utf8).write(to: skillDir.appendingPathComponent("root-secret.env"))
+            try Data("outside secret".utf8).write(to: outsideScript)
+            try FileManager.default.createSymbolicLink(
+                at: scriptsDir.appendingPathComponent("linked-secret.sh"),
+                withDestinationURL: outsideScript
+            )
+
+            let paths = Set(SkillStore.supportFiles(from: skill).map(\.relativePath))
+            #expect(paths == ["scripts/visible.sh"])
         }
     }
 

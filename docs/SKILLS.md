@@ -174,6 +174,38 @@ Skills are stored as directories:
         └── template.md
 ```
 
+## Project-Scoped Skills
+
+Selecting a working directory also lets Osaurus inspect compatible skills in:
+
+- `.osaurus/skills/**/SKILL.md`
+- `.agents/skills/**/SKILL.md`
+- `.claude/skills/**/SKILL.md`
+
+Open **Management → Skills → Project** to review what was found. Project skills
+are disabled by default. Trust the package, then grant access to a selected
+custom agent; that agent must still load the stable `project-skill/...`
+capability ID in its active chat session. Osaurus does not copy the package into
+`~/.osaurus/skills`, inject every project skill into the prompt, or execute
+helper scripts while scanning/loading.
+
+The workbench shows the source convention, trust boundary, conflicts, rejected
+packages, references, assets, and helper inventory. Paths remain relative to the
+selected project. Reading or running an inventoried helper must go through the
+normal workspace tools and their existing permission policy.
+
+Project discovery fails closed when a package has ambiguous duplicate names,
+any symlinked root, file, or directory, excessive depth or file count, malformed
+metadata, or an oversized `SKILL.md`. Switching or clearing the working
+directory immediately removes the prior project's skills and session grants.
+Approval pins `SKILL.md` plus the bounded package inventory and every inventoried
+file hash. Osaurus revalidates that target package snapshot during discovery and
+on each load; edits delete the persisted approval and all agent grants until the
+user reviews, explicitly trusts, and explicitly re-grants the changed package.
+Manually untrusting a package also clears its agent grants. Loading
+also requires the current foreground chat's explicit custom-agent identity and
+never falls back to whichever agent happens to be active in the UI.
+
 ---
 
 ## Reference Files

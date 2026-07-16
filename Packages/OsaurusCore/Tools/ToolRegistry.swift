@@ -144,6 +144,8 @@ public final class ToolRegistry: ObservableObject {
     private var mcpToolNames: Set<String> = []
     /// Tool names registered from native dylib plugins.
     private var pluginToolNames: Set<String> = []
+    private var toolIndexMutationTasks: [String: (revision: UInt64, task: Task<Void, Never>)] = [:]
+    private var nextToolIndexMutationRevision: UInt64 = 0
 
     struct ToolPolicyInfo {
         let isPermissioned: Bool
@@ -470,8 +472,7 @@ public final class ToolRegistry: ObservableObject {
             externallyDeniedToolNames.contains(name)
         else { return false }
         if ChatExecutionContext.authenticatedHostFolderRoot != nil,
-            hostFolderAllowedWhenAuthenticated.contains(name)
-        {
+            hostFolderAllowedWhenAuthenticated.contains(name) {
             return false
         }
         return true
@@ -756,7 +757,7 @@ public final class ToolRegistry: ObservableObject {
             // discover returned). Scoped to capability tools ONLY — other tool
             // results (file contents, shell/web output) can be large or
             // sensitive and have no place in this diagnostic.
-            var resultForLog: String? = nil
+            var resultForLog: String?
             defer {
                 var line =
                     "       TOOL-EXEC-END   name=\(name) "
@@ -1014,8 +1015,7 @@ public final class ToolRegistry: ObservableObject {
         // marker is a leading root key, so scanning the whole string just to
         // detect it could hang the UI.
         if raw.prefix(4096).contains("\"action\":\"\(SecretPromptAction.actionKey)\""),
-            SecretPromptParser.parse(raw) != nil
-        {
+            SecretPromptParser.parse(raw) != nil {
             return raw
         }
 
@@ -1310,6 +1310,50 @@ public final class ToolRegistry: ObservableObject {
 
     // MARK: - Sandbox Tool Registration
 
+    private func scheduleToolIndexMutation(
+        name: String,
+        operation: @escaping @Sendable () async -> Void
+    ) {
+        let previous = toolIndexMutationTasks[name]?.task
+        nextToolIndexMutationRevision &+= 1
+        let revision = nextToolIndexMutationRevision
+        let task = Task { @MainActor [weak self] in
+            await previous?.value
+            await operation()
+            guard self?.toolIndexMutationTasks[name]?.revision == revision else { return }
+            self?.toolIndexMutationTasks.removeValue(forKey: name)
+        }
+        toolIndexMutationTasks[name] = (revision, task)
+    }
+
+    private func scheduleToolIndexRegistration(
+        name: String,
+        description: String,
+        runtime: ToolRuntime,
+        tokenCount: Int,
+        parameters: JSONValue?
+    ) {
+        scheduleToolIndexMutation(name: name) {
+            await ToolIndexService.shared.onToolRegistered(
+                name: name,
+                description: description,
+                runtime: runtime,
+                tokenCount: tokenCount,
+                parameters: parameters
+            )
+        }
+    }
+
+    private func scheduleToolIndexRemoval(name: String) {
+        scheduleToolIndexMutation(name: name) {
+            await ToolIndexService.shared.onToolUnregistered(name: name)
+        }
+    }
+
+    func awaitToolIndexMutation(for name: String) async {
+        await toolIndexMutationTasks[name]?.task.value
+    }
+
     /// Register a tool that requires the sandbox container.
     /// Non-runtime-managed tools are auto-enabled on first registration so they
     /// are immediately usable; subsequent registrations preserve the user's choice.
@@ -1329,15 +1373,13 @@ public final class ToolRegistry: ObservableObject {
                 setEnabled(true, for: tool.name)
             }
             builtInSandboxToolNames.remove(tool.name)
-            Task {
-                await ToolIndexService.shared.onToolRegistered(
-                    name: tool.name,
-                    description: tool.description,
-                    runtime: .sandbox,
-                    tokenCount: Self.estimateTokenCount(tool),
-                    parameters: tool.parameters
-                )
-            }
+            scheduleToolIndexRegistration(
+                name: tool.name,
+                description: tool.description,
+                runtime: .sandbox,
+                tokenCount: Self.estimateTokenCount(tool),
+                parameters: tool.parameters
+            )
         }
     }
 
@@ -1388,7 +1430,7 @@ public final class ToolRegistry: ObservableObject {
         toolsByName.removeValue(forKey: name)
         sandboxToolNames.remove(name)
         builtInSandboxToolNames.remove(name)
-        Task { await ToolIndexService.shared.onToolUnregistered(name: name) }
+        scheduleToolIndexRemoval(name: name)
     }
 
     /// Whether a tool requires the sandbox container.
@@ -1404,8 +1446,7 @@ public final class ToolRegistry: ObservableObject {
     func registerMCPTool(_ tool: MCPProviderTool) {
         let name = tool.name
         if let existing = toolsByName[name] as? MCPProviderTool,
-            existing.providerId != tool.providerId
-        {
+            existing.providerId != tool.providerId {
             NSLog(
                 "[ToolRegistry] MCP tool name collision on '\(name)': "
                     + "existing provider '\(existing.providerName)' (\(existing.providerId)) "
@@ -1424,15 +1465,13 @@ public final class ToolRegistry: ObservableObject {
         if firstTime {
             setEnabled(true, for: name)
         }
-        Task {
-            await ToolIndexService.shared.onToolRegistered(
-                name: name,
-                description: tool.description,
-                runtime: .mcp,
-                tokenCount: Self.estimateTokenCount(tool),
-                parameters: tool.parameters
-            )
-        }
+        scheduleToolIndexRegistration(
+            name: name,
+            description: tool.description,
+            runtime: .mcp,
+            tokenCount: Self.estimateTokenCount(tool),
+            parameters: tool.parameters
+        )
     }
 
     /// Whether a tool was registered from a remote MCP provider.
@@ -1458,15 +1497,13 @@ public final class ToolRegistry: ObservableObject {
         if firstTime {
             setEnabled(true, for: tool.name)
         }
-        Task {
-            await ToolIndexService.shared.onToolRegistered(
-                name: tool.name,
-                description: tool.description,
-                runtime: .native,
-                tokenCount: Self.estimateTokenCount(tool),
-                parameters: tool.parameters
-            )
-        }
+        scheduleToolIndexRegistration(
+            name: tool.name,
+            description: tool.description,
+            runtime: .native,
+            tokenCount: Self.estimateTokenCount(tool),
+            parameters: tool.parameters
+        )
     }
 
     /// Register a tool from a native dylib plugin.
@@ -1484,15 +1521,13 @@ public final class ToolRegistry: ObservableObject {
         if firstTime {
             setEnabled(true, for: tool.name)
         }
-        Task {
-            await ToolIndexService.shared.onToolRegistered(
-                name: tool.name,
-                description: tool.description,
-                runtime: .native,
-                tokenCount: Self.estimateTokenCount(tool),
-                parameters: tool.parameters
-            )
-        }
+        scheduleToolIndexRegistration(
+            name: tool.name,
+            description: tool.description,
+            runtime: .native,
+            tokenCount: Self.estimateTokenCount(tool),
+            parameters: tool.parameters
+        )
     }
 
     /// Whether a tool was registered from a native dylib plugin.
@@ -1508,7 +1543,7 @@ public final class ToolRegistry: ObservableObject {
             builtInSandboxToolNames.remove(n)
             mcpToolNames.remove(n)
             pluginToolNames.remove(n)
-            Task { await ToolIndexService.shared.onToolUnregistered(name: n) }
+            scheduleToolIndexRemoval(name: n)
         }
     }
 
@@ -1813,6 +1848,12 @@ public final class ToolRegistry: ObservableObject {
     static let nonDiscoverableBuiltInToolNames: Set<String> = [
         ComputerUseTool.toolName
     ]
+
+    var capabilitySearchExcludedToolNames: Set<String> {
+        Self.capabilityToolNames
+            .union(runtimeManagedToolNames)
+            .union(Self.nonDiscoverableBuiltInToolNames)
+    }
 
     /// Always-loaded tool specs: built-in + runtime-managed tools.
     /// These are always included when registered — mode exclusions handle

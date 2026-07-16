@@ -13,7 +13,7 @@ import Foundation
 // Lives outside the @MainActor class so the lock and storage are never actor-isolated.
 // Concurrency safety is enforced manually via _folderRootPathLock.
 private let _folderRootPathLock = NSLock()
-private nonisolated(unsafe) var _folderCachedRootPath: URL?
+nonisolated(unsafe) private var _folderCachedRootPath: URL?
 
 /// Service for managing work folder context
 @MainActor
@@ -24,6 +24,17 @@ public final class FolderContextService: ObservableObject {
         didSet {
             _folderRootPathLock.withLock {
                 _folderCachedRootPath = currentContext?.rootPath
+            }
+            // Project-local skills are scoped to exactly one selected folder.
+            // Clear the old snapshot synchronously before any async scan so a
+            // folder switch can never expose skills from the previous root.
+            let previousRoot = oldValue?.rootPath.standardizedFileURL.resolvingSymlinksInPath()
+            let nextRoot = currentContext?.rootPath.standardizedFileURL.resolvingSymlinksInPath()
+            if previousRoot != nextRoot {
+                ProjectSkillManager.shared.prepareForFolder(nextRoot)
+            }
+            if nextRoot != nil {
+                Task { await ProjectSkillManager.shared.refresh() }
             }
         }
     }
@@ -38,7 +49,7 @@ public final class FolderContextService: ObservableObject {
 
     /// Thread-safe accessor for the current folder root path.
     /// Reads a lock-protected cache so callers never need to hop to MainActor.
-    public nonisolated static var cachedRootPath: URL? {
+    nonisolated public static var cachedRootPath: URL? {
         _folderRootPathLock.withLock { _folderCachedRootPath }
     }
 
@@ -122,7 +133,7 @@ public final class FolderContextService: ObservableObject {
     /// survives relaunch. Mirrors the bookmark `setFolder` creates, but does
     /// not mutate the process-wide folder context. Returns nil if the bookmark
     /// can't be created.
-    public nonisolated static func makeSecurityScopedBookmark(for url: URL) -> Data? {
+    nonisolated public static func makeSecurityScopedBookmark(for url: URL) -> Data? {
         try? url.bookmarkData(
             options: .withSecurityScope,
             includingResourceValuesForKeys: nil,
@@ -135,7 +146,7 @@ public final class FolderContextService: ObservableObject {
     /// successful `startAccessingSecurityScopedResource()` on the returned URL
     /// with `stopAccessingSecurityScopedResource()`. Returns nil when the
     /// bookmark can't be resolved (e.g. the folder was deleted) or is stale.
-    public nonisolated static func resolveSecurityScopedURL(from bookmark: Data) -> URL? {
+    nonisolated public static func resolveSecurityScopedURL(from bookmark: Data) -> URL? {
         var isStale = false
         guard
             let url = try? URL(
