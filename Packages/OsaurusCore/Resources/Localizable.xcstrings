@@ -85456,36 +85456,36 @@
         }
       }
     },
-    "Markdown files in this folder are indexed in place and never modified. YAML frontmatter (`type`, `tags`, …) is used for filtering." : {
+    "Files in this folder are indexed in place and never modified. Markdown, plain text, code, and documents (PDF, Word, Excel, PowerPoint, CSV) are supported; YAML frontmatter (`type`, `tags`, …) in markdown is used for filtering." : {
       "localizations" : {
         "de" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Markdown-Dateien in diesem Ordner werden an Ort und Stelle indiziert und nie verändert. YAML-Frontmatter (`type`, `tags`, …) dient zum Filtern."
+            "value" : "Dateien in diesem Ordner werden an Ort und Stelle indiziert und nie verändert. Unterstützt werden Markdown, reiner Text, Code und Dokumente (PDF, Word, Excel, PowerPoint, CSV); YAML-Frontmatter (`type`, `tags`, …) in Markdown dient zum Filtern."
           }
         },
         "ko" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "이 폴더의 마크다운 파일은 제자리에서 색인되며 절대 수정되지 않습니다. YAML 프런트매터(`type`, `tags` 등)는 필터링에 사용됩니다."
+            "value" : "이 폴더의 파일은 제자리에서 색인되며 절대 수정되지 않습니다. 마크다운, 일반 텍스트, 코드, 문서(PDF, Word, Excel, PowerPoint, CSV)를 지원하며, 마크다운의 YAML 프런트매터(`type`, `tags` 등)는 필터링에 사용됩니다."
           }
         },
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Файлы Markdown в этой папке индексируются на месте и никогда не изменяются. YAML-заголовок (`type`, `tags`, …) используется для фильтрации."
+            "value" : "Файлы в этой папке индексируются на месте и никогда не изменяются. Поддерживаются Markdown, обычный текст, код и документы (PDF, Word, Excel, PowerPoint, CSV); YAML-заголовок (`type`, `tags`, …) в Markdown используется для фильтрации."
           }
         },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "此文件夹中的 Markdown 文件将就地建立索引，绝不会被修改。YAML frontmatter（`type`、`tags` 等）用于筛选。"
+            "value" : "此文件夹中的文件将就地建立索引，绝不会被修改。支持 Markdown、纯文本、代码和文档（PDF、Word、Excel、PowerPoint、CSV）；Markdown 中的 YAML frontmatter（`type`、`tags` 等）用于筛选。"
           }
         },
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "此資料夾中的 Markdown 檔案會就地建立索引，絕不會被修改。YAML frontmatter（`type`、`tags` 等）用於篩選。"
+            "value" : "此資料夾中的檔案將就地建立索引，絕不會被修改。支援 Markdown、純文字、程式碼與文件（PDF、Word、Excel、PowerPoint、CSV）；Markdown 中的 YAML frontmatter（`type`、`tags` 等）用於篩選。"
           }
         }
       }

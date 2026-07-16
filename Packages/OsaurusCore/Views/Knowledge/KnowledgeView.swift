@@ -771,7 +771,7 @@ private struct KnowledgeCollectionEditorSheet: View {
                         )
                 )
                 Text(
-                    "Markdown files in this folder are indexed in place and never modified. YAML frontmatter (`type`, `tags`, …) is used for filtering.",
+                    "Files in this folder are indexed in place and never modified. Markdown, plain text, code, and documents (PDF, Word, Excel, PowerPoint, CSV) are supported; YAML frontmatter (`type`, `tags`, …) in markdown is used for filtering.",
                     bundle: .module
                 )
                 .font(.system(size: 11))
