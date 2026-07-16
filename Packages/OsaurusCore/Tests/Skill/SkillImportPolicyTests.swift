@@ -54,6 +54,33 @@ struct SkillImportPolicyTests {
         }
     }
 
+    /// Skills exported before the universal library carried an
+    /// `osaurus-enabled` frontmatter key. Parsing must ignore it — a
+    /// legacy `osaurus-enabled: false` file must not error out or hide
+    /// the skill from the always-available library.
+    @Test func legacyOsaurusEnabledMetadataIsIgnored() throws {
+        let markdown = """
+            ---
+            name: Legacy Disabled Skill
+            description: Exported while toggled off
+            version: 1.2.0
+            osaurus-enabled: false
+            ---
+
+            # Legacy Disabled Skill
+
+            Instructions body.
+            """
+
+        let skill = try Skill.parseAgentSkillsFormat(from: markdown)
+        #expect(skill.name == "Legacy Disabled Skill")
+        #expect(skill.description == "Exported while toggled off")
+        #expect(skill.instructions.contains("Instructions body."))
+        // No enabled gate exists anymore; re-serialization must not
+        // write the legacy key back out.
+        #expect(!skill.toAgentSkillsFormat().contains("osaurus-enabled"))
+    }
+
     @Test func archivePathValidationRejectsTraversalAndDepth() throws {
         try Self.expectSkillFileError(matching: { error in
             if case .archiveEntryEscapes("../SKILL.md") = error { return true }

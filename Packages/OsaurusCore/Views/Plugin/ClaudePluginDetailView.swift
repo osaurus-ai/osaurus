@@ -598,15 +598,7 @@ struct ClaudePluginDetailView: View {
             title: skill.name,
             subtitle: skill.description.isEmpty ? (skill.category ?? "Skill") : skill.description,
             subtitleMonospaced: false,
-            trailing: {
-                if !skill.enabled {
-                    StatusCapsuleBadge(
-                        icon: "pause.circle.fill",
-                        text: "Disabled",
-                        color: theme.warningColor
-                    )
-                }
-            },
+            trailing: { EmptyView() },
             preview: { SkillPreviewView(theme: theme, skill: skill) }
         )
     }
@@ -1139,19 +1131,6 @@ private struct SkillPreviewView: View {
             subtitle: skill.description.isEmpty ? nil : skill.description,
             pills: {
                 HStack(spacing: 6) {
-                    if !skill.enabled {
-                        StatusCapsuleBadge(
-                            icon: "pause.circle.fill",
-                            text: "Disabled",
-                            color: theme.warningColor
-                        )
-                    } else {
-                        StatusCapsuleBadge(
-                            icon: "checkmark.circle.fill",
-                            text: "Enabled",
-                            color: theme.successColor
-                        )
-                    }
                     if let category = skill.category, !category.isEmpty {
                         StatusCapsuleBadge(
                             icon: "tag",

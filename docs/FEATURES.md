@@ -899,11 +899,12 @@ See [docs/plugins/README.md](plugins/README.md) for the full reference.
 
 - **GitHub Import** — Import from repositories with `.claude-plugin/marketplace.json`
 - **File Import** — Load `.md` (Agent Skills), `.json`, or `.zip` packages
-- **Built-in Skills** — 6 pre-installed skills for common use cases
+- **Built-in Skills** — 9 pre-installed tool-grounded skills for common use cases
 - **Reference Files** — Attach text files loaded into skill context
 - **Asset Files** — Support files for skills
 - **Categories** — Organize skills by type
-- **Automated Discovery** — Skills are listed in the enabled-capabilities manifest and loaded on demand via `capabilities_discover` / `capabilities_load`
+- **Universal Availability** — Every installed skill is automatically available to custom agents; there are no enable toggles or per-agent assignment
+- **Automated Discovery** — Skills are listed in the capabilities manifest and loaded on demand via `capabilities_discover` / `capabilities_load`; `/skill-name` forces one for a single message
 
 **Skill Properties:**
 
@@ -1021,9 +1022,9 @@ Each time a method is used, a `MethodEvent` is recorded (`loaded`, `succeeded`, 
 
 ### Context Management
 
-**Purpose:** Give the agent a complete, statically-ordered view of every enabled capability (methods, tools, and skills) and let it load the ones it needs on demand.
+**Purpose:** Give the agent a complete, statically-ordered view of every available capability (methods, tools, and skills) and let it load the ones it needs on demand.
 
-Context management replaces manual per-turn tool selection with a static, session-frozen design. The system prompt carries an enabled-capabilities manifest that lists every capability the agent is allowed to use; only a fixed "hot set" of tools is loaded into the schema up front. The agent pulls in additional capabilities mid-session with `capabilities_discover` / `capabilities_load`. The manifest and hot set are frozen at session start so the static prompt prefix stays byte-stable across turns (KV-cache reuse), and there is no per-turn LLM picker.
+Context management replaces manual per-turn tool selection with a static, session-frozen design. The system prompt carries a capabilities manifest that lists the agent's assigned tools plus every installed skill; only a fixed "hot set" of tools is loaded into the schema up front. The agent pulls in additional capabilities mid-session with `capabilities_discover` / `capabilities_load`. The manifest and hot set are frozen at session start so the static prompt prefix stays byte-stable across turns (KV-cache reuse), and there is no per-turn LLM picker.
 
 **Components:**
 

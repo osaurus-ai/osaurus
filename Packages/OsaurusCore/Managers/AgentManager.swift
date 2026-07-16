@@ -109,13 +109,12 @@ public final class AgentManager: ObservableObject {
     private var lastStorageWarningAt: [UUID: Date] = [:]
     private static let storageWarningCooldown: TimeInterval = 24 * 60 * 60
 
-    /// `UserDefaults` keys for the persisted snapshot of every
-    /// tool/skill name the registry has ever reported via
-    /// `.toolsListChanged`. Used by the observer to tell *brand-new*
-    /// capabilities apart from ones the user has explicitly disabled
-    /// (both look "absent from the agent's allowlist" otherwise).
+    /// `UserDefaults` key for the persisted snapshot of every tool name the
+    /// registry has ever reported via `.toolsListChanged`. Used by the
+    /// observer to tell *brand-new* tools apart from ones the user has
+    /// explicitly disabled (both look "absent from the agent's allowlist"
+    /// otherwise).
     private static let knownToolNamesKey = "AgentManager.knownToolNames.v1"
-    private static let knownSkillNamesKey = "AgentManager.knownSkillNames.v1"
 
     private init() {
         refresh()
@@ -128,12 +127,10 @@ public final class AgentManager: ObservableObject {
             }
         }
 
-        // Auto-grow per-agent enabled sets when new tools/skills register so users
+        // Auto-grow per-agent enabled tool sets when new tools register so users
         // who explicitly seeded their picker don't silently lose access to a freshly
         // installed plugin's capabilities. Skipped for un-seeded (nil) agents which
         // still fall back to the global registry — see `effectiveEnabledToolNames`.
-        // Skills ride this same notification because plugin skills register alongside
-        // their tools (see `PluginManager._loadAll`).
         //
         // We only grow with names that are *new* relative to the persisted registry
         // snapshot. On the first observation after this fix shipped the snapshot is
@@ -150,11 +147,6 @@ public final class AgentManager: ObservableObject {
                     live: Set(ToolRegistry.shared.listDynamicTools().map(\.name)),
                     key: Self.knownToolNamesKey,
                     grow: self.growEnabledToolNames
-                )
-                self.growNewlyDiscoveredCapabilities(
-                    live: Set(SkillManager.shared.skills.map(\.name)),
-                    key: Self.knownSkillNamesKey,
-                    grow: self.growEnabledSkillNames
                 )
             }
         }
@@ -902,18 +894,6 @@ extension AgentManager {
         return agent.manualToolNames
     }
 
-    /// Get the manually selected skill names for an agent, or nil when not in manual mode.
-    public func effectiveManualSkillNames(for agentId: UUID) -> [String]? {
-        guard let agent = agent(for: agentId) else { return nil }
-        if agent.id == Agent.defaultId {
-            let config = DefaultAgentConfigurationStore.load()
-            guard config.toolSelectionMode == .manual else { return nil }
-            return config.manualSkillNames
-        }
-        guard agent.toolSelectionMode == .manual else { return nil }
-        return agent.manualSkillNames
-    }
-
     /// Tool names this agent has enabled (as a unified allow-list) regardless of mode.
     /// In Auto mode this scopes the pre-flight catalog; in Manual mode this is the strict
     /// allowlist. Returns `nil` for legacy / un-seeded agents — callers should treat that
@@ -924,16 +904,6 @@ extension AgentManager {
             return DefaultAgentConfigurationStore.load().manualToolNames
         }
         return agent.manualToolNames
-    }
-
-    /// Skill names this agent has enabled regardless of mode. Mirrors
-    /// `effectiveEnabledToolNames` for the skills side.
-    public func effectiveEnabledSkillNames(for agentId: UUID) -> [String]? {
-        guard let agent = agent(for: agentId) else { return nil }
-        if agent.id == Agent.defaultId {
-            return DefaultAgentConfigurationStore.load().manualSkillNames
-        }
-        return agent.manualSkillNames
     }
 
     /// Get the theme ID for an agent (nil if agent uses global theme)
@@ -950,45 +920,28 @@ extension AgentManager {
         return agent.themeId
     }
 
-    /// Seed an agent's enabled tool/skill set from the live registries the first time
+    /// Seed an agent's enabled tool set from the live registry the first time
     /// the user opens the new capability picker. Idempotent: only writes when the field
     /// is `nil`. Without seeding, `nil` would mean "no allowlist" at runtime — i.e. the
     /// agent gets the global registry, which is what legacy auto-mode agents already
     /// expect. After seeding, every per-item toggle is a real disable, even in Auto.
     public func seedEnabledCapabilitiesIfNeeded(
         for agentId: UUID,
-        defaultToolNames: [String],
-        defaultSkillNames: [String]
+        defaultToolNames: [String]
     ) {
         guard let agent = agent(for: agentId) else { return }
         if agent.id == Agent.defaultId {
             var config = DefaultAgentConfigurationStore.load()
-            var changed = false
             if config.manualToolNames == nil {
                 config.manualToolNames = defaultToolNames
-                changed = true
-            }
-            if config.manualSkillNames == nil {
-                config.manualSkillNames = defaultSkillNames
-                changed = true
-            }
-            if changed {
                 DefaultAgentConfigurationStore.save(config)
                 NotificationCenter.default.post(name: .agentUpdated, object: Agent.defaultId)
             }
             return
         }
-        var updated = agent
-        var changed = false
-        if updated.manualToolNames == nil {
+        if agent.manualToolNames == nil {
+            var updated = agent
             updated.manualToolNames = defaultToolNames
-            changed = true
-        }
-        if updated.manualSkillNames == nil {
-            updated.manualSkillNames = defaultSkillNames
-            changed = true
-        }
-        if changed {
             update(updated)
         }
     }
@@ -1004,20 +957,6 @@ extension AgentManager {
         }
         guard var agent = agent(for: agentId), !agent.isBuiltIn else { return }
         agent.manualToolNames = names
-        update(agent)
-    }
-
-    /// Update the agent's enabled skill allowlist (used by the capability picker).
-    public func updateEnabledSkillNames(_ names: [String], for agentId: UUID) {
-        if agentId == Agent.defaultId {
-            var config = DefaultAgentConfigurationStore.load()
-            config.manualSkillNames = names
-            DefaultAgentConfigurationStore.save(config)
-            NotificationCenter.default.post(name: .agentUpdated, object: agentId)
-            return
-        }
-        guard var agent = agent(for: agentId), !agent.isBuiltIn else { return }
-        agent.manualSkillNames = names
         update(agent)
     }
 
@@ -1064,41 +1003,6 @@ extension AgentManager {
             guard current.count != before else { continue }
             var updated = agent
             updated.manualToolNames = current
-            updated.updatedAt = Date()
-            AgentStore.save(updated)
-            anyAgentChanged = true
-        }
-        if anyAgentChanged {
-            refresh()
-        }
-    }
-
-    /// Additively insert newly-discovered skill names into every seeded agent. Mirror of
-    /// `growEnabledToolNames` for skills. Called when a plugin registers skills.
-    public func growEnabledSkillNames(_ liveNames: Set<String>) {
-        var configChanged = false
-        var config = DefaultAgentConfigurationStore.load()
-        if var current = config.manualSkillNames {
-            let before = current.count
-            for name in liveNames where !current.contains(name) { current.append(name) }
-            if current.count != before {
-                config.manualSkillNames = current
-                configChanged = true
-            }
-        }
-        if configChanged {
-            DefaultAgentConfigurationStore.save(config)
-            NotificationCenter.default.post(name: .agentUpdated, object: Agent.defaultId)
-        }
-
-        var anyAgentChanged = false
-        for agent in agents where !agent.isBuiltIn {
-            guard var current = agent.manualSkillNames else { continue }
-            let before = current.count
-            for name in liveNames where !current.contains(name) { current.append(name) }
-            guard current.count != before else { continue }
-            var updated = agent
-            updated.manualSkillNames = current
             updated.updatedAt = Date()
             AgentStore.save(updated)
             anyAgentChanged = true

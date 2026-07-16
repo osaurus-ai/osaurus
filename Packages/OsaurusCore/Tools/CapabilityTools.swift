@@ -598,6 +598,14 @@ final class CapabilitiesDiscoverTool: OsaurusTool, @unchecked Sendable {
 // MARK: - capabilities_load
 
 final class CapabilitiesLoadTool: OsaurusTool, @unchecked Sendable {
+    /// Total character budget for a loaded skill's reference materials
+    /// (~8k tokens). Skill loads ride in tool results that persist in
+    /// conversation history, so an unbounded reference dump would tax every
+    /// subsequent turn. Past the budget, remaining files collapse to a named
+    /// omission note; `/skill-name` invocation stays uncapped because it
+    /// injects for a single message only.
+    static let skillReferenceBudget = 32_000
+
     let name = "capabilities_load"
     let description =
         "Load capabilities into the current session by ID. IDs come from the Enabled capabilities list "
@@ -1023,8 +1031,11 @@ final class CapabilitiesLoadTool: OsaurusTool, @unchecked Sendable {
                 )
             )
         }
-        let skill = await MainActor.run {
-            SkillManager.shared.skill(named: skillName)
+        let (skill, sameNamed) = await MainActor.run {
+            (
+                SkillManager.shared.skill(named: skillName),
+                SkillManager.shared.skills(named: skillName)
+            )
         }
         guard let skill = skill else {
             return .failure(
@@ -1035,8 +1046,30 @@ final class CapabilitiesLoadTool: OsaurusTool, @unchecked Sendable {
         if !skill.description.isEmpty {
             output += "*\(skill.description)*\n\n"
         }
-        output += skill.instructions
+        // Parity with `/skill-name`: instructions AND reference materials.
+        // The budget keeps a reference-heavy skill from flooding the tool
+        // result; past it, files collapse to a named omission note.
+        output += await SkillManager.shared.buildFullInstructions(
+            for: skill,
+            referenceBudget: Self.skillReferenceBudget
+        )
         output += "\n\n"
+        if sameNamed.count > 1 {
+            let alternates = sameNamed
+                .filter { $0.id != skill.id }
+                .map { alt -> String in
+                    if let pluginId = alt.pluginId, !pluginId.isEmpty {
+                        return "one from plugin `\(pluginId)`"
+                    }
+                    return alt.isBuiltIn ? "a built-in" : "a user skill"
+                }
+            output +=
+                "Note: \(alternates.count) other installed skill(s) share this name "
+                + "(\(alternates.joined(separator: ", "))). Loaded: "
+                + (skill.isFromPlugin
+                    ? "the plugin skill." : skill.isBuiltIn ? "the built-in." : "the user skill.")
+            output += "\n\n"
+        }
 
         // A plugin skill governs its sibling tools, so auto-load the plugin's
         // whole dynamic tool group (agent-scoped) instead of forcing a
@@ -1135,7 +1168,7 @@ final class CapabilitiesLoadTool: OsaurusTool, @unchecked Sendable {
         // ordering a name-only manifest can't convey. Mirrors `loadSkill`.
         var output = ""
         let governingSkills = await MainActor.run {
-            SkillManager.shared.skills.filter { $0.enabled && $0.pluginId == pluginId }
+            SkillManager.shared.skills.filter { $0.pluginId == pluginId }
         }
         for skill in governingSkills {
             output += "## Skill: \(skill.name)\n"

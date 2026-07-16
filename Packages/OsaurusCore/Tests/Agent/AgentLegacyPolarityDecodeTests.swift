@@ -74,6 +74,27 @@ struct AgentLegacyPolarityDecodeTests {
     }
 
     @Test
+    func legacyManualSkillNames_isIgnoredWithoutError() throws {
+        // Pre-universal-library agents persisted a per-agent skill
+        // allowlist. That key must decode as ignored extra data — no
+        // error, and it must not affect the agent's tool assignment.
+        let agent = Agent(
+            name: "LegacySkills",
+            description: "d",
+            systemPrompt: "p",
+            manualToolNames: ["osaurus_status"]
+        )
+        var dict = try encodeToDictionary(agent)
+        dict["manualSkillNames"] = ["Web Researcher", "Data Keeper"]
+
+        let decoded = try decodeAgent(from: dict)
+        #expect(decoded.manualToolNames == ["osaurus_status"])
+        // Round-trip encode must not resurrect the legacy key.
+        let reencoded = try encodeToDictionary(decoded)
+        #expect(reencoded["manualSkillNames"] == nil)
+    }
+
+    @Test
     func autonomousExec_ignoresLegacyCommandTimeout_egressDefaultsOn() throws {
         // Older agent JSON may still carry the removed `commandTimeout`
         // key; keyed decoding ignores it. sandboxNetworkEnabled defaults on

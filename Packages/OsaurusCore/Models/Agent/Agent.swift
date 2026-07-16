@@ -126,8 +126,6 @@ public struct Agent: Codable, Identifiable, Sendable, Equatable {
     public var toolSelectionMode: ToolSelectionMode?
     /// Tool names explicitly selected by the user when toolSelectionMode is .manual
     public var manualToolNames: [String]?
-    /// Skill names explicitly selected by the user when toolSelectionMode is .manual
-    public var manualSkillNames: [String]?
     /// Whether this agent may use tools / preflight context. Default true.
     /// Positive polarity (matches `AgentSettings.*Enabled`); the legacy
     /// negative `disableTools` key is read on decode for back-compat.
@@ -187,7 +185,6 @@ public struct Agent: Codable, Identifiable, Sendable, Equatable {
         bonjourEnabled: Bool = false,
         toolSelectionMode: ToolSelectionMode? = nil,
         manualToolNames: [String]? = nil,
-        manualSkillNames: [String]? = nil,
         toolsEnabled: Bool = true,
         memoryEnabled: Bool = true,
         avatar: String? = nil,
@@ -220,7 +217,6 @@ public struct Agent: Codable, Identifiable, Sendable, Equatable {
         self.bonjourEnabled = bonjourEnabled
         self.toolSelectionMode = toolSelectionMode
         self.manualToolNames = manualToolNames
-        self.manualSkillNames = manualSkillNames
         self.toolsEnabled = toolsEnabled
         self.memoryEnabled = memoryEnabled
         self.avatar = avatar
@@ -338,7 +334,8 @@ extension Agent {
         bonjourEnabled = try c.decodeIfPresent(Bool.self, forKey: .bonjourEnabled) ?? false
         toolSelectionMode = try c.decodeIfPresent(ToolSelectionMode.self, forKey: .toolSelectionMode)
         manualToolNames = try c.decodeIfPresent([String].self, forKey: .manualToolNames)
-        manualSkillNames = try c.decodeIfPresent([String].self, forKey: .manualSkillNames)
+        // Legacy `manualSkillNames` keys are intentionally ignored: skills are
+        // universally available to custom agents.
         // Positive polarity (`toolsEnabled` / `memoryEnabled`, default true).
         // Older agent JSON only has the negative `disableTools` /
         // `disableMemory` keys; read those from a legacy container and

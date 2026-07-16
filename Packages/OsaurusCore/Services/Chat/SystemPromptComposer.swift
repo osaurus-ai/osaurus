@@ -1282,10 +1282,10 @@ public struct SystemPromptComposer: Sendable {
 
     }
 
-    /// Build the **complete** enabled-capabilities manifest: every tool and
-    /// skill the agent has enabled, regardless of what landed in this turn's
-    /// tool schema. Reads the agent's enabled tool + skill allowlists and the
-    /// live registry — MUST run on the main actor.
+    /// Build the **complete** enabled-capabilities manifest: every tool the
+    /// agent has enabled plus every installed skill, regardless of what landed
+    /// in this turn's tool schema. Reads the agent's enabled tool allowlist and
+    /// the live registries — MUST run on the main actor.
     ///
     /// This is a static enumeration, not a per-turn delta. Under Design C the
     /// rendered string is frozen at session start and injected as a static
@@ -1297,10 +1297,10 @@ public struct SystemPromptComposer: Sendable {
     ///
     /// Contents:
     /// - **Tools**: all enabled dynamic tools, grouped by plugin.
-    /// - **Plugin skills**: enabled skills carrying a `pluginId`, in their
+    /// - **Plugin skills**: installed skills carrying a `pluginId`, in their
     ///   plugin group (skills never enter the tool schema, so they are what
     ///   the "Skills that govern tool groups" rule binds to).
-    /// - **Standalone skills**: enabled skills with no `pluginId`, enumerated
+    /// - **Standalone skills**: installed skills with no `pluginId`, enumerated
     ///   directly from `SkillManager` into a trailing "Skills (no plugin)"
     ///   group — no embedding search, no query ranking.
     ///
@@ -1313,7 +1313,6 @@ public struct SystemPromptComposer: Sendable {
         agentId: UUID
     ) -> [SystemPromptTemplates.ManifestPluginGroup] {
         let allowedTools = AgentManager.shared.effectiveEnabledToolNames(for: agentId).map(Set.init)
-        let allowedSkills = AgentManager.shared.effectiveEnabledSkillNames(for: agentId).map(Set.init)
 
         // Tools: live dynamic catalog is already enabled-filtered; intersect
         // with the agent allowlist (nil = legacy global). The complete set —
@@ -1330,15 +1329,13 @@ public struct SystemPromptComposer: Sendable {
             )
         }
 
-        // Plugin skills (pluginId != nil) that the agent has enabled, plus
-        // standalone skills (pluginId == nil) collected for the trailing
-        // synthetic group. Both come straight from `SkillManager` — no search.
+        // Plugin skills (pluginId != nil), plus standalone skills
+        // (pluginId == nil) collected for the trailing synthetic group. Every
+        // installed skill is universally available to custom agents; both come
+        // straight from `SkillManager` — no search.
         var skillsByGroup: [String: [SystemPromptTemplates.ManifestCapability]] = [:]
         var standaloneCaps: [SystemPromptTemplates.ManifestCapability] = []
         for skill in SkillManager.shared.skills {
-            guard skill.enabled,
-                allowedSkills?.contains(skill.name) ?? true
-            else { continue }
             let cap = SystemPromptTemplates.ManifestCapability(
                 name: skill.name,
                 description: skill.description

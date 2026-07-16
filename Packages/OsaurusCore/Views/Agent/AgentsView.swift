@@ -864,7 +864,7 @@ private enum DetailTab: String, CaseIterable {
     var label: String {
         switch self {
         case .configure: return L("Configure")
-        case .capabilities: return L("Capabilities")
+        case .capabilities: return L("Tools")
         case .subagents: return L("Subagents")
         case .customization: return L("Customization")
         case .network: return L("Network")
@@ -6302,7 +6302,7 @@ struct AgentDetailView: View {
         }()
 
         let current = currentAgent
-        // The capability picker writes `manualToolNames`, `manualSkillNames`, and
+        // The tool picker writes `manualToolNames` and
         // `toolSelectionMode` directly via `AgentManager.update*` calls (so they
         // save instantly without going through this debounced path). We therefore
         // pass through `current.*` values rather than this view's local mirrors,
@@ -6336,7 +6336,6 @@ struct AgentDetailView: View {
             bonjourEnabled: current.bonjourEnabled,
             toolSelectionMode: current.toolSelectionMode,
             manualToolNames: current.manualToolNames,
-            manualSkillNames: current.manualSkillNames,
             toolsEnabled: toolsEnabled,
             memoryEnabled: memoryEnabled,
             avatar: avatar,
@@ -7153,14 +7152,13 @@ private struct AgentEditorSheet: View {
     /// navigation occurs.
     @State private var inlineCustomize: Bool = false
 
-    /// Draft capability state. Seeded on first appear from the live registries
+    /// Draft tool state. Seeded on first appear from the live registry
     /// (matching what `AgentManager.seedEnabledCapabilitiesIfNeeded` would have
     /// written on first picker open) and then mutated in place by the embedded
-    /// picker. Baked into the saved Agent's `manualToolNames` /
-    /// `manualSkillNames` so the seed step is a no-op for newly created agents.
+    /// picker. Baked into the saved Agent's `manualToolNames` so the seed
+    /// step is a no-op for newly created agents.
     @State private var draftMode: ToolSelectionMode = .auto
     @State private var draftToolNames: Set<String> = []
-    @State private var draftSkillNames: Set<String> = []
     @State private var draftSeeded: Bool = false
 
     @FocusState private var nameFocused: Bool
@@ -7237,7 +7235,6 @@ private struct AgentEditorSheet: View {
         AgentCapabilityManagerView(
             draftMode: $draftMode,
             draftTools: $draftToolNames,
-            draftSkills: $draftSkillNames,
             onDismiss: {
                 withAnimation(.spring(response: 0.35, dampingFraction: 0.9)) {
                     inlineCustomize = false
@@ -7255,7 +7252,6 @@ private struct AgentEditorSheet: View {
         guard !draftSeeded else { return }
         draftSeeded = true
         draftToolNames = Set(ToolRegistry.shared.listDynamicTools().map(\.name))
-        draftSkillNames = Set(SkillManager.shared.skills.map(\.name))
     }
 
     // MARK: Form column
@@ -7422,8 +7418,8 @@ private struct AgentEditorSheet: View {
         }
     }
 
-    /// Capabilities row in the create sheet. Mirrors the Auto-discover affordance
-    /// from the picker but renders against the draft sets so the count line
+    /// Tools row in the create sheet. Mirrors the Auto-discover affordance
+    /// from the picker but renders against the draft set so the count line
     /// stays honest as the user toggles things in the embedded picker pane.
     /// "Customize…" performs an inline view swap (no save) — the embedded
     /// picker writes back to the same draft bindings, so closing it and
@@ -7431,7 +7427,7 @@ private struct AgentEditorSheet: View {
     private var capabilitiesField: some View {
         let isAuto = draftMode == .auto
         return VStack(alignment: .leading, spacing: 6) {
-            AgentSheetSectionLabel("Capabilities")
+            AgentSheetSectionLabel("Tools")
             VStack(alignment: .leading, spacing: 10) {
                 HStack(spacing: 10) {
                     Image(systemName: isAuto ? "sparkles" : "list.bullet.rectangle")
@@ -7447,7 +7443,7 @@ private struct AgentEditorSheet: View {
                         )
 
                     VStack(alignment: .leading, spacing: 2) {
-                        Text("Auto-discover relevant capabilities", bundle: .module)
+                        Text("Auto-discover relevant tools", bundle: .module)
                             .font(.system(size: 12, weight: .semibold))
                             .foregroundColor(theme.primaryText)
                         Text(capabilitiesSubtitle)
@@ -7501,7 +7497,7 @@ private struct AgentEditorSheet: View {
                     )
                 }
                 .buttonStyle(.plain)
-                .localizedHelp("Pick which tools and skills this agent can use")
+                .localizedHelp("Pick which tools this agent can use")
             }
             .padding(12)
             .background(
@@ -7514,17 +7510,16 @@ private struct AgentEditorSheet: View {
         }
     }
 
-    /// Honest one-liner for the Capabilities row: counts come from the draft
-    /// sets, so editing inside the embedded picker is reflected as soon as
+    /// Honest one-liner for the Tools row: the count comes from the draft
+    /// set, so editing inside the embedded picker is reflected as soon as
     /// the user returns to the form.
     private var capabilitiesSubtitle: String {
         let toolCount = draftToolNames.count
-        let skillCount = draftSkillNames.count
         let modeBlurb =
             draftMode == .auto
-            ? L("Loaded on demand from your enabled set.")
-            : L("All enabled items are sent every turn.")
-        return L("\(toolCount) tools and \(skillCount) skills enabled · \(modeBlurb)")
+            ? L("Loaded on demand from your assigned set.")
+            : L("All assigned tools are sent every turn.")
+        return L("\(toolCount) tools assigned · \(modeBlurb)")
     }
 
     private var promptField: some View {
@@ -7554,7 +7549,7 @@ private struct AgentEditorSheet: View {
                     )
             )
             Text(
-                "Capabilities, generation overrides, and theme are editable after creation in the Configure tab.",
+                "Tools, generation overrides, and theme are editable after creation in the Configure tab.",
                 bundle: .module
             )
             .font(.system(size: 11))
@@ -7719,7 +7714,6 @@ private struct AgentEditorSheet: View {
             autonomousExec: AgentManager.sandboxDefaultAutonomousExec,
             toolSelectionMode: draftMode,
             manualToolNames: Array(draftToolNames),
-            manualSkillNames: Array(draftSkillNames),
             avatar: selectedAvatar
         )
 

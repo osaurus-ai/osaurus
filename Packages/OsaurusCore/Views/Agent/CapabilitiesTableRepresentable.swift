@@ -2,9 +2,9 @@
 //  CapabilitiesTableRepresentable.swift
 //  osaurus
 //
-//  NSViewRepresentable wrapping an NSTableView for the capabilities
+//  NSViewRepresentable wrapping an NSTableView for the agent tool
 //  selector item list. Provides true cell reuse and efficient diffing
-//  for large tool/skill lists.
+//  for large tool lists.
 //
 //  Key design decisions:
 //  - NSDiffableDataSource with row IDs for efficient structural updates.
@@ -38,9 +38,7 @@ enum CapabilityRow: Equatable, Identifiable {
         enabledCount: Int,
         totalCount: Int,
         isExpanded: Bool,
-        toolCount: Int,
-        skillCount: Int,
-        hasRoutes: Bool
+        toolCount: Int
     )
     case tool(
         id: String,
@@ -52,21 +50,11 @@ enum CapabilityRow: Equatable, Identifiable {
         catalogTokens: Int,
         estimatedTokens: Int
     )
-    case skill(
-        id: String,
-        name: String,
-        description: String,
-        enabled: Bool,
-        isBuiltIn: Bool,
-        isFromPlugin: Bool,
-        estimatedTokens: Int
-    )
 
     var id: String {
         switch self {
-        case .groupHeader(let id, _, _, _, _, _, _, _, _): return "gh-\(id)"
+        case .groupHeader(let id, _, _, _, _, _, _): return "gh-\(id)"
         case .tool(let id, _, _, _, _, _, _, _): return "tool-\(id)"
-        case .skill(let id, _, _, _, _, _, _): return "skill-\(id)"
         }
     }
 }
@@ -80,7 +68,6 @@ struct CapabilityRenderingContext {
     let onDisableAllInGroup: ((String) -> Void)?
 
     let onToggleTool: ((String, Bool) -> Void)?
-    let onToggleSkill: ((String) -> Void)?
 }
 
 // MARK: - CapabilitiesTableRepresentable
@@ -95,7 +82,6 @@ struct CapabilitiesTableRepresentable: NSViewRepresentable {
     var onDisableAllInGroup: ((String) -> Void)?
 
     var onToggleTool: ((String, Bool) -> Void)?
-    var onToggleSkill: ((String) -> Void)?
 
     // MARK: - NSViewRepresentable Lifecycle
 
@@ -127,8 +113,7 @@ struct CapabilitiesTableRepresentable: NSViewRepresentable {
             onToggleGroup: onToggleGroup,
             onEnableAllInGroup: onEnableAllInGroup,
             onDisableAllInGroup: onDisableAllInGroup,
-            onToggleTool: onToggleTool,
-            onToggleSkill: onToggleSkill
+            onToggleTool: onToggleTool
         )
     }
 
@@ -339,12 +324,6 @@ extension CapabilitiesTableRepresentable {
                     let content = makeToolContent(rowData, isHovered: isHovered)
                 else { return }
                 cell.configure(id: rowData.id, content: content)
-
-            case .skill:
-                guard let cell = tableView.view(atColumn: 0, row: row, makeIfNecessary: false) as? SkillCell,
-                    let content = makeSkillContent(rowData, isHovered: isHovered)
-                else { return }
-                cell.configure(id: rowData.id, content: content)
             }
         }
 
@@ -383,11 +362,9 @@ extension CapabilitiesTableRepresentable {
 
         private static let headerReuseId = NSUserInterfaceItemIdentifier("CapabilityGroupHeaderCell")
         private static let toolReuseId = NSUserInterfaceItemIdentifier("CapabilityToolRowCell")
-        private static let skillReuseId = NSUserInterfaceItemIdentifier("CapabilitySkillRowCell")
 
         private typealias HeaderCell = TypedHostingCellView<ThemedContent<GroupHeaderCell>>
         private typealias ToolCell = TypedHostingCellView<ThemedContent<ToolRowCell>>
-        private typealias SkillCell = TypedHostingCellView<ThemedContent<SkillRowCell>>
 
         // MARK: - Cell Content Builders
 
@@ -403,9 +380,7 @@ extension CapabilitiesTableRepresentable {
                     let enabledCount,
                     let totalCount,
                     let isExpanded,
-                    let toolCount,
-                    let skillCount,
-                    let hasRoutes
+                    let toolCount
                 ) = row, let theme = ctx?.theme
             else { return nil }
             return ThemedContent(
@@ -417,8 +392,6 @@ extension CapabilitiesTableRepresentable {
                     totalCount: totalCount,
                     isExpanded: isExpanded,
                     toolCount: toolCount,
-                    skillCount: skillCount,
-                    hasRoutes: hasRoutes,
                     isHovered: isHovered,
                     onToggle: { [weak self] in self?.ctx?.onToggleGroup?(id) },
                     onEnableAll: { [weak self] in self?.ctx?.onEnableAllInGroup?(id) },
@@ -459,36 +432,6 @@ extension CapabilitiesTableRepresentable {
             )
         }
 
-        private func makeSkillContent(
-            _ row: CapabilityRow,
-            isHovered: Bool
-        ) -> ThemedContent<SkillRowCell>? {
-            guard
-                case .skill(
-                    let id,
-                    let name,
-                    let description,
-                    let enabled,
-                    let isBuiltIn,
-                    let isFromPlugin,
-                    let estimatedTokens
-                ) = row, let theme = ctx?.theme
-            else { return nil }
-            return ThemedContent(
-                theme: theme,
-                content: SkillRowCell(
-                    name: name,
-                    description: description,
-                    enabled: enabled,
-                    isBuiltIn: isBuiltIn,
-                    isFromPlugin: isFromPlugin,
-                    estimatedTokens: estimatedTokens,
-                    isHovered: isHovered,
-                    onToggle: { [weak self] in self?.ctx?.onToggleSkill?(id) }
-                )
-            )
-        }
-
         // MARK: - Cell Factory
 
         private func dequeueAndConfigure(tableView: NSTableView, row: Int, rowId: String) -> NSView {
@@ -514,17 +457,6 @@ extension CapabilitiesTableRepresentable {
                         let c = ToolCell(frame: .zero); c.identifier = Self.toolReuseId; return c
                     }()
                 if let content = makeToolContent(rowData, isHovered: isHovered) {
-                    cell.configure(id: rowData.id, content: content)
-                }
-                return cell
-
-            case .skill:
-                let cell =
-                    tableView.makeView(withIdentifier: Self.skillReuseId, owner: nil) as? SkillCell
-                    ?? {
-                        let c = SkillCell(frame: .zero); c.identifier = Self.skillReuseId; return c
-                    }()
-                if let content = makeSkillContent(rowData, isHovered: isHovered) {
                     cell.configure(id: rowData.id, content: content)
                 }
                 return cell
@@ -564,7 +496,6 @@ extension CapabilitiesTableRepresentable {
             switch row {
             case .groupHeader: return 44
             case .tool: return 70
-            case .skill: return 56
             }
         }
     }
@@ -585,7 +516,7 @@ struct ThemedContent<C: View>: View {
 
 // MARK: - Cell SwiftUI Views
 
-/// Group header cell with tool+skill breakdown, expand/collapse, and All/None controls.
+/// Group header cell with tool count, expand/collapse, and All/None controls.
 struct GroupHeaderCell: View {
     let name: String
     let icon: String
@@ -593,8 +524,6 @@ struct GroupHeaderCell: View {
     let totalCount: Int
     let isExpanded: Bool
     let toolCount: Int
-    let skillCount: Int
-    let hasRoutes: Bool
     let isHovered: Bool
     let onToggle: () -> Void
     let onEnableAll: () -> Void
@@ -656,47 +585,14 @@ struct GroupHeaderCell: View {
                     .foregroundColor(theme.primaryText)
                     .lineLimit(1)
 
-                HStack(spacing: 4) {
-                    if toolCount > 0 {
-                        HStack(spacing: 2) {
-                            Image(systemName: "wrench.and.screwdriver")
-                                .font(.system(size: 8))
-                            Text("\(toolCount)", bundle: .module)
-                                .font(.system(size: 9, weight: .medium))
-                        }
-                        .foregroundColor(theme.tertiaryText)
-                    }
-
-                    if toolCount > 0 && (skillCount > 0 || hasRoutes) {
-                        Text("+")
+                if toolCount > 0 {
+                    HStack(spacing: 2) {
+                        Image(systemName: "wrench.and.screwdriver")
                             .font(.system(size: 8))
-                            .foregroundColor(theme.tertiaryText)
+                        Text("\(toolCount)", bundle: .module)
+                            .font(.system(size: 9, weight: .medium))
                     }
-
-                    if skillCount > 0 {
-                        HStack(spacing: 2) {
-                            Image(systemName: "lightbulb")
-                                .font(.system(size: 8))
-                            Text("\(skillCount)", bundle: .module)
-                                .font(.system(size: 9, weight: .medium))
-                        }
-                        .foregroundColor(theme.tertiaryText)
-                    }
-
-                    if hasRoutes {
-                        if skillCount > 0 || toolCount > 0 {
-                            Text("+")
-                                .font(.system(size: 8))
-                                .foregroundColor(theme.tertiaryText)
-                        }
-                        HStack(spacing: 2) {
-                            Image(systemName: "network")
-                                .font(.system(size: 8))
-                            Text("Routes", bundle: .module)
-                                .font(.system(size: 9, weight: .medium))
-                        }
-                        .foregroundColor(theme.tertiaryText)
-                    }
+                    .foregroundColor(theme.tertiaryText)
                 }
             }
 
@@ -823,64 +719,6 @@ struct ToolRowCell: View {
                 ? "Restricted for this agent."
                 : availability.compactSummary
         )
-    }
-}
-
-/// Skill row cell rendered in the NSTableView.
-struct SkillRowCell: View {
-    let name: String
-    let description: String
-    let enabled: Bool
-    let isBuiltIn: Bool
-    let isFromPlugin: Bool
-    let estimatedTokens: Int
-    let isHovered: Bool
-    let onToggle: () -> Void
-
-    @Environment(\.theme) private var theme
-
-    var body: some View {
-        HStack(spacing: 12) {
-            CapabilitySwitch(
-                isOn: enabled,
-                tint: theme.accentColor,
-                onToggle: onToggle
-            )
-
-            VStack(alignment: .leading, spacing: 3) {
-                HStack(spacing: 6) {
-                    Image(systemName: "lightbulb")
-                        .font(.system(size: 9))
-                        .foregroundColor(enabled ? theme.accentColor : theme.tertiaryText)
-
-                    Text(name)
-                        .font(.system(size: 12, weight: .medium))
-                        .foregroundColor(enabled ? theme.primaryText : theme.secondaryText)
-                        .lineLimit(1)
-
-                    if isBuiltIn {
-                        SmallCapsuleBadge(text: "Built-in")
-                    } else if isFromPlugin {
-                        SmallCapsuleBadge(text: "Plugin", icon: "puzzlepiece.extension")
-                    }
-                }
-                Text(description)
-                    .font(.system(size: 10))
-                    .foregroundColor(theme.tertiaryText)
-                    .lineLimit(2)
-            }
-
-            Spacer()
-
-            TokenBadge(count: estimatedTokens)
-                .localizedHelp("~\(estimatedTokens) tokens")
-        }
-        .padding(.leading, 32)
-        .padding(.trailing, 12)
-        .padding(.vertical, 10)
-        .contentShape(Rectangle())
-        .onTapGesture { onToggle() }
-        .modifier(HoverRowStyle(isHovered: isHovered, showAccent: enabled))
     }
 }
 

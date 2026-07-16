@@ -15,27 +15,23 @@ import Testing
 struct SkillSearchServiceTests {
 
     @Test func searchFallsBackToBuiltInSkillsWhenUninitialized() async {
-        // The live lexical fallback only surfaces *enabled* skills, and
-        // built-ins ship disabled. Enable one for the duration of the check
-        // (under the storage lock so the transient state can't leak into
-        // sibling suites) and restore it before releasing.
+        // Every installed skill (built-ins included) is universally
+        // searchable, so the lexical fallback should surface Mac Automator
+        // with no enablement setup.
         await SandboxTestLock.runWithStoragePaths {
             await SkillManager.shared.refresh()
-            guard let debugAssistant = SkillManager.shared.skill(named: L("Debug Assistant"))
+            guard SkillManager.shared.skill(named: L("Mac Automator")) != nil
             else {
-                Issue.record("Debug Assistant built-in skill missing")
+                Issue.record("Mac Automator built-in skill missing")
                 return
             }
-            let wasEnabled = debugAssistant.enabled
-            await SkillManager.shared.setEnabled(true, for: debugAssistant.id)
 
             let results = await SkillSearchService.shared.search(
-                query: "help me debug this crash",
+                query: "write an applescript to control safari",
                 threshold: 0.25
             )
 
-            await SkillManager.shared.setEnabled(wasEnabled, for: debugAssistant.id)
-            #expect(results.contains { $0.skill.name == L("Debug Assistant") })
+            #expect(results.contains { $0.skill.name == L("Mac Automator") })
         }
     }
 

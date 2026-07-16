@@ -415,7 +415,7 @@ Index-only recall measurements over the tools / methods / skills lanes. No LLM, 
 Field notes:
 
 - `fixtures.seedMethods` — methods to insert into `MethodDatabase` before the case runs (and remove after). Each entry is `{ id, name, description, triggerText?, body? }`. Methods have no built-in seed so a fixture has to bring its own. Prefer `eval-<slug>` ids — the runner skips inserts when the id already exists, so a real user method on disk won't get clobbered if your slug collides.
-- `fixtures.enableSkills` — array of skill **display names** to flip `enabled = true` on for the duration of the case (and restore after). Built-in skills ship disabled-by-default and the search post-filters disabled skills out, so a recall fixture against e.g. `"Debug Assistant"` silently returns 0 unless we toggle it on first. Restoration is best-effort, not crash-safe — re-running any case that names the same skill converges back.
+- Skills need no fixture setup: every installed skill (built-ins included) is universally searchable, so a recall fixture against e.g. `"Mac Automator"` runs against the live library directly.
 - `expect.capabilitySearch.expectedTools` / `expectedMethods` / `expectedSkills` — `{ anyOf: [...names], minMatches: N }` matchers. Each matched name must appear in the **accepted** hit set for its lane (i.e. above the lane's threshold).
 - `expect.capabilitySearch.maxAccepted` — caps total accepted hits across all three lanes. `0` is the abstain-style assertion: any accepted hit fails the case.
 - `expect.capabilitySearch.thresholdOverride` — per-case sweep value. **Tools-lane only** (RRF fused-score scale, max ≈ 0.033). Methods + skills lanes always use their own production embed-cosine constants — sweeping a fused-score value into the cosine lane would silently disable the cosine quality gate.
@@ -433,7 +433,6 @@ Agent-loop behaviour evals for the "do you have X" problem. Drives `CapabilityCl
   "query": "Do you have a tool that can open and navigate web pages?",
   "fixtures": {
     "requirePlugins": ["osaurus.browser"],
-    "enableSkills": ["Osaurus Browser"],
     "enableTools": ["browser_navigate"]
   },
   "expect": {
@@ -453,7 +452,7 @@ Field notes:
 
 - `fixtures.enableTools` — tool names to grant the agent for the run window (and restore after). The enabled-capabilities manifest is built from the agent's enabled set, so a "confirm you have X" case has to enable X first. No-op when the agent is in legacy global-enabled mode (a nil allowlist already grants everything).
 - `fixtures.ensureToolsDisabled` — tool names that must be **absent** for the case to be valid (honest-absence / impossible cases). The runner can't safely disable a globally-enabled tool, so it **skips** the case (with a note) when any of these are currently enabled, rather than silently changing what the case proves.
-- `fixtures.enableSkills` / `fixtures.requirePlugins` — same semantics as `capability_search`.
+- `fixtures.requirePlugins` — same semantics as `capability_search`. Skills need no grant: every installed skill is universally available.
 - `expect.capabilityClaims.rubric` — natural-language conditions graded by the LLM judge against the final answer. **All must pass.** Set `JUDGE_MODEL` to grade with a stronger model than the run model.
 - `expect.capabilityClaims.mustCallTools` / `mustNotCallTools` — deterministic assertions over the flattened tool-call transcript.
 - `expect.capabilityClaims.loadSkillFirst` — `{ skill, beforeTools }` ordering check: a `capabilities_load` carrying `skill/<skill>` must precede the first call to any tool in `beforeTools`.
@@ -463,7 +462,7 @@ The suite covers eleven scenarios under `Suites/CapabilityClaims/`: `confirm` (c
 
 > **Why this suite measures claims, not actions.** `capability_claims` runs the real loop but **auto-denies tool execution** (a headless run has no approval surface; auto-allowing state-mutating tools risks a deadlock or real side effects). So the honest signal here is what the model *claims and loads*, not what it *does*. Cases that drove execution (open a page, fill a form) were removed: under auto-deny a model either loops on `capabilities_load` (REMOTE function-calling models, see the deferred-schema note below) or stalls, which is a harness artifact, not a capability signal. The execution behaviour those cases targeted — `capabilities_load` a tool mid-run and then *call* it — is covered where execution is actually allowed, by `agent_loop`'s `capabilities-load-midrun` case.
 >
-> **Positive cases run against an isolated `auto`-mode agent.** A case that enables a capability (`enableTools` / `enableSkills` / `requirePlugins`) is scored against a fresh isolated agent whose enabled set advertises that capability in the system-prompt manifest — not the default configuration agent, which honestly disclaims non-config abilities and would (correctly, for *it*) deny the browser. This keeps "do you have X?" a measure of manifest grounding, not of which agent happened to answer.
+> **Positive cases run against an isolated `auto`-mode agent.** A case that enables a capability (`enableTools` / `requirePlugins`) is scored against a fresh isolated agent whose enabled set advertises that capability in the system-prompt manifest — not the default configuration agent, which honestly disclaims non-config abilities and would (correctly, for *it*) deny the browser. This keeps "do you have X?" a measure of manifest grounding, not of which agent happened to answer.
 
 The judge model defaults to the run `--model`; export `JUDGE_MODEL=...` to grade small-model output with a stronger evaluator. The runner re-ensures the ephemeral remote judge provider before each judge call, so a suite that runs a provider-mutating config tool mid-run (e.g. `default_agent`'s `osaurus_provider`, which reloads the provider registry from disk and evicts the in-memory judge) can't silently fall back to an unresolved judge.
 

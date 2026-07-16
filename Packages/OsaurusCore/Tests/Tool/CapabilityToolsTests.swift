@@ -578,6 +578,52 @@ struct CapabilitiesLoadToolTests {
         }
     }
 
+    /// Parity between the two skill-delivery paths: `capabilities_load
+    /// skill/<name>` must return the same "skill is active" payload as
+    /// `/skill-name` — instructions AND reference materials. Regression for
+    /// the gap where the load path emitted raw `skill.instructions` only,
+    /// so reference-dependent skills silently degraded when the model (not
+    /// the user) invoked them.
+    @Test @MainActor
+    func skillLoadIncludesReferenceMaterials() async throws {
+        try await StoragePathsTestLock.shared.run {
+            let root = FileManager.default.temporaryDirectory.appendingPathComponent(
+                "osaurus-skill-refs-root-\(UUID().uuidString)",
+                isDirectory: true
+            )
+            try? FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+            let previousRoot = OsaurusPaths.overrideRoot
+            OsaurusPaths.overrideRoot = root
+            await SkillManager.shared.refresh()
+
+            let skill = await SkillManager.shared.create(
+                name: "RefParity \(UUID().uuidString.prefix(6))",
+                description: "Reference parity fixture",
+                instructions: "Follow the style guide in the references."
+            )
+            try? await SkillStore.addReference(
+                to: skill,
+                name: "style-guide.md",
+                content: Data("Always write in haiku.".utf8)
+            )
+            await SkillManager.shared.refresh()
+
+            let tool = CapabilitiesLoadTool()
+            let result = try await tool.execute(
+                argumentsJSON: "{\"ids\": [\"skill/\(skill.name)\"]}"
+            )
+
+            #expect(result.contains("## Skill:"))
+            #expect(result.contains("Follow the style guide in the references."))
+            #expect(result.contains("## Reference Materials"))
+            #expect(result.contains("Always write in haiku."))
+
+            OsaurusPaths.overrideRoot = previousRoot
+            try? FileManager.default.removeItem(at: root)
+            await SkillManager.shared.refresh()
+        }
+    }
+
     @Test @MainActor
     func skillLoadAutoLoadsPluginToolGroup() async throws {
         try await StoragePathsTestLock.shared.run {
@@ -627,7 +673,6 @@ struct CapabilitiesLoadToolTests {
                     description: "Governs the AutoGroup tool group",
                     version: "1.0.0",
                     keywords: [],
-                    enabled: true,
                     instructions: "Use the AutoGroup tools.",
                     isBuiltIn: false,
                     pluginId: plugin.id

@@ -176,7 +176,7 @@ public actor SkillSearchService {
 
             let accepted = Array(
                 matchedSkillIds.compactMap { skillId -> SkillSearchResult? in
-                    guard let skill = skillById[skillId], skill.enabled else { return nil }
+                    guard let skill = skillById[skillId] else { return nil }
                     let uuid = deterministicUUID(for: skillId)
                     guard let score = scoreMap[uuid.uuidString] else { return nil }
                     return SkillSearchResult(skill: skill, searchScore: score)
@@ -209,14 +209,6 @@ public actor SkillSearchService {
             threshold: threshold
         )
         return (accepted, diagnostic)
-    }
-
-    func indexSnapshot() -> SkillSearchIndexSnapshot {
-        SkillSearchIndexSnapshot(
-            vectorIndexInitialized: isInitialized,
-            vectorIndexAvailable: vectorDB != nil,
-            knownSkillIds: Set(reverseIdMap.values)
-        )
     }
 
     // MARK: - Rebuild
@@ -271,7 +263,6 @@ public actor SkillSearchService {
         }
 
         let results = skills.compactMap { skill -> SkillSearchResult? in
-            guard skill.enabled else { return nil }
             let score = Self.lexicalScore(skill: skill, queryTokens: queryTokens)
             guard score >= threshold else { return nil }
             return SkillSearchResult(skill: skill, searchScore: score)

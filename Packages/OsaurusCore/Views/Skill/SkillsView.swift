@@ -30,21 +30,23 @@ struct SkillsView: View {
     @State private var pendingOverwriteSkillName = ""
     @State private var showOverwriteConfirmation = false
 
-    /// Base skill set for a tab: All, Installed (user-created + plugin), or
-    /// Default (built-in).
+    /// Base skill set for a tab, sliced by source: shipped with Osaurus,
+    /// created/imported by the user, or installed as part of a plugin.
     private func skills(in tab: SkillsTab) -> [Skill] {
         switch tab {
         case .all: return skillManager.skills
-        case .installed: return skillManager.skills.filter { !$0.isBuiltIn }
-        case .defaults: return skillManager.skills.filter { $0.isBuiltIn }
+        case .builtIn: return skillManager.skills.filter { $0.isBuiltIn }
+        case .yours: return skillManager.skills.filter { !$0.isBuiltIn && !$0.isFromPlugin }
+        case .fromPlugins: return skillManager.skills.filter { $0.isFromPlugin }
         }
     }
 
     private var tabCounts: [SkillsTab: Int] {
         [
             .all: skillManager.skills.count,
-            .installed: skillManager.skills.filter { !$0.isBuiltIn }.count,
-            .defaults: skillManager.skills.filter { $0.isBuiltIn }.count,
+            .builtIn: skillManager.skills.filter { $0.isBuiltIn }.count,
+            .yours: skillManager.skills.filter { !$0.isBuiltIn && !$0.isFromPlugin }.count,
+            .fromPlugins: skillManager.skills.filter { $0.isFromPlugin }.count,
         ]
     }
 
@@ -84,22 +86,22 @@ struct SkillsView: View {
                     SettingsEmptyState(
                         icon: "sparkles",
                         title: L("Create Your First Skill"),
-                        subtitle: L("Skills provide specialized knowledge and guidance to the AI."),
+                        subtitle: L("Skills are reusable workflows that every custom agent can use automatically."),
                         examples: [
                             .init(
                                 icon: "magnifyingglass",
-                                title: L("Research Analyst"),
-                                description: "Fact-checking and balanced analysis"
+                                title: L("Web Researcher"),
+                                description: "Live web research with cited sources"
                             ),
                             .init(
-                                icon: "lightbulb.fill",
-                                title: L("Creative Brainstormer"),
-                                description: "Generate ideas and explore possibilities"
+                                icon: "gearshape.2.fill",
+                                title: L("Mac Automator"),
+                                description: "Control Mac apps with AppleScript"
                             ),
                             .init(
-                                icon: "checklist",
-                                title: L("Productivity Coach"),
-                                description: "Task management and goal setting"
+                                icon: "calendar",
+                                title: L("Personal Organizer"),
+                                description: "Manage calendar, reminders, and mail"
                             ),
                         ],
                         primaryAction: .init(title: "Create Skill", icon: "plus", handler: { isCreating = true }),
@@ -108,6 +110,8 @@ struct SkillsView: View {
                 } else {
                     ScrollView {
                         LazyVStack(spacing: 12) {
+                            availabilityHint
+
                             let shown = filteredSkills
                             if shown.isEmpty {
                                 emptyState
@@ -118,13 +122,6 @@ struct SkillsView: View {
                                     skill: skill,
                                     animationDelay: Double(index) * 0.03,
                                     hasAppeared: hasAppeared,
-                                    onToggle: { enabled in
-                                        Task { @MainActor in
-                                            isProcessing = true
-                                            defer { isProcessing = false }
-                                            await skillManager.setEnabled(enabled, for: skill.id)
-                                        }
-                                    },
                                     onEdit: {
                                         editingSkill = skill
                                     },
@@ -364,6 +361,36 @@ struct SkillsView: View {
         showToast(L("Imported \"\(skill.name)\"") + note)
     }
 
+    // MARK: - Availability Hint
+
+    /// One-line explanation of the library contract: no toggles, no per-agent
+    /// assignment — everything installed is available to custom agents.
+    private var availabilityHint: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "info.circle")
+                .font(.system(size: 11, weight: .medium))
+                .foregroundColor(theme.accentColor)
+            Text(
+                "Skills are automatically available to every custom agent and load only when relevant. Type /skill-name in chat to use one explicitly.",
+                bundle: .module
+            )
+            .font(.system(size: 11))
+            .foregroundColor(theme.secondaryText)
+            .fixedSize(horizontal: false, vertical: true)
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .background(
+            RoundedRectangle(cornerRadius: 8)
+                .fill(theme.accentColor.opacity(0.06))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 8)
+                        .stroke(theme.accentColor.opacity(0.15), lineWidth: 1)
+                )
+        )
+    }
+
     // MARK: - Empty State
 
     @ViewBuilder
@@ -376,8 +403,12 @@ struct SkillsView: View {
                 Text("No skills match \"\(searchText)\"", bundle: .module)
                     .font(.system(size: 13))
                     .foregroundColor(theme.secondaryText)
-            } else if selectedTab == .installed {
-                Text("No installed skills yet", bundle: .module)
+            } else if selectedTab == .yours {
+                Text("No skills of your own yet — create or import one", bundle: .module)
+                    .font(.system(size: 13))
+                    .foregroundColor(theme.secondaryText)
+            } else if selectedTab == .fromPlugins {
+                Text("No plugin skills installed — plugins can bundle skills when you install them", bundle: .module)
                     .font(.system(size: 13))
                     .foregroundColor(theme.secondaryText)
             } else {
@@ -395,7 +426,7 @@ struct SkillsView: View {
     private var headerView: some View {
         ManagerHeaderWithTabs(
             title: L("Skills"),
-            subtitle: L("Specialized knowledge and guidance for the AI")
+            subtitle: L("Reusable workflows, automatically available to every custom agent")
         ) {
             HeaderIconButton("arrow.clockwise", isLoading: skillManager.isRefreshing, help: "Refresh skills") {
                 Task { @MainActor in
@@ -446,7 +477,6 @@ private struct SkillRow: View {
     let skill: Skill
     let animationDelay: Double
     let hasAppeared: Bool
-    let onToggle: (Bool) -> Void
     let onEdit: () -> Void
     let onExport: () -> Void
     let onDelete: () -> Void
@@ -564,17 +594,6 @@ private struct SkillRow: View {
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(PlainButtonStyle())
-
-                // Enable toggle - separate from expand area
-                Toggle(
-                    "",
-                    isOn: Binding(
-                        get: { skill.enabled },
-                        set: { onToggle($0) }
-                    )
-                )
-                .toggleStyle(SwitchToggleStyle())
-                .labelsHidden()
             }
 
             // Expanded content
@@ -698,11 +717,11 @@ private struct SkillRow: View {
                         Spacer()
 
                         if skill.isFromPlugin {
-                            // Info badge for plugin skills
+                            // Plugin skills are removed by uninstalling their plugin
                             HStack(spacing: 4) {
                                 Image(systemName: "info.circle")
                                     .font(.system(size: 10))
-                                Text("Managed by plugin", bundle: .module)
+                                Text("Managed by its plugin — uninstall in Plugins to remove", bundle: .module)
                                     .font(.system(size: 10, weight: .medium))
                             }
                             .foregroundColor(theme.tertiaryText)

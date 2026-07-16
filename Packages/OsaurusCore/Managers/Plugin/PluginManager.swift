@@ -1187,7 +1187,7 @@ final class PluginManager {
                     version: skill.version,
                     author: skill.author,
                     category: skill.category,
-                    enabled: skill.enabled,
+                    keywords: skill.keywords,
                     instructions: skill.instructions,
                     isBuiltIn: false,
                     createdAt: skill.createdAt,
