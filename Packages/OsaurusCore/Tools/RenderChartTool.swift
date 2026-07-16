@@ -25,7 +25,8 @@ struct RenderChartTool: OsaurusTool {
             + "obtained or generated in this turn. Supported chart types: \(Self.chartTypeList). "
             + "Pass either the full raw `data` or a `dataRef` returned by search_and_extract. "
             + "Data may come from web extraction, an attachment, sandbox/file read, download, or computation. "
-            + "For delimited data, preserve its header row and pass column names. For nested JSON references, "
+            + "For delimited data, preserve its header row and pass column names; when `series` is omitted, "
+            + "numeric columns are inferred. For nested JSON references, "
             + "copy the returned xPath/seriesPaths next action. This tool does not fetch URLs, so retrieve data first. "
             + "A successful result is already displayed as an inline chart card; create a separate file only when "
             + "the user explicitly requests a saved or downloadable artifact."
@@ -186,7 +187,7 @@ struct RenderChartTool: OsaurusTool {
         }
 
         let inlineRaw = (args["data"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard let raw = inlineRaw?.isEmpty == false ? inlineRaw : referencedEntry?.raw else {
+        guard let suppliedRaw = inlineRaw?.isEmpty == false ? inlineRaw : referencedEntry?.raw else {
             return ToolEnvelope.failure(
                 kind: .invalidArgs,
                 message: "Provide raw `data` or a `dataRef` returned by search_and_extract.",
@@ -200,6 +201,7 @@ struct RenderChartTool: OsaurusTool {
             ?? (args["dataFormat"] as? String)?.lowercased()
             ?? referencedEntry?.format
             ?? "csv"
+        let raw = Self.unwrapQuotedDelimitedPayload(suppliedRaw, format: format)
         let title = args["title"] as? String
         let tipSuffix = args["tooltipSuffix"] as? String
 
@@ -234,20 +236,6 @@ struct RenderChartTool: OsaurusTool {
             )
         }
 
-        // `series` is required for tabular data. Preflight already
-        // unwraps a JSON-encoded string array; `requireStringArray` keeps
-        // its bare-string fallback for the rare case where preflight
-        // didn't fire (no schema in scope).
-        guard let seriesCols = Self.parseRequestedSeries(args["series"]), !seriesCols.isEmpty else {
-            return ToolEnvelope.failure(
-                kind: .invalidArgs,
-                message: "Argument `series` must be a non-empty array of column-name strings.",
-                field: "series",
-                expected: "non-empty array of column-name strings",
-                tool: name
-            )
-        }
-
         let xColumn = args["xColumn"] as? String
 
         var headers: [String]
@@ -276,6 +264,53 @@ struct RenderChartTool: OsaurusTool {
                 message: "Could not parse any columns from the provided data.",
                 tool: name,
                 retryable: true
+            )
+        }
+
+        // Bonsai can copy only the body rows of a small inline CSV and omit
+        // both `series` and the header row. In that case parseDelimited has
+        // necessarily mistaken the first data record for headers. Recover the
+        // narrow chart-shaped form (one text category followed by numeric
+        // values) before inferring series, so the first point is not lost.
+        // Explicit series/xColumn requests continue through the stricter
+        // requested-column recovery below.
+        if args["series"] == nil,
+            xColumn == nil,
+            format != "json",
+            let recovered = recoverOmittedSeriesHeaderlessDelimited(
+                firstRecord: headers,
+                remainingRows: rows
+            )
+        {
+            headers = recovered.headers
+            rows = recovered.rows
+        }
+
+        // The model-facing schema intentionally leaves `series` optional so
+        // nested JSON can use `seriesPaths`. For tabular data, recover an
+        // omitted series list from columns whose values are predominantly
+        // numeric. Never replace an explicit list: misspelled or otherwise
+        // invalid user/model-selected columns still fail below.
+        let seriesCols: [String]
+        if args["series"] == nil {
+            seriesCols = Self.inferredSeriesColumns(
+                headers: headers,
+                rows: rows,
+                excluding: xColumn
+            )
+        } else if let requested = Self.parseRequestedSeries(args["series"]), !requested.isEmpty {
+            seriesCols = requested
+        } else {
+            seriesCols = []
+        }
+        guard !seriesCols.isEmpty else {
+            return ToolEnvelope.failure(
+                kind: .invalidArgs,
+                message:
+                    "Argument `series` must name at least one numeric column, or the data must contain an inferable numeric column.",
+                field: "series",
+                expected: "non-empty array of numeric column names",
+                tool: name
             )
         }
 
@@ -695,6 +730,45 @@ struct RenderChartTool: OsaurusTool {
         return [trimmed]
     }
 
+    private static func inferredSeriesColumns(
+        headers: [String],
+        rows: [[String]],
+        excluding xColumn: String?
+    ) -> [String] {
+        headers.enumerated().compactMap { index, header in
+            guard header != xColumn else { return nil }
+            let values = rows.compactMap { row -> String? in
+                guard index < row.count else { return nil }
+                let value = row[index].trimmingCharacters(in: .whitespacesAndNewlines)
+                return value.isEmpty ? nil : value
+            }
+            guard !values.isEmpty else { return nil }
+            let numericCount = values.reduce(into: 0) { count, value in
+                if Double(value) != nil { count += 1 }
+            }
+            return numericCount > 0 && numericCount * 2 >= values.count ? header : nil
+        }
+    }
+
+    /// Some local models wrap an entire CSV/TSV payload in one extra pair of
+    /// quotes. JSON decoding has already handled escaping by this point, so
+    /// remove only that dataset-wide wrapper when the first record still has
+    /// multiple delimited columns. Ordinary quoted fields remain untouched.
+    private static func unwrapQuotedDelimitedPayload(_ raw: String, format: String) -> String {
+        guard format == "csv" || format == "tsv",
+            raw.first == "\"",
+            raw.last == "\"",
+            raw.contains("\n"),
+            raw.count >= 2
+        else { return raw }
+        let candidate = String(raw.dropFirst().dropLast())
+        let separator = format == "tsv" ? "\t" : ","
+        guard candidate.components(separatedBy: .newlines).first?.contains(separator) == true else {
+            return raw
+        }
+        return candidate
+    }
+
     private static func chartSpec(from result: String) -> ChartSpec? {
         let source: String
         if let payload = ToolEnvelope.successPayload(result) as? [String: Any],
@@ -747,6 +821,61 @@ struct RenderChartTool: OsaurusTool {
             return nil
         }
         return (recoveredHeaders, [firstRecord] + remainingRows)
+    }
+
+    private func recoverOmittedSeriesHeaderlessDelimited(
+        firstRecord: [String],
+        remainingRows: [[String]]
+    ) -> (headers: [String], rows: [[String]])? {
+        guard firstRecord.count >= 2,
+            Double(firstRecord[0].trimmingCharacters(in: .whitespacesAndNewlines)) == nil,
+            remainingRows.allSatisfy({ $0.count == firstRecord.count }),
+            Self.looksLikeHeaderlessCategorySequence(
+                [firstRecord[0]] + remainingRows.map { $0[0] }
+            )
+        else {
+            return nil
+        }
+
+        let numericIndices = firstRecord.indices.dropFirst().filter { index in
+            let firstValue = firstRecord[index].trimmingCharacters(in: .whitespacesAndNewlines)
+            guard Double(firstValue) != nil else { return false }
+            return remainingRows.allSatisfy { row in
+                Double(row[index].trimmingCharacters(in: .whitespacesAndNewlines)) != nil
+            }
+        }
+        guard numericIndices.count == firstRecord.count - 1 else { return nil }
+
+        let valueHeaders = numericIndices.enumerated().map { offset, _ in
+            numericIndices.count == 1 ? "value" : "value_\(offset + 1)"
+        }
+        return (["category"] + valueHeaders, [firstRecord] + remainingRows)
+    }
+
+    /// Numeric column names are valid CSV headers (years are common), so a
+    /// numeric first record alone is not enough to reinterpret it as data.
+    /// Limit headerless recovery to recognizable category sequences observed
+    /// in small inline charts: calendar months, ISO dates, or quarters.
+    private static func looksLikeHeaderlessCategorySequence(_ values: [String]) -> Bool {
+        guard values.count >= 2 else { return false }
+        let normalized = values.map {
+            $0.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        }
+        let months: Set<String> = [
+            "jan", "january", "feb", "february", "mar", "march", "apr", "april",
+            "may", "jun", "june", "jul", "july", "aug", "august", "sep", "sept",
+            "september", "oct", "october", "nov", "november", "dec", "december",
+        ]
+        if normalized.allSatisfy(months.contains) { return true }
+        if normalized.allSatisfy({ value in
+            value.range(of: #"^\d{4}-\d{2}-\d{2}(?:[t ][^,]+)?$"#, options: .regularExpression)
+                != nil
+        }) {
+            return true
+        }
+        return normalized.allSatisfy { value in
+            value.range(of: #"^q[1-4](?:\s+\d{4})?$"#, options: .regularExpression) != nil
+        }
     }
 
     private func downsample(_ rows: [[String]], to maxCount: Int) -> [[String]] {

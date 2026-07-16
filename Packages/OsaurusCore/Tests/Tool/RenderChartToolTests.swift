@@ -20,8 +20,92 @@ struct RenderChartToolTests {
         #expect(description.contains("does not fetch URLs"))
         #expect(description.contains("dataRef"))
         #expect(description.contains("header row"))
+        #expect(description.contains("numeric columns are inferred"))
         #expect(description.contains("already displayed as an inline chart card"))
         #expect(!description.contains("use `share_artifact` instead"))
+    }
+
+    @Test func omittedSeriesAndQuotedCSVInferNumericColumns() async throws {
+        let argumentsJSON = #"""
+            {
+              "chartType": "line",
+              "data": "\"month,value\nJan,1\nFeb,2\nMar,3\"",
+              "dataFormat": "csv",
+              "title": "Monthly Values"
+            }
+            """#
+        let tool = RenderChartTool()
+        let normalizedJSON: String
+        switch await ToolRegistry.shared.preflightForTest(
+            argumentsJSON: argumentsJSON,
+            schema: tool.parameters,
+            toolName: tool.name
+        ) {
+        case .ready(let normalized):
+            normalizedJSON = normalized
+        case .rejected(let envelope):
+            Issue.record("preflight rejected the observed Bonsai chart arguments: \(envelope)")
+            return
+        }
+
+        let result = try await tool.execute(argumentsJSON: normalizedJSON)
+        #expect(ToolEnvelope.isSuccess(result))
+        let payload = try #require(ToolEnvelope.successPayload(result) as? [String: Any])
+        let marker = try #require(payload["text"] as? String)
+        #expect(marker.contains("\"categories\":[\"Jan\",\"Feb\",\"Mar\"]"))
+        #expect(marker.contains("\"name\":\"value\""))
+        #expect(marker.contains("\"data\":[1,2,3]"))
+    }
+
+    @Test func omittedSeriesAndHeaderlessRowsPreserveFirstPoint() async throws {
+        let argumentsJSON = #"""
+            {
+              "chartType": "line",
+              "data": "Jan,1\nFeb,2\nMar,3",
+              "dataFormat": "csv",
+              "title": "Monthly Values"
+            }
+            """#
+        let tool = RenderChartTool()
+        let normalizedJSON: String
+        switch await ToolRegistry.shared.preflightForTest(
+            argumentsJSON: argumentsJSON,
+            schema: tool.parameters,
+            toolName: tool.name
+        ) {
+        case .ready(let normalized):
+            normalizedJSON = normalized
+        case .rejected(let envelope):
+            Issue.record("preflight rejected the observed Bonsai chart arguments: \(envelope)")
+            return
+        }
+
+        let result = try await tool.execute(argumentsJSON: normalizedJSON)
+        #expect(ToolEnvelope.isSuccess(result))
+        let payload = try #require(ToolEnvelope.successPayload(result) as? [String: Any])
+        let marker = try #require(payload["text"] as? String)
+        #expect(marker.contains("\"categories\":[\"Jan\",\"Feb\",\"Mar\"]"))
+        #expect(marker.contains("\"name\":\"value\""))
+        #expect(marker.contains("\"data\":[1,2,3]"))
+    }
+
+    @Test func omittedSeriesPreservesNumericColumnHeader() async throws {
+        let result = try await RenderChartTool().execute(
+            argumentsJSON: #"""
+                {
+                  "chartType": "line",
+                  "data": "month,2024\nJan,1\nFeb,2",
+                  "dataFormat": "csv"
+                }
+                """#
+        )
+
+        #expect(ToolEnvelope.isSuccess(result))
+        let payload = try #require(ToolEnvelope.successPayload(result) as? [String: Any])
+        let marker = try #require(payload["text"] as? String)
+        #expect(marker.contains("\"categories\":[\"Jan\",\"Feb\"]"))
+        #expect(marker.contains("\"name\":\"2024\""))
+        #expect(marker.contains("\"data\":[1,2]"))
     }
 
     @Test func headerlessDelimitedRowsRecoverFromRequestedSeries() async throws {
