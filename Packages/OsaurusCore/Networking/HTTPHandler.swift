@@ -1755,10 +1755,12 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
 
             let manifest = loaded.plugin.manifest
 
-            // Check for static web serving first
+            // Check for static web serving first. Segment-boundary matching
+            // via the shared helper: mount `/ui` must NOT capture `/ui-other`
+            // (a bare `hasPrefix` did, disagreeing with the load-time
+            // web/route overlap validation in PluginManager).
             if let webSpec = loaded.webConfig {
-                let mountPrefix = webSpec.mount.hasPrefix("/") ? webSpec.mount : "/\(webSpec.mount)"
-                if subpath.hasPrefix(mountPrefix) {
+                if PluginManifest.WebSpec.mountCaptures(subpath: subpath, mount: webSpec.mount) {
                     // Tunnel exposure gate: web UIs are loopback-only by
                     // default. Plugins must opt in via `capabilities.web.tunnel_exposed`
                     // for the static UI to be reachable over the tunnel.
@@ -1795,7 +1797,8 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
 
                     // Check for dev proxy configuration
                     if let proxyURL = Self.loadDevProxyURL(for: pluginId) {
-                        let relPath = String(subpath.dropFirst(mountPrefix.count))
+                        let relPath = PluginManifest.WebSpec.relativeSubpath(
+                            subpath: subpath, mount: webSpec.mount)
                         let targetPath = relPath.isEmpty ? "/" : relPath
                         // Forward the original method/headers/body so HMR,
                         // POST APIs, and any non-GET dev-server traffic
@@ -1824,7 +1827,8 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                         )
                     }
 
-                    let relPath = String(subpath.dropFirst(mountPrefix.count))
+                    let relPath = PluginManifest.WebSpec.relativeSubpath(
+                        subpath: subpath, mount: webSpec.mount)
                     let filePath: String
                     if relPath.isEmpty || relPath == "/" {
                         filePath = webSpec.entry
