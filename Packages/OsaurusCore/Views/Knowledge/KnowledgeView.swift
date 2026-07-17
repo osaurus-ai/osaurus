@@ -422,7 +422,7 @@ struct KnowledgeView: View {
     private var headerView: some View {
         ManagerHeaderWithActions(
             title: L("Knowledge"),
-            subtitle: L("Folders of markdown your agents can search and read on demand"),
+            subtitle: L("Folders of documents your agents can search and read on demand"),
             count: knowledgeManager.collections.isEmpty ? nil : knowledgeManager.collections.count
         ) {
             HeaderIconButton("arrow.clockwise", help: "Re-index all collections") {
@@ -741,7 +741,7 @@ private struct KnowledgeCollectionEditorSheet: View {
                     .font(.system(size: 12, weight: .medium))
                     .foregroundColor(theme.primaryText)
                 HStack(spacing: 10) {
-                    TextField("/path/to/markdown-folder", text: $folderPath)
+                    TextField("/path/to/knowledge-folder", text: $folderPath)
                         .textFieldStyle(.plain)
                         .font(.system(size: 13, design: .monospaced))
                         .foregroundColor(theme.primaryText)

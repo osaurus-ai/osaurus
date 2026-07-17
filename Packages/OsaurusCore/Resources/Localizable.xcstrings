@@ -1045,7 +1045,7 @@
         }
       }
     },
-    "/path/to/markdown-folder" : {
+    "/path/to/knowledge-folder" : {
       "shouldTranslate" : false
     },
     "/plugins/%@%@" : {
@@ -63580,36 +63580,36 @@
         }
       }
     },
-    "Folders of markdown your agents can search and read on demand" : {
+    "Folders of documents your agents can search and read on demand" : {
       "localizations" : {
         "de" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Markdown-Ordner, die deine Agenten bei Bedarf durchsuchen und lesen können"
+            "value" : "Dokumentordner, die deine Agenten bei Bedarf durchsuchen und lesen können"
           }
         },
         "ko" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "에이전트가 필요할 때 검색하고 읽을 수 있는 마크다운 폴더"
+            "value" : "에이전트가 필요할 때 검색하고 읽을 수 있는 문서 폴더"
           }
         },
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Папки с Markdown, которые ваши агенты могут искать и читать по запросу"
+            "value" : "Папки с документами, которые ваши агенты могут искать и читать по запросу"
           }
         },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "供代理按需搜索和阅读的 Markdown 文件夹"
+            "value" : "供代理按需搜索和阅读的文档文件夹"
           }
         },
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "供代理按需搜尋和閱讀的 Markdown 資料夾"
+            "value" : "供代理按需搜尋和閱讀的文件資料夾"
           }
         }
       }
