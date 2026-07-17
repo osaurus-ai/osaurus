@@ -13,24 +13,19 @@ public struct ToolsInstall {
     public static func execute(args: [String]) async {
         guard let src = args.first, !src.isEmpty else {
             fputs(
-                "Usage: osaurus tools install <plugin_id|url-or-path> [--version <semver>] [--no-consent]\n",
+                "Usage: osaurus tools install <plugin_id|url-or-path> [--version <semver>] [--consent]\n",
                 stderr
             )
             exit(EXIT_FAILURE)
         }
 
-        // The release-build loader requires a `.user_consent` marker
-        // alongside `receipt.json` before it will dlopen a plugin. The
-        // registry-install path (`PluginInstallManager.install`) writes
-        // it automatically; manual sideload via `tools install` should
-        // be symmetric so authors iterating with `tools install
-        // ./my-plugin-1.0.0` don't get a silent `consent_required:`
-        // load failure they then have to clear in the UI. `--no-consent`
-        // opts out for users who want the explicit Approve gate.
-        let grantConsent = !args.contains("--no-consent")
-
         // Check if argument is a local path or URL
         if isManualInstallSource(src) {
+            // Manual sideloads bypass the registry's checksum/signature
+            // verification, so the release loader's `.user_consent` gate is
+            // NOT waived implicitly: pass `--consent` to grant it at install
+            // time, otherwise approve the plugin in Osaurus settings.
+            let grantConsent = args.contains("--consent")
             await installManual(src: src, grantConsent: grantConsent)
         } else {
             await installFromRegistry(pluginId: src, args: args)
@@ -93,7 +88,11 @@ public struct ToolsInstall {
         var sourceName: String = ""
         var preferManifestIdentity = false
 
-        // 1. Unpack/Copy to staging
+        // 1. Unpack/Copy to staging. Archives go through the same bounded
+        // in-process extractor as registry installs (path-safety, resource
+        // limits) instead of shelling out to /usr/bin/unzip, and remote
+        // archives are streamed to disk instead of buffered in memory.
+        let stageRoot = tmpDir.appendingPathComponent("extracted", isDirectory: true)
         if src.hasPrefix("http://") || src.hasPrefix("https://") {
             guard let url = URL(string: src) else {
                 fputs("Invalid URL: \(src)\n", stderr)
@@ -103,13 +102,14 @@ public struct ToolsInstall {
             sourceName = url.lastPathComponent
             let zipFile = tmpDir.appendingPathComponent("download.zip")
             do {
-                let (data, resp) = try await URLSession.shared.data(from: url)
+                let (downloadedURL, resp) = try await URLSession.shared.download(from: url)
                 guard let http = resp as? HTTPURLResponse, (200 ... 299).contains(http.statusCode) else {
+                    try? fm.removeItem(at: downloadedURL)
                     fputs("Download failed (status \((resp as? HTTPURLResponse)?.statusCode ?? -1))\n", stderr)
                     exit(EXIT_FAILURE)
                 }
-                try data.write(to: zipFile)
-                try unzip(zipURL: zipFile, to: tmpDir)
+                try fm.moveItem(at: downloadedURL, to: zipFile)
+                try PluginInstallManager.extractPluginArchive(at: zipFile, to: stageRoot)
             } catch {
                 fputs("Download/Unzip error: \(error)\n", stderr)
                 exit(EXIT_FAILURE)
@@ -121,11 +121,12 @@ public struct ToolsInstall {
             if fm.fileExists(atPath: pathURL.path, isDirectory: &isDir) {
                 if isDir.boolValue {
                     preferManifestIdentity = true
-                    // Copy contents to tmpDir
+                    // Copy contents to the staging root
                     do {
+                        try fm.createDirectory(at: stageRoot, withIntermediateDirectories: true)
                         let contents = try fm.contentsOfDirectory(at: pathURL, includingPropertiesForKeys: nil)
                         for item in contents {
-                            try fm.copyItem(at: item, to: tmpDir.appendingPathComponent(item.lastPathComponent))
+                            try fm.copyItem(at: item, to: stageRoot.appendingPathComponent(item.lastPathComponent))
                         }
                     } catch {
                         fputs("Failed to copy directory: \(error)\n", stderr)
@@ -133,7 +134,7 @@ public struct ToolsInstall {
                     }
                 } else if pathURL.pathExtension.lowercased() == "zip" {
                     do {
-                        try unzip(zipURL: pathURL, to: tmpDir)
+                        try PluginInstallManager.extractPluginArchive(at: pathURL, to: stageRoot)
                     } catch {
                         fputs("Unzip error: \(error)\n", stderr)
                         exit(EXIT_FAILURE)
@@ -148,11 +149,11 @@ public struct ToolsInstall {
             }
         }
 
-        // Find the plugin root (unzip might create a wrapper directory)
-        var pluginRoot: URL = tmpDir
+        // Find the plugin root (the archive might contain a wrapper directory)
+        var pluginRoot: URL = stageRoot
         do {
             let contents = try fm.contentsOfDirectory(
-                at: tmpDir,
+                at: stageRoot,
                 includingPropertiesForKeys: nil,
                 options: [.skipsHiddenFiles]
             )
@@ -161,7 +162,7 @@ public struct ToolsInstall {
                 pluginRoot = contents[0]
             }
         } catch {
-            // ignore - use tmpDir as root
+            // ignore - use stageRoot as root
         }
 
         // 2. Resolve plugin_id and version. Packaged zips keep using
@@ -187,36 +188,19 @@ public struct ToolsInstall {
             exit(EXIT_FAILURE)
         }
 
-        // 3. Install to Tools/<id>/<version>
-        let installDir = PluginInstallManager.toolsVersionDirectory(pluginId: pluginId, version: semver)
-
+        // 3. Publish the staged payload to Tools/<id>/<version>
         do {
-            if fm.fileExists(atPath: installDir.path) {
-                try fm.removeItem(at: installDir)
-            }
-            try fm.createDirectory(at: installDir.deletingLastPathComponent(), withIntermediateDirectories: true)
-            try fm.moveItem(at: pluginRoot, to: installDir)
-
-            // 4. Create receipt.json for manual installs
-            try createManualInstallReceipt(pluginId: pluginId, version: semver, installDir: installDir)
-
-            // 4b. Auto-grant consent (matches registry install). The
-            // release loader checks for `.user_consent` next to the
-            // receipt; without it, the plugin fails verification with
-            // `consent_required:` and the user has to tap Approve in
-            // the app. `--no-consent` keeps the explicit gate.
-            if grantConsent {
-                let consentURL = installDir.appendingPathComponent(".user_consent", isDirectory: false)
-                try Data().write(to: consentURL)
-            }
-
-            // 5. Update Current Symlink
-            try PluginInstallManager.updateCurrentSymlink(pluginId: pluginId, version: semver)
+            let installDir = try publishManualInstall(
+                pluginRoot: pluginRoot,
+                pluginId: pluginId,
+                version: semver,
+                grantConsent: grantConsent
+            )
 
             print("Installed \(pluginId) @ \(semver) to \(installDir.path)")
             if !grantConsent {
                 print(
-                    "Consent NOT granted (--no-consent). Approve in Osaurus settings before the plugin will load."
+                    "Consent NOT granted. Approve in Osaurus settings before the plugin will load, or reinstall with --consent."
                 )
             }
 
@@ -228,6 +212,50 @@ public struct ToolsInstall {
             fputs("Installation failed: \(error)\n", stderr)
             exit(EXIT_FAILURE)
         }
+    }
+
+    /// Completes the staged payload (receipt + optional consent marker) and
+    /// then publishes it into `Tools/<id>/<version>` in one atomic swap. Any
+    /// previously installed copy of this version is only replaced by a
+    /// complete, valid layout — never deleted up front, so a failure while
+    /// preparing the new payload leaves the existing install untouched.
+    /// Fails (before touching the destination) when the payload contains no
+    /// dylib, so a manual install can no longer produce a receipt-less or
+    /// binary-less tree.
+    static func publishManualInstall(
+        pluginRoot: URL,
+        pluginId: String,
+        version: SemanticVersion,
+        grantConsent: Bool
+    ) throws -> URL {
+        let fm = FileManager.default
+        let installDir = PluginInstallManager.toolsVersionDirectory(pluginId: pluginId, version: version)
+
+        try createManualInstallReceipt(pluginId: pluginId, version: version, installDir: pluginRoot)
+        if grantConsent {
+            try Data().write(to: pluginRoot.appendingPathComponent(".user_consent", isDirectory: false))
+        }
+
+        let parent = installDir.deletingLastPathComponent()
+        try fm.createDirectory(at: parent, withIntermediateDirectories: true)
+
+        // Move the payload next to its final location first (the temp dir may
+        // be on another volume), then swap it in atomically.
+        let staging = parent.appendingPathComponent(".staging-\(UUID().uuidString)", isDirectory: true)
+        try fm.moveItem(at: pluginRoot, to: staging)
+        do {
+            if fm.fileExists(atPath: installDir.path) {
+                _ = try fm.replaceItemAt(installDir, withItemAt: staging)
+            } else {
+                try fm.moveItem(at: staging, to: installDir)
+            }
+        } catch {
+            try? fm.removeItem(at: staging)
+            throw error
+        }
+
+        try PluginInstallManager.updateCurrentSymlink(pluginId: pluginId, version: version)
+        return installDir
     }
 
     /// Parses plugin_id and version from a filename like "my-plugin-1.0.0" or "my-plugin-1.0.0.zip"
@@ -429,6 +457,7 @@ public struct ToolsInstall {
 
     enum ManualInstallError: Error, CustomStringConvertible {
         case identityUnavailable(sourceName: String)
+        case noDylibFound
         case invalidManifestField(String, String)
         case invalidManifestVersion(String, String)
         case manifestReadFailed(String, String)
@@ -441,6 +470,9 @@ public struct ToolsInstall {
             case .identityUnavailable:
                 return
                     "Invalid naming format. Expected <plugin_id>-<version>.zip, or install a project directory containing osaurus-plugin.json with plugin_id and version."
+            case .noDylibFound:
+                return
+                    "No .dylib found in the plugin payload. Build the plugin first (e.g. `osaurus tools build`) — an install without a binary would produce a broken receipt-less tree."
             case .invalidManifestField(let filename, let field):
                 return "`\(filename)` must include a non-empty `\(field)` for directory installs."
             case .invalidManifestVersion(let filename, let value):
@@ -457,12 +489,13 @@ public struct ToolsInstall {
         }
     }
 
-    /// Creates a receipt.json for manual installations
+    /// Creates a receipt.json for manual installations. Throws when the
+    /// payload contains no dylib: the loader requires receipt + binary, so
+    /// silently skipping the receipt used to publish an install that could
+    /// never load (and that `tools verify` then ignored).
     static func createManualInstallReceipt(pluginId: String, version: SemanticVersion, installDir: URL) throws {
-        // Find the dylib in the install directory
         guard let dylibURL = findFirstDylib(in: installDir) else {
-            // No dylib found - skip receipt creation (plugin might not be fully built)
-            return
+            throw ManualInstallError.noDylibFound
         }
 
         // Calculate SHA256 of the dylib
@@ -507,20 +540,5 @@ public struct ToolsInstall {
             return fileURL
         }
         return nil
-    }
-
-    private static func unzip(zipURL: URL, to destDir: URL) throws {
-        let unzip = Process()
-        unzip.executableURL = URL(fileURLWithPath: "/usr/bin/unzip")
-        unzip.arguments = ["-o", "-q", zipURL.path, "-d", destDir.path]
-        try unzip.run()
-        unzip.waitUntilExit()
-        if unzip.terminationStatus != 0 {
-            throw NSError(
-                domain: "ToolsInstall",
-                code: 1,
-                userInfo: [NSLocalizedDescriptionKey: "unzip command failed"]
-            )
-        }
     }
 }

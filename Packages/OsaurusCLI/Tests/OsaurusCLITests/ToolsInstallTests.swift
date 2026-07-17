@@ -268,14 +268,18 @@ final class ToolsInstallTests: XCTestCase {
         )
     }
 
-    func testManualInstallReceiptSkipsWhenNoDylibExists() throws {
+    func testManualInstallReceiptFailsWhenNoDylibExists() throws {
         let version = try XCTUnwrap(SemanticVersion.parse("1.2.3"))
 
-        try ToolsInstall.createManualInstallReceipt(
-            pluginId: "com.example.empty",
-            version: version,
-            installDir: tempDir
-        )
+        XCTAssertThrowsError(
+            try ToolsInstall.createManualInstallReceipt(
+                pluginId: "com.example.empty",
+                version: version,
+                installDir: tempDir
+            )
+        ) { error in
+            XCTAssertTrue(String(describing: error).contains("No .dylib"))
+        }
 
         let receiptURL = tempDir.appendingPathComponent("receipt.json", isDirectory: false)
         XCTAssertFalse(FileManager.default.fileExists(atPath: receiptURL.path))
