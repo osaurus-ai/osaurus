@@ -619,7 +619,7 @@ struct SearchView: View {
         manager.setDefaultRanking(apiIds + freeIds)
     }
 
-    // MARK: - Free sources
+    // MARK: - Built-in sources
 
     private var freeProviderRows: [(provider: SearchProvider, definition: SearchProviderDefinition)] {
         manager.rankedProviders.filter { $0.definition.isKeyless }

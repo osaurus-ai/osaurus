@@ -249,14 +249,14 @@ public enum WhatsNewContent {
                 id: "native-search-0.21.11:summary",
                 title: "Web search is now built in",
                 description:
-                    "Your agents can search the web out of the box — no plugin, no API key required. Free sources are on by default, and if you used the search plugin before, your API keys were carried over automatically.",
+                    "Your agents can search the web out of the box — no plugin, no API key required. Built-in sources are on by default, and if you used the search plugin before, your API keys were carried over automatically.",
                 systemImage: "magnifyingglass"
             ),
             WhatsNewPage(
                 id: "native-search-0.21.11:providers",
                 title: "Bring your own provider",
                 description:
-                    "For faster, higher-quality results, connect a provider like Tavily or Exa in the new Search tab — most have free tiers. Providers are tried in your order, with free sources as backup, and you can test any query right from settings.",
+                    "For faster, higher-quality results, connect a provider like Tavily or Exa in the new Search tab. Providers are tried in your order, with built-in sources as backup, and you can test any query right from settings.",
                 systemImage: "antenna.radiowaves.left.and.right",
                 actionLabel: "Open Search settings",
                 action: .openSearchSettings

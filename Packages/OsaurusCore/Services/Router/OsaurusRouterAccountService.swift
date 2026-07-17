@@ -31,7 +31,7 @@ final class OsaurusRouterAccountService: ObservableObject {
     /// session; drives the search-credit balance hint.
     @Published private(set) var lastWebBilling: RouterWebBillingSummary?
     /// Set when a hosted web search hit `402 INSUFFICIENT_FUNDS` — premium
-    /// search is falling back to free sources until the user tops up. Cleared
+    /// search is falling back to built-in sources until the user tops up. Cleared
     /// when the balance rises or a hosted request succeeds again.
     @Published private(set) var webSearchNeedsTopUp = false
 
@@ -328,7 +328,7 @@ final class OsaurusRouterAccountService: ObservableObject {
     }
 
     /// A hosted web request failed with `402 INSUFFICIENT_FUNDS`. The search
-    /// itself falls back to free sources, but the billing state must still
+    /// itself falls back to built-in sources, but the billing state must still
     /// reach the UI: refresh server truth and surface the top-up hint.
     func noteWebInsufficientFunds() {
         webSearchNeedsTopUp = true

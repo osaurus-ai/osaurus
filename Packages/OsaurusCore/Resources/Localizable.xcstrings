@@ -22885,6 +22885,9 @@
         }
       }
     },
+    "Bing (built-in)" : {
+
+    },
     "Bing (free)" : {
       "localizations" : {
         "de" : {
@@ -22918,6 +22921,9 @@
           }
         }
       }
+    },
+    "Bing search results. No key needed." : {
+
     },
     "Blank" : {
       "localizations" : {
@@ -24332,6 +24338,9 @@
         }
       }
     },
+    "Brave (built-in)" : {
+
+    },
     "Brave (free)" : {
       "localizations" : {
         "de" : {
@@ -24365,6 +24374,9 @@
           }
         }
       }
+    },
+    "Brave search results. No key needed." : {
+
     },
     "Brave Search" : {
       "localizations" : {
@@ -172675,6 +172687,9 @@
 
     },
     "Web search" : {
+
+    },
+    "Web, news, and image search. No key needed; used only when other sources fail." : {
 
     },
     "Web Search" : {
