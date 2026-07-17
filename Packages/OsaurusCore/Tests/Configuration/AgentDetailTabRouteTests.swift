@@ -56,4 +56,12 @@ struct AgentDetailTabRouteTests {
         let route = AgentDetailTabRoute.resolve("database")
         #expect(route == AgentDetailTabRoute(tabRawValue: "database"))
     }
+
+    @Test func abilitiesOverviewIsACanonicalTab() {
+        // The Abilities overview (capability cards + startup-context
+        // estimate) must be directly addressable for deep links.
+        let route = AgentDetailTabRoute.resolve("abilities")
+        #expect(route == AgentDetailTabRoute(tabRawValue: "abilities"))
+        #expect(route?.databaseSection == nil)
+    }
 }

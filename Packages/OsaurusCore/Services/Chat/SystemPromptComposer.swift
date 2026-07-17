@@ -1718,6 +1718,20 @@ public struct SystemPromptComposer: Sendable {
             agentId: agentId,
             modelOverride: model
         )
+        return composePreviewContext(snapshot: snapshot, executionMode: executionMode)
+    }
+
+    /// Snapshot-taking variant of `composePreviewContext`. Lets the agent
+    /// editor price a DRAFT capability state (local toggles that haven't
+    /// gone through the debounced save yet) by constructing the snapshot
+    /// itself instead of capturing the persisted one — while still running
+    /// the exact section + tool gates the next real send would.
+    @MainActor
+    static func composePreviewContext(
+        snapshot: AgentConfigSnapshot,
+        executionMode: ExecutionMode
+    ) -> ComposedContext {
+        let agentId = snapshot.agentId
         var composer = forChat(
             snapshot: snapshot,
             agentId: agentId,

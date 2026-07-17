@@ -300,7 +300,7 @@ struct ChatSettingsView: View {
                 SettingsSubsection(label: "Generative Greetings") {
                     VStack(alignment: .leading, spacing: 12) {
                         Text(
-                            "Default voice for AI-generated greetings + quick actions. Turn greetings on per agent under the agent's Features tab; each agent can also override this voice in its Customization tab.",
+                            "Default voice for AI-generated greetings + quick actions. Turn greetings on per agent under the agent's Appearance tab, where each agent can also override this voice.",
                             bundle: .module
                         )
                         .font(.system(size: 11))
