@@ -397,8 +397,13 @@ struct DarkTheme: ThemeProtocol {
 struct CustomizableTheme: ThemeProtocol {
     let config: CustomTheme
 
-    init(config: CustomTheme) {
+    /// Global zoom applied on top of the theme's own typography. Captured at
+    /// construction; ThemeManager rebuilds live theme instances when it changes.
+    let fontScale: Double
+
+    init(config: CustomTheme, fontScale: Double = ThemeManager.fontScale) {
         self.config = config
+        self.fontScale = fontScale
     }
 
     // Primary colors
@@ -502,11 +507,11 @@ struct CustomizableTheme: ThemeProtocol {
     // Typography
     var primaryFontName: String { config.typography.primaryFont }
     var monoFontName: String { config.typography.monoFont }
-    var titleSize: Double { config.typography.titleSize }
-    var headingSize: Double { config.typography.headingSize }
-    var bodySize: Double { config.typography.bodySize }
-    var captionSize: Double { config.typography.captionSize }
-    var codeSize: Double { config.typography.codeSize }
+    var titleSize: Double { config.typography.titleSize * fontScale }
+    var headingSize: Double { config.typography.headingSize * fontScale }
+    var bodySize: Double { config.typography.bodySize * fontScale }
+    var captionSize: Double { config.typography.captionSize * fontScale }
+    var codeSize: Double { config.typography.codeSize * fontScale }
 
     // Code syntax highlighting
     var codeHighlightTheme: String? { config.codeHighlightTheme }
@@ -531,7 +536,7 @@ struct CustomizableTheme: ThemeProtocol {
     var showInlineAvatar: Bool { config.messages.showInlineAvatar }
     var inlineAvatarSize: Double { config.messages.inlineAvatarSize }
     var showAgentName: Bool { config.messages.showAgentName }
-    var agentNameSize: Double { config.messages.agentNameSize }
+    var agentNameSize: Double { config.messages.agentNameSize * fontScale }
 
     // Border customization
     var defaultBorderWidth: Double { config.borders.defaultWidth }
@@ -567,11 +572,56 @@ public class ThemeManager: ObservableObject {
     /// Whether a custom theme is currently active
     public var isCustomThemeActive: Bool { activeCustomTheme != nil }
 
+    /// Global font zoom applied on top of every theme's typography. Static so
+    /// `CustomizableTheme` instances can capture it at construction wherever
+    /// they are built (main thread only, like the rest of ThemeManager).
+    public private(set) static var fontScale: Double = 1.0
+    private static let fontScaleStep: Double = 0.1
+
+    public var canZoomFontIn: Bool {
+        Self.fontScale < ServerConfiguration.fontSizeMultiplierRange.upperBound
+    }
+    public var canZoomFontOut: Bool {
+        Self.fontScale > ServerConfiguration.fontSizeMultiplierRange.lowerBound
+    }
+    public var isDefaultFontScale: Bool { Self.fontScale == 1.0 }
+
+    public func zoomFontIn() { setFontScale(Self.fontScale + Self.fontScaleStep) }
+    public func zoomFontOut() { setFontScale(Self.fontScale - Self.fontScaleStep) }
+    public func resetFontScale() { setFontScale(1.0) }
+
+    public func setFontScale(_ scale: Double, persist: Bool = true) {
+        // Snap to the step grid so repeated zooms don't accumulate float drift.
+        let snapped = (scale / Self.fontScaleStep).rounded() * Self.fontScaleStep
+        let clamped = ServerConfiguration.clampedFontSizeMultiplier(snapped)
+        guard clamped != Self.fontScale else { return }
+        Self.fontScale = clamped
+
+        if persist {
+            ServerConfigurationStore.updateFontSizeMultiplier(clamped)
+        }
+
+        // Rebuild the live theme instances so every observer re-renders with
+        // the new scale; agent-specific chat themes rebuild via the
+        // globalThemeChanged notification.
+        if let custom = activeCustomTheme {
+            let themeInstance = CustomizableTheme(config: custom)
+            currentTheme = themeInstance
+            chatTheme = themeInstance
+        } else {
+            applyResolvedTheme(for: appearanceMode, animated: false)
+        }
+        NotificationCenter.default.post(name: .globalThemeChanged, object: nil)
+    }
+
     private init() {
         print("[Osaurus] ThemeManager: Initializing...")
 
         // Load saved appearance mode (cheap config read).
         let config = ServerConfigurationStore.load() ?? ServerConfiguration.default
+        // Restore the persisted font zoom before any theme instance is built
+        // so the initial themes capture the correct scale.
+        Self.fontScale = ServerConfiguration.clampedFontSizeMultiplier(config.fontSizeMultiplier)
         let savedActiveTheme = ThemeConfigurationStore.loadActiveTheme()
         let startupSelection = Self.startupSelection(
             savedActiveTheme: savedActiveTheme,
