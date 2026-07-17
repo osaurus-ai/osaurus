@@ -225,6 +225,11 @@ enum FeatureTelemetry {
             "had_dead_end": metrics.deadEnds > 0,
             "had_block": metrics.blocked > 0,
             "cloud_vision_used": metrics.cloudVisionUsed,
+            "cloud_vision_consent_prompted": metrics.cloudVisionConsentPrompted,
+            "cloud_vision_consent_granted": metrics.cloudVisionConsentGranted,
+            "cloud_vision_consent_scope": metrics.cloudVisionConsentPersistent
+                ? "persistent"
+                : (metrics.cloudVisionConsentGranted ? "run" : "none"),
         ]
         service.track("computer_use_run", props)
     }

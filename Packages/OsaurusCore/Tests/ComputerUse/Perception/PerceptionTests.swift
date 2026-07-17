@@ -128,13 +128,6 @@ final class CloudVisionConsentTests: XCTestCase {
         let consent = CloudVisionConsent(defaults: defaults)
         XCTAssertFalse(consent.isGranted)
 
-        consent.grantForSession()
-        XCTAssertTrue(consent.isGranted)
-        XCTAssertFalse(consent.isPersistentlyGranted)
-
-        consent.revoke()
-        XCTAssertFalse(consent.isGranted)
-
         consent.grantPersistently()
         XCTAssertTrue(consent.isGranted)
         // A fresh instance over the same defaults sees the persisted grant.
@@ -142,6 +135,22 @@ final class CloudVisionConsentTests: XCTestCase {
 
         consent.setPersistent(false)
         XCTAssertFalse(consent.isGranted)
+        XCTAssertFalse(CloudVisionConsent(defaults: defaults).isPersistentlyGranted)
+    }
+
+    @MainActor
+    func testLoopPersistenceAdapterOnlyPersistsAlwaysChoice() {
+        let suite = "cu-consent-adapter-\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suite)!
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let consent = CloudVisionConsent(defaults: defaults)
+
+        ComputerUseLoop.persistCloudVisionChoice(.allowOnce, consent: consent)
+        XCTAssertFalse(consent.isPersistentlyGranted)
+        ComputerUseLoop.persistCloudVisionChoice(.deny, consent: consent)
+        XCTAssertFalse(consent.isPersistentlyGranted)
+        ComputerUseLoop.persistCloudVisionChoice(.allowAlways, consent: consent)
+        XCTAssertTrue(consent.isPersistentlyGranted)
     }
 }
 

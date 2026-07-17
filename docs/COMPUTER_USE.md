@@ -175,9 +175,10 @@ only through a route that is made *unrepresentable* without consent **and**
 scrubbing:
 
 - **`CloudVisionConsent`** (`ComputerUse/Perception/CloudVisionConsent.swift`) —
-  off by default, never inferred. Two grant scopes: persisted opt-in (survives
-  relaunch, `UserDefaults` key `ai.osaurus.computeruse.cloudVisionConsent`) and a
-  transient this-launch-only grant. Revoke clears both.
+  off by default, never inferred. The persisted opt-in survives relaunch
+  (`UserDefaults` key `ai.osaurus.computeruse.cloudVisionConsent`). One-run
+  grants live only inside the active Computer Use run. Revoke clears the
+  persisted opt-in.
 - **`FrameScrubber`** (`ComputerUse/Perception/FrameScrubber.swift`) — the only
   producer of a `ScrubbedFrame`. It runs Vision OCR over a frame and redacts it
   in one of two modes:
@@ -210,9 +211,10 @@ scrubbing:
   most one screenshot to the conversation at a time and reserves image tokens
   against the context budget. When a frame *would* reach a cloud model if only
   consent were granted (`wouldAttachWithConsent`), the loop surfaces a
-  **just-in-time consent prompt** once per run (Allow once / Always allow / Not
-  now) instead of silently staying AX-only — wiring `grantForSession()` /
-  `grantPersistently()` to the user's choice.
+  **just-in-time consent prompt** once per run (Allow for this run / Always
+  allow / Not now) instead of silently staying AX-only. Allow for this run stays
+  in the run-local state; Always allow writes the persisted opt-in until the
+  user turns it off in Settings.
 
 A frame is only ever attached to a model request when **the model accepts
 images** (`ComputerUseTool.modelAcceptsImages`: local VLM detection / media

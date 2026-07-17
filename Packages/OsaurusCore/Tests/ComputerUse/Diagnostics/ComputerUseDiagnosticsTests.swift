@@ -20,9 +20,7 @@ final class ComputerUsePermissionDoctorTests: XCTestCase {
                     skyLight: false
                 ),
                 cloudVision: ComputerUseCloudVisionDoctorInput(
-                    isGranted: false,
                     isPersistentlyGranted: false,
-                    isSessionGranted: false,
                     scrubMode: .allText
                 ),
                 screenContextEnabled: false,
@@ -49,9 +47,7 @@ final class ComputerUsePermissionDoctorTests: XCTestCase {
                     skyLight: false
                 ),
                 cloudVision: ComputerUseCloudVisionDoctorInput(
-                    isGranted: true,
                     isPersistentlyGranted: true,
-                    isSessionGranted: false,
                     scrubMode: .pii
                 ),
                 screenContextEnabled: true,
@@ -96,6 +92,31 @@ final class ComputerUsePermissionDoctorTests: XCTestCase {
             snapshot.agentAvailability.rows.first { $0.id == customMissingModel }?.severity,
             .attention
         )
+    }
+
+    func testMapsCloudVisionWithoutPersistedConsent() {
+        let snapshot = ComputerUsePermissionDoctor.snapshot(
+            input: ComputerUsePermissionDoctorInput(
+                availability: MacDriverAvailability(
+                    accessibility: true,
+                    screenRecording: true,
+                    skyLight: false
+                ),
+                cloudVision: ComputerUseCloudVisionDoctorInput(
+                    isPersistentlyGranted: false,
+                    scrubMode: .allText
+                ),
+                screenContextEnabled: false,
+                agents: []
+            )
+        )
+
+        XCTAssertEqual(snapshot.row(.cloudVision)?.value, "Off — ask when needed")
+        XCTAssertEqual(
+            snapshot.row(.cloudVision)?.detail,
+            "A cloud image model can request consent for one run or a persisted opt-in."
+        )
+        XCTAssertEqual(snapshot.row(.cloudVision)?.severity, .inactive)
     }
 }
 

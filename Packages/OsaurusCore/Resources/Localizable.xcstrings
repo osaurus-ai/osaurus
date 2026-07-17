@@ -14547,36 +14547,70 @@
         }
       }
     },
-    "Allow once" : {
+    "Allow for this run" : {
       "localizations" : {
         "de" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Einmal erlauben"
+            "value" : "Für diesen Lauf erlauben"
           }
         },
         "ko" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "한 번 허용"
+            "value" : "이 실행에 허용"
           }
         },
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Разрешить один раз"
+            "value" : "Разрешить для этого запуска"
           }
         },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "允许一次"
+            "value" : "允许本次运行"
           }
         },
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "允許一次"
+            "value" : "允許本次執行"
+          }
+        }
+      }
+    },
+    "Always allow remembers this choice for future Computer Use runs until you turn it off in Settings." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "„Immer erlauben“ merkt sich diese Auswahl für zukünftige Computer-Use-Läufe, bis du sie in den Einstellungen deaktivierst."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "‘항상 허용’을 선택하면 설정에서 끌 때까지 이후의 Computer Use 실행에도 이 선택이 기억됩니다."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Параметр «Разрешать всегда» запоминает этот выбор для будущих запусков Computer Use, пока вы не отключите его в Настройках."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "“始终允许”会为今后的“电脑操作”运行记住此选择，直到你在“设置”中将其关闭。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "「永遠允許」會為日後的「電腦操作」執行記住此選擇，直到你在「設定」中將其關閉。"
           }
         }
       }
@@ -101796,36 +101830,36 @@
         }
       }
     },
-    "Off by default. Nothing is sent without this and on-device masking." : {
+    "Off by default. When off, Osaurus asks during a run when a cloud screenshot would help. Every cloud screenshot is masked on-device first." : {
       "localizations" : {
         "de" : {
           "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Standardmäßig deaktiviert. Ohne diese Option und die Gerätemaskierung wird nichts gesendet."
+            "state" : "translated",
+            "value" : "Standardmäßig deaktiviert. Wenn die Option aus ist, fragt Osaurus während eines Laufs nach, sobald ein Cloud-Screenshot helfen würde. Jeder Cloud-Screenshot wird zuerst auf dem Gerät maskiert."
           }
         },
         "ko" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "기본적으로 꺼져 있습니다. 이 기능과 기기 내 마스킹 없이는 아무것도 전송되지 않습니다."
+            "value" : "기본적으로 꺼져 있습니다. 꺼져 있으면 클라우드 스크린샷이 도움이 될 때 Osaurus가 실행 중에 묻습니다. 모든 클라우드 스크린샷은 먼저 기기에서 마스킹됩니다."
           }
         },
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "По умолчанию выключено. Без этого и маскировки на устройстве ничего не отправляется."
+            "value" : "По умолчанию выключено. Когда параметр выключен, Osaurus запрашивает разрешение во время запуска, если может помочь облачный снимок экрана. Каждый облачный снимок экрана сначала маскируется на устройстве."
           }
         },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "默认关闭。没有此设置和本地脱敏处理，任何数据都不会被发送。"
+            "value" : "默认关闭。关闭时，如果云端截图有助于完成任务，Osaurus 会在运行期间询问。每张云端截图都会先在设备上进行遮蔽。"
           }
         },
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "默認關閉。沒有此設置和本地脫敏處理，任何數據都不會被發送。"
+            "value" : "預設關閉。關閉時，如果雲端截圖有助於完成工作，Osaurus 會在執行期間詢問。每張雲端截圖都會先在裝置上進行遮蔽。"
           }
         }
       }

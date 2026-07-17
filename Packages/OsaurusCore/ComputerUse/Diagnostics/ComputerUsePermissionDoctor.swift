@@ -60,9 +60,7 @@ struct ComputerUseAgentAvailabilityInput: Sendable, Equatable {
 }
 
 struct ComputerUseCloudVisionDoctorInput: Sendable, Equatable {
-    let isGranted: Bool
     let isPersistentlyGranted: Bool
-    let isSessionGranted: Bool
     let scrubMode: ScrubMode
 }
 
@@ -187,28 +185,20 @@ enum ComputerUsePermissionDoctor {
                 severity: .inactive
             )
         }
-        guard cloudVision.isGranted else {
+        guard cloudVision.isPersistentlyGranted else {
             return ComputerUseDiagnosticRow(
                 id: .cloudVision,
                 title: "Cloud vision",
-                value: "Off",
-                detail: "Remote image models receive no screenshots unless consent is granted.",
+                value: "Off — ask when needed",
+                detail: "A cloud image model can request consent for one run or a persisted opt-in.",
                 severity: .inactive
             )
         }
 
-        let scope: String
-        if cloudVision.isPersistentlyGranted {
-            scope = "persistent"
-        } else if cloudVision.isSessionGranted {
-            scope = "this launch"
-        } else {
-            scope = "granted"
-        }
         return ComputerUseDiagnosticRow(
             id: .cloudVision,
             title: "Cloud vision",
-            value: "On (\(scope))",
+            value: "On (persistent)",
             detail: "Scrub mode: \(scrubModeLabel(cloudVision.scrubMode)).",
             severity: cloudVision.scrubMode == .allText ? .ready : .attention
         )

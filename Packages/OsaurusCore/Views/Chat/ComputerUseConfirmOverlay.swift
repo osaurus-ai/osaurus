@@ -227,13 +227,21 @@ struct ComputerUseConfirmOverlay: View {
                 .font(.system(size: 12))
                 .foregroundColor(theme.secondaryText)
                 .fixedSize(horizontal: false, vertical: true)
+                Text(
+                    L(
+                        "Always allow remembers this choice for future Computer Use runs until you turn it off in Settings."
+                    )
+                )
+                .font(.system(size: 11))
+                .foregroundColor(theme.secondaryText)
+                .fixedSize(horizontal: false, vertical: true)
 
                 HStack(spacing: 10) {
                     Spacer()
                     secondaryButton(L("Not now")) {
                         queue.resolveConsent(id: request.id, choice: .deny)
                     }
-                    secondaryButton(L("Allow once")) {
+                    secondaryButton(L("Allow for this run")) {
                         queue.resolveConsent(id: request.id, choice: .allowOnce)
                     }
                     primaryButton(L("Always allow")) {

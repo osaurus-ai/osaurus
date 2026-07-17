@@ -28,7 +28,7 @@ public struct ConfirmRequest: Identifiable, Sendable, Equatable {
 
 /// The user's answer to a just-in-time cloud-vision consent prompt.
 public enum CloudVisionConsentChoice: String, Sendable, Equatable {
-    /// Allow for this run only (session grant).
+    /// Allow for this run only; do not write a broader consent grant.
     case allowOnce
     /// Allow and remember (persistent grant).
     case allowAlways

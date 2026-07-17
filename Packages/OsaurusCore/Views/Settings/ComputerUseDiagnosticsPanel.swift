@@ -105,9 +105,7 @@ struct ComputerUseDiagnosticsPanel: View {
                     skyLight: false
                 ),
                 cloudVision: ComputerUseCloudVisionDoctorInput(
-                    isGranted: cloudVisionConsent.isGranted,
                     isPersistentlyGranted: cloudVisionConsent.isPersistentlyGranted,
-                    isSessionGranted: cloudVisionConsent.isSessionGranted,
                     scrubMode: cloudVisionConsent.scrubMode
                 ),
                 // Screen context is per-agent now (a child of Computer Use), so

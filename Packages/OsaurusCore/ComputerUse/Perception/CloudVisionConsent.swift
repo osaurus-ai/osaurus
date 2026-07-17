@@ -4,13 +4,14 @@
 //
 //  The consent gate for the cloud-vision route (PR3). Sending a screenshot —
 //  even a scrubbed one — to a cloud model is a trust-boundary crossing, so it
-//  is OFF by default and never inferred. `CaptureRouter.cloudRoute(...)` reads
-//  `isGranted` and refuses to build a cloud route without it; combined with
-//  `ScrubbedFrame` being unconstructible outside `FrameScrubber`, the two
-//  facts make an unconsented or unscrubbed cloud send impossible to express.
+//  is OFF by default and never inferred. `CaptureRouter.cloudRoute(...)`
+//  requires an explicit consent flag and refuses to build a cloud route without
+//  it; combined with `ScrubbedFrame` being unconstructible outside
+//  `FrameScrubber`, the two facts make an unconsented or unscrubbed cloud send
+//  impossible to express.
 //
-//  Two grant scopes: a persisted opt-in (survives relaunch) and a transient
-//  this-launch-only grant. Revoke clears both.
+//  The persisted opt-in survives relaunch. One-run grants are held inside the
+//  active Computer Use run, not in this app-wide preference object.
 //
 
 import Combine
@@ -27,8 +28,6 @@ public final class CloudVisionConsent: ObservableObject {
     /// Persisted opt-in. Default `false` — pixels never leave the device until
     /// the user explicitly allows it.
     @Published public private(set) var isPersistentlyGranted: Bool
-    /// This-launch-only grant; never written to disk.
-    @Published public private(set) var isSessionGranted: Bool = false
     /// When `true`, a consented cloud screenshot masks only detected sensitive
     /// text (`.pii`) instead of every recognized region (`.allText`). Default
     /// `false` (`.allText`) so the safest redaction is the out-of-box behavior;
@@ -41,8 +40,9 @@ public final class CloudVisionConsent: ObservableObject {
         self.masksOnlyDetectedPII = defaults.bool(forKey: piiOnlyKey)
     }
 
-    /// The single value the router consults.
-    public var isGranted: Bool { isPersistentlyGranted || isSessionGranted }
+    /// App-wide persisted opt-in. One-run grants are tracked inside the active
+    /// Computer Use loop instead of this shared preference object.
+    public var isGranted: Bool { isPersistentlyGranted }
 
     /// The redaction mode a consented cloud screenshot uses, derived from the
     /// user's preference. `.allText` by default (mask everything).
@@ -59,14 +59,10 @@ public final class CloudVisionConsent: ObservableObject {
         defaults.set(true, forKey: defaultsKey)
     }
 
-    public func grantForSession() {
-        isSessionGranted = true
-    }
-
-    /// Clear all consent (both scopes). The user's "stop sharing" control.
+    /// Clear persisted consent. Active one-run grants are owned by their run and
+    /// expire when that run ends.
     public func revoke() {
         isPersistentlyGranted = false
-        isSessionGranted = false
         defaults.set(false, forKey: defaultsKey)
     }
 

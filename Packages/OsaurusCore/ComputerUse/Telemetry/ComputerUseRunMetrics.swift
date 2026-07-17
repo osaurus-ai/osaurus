@@ -51,6 +51,13 @@ public struct ComputerUseRunMetrics: Sendable, Equatable {
     public var decodeTpsSamples = 0
     /// Whether the cloud-vision route was ever taken (consented + scrubbed).
     public var cloudVisionUsed = false
+    /// Whether the run displayed the just-in-time cloud-vision consent prompt.
+    public var cloudVisionConsentPrompted = false
+    /// Whether cloud vision was effectively granted for this run, either by a
+    /// just-in-time choice or an app-wide persisted opt-in.
+    public var cloudVisionConsentGranted = false
+    /// Whether this run's effective cloud-vision grant is app-wide persisted.
+    public var cloudVisionConsentPersistent = false
     /// Effect-class distribution of gated actions.
     public var effectCounts: [EffectClass: Int] = [:]
 
