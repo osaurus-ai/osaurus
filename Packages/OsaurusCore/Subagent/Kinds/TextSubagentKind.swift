@@ -526,6 +526,14 @@ final class TextSubagentKind: SubagentKind, @unchecked Sendable {
         }
         guard !specs.isEmpty else { return nil }
         let allowed = Set(specs.map { $0.function.name })
+        // The parent chat publishes its own request scope. A spawned
+        // agent executes inside that task, so leaving the TaskLocal inherited
+        // makes the registry reject the child's legitimately exposed tools as
+        // "not available in this conversation". Publish a distinct scope from
+        // the child's exact schema for the lifetime of every child dispatch.
+        // Keep one scope for the whole run so capabilities_load can grow it
+        // additively, just like the direct chat loop.
+        let childExecutionScope = ToolExecutionScope(exposed: specs)
         let cap = maxToolCalls > 0 ? maxToolCalls : defaultReadOnlyToolCallCap
         let counter = ToolCallCounter()
         let dispatchCall: @Sendable (ServiceToolInvocation) async -> String =
@@ -572,7 +580,11 @@ final class TextSubagentKind: SubagentKind, @unchecked Sendable {
                         detail: Self.toolCallDetail(invocation)
                     )
                 )
-                return await dispatchCall(invocation)
+                return await ChatExecutionContext.$toolExecutionScope.withValue(
+                    childExecutionScope
+                ) {
+                    await dispatchCall(invocation)
+                }
             }
         )
     }
