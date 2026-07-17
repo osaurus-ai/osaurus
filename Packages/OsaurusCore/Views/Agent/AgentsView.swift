@@ -1005,6 +1005,14 @@ struct AgentDetailView: View {
     /// directly; `saveAgent` folds them back into the persisted agent.
     @State private var toolsEnabled: Bool = true
     @State private var memoryEnabled: Bool = true
+    /// Tapping the dimmed tool-dependent nest while Tools is off scrolls
+    /// to the Tools toggle and pulses the shared search-highlight glow on
+    /// it, pointing at the switch that unlocks the nest. The nonce keys
+    /// the scroll; the generation counter lets the auto-clear of a pulse
+    /// know whether a newer tap superseded it.
+    @State private var scrollToToolsNonce = 0
+    @State private var toolsHighlightActive = false
+    @State private var toolsHighlightGeneration = 0
     /// Local mirror of `Agent.settings.dbEnabled` (spec §5.5). The
     /// Features section binds a toggle to this; `debouncedSave`
     /// folds it back into the persisted `AgentSettings` block.
@@ -1316,14 +1324,21 @@ struct AgentDetailView: View {
                 .environment(\.theme, themeManager.currentTheme)
                 .id(selectedTab)
         default:
-            ScrollView {
-                VStack(alignment: .leading, spacing: 16) {
-                    scrollableTabContent
+            ScrollViewReader { proxy in
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 16) {
+                        scrollableTabContent
+                    }
+                    .padding(24)
+                    .id(selectedTab)
                 }
-                .padding(24)
-                .id(selectedTab)
+                .animation(nil, value: selectedTab)
+                .onChange(of: scrollToToolsNonce) { _, _ in
+                    withAnimation(.easeInOut(duration: 0.3)) {
+                        proxy.scrollTo(Self.toolsToggleScrollId, anchor: .center)
+                    }
+                }
             }
-            .animation(nil, value: selectedTab)
         }
     }
 
@@ -2690,6 +2705,8 @@ struct AgentDetailView: View {
                             "Let the agent use tools to take actions and look things up. Turn off for a chat-only agent.",
                         isOn: $toolsEnabled
                     )
+                    .id(Self.toolsToggleScrollId)
+                    .settingsSearchHighlight(toolsHighlightActive)
                 }
 
                 // Always shown (default + custom agents): the empty-state
@@ -2847,11 +2864,46 @@ struct AgentDetailView: View {
             }
             .opacity(toolsEnabled ? 1 : 0.45)
             .disabled(!toolsEnabled)
+            // `.disabled` silently swallows clicks on the dead toggles.
+            // Catch them instead and point at the switch that unlocks the
+            // nest: scroll to the Tools row and pulse the shared
+            // search-highlight glow on it.
+            .overlay {
+                if !toolsEnabled {
+                    Color.clear
+                        .contentShape(Rectangle())
+                        .onTapGesture { flashToolsToggle() }
+                }
+            }
         }
         // Indent the whole nest relative to the top-level toggle cards so
         // the child relationship to the Tools switch is unmistakable.
         .padding(.leading, 16)
         .animation(.easeInOut(duration: 0.15), value: toolsEnabled)
+    }
+
+    /// Scroll anchor for the Tools toggle row in the Features section.
+    private static let toolsToggleScrollId = "features-tools-toggle"
+
+    /// Scroll the Tools toggle into view and run one highlight breath on
+    /// it. Re-tapping restarts the pulse; the delayed clear only lands if
+    /// no newer tap has bumped the generation, so a rapid second tap can't
+    /// cut its own glow short.
+    private func flashToolsToggle() {
+        scrollToToolsNonce += 1
+        toolsHighlightGeneration += 1
+        let generation = toolsHighlightGeneration
+        // Drop to false first so `settingsSearchHighlight` sees a fresh
+        // rising edge and re-fires its breath on every tap.
+        toolsHighlightActive = false
+        DispatchQueue.main.async {
+            guard generation == toolsHighlightGeneration else { return }
+            toolsHighlightActive = true
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2.2) {
+            guard generation == toolsHighlightGeneration else { return }
+            toolsHighlightActive = false
+        }
     }
 
     /// Knowledge feature rows: the on/off toggle plus per-collection
