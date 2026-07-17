@@ -287,6 +287,11 @@ public enum OsaurusPaths {
         root().appendingPathComponent("methods", isDirectory: true)
     }
 
+    /// Palace (verbatim memory archive) data directory
+    public static func palace() -> URL {
+        root().appendingPathComponent("palace", isDirectory: true)
+    }
+
     /// On-device Osaurus Router billing ledger directory (`~/.osaurus/billing/`).
     public static func billing() -> URL {
         root().appendingPathComponent("billing", isDirectory: true)
@@ -483,10 +488,13 @@ public enum OsaurusPaths {
         agentChannels().appendingPathComponent("messages.sqlite")
     }
     public static func methodsDatabaseFile() -> URL { methods().appendingPathComponent("methods.sqlite") }
+    /// Palace verbatim-memory archive: `~/.osaurus/palace/palace.sqlite`.
+    public static func palaceDatabaseFile() -> URL { palace().appendingPathComponent("palace.sqlite") }
     /// Encrypted on-device Osaurus Router billing ledger: `~/.osaurus/billing/ledger.sqlite`.
     public static func billingLedgerDatabaseFile() -> URL { billing().appendingPathComponent("ledger.sqlite") }
     public static func toolIndexDatabaseFile() -> URL { toolIndex().appendingPathComponent("tool_index.sqlite") }
     public static func memoryConfigFile() -> URL { config().appendingPathComponent("memory.json") }
+    public static func palaceConfigFile() -> URL { config().appendingPathComponent("palace.json") }
     public static func relayConfigFile() -> URL { config().appendingPathComponent("relay.json") }
 
     // MARK: - File Path Helpers

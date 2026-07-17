@@ -248,6 +248,21 @@ public final class ToolRegistry: ObservableObject {
             DBRunViewTool(),
             DBListViewsTool(),
             DBDropViewTool(),
+            // Palace verbatim-memory feature (docs/plans/palace-implementation-plan.md).
+            // Registered as built-ins like db_*; SystemPromptComposer strips
+            // them from the model-visible schema unless the GLOBAL
+            // `palace.json: enabled` flag is true (default false). Each
+            // tool's execute() re-checks the flag so a frozen schema, manual
+            // selection, or a direct /mcp/call can't reach a disabled palace.
+            PalaceStatusTool(),
+            PalaceSearchTool(),
+            PalaceAddDrawerTool(),
+            PalaceGetDrawerTool(),
+            PalaceUpdateDrawerTool(),
+            PalaceDeleteDrawerTool(),
+            PalaceListWingsTool(),
+            PalaceListRoomsTool(),
+            PalaceListDrawersTool(),
             // Self-scheduling + notification (spec §9, §10). Registered as
             // built-ins so the runtime can execute them, but the system
             // prompt composer strips them from the model-visible schema
@@ -1826,6 +1841,14 @@ public final class ToolRegistry: ObservableObject {
         let builtInNames = Set(builtInToolNames)
         let runtimeNames = runtimeManagedToolNames
         let excluded = excludedToolNames(for: mode)
+        // Palace global feature gate (default off): keep disabled palace
+        // tools out of every surface that builds from the always-loaded
+        // baseline — the chat composer AND the plugin-host inference path
+        // (PluginHostAPI.applyAgentTools), which does not run the
+        // composer's per-agent strips. The composer's own palace strip
+        // stays as defense in depth for frozen-schema turns. The config
+        // read is mtime-cached, so this is a cheap stat.
+        let palaceEnabled = PalaceConfigurationStore.load().enabled
 
         let specs =
             toolsByName.values
@@ -1834,6 +1857,7 @@ public final class ToolRegistry: ObservableObject {
             }
             .filter { !excluded.contains($0.name) }
             .filter { !excludeCapabilityTools || !Self.capabilityToolNames.contains($0.name) }
+            .filter { palaceEnabled || !SystemPromptComposer.palaceToolNames.contains($0.name) }
             .sorted { $0.name < $1.name }
             .map { $0.asOpenAITool() }
         return annotatedForCombinedMode(specs, mode: mode)

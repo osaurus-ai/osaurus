@@ -1628,6 +1628,18 @@ public struct SystemPromptComposer: Sendable {
         "schedule_next_run", "cancel_next_run", "notify",
     ]
 
+    /// Tools belonging to the Palace verbatim-memory feature
+    /// (docs/plans/palace-implementation-plan.md). Unlike the per-agent
+    /// `agentDBToolNames` gate, Palace is a GLOBAL opt-in
+    /// (`config/palace.json: enabled`, default false), so the strip applies
+    /// in both auto and manual modes with no `additionalToolNames`
+    /// carve-out — feature off means no model ever sees the tools.
+    static let palaceToolNames: Set<String> = [
+        "palace_status", "palace_search", "palace_add_drawer", "palace_get_drawer",
+        "palace_update_drawer", "palace_delete_drawer",
+        "palace_list_wings", "palace_list_rooms", "palace_list_drawers",
+    ]
+
     /// Render the schema snapshot block injected after the onboarding
     /// prompt when `dbEnabled` is true. Best-effort: a failure to open
     /// the DB (e.g. the user just enabled the toggle and the first
@@ -2134,6 +2146,17 @@ public struct SystemPromptComposer: Sendable {
         //   - In auto mode, a tool pulled in via `additionalToolNames`
         //     (a `capabilities_load`) survives — a deliberate "I want this"
         //     signal. The gate only trims the default baseline, not picks.
+        //
+        // Palace global feature gate (default off). Applies in both auto
+        // and manual modes — the palace.json flag governs the subsystem,
+        // not per-agent tool hygiene. Execution re-checks the flag, so
+        // this strip is schema hygiene, not the security boundary.
+        if !PalaceConfigurationStore.load().enabled {
+            for name in Self.palaceToolNames {
+                byName.removeValue(forKey: name)
+            }
+        }
+
         if !isManual {
             let keep = additionalToolNames
             if !snapshot.dbEnabled {
