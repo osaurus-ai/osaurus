@@ -48,21 +48,16 @@ final class PluginInstallIntegrityTests: XCTestCase {
 
     private func sv(_ s: String) -> SemanticVersion { SemanticVersion.parse(s)! }
 
-    private func makeArtifact(minMacOS: String? = nil) -> PluginArtifact {
-        artifactJSONDecoded(os: "macos", arch: "arm64", minMacOS: minMacOS)
-    }
-
-    private func artifactJSONDecoded(os: String, arch: String, minMacOS: String?) -> PluginArtifact {
-        var dict: [String: Any] = [
-            "os": os,
-            "arch": arch,
-            "url": "https://example.invalid/plugin.zip",
-            "sha256": String(repeating: "0", count: 64),
-            "size": 4,
-        ]
-        if let minMacOS { dict["min_macos"] = minMacOS }
-        let data = try! JSONSerialization.data(withJSONObject: dict)
-        return try! JSONDecoder().decode(PluginArtifact.self, from: data)
+    private func makeArtifact(minMacOS: String? = nil, url: String = "https://example.invalid/plugin.zip") -> PluginArtifact {
+        PluginArtifact(
+            os: "macos",
+            arch: "arm64",
+            min_macos: minMacOS,
+            url: url,
+            sha256: String(repeating: "0", count: 64),
+            minisign: nil,
+            size: 4
+        )
     }
 
     private func makeVersionEntry(
@@ -70,33 +65,13 @@ final class PluginInstallIntegrityTests: XCTestCase {
         minOsaurus: String? = nil,
         artifacts: [PluginArtifact]? = nil
     ) -> PluginVersionEntry {
-        var dict: [String: Any] = [
-            "version": version,
-            "artifacts": [
-                [
-                    "os": "macos",
-                    "arch": "arm64",
-                    "url": "https://example.invalid/plugin-\(version).zip",
-                    "sha256": String(repeating: "0", count: 64),
-                    "size": 4,
-                ]
-            ],
-        ]
-        if let minOsaurus {
-            dict["requires"] = ["osaurus_min_version": minOsaurus]
-        }
-        let data = try! JSONSerialization.data(withJSONObject: dict)
-        var entry = try! JSONDecoder().decode(PluginVersionEntry.self, from: data)
-        if let artifacts {
-            entry = PluginVersionEntry(
-                version: entry.version,
-                release_date: entry.release_date,
-                notes: entry.notes,
-                artifacts: artifacts,
-                requires: entry.requires
-            )
-        }
-        return entry
+        PluginVersionEntry(
+            version: sv(version),
+            release_date: nil,
+            notes: nil,
+            artifacts: artifacts ?? [makeArtifact(url: "https://example.invalid/plugin-\(version).zip")],
+            requires: minOsaurus.map { PluginRequirements(osaurus_min_version: sv($0)) }
+        )
     }
 
     private func makeSpec(
