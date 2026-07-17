@@ -136,7 +136,9 @@ struct AgentAbilitiesHeroCard: View {
                         .foregroundColor(theme.tertiaryText)
                 }
                 .accessibilityElement(children: .combine)
-                .accessibilityLabel(Text("Estimated startup context: \(estimateText)"))
+                .accessibilityLabel(
+                    Text("Estimated startup context: \(estimateText)", bundle: .module)
+                )
             }
 
             if let preview {
