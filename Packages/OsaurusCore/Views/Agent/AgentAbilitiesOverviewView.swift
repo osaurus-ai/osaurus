@@ -470,6 +470,7 @@ extension AgentAbilityCard where Accessory == EmptyView {
         isActive: Bool? = nil,
         isInteractive: Bool = true,
         pausedNote: LocalizedStringKey? = nil,
+        onPausedNoteTap: (() -> Void)? = nil,
         configureLabel: LocalizedStringKey? = nil,
         onConfigure: (() -> Void)? = nil
     ) {
@@ -481,6 +482,7 @@ extension AgentAbilityCard where Accessory == EmptyView {
             isActive: isActive,
             isInteractive: isInteractive,
             pausedNote: pausedNote,
+            onPausedNoteTap: onPausedNoteTap,
             configureLabel: configureLabel,
             onConfigure: onConfigure,
             accessory: { EmptyView() }
