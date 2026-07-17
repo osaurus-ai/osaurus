@@ -2693,6 +2693,18 @@ struct AgentDetailView: View {
                 // greeting flavor. The on/off lives here; the matching
                 // editor (AI personality vs. custom greeting) is in
                 // Customization > Empty State.
+                // Tool-backed capabilities render as structural children of
+                // the Tools switch: every one of them enters the model's
+                // schema through `resolveTools`, which returns nothing when
+                // Tools is off, so nesting (plus dimming) makes the
+                // dependency visible instead of leaving live-looking dead
+                // toggles. Code Execution and Host Files stay top-level —
+                // their execution modes deliberately override the per-agent
+                // Tools switch (`resolveEffectiveToolsOff`).
+                if isCustomAgent {
+                    toolDependentFeatureGroups
+                }
+
                 featureGroup(
                     "Empty State",
                     description: "How the chat looks before your first message."
@@ -2709,81 +2721,6 @@ struct AgentDetailView: View {
                 // its fixed baseline (DB hard-off, no sandbox), so these
                 // would be dead UI for it.
                 if isCustomAgent {
-                    featureGroup(
-                        "Output",
-                        description: "Extra ways the agent can present results."
-                    ) {
-                        featureToggleRow(
-                            title: "Charts",
-                            subtitle: "Render data as inline chart cards.",
-                            isOn: $renderChartEnabled
-                        )
-                        featureToggleRow(
-                            title: "Speak Tool",
-                            subtitle:
-                                "Give the agent a tool it can call to read a reply aloud when you ask. For always-speak, use Auto Speak Responses in the Voice section.",
-                            isOn: $speakEnabled
-                        )
-                    }
-
-                    featureGroup(
-                        "Memory & Recall",
-                        description: "Active lookups into the agent's memory."
-                    ) {
-                        featureToggleRow(
-                            title: "Memory Recall",
-                            subtitle:
-                                "Let the agent search its own memory mid-conversation to pull up past details on demand. Separate from Memory above, which only auto-injects and saves.",
-                            isOn: $searchMemoryEnabled
-                        )
-                    }
-
-                    featureGroup(
-                        "Knowledge",
-                        description: "Curated reference material the agent can consult on demand."
-                    ) {
-                        knowledgeFeatureSection
-                    }
-
-                    featureGroup(
-                        "Web",
-                        description: "Live information from the internet."
-                    ) {
-                        featureToggleRow(
-                            title: "Web Search",
-                            subtitle:
-                                "Let the agent search the web through your search providers. Works out of the box with free sources; configure providers in Settings > Search.",
-                            isOn: $webSearchEnabled
-                        )
-                    }
-
-                    featureGroup(
-                        "Autonomy",
-                        description: "Let the agent act between your messages."
-                    ) {
-                        featureToggleRow(
-                            title: "Self-scheduling",
-                            subtitle:
-                                "Let the agent schedule its own follow-up runs and send you notifications.",
-                            isOn: $selfSchedulingEnabled
-                        )
-                        if selfSchedulingEnabled {
-                            Text(
-                                "Run frequency and limits are configured in the Scheduling section below.",
-                                bundle: .module
-                            )
-                            .font(.system(size: 11))
-                            .foregroundColor(theme.tertiaryText)
-                        }
-                    }
-
-                    featureGroup(
-                        "Data",
-                        description: "Durable storage for this agent."
-                    ) {
-                        databaseFeatureRow
-                    }
-
                     featureGroup(
                         "Code Execution",
                         description: "Run code and commands in an isolated sandbox."
@@ -2807,6 +2744,108 @@ struct AgentDetailView: View {
                 }
             }
         }
+    }
+
+    /// Tool-backed feature groups, indented under Model Access with a
+    /// guide rule so the dependency on the Tools switch reads as
+    /// structure. When Tools is off the whole block dims and disables;
+    /// the stored per-feature flags are preserved, so nothing has to be
+    /// reconfigured when Tools comes back on.
+    private var toolDependentFeatureGroups: some View {
+        HStack(alignment: .top, spacing: 12) {
+            RoundedRectangle(cornerRadius: 1)
+                .fill(toolsEnabled ? theme.accentColor.opacity(0.35) : theme.inputBorder)
+                .frame(width: 2)
+            VStack(alignment: .leading, spacing: 18) {
+                Text(
+                    toolsEnabled
+                        ? "These features work through tools and follow the Tools switch above."
+                        : "Tools is off, so these features are inactive. Turn Tools on to use them.",
+                    bundle: .module
+                )
+                .font(.system(size: 11))
+                .foregroundColor(theme.tertiaryText)
+                .fixedSize(horizontal: false, vertical: true)
+
+                featureGroup(
+                    "Output",
+                    description: "Extra ways the agent can present results."
+                ) {
+                    featureToggleRow(
+                        title: "Charts",
+                        subtitle: "Render data as inline chart cards.",
+                        isOn: $renderChartEnabled
+                    )
+                    featureToggleRow(
+                        title: "Speak Tool",
+                        subtitle:
+                            "Give the agent a tool it can call to read a reply aloud when you ask. For always-speak, use Auto Speak Responses in the Voice section.",
+                        isOn: $speakEnabled
+                    )
+                }
+
+                featureGroup(
+                    "Memory & Recall",
+                    description: "Active lookups into the agent's memory."
+                ) {
+                    featureToggleRow(
+                        title: "Memory Recall",
+                        subtitle:
+                            "Let the agent search its own memory mid-conversation to pull up past details on demand. Separate from Memory above, which only auto-injects and saves.",
+                        isOn: $searchMemoryEnabled
+                    )
+                }
+
+                featureGroup(
+                    "Knowledge",
+                    description: "Curated reference material the agent can consult on demand."
+                ) {
+                    knowledgeFeatureSection
+                }
+
+                featureGroup(
+                    "Web",
+                    description: "Live information from the internet."
+                ) {
+                    featureToggleRow(
+                        title: "Web Search",
+                        subtitle:
+                            "Let the agent search the web through your search providers. Works out of the box with free sources; configure providers in Settings > Search.",
+                        isOn: $webSearchEnabled
+                    )
+                }
+
+                featureGroup(
+                    "Autonomy",
+                    description: "Let the agent act between your messages."
+                ) {
+                    featureToggleRow(
+                        title: "Self-scheduling",
+                        subtitle:
+                            "Let the agent schedule its own follow-up runs and send you notifications.",
+                        isOn: $selfSchedulingEnabled
+                    )
+                    if selfSchedulingEnabled {
+                        Text(
+                            "Run frequency and limits are configured in the Scheduling section below.",
+                            bundle: .module
+                        )
+                        .font(.system(size: 11))
+                        .foregroundColor(theme.tertiaryText)
+                    }
+                }
+
+                featureGroup(
+                    "Data",
+                    description: "Durable storage for this agent."
+                ) {
+                    databaseFeatureRow
+                }
+            }
+            .opacity(toolsEnabled ? 1 : 0.45)
+            .disabled(!toolsEnabled)
+        }
+        .animation(.easeInOut(duration: 0.15), value: toolsEnabled)
     }
 
     /// Knowledge feature rows: the on/off toggle plus per-collection

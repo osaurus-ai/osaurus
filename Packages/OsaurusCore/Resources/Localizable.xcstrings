@@ -159521,6 +159521,40 @@
         }
       }
     },
+    "These features work through tools and follow the Tools switch above." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Diese Funktionen laufen über Tools und folgen dem Tools-Schalter oben."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "이 기능들은 도구를 통해 작동하며 위의 도구 스위치를 따릅니다."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Эти функции работают через инструменты и следуют переключателю «Инструменты» выше."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "这些功能通过工具运行，并遵循上方的“工具”开关。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "這些功能透過工具運作，並遵循上方的「工具」開關。"
+          }
+        }
+      }
+    },
     "These instructions will be sent to the AI when the schedule runs." : {
       "localizations" : {
         "de" : {
@@ -163922,6 +163956,40 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "已安裝插件和連接提供者的工具"
+          }
+        }
+      }
+    },
+    "Tools is off, so these features are inactive. Turn Tools on to use them." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Tools ist deaktiviert, daher sind diese Funktionen inaktiv. Aktiviere Tools, um sie zu nutzen."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "도구가 꺼져 있어 이 기능들이 비활성화되어 있습니다. 사용하려면 도구를 켜세요."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Инструменты выключены, поэтому эти функции неактивны. Включите инструменты, чтобы ими пользоваться."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "“工具”已关闭，因此这些功能处于非活动状态。开启“工具”即可使用。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "「工具」已關閉，因此這些功能處於非作用狀態。開啟「工具」即可使用。"
           }
         }
       }
