@@ -14,6 +14,11 @@ import Testing
 
 @testable import OsaurusCore
 
+/// These integration tests synchronously wait on real `Process` instances and
+/// share the service actor. Running every case concurrently can exhaust Swift's
+/// cooperative executor in the full Xcode suite, leaving one random git process
+/// test suspended until the per-test timeout kills it.
+@Suite(.serialized)
 struct KnowledgeGitSyncTests {
 
     // MARK: - Git harness
