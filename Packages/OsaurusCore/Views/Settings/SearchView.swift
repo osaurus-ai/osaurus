@@ -9,7 +9,7 @@
 //    - Try-it playground running the exact cascade agents get.
 //    - Preset gallery (empty state) / full-width provider cards (configured),
 //      with a two-step connect flow that verifies keys automatically.
-//    - Free sources and Advanced (per-category routing + custom JSON
+//    - Built-in sources and Advanced (per-category routing + custom JSON
 //      definitions) as standard settings sections.
 //
 
@@ -48,6 +48,7 @@ struct SearchView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
                     hubPanel
+                    premiumSearchStrip
                     tryItCard
                     if apiProviderRows.isEmpty {
                         presetGallery
@@ -96,10 +97,10 @@ struct SearchView: View {
         }.count
         let freeOn = freeProviderRows.filter { $0.provider.enabled }.count
         if readyAPI > 0 {
-            return L("\(readyAPI) provider\(readyAPI == 1 ? "" : "s") connected • \(freeOn) free source\(freeOn == 1 ? "" : "s") as backup")
+            return L("\(readyAPI) provider\(readyAPI == 1 ? "" : "s") connected • \(freeOn) built-in source\(freeOn == 1 ? "" : "s") as backup")
         }
         if freeOn > 0 {
-            return L("Running on free sources — connect a provider for better results")
+            return L("Running on built-in sources — connect a provider for better results")
         }
         return L("Web search is off — enable a source to let agents search")
     }
@@ -167,8 +168,85 @@ struct SearchView: View {
     }
 
     private func providerDisplayName(_ id: String?) -> String {
-        guard let id, !id.isEmpty else { return L("free sources") }
+        guard let id, !id.isEmpty else { return L("built-in sources") }
+        if id == OsaurusRouterSearchBackend.providerId { return L("Osaurus Premium") }
         return manager.definition(id: id)?.name ?? id
+    }
+
+    // MARK: - Premium search strip
+
+    /// Compact premium-search state row: the on/off preference lives here for
+    /// discoverability next to the providers it front-runs; grants, auto-pay,
+    /// and usage live in the dedicated Credits section this links to.
+    @ViewBuilder
+    private var premiumSearchStrip: some View {
+        if OsaurusRouter.isEnabled {
+            HStack(alignment: .center, spacing: 12) {
+                Image(systemName: "magnifyingglass.circle.fill")
+                    .font(.system(size: 18, weight: .semibold))
+                    .foregroundColor(
+                        manager.hostedSearchEnabled ? theme.accentColor : theme.tertiaryText)
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Premium search", bundle: .module)
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundColor(theme.primaryText)
+                    Text(premiumStripSubtitle, bundle: .module)
+                        .font(.system(size: 11))
+                        .foregroundColor(theme.secondaryText)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+
+                Spacer(minLength: 12)
+
+                Button {
+                    ManagementStateManager.shared.selectedTab = .credits
+                } label: {
+                    Text("Credits", bundle: .module)
+                        .font(.system(size: 11, weight: .medium))
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+                .localizedHelp("Manage search credits and billing.")
+
+                Toggle(
+                    "",
+                    isOn: Binding(
+                        get: { manager.hostedSearchEnabled },
+                        set: { manager.setHostedSearchEnabled($0) }
+                    )
+                )
+                .labelsHidden()
+                .toggleStyle(.switch)
+                .controlSize(.small)
+                .tint(theme.accentColor)
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 12)
+            .background(
+                RoundedRectangle(cornerRadius: 10)
+                    .fill(theme.cardBackground)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 10)
+                            .stroke(
+                                manager.hostedSearchEnabled
+                                    ? theme.accentColor.opacity(0.35) : theme.cardBorder,
+                                lineWidth: 1
+                            )
+                    )
+            )
+        }
+    }
+
+    private var premiumStripSubtitle: LocalizedStringKey {
+        if !manager.hostedSearchEnabled {
+            if manager.hasActiveUserProviderSetup {
+                return "Off — your own providers below handle every search."
+            }
+            return "Off — searches use the providers and built-in sources below."
+        }
+        return
+            "Searches go through Osaurus first — search credits, then your wallet — and fall back to the sources below."
     }
 
     private func relativeTime(_ date: Date) -> String {
@@ -210,7 +288,7 @@ struct SearchView: View {
 
             HStack(spacing: 8) {
                 metricPill(title: L("Providers"), value: "\(readyAPI)", color: theme.accentColor)
-                metricPill(title: L("Free sources"), value: "\(freeOn)", color: theme.successColor)
+                metricPill(title: L("Built-in sources"), value: "\(freeOn)", color: theme.successColor)
                 metricPill(
                     title: L("Categories"),
                     value: categories.map { $0.capitalized }.joined(separator: " · "),
@@ -424,9 +502,15 @@ struct SearchView: View {
         trySearching = true
         tryOutcome = nil
         Task {
-            let outcome = await manager.runSearch(SearchRequest(query: query, maxResults: 5))
+            // Same premium-first path the tools run, so the health panel and
+            // "via …" label reflect what agents actually get (including a
+            // billed hosted request when premium is on).
+            let run = await manager.runHostedFirstSearch(
+                SearchRequest(query: query, maxResults: 5),
+                idempotencyKey: UUID().uuidString
+            )
             await MainActor.run {
-                tryOutcome = outcome
+                tryOutcome = run.outcome
                 trySearching = false
             }
         }
@@ -449,7 +533,7 @@ struct SearchView: View {
                     .font(.system(size: 16, weight: .semibold))
                     .foregroundColor(theme.primaryText)
                 Text(
-                    "Free sources work out of the box. Connect a search provider for faster, more relevant results — free tiers available, takes about 2 minutes.",
+                    "Built-in sources work out of the box. Connect a search provider for faster, more relevant results — setup takes about 2 minutes.",
                     bundle: .module
                 )
                 .font(.system(size: 12))
@@ -542,7 +626,7 @@ struct SearchView: View {
     }
 
     private var freeSourcesSection: some View {
-        SettingsSection(title: L("Free Sources"), icon: "gift") {
+        SettingsSection(title: L("Built-in Sources"), icon: "globe") {
             VStack(alignment: .leading, spacing: 0) {
                 Text(
                     "Built-in sources that need no key. Always available as backup when no provider answers.",
@@ -640,7 +724,7 @@ struct SearchView: View {
                 SettingsSubsection(label: L("Category preferences"), anchorId: "search.routing") {
                     VStack(alignment: .leading, spacing: 10) {
                         Text(
-                            "Pick which provider answers first for each kind of search. The rest follow your main list order, with free sources as backup.",
+                            "Pick which provider answers first for each kind of search. The rest follow your main list order, with built-in sources as backup.",
                             bundle: .module
                         )
                         .font(.system(size: 11))

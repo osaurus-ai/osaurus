@@ -246,6 +246,6 @@ struct WebSearchToolTests {
         let withProvider = WebSearchResultFormatter.noResultsHint(hasConfiguredAPIProvider: true)
         let without = WebSearchResultFormatter.noResultsHint(hasConfiguredAPIProvider: false)
         #expect(withProvider.contains("API keys"))
-        #expect(without.contains("add a free search provider"))
+        #expect(without.contains("add a search provider"))
     }
 }

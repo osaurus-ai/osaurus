@@ -1050,21 +1050,50 @@ final class NativeToolCallRowView: NSView {
                 )
             }
             searchSettingsButton.isHidden = !showSearchLink
+            // Search-source tag for completed search rows: premium (Osaurus
+            // hosted) tints accent, the user's own provider reads neutral,
+            // and the built-in scrapers stay dimmed — the at-a-glance state
+            // the Credits UI elaborates on.
+            let sourceTag: (label: String, color: NSColor)? = {
+                guard !failed, ToolDisplayName.isSearchTool(toolName),
+                    let result = item.result,
+                    let source = Self.searchSource(inToolResult: result)
+                else { return nil }
+                switch source {
+                case "premium": return (L("Premium"), NSColor(theme.accentColor))
+                case "custom": return (L("Your provider"), NSColor(theme.secondaryText))
+                case "free": return (L("Built-in"), NSColor(theme.tertiaryText))
+                default: return nil
+                }
+            }()
             // Append the recorded duration after an interpunct, dimmed.
-            if let elapsed = item.duration {
+            if item.duration != nil || sourceTag != nil {
                 let s = NSMutableAttributedString(
                     string: past,
                     attributes: [.font: titleFont, .foregroundColor: NSColor(theme.primaryText)]
                 )
-                s.append(
-                    NSAttributedString(
-                        string: " · \(Self.formatElapsed(elapsed))",
-                        attributes: [
-                            .font: NSFont.systemFont(ofSize: 12, weight: .regular),
-                            .foregroundColor: NSColor(theme.tertiaryText),
-                        ]
+                if let tag = sourceTag {
+                    s.append(
+                        NSAttributedString(
+                            string: " · \(tag.label)",
+                            attributes: [
+                                .font: NSFont.systemFont(ofSize: 12, weight: .medium),
+                                .foregroundColor: tag.color,
+                            ]
+                        )
                     )
-                )
+                }
+                if let elapsed = item.duration {
+                    s.append(
+                        NSAttributedString(
+                            string: " · \(Self.formatElapsed(elapsed))",
+                            attributes: [
+                                .font: NSFont.systemFont(ofSize: 12, weight: .regular),
+                                .foregroundColor: NSColor(theme.tertiaryText),
+                            ]
+                        )
+                    )
+                }
                 nameLabel.attributedStringValue = s
             } else {
                 nameLabel.stringValue = past
@@ -1885,6 +1914,22 @@ final class NativeToolCallRowView: NSView {
     /// recomputed on every cell (re)configure tick while a response streams. Results
     /// are write-once per call, so the verdict is keyed by (call id, byte length).
     private var cachedErrorVerdict: (callId: String, resultBytes: Int, isError: Bool)?
+
+    /// Sniff the `search_source` classification a search tool stamped on its
+    /// success payload. Substring scan (tolerating compact and pretty JSON)
+    /// rather than a full decode — results can be large and this runs on the
+    /// collapsed row only.
+    static func searchSource(inToolResult result: String) -> String? {
+        for source in ["premium", "custom", "free"] {
+            if result.contains("\"search_source\":\"\(source)\"")
+                || result.contains("\"search_source\" : \"\(source)\"")
+                || result.contains("\"search_source\": \"\(source)\"")
+            {
+                return source
+            }
+        }
+        return nil
+    }
 
     private func isErrorResult(_ result: String, callId: String) -> Bool {
         let bytes = result.utf8.count

@@ -192,6 +192,76 @@ struct WalletActivityProjectorTests {
         #expect(rows[1].isCredit)
     }
 
+    private func webUsage(
+        id: String = "w1",
+        operation: String = "search",
+        billing: String = "free",
+        cost: String = "0",
+        status: String = "completed",
+        createdAt: String = WalletActivityProjectorTests.timestamp(offset: 0)
+    ) -> OsaurusRouterWebUsageItem {
+        OsaurusRouterWebUsageItem(
+            id: id,
+            requestId: nil,
+            operation: operation,
+            provider: "exa",
+            billing: billing,
+            units: nil,
+            costMicro: cost,
+            status: status,
+            createdAt: createdAt
+        )
+    }
+
+    @Test func webUsageRowsMergeIntoTimeline() {
+        let rows = WalletActivityProjector().rows(
+            usageItems: [usage(id: "u1", createdAt: Self.timestamp(offset: -100))],
+            transactions: [],
+            webUsageItems: [webUsage(id: "w1", createdAt: Self.timestamp(offset: 50))]
+        )
+
+        #expect(rows.map(\.id) == ["web-w1", "usage-u1"])
+        #expect(rows[0].kind == .webUsage)
+    }
+
+    @Test func includedWebSearchShowsGrantVocabulary() {
+        let row = WalletActivityProjector().rows(
+            usageItems: [],
+            transactions: [],
+            webUsageItems: [webUsage(billing: "free", cost: "0")]
+        )[0]
+
+        #expect(row.title == "Web search")
+        #expect(row.amountLabel == "Included")
+        #expect(row.isIncludedWebRequest)
+        #expect(row.isCredit == false)
+        #expect(row.stateKind == .success)
+    }
+
+    @Test func paidWebContentsShowsSignedCost() {
+        let row = WalletActivityProjector().rows(
+            usageItems: [],
+            transactions: [],
+            webUsageItems: [webUsage(operation: "contents", billing: "paid", cost: "12500")]
+        )[0]
+
+        #expect(row.title == "Page extract")
+        #expect(row.amountLabel == "-$0.01")
+        #expect(row.isIncludedWebRequest == false)
+    }
+
+    @Test func webUsageMapsServerStatusToStateKind() {
+        let rows = WalletActivityProjector().rows(
+            usageItems: [],
+            transactions: [],
+            webUsageItems: [
+                webUsage(id: "ok", status: "completed", createdAt: Self.timestamp(offset: 2)),
+                webUsage(id: "bad", status: "mystery", createdAt: Self.timestamp(offset: 1)),
+            ]
+        )
+        #expect(rows.map(\.stateKind) == [.success, .error])
+    }
+
     @Test func unparseableTimestampsSortLast() {
         let rows = WalletActivityProjector().rows(
             usageItems: [usage(id: "dated", createdAt: Self.timestamp(offset: -3600))],

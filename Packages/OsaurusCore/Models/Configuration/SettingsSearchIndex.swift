@@ -649,6 +649,25 @@ public enum SettingsSearchIndex {
             ]
         ),
         .init(
+            id: "search.premium",
+            tab: .search,
+            title: "Premium Search",
+            keywords: [
+                "premium search", "hosted search", "osaurus search", "router search",
+                "paid search", "web search credits",
+            ]
+        ),
+        .init(
+            id: "credits.webSearch",
+            tab: .credits,
+            section: "Web search",
+            title: "Search Credits",
+            keywords: [
+                "web search", "premium search", "free searches", "search credits",
+                "auto pay", "search billing", "page extract", "grant",
+            ]
+        ),
+        .init(
             id: "search.tryIt",
             tab: .search,
             section: "Try it",

@@ -2737,7 +2737,7 @@ struct AgentDetailView: View {
                         featureToggleRow(
                             title: "Web Search",
                             subtitle:
-                                "Let the agent search the web through your search providers. Works out of the box with free sources; configure providers in Settings > Search.",
+                                "Let the agent search the web through your search providers. Works out of the box with built-in sources; configure providers in Settings > Search.",
                             isOn: $webSearchEnabled
                         )
                     }

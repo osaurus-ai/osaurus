@@ -7,6 +7,7 @@ struct CreditsView: View {
     @ObservedObject private var accountService = OsaurusRouterAccountService.shared
     @ObservedObject private var insightsService = InsightsService.shared
     @ObservedObject private var providerManager = RemoteProviderManager.shared
+    @ObservedObject private var searchManager = SearchProviderManager.shared
 
     private static let activityPageSize = 10
     private static let ledgerMatchLimit = 500
@@ -45,6 +46,7 @@ struct CreditsView: View {
                             identityRequiredCard
                         }
                         balanceCard
+                        webSearchCard
                         activityCard
                     } else {
                         routerOffCard
@@ -401,6 +403,197 @@ struct CreditsView: View {
             )
     }
 
+    // MARK: - Web search
+
+    /// Dedicated premium web search section: the premium on/off preference,
+    /// search credit balances, the auto-pay switch, and the graceful
+    /// fallback state when credits ran out.
+    private var webSearchCard: some View {
+        card {
+            VStack(alignment: .leading, spacing: 14) {
+                HStack(alignment: .top, spacing: 12) {
+                    VStack(alignment: .leading, spacing: 4) {
+                        HStack(spacing: 8) {
+                            Text("Web search", bundle: .module)
+                                .font(.system(size: 15, weight: .semibold))
+                                .foregroundColor(theme.primaryText)
+                            if accountService.webSearchNeedsTopUp {
+                                statusPill(
+                                    L("Using built-in sources"),
+                                    icon: "exclamationmark.circle.fill",
+                                    color: theme.warningColor
+                                )
+                            } else if searchManager.hostedSearchEnabled {
+                                statusPill(
+                                    L("Premium"),
+                                    icon: "magnifyingglass.circle.fill",
+                                    color: theme.accentColor
+                                )
+                            }
+                        }
+                        Text(
+                            "Premium search runs the `web_search` tool through Osaurus - better results with zero setup. Search credits cover requests first; after that, requests bill this wallet. If credits run out, search continues on the built-in sources automatically.",
+                            bundle: .module
+                        )
+                        .font(.system(size: 12))
+                        .foregroundColor(theme.secondaryText)
+                        .fixedSize(horizontal: false, vertical: true)
+                    }
+
+                    Spacer()
+
+                    Toggle(
+                        "",
+                        isOn: Binding(
+                            get: { searchManager.hostedSearchEnabled },
+                            set: { searchManager.setHostedSearchEnabled($0) }
+                        )
+                    )
+                    .labelsHidden()
+                    .toggleStyle(.switch)
+                    .controlSize(.small)
+                    .tint(theme.accentColor)
+                }
+
+                if searchManager.hasActiveUserProviderSetup, !searchManager.hostedSearchEnabled {
+                    Label {
+                        Text(
+                            "You have your own search providers configured - they keep handling searches while premium is off.",
+                            bundle: .module
+                        )
+                        .font(.system(size: 11))
+                        .foregroundColor(theme.tertiaryText)
+                        .fixedSize(horizontal: false, vertical: true)
+                    } icon: {
+                        Image(systemName: "curlybraces")
+                            .font(.system(size: 10))
+                            .foregroundColor(theme.tertiaryText)
+                    }
+                }
+
+                if searchManager.hostedSearchEnabled {
+                    if accountService.webSearchNeedsTopUp {
+                        Label {
+                            Text(
+                                "Premium search ran out of credits and is quietly using the built-in sources. Add credits to resume - nothing else to reset.",
+                                bundle: .module
+                            )
+                            .font(.system(size: 11))
+                            .foregroundColor(theme.secondaryText)
+                            .fixedSize(horizontal: false, vertical: true)
+                        } icon: {
+                            Image(systemName: "exclamationmark.triangle.fill")
+                                .font(.system(size: 10))
+                                .foregroundColor(theme.warningColor)
+                        }
+                    }
+
+                    if let grants = accountService.webSettings?.grants {
+                        HStack(spacing: 10) {
+                            if let search = grants.search, search.includedTotal > 0 {
+                                grantMeter(
+                                    title: L("Search credits"),
+                                    allowance: search,
+                                    icon: "magnifyingglass"
+                                )
+                            }
+                            if let contents = grants.contents, contents.includedTotal > 0 {
+                                grantMeter(
+                                    title: L("Extract credits"),
+                                    allowance: contents,
+                                    icon: "doc.text.magnifyingglass"
+                                )
+                            }
+                            if (grants.search?.includedTotal ?? 0) == 0
+                                && (grants.contents?.includedTotal ?? 0) == 0
+                            {
+                                Text(
+                                    "Searches bill your balance at cost.",
+                                    bundle: .module
+                                )
+                                .font(.system(size: 11))
+                                .foregroundColor(theme.tertiaryText)
+                            }
+                            Spacer()
+                        }
+                    }
+
+                    if let settings = accountService.webSettings {
+                        Divider()
+                        HStack(alignment: .center, spacing: 12) {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(
+                                    "Use Osaurus balance when search credits run out",
+                                    bundle: .module
+                                )
+                                .font(.system(size: 12, weight: .semibold))
+                                .foregroundColor(theme.secondaryText)
+                                Text(
+                                    "Off means premium search stops at your remaining credits; everything else uses the built-in sources.",
+                                    bundle: .module
+                                )
+                                .font(.system(size: 11))
+                                .foregroundColor(theme.tertiaryText)
+                                .fixedSize(horizontal: false, vertical: true)
+                            }
+
+                            Spacer(minLength: 12)
+
+                            if accountService.isUpdatingWebSettings {
+                                ProgressView().scaleEffect(0.6)
+                            }
+                            Toggle(
+                                "",
+                                isOn: Binding(
+                                    get: { settings.autoPayEnabled },
+                                    set: { newValue in
+                                        Task { await accountService.setWebAutoPay(newValue) }
+                                    }
+                                )
+                            )
+                            .labelsHidden()
+                            .toggleStyle(.switch)
+                            .controlSize(.small)
+                            .tint(theme.accentColor)
+                            .disabled(accountService.isUpdatingWebSettings)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// Remaining-credit balance for one bucket, styled like the wallet's
+    /// dollar balance — a single number, not a coupon-style "X of Y" counter.
+    /// Credits never refill, so an exhausted bucket reads as spent rather
+    /// than erroring.
+    private func grantMeter(
+        title: String,
+        allowance: OsaurusRouterWebAllowance,
+        icon: String
+    ) -> some View {
+        let exhausted = allowance.remainingTotal <= 0
+        return HStack(spacing: 8) {
+            Image(systemName: icon)
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundColor(exhausted ? theme.tertiaryText : theme.accentColor)
+            VStack(alignment: .leading, spacing: 1) {
+                Text(verbatim: title)
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundColor(theme.secondaryText)
+                Text(verbatim: "\(allowance.remainingTotal)")
+                    .font(.system(size: 12, weight: .semibold, design: .monospaced))
+                    .foregroundColor(exhausted ? theme.tertiaryText : theme.primaryText)
+            }
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 6)
+        .background(
+            RoundedRectangle(cornerRadius: 8)
+                .fill((exhausted ? theme.tertiaryText : theme.accentColor).opacity(0.08))
+        )
+    }
+
     // MARK: - Credits activity
 
     private var activityCard: some View {
@@ -463,6 +656,8 @@ struct CreditsView: View {
                         activityRow(row)
                     case .transaction(let row):
                         transactionRow(row)
+                    case .webUsage(let row):
+                        webUsageRow(row)
                     }
                 }
                 if entry.id != entries.last?.id {
@@ -558,7 +753,9 @@ struct CreditsView: View {
         let transactions = accountService.transactions
             .filter(WalletActivityRow.isWalletVisible)
             .map { CreditsTimelineEntry.transaction(WalletActivityRow(transaction: $0)) }
-        return (requests + transactions)
+        let webRequests = accountService.webUsage
+            .map { CreditsTimelineEntry.webUsage(WalletActivityRow(webUsage: $0)) }
+        return (requests + transactions + webRequests)
             .sorted { ($0.date ?? .distantPast) > ($1.date ?? .distantPast) }
     }
 
@@ -676,6 +873,65 @@ struct CreditsView: View {
         .padding(.horizontal, 14)
         .padding(.vertical, 12)
         .background(theme.cardBackground)
+    }
+
+    /// A billed hosted web search/contents request. The premium (accent)
+    /// family distinguishes it from model spend — full strength when the
+    /// request used a search credit, softened when it billed the balance.
+    private func webUsageRow(_ row: WalletActivityRow) -> some View {
+        HStack(alignment: .center, spacing: 12) {
+            timelineBadge(
+                icon: "magnifyingglass",
+                tint: webUsageTint(row)
+            )
+
+            VStack(alignment: .leading, spacing: 4) {
+                HStack(spacing: 8) {
+                    Text(LocalizedStringKey(row.title), bundle: .module)
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundColor(theme.primaryText)
+                    Text(
+                        row.isIncludedWebRequest ? "Credit" : "Premium",
+                        bundle: .module
+                    )
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundColor(webUsageTint(row))
+                    .padding(.horizontal, 7)
+                    .padding(.vertical, 2)
+                    .background(Capsule().fill(webUsageTint(row).opacity(0.12)))
+                    .fixedSize()
+                }
+                if let date = row.date {
+                    Text(verbatim: date.formatted(date: .abbreviated, time: .shortened))
+                        .font(.system(size: 11))
+                        .foregroundColor(theme.secondaryText)
+                }
+            }
+
+            Spacer(minLength: 12)
+
+            Group {
+                if row.isIncludedWebRequest {
+                    Text("Included", bundle: .module)
+                } else {
+                    Text(verbatim: row.amountLabel)
+                }
+            }
+            .font(.system(size: 13, weight: .semibold, design: .monospaced))
+            .foregroundColor(theme.secondaryText)
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 12)
+        .background(theme.cardBackground)
+    }
+
+    private func webUsageTint(_ row: WalletActivityRow) -> Color {
+        switch row.stateKind {
+        case .warning: return theme.warningColor
+        case .error: return theme.errorColor
+        case .success, .secondary:
+            return row.isIncludedWebRequest ? theme.accentColor : theme.accentColor.opacity(0.7)
+        }
     }
 
     /// Tinted circular icon badge shared by both timeline row types, matching
@@ -884,6 +1140,10 @@ struct CreditsView: View {
         // Transactions feed the merged timeline (top-ups, grants, refunds)
         // alongside the usage rows `refreshAll` already fetched.
         await accountService.refreshTransactions(reset: true)
+        // Web search settings (grants + auto-pay) and billed web requests
+        // feed the Web search card and the merged timeline.
+        await accountService.refreshWebSettings()
+        await accountService.refreshWebUsage(reset: true)
         await reloadLedger()
     }
 
@@ -958,11 +1218,14 @@ struct CreditsView: View {
 private enum CreditsTimelineEntry: Identifiable {
     case request(CreditsActivityRow, date: Date?)
     case transaction(WalletActivityRow)
+    /// A billed hosted web search/contents request (metadata-only).
+    case webUsage(WalletActivityRow)
 
     var id: String {
         switch self {
         case .request(let row, _): return row.id
         case .transaction(let row): return row.id
+        case .webUsage(let row): return row.id
         }
     }
 
@@ -970,6 +1233,7 @@ private enum CreditsTimelineEntry: Identifiable {
         switch self {
         case .request(_, let date): return date
         case .transaction(let row): return row.date
+        case .webUsage(let row): return row.date
         }
     }
 }

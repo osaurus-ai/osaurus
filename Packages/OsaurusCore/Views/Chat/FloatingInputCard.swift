@@ -6004,7 +6004,8 @@ private struct WalletPopover: View {
     private var rows: [WalletActivityRow] {
         WalletActivityProjector().rows(
             usageItems: accountService.usage,
-            transactions: accountService.transactions
+            transactions: accountService.transactions,
+            webUsageItems: accountService.webUsage
         )
     }
 
@@ -6014,6 +6015,16 @@ private struct WalletPopover: View {
             if let sessionSpend {
                 divider
                 sessionSpendRow(sessionSpend)
+            }
+            if let searchGrant = accountService.webSettings?.grants?.search,
+                searchGrant.includedTotal > 0
+            {
+                divider
+                webSearchCreditsRow(searchGrant)
+            }
+            if accountService.webSearchNeedsTopUp {
+                divider
+                webSearchFallbackNotice
             }
             divider
             activitySection
@@ -6026,6 +6037,8 @@ private struct WalletPopover: View {
             await accountService.refreshBalance()
             await accountService.refreshUsage(reset: true)
             await accountService.refreshTransactions(reset: true)
+            await accountService.refreshWebUsage(reset: true)
+            await accountService.refreshWebSettings()
         }
     }
 
@@ -6111,6 +6124,51 @@ private struct WalletPopover: View {
         .padding(.vertical, 8)
     }
 
+    /// The account's search credit balance, mirrored from the Credits tab so
+    /// the balance the user actually spends on web search is visible where
+    /// they check their wallet. Reads like the dollar balance above it — a
+    /// single remaining count, amber once spent (searches then bill the
+    /// shared balance or fall back to the built-in sources).
+    private func webSearchCreditsRow(_ grant: OsaurusRouterWebAllowance) -> some View {
+        let exhausted = grant.remainingTotal <= 0
+        return HStack(spacing: 6) {
+            Image(systemName: "magnifyingglass")
+                .font(.system(size: 8))
+                .foregroundColor(exhausted ? theme.warningColor : theme.tertiaryText)
+            Text("Search credits", bundle: .module)
+                .font(.system(size: 11))
+                .foregroundColor(theme.secondaryText)
+            Spacer()
+            Text(verbatim: "\(grant.remainingTotal)")
+                .font(.system(size: 11, weight: .medium, design: .monospaced))
+                .foregroundColor(exhausted ? theme.warningColor : theme.primaryText)
+                .contentTransition(.numericText())
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 8)
+    }
+
+    /// Premium web search ran out of credits and is quietly using the
+    /// built-in sources — the graceful-fallback state made visible where the
+    /// user checks their wallet, per spec: billing outcomes reach the UI even
+    /// when the search itself succeeded via fallback.
+    private var webSearchFallbackNotice: some View {
+        HStack(alignment: .top, spacing: 6) {
+            Image(systemName: "magnifyingglass")
+                .font(.system(size: 9, weight: .semibold))
+                .foregroundColor(theme.warningColor)
+            Text(
+                "Premium search is paused - add credits to resume.",
+                bundle: .module
+            )
+            .font(.system(size: 10))
+            .foregroundColor(theme.secondaryText)
+            .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 8)
+    }
+
     private var activitySection: some View {
         VStack(alignment: .leading, spacing: 9) {
             Text("Recent activity", bundle: .module)
@@ -6159,16 +6217,16 @@ private struct WalletPopover: View {
             .frame(width: 20, height: 20)
 
             VStack(alignment: .leading, spacing: 1) {
-                // Transaction titles are the projector's fixed vocabulary
-                // ("Credits added", ...) and localize via key lookup. Usage
-                // titles are model/provider ids and must render verbatim —
-                // LocalizedStringKey would treat underscores in ids as
-                // markdown emphasis.
+                // Transaction and web-usage titles are the projector's fixed
+                // vocabulary ("Credits added", "Web search", ...) and localize
+                // via key lookup. Model-usage titles are model/provider ids
+                // and must render verbatim — LocalizedStringKey would treat
+                // underscores in ids as markdown emphasis.
                 Group {
-                    if row.kind == .transaction {
-                        Text(LocalizedStringKey(row.title), bundle: .module)
-                    } else {
+                    if row.kind == .usage {
                         Text(verbatim: row.title)
+                    } else {
+                        Text(LocalizedStringKey(row.title), bundle: .module)
                     }
                 }
                 .font(.system(size: 11, weight: .medium))
@@ -6234,17 +6292,26 @@ private struct WalletPopover: View {
             return row.isCredit ? "arrow.down.left" : "arrow.up.right"
         case .usage:
             return "sparkles"
+        case .webUsage:
+            return "magnifyingglass"
         }
     }
 
     /// Badge + icon tint. Money-in reads green; spends stay neutral unless the
     /// request itself needs attention (stopped/error states from the ledger).
+    /// Hosted web searches render in the premium (accent) family — a touch
+    /// stronger when the request used a search credit.
     private func badgeTint(for row: WalletActivityRow) -> Color {
         if row.isCredit { return theme.successColor }
         switch row.stateKind {
         case .warning: return theme.warningColor
         case .error: return theme.errorColor
-        case .success, .secondary: return theme.secondaryText
+        case .success, .secondary:
+            if row.kind == .webUsage {
+                return row.isIncludedWebRequest
+                    ? theme.accentColor : theme.accentColor.opacity(0.7)
+            }
+            return theme.secondaryText
         }
     }
 

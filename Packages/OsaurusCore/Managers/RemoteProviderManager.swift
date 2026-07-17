@@ -657,7 +657,8 @@ public final class RemoteProviderManager: ObservableObject {
             case .server(_, _, let status):
                 return status >= 500
             case .noIdentity, .invalidURL, .unauthorized,
-                .belowMinimumTopUp, .insufficientFunds, .accountFrozen:
+                .belowMinimumTopUp, .insufficientFunds, .accountFrozen,
+                .paidWebDisabled, .idempotencyConflict:
                 return false
             }
         }
