@@ -37,6 +37,10 @@ struct AgentsView: View {
     @ObservedObject private var agentManager = AgentManager.shared
     @ObservedObject private var remoteAgentManager = RemoteAgentManager.shared
     @ObservedObject private var managementState = ManagementStateManager.shared
+    /// Drives the landing glow when a settings-search result targets this
+    /// screen (`agents.*` anchors). Also observed so an open detail view pops
+    /// back to the grid, where the anchored controls live.
+    @ObservedObject private var highlightCoordinator = SettingsHighlightCoordinator.shared
 
     private var theme: ThemeProtocol { themeManager.currentTheme }
 
@@ -56,10 +60,13 @@ struct AgentsView: View {
     @State private var consumedDeeplinkAgentId: UUID?
     /// One-shot inner-tab target paired with an agent id, set by the
     /// `.agentDetailDeeplink` handler so the detail view opens on a specific
-    /// tab (e.g. Subagents). Applied at `AgentDetailView` construction so it
+    /// tab (e.g. Subagents). Kept as the RAW deep-link string (not a resolved
+    /// `DetailTab`) so legacy database-surface values like `data` / `views`
+    /// survive to `AgentDetailView`, which maps them onto the Database
+    /// workspace section. Applied at `AgentDetailView` construction so it
     /// survives a cold window open; matched on id so it only affects the
     /// deep-linked agent, and cleared on back.
-    @State private var deeplinkTab: (agentId: UUID, tab: DetailTab)?
+    @State private var deeplinkTab: (agentId: UUID, tabRaw: String)?
 
     init(deeplinkAgentId: UUID? = nil) {
         self.deeplinkAgentId = deeplinkAgentId
@@ -104,7 +111,7 @@ struct AgentsView: View {
                 // state reloads via onAppear without manual onChange wiring.
                 AgentDetailView(
                     agent: agent,
-                    initialTab: deeplinkTab?.agentId == agent.id ? deeplinkTab?.tab.rawValue : nil,
+                    initialTab: deeplinkTab?.agentId == agent.id ? deeplinkTab?.tabRaw : nil,
                     onBack: {
                         deeplinkTab = nil
                         withAnimation(Self.navTransition) { selectedAgent = nil }
@@ -206,6 +213,16 @@ struct AgentsView: View {
         .onReceive(managementState.$pendingRemoteAgentDetailId) { _ in
             applyPendingRemoteAgentDetail()
         }
+        .onChange(of: highlightCoordinator.pending) { _, pending in
+            // Settings-search landings target the grid (header / agent
+            // cards); pop any open detail so the anchored control is
+            // actually on screen to glow.
+            guard let pending, pending.hasPrefix("agents.") else { return }
+            withAnimation(Self.navTransition) {
+                selectedAgent = nil
+                selectedRemoteAgentId = nil
+            }
+        }
         .onReceive(NotificationCenter.default.publisher(for: .agentDetailDeeplink)) { note in
             // Notification-tap deep-link router (spec §3.3). Resolves
             // the target agent and surfaces it; `AgentDetailView`
@@ -218,11 +235,13 @@ struct AgentsView: View {
             // Carry an optional inner-tab target so the detail opens on the
             // requested tab. Applied at construction below (cold open) and by
             // `AgentDetailView`'s own deeplink handler (warm, already mounted).
+            // Legacy database-surface raws (`data`, `views`, …) resolve via
+            // `DetailTab.fromDeeplink`; the raw string is preserved so the
+            // detail view can also recover the target workspace section.
             if let tabRaw = info["tab"] as? String,
-                let tab = DetailTab(rawValue: tabRaw),
-                DetailTab.allTabsForAgent(target).contains(tab)
+                DetailTab.fromDeeplink(tabRaw) != nil
             {
-                deeplinkTab = (agentId, tab)
+                deeplinkTab = (agentId, tabRaw)
             }
             withAnimation(Self.navTransition) {
                 selectedRemoteAgentId = nil
@@ -237,6 +256,7 @@ struct AgentsView: View {
         VStack(spacing: 0) {
             headerView
                 .managerHeaderEntrance(hasAppeared: hasAppeared)
+                .settingsLandingAnchor("agents.overview")
 
             // First-agent onboarding stays reachable as long as the user has no
             // *local* agents — even if they've already paired a remote agent.
@@ -292,7 +312,8 @@ struct AgentsView: View {
                                     withAnimation(Self.navTransition) { selectedAgent = agent }
                                 },
                                 onDuplicate: { duplicateAgent(agent) },
-                                onDelete: { deleteAgent(agent) }
+                                onDelete: { deleteAgent(agent) },
+                                onOpenDatabase: { openDatabase(for: agent) }
                             )
                             .gridDiffCell()
                         }
@@ -309,9 +330,24 @@ struct AgentsView: View {
                     }
                     .padding(24)
                     .gridDiffAnimation(token: gridChangeToken)
+                    // Landing target for the "Agent Database" settings-search
+                    // entry: the grid glows, and each card's Database
+                    // status/menu shortcut is the direct entry point.
+                    .settingsLandingAnchor("agents.database")
                 }
                 .opacity(hasAppeared ? 1 : 0)
             }
+        }
+    }
+
+    /// Opens `agent`'s detail view directly on the Database workspace —
+    /// the same routing a `tab: "database"` deep-link takes, so the card
+    /// shortcut and notification paths stay consistent.
+    private func openDatabase(for agent: Agent) {
+        deeplinkTab = (agent.id, "database")
+        withAnimation(Self.navTransition) {
+            selectedRemoteAgentId = nil
+            selectedAgent = agent
         }
     }
 
@@ -513,6 +549,10 @@ private struct AgentCard: View {
     let onSelect: () -> Void
     let onDuplicate: () -> Void
     let onDelete: () -> Void
+    /// Opens the agent's detail view directly on the Database workspace
+    /// (Knowledge › Database) — surfaced in the card menu so users can jump
+    /// straight to their agent's data without hunting through tabs.
+    let onOpenDatabase: () -> Void
 
     init(
         agent: Agent,
@@ -521,7 +561,8 @@ private struct AgentCard: View {
         hasAppeared: Bool,
         onSelect: @escaping () -> Void,
         onDuplicate: @escaping () -> Void,
-        onDelete: @escaping () -> Void
+        onDelete: @escaping () -> Void,
+        onOpenDatabase: @escaping () -> Void
     ) {
         self.agent = agent
         self.isActive = isActive
@@ -530,6 +571,7 @@ private struct AgentCard: View {
         self.onSelect = onSelect
         self.onDuplicate = onDuplicate
         self.onDelete = onDelete
+        self.onOpenDatabase = onOpenDatabase
     }
 
     @State private var isHovered = false
@@ -616,6 +658,13 @@ private struct AgentCard: View {
                                 Text("Duplicate", bundle: .module)
                             } icon: {
                                 Image(systemName: "doc.on.doc")
+                            }
+                        }
+                        Button(action: onOpenDatabase) {
+                            Label {
+                                Text("Open Database", bundle: .module)
+                            } icon: {
+                                Image(systemName: "cylinder.split.1x2")
                             }
                         }
                         Divider()
@@ -775,6 +824,13 @@ private struct AgentCard: View {
             chips.append(.init(icon: "clock.badge.checkmark", text: "\(automationCount)"))
         }
 
+        // Database: status chip when the agent has its private database
+        // enabled. The card menu's "Open Database" jumps straight into the
+        // workspace.
+        if agent.settings.dbEnabled {
+            chips.append(.init(icon: "cylinder.split.1x2", text: L("Database")))
+        }
+
         // Updated: relative time so it stays meaningful at a glance.
         chips.append(
             .init(icon: "clock", text: agent.updatedAt.formatted(.relative(presentation: .named)))
@@ -836,29 +892,30 @@ private enum DetailTab: String, CaseIterable {
     case sandbox
     case automation
     case memory
-    /// Agent DB feature (spec §5.5 / §7). Visible only when
-    /// `Agent.settings.dbEnabled == true`; the tab strip filters
-    /// these out via `Self.allTabsForAgent`. Order in the strip
-    /// follows the canonical iteration order on `allCases`.
-    case home
-    case schema
-    case data
-    case views
-    case activity
+    /// The Database workspace (spec §5.5 / §7): Overview, Tables, Saved
+    /// Views, and History as sections inside ONE tab. Always visible —
+    /// when `Agent.settings.dbEnabled` is off the workspace shows an
+    /// explanatory empty state with an Enable action, so the feature
+    /// stays discoverable. Legacy deep links (`home` / `schema` / `data`
+    /// / `views` / `activity`) map onto this tab's sections via
+    /// `AgentDetailTabRoute`.
+    case database
 
-    /// DetailTabs that belong to the Agent DB feature. Hidden from
-    /// the tab strip unless the agent has `settings.dbEnabled`.
-    static let dbTabs: Set<DetailTab> = [.home, .schema, .data, .views, .activity]
-
-    /// Tabs visible for `agent`, in canonical order. We render the
-    /// schema/data/activity trio at the end so they sit visually
-    /// adjacent to memory — both surface "what does this agent
-    /// remember?" but along different axes.
+    /// Tabs visible for `agent`, in canonical order. Every built-in tab
+    /// is visible for every custom agent — the Database tab included,
+    /// so the feature is discoverable even before it's switched on.
     static func allTabsForAgent(_ agent: Agent) -> [DetailTab] {
-        var hidden: Set<DetailTab> = []
-        // Agent DB tabs only appear once the feature is on.
-        if !agent.settings.dbEnabled { hidden.formUnion(dbTabs) }
-        return DetailTab.allCases.filter { !hidden.contains($0) }
+        DetailTab.allCases
+    }
+
+    /// Resolve a deep-link tab string, including the legacy per-surface
+    /// database tab raw values (`home`, `schema`, `data`, `views`,
+    /// `activity`) that older callers still post.
+    static func fromDeeplink(_ raw: String) -> (tab: DetailTab, dbSection: AgentDatabaseSection?)? {
+        guard let route = AgentDetailTabRoute.resolve(raw),
+            let tab = DetailTab(rawValue: route.tabRawValue)
+        else { return nil }
+        return (tab, route.databaseSection)
     }
 
     var label: String {
@@ -866,17 +923,13 @@ private enum DetailTab: String, CaseIterable {
         case .configure: return L("Configure")
         case .capabilities: return L("Tools")
         case .subagents: return L("Subagents")
-        case .customization: return L("Customization")
+        case .customization: return L("Appearance")
         case .network: return L("Network")
         case .connections: return L("Remote Connections")
         case .sandbox: return L("Sandbox")
         case .automation: return L("Automation")
         case .memory: return L("Memory")
-        case .home: return L("Home")
-        case .schema: return L("Schema")
-        case .data: return L("Data")
-        case .views: return L("Views")
-        case .activity: return L("Activity")
+        case .database: return L("Database")
         }
     }
 
@@ -891,11 +944,7 @@ private enum DetailTab: String, CaseIterable {
         case .sandbox: return "shippingbox"
         case .automation: return "clock.badge.checkmark"
         case .memory: return "brain.head.profile"
-        case .home: return "house"
-        case .schema: return "tablecells"
-        case .data: return "square.grid.3x1.below.line.grid.1x2"
-        case .views: return "eye"
-        case .activity: return "waveform.path.ecg"
+        case .database: return "cylinder.split.1x2"
         }
     }
 
@@ -914,17 +963,58 @@ private enum DetailTab: String, CaseIterable {
         case .sandbox: return L("Container-based code execution.")
         case .automation: return L("Schedules and file watchers for autonomous behavior.")
         case .memory: return L("Conversation history, pinned facts, and episode summaries.")
-        case .home:
-            return L("Dashboard of pinned views — the agent's own home screen.")
-        case .schema:
-            return L("Tables, columns, indexes the agent has created in its private database.")
-        case .data:
-            return L("Browse, inspect, and export the rows stored in the agent's database.")
-        case .views:
-            return L("Saved SQL views the agent reuses across runs.")
-        case .activity:
-            return L("Run history and the audit trail of every write the agent has done.")
+        case .database:
+            return L("Everything this agent stores — browse tables, saved views, and history.")
         }
+    }
+}
+
+// MARK: - Detail Tab Groups
+
+/// Top-level navigation groups for the agent detail view. Five stable,
+/// plain-language buckets replace the old flat strip of 14+ tabs; agent
+/// plugins (and failed plugins) join the Abilities group.
+private enum DetailTabGroup: String, CaseIterable {
+    case general
+    case abilities
+    case connections
+    case automation
+    case knowledge
+
+    var label: String {
+        switch self {
+        case .general: return L("General")
+        case .abilities: return L("Abilities")
+        case .connections: return L("Connections")
+        case .automation: return L("Automation")
+        case .knowledge: return L("Knowledge")
+        }
+    }
+
+    var icon: String {
+        switch self {
+        case .general: return "gear"
+        case .abilities: return "wrench.and.screwdriver"
+        case .connections: return "network"
+        case .automation: return "clock.badge.checkmark"
+        case .knowledge: return "brain.head.profile"
+        }
+    }
+
+    /// Built-in tabs that live inside this group, in display order.
+    var builtInTabs: [DetailTab] {
+        switch self {
+        case .general: return [.configure, .customization]
+        case .abilities: return [.capabilities, .subagents, .sandbox]
+        case .connections: return [.network, .connections]
+        case .automation: return [.automation]
+        case .knowledge: return [.memory, .database]
+        }
+    }
+
+    /// The group that hosts `tab`.
+    static func group(for tab: DetailTab) -> DetailTabGroup {
+        allCases.first { $0.builtInTabs.contains(tab) } ?? .general
     }
 }
 
@@ -985,8 +1075,11 @@ struct AgentDetailView: View {
         // Seed the inner tab at construction so a deep-link (e.g. the What's New
         // "Open Subagent settings" CTA) lands on the right tab even on a cold
         // window open, where a post-mount notification would race the view.
-        let resolvedInitialTab = initialTab.flatMap(DetailTab.init(rawValue:)) ?? .configure
-        _selectedTab = State(initialValue: .builtIn(resolvedInitialTab))
+        // Legacy database-surface raws (`home` / `schema` / `data` / `views` /
+        // `activity`) resolve to the Database tab plus a workspace section.
+        let resolved = initialTab.flatMap(DetailTab.fromDeeplink)
+        _selectedTab = State(initialValue: .builtIn(resolved?.tab ?? .configure))
+        _pendingDatabaseSection = State(initialValue: resolved?.dbSection)
     }
 
     // MARK: - Editable State
@@ -1168,16 +1261,21 @@ struct AgentDetailView: View {
 
     @State private var selectedTab: AgentTab = .builtIn(.configure)
     /// Optional saved-view name to focus when the user lands on the
-    /// Views tab via the notification deep-link (spec §3.3). Passed
-    /// through to `ViewsTabView`, which uses it as an initial
-    /// `selection`. Cleared back to `nil` once the user navigates
-    /// elsewhere so re-entering the tab manually doesn't keep
-    /// snapping back to the old view.
+    /// Database workspace via the notification deep-link (spec §3.3).
+    /// Passed through to `DatabaseWorkspaceView`, which uses it as an
+    /// initial selection. Cleared back to `nil` once the user navigates
+    /// elsewhere so re-entering the tab manually doesn't keep snapping
+    /// back to the old view.
     @State private var pendingFocusedViewName: String? = nil
     /// Optional table name to pre-select when the user lands on the
-    /// Data tab via the Schema-tab "Browse" deep-link. Same lifecycle
+    /// Database workspace via a `tableRef` deep-link. Same lifecycle
     /// as `pendingFocusedViewName`.
     @State private var pendingFocusedTableName: String? = nil
+    /// Workspace section the Database tab should open on, resolved from
+    /// the deep-link raw tab value (legacy `home` / `schema` / `data` /
+    /// `views` / `activity` map to sections). Cleared once the user
+    /// navigates away so manual re-entry lands on the default section.
+    @State private var pendingDatabaseSection: AgentDatabaseSection? = nil
     @State private var saveIndicator: String?
     @State private var saveDebounceTask: Task<Void, Never>?
     @State private var showDeleteConfirm = false
@@ -1281,32 +1379,25 @@ struct AgentDetailView: View {
             AgentCapabilityManagerView(agentId: agent.id, onDismiss: nil)
                 .environment(\.theme, themeManager.currentTheme)
                 .id(selectedTab)
-        case .builtIn(.home):
-            HomeTabView(agentId: agent.id)
-                .environment(\.theme, themeManager.currentTheme)
-                .id(selectedTab)
-        case .builtIn(.schema):
-            SchemaTabView(agentId: agent.id)
-                .environment(\.theme, themeManager.currentTheme)
-                .id(selectedTab)
-        case .builtIn(.data):
-            DataTabView(
+        case .builtIn(.database):
+            DatabaseWorkspaceView(
                 agentId: agent.id,
-                initialSelectedTable: pendingFocusedTableName
+                isEnabled: dbEnabled,
+                isRemoteProvider: isUsingRemoteProvider,
+                initialSection: pendingDatabaseSection,
+                initialTableName: pendingFocusedTableName,
+                initialViewName: pendingFocusedViewName,
+                isBundleBusy: isBundleBusy,
+                onEnable: {
+                    dbEnabled = true
+                    debouncedSave()
+                },
+                onExportBundle: { beginBundleExport() },
+                onImportBundle: { beginBundleImport() },
+                onDeleteData: { showDeleteDBConfirmation = true }
             )
             .environment(\.theme, themeManager.currentTheme)
             .id(selectedTab)
-        case .builtIn(.views):
-            ViewsTabView(
-                agentId: agent.id,
-                initialFocusedViewName: pendingFocusedViewName
-            )
-            .environment(\.theme, themeManager.currentTheme)
-            .id(selectedTab)
-        case .builtIn(.activity):
-            ActivityTabView(agentId: agent.id)
-                .environment(\.theme, themeManager.currentTheme)
-                .id(selectedTab)
         default:
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
@@ -1344,10 +1435,11 @@ struct AgentDetailView: View {
                 Divider()
                     .foregroundColor(theme.primaryBorder)
 
-                // Capabilities + Schema/Data/Activity host their own scrolling
-                // (NSTableView / NSOutlineView). Rendering them directly —
-                // without the outer ScrollView the other tabs share — keeps
-                // their tables flush and avoids nested scrolling.
+                // Capabilities + the Database workspace host their own
+                // scrolling (NSTableView / NSOutlineView). Rendering them
+                // directly — without the outer ScrollView the other tabs
+                // share — keeps their tables flush and avoids nested
+                // scrolling.
                 tabContent
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -1380,20 +1472,6 @@ struct AgentDetailView: View {
         .onReceive(NotificationCenter.default.publisher(for: .watchersChanged)) { _ in
             refreshDetailCaches()
         }
-        .onChange(of: dbEnabled) { _, newValue in
-            // Watch the local `@State dbEnabled` (driven by the Configure
-            // tab toggle), not `agent.settings.dbEnabled` — the prop is
-            // frozen at view construction and would never fire. If the
-            // user just turned the DB feature off while sitting on a
-            // DB-only tab, snap back to Configure so they're not
-            // stranded on a tab whose data has just been deleted.
-            if !newValue,
-                case .builtIn(let dt) = selectedTab,
-                DetailTab.dbTabs.contains(dt)
-            {
-                selectedTab = .builtIn(.configure)
-            }
-        }
         .onChange(of: selfSchedulingEnabled) { _, newValue in
             // The master Self-scheduling switch owns the on/off state, so the
             // mode picker only offers the "how often" presets (Ambient /
@@ -1415,41 +1493,36 @@ struct AgentDetailView: View {
             }
         }
         .onReceive(NotificationCenter.default.publisher(for: .agentDetailDeeplink)) { note in
-            // Tab + entity deep-link handler. Used by:
-            //   - `NotifyTool` taps (`tab: "views"`, `viewRef: ...`)
-            //   - `SchemaTabView` "Browse" button (`tab: "data"`,
-            //     `tableRef: ...`)
-            // AgentsView selects the right agent via the same
-            // notification; this handler just flips the inner tab
-            // and stashes the entity name for the destination tab to
-            // pick up on first load.
+            // Tab + entity deep-link handler. Used by `NotifyTool` taps
+            // (`tab: "views"`, `viewRef: ...`) and legacy database-surface
+            // callers (`tab: "data"`, `tableRef: ...`). AgentsView selects
+            // the right agent via the same notification; this handler just
+            // flips the inner tab (mapping legacy raws onto the Database
+            // workspace) and stashes the entity name for the destination
+            // to pick up on first load.
             guard let info = note.userInfo,
                 let targetId = info["agentId"] as? UUID,
                 targetId == agent.id
             else { return }
             if let tabRaw = info["tab"] as? String,
-                let tab = DetailTab(rawValue: tabRaw),
-                DetailTab.allTabsForAgent(currentAgent).contains(tab)
+                let resolved = DetailTab.fromDeeplink(tabRaw)
             {
                 pendingFocusedViewName = info["viewRef"] as? String
                 pendingFocusedTableName = info["tableRef"] as? String
-                selectedTab = .builtIn(tab)
+                pendingDatabaseSection = resolved.dbSection
+                selectedTab = .builtIn(resolved.tab)
             }
         }
         .onChange(of: selectedTab) { _, newValue in
             // Drop any leftover notification-driven focus when the
-            // user navigates to a tab the focus doesn't apply to.
-            // The focused-name state is set together with
-            // `selectedTab` in the deeplink handler above so it
-            // survives this transition exactly once.
-            switch newValue {
-            case .builtIn(.views):
-                pendingFocusedTableName = nil
-            case .builtIn(.data):
-                pendingFocusedViewName = nil
-            default:
+            // user navigates away from the Database workspace. The
+            // focused-name state is set together with `selectedTab`
+            // in the deeplink handler above so it survives the
+            // transition into the workspace exactly once.
+            if newValue != .builtIn(.database) {
                 pendingFocusedViewName = nil
                 pendingFocusedTableName = nil
+                pendingDatabaseSection = nil
             }
         }
         .onReceive(NotificationCenter.default.publisher(for: .toolsListChanged)) { _ in
@@ -1490,6 +1563,26 @@ struct AgentDetailView: View {
 
     private var bodyWithSheets: some View {
         bodyCore
+            // Attached at the body level (not inside a tab) because the
+            // Delete Data action is triggered from the Database workspace
+            // as well as legacy call sites.
+            .confirmationDialog(
+                "Delete this agent's database?",
+                isPresented: $showDeleteDBConfirmation,
+                titleVisibility: .visible
+            ) {
+                Button(localized: "Delete Data", role: .destructive) {
+                    deleteAgentDatabaseData()
+                }
+                Button(localized: "Cancel", role: .cancel) {}
+            } message: {
+                Text(
+                    "This permanently erases the encrypted SQLite database, all "
+                        + "schema artifacts, all scheduled / pause state, and the run "
+                        + "history for this agent. The agent itself stays. This can't "
+                        + "be undone."
+                )
+            }
             .sheet(
                 isPresented: Binding(
                     get: { bundleExportDestination != nil },
@@ -1740,7 +1833,7 @@ struct AgentDetailView: View {
         case .builtIn(let dt):
             switch dt {
             case .configure, .capabilities, .subagents, .customization, .network, .connections,
-                .sandbox, .home, .schema, .data, .views, .activity:
+                .sandbox, .database:
                 return nil
             case .automation:
                 let count = linkedSchedules.count + linkedWatchers.count
@@ -1759,56 +1852,76 @@ struct AgentDetailView: View {
         }
     }
 
-    /// Horizontally scrollable tab bar — built-in tabs stay leftmost, then one
-    /// per plugin, then any failed-plugin warning tabs. The shared
-    /// `AgentDetailTabStrip` owns the scroll / overflow-fade / chevron chrome,
-    /// so this view only maps the agent's tab sources into items.
+    /// Two-level navigation: five stable groups on top, the active
+    /// group's tabs as pills below. `AgentDetailGroupedTabStrip` owns the
+    /// chrome; this view only maps the agent's tab sources into groups.
     private var tabBar: some View {
-        AgentDetailTabStrip(items: tabItems, selection: $selectedTab)
+        AgentDetailGroupedTabStrip(groups: tabGroups, selection: $selectedTab)
     }
 
-    /// Built-in + plugin + failed-plugin tabs as `AgentDetailTabStrip` items.
-    /// IMPORTANT: read from `currentAgent`, not the captured `agent` prop — the
-    /// prop is frozen at view construction, while `currentAgent` re-fetches from
-    /// `AgentManager` so flipping `Enable Database` in Configure causes the DB
-    /// tabs (Home/Schema/Data/Views/Activity) to appear here.
-    private var tabItems: [AgentDetailTabItem<AgentTab>] {
-        var items: [AgentDetailTabItem<AgentTab>] = []
-        for tab in DetailTab.allTabsForAgent(currentAgent) {
-            items.append(
-                AgentDetailTabItem(
-                    id: .builtIn(tab),
-                    label: tab.label,
-                    icon: tab.icon,
-                    badgeCount: tabBadgeCount(for: .builtIn(tab))
-                )
+    private func tabItem(for tab: DetailTab) -> AgentDetailTabItem<AgentTab> {
+        AgentDetailTabItem(
+            id: .builtIn(tab),
+            label: tab.label,
+            icon: tab.icon,
+            badgeCount: tabBadgeCount(for: .builtIn(tab))
+        )
+    }
+
+    /// Built-in tabs mapped into their groups, with agent plugins (and
+    /// failed plugins) appended to the Abilities group. Group badges
+    /// surface the automation count and the memory-session count; a
+    /// failed plugin marks the Abilities group with the warning tint so
+    /// the problem is visible before the group is opened.
+    private var tabGroups: [AgentDetailTabGroup<AgentTab>] {
+        DetailTabGroup.allCases.map { group in
+            var items = group.builtInTabs.map(tabItem(for:))
+            if group == .abilities {
+                for loaded in agentPlugins {
+                    items.append(
+                        AgentDetailTabItem(
+                            id: .plugin(loaded.plugin.id),
+                            label: loaded.plugin.manifest.name ?? loaded.plugin.id,
+                            icon: "puzzlepiece.extension",
+                            badgeCount: tabBadgeCount(for: .plugin(loaded.plugin.id))
+                        )
+                    )
+                }
+                // Failed plugins surface AFTER successfully loaded ones so
+                // the warning pills cluster on the trailing edge. Each shows
+                // a structured error + Retry via `failedPluginTabContent`.
+                for failed in agentFailedPlugins {
+                    items.append(
+                        AgentDetailTabItem(
+                            id: .failedPlugin(failed.pluginId),
+                            label: failedPluginTabLabel(for: failed),
+                            icon: "exclamationmark.triangle.fill",
+                            isWarning: true
+                        )
+                    )
+                }
+            }
+            let badge: Int? = {
+                switch group {
+                case .automation:
+                    let count = linkedSchedules.count + linkedWatchers.count
+                    return count > 0 ? count : nil
+                case .knowledge:
+                    let count = chatSessions.count
+                    return count > 0 ? count : nil
+                case .general, .abilities, .connections:
+                    return nil
+                }
+            }()
+            return AgentDetailTabGroup(
+                id: group.rawValue,
+                label: group.label,
+                icon: group.icon,
+                items: items,
+                badgeCount: badge,
+                isWarning: group == .abilities && !agentFailedPlugins.isEmpty
             )
         }
-        for loaded in agentPlugins {
-            items.append(
-                AgentDetailTabItem(
-                    id: .plugin(loaded.plugin.id),
-                    label: loaded.plugin.manifest.name ?? loaded.plugin.id,
-                    icon: "puzzlepiece.extension",
-                    badgeCount: tabBadgeCount(for: .plugin(loaded.plugin.id))
-                )
-            )
-        }
-        // Failed plugins surface AFTER successfully loaded ones so the warning
-        // tabs cluster on the trailing edge of the strip — visually obvious
-        // without crowding the happy-path tabs. Each shows a structured error +
-        // Retry button via `failedPluginTabContent`.
-        for failed in agentFailedPlugins {
-            items.append(
-                AgentDetailTabItem(
-                    id: .failedPlugin(failed.pluginId),
-                    label: failedPluginTabLabel(for: failed),
-                    icon: "exclamationmark.triangle.fill",
-                    isWarning: true
-                )
-            )
-        }
-        return items
     }
 
     private func tabHelperText(_ text: String) -> some View {
@@ -1879,13 +1992,9 @@ struct AgentDetailView: View {
             automationTabContent
         case .builtIn(.memory):
             memoryTabContent
-        case .builtIn(.home),
-            .builtIn(.schema),
-            .builtIn(.data),
-            .builtIn(.views),
-            .builtIn(.activity):
+        case .builtIn(.database):
             // Routed at the body level outside the ScrollView (the
-            // DB tabs host their own scrolling); the
+            // Database workspace hosts its own scrolling); the
             // ScrollView-wrapping path would force a fixed sizing.
             EmptyView()
         case .builtIn(.capabilities):
@@ -2795,10 +2904,9 @@ struct AgentDetailView: View {
     }
 
     /// Row for the Agent DB feature (spec §5.5). Houses the on/off
-    /// toggle plus a Delete Data action that wipes the per-agent
-    /// `db.sqlite` (encrypted) and the scheduler-side rows belonging
-    /// to this agent. The Delete action only renders when the agent
-    /// has the feature on, since there's nothing to delete otherwise.
+    /// toggle plus a shortcut into the Database workspace, where the
+    /// data itself — and the bundle export/import + Delete Data
+    /// management actions — now live.
     @ViewBuilder
     private var databaseFeatureRow: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -2832,52 +2940,19 @@ struct AgentDetailView: View {
             if dbEnabled {
                 HStack(spacing: 8) {
                     Button {
-                        beginBundleExport()
+                        selectedTab = .builtIn(.database)
                     } label: {
-                        Label(localized: "Export Bundle…", systemImage: "square.and.arrow.up")
+                        Label(localized: "Open Database", systemImage: "arrow.right")
                             .font(.system(size: 11, weight: .medium))
                     }
                     .buttonStyle(.bordered)
                     .controlSize(.small)
-                    .disabled(isBundleBusy)
-                    Button {
-                        beginBundleImport()
-                    } label: {
-                        Label(localized: "Import Bundle…", systemImage: "square.and.arrow.down")
-                            .font(.system(size: 11, weight: .medium))
-                    }
-                    .buttonStyle(.bordered)
-                    .controlSize(.small)
-                    .disabled(isBundleBusy)
+                    .localizedHelp(
+                        "Browse the agent's tables and saved views under Knowledge › Database. Export, import, and delete actions live there too."
+                    )
                     Spacer()
-                    Button(role: .destructive) {
-                        showDeleteDBConfirmation = true
-                    } label: {
-                        Label(localized: "Delete Data", systemImage: "trash")
-                            .font(.system(size: 11, weight: .medium))
-                    }
-                    .buttonStyle(.bordered)
-                    .controlSize(.small)
-                    .tint(.red)
                 }
             }
-        }
-        .confirmationDialog(
-            "Delete this agent's database?",
-            isPresented: $showDeleteDBConfirmation,
-            titleVisibility: .visible
-        ) {
-            Button(localized: "Delete Data", role: .destructive) {
-                deleteAgentDatabaseData()
-            }
-            Button(localized: "Cancel", role: .cancel) {}
-        } message: {
-            Text(
-                "This permanently erases the encrypted SQLite database, all "
-                    + "schema artifacts, all scheduled / pause state, and the run "
-                    + "history for this agent. The agent itself stays. This can't "
-                    + "be undone."
-            )
         }
     }
 
