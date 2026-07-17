@@ -1005,14 +1005,6 @@ struct AgentDetailView: View {
     /// directly; `saveAgent` folds them back into the persisted agent.
     @State private var toolsEnabled: Bool = true
     @State private var memoryEnabled: Bool = true
-    /// Tapping the dimmed tool-dependent nest while Tools is off scrolls
-    /// to the Tools toggle and pulses the shared search-highlight glow on
-    /// it, pointing at the switch that unlocks the nest. The nonce keys
-    /// the scroll; the generation counter lets the auto-clear of a pulse
-    /// know whether a newer tap superseded it.
-    @State private var scrollToToolsNonce = 0
-    @State private var toolsHighlightActive = false
-    @State private var toolsHighlightGeneration = 0
     /// Local mirror of `Agent.settings.dbEnabled` (spec §5.5). The
     /// Features section binds a toggle to this; `debouncedSave`
     /// folds it back into the persisted `AgentSettings` block.
@@ -1324,21 +1316,14 @@ struct AgentDetailView: View {
                 .environment(\.theme, themeManager.currentTheme)
                 .id(selectedTab)
         default:
-            ScrollViewReader { proxy in
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 16) {
-                        scrollableTabContent
-                    }
-                    .padding(24)
-                    .id(selectedTab)
+            ScrollView {
+                VStack(alignment: .leading, spacing: 16) {
+                    scrollableTabContent
                 }
-                .animation(nil, value: selectedTab)
-                .onChange(of: scrollToToolsNonce) { _, _ in
-                    withAnimation(.easeInOut(duration: 0.3)) {
-                        proxy.scrollTo(Self.toolsToggleScrollId, anchor: .center)
-                    }
-                }
+                .padding(24)
+                .id(selectedTab)
             }
+            .animation(nil, value: selectedTab)
         }
     }
 
@@ -2679,9 +2664,12 @@ struct AgentDetailView: View {
                     "Model Access",
                     description: "What the model can draw on by default."
                 ) {
-                    // Memory renders before Tools so the tool-dependent
-                    // groups nested below sit directly under the Tools
-                    // toggle they depend on.
+                    featureToggleRow(
+                        title: "Tools",
+                        subtitle:
+                            "Let the agent use tools to take actions and look things up. Turn off for a chat-only agent.",
+                        isOn: $toolsEnabled
+                    )
                     // The default agent has no per-agent memory flag: its
                     // memory is governed globally (Settings > Enable memory),
                     // so a per-agent toggle here would be a dead control.
@@ -2699,32 +2687,12 @@ struct AgentDetailView: View {
                         .font(.system(size: 11))
                         .foregroundColor(theme.tertiaryText)
                     }
-                    featureToggleRow(
-                        title: "Tools",
-                        subtitle:
-                            "Let the agent use tools to take actions and look things up. Turn off for a chat-only agent.",
-                        isOn: $toolsEnabled
-                    )
-                    .id(Self.toolsToggleScrollId)
-                    .settingsSearchHighlight(toolsHighlightActive)
                 }
 
                 // Always shown (default + custom agents): the empty-state
                 // greeting flavor. The on/off lives here; the matching
                 // editor (AI personality vs. custom greeting) is in
                 // Customization > Empty State.
-                // Tool-backed capabilities render as structural children of
-                // the Tools switch: every one of them enters the model's
-                // schema through `resolveTools`, which returns nothing when
-                // Tools is off, so nesting (plus dimming) makes the
-                // dependency visible instead of leaving live-looking dead
-                // toggles. Code Execution and Host Files stay top-level —
-                // their execution modes deliberately override the per-agent
-                // Tools switch (`resolveEffectiveToolsOff`).
-                if isCustomAgent {
-                    toolDependentFeatureGroups
-                }
-
                 featureGroup(
                     "Empty State",
                     description: "How the chat looks before your first message."
@@ -2741,6 +2709,81 @@ struct AgentDetailView: View {
                 // its fixed baseline (DB hard-off, no sandbox), so these
                 // would be dead UI for it.
                 if isCustomAgent {
+                    featureGroup(
+                        "Output",
+                        description: "Extra ways the agent can present results."
+                    ) {
+                        featureToggleRow(
+                            title: "Charts",
+                            subtitle: "Render data as inline chart cards.",
+                            isOn: $renderChartEnabled
+                        )
+                        featureToggleRow(
+                            title: "Speak Tool",
+                            subtitle:
+                                "Give the agent a tool it can call to read a reply aloud when you ask. For always-speak, use Auto Speak Responses in the Voice section.",
+                            isOn: $speakEnabled
+                        )
+                    }
+
+                    featureGroup(
+                        "Memory & Recall",
+                        description: "Active lookups into the agent's memory."
+                    ) {
+                        featureToggleRow(
+                            title: "Memory Recall",
+                            subtitle:
+                                "Let the agent search its own memory mid-conversation to pull up past details on demand. Separate from Memory above, which only auto-injects and saves.",
+                            isOn: $searchMemoryEnabled
+                        )
+                    }
+
+                    featureGroup(
+                        "Knowledge",
+                        description: "Curated reference material the agent can consult on demand."
+                    ) {
+                        knowledgeFeatureSection
+                    }
+
+                    featureGroup(
+                        "Web",
+                        description: "Live information from the internet."
+                    ) {
+                        featureToggleRow(
+                            title: "Web Search",
+                            subtitle:
+                                "Let the agent search the web through your search providers. Works out of the box with free sources; configure providers in Settings > Search.",
+                            isOn: $webSearchEnabled
+                        )
+                    }
+
+                    featureGroup(
+                        "Autonomy",
+                        description: "Let the agent act between your messages."
+                    ) {
+                        featureToggleRow(
+                            title: "Self-scheduling",
+                            subtitle:
+                                "Let the agent schedule its own follow-up runs and send you notifications.",
+                            isOn: $selfSchedulingEnabled
+                        )
+                        if selfSchedulingEnabled {
+                            Text(
+                                "Run frequency and limits are configured in the Scheduling section below.",
+                                bundle: .module
+                            )
+                            .font(.system(size: 11))
+                            .foregroundColor(theme.tertiaryText)
+                        }
+                    }
+
+                    featureGroup(
+                        "Data",
+                        description: "Durable storage for this agent."
+                    ) {
+                        databaseFeatureRow
+                    }
+
                     featureGroup(
                         "Code Execution",
                         description: "Run code and commands in an isolated sandbox."
@@ -2763,146 +2806,6 @@ struct AgentDetailView: View {
                     .foregroundColor(theme.tertiaryText)
                 }
             }
-        }
-    }
-
-    /// Tool-backed feature groups, indented under Model Access with a
-    /// guide rule so the dependency on the Tools switch reads as
-    /// structure. When Tools is off the whole block dims and disables;
-    /// the stored per-feature flags are preserved, so nothing has to be
-    /// reconfigured when Tools comes back on.
-    private var toolDependentFeatureGroups: some View {
-        HStack(alignment: .top, spacing: 12) {
-            RoundedRectangle(cornerRadius: 1)
-                .fill(toolsEnabled ? theme.accentColor.opacity(0.35) : theme.inputBorder)
-                .frame(width: 2)
-            VStack(alignment: .leading, spacing: 18) {
-                Text(
-                    toolsEnabled
-                        ? "These features work through tools and follow the Tools switch above."
-                        : "Tools is off, so these features are inactive. Turn Tools on to use them.",
-                    bundle: .module
-                )
-                .font(.system(size: 11))
-                .foregroundColor(theme.tertiaryText)
-                .fixedSize(horizontal: false, vertical: true)
-
-                featureGroup(
-                    "Output",
-                    description: "Extra ways the agent can present results."
-                ) {
-                    featureToggleRow(
-                        title: "Charts",
-                        subtitle: "Render data as inline chart cards.",
-                        isOn: $renderChartEnabled
-                    )
-                    featureToggleRow(
-                        title: "Speak Tool",
-                        subtitle:
-                            "Give the agent a tool it can call to read a reply aloud when you ask. For always-speak, use Auto Speak Responses in the Voice section.",
-                        isOn: $speakEnabled
-                    )
-                }
-
-                featureGroup(
-                    "Memory & Recall",
-                    description: "Active lookups into the agent's memory."
-                ) {
-                    featureToggleRow(
-                        title: "Memory Recall",
-                        subtitle:
-                            "Let the agent search its own memory mid-conversation to pull up past details on demand. Separate from Memory above, which only auto-injects and saves.",
-                        isOn: $searchMemoryEnabled
-                    )
-                }
-
-                featureGroup(
-                    "Knowledge",
-                    description: "Curated reference material the agent can consult on demand."
-                ) {
-                    knowledgeFeatureSection
-                }
-
-                featureGroup(
-                    "Web",
-                    description: "Live information from the internet."
-                ) {
-                    featureToggleRow(
-                        title: "Web Search",
-                        subtitle:
-                            "Let the agent search the web through your search providers. Works out of the box with free sources; configure providers in Settings > Search.",
-                        isOn: $webSearchEnabled
-                    )
-                }
-
-                featureGroup(
-                    "Autonomy",
-                    description: "Let the agent act between your messages."
-                ) {
-                    featureToggleRow(
-                        title: "Self-scheduling",
-                        subtitle:
-                            "Let the agent schedule its own follow-up runs and send you notifications.",
-                        isOn: $selfSchedulingEnabled
-                    )
-                    if selfSchedulingEnabled {
-                        Text(
-                            "Run frequency and limits are configured in the Scheduling section below.",
-                            bundle: .module
-                        )
-                        .font(.system(size: 11))
-                        .foregroundColor(theme.tertiaryText)
-                    }
-                }
-
-                featureGroup(
-                    "Data",
-                    description: "Durable storage for this agent."
-                ) {
-                    databaseFeatureRow
-                }
-            }
-            .opacity(toolsEnabled ? 1 : 0.45)
-            .disabled(!toolsEnabled)
-            // `.disabled` silently swallows clicks on the dead toggles.
-            // Catch them instead and point at the switch that unlocks the
-            // nest: scroll to the Tools row and pulse the shared
-            // search-highlight glow on it.
-            .overlay {
-                if !toolsEnabled {
-                    Color.clear
-                        .contentShape(Rectangle())
-                        .onTapGesture { flashToolsToggle() }
-                }
-            }
-        }
-        // Indent the whole nest relative to the top-level toggle cards so
-        // the child relationship to the Tools switch is unmistakable.
-        .padding(.leading, 16)
-        .animation(.easeInOut(duration: 0.15), value: toolsEnabled)
-    }
-
-    /// Scroll anchor for the Tools toggle row in the Features section.
-    private static let toolsToggleScrollId = "features-tools-toggle"
-
-    /// Scroll the Tools toggle into view and run one highlight breath on
-    /// it. Re-tapping restarts the pulse; the delayed clear only lands if
-    /// no newer tap has bumped the generation, so a rapid second tap can't
-    /// cut its own glow short.
-    private func flashToolsToggle() {
-        scrollToToolsNonce += 1
-        toolsHighlightGeneration += 1
-        let generation = toolsHighlightGeneration
-        // Drop to false first so `settingsSearchHighlight` sees a fresh
-        // rising edge and re-fires its breath on every tap.
-        toolsHighlightActive = false
-        DispatchQueue.main.async {
-            guard generation == toolsHighlightGeneration else { return }
-            toolsHighlightActive = true
-        }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 2.2) {
-            guard generation == toolsHighlightGeneration else { return }
-            toolsHighlightActive = false
         }
     }
 
