@@ -556,11 +556,19 @@ public final class AgentManager: ObservableObject {
 
         refresh()
 
+        // Tear down plugin state FIRST and wait for it to finish. Plugins
+        // deregister webhooks inside `on_config_changed(tunnel_url="")`
+        // and read their per-agent config (e.g. Telegram's `bot_token`)
+        // while doing so — the secrets must still exist at that point.
+        // Sweeping the keychain before this call left webhooks registered
+        // upstream forever because the plugin found no token to
+        // deregister with.
+        await PluginManager.shared.tearDownPluginsForRemovedAgent(agentId: id)
+
         // Sweep every plugin's per-agent secrets for this agent. Without
         // this, deleting an agent would leave its `bot_token` / OAuth
         // credentials / `tunnel_url` / etc. in Keychain Access forever.
-        // Done before posting `.agentRemoved` so subscribers see the
-        // post-cleanup keychain state.
+        // Done only AFTER plugin teardown completed (see above).
         ToolSecretsKeychain.deleteAllSecrets(forAgent: id)
 
         // Drop any greetings the pool was holding for this agent. We
@@ -573,9 +581,10 @@ public final class AgentManager: ObservableObject {
         // doesn't accumulate one VecturaKit instance per deleted agent.
         await MemorySearchService.shared.evictAgent(agentId: id.uuidString)
 
-        // Notify subscribers (e.g. PluginManager) so plugins can
-        // deregister webhooks (push tunnel_url=nil) and tear down any
-        // per-agent state of their own.
+        // Notify remaining subscribers. Plugin webhook deregistration
+        // already happened synchronously above; PluginManager's own
+        // `.agentRemoved` handler only performs an idempotent repeat
+        // (deduped plugin-side).
         NotificationCenter.default.post(
             name: .agentRemoved,
             object: nil,

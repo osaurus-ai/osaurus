@@ -105,6 +105,27 @@ public enum ToolSecretsKeychain {
         resolvedSecretsMerging(pluginId: pluginId, primary: agentId, defaults: Agent.defaultId)
     }
 
+    /// THE single per-key resolution policy: exact agent namespace first,
+    /// then the `Agent.defaultId` namespace as the global-default fallback
+    /// (Plugins-tab writes land there). This is the per-key equivalent of
+    /// `resolvedSecretsWithDefaults` and must be used by every read path
+    /// that feeds plugins — `config_get`, initial config delivery, and
+    /// required-secret checks — so they can't disagree with tool payload
+    /// injection about whether a key is configured.
+    public static func resolvedSecret(id: String, for pluginId: String, agentId: UUID) -> String? {
+        if let exact = getSecret(id: id, for: pluginId, agentId: agentId) {
+            return exact
+        }
+        guard agentId != Agent.defaultId else { return nil }
+        return getSecret(id: id, for: pluginId, agentId: Agent.defaultId)
+    }
+
+    /// `resolvedSecret` presence check (exact agent, then default-agent
+    /// fallback).
+    public static func hasResolvedSecret(id: String, for pluginId: String, agentId: UUID) -> Bool {
+        resolvedSecret(id: id, for: pluginId, agentId: agentId) != nil
+    }
+
     /// Two-id merge primitive: `primary` agent's secrets overlaid on `defaults`.
     public static func resolvedSecretsMerging(pluginId: String, primary: UUID, defaults: UUID) -> [String: String] {
         let defaultDict = getAllSecrets(for: pluginId, agentId: defaults)
@@ -115,11 +136,15 @@ public enum ToolSecretsKeychain {
         return merged
     }
 
+    /// Required-secret check under the shared resolution policy: a key
+    /// satisfied by a Plugins-tab (default-agent) write counts as
+    /// configured for every agent, matching what tool payload injection
+    /// actually delivers via `resolvedSecretsWithDefaults`.
     public static func hasAllRequiredSecrets(specs: [PluginManifest.SecretSpec], for pluginId: String, agentId: UUID)
         -> Bool
     {
         for spec in specs where spec.required {
-            if !hasSecret(id: spec.id, for: pluginId, agentId: agentId) {
+            if !hasResolvedSecret(id: spec.id, for: pluginId, agentId: agentId) {
                 return false
             }
         }
@@ -132,7 +157,7 @@ public enum ToolSecretsKeychain {
         agentId: UUID
     ) -> [PluginManifest.SecretSpec] {
         return specs.filter { spec in
-            spec.required && !hasSecret(id: spec.id, for: pluginId, agentId: agentId)
+            spec.required && !hasResolvedSecret(id: spec.id, for: pluginId, agentId: agentId)
         }
     }
 
