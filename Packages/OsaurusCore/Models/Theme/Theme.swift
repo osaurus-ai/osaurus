@@ -574,8 +574,10 @@ public class ThemeManager: ObservableObject {
 
     /// Global font zoom applied on top of every theme's typography. Static so
     /// `CustomizableTheme` instances can capture it at construction wherever
-    /// they are built (main thread only, like the rest of ThemeManager).
-    public private(set) static var fontScale: Double = 1.0
+    /// they are built. `nonisolated(unsafe)` so it can serve as a default
+    /// argument in the nonisolated `CustomizableTheme.init`; all writes stay
+    /// on the main actor (this class), and themes are built on it too.
+    nonisolated(unsafe) public private(set) static var fontScale: Double = 1.0
     private static let fontScaleStep: Double = 0.1
 
     public var canZoomFontIn: Bool {
