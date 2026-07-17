@@ -147,6 +147,7 @@ struct MLXModel: Identifiable, Codable {
             // Precision / quantization tokens.
             if t.range(of: #"^mxfp\d+$"#, options: .regularExpression) != nil { return true }
             if t.range(of: #"^\d+-?bit$"#, options: .regularExpression) != nil { return true }
+            if t == "ternary" || t == "jang" { return true }
             if t == "fp16" || t == "bf16" || t == "fp32" { return true }
             if t.range(of: #"^jangtq\d*$"#, options: .regularExpression) != nil { return true }
             if t.range(of: #"^jang_?\d+[a-z]?$"#, options: .regularExpression) != nil { return true }
@@ -518,9 +519,10 @@ struct MLXModel: Identifiable, Codable {
         // and under-estimated every MXFP8 model at ~half its real footprint.
         if quant.contains("mxfp8") || quant.contains("fp8") { return 1.0 }
         if quant.contains("mxfp4") { return 0.5 }
+        if quant == "ternary" { return 0.25 }
 
         let bitWidths: [(String, Double)] = [
-            ("2-bit", 0.25), ("3-bit", 0.375), ("4-bit", 0.5),
+            ("1-bit", 0.125), ("2-bit", 0.25), ("3-bit", 0.375), ("4-bit", 0.5),
             ("5-bit", 0.625), ("6-bit", 0.75), ("8-bit", 1.0),
         ]
         for (label, bytes) in bitWidths {

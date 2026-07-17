@@ -271,9 +271,10 @@ final class ModelManager: NSObject, ObservableObject {
     func loadAvailableModels() {
         // Seed sizes synchronously from the on-disk cache so the first
         // paint shows last-known-accurate download sizes even offline.
-        // Sizes are no longer hand-coded; they're fetched + cached by the
-        // OsaurusAI org refresh / on-demand estimate and persisted in
-        // `ModelSizeCache`.
+        // Sizes normally come from the OsaurusAI org refresh / on-demand
+        // estimate and persist in `ModelSizeCache`. A model whose mixed
+        // precision cannot be inferred from its id may carry a bootstrap size;
+        // a cached Hub measurement still replaces it here.
         let curated = Self.curatedSuggestedModels.map { model in
             model.withDownloadSize(ModelSizeCache.bytes(forId: model.id))
         }
@@ -661,6 +662,7 @@ extension ModelManager {
         id: String,
         description: String,
         isTopSuggestion: Bool = false,
+        bootstrapDownloadSizeBytes: Int64? = nil,
         modelType: String? = nil,
         releasedAt: Date? = nil,
         useCase: ModelUseCase? = nil
@@ -671,7 +673,7 @@ extension ModelManager {
             description: description,
             downloadURL: "https://huggingface.co/\(id)",
             isTopSuggestion: isTopSuggestion,
-            downloadSizeBytes: nil,
+            downloadSizeBytes: bootstrapDownloadSizeBytes,
             modelType: modelType,
             releasedAt: releasedAt,
             useCase: useCase
@@ -698,7 +700,9 @@ extension ModelManager {
         // Onboarding recommendation spine (2026-07-08, GUI-verified in the
         // dev-built app — every model below loads, calls tools, reasons with
         // thinking on, and leaks no markup into visible content):
-        //   • Larger RAM  → Ornith 1.0 MXFP8 (9B / 35B, below).
+        //   • Mainstream RAM → Bonsai 27B, selecting its 1-bit or ternary
+        //                      variant from the machine's model-memory budget.
+        //   • Larger RAM     → Ornith 1.0 MXFP8 (9B / 35B, below).
         //   • Smaller RAM → official OsaurusAI Gemma 4 at the highest non-QAT,
         //                    non-MXFP4 precision that exists: `12B-it-MXFP8`
         //                    (the only MXFP8 Gemma the org ships) and the
@@ -871,12 +875,18 @@ extension ModelManager {
         // prism-ml's Bonsai checkpoints. Text matrices use affine JANG
         // (schema-2 discrete storage — not JANGTQ/MXTQ or a codebook
         // sidecar); vision components stay 4-bit affine. Same `qwen3_5`
-        // runtime class as Qwen 3.6 / Ornith dense builds.
+        // runtime class as Qwen 3.6 / Ornith dense builds. Both variants are
+        // Top Picks so the normalized Bonsai family can select the best build
+        // for this Mac. Their mixed text/vision precision cannot be estimated
+        // accurately from `27B × bit-width`, so the current Hub sizes bootstrap
+        // first-launch hardware selection until `ModelSizeCache` refreshes.
 
         curated(
             id: "OsaurusAI/Bonsai-27b-Ternary-JANG",
             description:
                 "Bonsai 27B dense vision model on a Qwen 3.5 backbone. Ternary (2-bit slot) affine JANG text weights — ~8 GB on disk.",
+            isTopSuggestion: true,
+            bootstrapDownloadSizeBytes: 8_040_700_199,
             modelType: "qwen3_5",
             releasedAt: date("2026-07-14"),
             useCase: .vision
@@ -886,6 +896,8 @@ extension ModelManager {
             id: "OsaurusAI/Bonsai-27b-1bit-JANG",
             description:
                 "Bonsai 27B dense vision model on a Qwen 3.5 backbone. 1-bit affine JANG text weights — smallest of the family at ~4.7 GB.",
+            isTopSuggestion: true,
+            bootstrapDownloadSizeBytes: 4_679_030_015,
             modelType: "qwen3_5",
             releasedAt: date("2026-07-14"),
             useCase: .vision

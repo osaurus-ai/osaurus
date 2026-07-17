@@ -124,11 +124,13 @@ enum ModelMetadataParser {
             #"(?i)\bbf16\b"#,
             #"(?i)\bq\d+(_[a-z0-9]+)*\b"#,  // q4_0, q8_k_m
             #"(?i)\b\d+-?bit\b"#,  // 4bit, 4-bit, 8-bit
+            #"(?i)\bternary\b"#,  // ternary / two-bit storage variant
             #"(?i)\bmlx\b"#,
             #"(?i)\bit\b"#,  // "it" = instruction tuned
             #"(?i)\binstruct\b"#,
             #"(?i)\bchat\b"#,
             #"(?i)\bjangtq[_0-9a-z]*\b"#,  // TurboQuant variants (JANGTQ4, JANGTQ_K)
+            #"(?i)\bjang\b"#,  // plain affine JANG storage marker
             #"(?i)\ba\d+(\.\d+)?b\b"#,  // A3B / A2.5B active param count
         ]
         for pat in dropPatterns {
@@ -184,6 +186,8 @@ enum ModelMetadataParser {
             #"^qat$"#,  // quantization-aware-training marker
             #"^jangtq[_0-9a-z]*$"#,  // JANGTQ / JANGTQ4 / JANGTQ_K TurboQuant
             #"^jang_?\d+[a-z]?$"#,  // JANG_4M / JANG_2S mixed precision
+            #"^jang$"#,  // plain affine JANG storage
+            #"^ternary$"#,  // ternary / two-bit storage variant
             #"^\d+-?bit$"#,  // 4bit / 8bit / 4-bit
             #"^(fp16|bf16|fp32)$"#,
             #"^q\d+(_[a-z0-9]+)*$"#,  // GGUF-style q4_0 / q8_k_m
@@ -285,6 +289,16 @@ enum ModelMetadataParser {
             options: .regularExpression
         ) {
             return String(text[match]).uppercased().replacingOccurrences(of: "_", with: " ")
+        }
+        // Bonsai's ternary checkpoint uses plain affine JANG storage. Ternary
+        // is the useful precision label; the trailing `JANG` token identifies
+        // the storage format rather than a separate model family.
+        if text.contains("ternary") { return "Ternary" }
+        if text.range(
+            of: #"(^|[-_/])jang($|[-_/])"#,
+            options: .regularExpression
+        ) != nil {
+            return "JANG"
         }
         if text.contains("fp16") { return "FP16" }
         if text.contains("bf16") { return "BF16" }

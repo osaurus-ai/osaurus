@@ -39,4 +39,15 @@ struct ModelMetadataParserQuantLabelTests {
         #expect(ModelMetadataParser.quantization(from: "OsaurusAI/gemma-4-12B-it-qat-MXFP4") == "MXFP4")
         #expect(ModelMetadataParser.quantization(from: "OsaurusAI/gemma-4-E4B-it-8bit") == "8-bit")
     }
+
+    @Test func parsesBonsaiLowBitLabels() {
+        #expect(
+            ModelMetadataParser.quantization(from: "OsaurusAI/Bonsai-27b-Ternary-JANG")
+                == "Ternary"
+        )
+        #expect(
+            ModelMetadataParser.quantization(from: "OsaurusAI/Bonsai-27b-1bit-JANG")
+                == "1-bit"
+        )
+    }
 }
