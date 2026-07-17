@@ -41,7 +41,7 @@ struct KnowledgeView: View {
                         icon: "books.vertical.fill",
                         title: L("Add Your First Knowledge Collection"),
                         subtitle: L(
-                            "Point Osaurus at a folder of markdown (guides, templates, standards) and grant it to agents so they can consult it on demand."
+                            "Point Osaurus at a folder of guides, templates, and standards and grant it to agents so they can consult it on demand. Markdown, plain text, code, PDF, Word, Excel, PowerPoint, and CSV files are supported."
                         ),
                         examples: [
                             .init(

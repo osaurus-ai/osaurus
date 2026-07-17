@@ -113850,36 +113850,36 @@
         }
       }
     },
-    "Point Osaurus at a folder of markdown (guides, templates, standards) and grant it to agents so they can consult it on demand." : {
+    "Point Osaurus at a folder of guides, templates, and standards and grant it to agents so they can consult it on demand. Markdown, plain text, code, PDF, Word, Excel, PowerPoint, and CSV files are supported." : {
       "localizations" : {
         "de" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Zeige Osaurus auf einen Markdown-Ordner (Leitfäden, Vorlagen, Standards) und gib ihn für Agenten frei, damit sie ihn bei Bedarf heranziehen können."
+            "value" : "Zeige Osaurus auf einen Ordner mit Leitfäden, Vorlagen und Standards und gib ihn für Agenten frei, damit sie ihn bei Bedarf heranziehen können. Unterstützt werden Markdown, reiner Text, Code, PDF, Word, Excel, PowerPoint und CSV."
           }
         },
         "ko" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "마크다운 폴더(가이드, 템플릿, 표준)를 Osaurus에 지정하고 에이전트에 허용하면 필요할 때 참조할 수 있습니다."
+            "value" : "가이드, 템플릿, 표준이 담긴 폴더를 Osaurus에 지정하고 에이전트에 허용하면 필요할 때 참조할 수 있습니다. 마크다운, 일반 텍스트, 코드, PDF, Word, Excel, PowerPoint, CSV 파일을 지원합니다."
           }
         },
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Укажите Osaurus папку с Markdown (руководства, шаблоны, стандарты) и предоставьте её агентам, чтобы они могли обращаться к ней по мере необходимости."
+            "value" : "Укажите Osaurus папку с руководствами, шаблонами и стандартами и предоставьте её агентам, чтобы они могли обращаться к ней по мере необходимости. Поддерживаются Markdown, обычный текст, код, PDF, Word, Excel, PowerPoint и CSV."
           }
         },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "让 Osaurus 指向一个 Markdown 文件夹（指南、模板、规范），并授权给代理，让它们可以按需查阅。"
+            "value" : "让 Osaurus 指向一个包含指南、模板、规范的文件夹，并授权给代理，让它们可以按需查阅。支持 Markdown、纯文本、代码、PDF、Word、Excel、PowerPoint 和 CSV 文件。"
           }
         },
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "讓 Osaurus 指向一個 Markdown 資料夾（指南、範本、規範），並授權給代理，讓它們可以按需查閱。"
+            "value" : "讓 Osaurus 指向一個包含指南、範本、規範的資料夾，並授權給代理，讓它們可以按需查閱。支援 Markdown、純文字、程式碼、PDF、Word、Excel、PowerPoint 和 CSV 檔案。"
           }
         }
       }
