@@ -1069,8 +1069,8 @@ struct AppleScriptLoopTests {
         #expect(await exec.count == 0)
     }
 
-    @Test("an invalid call is re-asked, then the model completes")
-    func invalidThenComplete() async {
+    @Test("an invalid call followed by completion stays failed")
+    func invalidThenCompleteStaysFailed() async {
         let feed = SubagentFeed(toolCallId: "t-invalid", kindId: "applescript", title: "task")
         let exec = ExecRecorder(result: successResult())
         let confirm = ConfirmCounter(approve: true)
@@ -1088,10 +1088,19 @@ struct AppleScriptLoopTests {
             nextScript: { _ in await seq.next() }
         )
 
-        #expect(result.outcome.isSuccess)
+        guard case .failed(let reason) = result.outcome else {
+            Issue.record("expected .failed, got \(result.outcome)")
+            return
+        }
+        #expect(reason.contains("No valid script executed successfully"))
         #expect(result.scriptsExecuted == 0)
         #expect(await exec.count == 0)
         #expect(feed.currentEvents().contains { $0.kind == .retry })
+        if case .finished(let success, _) = feed.currentStatus() {
+            #expect(success == false)
+        } else {
+            Issue.record("expected a finished feed status")
+        }
     }
 
     @Test("the step cap terminates a model that keeps proposing scripts")
@@ -1121,6 +1130,38 @@ struct AppleScriptLoopTests {
             Issue.record("expected .stepCapReached, got \(result.outcome)")
         }
         #expect(result.scriptsExecuted == 1)
+    }
+
+    @Test("query mode stops after the first successful read with a returned value")
+    func queryStopsAfterSuccessfulValue() async {
+        let feed = SubagentFeed(toolCallId: "t-query-done", kindId: "applescript", title: "q")
+        let exec = ExecRecorder(result: successResult("4"))
+        let seq = ScriptSequencer(repeating: call("return 2 + 2"))
+
+        let result = await AppleScriptLoop.run(
+            task: "return the integer result of 2 + 2",
+            modelId: "applescript-test",
+            feed: feed,
+            interrupt: InterruptToken(),
+            executionMode: .confirmEach,
+            confirm: { _ in true },
+            limits: RunLimits(maxSteps: 8),
+            sessionId: "s",
+            mode: .query,
+            execute: { script, _ in await exec.run(script) },
+            nextScript: { _ in await seq.next() }
+        )
+
+        guard case .done(let summary) = result.outcome else {
+            Issue.record("expected .done, got \(result.outcome)")
+            return
+        }
+        #expect(summary.contains("4"))
+        #expect(result.scriptsExecuted == 1)
+        #expect(result.succeeded == 1)
+        #expect(result.failed == 0)
+        #expect(result.lastOutput == "4")
+        #expect(await exec.count == 1)
     }
 
     /// Build a `run_applescript` call carrying `script` (JSON-encoded so quotes
@@ -1190,6 +1231,47 @@ struct AppleScriptLoopTests {
         #expect(result.steps.first?.status == "runtime_error")
         #expect(result.steps.first?.errorNumber == -1728)
         #expect(result.steps.first?.error == "Can’t get name")
+    }
+
+    @Test("plain-text completion after only failed scripts keeps the run and feed failed")
+    func completionAfterOnlyFailuresStaysFailed() async {
+        let feed = SubagentFeed(toolCallId: "t-all-failed", kindId: "applescript", title: "q")
+        let exec = ExecRecorder(
+            result: AppleScriptExecutionResult(
+                status: .runtimeError,
+                output: nil,
+                errorNumber: -1728,
+                errorMessage: "Can’t get the requested property"
+            )
+        )
+        let seq = ScriptSequencer([call("get missing property"), nil])
+
+        let result = await AppleScriptLoop.run(
+            task: "read the missing property",
+            modelId: "applescript-test",
+            feed: feed,
+            interrupt: InterruptToken(),
+            executionMode: .confirmEach,
+            confirm: { _ in true },
+            sessionId: "s",
+            mode: .query,
+            execute: { script, _ in await exec.run(script) },
+            nextScript: { _ in await seq.next() }
+        )
+
+        guard case .failed(let reason) = result.outcome else {
+            Issue.record("expected .failed, got \(result.outcome)")
+            return
+        }
+        #expect(reason.contains("all failed"))
+        #expect(result.scriptsExecuted == 1)
+        #expect(result.succeeded == 0)
+        #expect(result.failed == 1)
+        if case .finished(let success, _) = feed.currentStatus() {
+            #expect(success == false)
+        } else {
+            Issue.record("expected a finished feed status")
+        }
     }
 
     @Test("query mode runs the verification read-back to capture a value")
@@ -1406,7 +1488,7 @@ struct AppleScriptMapOutcomeTests {
         )
     }
 
-    @Test("a failed run that executed scripts returns the transcript instead of throwing")
+    @Test("a failed run with a successful script returns the transcript instead of throwing")
     func failedWithScriptsReturnsTranscript() throws {
         let result = AppleScriptRunResult(
             outcome: .failed(reason: "boom"),
@@ -1439,6 +1521,60 @@ struct AppleScriptMapOutcomeTests {
         )
         #expect(throws: SubagentError.self) {
             _ = try AppleScriptKind.mapOutcome(result, model: "m", mode: .automate)
+        }
+    }
+
+    @Test("a failed run where every executed script failed throws executionFailed")
+    func failedWithOnlyFailedScriptsThrows() {
+        let result = AppleScriptRunResult(
+            outcome: .failed(reason: "Every generated script failed."),
+            scriptsExecuted: 2,
+            succeeded: 0,
+            failed: 2,
+            modelTokens: 100,
+            lastOutput: nil,
+            steps: [
+                step(1, "compile_error", error: "syntax", errorNumber: -2741),
+                step(2, "runtime_error", error: "missing value", errorNumber: -1728),
+            ]
+        )
+
+        #expect(throws: SubagentError.self) {
+            _ = try AppleScriptKind.mapOutcome(result, model: "m", mode: .query)
+        }
+    }
+
+    @Test("a done run where every executed script failed still throws executionFailed")
+    func doneWithOnlyFailedScriptsThrows() {
+        let result = AppleScriptRunResult(
+            outcome: .done(summary: "I could not read the requested value."),
+            scriptsExecuted: 1,
+            succeeded: 0,
+            failed: 1,
+            modelTokens: 50,
+            lastOutput: nil,
+            steps: [step(1, "runtime_error", error: "not found", errorNumber: -1728)]
+        )
+
+        #expect(throws: SubagentError.self) {
+            _ = try AppleScriptKind.mapOutcome(result, model: "m", mode: .query)
+        }
+    }
+
+    @Test("a done run with invalid attempts but no executed script throws executionFailed")
+    func doneWithOnlyInvalidAttemptsThrows() {
+        let result = AppleScriptRunResult(
+            outcome: .done(summary: "Completed the task."),
+            scriptsExecuted: 0,
+            succeeded: 0,
+            failed: 0,
+            modelTokens: 100,
+            lastOutput: nil,
+            steps: [step(1, "invalid", error: "Missing required property: script")]
+        )
+
+        #expect(throws: SubagentError.self) {
+            _ = try AppleScriptKind.mapOutcome(result, model: "m", mode: .query)
         }
     }
 

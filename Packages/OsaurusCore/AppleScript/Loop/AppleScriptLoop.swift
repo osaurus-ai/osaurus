@@ -576,6 +576,21 @@ public enum AppleScriptLoop {
                     succeeded: succeeded,
                     failed: failed
                 )
+                // A plain-text completion after attempted work does not erase
+                // its real outcome. `steps` also includes malformed tool calls
+                // and compile/placeholder rejections that never reached the
+                // executor, so do not mistake `scriptsExecuted == 0` for a
+                // clean no-tool explanation when such attempts exist.
+                if succeeded == 0, scriptsExecuted > 0 || !steps.isEmpty {
+                    let reason: String
+                    if scriptsExecuted == 0 {
+                        let detail = steps.last?.error ?? "The generated script call was invalid."
+                        reason = "No valid script executed successfully. \(detail)"
+                    } else {
+                        reason = summary
+                    }
+                    return terminate(.failed(reason: reason))
+                }
                 return terminate(.done(summary: summary))
             }
 
@@ -958,6 +973,24 @@ public enum AppleScriptLoop {
                 errorNumber: execution.errorNumber,
                 script: script
             )
+
+            // `mac_query` is complete as soon as a read succeeds with a real
+            // return value. Continuing to ask the model after that point lets
+            // small dedicated models repeat the identical successful script
+            // until the step cap, wasting an entire generation per repeat.
+            // Empty successful reads still continue into the existing
+            // verification path so the runtime can obtain the requested value.
+            if mode == .query, execution.isSuccess, let trimmedOutput, !trimmedOutput.isEmpty {
+                let summary = completionSummary(
+                    modelText: nil,
+                    lastOutput: trimmedOutput,
+                    scriptsExecuted: scriptsExecuted,
+                    succeeded: succeeded,
+                    failed: failed
+                )
+                return terminate(.done(summary: summary))
+            }
+
             messages.append(
                 ChatMessage(role: "tool", content: toolResult, tool_calls: nil, tool_call_id: call.id)
             )

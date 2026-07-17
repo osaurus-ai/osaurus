@@ -318,16 +318,26 @@ final class AppleScriptKind: SubagentKind, @unchecked Sendable {
     }
 
     /// Map a finished `AppleScriptLoop` run onto the shared subagent result
-    /// contract. `done` → the rich success payload. `interrupted` → a
-    /// `user_denied` envelope. A `stepCapReached` / `failed` run that ACTUALLY
-    /// RAN scripts still returns the rich payload (with an honest
-    /// `failed`/`partial` status + the transcript) so the parent can
-    /// troubleshoot — only a run where nothing executed is a hard tool failure.
+    /// contract. A completed run with no attempted scripts may carry the
+    /// model's useful explanation. Once script work was attempted (including
+    /// malformed calls that never reached the executor), at least one script
+    /// must have succeeded for a successful outer envelope. `interrupted` → a
+    /// `user_denied` envelope. A `stepCapReached` / `failed` run with at least
+    /// one successful script still returns the rich partial payload so the
+    /// parent can use the real value and troubleshoot later failures.
     static func mapOutcome(
         _ result: AppleScriptRunResult,
         model: String,
         mode: AppleScriptRunMode
     ) throws -> SubagentResult {
+        let attemptedWork = result.scriptsExecuted > 0 || !result.steps.isEmpty
+        if attemptedWork, result.succeeded == 0 {
+            throw SubagentError.executionFailed(
+                message: result.outcome.summary,
+                retryable: false
+            )
+        }
+
         switch result.outcome {
         case .done(let summary):
             return successResult(result, model: model, mode: mode, summary: summary)
@@ -347,8 +357,8 @@ final class AppleScriptKind: SubagentKind, @unchecked Sendable {
     /// Assemble the parent-facing payload: the headline `values`, an honest
     /// aggregate `status` (`succeeded` / `partial` / `failed`), and a capped
     /// per-step transcript plus convenience `errors` / `permission_needed`. The
-    /// top-level envelope `ok` means "the tool ran"; the task outcome lives in
-    /// `status`, so the two never collide.
+    /// top-level envelope remains successful only when at least one script
+    /// succeeded; the task's aggregate outcome lives in `status`.
     private static func successResult(
         _ result: AppleScriptRunResult,
         model: String,
