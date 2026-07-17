@@ -1199,12 +1199,13 @@ final class PluginManager {
         if let mount = manifest.capabilities.web?.mount,
             let routes = manifest.capabilities.routes
         {
-            let normalizedMount = mount.hasPrefix("/") ? mount : "/\(mount)"
             for route in routes {
                 let routePath = route.path.hasPrefix("/") ? route.path : "/\(route.path)"
-                let isShadowed =
-                    routePath == normalizedMount
-                    || routePath.hasPrefix(normalizedMount + "/")
+                // Same segment-boundary helper HTTPHandler uses for static
+                // dispatch, so validation and runtime can never disagree
+                // about which paths the mount captures.
+                let isShadowed = PluginManifest.WebSpec.mountCaptures(
+                    subpath: routePath, mount: mount)
                 if isShadowed {
                     let errorMsg =
                         "Plugin \(manifest.plugin_id) declares route '\(route.path)' under web mount '\(mount)'; the static web branch would shadow this route. Move the route outside the web mount or remove the web mount overlap."
