@@ -2664,12 +2664,9 @@ struct AgentDetailView: View {
                     "Model Access",
                     description: "What the model can draw on by default."
                 ) {
-                    featureToggleRow(
-                        title: "Tools",
-                        subtitle:
-                            "Let the agent use tools to take actions and look things up. Turn off for a chat-only agent.",
-                        isOn: $toolsEnabled
-                    )
+                    // Memory renders before Tools so the tool-dependent
+                    // groups nested below sit directly under the Tools
+                    // toggle they depend on.
                     // The default agent has no per-agent memory flag: its
                     // memory is governed globally (Settings > Enable memory),
                     // so a per-agent toggle here would be a dead control.
@@ -2687,6 +2684,12 @@ struct AgentDetailView: View {
                         .font(.system(size: 11))
                         .foregroundColor(theme.tertiaryText)
                     }
+                    featureToggleRow(
+                        title: "Tools",
+                        subtitle:
+                            "Let the agent use tools to take actions and look things up. Turn off for a chat-only agent.",
+                        isOn: $toolsEnabled
+                    )
                 }
 
                 // Always shown (default + custom agents): the empty-state
@@ -2845,6 +2848,9 @@ struct AgentDetailView: View {
             .opacity(toolsEnabled ? 1 : 0.45)
             .disabled(!toolsEnabled)
         }
+        // Indent the whole nest relative to the top-level toggle cards so
+        // the child relationship to the Tools switch is unmistakable.
+        .padding(.leading, 16)
         .animation(.easeInOut(duration: 0.15), value: toolsEnabled)
     }
 
