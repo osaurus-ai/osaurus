@@ -2883,19 +2883,21 @@ struct AgentDetailView: View {
     /// Scroll anchor for the Tools master card in the Abilities overview.
     private static let toolsToggleScrollId = "abilities-tools-card"
 
-    /// `abilitySaveBinding` for tool-backed abilities: the write (and the
-    /// debounced save) still lands so users can pre-configure abilities
-    /// while Tools is off, but switching one ON in that state also points
-    /// at the master switch that keeps it inactive.
+    /// `abilitySaveBinding` for tool-backed abilities: while Tools is off
+    /// the switch refuses to turn ON — the write is dropped so the toggle
+    /// snaps back, and the view scrolls to and pulses the Tools master
+    /// card instead. Turning OFF still lands, so a paused ability can be
+    /// unconfigured without re-enabling Tools first.
     private func toolBackedSaveBinding(_ source: Binding<Bool>) -> Binding<Bool> {
         Binding(
             get: { source.wrappedValue },
             set: { newValue in
-                source.wrappedValue = newValue
-                debouncedSave()
                 if newValue, !toolsEnabled {
                     flashToolsToggle()
+                    return
                 }
+                source.wrappedValue = newValue
+                debouncedSave()
             }
         )
     }
