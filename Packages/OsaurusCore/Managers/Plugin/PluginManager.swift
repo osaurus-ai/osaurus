@@ -484,12 +484,18 @@ final class PluginManager {
         else { return }
 
         let allFieldKeys = Set(configSpec.sections.flatMap { $0.fields.map { $0.key } })
-        var values = ToolSecretsKeychain.getAllSecrets(for: pluginId, agentId: agentId)
+        // Shared resolution policy (exact agent overlaid on default-agent
+        // globals) so initial delivery matches tool payload injection —
+        // a key saved once on the Plugins tab reaches every agent's
+        // `on_config_changed`, not just the Default agent's.
+        var values = ToolSecretsKeychain.resolvedSecretsWithDefaults(
+            pluginId: pluginId, agentId: agentId)
 
         for section in configSpec.sections {
             for field in section.fields {
                 if values[field.key] == nil, field.type != .readonly, field.type != .status,
-                    let val = ToolSecretsKeychain.getSecret(id: field.key, for: pluginId, agentId: agentId)
+                    let val = ToolSecretsKeychain.resolvedSecret(
+                        id: field.key, for: pluginId, agentId: agentId)
                 {
                     values[field.key] = val
                 }
@@ -497,7 +503,8 @@ final class PluginManager {
                     values[field.key] = def.stringValue
                 }
                 if let connKey = field.connected_when, values[connKey] == nil,
-                    let val = ToolSecretsKeychain.getSecret(id: connKey, for: pluginId, agentId: agentId)
+                    let val = ToolSecretsKeychain.resolvedSecret(
+                        id: connKey, for: pluginId, agentId: agentId)
                 {
                     values[connKey] = val
                 }
@@ -582,8 +589,12 @@ final class PluginManager {
 
     /// Tear down per-agent state on every loaded plugin when an agent is
     /// deleted: push `tunnel_url=""` so plugins can deregister their
-    /// webhooks. Per-agent keychain secrets are swept by
-    /// `AgentManager.delete(id:)` itself before this handler runs.
+    /// webhooks. `AgentManager.delete(id:)` already ran the awaitable
+    /// `tearDownPluginsForRemovedAgent` before sweeping keychain secrets;
+    /// this notification-driven pass is a belt-and-braces repeat for any
+    /// other `.agentRemoved` poster — the plugin-side delivery dedup
+    /// filters the duplicate `tunnel_url=""` so `on_config_changed`
+    /// doesn't re-fire.
     private func handleAgentRemoved(_ agentId: UUID) {
         for loaded in plugins where !loaded.routes.isEmpty {
             pushTunnelURL(nil, to: loaded, agentId: agentId)
@@ -594,6 +605,41 @@ final class PluginManager {
         for pluginId in lastPushedTunnelURL.keys {
             lastPushedTunnelURL[pluginId]?.removeValue(forKey: agentId)
         }
+    }
+
+    /// Awaitable per-agent plugin teardown for agent deletion. Pushes
+    /// `tunnel_url=""` to every routed plugin through the SYNCHRONOUS
+    /// config-delivery path and returns only after each plugin's
+    /// `on_config_changed` has run.
+    ///
+    /// Ordering contract: `AgentManager.delete(id:)` must call this
+    /// BEFORE `ToolSecretsKeychain.deleteAllSecrets(forAgent:)`. Plugins
+    /// deregister webhooks inside this callback and read their config
+    /// (e.g. Telegram's `bot_token`) while doing so — sweeping the
+    /// keychain first made those reads return nothing, leaving the
+    /// webhook registered upstream forever.
+    func tearDownPluginsForRemovedAgent(agentId: UUID) async {
+        // Drop the host-side tunnel-push dedup entries regardless of
+        // whether any plugin needs a delivery.
+        for pluginId in lastPushedTunnelURL.keys {
+            lastPushedTunnelURL[pluginId]?.removeValue(forKey: agentId)
+        }
+
+        let routed = plugins.filter { !$0.routes.isEmpty }
+        guard !routed.isEmpty else { return }
+
+        // Off the main actor: the keychain write blocks on security-daemon
+        // XPC and `notifyConfigBatchSync` blocks until the plugin's C
+        // callback returns.
+        await Task.detached(priority: .userInitiated) {
+            for loaded in routed {
+                Self.persistTunnelURLSecret(nil, pluginId: loaded.plugin.id, agentId: agentId)
+                loaded.plugin.notifyConfigBatchSync(
+                    [(key: "tunnel_url", value: "")],
+                    agentId: agentId
+                )
+            }
+        }.value
     }
 
     private func handleTunnelStatusChange(_ statuses: [UUID: AgentRelayStatus]) {

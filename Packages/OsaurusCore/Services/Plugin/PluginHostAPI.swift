@@ -295,7 +295,11 @@ final class PluginHostContext: @unchecked Sendable {
             Self.warnNoAgentContextOnce(pluginId: pluginId, op: "config_get")
             return nil
         }
-        return ToolSecretsKeychain.getSecret(id: key, for: pluginId, agentId: agentId)
+        // Shared resolution policy (exact agent, then default-agent
+        // fallback) so `config_get` agrees with tool payload injection —
+        // a `bot_token` saved as a Plugins-tab global default must be
+        // readable here, not only via the injected payload.
+        return ToolSecretsKeychain.resolvedSecret(id: key, for: pluginId, agentId: agentId)
     }
 
     /// Maximum config value byte size accepted by `config_set`. The
