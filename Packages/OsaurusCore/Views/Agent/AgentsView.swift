@@ -2893,6 +2893,9 @@ struct AgentDetailView: View {
             get: { source.wrappedValue },
             set: { newValue in
                 if newValue, !toolsEnabled {
+                    // Re-assert false so the optimistic switch animation
+                    // snaps back even though the value never changed.
+                    source.wrappedValue = false
                     flashToolsToggle()
                     return
                 }
