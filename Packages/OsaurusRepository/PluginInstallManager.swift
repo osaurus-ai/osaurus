@@ -66,25 +66,21 @@ public final class PluginInstallManager: @unchecked Sendable {
             throw PluginInstallError.specNotFound(pluginId)
         }
 
-        // TOFU: when the author's signing key changes, the new artifact is verified against
-        // the updated key from the registry. We capture the prior version here so we can
-        // remove it *after* the new install + symlink swap succeed. Eagerly deleting it now
-        // would leave the user with no installed version (and a dangling `current` symlink)
-        // if any later step throws (network, checksum, signature, extraction).
-        let keyRotatedFromVersion: SemanticVersion? = {
-            guard let latest = InstalledPluginsStore.shared.latestInstalledVersion(pluginId: spec.plugin_id),
-                let existing = InstalledPluginsStore.shared.receipt(pluginId: spec.plugin_id, version: latest),
-                let existingKey = existing.public_keys?["minisign"],
-                let newKey = spec.public_keys?["minisign"],
-                existingKey != newKey
-            else { return nil }
+        // TOFU pinning: once a signing key has been trusted for this plugin, a
+        // registry that suddenly advertises a different key is NOT silently
+        // trusted. Fail closed; the explicit recovery path is uninstalling the
+        // plugin (which drops the pinned key) and reinstalling to accept the
+        // new key — the flow the `authorKeyMismatch` UI alert walks users through.
+        if Self.pinnedSigningKeyMismatch(
+            spec: spec,
+            installedReceipt: Self.latestInstalledReceipt(pluginId: spec.plugin_id)
+        ) {
             NSLog(
-                "[Osaurus] Signing key changed for %@ — will remove old version %@ after new install succeeds",
-                spec.plugin_id,
-                latest.description
+                "[Osaurus] Signing key changed for %@ — refusing to install without explicit re-trust (uninstall + reinstall)",
+                spec.plugin_id
             )
-            return latest
-        }()
+            throw PluginInstallError.authorKeyMismatch
+        }
 
         let targetPlatform: Platform = .macos
         // Arm64 only per project policy
@@ -95,8 +91,9 @@ public final class PluginInstallManager: @unchecked Sendable {
             resolution = try spec.resolveBestVersion(
                 targetPlatform: targetPlatform,
                 targetArch: targetArch,
-                minimumOsaurusVersion: nil,
-                preferredVersion: preferredVersion
+                minimumOsaurusVersion: Self.currentHostVersion(),
+                preferredVersion: preferredVersion,
+                currentMacOSVersion: ProcessInfo.processInfo.operatingSystemVersion
             )
         } catch {
             throw PluginInstallError.resolutionFailed("\(error)")
@@ -148,13 +145,35 @@ public final class PluginInstallManager: @unchecked Sendable {
             throw PluginInstallError.archiveRejected(error.localizedDescription)
         }
 
-        guard let dylibURL = findFirstDylib(in: tmpDir) else {
-            throw PluginInstallError.layoutInvalid("No .dylib found in archive")
-        }
+        return try installVerifiedArtifact(
+            extractedAt: tmpDir,
+            spec: spec,
+            versionEntry: resolution.version,
+            artifact: artifact,
+            targetPlatform: targetPlatform,
+            targetArch: targetArch
+        )
+    }
+
+    /// Lays out an already-downloaded, checksum/signature-verified, extracted
+    /// artifact into the versioned install directory: dylib, web assets,
+    /// skills, docs, receipt, consent marker, and the `current` symlink swap.
+    /// Internal (not private) so the layout contract is unit-testable without
+    /// network access.
+    func installVerifiedArtifact(
+        extractedAt tmpDir: URL,
+        spec: PluginSpec,
+        versionEntry: PluginVersionEntry,
+        artifact: PluginArtifact,
+        targetPlatform: Platform,
+        targetArch: CPUArch
+    ) throws -> InstallResult {
+        let pluginId = spec.plugin_id
+        let dylibURL = try Self.locateSingleDylib(in: tmpDir)
 
         let installDir = PluginInstallManager.toolsVersionDirectory(
-            pluginId: spec.plugin_id,
-            version: resolution.version.version
+            pluginId: pluginId,
+            version: versionEntry.version
         )
         try ensureDirectoryExists(installDir)
         let finalDylibURL = installDir.appendingPathComponent(dylibURL.lastPathComponent, isDirectory: false)
@@ -162,6 +181,17 @@ public final class PluginInstallManager: @unchecked Sendable {
             try FileManager.default.removeItem(at: finalDylibURL)
         }
         try FileManager.default.copyItem(at: dylibURL, to: finalDylibURL)
+
+        // Copy the static web UI directory when the artifact bundles one
+        // (docs/plugins/PACKAGING.md promises `web/` survives the install).
+        if let webDir = Self.findWebDirectory(in: tmpDir, near: dylibURL) {
+            let destWebDir = installDir.appendingPathComponent(webDir.lastPathComponent, isDirectory: true)
+            if FileManager.default.fileExists(atPath: destWebDir.path) {
+                try FileManager.default.removeItem(at: destWebDir)
+            }
+            try FileManager.default.copyItem(at: webDir, to: destWebDir)
+            NSLog("[Osaurus] Installed web assets for plugin \(pluginId)")
+        }
 
         // Copy any SKILL.md files found in the artifact
         let skillFileURLs = findSkillFiles(in: tmpDir)
@@ -203,8 +233,8 @@ public final class PluginInstallManager: @unchecked Sendable {
         let dylibSha = try Self.sha256Hex(ofFile: finalDylibURL)
 
         let receipt = PluginReceipt(
-            plugin_id: spec.plugin_id,
-            version: resolution.version.version,
+            plugin_id: pluginId,
+            version: versionEntry.version,
             installed_at: Date(),
             dylib_filename: finalDylibURL.lastPathComponent,
             dylib_sha256: dylibSha,
@@ -226,19 +256,7 @@ public final class PluginInstallManager: @unchecked Sendable {
         let consentURL = installDir.appendingPathComponent(".user_consent", isDirectory: false)
         try Data().write(to: consentURL)
 
-        try Self.updateCurrentSymlink(pluginId: spec.plugin_id, version: resolution.version.version)
-
-        // Deferred TOFU cleanup: now that the new version is fully on disk and `current`
-        // points at it, it's safe to remove the prior key-rotated version.
-        if let old = keyRotatedFromVersion, old != resolution.version.version {
-            let oldDir = PluginInstallManager.toolsVersionDirectory(pluginId: spec.plugin_id, version: old)
-            try? FileManager.default.removeItem(at: oldDir)
-            NSLog(
-                "[Osaurus] Key rotated for %@ — removed prior version %@",
-                spec.plugin_id,
-                old.description
-            )
-        }
+        try Self.updateCurrentSymlink(pluginId: pluginId, version: versionEntry.version)
 
         return InstallResult(
             receipt: receipt,
@@ -246,6 +264,50 @@ public final class PluginInstallManager: @unchecked Sendable {
             dylibURL: finalDylibURL,
             skillFiles: installedSkillFiles
         )
+    }
+
+    // MARK: - Trust decisions
+
+    /// Latest installed receipt for `pluginId`, if any.
+    static func latestInstalledReceipt(pluginId: String) -> PluginReceipt? {
+        guard let latest = InstalledPluginsStore.shared.latestInstalledVersion(pluginId: pluginId) else {
+            return nil
+        }
+        return InstalledPluginsStore.shared.receipt(pluginId: pluginId, version: latest)
+    }
+
+    /// True when the registry advertises a minisign key that differs from the
+    /// key pinned by an existing install's receipt. No pinned key (fresh
+    /// install, or a manual sideload without keys) is not a mismatch.
+    static func pinnedSigningKeyMismatch(spec: PluginSpec, installedReceipt: PluginReceipt?) -> Bool {
+        guard let pinnedKey = installedReceipt?.public_keys?["minisign"],
+            let newKey = spec.public_keys?["minisign"]
+        else { return false }
+        return pinnedKey != newKey
+    }
+
+    /// Host app version used for `osaurus_min_version` filtering during
+    /// registry resolution. Lenient parse: Xcode's default MARKETING_VERSION
+    /// is often `1.0` (or `1`), so missing components are treated as zero.
+    /// Returns nil (fail open, matching the loader) when bundle metadata is
+    /// absent or unparseable.
+    static nonisolated(unsafe) var hostVersionOverrideForTesting: SemanticVersion?
+    static func currentHostVersion() -> SemanticVersion? {
+        if let hostVersionOverrideForTesting { return hostVersionOverrideForTesting }
+        guard let raw = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String else {
+            return nil
+        }
+        return parseLenientHostVersion(raw)
+    }
+
+    static func parseLenientHostVersion(_ s: String) -> SemanticVersion? {
+        if let strict = SemanticVersion.parse(s) { return strict }
+        let core = s.split(separator: "-", maxSplits: 1).first.map(String.init) ?? s
+        let parts = core.split(separator: ".", omittingEmptySubsequences: false).map(String.init)
+        guard let major = parts.first.flatMap(Int.init) else { return nil }
+        let minor = parts.count > 1 ? Int(parts[1]) ?? 0 : 0
+        let patch = parts.count > 2 ? Int(parts[2]) ?? 0 : 0
+        return SemanticVersion(major: major, minor: minor, patch: patch)
     }
 
     // MARK: - Paths
@@ -458,6 +520,17 @@ public final class PluginInstallManager: @unchecked Sendable {
         try Data(contentsOf: url, options: [.mappedIfSafe])
     }
 
+    /// Public facade over the bounded in-process ZIP extractor so other
+    /// install surfaces (e.g. the CLI's manual `tools install`) share the
+    /// same hardened extraction instead of shelling out to /usr/bin/unzip.
+    public static func extractPluginArchive(at archive: URL, to destination: URL) throws {
+        do {
+            try BoundedArchiveExtractor.extract(archive: archive, to: destination, policy: .plugin)
+        } catch let error as ArchiveExtractionError {
+            throw PluginInstallError.archiveRejected(error.localizedDescription)
+        }
+    }
+
     /// Finds a documentation file (case-insensitive) in the extracted archive directory
     private func findDocFile(named filename: String, in directory: URL) -> URL? {
         let fm = FileManager.default
@@ -500,7 +573,11 @@ public final class PluginInstallManager: @unchecked Sendable {
         return results
     }
 
-    private func findFirstDylib(in directory: URL) -> URL? {
+    /// The extracted artifact must contain exactly one dylib. Zero means the
+    /// archive is broken; more than one means "pick the first the enumerator
+    /// happens to return" — a nondeterministic choice a signed artifact must
+    /// never rely on.
+    static func locateSingleDylib(in directory: URL) throws -> URL {
         let fm = FileManager.default
         guard
             let enumerator = fm.enumerator(
@@ -509,14 +586,47 @@ public final class PluginInstallManager: @unchecked Sendable {
                 options: [.skipsHiddenFiles]
             )
         else {
-            return nil
+            throw PluginInstallError.layoutInvalid("Could not enumerate extracted archive")
         }
+        var found: [URL] = []
         for case let fileURL as URL in enumerator {
             if fileURL.pathExtension == "dylib" && Self.isRegularPayloadFile(fileURL) {
-                return fileURL
+                found.append(fileURL)
             }
         }
-        return nil
+        guard let dylib = found.first else {
+            throw PluginInstallError.layoutInvalid("No .dylib found in archive")
+        }
+        guard found.count == 1 else {
+            let names = found.map { $0.lastPathComponent }.sorted().joined(separator: ", ")
+            throw PluginInstallError.layoutInvalid(
+                "Archive must contain exactly one .dylib, found \(found.count): \(names)"
+            )
+        }
+        return dylib
+    }
+
+    /// Locates the artifact's static web UI directory (`web/`, the name
+    /// `osaurus tools package` bundles and PACKAGING.md documents). Prefers a
+    /// `web/` sibling of the dylib, then falls back to a top-level `web/`
+    /// under the extraction root (archives may nest payloads one level deep).
+    static func findWebDirectory(in directory: URL, near dylibURL: URL?) -> URL? {
+        let fm = FileManager.default
+        func directoryIfExists(_ url: URL) -> URL? {
+            var isDir: ObjCBool = false
+            guard fm.fileExists(atPath: url.path, isDirectory: &isDir), isDir.boolValue,
+                (try? url.resourceValues(forKeys: [.isSymbolicLinkKey]))?.isSymbolicLink != true
+            else { return nil }
+            return url
+        }
+        if let dylibURL,
+            let sibling = directoryIfExists(
+                dylibURL.deletingLastPathComponent().appendingPathComponent("web", isDirectory: true)
+            )
+        {
+            return sibling
+        }
+        return directoryIfExists(directory.appendingPathComponent("web", isDirectory: true))
     }
 
     /// Signed archives should contribute real files only; symlinked payload files would let

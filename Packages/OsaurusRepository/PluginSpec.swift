@@ -122,7 +122,8 @@ public extension PluginSpec {
         targetPlatform: Platform,
         targetArch: CPUArch,
         minimumOsaurusVersion: SemanticVersion?,
-        preferredVersion: SemanticVersion? = nil
+        preferredVersion: SemanticVersion? = nil,
+        currentMacOSVersion: OperatingSystemVersion? = nil
     ) throws -> PluginResolution {
         guard !versions.isEmpty else { throw PluginResolutionError.noVersions }
 
@@ -134,22 +135,69 @@ public extension PluginSpec {
         }
         let sorted = filtered.sorted { $0.version > $1.version }
 
+        func eligibleArtifact(in entry: PluginVersionEntry) -> PluginArtifact? {
+            entry.artifacts.first { art in
+                art.os == targetPlatform.rawValue
+                    && art.arch == targetArch.rawValue
+                    && Self.artifactSupportsMacOSVersion(art, current: currentMacOSVersion)
+            }
+        }
+
         if let preferred = preferredVersion {
             if let match = sorted.first(where: { $0.version == preferred }),
-                let art = match.artifacts.first(where: {
-                    $0.os == targetPlatform.rawValue && $0.arch == targetArch.rawValue
-                })
+                let art = eligibleArtifact(in: match)
             {
                 return PluginResolution(spec: self, version: match, artifact: art)
             }
         }
 
         for v in sorted {
-            if let art = v.artifacts.first(where: { $0.os == targetPlatform.rawValue && $0.arch == targetArch.rawValue }
-            ) {
+            if let art = eligibleArtifact(in: v) {
                 return PluginResolution(spec: self, version: v, artifact: art)
             }
         }
         throw PluginResolutionError.noMatchingArtifact
+    }
+
+    /// True when `artifact.min_macos` is satisfied by `current`. Fails open when
+    /// the caller passes no current version, the artifact declares no minimum,
+    /// or the declared minimum is unparseable (registry data problem — the
+    /// artifact should not become uninstallable because of a typo the loader
+    /// would also ignore).
+    internal static func artifactSupportsMacOSVersion(
+        _ artifact: PluginArtifact,
+        current: OperatingSystemVersion?
+    ) -> Bool {
+        guard let current,
+            let declared = artifact.min_macos, !declared.isEmpty,
+            let required = parseMacOSVersion(declared)
+        else { return true }
+        return osVersion(current, isAtLeast: required)
+    }
+
+    /// Parses a "MAJOR[.MINOR[.PATCH]]" macOS version string. Trailing
+    /// components default to zero (`"14"` / `"14.5"` / `"14.5.1"` are all
+    /// valid). Returns nil when no leading integer can be parsed.
+    internal static func parseMacOSVersion(_ s: String) -> OperatingSystemVersion? {
+        let parts = s.split(separator: ".", omittingEmptySubsequences: false).map(String.init)
+        guard let major = parts.first.flatMap(Int.init) else { return nil }
+        let minor = parts.count > 1 ? Int(parts[1]) ?? 0 : 0
+        let patch = parts.count > 2 ? Int(parts[2]) ?? 0 : 0
+        return OperatingSystemVersion(majorVersion: major, minorVersion: minor, patchVersion: patch)
+    }
+
+    /// `OperatingSystemVersion` has no `Comparable` conformance; lexicographic
+    /// comparison keeps this testable with injected values.
+    internal static func osVersion(
+        _ current: OperatingSystemVersion,
+        isAtLeast required: OperatingSystemVersion
+    ) -> Bool {
+        if current.majorVersion != required.majorVersion {
+            return current.majorVersion > required.majorVersion
+        }
+        if current.minorVersion != required.minorVersion {
+            return current.minorVersion > required.minorVersion
+        }
+        return current.patchVersion >= required.patchVersion
     }
 }
