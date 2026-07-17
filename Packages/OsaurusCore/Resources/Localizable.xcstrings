@@ -96,6 +96,182 @@
         }
       }
     },
+    "Capability search was rebuilt. Re-run discovery or try the tool again." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Capability search was rebuilt. Re-run discovery or try the tool again."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Capability search was rebuilt. Re-run discovery or try the tool again."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Capability search was rebuilt. Re-run discovery or try the tool again."
+          }
+        }
+      }
+    },
+    "Filtered blocked tools. Change policies only after verifying the exact tool and owner." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Filtered blocked tools. Change policies only after verifying the exact tool and owner."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Filtered blocked tools. Change policies only after verifying the exact tool and owner."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Filtered blocked tools. Change policies only after verifying the exact tool and owner."
+          }
+        }
+      }
+    },
+    "Filtered blocked tools. Verify the owner, source, and agent scope before using same-named capabilities." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Filtered blocked tools. Verify the owner, source, and agent scope before using same-named capabilities."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Filtered blocked tools. Verify the owner, source, and agent scope before using same-named capabilities."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Filtered blocked tools. Verify the owner, source, and agent scope before using same-named capabilities."
+          }
+        }
+      }
+    },
+    "Opened macOS privacy settings. After granting the named permission, reload tools to recheck." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Opened macOS privacy settings. After granting the named permission, reload tools to recheck."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Opened macOS privacy settings. After granting the named permission, reload tools to recheck."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Opened macOS privacy settings. After granting the named permission, reload tools to recheck."
+          }
+        }
+      }
+    },
+    "Opened provider settings. Sign in, reconnect, or test the expected provider there." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Opened provider settings. Sign in, reconnect, or test the expected provider there."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Opened provider settings. Sign in, reconnect, or test the expected provider there."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Opened provider settings. Sign in, reconnect, or test the expected provider there."
+          }
+        }
+      }
+    },
+    "Opened sandbox tools. Start or repair the sandbox before exposing sandbox-backed tools." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Opened sandbox tools. Start or repair the sandbox before exposing sandbox-backed tools."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Opened sandbox tools. Start or repair the sandbox before exposing sandbox-backed tools."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Opened sandbox tools. Start or repair the sandbox before exposing sandbox-backed tools."
+          }
+        }
+      }
+    },
+    "Plugins were rechecked. Review any remaining blocked rows before enabling tools." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Plugins were rechecked. Review any remaining blocked rows before enabling tools."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Plugins were rechecked. Review any remaining blocked rows before enabling tools."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Plugins were rechecked. Review any remaining blocked rows before enabling tools."
+          }
+        }
+      }
+    },
+    "Provider probe finished. Review the updated recovery diagnostics before exposing tools." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Provider probe finished. Review the updated recovery diagnostics before exposing tools."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Provider probe finished. Review the updated recovery diagnostics before exposing tools."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Provider probe finished. Review the updated recovery diagnostics before exposing tools."
+          }
+        }
+      }
+    },
     " in sandbox" : {
       "localizations" : {
         "de" : {

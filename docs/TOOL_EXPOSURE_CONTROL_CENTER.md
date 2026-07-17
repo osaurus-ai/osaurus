@@ -3,6 +3,10 @@
 The Tools settings view (Available tab) is organized as a single, de-duplicated
 tool browser. A Tool Exposure Control Center bar sits at the top and drives one
 origin-grouped list below it; every registered tool appears exactly once.
+When a row needs user action, the
+[Plugin and Tool Recovery Center](TOOL_PLUGIN_RECOVERY_CENTER.md) appears above
+the exposure controls with the reason, trust/provenance state, permission state,
+and safe recovery/recheck actions.
 
 ## Layout
 

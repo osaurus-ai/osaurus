@@ -20,6 +20,7 @@ struct ToolsManagerView: View {
     @ObservedObject private var themeManager = ThemeManager.shared
     private let repoService = PluginRepositoryService.shared
     private let providerManager = MCPProviderManager.shared
+    private let remoteProviderManager = RemoteProviderManager.shared
 
     private var theme: ThemeProtocol { themeManager.currentTheme }
 
@@ -52,6 +53,13 @@ struct ToolsManagerView: View {
     /// `ToolRegistry.availability(forTool:)` during SwiftUI layout.
     @State private var availabilityCache: [String: ToolAvailability] = [:]
     @State private var exposureDiagnostic: ToolExposureDiagnostic?
+    @State private var recoveryReport: PluginToolCapabilityRecoveryReport?
+    @State private var recoveryActionInFlight: CapabilityRecoveryActionKind?
+    @State private var recoveryActionMessage: String?
+    @State private var recoverySearchSnapshot: CapabilityRecoverySearchSnapshot?
+    @State private var recoveryPluginSnapshots: [PluginCapabilitySnapshot] = []
+    @State private var recoveryMCPSnapshots: [MCPProviderCapabilitySnapshot] = []
+    @State private var recoveryRemoteProviderSnapshots: [RemoteProviderCapabilitySnapshot] = []
     /// Per-tool exposure rows, precomputed once per refresh so grouped rows
     /// render their state pill from a snapshot instead of re-querying.
     @State private var exposureRowsByName: [String: ToolExposureDiagnostic.Row] = [:]
@@ -152,6 +160,23 @@ struct ToolsManagerView: View {
                 Text(error)
             }
         }
+        .alert(
+            Text("Recovery Center", bundle: .module),
+            isPresented: Binding(
+                get: { recoveryActionMessage != nil },
+                set: { if !$0 { recoveryActionMessage = nil } }
+            )
+        ) {
+            Button(role: .cancel) {
+                recoveryActionMessage = nil
+            } label: {
+                Text("OK", bundle: .module)
+            }
+        } message: {
+            if let recoveryActionMessage {
+                Text(recoveryActionMessage)
+            }
+        }
     }
 
     // MARK: - Header Bar
@@ -209,6 +234,15 @@ struct ToolsManagerView: View {
                     title: L("Available Tools"),
                     description: "Tools from installed plugins and connected providers"
                 )
+
+                if let recoveryReport, recoveryReport.actionableCount > 0 {
+                    PluginToolRecoveryCenterCard(
+                        report: recoveryReport,
+                        actionInFlight: recoveryActionInFlight,
+                        onAction: performRecoveryAction,
+                        onExport: exportRecoveryReport
+                    )
+                }
 
                 if let exposureDiagnostic, !exposureDiagnostic.rows.isEmpty {
                     ToolExposureControlCenter(
@@ -390,13 +424,17 @@ struct ToolsManagerView: View {
         let runtimeManagedNames = ToolRegistry.shared.runtimeManagedToolNames
         let builtInSandboxNames = ToolRegistry.shared.builtInSandboxToolNamesSnapshot
         let currentPlugins = repoService.plugins
+        let currentLoadedPlugins = PluginManager.shared.plugins
         let currentProviders = providerManager.configuration.providers
         let currentProviderStates = providerManager.providerStates
+        let currentRemoteProviders = remoteProviderManager.configuration.providers
+        let currentRemoteProviderStates = remoteProviderManager.providerStates
 
         // Snapshot the exposure diagnostic up front (the only DB-backed step)
         // so the detached pass below can also partition built-in/native tools
         // from the same source classification.
         let diagnostic = await ToolIndexService.shared.exposureSnapshot()
+        async let searchHealthTask = CapabilitySearchDiagnostics.snapshot(mode: .full)
         guard !Task.isCancelled else { return }
         let rowsByName = Dictionary(uniqueKeysWithValues: diagnostic.rows.map { ($0.toolName, $0) })
 
@@ -542,9 +580,54 @@ struct ToolsManagerView: View {
         availabilityCache = availability
 
         exposureDiagnostic = diagnostic
+        recoverySearchSnapshot = capabilityRecoverySearchSnapshot(await searchHealthTask)
+        recoveryPluginSnapshots = pluginCapabilitySnapshots(
+            plugins: currentPlugins,
+            loadedPlugins: currentLoadedPlugins,
+            mcpProviders: currentProviders,
+            mcpStates: currentProviderStates
+        )
+        recoveryMCPSnapshots = currentProviders.map {
+            MCPProviderCapabilitySnapshot(
+                provider: $0,
+                state: currentProviderStates[$0.id],
+                healthSnapshot: MCPProviderHealthSnapshotStore.snapshot(providerId: $0.id)
+            )
+        }
+        recoveryRemoteProviderSnapshots = currentRemoteProviders.map {
+            RemoteProviderCapabilitySnapshot(
+                provider: $0,
+                state: currentRemoteProviderStates[$0.id]
+            )
+        }
+        refreshRecoveryReport(query: query, rowsByName: rowsByName)
         exposureRowsByName = rowsByName
         recomputeAllowedToolNames()
         recomputePermissionBannerCount()
+    }
+
+    private func refreshRecoveryReport(
+        query: String = "",
+        rowsByName: [String: ToolExposureDiagnostic.Row]? = nil
+    ) {
+        guard let exposureDiagnostic else {
+            recoveryReport = nil
+            return
+        }
+        let rows = rowsByName ?? Dictionary(
+            exposureDiagnostic.rows.map { ($0.toolName, $0) },
+            uniquingKeysWith: { first, _ in first }
+        )
+        recoveryReport = PluginToolCapabilityRecoveryCenter.diagnose(
+            PluginToolCapabilityRecoveryRequest(
+                requestedTools: requestedToolCapabilities(query: query, rowsByName: rows),
+                toolExposure: exposureDiagnostic,
+                search: recoverySearchSnapshot,
+                plugins: recoveryPluginSnapshots,
+                mcpProviders: recoveryMCPSnapshots,
+                remoteProviders: recoveryRemoteProviderSnapshots
+            )
+        )
     }
 
     private var filteredExposureRows: [ToolExposureDiagnostic.Row] {
@@ -677,6 +760,7 @@ struct ToolsManagerView: View {
                 )
             }
             recomputeAllowedToolNames()
+            refreshRecoveryReport(query: searchText, rowsByName: exposureRowsByName)
         }
     }
 
@@ -726,6 +810,92 @@ struct ToolsManagerView: View {
         }
     }
 
+    private func exportRecoveryReport() {
+        guard let recoveryReport else { return }
+        let panel = NSSavePanel()
+        panel.allowedContentTypes = [.plainText]
+        panel.nameFieldStringValue = "osaurus-plugin-tool-recovery-report.md"
+        Task { @MainActor in
+            guard await panel.beginModal() == .OK, let url = panel.url else { return }
+            do {
+                try recoveryReport.reporterSafeMarkdown.write(to: url, atomically: true, encoding: .utf8)
+            } catch {
+                exposureExportError = error.localizedDescription
+            }
+        }
+    }
+
+    private func performRecoveryAction(_ suggestion: CapabilityRecoverySuggestion, item: CapabilityRecoveryItem) {
+        recoveryActionInFlight = suggestion.actionKind
+        Task { @MainActor in
+            defer { recoveryActionInFlight = nil }
+            do {
+                switch suggestion.actionKind {
+                case .rebuildSearchIndex:
+                    await ToolIndexService.shared.syncFromRegistry(rebuildVectorIndex: true)
+                    reload()
+                    recoveryActionMessage = L("Capability search was rebuilt. Re-run discovery or try the tool again.")
+                case .refreshManifest, .reinstallAfterReview, .inspect, .reviewTrust:
+                    await PluginManager.shared.loadAll(forceReload: true)
+                    await repoService.refresh()
+                    reload()
+                    recoveryActionMessage = L("Plugins were rechecked. Review any remaining blocked rows before enabling tools.")
+                case .runProbe:
+                    try await runRecoveryProbe(for: item)
+                    reload()
+                    recoveryActionMessage = L("Provider probe finished. Review the updated recovery diagnostics before exposing tools.")
+                case .authenticateProvider, .configureProvider:
+                    selectedTab = .remote
+                    if item.subject.kind == .mcpProvider, let id = UUID(uuidString: item.subject.identifier) {
+                        try? await providerManager.reconnect(providerId: id)
+                    }
+                    recoveryActionMessage = L("Opened provider settings. Sign in, reconnect, or test the expected provider there.")
+                case .startSandbox:
+                    selectedTab = .sandbox
+                    recoveryActionMessage = L("Opened sandbox tools. Start or repair the sandbox before exposing sandbox-backed tools.")
+                case .reviewScope:
+                    exposureSourceFilter = .all
+                    exposureStateFilter = .blocked
+                    recoveryActionMessage = L("Filtered blocked tools. Verify the owner, source, and agent scope before using same-named capabilities.")
+                case .reviewUserPolicy:
+                    exposureStateFilter = .blocked
+                    recoveryActionMessage = L("Filtered blocked tools. Change policies only after verifying the exact tool and owner.")
+                case .grantSystemPermission:
+                    openSystemPermissionSettings(for: item)
+                    recoveryActionMessage = L("Opened macOS privacy settings. After granting the named permission, reload tools to recheck.")
+                }
+            } catch {
+                recoveryActionMessage = error.localizedDescription
+            }
+        }
+    }
+
+    private func runRecoveryProbe(for item: CapabilityRecoveryItem) async throws {
+        guard item.subject.kind == .mcpProvider,
+            let providerId = UUID(uuidString: item.subject.identifier),
+            let provider = providerManager.configuration.provider(id: providerId)
+        else { return }
+
+        if provider.transport == .stdio {
+            let result = await MCPProviderProbeService.probeStdio(provider: provider)
+            MCPProviderHealthSnapshotStore.record(result, for: provider)
+        } else {
+            try await providerManager.reconnect(providerId: providerId)
+        }
+    }
+
+    private func openSystemPermissionSettings(for item: CapabilityRecoveryItem) {
+        let combined = ([item.detail] + item.evidence).joined(separator: " ").lowercased()
+        if let permission = SystemPermission.allCases.first(where: { permission in
+            combined.contains(permission.rawValue.lowercased())
+                || combined.contains(permission.displayName.lowercased())
+        }) {
+            SystemPermissionService.shared.openSystemSettings(for: permission)
+        } else if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy") {
+            NSWorkspace.shared.open(url)
+        }
+    }
+
     /// Honour one-shot navigation requests routed through
     /// `ManagementStateManager.pendingToolsSubTab` (e.g. the Claude plugin
     /// install summary deep-linking to the Remote MCP tab after OAuth or
@@ -737,6 +907,99 @@ struct ToolsManagerView: View {
         selectedTab = target
         managementState.pendingToolsSubTab = nil
     }
+
+    private func requestedToolCapabilities(
+        query: String,
+        rowsByName: [String: ToolExposureDiagnostic.Row]
+    ) -> [RequestedToolCapability] {
+        let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, trimmed.rangeOfCharacter(from: .whitespacesAndNewlines) == nil else {
+            return []
+        }
+        if let row = rowsByName[trimmed] {
+            return [
+                RequestedToolCapability(
+                    toolName: trimmed,
+                    expectedSource: row.source,
+                    expectedOwner: row.availability.groupName
+                )
+            ]
+        }
+        return [RequestedToolCapability(toolName: trimmed)]
+    }
+
+    private func capabilityRecoverySearchSnapshot(
+        _ health: CapabilitySearchHealth
+    ) -> CapabilityRecoverySearchSnapshot {
+        let emptyIndexForRegisteredTools = health.registryToolCount > 0 && health.indexedToolCount == 0
+        return CapabilityRecoverySearchSnapshot(
+            isAvailable: !emptyIndexForRegisteredTools,
+            health: health,
+            failureMessage: emptyIndexForRegisteredTools
+                ? "Capability search has no indexed tools for the current registry."
+                : nil
+        )
+    }
+
+    private func pluginCapabilitySnapshots(
+        plugins: [PluginState],
+        loadedPlugins: [PluginManager.LoadedPlugin],
+        mcpProviders: [MCPProvider],
+        mcpStates: [UUID: MCPProviderState]
+    ) -> [PluginCapabilitySnapshot] {
+        let loadedById = Dictionary(
+            loadedPlugins.map { ($0.plugin.id, $0) },
+            uniquingKeysWith: { first, _ in first }
+        )
+        return plugins.filter { $0.isInstalled || $0.hasLoadError }.map { plugin in
+            let loaded = loadedById[plugin.pluginId]
+            let declaredToolNames = plugin.capabilities?.tools?.map(\.name) ?? loaded?.tools.map(\.name) ?? []
+            let loadedToolNames = loaded?.tools.map(\.name) ?? []
+            let pluginProviders = mcpProviders.filter { $0.pluginId == plugin.pluginId }
+            let loadedProviderNames = pluginProviders
+                .filter { mcpStates[$0.id]?.isConnected == true }
+                .map(\.name)
+            return PluginCapabilitySnapshot(
+                pluginId: plugin.pluginId,
+                displayName: plugin.displayName,
+                kind: .claude,
+                enabled: plugin.isInstalled,
+                trustState: trustState(for: plugin),
+                manifestState: manifestState(for: plugin, declaredToolNames: declaredToolNames, loaded: loaded),
+                declaredToolNames: declaredToolNames,
+                loadedToolNames: loadedToolNames,
+                declaredMCPProviderNames: pluginProviders.map(\.name),
+                loadedMCPProviderNames: loadedProviderNames,
+                loadError: plugin.loadError,
+                provenanceSummary: plugin.pluginId,
+                scopeSummary: plugin.capabilities == nil ? "manifest unavailable" : "installed plugin"
+            )
+        }
+    }
+
+    private func trustState(for plugin: PluginState) -> PluginTrustState {
+        if plugin.loadError?.hasPrefix("consent_required:") == true {
+            return .untrusted
+        }
+        if plugin.isInstalled, plugin.loadError == nil {
+            return .trusted
+        }
+        return .unknown
+    }
+
+    private func manifestState(
+        for plugin: PluginState,
+        declaredToolNames: [String],
+        loaded: PluginManager.LoadedPlugin?
+    ) -> PluginManifestState {
+        if plugin.capabilities != nil || loaded != nil {
+            return .current
+        }
+        if plugin.hasLoadError {
+            return .unknown
+        }
+        return declaredToolNames.isEmpty ? .unknown : .missing
+    }
 }
 
 /// Tool availability from a per-refresh snapshot, falling back to a direct
@@ -747,6 +1010,270 @@ private func cachedAvailability(
     for entry: ToolRegistry.ToolEntry
 ) -> ToolAvailability {
     cache[entry.name] ?? ToolRegistry.shared.availability(forTool: entry.name)
+}
+
+// MARK: - Plugin Tool Recovery Center
+
+private struct PluginToolRecoveryCenterCard: View {
+    @Environment(\.theme) private var theme
+
+    let report: PluginToolCapabilityRecoveryReport
+    let actionInFlight: CapabilityRecoveryActionKind?
+    let onAction: (CapabilityRecoverySuggestion, CapabilityRecoveryItem) -> Void
+    let onExport: () -> Void
+
+    private var visibleItems: [CapabilityRecoveryItem] {
+        Array(report.actionableItems.prefix(5))
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(alignment: .center, spacing: 12) {
+                ZStack {
+                    RoundedRectangle(cornerRadius: 8)
+                        .fill(recoveryTint.opacity(0.12))
+                    Image(systemName: report.blockingCount > 0 ? "wrench.adjustable.fill" : "checkmark.shield.fill")
+                        .font(.system(size: 18, weight: .semibold))
+                        .foregroundColor(recoveryTint)
+                }
+                .frame(width: 40, height: 40)
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Plugin and Tool Recovery Center", bundle: .module)
+                        .font(.system(size: 15, weight: .semibold, design: .rounded))
+                        .foregroundColor(theme.primaryText)
+                    Text(
+                        "Explains blocked capabilities and keeps recovery behind trust, provenance, scope, and policy checks",
+                        bundle: .module
+                    )
+                    .font(.system(size: 11))
+                    .foregroundColor(theme.secondaryText)
+                    .lineLimit(1)
+                }
+
+                Spacer(minLength: 8)
+
+                recoveryCountPill("\(report.blockingCount) Blocking", color: theme.errorColor)
+                recoveryCountPill("\(report.actionableCount) Actions", color: theme.warningColor)
+
+                Button(action: onExport) {
+                    Image(systemName: "square.and.arrow.up")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundColor(theme.primaryText)
+                        .frame(width: 28, height: 28)
+                        .background(
+                            RoundedRectangle(cornerRadius: 7)
+                                .fill(theme.tertiaryBackground)
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: 7)
+                                        .stroke(theme.inputBorder, lineWidth: 1)
+                                )
+                        )
+                }
+                .buttonStyle(PlainButtonStyle())
+                .help(Text("Export reporter-safe recovery report", bundle: .module))
+            }
+
+            VStack(spacing: 8) {
+                ForEach(visibleItems) { item in
+                    PluginToolRecoveryItemRow(
+                        item: item,
+                        actionInFlight: actionInFlight,
+                        onAction: onAction
+                    )
+                }
+            }
+
+            if report.actionableItems.count > visibleItems.count {
+                Text("\(report.actionableItems.count - visibleItems.count) more recovery item(s) in the exported report", bundle: .module)
+                    .font(.system(size: 10))
+                    .foregroundColor(theme.tertiaryText)
+            }
+        }
+        .padding(16)
+        .frame(maxWidth: .infinity)
+        .background(HoverableCardBackground())
+    }
+
+    private var recoveryTint: Color {
+        report.blockingCount > 0 ? theme.errorColor : theme.warningColor
+    }
+
+    private func recoveryCountPill(_ label: String, color: Color) -> some View {
+        Text(LocalizedStringKey(label), bundle: .module)
+            .font(.system(size: 10, weight: .semibold))
+            .foregroundColor(color)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 4)
+            .background(Capsule().fill(color.opacity(0.12)))
+            .fixedSize()
+    }
+}
+
+private struct PluginToolRecoveryItemRow: View {
+    @Environment(\.theme) private var theme
+
+    let item: CapabilityRecoveryItem
+    let actionInFlight: CapabilityRecoveryActionKind?
+    let onAction: (CapabilityRecoverySuggestion, CapabilityRecoveryItem) -> Void
+
+    private var primarySuggestion: CapabilityRecoverySuggestion? {
+        item.suggestions.first
+    }
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 10) {
+            Image(systemName: icon)
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundColor(tint)
+                .frame(width: 22, height: 22)
+
+            VStack(alignment: .leading, spacing: 4) {
+                HStack(spacing: 6) {
+                    Text(item.subject.displayName)
+                        .font(.system(size: 12, weight: .semibold, design: .rounded))
+                        .foregroundColor(theme.primaryText)
+                        .lineLimit(1)
+                    Text(item.subject.kind.displayLabel)
+                        .font(.system(size: 9, weight: .semibold))
+                        .foregroundColor(theme.secondaryText)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
+                        .background(Capsule().fill(theme.tertiaryBackground))
+                    Text(item.status.displayLabel)
+                        .font(.system(size: 9, weight: .semibold))
+                        .foregroundColor(tint)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
+                        .background(Capsule().fill(tint.opacity(0.12)))
+                }
+
+                Text(item.summary)
+                    .font(.system(size: 11))
+                    .foregroundColor(theme.secondaryText)
+                    .lineLimit(2)
+
+                FlowLayout(spacing: 4) {
+                    ForEach(item.reasonCodes.prefix(4), id: \.self) { reason in
+                        Text(verbatim: reason.rawValue)
+                            .font(.system(size: 9, design: .monospaced))
+                            .foregroundColor(theme.tertiaryText)
+                            .padding(.horizontal, 5)
+                            .padding(.vertical, 2)
+                            .background(Capsule().fill(theme.tertiaryBackground.opacity(0.7)))
+                    }
+                }
+            }
+
+            Spacer(minLength: 8)
+
+            if let primarySuggestion {
+                actionButton(primarySuggestion)
+            }
+        }
+        .padding(10)
+        .background(RoundedRectangle(cornerRadius: 8).fill(theme.tertiaryBackground.opacity(0.45)))
+        .help(Text(item.detail.isEmpty ? item.summary : item.detail))
+    }
+
+    private func actionButton(_ suggestion: CapabilityRecoverySuggestion) -> some View {
+        let isLoading = actionInFlight == suggestion.actionKind
+        return Button {
+            onAction(suggestion, item)
+        } label: {
+            HStack(spacing: 5) {
+                actionButtonIcon(suggestion, isLoading: isLoading)
+                Text(suggestion.title)
+                    .font(.system(size: 11, weight: .medium))
+                    .lineLimit(1)
+            }
+            .foregroundColor(theme.primaryText)
+            .padding(.horizontal, 9)
+            .frame(height: 28)
+            .background(actionButtonBackground)
+        }
+        .buttonStyle(PlainButtonStyle())
+        .disabled(actionInFlight != nil)
+        .help(Text(suggestion.detail))
+        .fixedSize()
+    }
+
+    @ViewBuilder
+    private func actionButtonIcon(
+        _ suggestion: CapabilityRecoverySuggestion,
+        isLoading: Bool
+    ) -> some View {
+        if isLoading {
+            ProgressView()
+                .scaleEffect(0.55)
+                .frame(width: 10, height: 10)
+        } else {
+            Image(systemName: icon(for: suggestion.actionKind))
+                .font(.system(size: 10, weight: .semibold))
+        }
+    }
+
+    private var actionButtonBackground: some View {
+        RoundedRectangle(cornerRadius: 7)
+            .fill(theme.tertiaryBackground)
+            .overlay(
+                RoundedRectangle(cornerRadius: 7)
+                    .stroke(theme.inputBorder, lineWidth: 1)
+            )
+    }
+
+    private var tint: Color {
+        switch item.status {
+        case .available, .loadable:
+            return theme.successColor
+        case .hidden, .needsReview:
+            return theme.warningColor
+        case .disabled:
+            return theme.secondaryText
+        case .blocked, .unavailable:
+            return theme.errorColor
+        }
+    }
+
+    private var icon: String {
+        switch item.subject.kind {
+        case .tool:
+            return "wrench.and.screwdriver"
+        case .plugin:
+            return "puzzlepiece.extension"
+        case .search:
+            return "magnifyingglass.circle"
+        case .mcpProvider, .provider:
+            return "server.rack"
+        }
+    }
+
+    private func icon(for action: CapabilityRecoveryActionKind) -> String {
+        switch action {
+        case .inspect:
+            return "doc.text.magnifyingglass"
+        case .rebuildSearchIndex:
+            return "arrow.triangle.2.circlepath"
+        case .refreshManifest, .reinstallAfterReview:
+            return "arrow.clockwise"
+        case .reviewTrust:
+            return "checkmark.shield"
+        case .reviewScope:
+            return "scope"
+        case .reviewUserPolicy:
+            return "slider.horizontal.3"
+        case .grantSystemPermission:
+            return "lock.shield"
+        case .configureProvider:
+            return "gearshape"
+        case .authenticateProvider:
+            return "person.badge.key"
+        case .runProbe:
+            return "stethoscope"
+        case .startSandbox:
+            return "terminal"
+        }
+    }
 }
 
 // MARK: - Tool Exposure Control Center
