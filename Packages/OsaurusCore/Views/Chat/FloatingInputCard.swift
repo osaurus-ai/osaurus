@@ -332,6 +332,10 @@ struct FloatingInputCard: View {
     @State private var showModelPicker = false
     @State private var showImageSizePicker = false
     @State private var showContextBreakdown = false
+    /// True when the context panel was opened by click. Hover previews dismiss
+    /// automatically; pinned panels remain interactive until an outside click
+    /// or a second click on the trigger.
+    @State private var contextPanelPinned = false
     @State private var contextHoverTask: Task<Void, Never>?
     /// Delayed dismiss for the context popover. Gives the cursor a grace
     /// period to travel from the trigger into the popover (which lives in its
@@ -2648,52 +2652,69 @@ extension FloatingInputCard {
 
     @ViewBuilder
     private var contextIndicatorChip: some View {
-        HStack(alignment: .firstTextBaseline, spacing: 4) {
-            // Budget-state tinting: amber at ≥85% of the window (soft
-            // warning — compaction will engage), red when the
-            // non-compactable prefix alone can't fit (send is gated).
-            let warningColor: Color? =
-                isContextHardOverflow ? .red : (isContextNearLimit ? .orange : nil)
-
-            if let warningColor {
-                Image(systemName: "exclamationmark.triangle.fill")
-                    .font(.system(size: CGFloat(theme.captionSize) - 2))
-                    .foregroundColor(warningColor)
-                    .localizedHelp(
-                        isContextHardOverflow
-                            ? "Context is full: the system prompt, tools, and input alone exceed this model's window. Shorten the input, disable tools, or pick a larger-context model."
-                            : "Context is nearly full (≥85% of the model window). Older messages will be compacted; consider starting a fresh chat for best quality."
-                    )
+        let warningColor: Color? =
+            isContextHardOverflow ? .red : (isContextNearLimit ? .orange : nil)
+        let prefix = isStreaming ? "" : "~"
+        let tokenText =
+            if let maxCtx = maxContextTokens {
+                "\(prefix)\(formatTokenCount(displayContextTokens)) / \(formatTokenCount(maxCtx))"
+            } else {
+                "\(prefix)\(formatTokenCount(displayContextTokens))"
             }
 
-            let prefix = isStreaming ? "" : "~"
-            let tokenText =
-                if let maxCtx = maxContextTokens {
-                    "\(prefix)\(formatTokenCount(displayContextTokens)) / \(formatTokenCount(maxCtx))"
-                } else {
-                    "\(prefix)\(formatTokenCount(displayContextTokens))"
+        Button {
+            contextHoverTask?.cancel()
+            contextDismissTask?.cancel()
+            if showContextBreakdown && contextPanelPinned {
+                showContextBreakdown = false
+                contextPanelPinned = false
+            } else {
+                contextPanelPinned = true
+                showContextBreakdown = true
+            }
+        } label: {
+            HStack(alignment: .firstTextBaseline, spacing: 4) {
+                // Budget-state tinting: amber at ≥85% of the window (soft
+                // warning — compaction will engage), red when the
+                // non-compactable prefix alone can't fit (send is gated).
+                if let warningColor {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .font(.system(size: CGFloat(theme.captionSize) - 2))
+                        .foregroundColor(warningColor)
+                        .localizedHelp(
+                            isContextHardOverflow
+                                ? "Context is full: the system prompt, tools, and input alone exceed this model's window. Shorten the input, disable tools, or pick a larger-context model."
+                                : "Context is nearly full (≥85% of the model window). Older messages will be compacted; consider starting a fresh chat for best quality."
+                        )
                 }
-            Text(tokenText)
-                .font(.system(size: CGFloat(theme.captionSize) - 1, weight: .medium, design: .monospaced))
-                .foregroundColor(
-                    warningColor ?? (isStreaming ? theme.secondaryText : theme.tertiaryText)
-                )
-                .lineLimit(1)
-                .fixedSize(horizontal: true, vertical: false)
 
-            if !metaCompact {
-                Text("tokens", bundle: .module)
-                    .font(theme.font(size: CGFloat(theme.captionSize) - 1, weight: .regular))
-                    .foregroundColor(theme.tertiaryText.opacity(0.7))
+                Text(tokenText)
+                    .font(.system(size: CGFloat(theme.captionSize) - 1, weight: .medium, design: .monospaced))
+                    .foregroundColor(
+                        warningColor ?? (isStreaming ? theme.secondaryText : theme.tertiaryText)
+                    )
                     .lineLimit(1)
                     .fixedSize(horizontal: true, vertical: false)
+
+                if !metaCompact {
+                    Text("tokens", bundle: .module)
+                        .font(theme.font(size: CGFloat(theme.captionSize) - 1, weight: .regular))
+                        .foregroundColor(theme.tertiaryText.opacity(0.7))
+                        .lineLimit(1)
+                        .fixedSize(horizontal: true, vertical: false)
+                }
             }
+            .contentShape(Capsule())
         }
+        .buttonStyle(.plain)
         .pointingHandCursor()
+        .accessibilityLabel(
+            Text("Context budget: \(tokenText) tokens", bundle: .module)
+        )
         .onHover { hovering in
             if hovering {
                 openContextBreakdown()
-            } else {
+            } else if !contextPanelPinned {
                 scheduleContextDismiss()
             }
         }
@@ -2702,17 +2723,24 @@ extension FloatingInputCard {
                 breakdown: displayContextBreakdown,
                 maxTokens: maxContextTokens,
                 isStreaming: isStreaming,
+                isNearLimit: isContextNearLimit,
+                isHardOverflow: isContextHardOverflow,
                 formatTokenCount: formatTokenCount
             )
             // Keep the popover alive while the cursor is over it, so the user
             // can travel from the trigger and click the disclosure headers.
-            .onHover { hovering in
+            .onPopoverHover { hovering in
                 if hovering {
                     contextDismissTask?.cancel()
-                } else {
+                } else if !contextPanelPinned {
                     scheduleContextDismiss()
                 }
             }
+        }
+        .onChange(of: showContextBreakdown) { _, isShown in
+            // Outside-click dismissal flips the binding directly. Clear the
+            // pinned state so the next hover behaves as a passive preview.
+            if !isShown { contextPanelPinned = false }
         }
     }
 
@@ -5604,6 +5632,41 @@ private extension View {
 /// disclosure so the popover reads as a handful of categories by default and
 /// only fans out to per-section detail on demand. Single-entry groups (Tools,
 /// Memory, …) render as a plain row.
+struct ContextBudgetUtilization: Equatable {
+    let usedTokens: Int
+    let maxTokens: Int?
+    let fraction: Double?
+    let percent: Int?
+    let remainingTokens: Int?
+}
+
+/// Normalizes the popover's window-usage values in one pure, testable place.
+/// Invalid/unknown ceilings remain absent rather than implying a false limit.
+func computeContextBudgetUtilization(
+    usedTokens: Int,
+    maxTokens: Int?
+) -> ContextBudgetUtilization {
+    let used = max(0, usedTokens)
+    guard let maxTokens, maxTokens > 0 else {
+        return ContextBudgetUtilization(
+            usedTokens: used,
+            maxTokens: nil,
+            fraction: nil,
+            percent: nil,
+            remainingTokens: nil
+        )
+    }
+
+    let fraction = min(Double(used) / Double(maxTokens), 1)
+    return ContextBudgetUtilization(
+        usedTokens: used,
+        maxTokens: maxTokens,
+        fraction: fraction,
+        percent: Int((fraction * 100).rounded()),
+        remainingTokens: max(0, maxTokens - used)
+    )
+}
+
 private struct BudgetGroup: Identifiable {
     let id: String
     let label: String
@@ -5627,6 +5690,8 @@ private struct ContextBreakdownPopover: View {
     let breakdown: ContextBreakdown
     let maxTokens: Int?
     let isStreaming: Bool
+    let isNearLimit: Bool
+    let isHardOverflow: Bool
     let formatTokenCount: (Int) -> String
 
     @Environment(\.theme) private var theme
@@ -5641,6 +5706,26 @@ private struct ContextBreakdownPopover: View {
 
     /// Cap on the popover height; longer breakdowns scroll past this.
     private let maxPopoverHeight: CGFloat = 420
+
+    private var utilization: ContextBudgetUtilization {
+        computeContextBudgetUtilization(
+            usedTokens: breakdown.total,
+            maxTokens: maxTokens
+        )
+    }
+
+    private var statusColor: Color {
+        if isHardOverflow { return theme.errorColor }
+        if isNearLimit { return theme.warningColor }
+        return theme.accentColor
+    }
+
+    private var statusLabel: String {
+        if isHardOverflow { return L("Over limit") }
+        if isNearLimit { return L("Near limit") }
+        if let percent = utilization.percent { return "\(percent)% used" }
+        return isStreaming ? L("Live") : L("Estimated")
+    }
 
     /// Scroll-container height: nil until measured (use the content's
     /// natural size), then clamped to `maxPopoverHeight`.
@@ -5753,7 +5838,7 @@ private struct ContextBreakdownPopover: View {
                     }
                 )
         }
-        .frame(width: 240, height: resolvedHeight)
+        .frame(width: 272, height: resolvedHeight)
         .onPreferenceChange(ContextPopoverHeightKey.self) { measuredContentHeight = $0 }
         .popoverCard()
     }
@@ -5762,56 +5847,220 @@ private struct ContextBreakdownPopover: View {
     /// height-bounded `ScrollView` (see `resolvedHeight`).
     private var contentStack: some View {
         VStack(alignment: .leading, spacing: 0) {
-            HStack(spacing: 6) {
-                Text("Context Budget", bundle: .module)
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundColor(theme.secondaryText)
-                if isStreaming {
-                    Circle()
-                        .fill(color(for: .green))
-                        .frame(width: 5, height: 5)
-                }
-            }
-            .padding(.horizontal, 12)
-            .padding(.top, 10)
-            .padding(.bottom, 8)
+            hero
 
-            barChart
-                .padding(.horizontal, 12)
-                .padding(.bottom, 10)
+            if utilization.maxTokens != nil {
+                divider
+                utilizationSection
+            }
+
+            divider
+            compositionSection
 
             if let notice = autoDisableNotice {
-                Text(notice)
-                    .font(.system(size: 10).italic())
-                    .foregroundColor(theme.tertiaryText)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .padding(.horizontal, 12)
-                    .padding(.bottom, 10)
+                divider
+                autoDisableRow(notice)
             }
 
             if !contextGroups.isEmpty {
                 divider
-                contextGroupList.padding(.horizontal, 12).padding(.vertical, 8)
+                sourcesSection
             }
 
             if !breakdown.messages.isEmpty {
                 divider
-                entryGroup(breakdown.messages, highlightOutput: true).padding(.horizontal, 12).padding(.vertical, 8)
+                messagesSection
+            }
+        }
+    }
+
+    /// Wallet-style hero: the number users are checking first, followed by
+    /// clear headroom rather than a composition chart masquerading as usage.
+    private var hero: some View {
+        let prefix = isStreaming ? "" : "~"
+        return VStack(alignment: .leading, spacing: 3) {
+            HStack(spacing: 6) {
+                Image(systemName: "chart.bar.fill")
+                    .font(.system(size: 9, weight: .semibold))
+                    .foregroundColor(statusColor.opacity(0.9))
+                Text("Context Budget", bundle: .module)
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundColor(theme.secondaryText)
+                    .textCase(.uppercase)
+                    .kerning(0.8)
+                if isStreaming {
+                    Circle()
+                        .fill(theme.successColor)
+                        .frame(width: 5, height: 5)
+                }
+                Spacer(minLength: 0)
+                Text(verbatim: statusLabel)
+                    .font(.system(size: 9, weight: .semibold))
+                    .foregroundColor(statusColor)
+                    .padding(.horizontal, 7)
+                    .padding(.vertical, 2)
+                    .background(
+                        Capsule()
+                            .fill(statusColor.opacity(0.12))
+                            .overlay(
+                                Capsule().strokeBorder(
+                                    statusColor.opacity(0.3),
+                                    lineWidth: 1
+                                )
+                            )
+                    )
+            }
+            .padding(.bottom, 5)
+
+            HStack(alignment: .firstTextBaseline, spacing: 6) {
+                Text(verbatim: "\(prefix)\(formatTokenCount(breakdown.total))")
+                    .font(.system(size: 24, weight: .semibold, design: .monospaced))
+                    .foregroundColor(isHardOverflow ? theme.errorColor : theme.primaryText)
+                    .contentTransition(.numericText())
+                Text("tokens used", bundle: .module)
+                    .font(.system(size: 10))
+                    .foregroundColor(theme.tertiaryText)
             }
 
-            divider
-            totalRow.padding(.horizontal, 12).padding(.vertical, 8)
+            if let remaining = utilization.remainingTokens,
+                let maxTokens = utilization.maxTokens
+            {
+                Text(
+                    "\(formatTokenCount(remaining)) remaining of \(formatTokenCount(maxTokens))",
+                    bundle: .module
+                )
+                .font(.system(size: 10))
+                .foregroundColor(theme.tertiaryText)
+                .contentTransition(.numericText())
+            } else {
+                Text("Model context limit unavailable", bundle: .module)
+                    .font(.system(size: 10))
+                    .foregroundColor(theme.tertiaryText)
+            }
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 14)
+        .padding(.top, 12)
+        .padding(.bottom, 11)
+        .background(
+            LinearGradient(
+                colors: [statusColor.opacity(0.10), statusColor.opacity(0.02)],
+                startPoint: .top,
+                endPoint: .bottom
+            )
+        )
+    }
+
+    @ViewBuilder
+    private var utilizationSection: some View {
+        if let maxTokens = utilization.maxTokens,
+            let fraction = utilization.fraction,
+            let percent = utilization.percent
+        {
+            VStack(alignment: .leading, spacing: 7) {
+                HStack(spacing: 6) {
+                    Text("Window usage", bundle: .module)
+                        .font(.system(size: 9, weight: .semibold))
+                        .foregroundColor(theme.tertiaryText)
+                        .textCase(.uppercase)
+                        .kerning(0.8)
+                    Spacer()
+                    Text(
+                        "\(formatTokenCount(utilization.usedTokens)) / \(formatTokenCount(maxTokens))",
+                        bundle: .module
+                    )
+                    .font(.system(size: 10, weight: .medium, design: .monospaced))
+                    .foregroundColor(theme.secondaryText)
+                    .contentTransition(.numericText())
+                    Text(verbatim: "\(percent)%")
+                        .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                        .foregroundColor(statusColor)
+                        .frame(width: 34, alignment: .trailing)
+                        .contentTransition(.numericText())
+                }
+
+                GeometryReader { proxy in
+                    ZStack(alignment: .leading) {
+                        RoundedRectangle(cornerRadius: 3.5)
+                            .fill(theme.tertiaryBackground.opacity(0.65))
+                        RoundedRectangle(cornerRadius: 3.5)
+                            .fill(statusColor.opacity(0.9))
+                            .frame(width: proxy.size.width * fraction)
+                    }
+                }
+                .frame(height: 7)
+                .animation(.easeOut(duration: 0.2), value: fraction)
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 10)
+        }
+    }
+
+    private var compositionSection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 6) {
+                Text("Composition", bundle: .module)
+                    .font(.system(size: 9, weight: .semibold))
+                    .foregroundColor(theme.tertiaryText)
+                    .textCase(.uppercase)
+                    .kerning(0.8)
+                Spacer()
+                Text("share of used context", bundle: .module)
+                    .font(.system(size: 9))
+                    .foregroundColor(theme.tertiaryText)
+            }
+            compositionBar
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 10)
+    }
+
+    private func autoDisableRow(_ notice: String) -> some View {
+        HStack(alignment: .top, spacing: 7) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .font(.system(size: 9, weight: .semibold))
+                .foregroundColor(theme.warningColor)
+            Text(verbatim: notice)
+                .font(.system(size: 10))
+                .foregroundColor(theme.secondaryText)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 9)
+    }
+
+    private var sourcesSection: some View {
+        VStack(alignment: .leading, spacing: 9) {
+            sectionEyebrow("Sources")
+            contextGroupList
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 10)
+    }
+
+    private var messagesSection: some View {
+        VStack(alignment: .leading, spacing: 9) {
+            sectionEyebrow("Messages")
+            entryGroup(breakdown.messages, highlightOutput: true)
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 10)
+    }
+
+    private func sectionEyebrow(_ title: LocalizedStringKey) -> some View {
+        Text(title, bundle: .module)
+            .font(.system(size: 9, weight: .semibold))
+            .foregroundColor(theme.tertiaryText)
+            .textCase(.uppercase)
+            .kerning(0.8)
     }
 
     // MARK: - Stacked Bar
 
-    private var barChart: some View {
+    private var compositionBar: some View {
         let segments = barSegments
-        // The bar shows composition: every segment's share of the current
-        // total, always filling the track. Share-of-budget would render the
-        // whole breakdown as a near-invisible sliver against a huge window;
-        // headroom is conveyed by the "~2.1k / 262k" total row instead.
+        // Composition deliberately fills its own track. Actual model-window
+        // headroom is represented separately by `utilizationSection`.
         let scale = max(breakdown.total, 1)
         return GeometryReader { geo in
             let gapTotal = CGFloat(max(segments.count - 1, 0))
@@ -5835,7 +6084,7 @@ private struct ContextBreakdownPopover: View {
             }
             .clipShape(RoundedRectangle(cornerRadius: 4))
         }
-        .frame(height: 6)
+        .frame(height: 7)
         .background(RoundedRectangle(cornerRadius: 4).fill(theme.tertiaryBackground.opacity(0.4)))
     }
 
@@ -5844,7 +6093,7 @@ private struct ContextBreakdownPopover: View {
     /// The context legend at group granularity. Expandable groups render a
     /// tappable header that reveals their per-section rows indented beneath.
     private var contextGroupList: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: 9) {
             ForEach(contextGroups) { group in
                 if group.isExpandable {
                     let expanded = expandedGroups.contains(group.id)
@@ -5860,16 +6109,17 @@ private struct ContextBreakdownPopover: View {
                         groupHeader(group, expanded: expanded)
                     }
                     .buttonStyle(.plain)
+                    .pointingHandCursor()
 
                     if expanded {
-                        VStack(alignment: .leading, spacing: 4) {
+                        VStack(alignment: .leading, spacing: 7) {
                             // Key by position, not `entry.id`: a prompt section's
                             // id isn't guaranteed unique across the manifest, so
                             // duplicate ForEach IDs would trap. Positional
                             // identity is what we want for a static,
                             // display-only list anyway.
                             ForEach(Array(group.entries.enumerated()), id: \.offset) { _, entry in
-                                entryRow(entry).padding(.leading, 11)
+                                entryRow(entry).padding(.leading, 25)
                             }
                         }
                     }
@@ -5881,7 +6131,7 @@ private struct ContextBreakdownPopover: View {
     }
 
     private func entryGroup(_ entries: [ContextBreakdown.Entry], highlightOutput: Bool = false) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
+        VStack(alignment: .leading, spacing: 7) {
             ForEach(Array(entries.enumerated()), id: \.offset) { _, entry in
                 entryRow(entry, highlighted: highlightOutput && entry.id == "output")
             }
@@ -5891,11 +6141,8 @@ private struct ContextBreakdownPopover: View {
     /// Disclosure header for a multi-entry group: swatch, label, rotating
     /// chevron, summed tokens, and the group's share of the budget.
     private func groupHeader(_ group: BudgetGroup, expanded: Bool) -> some View {
-        HStack(spacing: 0) {
-            RoundedRectangle(cornerRadius: 1.5)
-                .fill(color(for: group.tint).opacity(0.85))
-                .frame(width: 3, height: 12)
-                .padding(.trailing, 8)
+        HStack(spacing: 7) {
+            legendMarker(group.tint)
 
             Text(group.label)
                 .font(.system(size: 11))
@@ -5905,9 +6152,8 @@ private struct ContextBreakdownPopover: View {
                 .font(.system(size: 7, weight: .semibold))
                 .foregroundColor(theme.tertiaryText)
                 .rotationEffect(.degrees(expanded ? 90 : 0))
-                .padding(.leading, 4)
 
-            Spacer()
+            Spacer(minLength: 8)
 
             Text(formatTokenCount(group.tokens))
                 .font(.system(size: 11, weight: .medium, design: .monospaced))
@@ -5922,17 +6168,14 @@ private struct ContextBreakdownPopover: View {
     }
 
     private func entryRow(_ entry: ContextBreakdown.Entry, highlighted: Bool = false) -> some View {
-        HStack(spacing: 0) {
-            RoundedRectangle(cornerRadius: 1.5)
-                .fill(color(for: entry.tint).opacity(0.85))
-                .frame(width: 3, height: 12)
-                .padding(.trailing, 8)
+        HStack(spacing: 7) {
+            legendMarker(entry.tint)
 
             Text(entry.label)
                 .font(.system(size: 11))
                 .foregroundColor(theme.secondaryText)
 
-            Spacer()
+            Spacer(minLength: 8)
 
             Text(formatTokenCount(entry.tokens))
                 .font(.system(size: 11, weight: .medium, design: .monospaced))
@@ -5946,25 +6189,15 @@ private struct ContextBreakdownPopover: View {
         }
     }
 
-    // MARK: - Total
-
-    private var totalRow: some View {
-        let prefix = isStreaming ? "" : "~"
-        return HStack(spacing: 4) {
-            Text("Total", bundle: .module)
-                .font(.system(size: 11, weight: .medium))
-                .foregroundColor(theme.secondaryText)
-            Spacer()
-            Text("\(prefix)\(formatTokenCount(breakdown.total))", bundle: .module)
-                .font(.system(size: 11, weight: .semibold, design: .monospaced))
-                .foregroundColor(theme.primaryText)
-                .contentTransition(.numericText())
-            if let max = maxTokens {
-                Text("/ \(formatTokenCount(max))", bundle: .module)
-                    .font(.system(size: 11, design: .monospaced))
-                    .foregroundColor(theme.tertiaryText)
-            }
+    private func legendMarker(_ tint: ContextBreakdown.Tint) -> some View {
+        let tintColor = color(for: tint)
+        return ZStack {
+            Circle().fill(tintColor.opacity(0.13))
+            Circle()
+                .fill(tintColor.opacity(0.9))
+                .frame(width: 5, height: 5)
         }
+        .frame(width: 18, height: 18)
     }
 
     // MARK: - Chrome

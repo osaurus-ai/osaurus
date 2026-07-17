@@ -1007,6 +1007,55 @@ struct ContextBudgetSegmentWidthsTests {
     }
 }
 
+// MARK: - Window Utilization
+
+@Suite
+struct ContextBudgetUtilizationTests {
+
+    @Test("known model window reports usage and remaining headroom")
+    func knownWindow_reportsUsageAndHeadroom() {
+        let usage = computeContextBudgetUtilization(
+            usedTokens: 9_000,
+            maxTokens: 36_000
+        )
+
+        #expect(usage.usedTokens == 9_000)
+        #expect(usage.maxTokens == 36_000)
+        #expect(usage.fraction == 0.25)
+        #expect(usage.percent == 25)
+        #expect(usage.remainingTokens == 27_000)
+    }
+
+    @Test("usage above the model window clamps visual metrics")
+    func overflow_clampsVisualMetrics() {
+        let usage = computeContextBudgetUtilization(
+            usedTokens: 5_000,
+            maxTokens: 4_000
+        )
+
+        #expect(usage.usedTokens == 5_000)
+        #expect(usage.fraction == 1)
+        #expect(usage.percent == 100)
+        #expect(usage.remainingTokens == 0)
+    }
+
+    @Test("unknown or invalid model windows stay absent")
+    func unknownWindow_omitsCapacityMetrics() {
+        for maxTokens in [nil, 0, -1] as [Int?] {
+            let usage = computeContextBudgetUtilization(
+                usedTokens: -10,
+                maxTokens: maxTokens
+            )
+
+            #expect(usage.usedTokens == 0)
+            #expect(usage.maxTokens == nil)
+            #expect(usage.fraction == nil)
+            #expect(usage.percent == nil)
+            #expect(usage.remainingTokens == nil)
+        }
+    }
+}
+
 // MARK: - Screen Context budget row
 
 /// The frozen `[Screen Context]` snapshot rides on the latest user message
