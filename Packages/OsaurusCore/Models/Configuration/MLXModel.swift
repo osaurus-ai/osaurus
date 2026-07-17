@@ -10,7 +10,7 @@ import SwiftUI
 import os
 
 /// Represents an MLX-compatible LLM that can be downloaded and used
-struct MLXModel: Identifiable, Codable {
+struct MLXModel: Identifiable, Codable, Sendable {
     let id: String
     let name: String
     let description: String

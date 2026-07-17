@@ -100,6 +100,20 @@ struct ModelDetailView: View, Identifiable {
     /// shared cache in `init` so a warm cache shows the checkmark immediately.
     @State private var resolvedIsDownloaded: Bool
 
+    /// Digest-bound live verification is separate from static compatibility
+    /// diagnostics. It only appears after a user explicitly runs the probes.
+    @State private var verificationArtifact: LocalModelVerificationArtifact?
+    @State private var verificationArtifactURL: URL?
+    @State private var verificationIsStale = false
+    @State private var verificationTerminalInvalidated = false
+    @State private var isVerifyingModel = false
+    @State private var verificationError: String?
+    @State private var verificationTask: Task<Void, Never>?
+    @State private var activeVerificationModelId: String?
+    @State private var verificationPublicationGuard = LocalModelVerificationPublicationGuard()
+    @State private var verificationLoadTask: Task<Void, Never>?
+    @State private var verificationLoadGuard = LocalModelVerificationPublicationGuard()
+
     init(model: MLXModel, variants: [MLXModel] = []) {
         self._selectedModel = State(initialValue: model)
         self.variants = variants
@@ -134,6 +148,8 @@ struct ModelDetailView: View, Identifiable {
 
                     runtimeDiagnosticsCard
 
+                    modelVerificationCard
+
                     modelCardSection
 
                     detailsCard
@@ -167,6 +183,8 @@ struct ModelDetailView: View, Identifiable {
                 await loadDownloadState()
             }
 
+            startVerificationLoad()
+
             Task {
                 await estimateIfNeeded()
                 await loadHFDetails()
@@ -176,7 +194,17 @@ struct ModelDetailView: View, Identifiable {
         .onReceive(NotificationCenter.default.publisher(for: .localModelsChanged)) { _ in
             // The shared cache is invalidated on this notification; re-resolve
             // off-main so the checkmark stays in sync after a download or delete.
-            Task { await loadDownloadState() }
+            Task {
+                await loadDownloadState()
+            }
+            if let activeVerificationModelId, activeVerificationModelId != model.id {
+                cancelModelVerification()
+            }
+            startVerificationLoad()
+        }
+        .onDisappear {
+            cancelModelVerification()
+            cancelVerificationLoad()
         }
     }
 
@@ -186,6 +214,8 @@ struct ModelDetailView: View, Identifiable {
     /// loading placeholders until the new repo's data lands.
     private func selectVariant(_ variant: MLXModel) {
         guard variant.id != selectedModel.id else { return }
+        cancelModelVerification()
+        cancelVerificationLoad()
         selectedModel = variant
 
         estimatedSize = nil
@@ -202,9 +232,15 @@ struct ModelDetailView: View, Identifiable {
         didCopyPath = false
         diagnostics = nil
         resolvedIsDownloaded = MLXModelDownloadCache.value(for: variant.id) ?? false
+        verificationArtifact = nil
+        verificationArtifactURL = nil
+        verificationIsStale = false
+        verificationTerminalInvalidated = false
+        verificationError = nil
 
         Task { await loadDiagnostics() }
         Task { await loadDownloadState() }
+        startVerificationLoad()
         Task {
             await estimateIfNeeded()
             await loadHFDetails()
@@ -556,6 +592,353 @@ struct ModelDetailView: View, Identifiable {
         case .partial: return "exclamationmark.triangle.fill"
         case .needsDownload: return "arrow.down.circle.fill"
         case .unproven: return "exclamationmark.triangle.fill"
+        }
+    }
+
+    @ViewBuilder
+    private var modelVerificationCard: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(alignment: .top, spacing: 10) {
+                Image(systemName: verificationIcon)
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundColor(verificationTint)
+                    .frame(width: 18, height: 18)
+
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("Local model verification", bundle: .module)
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundColor(theme.primaryText)
+                    Text(verificationSummary)
+                        .font(.system(size: 11))
+                        .foregroundColor(theme.tertiaryText)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+
+                Spacer(minLength: 8)
+
+                Button(action: startModelVerification) {
+                    HStack(spacing: 5) {
+                        if isVerifyingModel {
+                            ProgressView().controlSize(.small)
+                        } else {
+                            Image(systemName: "checkmark.shield")
+                                .font(.system(size: 11, weight: .semibold))
+                        }
+                        Text(isVerifyingModel ? "Verifying…" : "Verify this model", bundle: .module)
+                            .font(.system(size: 12, weight: .semibold))
+                    }
+                }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.small)
+                .disabled(!resolvedIsDownloaded || isVerifyingModel)
+            }
+
+            if !isVerifyingModel, let artifact = verificationArtifact {
+                LazyVGrid(
+                    columns: [
+                        GridItem(.flexible(), spacing: 14, alignment: .topLeading),
+                        GridItem(.flexible(), spacing: 14, alignment: .topLeading),
+                    ],
+                    alignment: .leading,
+                    spacing: 10
+                ) {
+                    DiagnosticFact(
+                        label: L("Result"),
+                        value: verificationIsStale
+                            ? L("Unproven (stale evidence)")
+                            : artifact.classification.rawValue.capitalized
+                    )
+                    DiagnosticFact(
+                        label: L("Bundle digest"),
+                        value: String(artifact.bundle.digest.suffix(12))
+                    )
+                    DiagnosticFact(
+                        label: L("Template"),
+                        value: artifact.bundle.templateSource
+                    )
+                    DiagnosticFact(
+                        label: L("Tool parser"),
+                        value: artifact.bundle.parserFormat ?? L("Not declared")
+                    )
+                    DiagnosticFact(
+                        label: L("vMLX revision"),
+                        value: artifact.bundle.vmlxRevision.map { String($0.prefix(12)) }
+                            ?? L("Unverified")
+                    )
+                    DiagnosticFact(
+                        label: L("Decode speed"),
+                        value: verificationRate(artifact)
+                    )
+                }
+
+                if verificationIsStale {
+                    verificationNotice(
+                        icon: "arrow.triangle.2.circlepath",
+                        text: L("The model bundle changed after this report. Verify it again before relying on the result."),
+                        color: theme.warningColor
+                    )
+                }
+
+                if let fallback = artifact.bundle.templateFallback {
+                    verificationNotice(
+                        icon: "exclamationmark.triangle.fill",
+                        text: fallback,
+                        color: theme.warningColor
+                    )
+                }
+
+                if !artifact.nonPassingEvidence.isEmpty {
+                    Divider().background(theme.cardBorder)
+                    VStack(alignment: .leading, spacing: 7) {
+                        Text("Non-passing evidence", bundle: .module)
+                            .font(.system(size: 10, weight: .bold))
+                            .foregroundColor(theme.tertiaryText)
+                            .textCase(.uppercase)
+                        ForEach(artifact.nonPassingEvidence) { probe in
+                            HStack(alignment: .top, spacing: 7) {
+                                Image(systemName: verificationProbeIcon(probe.status))
+                                    .font(.system(size: 10, weight: .semibold))
+                                    .foregroundColor(verificationProbeTint(probe.status))
+                                    .frame(width: 12)
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(verificationProbeLabel(probe.probe))
+                                        .font(.system(size: 11, weight: .semibold))
+                                        .foregroundColor(theme.secondaryText)
+                                    Text(probe.detail)
+                                        .font(.system(size: 10))
+                                        .foregroundColor(theme.tertiaryText)
+                                        .fixedSize(horizontal: false, vertical: true)
+                                    if let errorCode = probe.errorCode {
+                                        Text(errorCode)
+                                            .font(.system(size: 9, design: .monospaced))
+                                            .foregroundColor(theme.tertiaryText)
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                if let verificationArtifactURL {
+                    Button(
+                        action: {
+                            NSWorkspace.shared.activateFileViewerSelecting([verificationArtifactURL])
+                        },
+                        label: {
+                            Label(
+                                title: { Text("Reveal report", bundle: .module) },
+                                icon: { Image(systemName: "doc.text.magnifyingglass") }
+                            )
+                            .font(.system(size: 11, weight: .medium))
+                        }
+                    )
+                    .buttonStyle(.plain)
+                    .foregroundColor(theme.accentColor)
+                }
+            }
+
+            if let verificationError {
+                verificationNotice(
+                    icon: "xmark.octagon.fill",
+                    text: verificationError,
+                    color: theme.errorColor
+                )
+            }
+        }
+        .padding(16)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .detailCardSurface()
+    }
+
+    private var verificationSummary: String {
+        if isVerifyingModel {
+            return L("Hashing the exact bundle and running bounded generation, tool, continuation, and cancellation probes.")
+        }
+        if verificationIsStale {
+            return L("The saved result is stale because the model bundle changed.")
+        }
+        if let artifact = verificationArtifact {
+            return String(
+                format: L("%@ evidence bound to this exact bundle."),
+                artifact.classification.rawValue.capitalized
+            )
+        }
+        if !resolvedIsDownloaded {
+            return L("Download the model before running live verification.")
+        }
+        return L("Run live probes before relying on tool use, continuation, or runtime behavior.")
+    }
+
+    private var verificationTint: Color {
+        if isVerifyingModel { return theme.accentColor }
+        if verificationIsStale { return theme.warningColor }
+        guard let classification = verificationArtifact?.classification else {
+            return theme.tertiaryText
+        }
+        switch classification {
+        case .proven: return theme.successColor
+        case .partial, .unsupported, .unproven: return theme.warningColor
+        case .failed: return theme.errorColor
+        }
+    }
+
+    private var verificationIcon: String {
+        if isVerifyingModel { return "hourglass" }
+        if verificationIsStale { return "arrow.triangle.2.circlepath" }
+        switch verificationArtifact?.classification {
+        case .proven: return "checkmark.shield.fill"
+        case .failed: return "xmark.octagon.fill"
+        case .partial, .unsupported, .unproven: return "exclamationmark.triangle.fill"
+        case nil: return "checkmark.shield"
+        }
+    }
+
+    private func verificationNotice(icon: String, text: String, color: Color) -> some View {
+        HStack(alignment: .top, spacing: 7) {
+            Image(systemName: icon)
+                .font(.system(size: 10, weight: .semibold))
+                .foregroundColor(color)
+            Text(text)
+                .font(.system(size: 10))
+                .foregroundColor(theme.secondaryText)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    private func verificationProbeIcon(_ status: LocalModelVerificationProbeStatus) -> String {
+        switch status {
+        case .passed: return "checkmark.circle.fill"
+        case .failed, .error: return "xmark.octagon.fill"
+        case .blocked, .unsupported: return "exclamationmark.triangle.fill"
+        }
+    }
+
+    private func verificationProbeLabel(_ probe: LocalModelVerificationProbe) -> String {
+        if probe == .autoToolChoice { return L("Auto tool choice") }
+        return probe.rawValue.replacingOccurrences(of: "_", with: " ").capitalized
+    }
+
+    private func verificationProbeTint(_ status: LocalModelVerificationProbeStatus) -> Color {
+        switch status {
+        case .passed: return theme.successColor
+        case .failed, .error: return theme.errorColor
+        case .blocked, .unsupported: return theme.warningColor
+        }
+    }
+
+    private func verificationRate(_ artifact: LocalModelVerificationArtifact) -> String {
+        guard let rate = artifact.probes.first(where: { $0.probe == .throughput })?
+            .tokensPerSecond, rate.isFinite, rate > 0
+        else {
+            return L("Not recorded")
+        }
+        return String(format: "%.1f tok/s", rate)
+    }
+
+    private func startVerificationLoad() {
+        verificationLoadTask?.cancel()
+        let target = model
+        let token = verificationLoadGuard.begin(modelId: target.id)
+        verificationLoadTask = Task { await loadVerification(target: target, token: token) }
+    }
+
+    private func loadVerification(
+        target: MLXModel,
+        token: LocalModelVerificationPublicationGuard.Token
+    ) async {
+        let latest = await LocalModelVerificationService.shared.latest(modelId: target.id)
+        let digest: String? = if latest == nil {
+            nil
+        } else {
+            await exactBundleDigest(directory: target.localDirectory)
+        }
+        await MainActor.run {
+            guard verificationLoadGuard.permits(token, currentModelId: model.id) else { return }
+            verificationArtifact = latest?.0
+            verificationArtifactURL = latest?.1
+            verificationIsStale = verificationTerminalInvalidated
+                || (latest?.0.isStale(currentDigest: digest) ?? false)
+        }
+    }
+
+    private func cancelVerificationLoad() {
+        verificationLoadGuard.invalidate()
+        verificationLoadTask?.cancel()
+        verificationLoadTask = nil
+    }
+
+    private func exactBundleDigest(directory: URL) async -> String? {
+        let digestTask = Task.detached(priority: .utility) {
+            try? LocalModelBundleInspector.inspect(directory: directory).digest
+        }
+        return await withTaskCancellationHandler {
+            await digestTask.value
+        } onCancel: {
+            digestTask.cancel()
+        }
+    }
+
+    private func cancelModelVerification() {
+        verificationPublicationGuard.invalidate()
+        verificationTask?.cancel()
+        verificationTask = nil
+        activeVerificationModelId = nil
+        isVerifyingModel = false
+    }
+
+    private func startModelVerification() {
+        guard resolvedIsDownloaded, !isVerifyingModel else { return }
+        verificationTask?.cancel()
+        verificationError = nil
+        isVerifyingModel = true
+        let target = model
+        activeVerificationModelId = target.id
+        let publicationToken = verificationPublicationGuard.begin(modelId: target.id)
+        verificationTask = Task {
+            do {
+                let result = try await LocalModelVerificationService.shared.verify(model: target)
+                try Task.checkCancellation()
+                await MainActor.run {
+                    guard verificationPublicationGuard.permits(
+                        publicationToken,
+                        currentModelId: model.id
+                    ) else { return }
+                    verificationArtifact = result.0
+                    verificationArtifactURL = result.1
+                    verificationIsStale = false
+                    verificationTerminalInvalidated = false
+                    verificationError = nil
+                    isVerifyingModel = false
+                    activeVerificationModelId = nil
+                    verificationTask = nil
+                    startVerificationLoad()
+                }
+            } catch is CancellationError {
+                await MainActor.run {
+                    guard verificationPublicationGuard.permits(
+                        publicationToken,
+                        currentModelId: model.id
+                    ) else { return }
+                    isVerifyingModel = false
+                    verificationTerminalInvalidated = true
+                    activeVerificationModelId = nil
+                    verificationTask = nil
+                    startVerificationLoad()
+                }
+            } catch {
+                await MainActor.run {
+                    guard verificationPublicationGuard.permits(
+                        publicationToken,
+                        currentModelId: model.id
+                    ) else { return }
+                    verificationError = error.localizedDescription
+                    isVerifyingModel = false
+                    verificationTerminalInvalidated = true
+                    activeVerificationModelId = nil
+                    verificationTask = nil
+                    startVerificationLoad()
+                }
+            }
         }
     }
 

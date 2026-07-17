@@ -177564,6 +177564,166 @@
           }
         }
       }
+    },
+    "%@ evidence bound to this exact bundle." : {
+      "localizations" : {
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "%@-Nachweis, der genau an dieses Modellpaket gebunden ist." } },
+        "ko" : { "stringUnit" : { "state" : "translated", "value" : "이 정확한 모델 번들에 연결된 %@ 증거입니다." } },
+        "ru" : { "stringUnit" : { "state" : "translated", "value" : "Результат «%@» привязан именно к этому пакету модели." } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "%@ 证据已绑定到此确切模型包。" } }
+      }
+    },
+    "Bundle digest" : {
+      "localizations" : {
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "Paketprüfsumme" } },
+        "ko" : { "stringUnit" : { "state" : "translated", "value" : "번들 다이제스트" } },
+        "ru" : { "stringUnit" : { "state" : "translated", "value" : "Дайджест пакета" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "模型包摘要" } }
+      }
+    },
+    "Auto tool choice" : {
+      "localizations" : {
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "Automatische Werkzeugwahl" } },
+        "ko" : { "stringUnit" : { "state" : "translated", "value" : "자동 도구 선택" } },
+        "ru" : { "stringUnit" : { "state" : "translated", "value" : "Автоматический выбор инструмента" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "自动工具选择" } }
+      }
+    },
+    "Decode speed" : {
+      "localizations" : {
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "Dekodiergeschwindigkeit" } },
+        "ko" : { "stringUnit" : { "state" : "translated", "value" : "디코딩 속도" } },
+        "ru" : { "stringUnit" : { "state" : "translated", "value" : "Скорость декодирования" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "解码速度" } }
+      }
+    },
+    "Download the model before running live verification." : {
+      "localizations" : {
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "Laden Sie das Modell herunter, bevor Sie die Live-Prüfung ausführen." } },
+        "ko" : { "stringUnit" : { "state" : "translated", "value" : "실시간 검증을 실행하기 전에 모델을 다운로드하세요." } },
+        "ru" : { "stringUnit" : { "state" : "translated", "value" : "Перед запуском проверки скачайте модель." } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "请先下载模型，然后再运行实时验证。" } }
+      }
+    },
+    "Non-passing evidence" : {
+      "localizations" : {
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "Nicht bestandene Nachweise" } },
+        "ko" : { "stringUnit" : { "state" : "translated", "value" : "통과하지 못한 증거" } },
+        "ru" : { "stringUnit" : { "state" : "translated", "value" : "Непройденные проверки" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "未通过的证据" } }
+      }
+    },
+    "Hashing the exact bundle and running bounded generation, tool, continuation, and cancellation probes." : {
+      "localizations" : {
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "Das genaue Paket wird gehasht; begrenzte Generierungs-, Werkzeug-, Fortsetzungs- und Abbruchprüfungen werden ausgeführt." } },
+        "ko" : { "stringUnit" : { "state" : "translated", "value" : "정확한 번들을 해시하고 제한된 생성, 도구, 연속 생성 및 취소 검사를 실행하고 있습니다." } },
+        "ru" : { "stringUnit" : { "state" : "translated", "value" : "Вычисляется хеш точного пакета и выполняются ограниченные проверки генерации, инструментов, продолжения и отмены." } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "正在对确切模型包进行哈希，并运行有界的生成、工具、续写和取消探测。" } }
+      }
+    },
+    "Local model verification" : {
+      "localizations" : {
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "Lokale Modellprüfung" } },
+        "ko" : { "stringUnit" : { "state" : "translated", "value" : "로컬 모델 검증" } },
+        "ru" : { "stringUnit" : { "state" : "translated", "value" : "Проверка локальной модели" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "本地模型验证" } }
+      }
+    },
+    "Not declared" : {
+      "localizations" : {
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "Nicht deklariert" } },
+        "ko" : { "stringUnit" : { "state" : "translated", "value" : "선언되지 않음" } },
+        "ru" : { "stringUnit" : { "state" : "translated", "value" : "Не объявлен" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "未声明" } }
+      }
+    },
+    "Not recorded" : {
+      "localizations" : {
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "Nicht erfasst" } },
+        "ko" : { "stringUnit" : { "state" : "translated", "value" : "기록되지 않음" } },
+        "ru" : { "stringUnit" : { "state" : "translated", "value" : "Не записано" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "未记录" } }
+      }
+    },
+    "Result" : {
+      "localizations" : {
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "Ergebnis" } },
+        "ko" : { "stringUnit" : { "state" : "translated", "value" : "결과" } },
+        "ru" : { "stringUnit" : { "state" : "translated", "value" : "Результат" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "结果" } }
+      }
+    },
+    "Reveal report" : {
+      "localizations" : {
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "Bericht anzeigen" } },
+        "ko" : { "stringUnit" : { "state" : "translated", "value" : "보고서 보기" } },
+        "ru" : { "stringUnit" : { "state" : "translated", "value" : "Показать отчёт" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "显示报告" } }
+      }
+    },
+    "Run live probes before relying on tool use, continuation, or runtime behavior." : {
+      "localizations" : {
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "Führen Sie Live-Prüfungen aus, bevor Sie sich auf Werkzeugnutzung, Fortsetzung oder Laufzeitverhalten verlassen." } },
+        "ko" : { "stringUnit" : { "state" : "translated", "value" : "도구 사용, 연속 생성 또는 런타임 동작을 신뢰하기 전에 실시간 검사를 실행하세요." } },
+        "ru" : { "stringUnit" : { "state" : "translated", "value" : "Перед использованием инструментов, продолжения или поведения среды выполните проверку в реальном времени." } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "在依赖工具使用、续写或运行时行为之前，请先运行实时探测。" } }
+      }
+    },
+    "The model bundle changed after this report. Verify it again before relying on the result." : {
+      "localizations" : {
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "Das Modellpaket wurde nach diesem Bericht geändert. Prüfen Sie es erneut, bevor Sie sich auf das Ergebnis verlassen." } },
+        "ko" : { "stringUnit" : { "state" : "translated", "value" : "이 보고서 이후 모델 번들이 변경되었습니다. 결과를 신뢰하기 전에 다시 검증하세요." } },
+        "ru" : { "stringUnit" : { "state" : "translated", "value" : "После создания отчёта пакет модели изменился. Повторите проверку, прежде чем полагаться на результат." } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "生成此报告后模型包已更改。请重新验证后再依赖该结果。" } }
+      }
+    },
+    "The saved result is stale because the model bundle changed." : {
+      "localizations" : {
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "Das gespeicherte Ergebnis ist veraltet, da sich das Modellpaket geändert hat." } },
+        "ko" : { "stringUnit" : { "state" : "translated", "value" : "모델 번들이 변경되어 저장된 결과가 오래되었습니다." } },
+        "ru" : { "stringUnit" : { "state" : "translated", "value" : "Сохранённый результат устарел, так как пакет модели изменился." } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "模型包已更改，保存的结果已过期。" } }
+      }
+    },
+    "Tool parser" : {
+      "localizations" : {
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "Werkzeugparser" } },
+        "ko" : { "stringUnit" : { "state" : "translated", "value" : "도구 파서" } },
+        "ru" : { "stringUnit" : { "state" : "translated", "value" : "Парсер инструментов" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "工具解析器" } }
+      }
+    },
+    "Verify this model" : {
+      "localizations" : {
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "Dieses Modell prüfen" } },
+        "ko" : { "stringUnit" : { "state" : "translated", "value" : "이 모델 검증" } },
+        "ru" : { "stringUnit" : { "state" : "translated", "value" : "Проверить эту модель" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "验证此模型" } }
+      }
+    },
+    "Unproven (stale evidence)" : {
+      "localizations" : {
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "Unbewiesen (veralteter Nachweis)" } },
+        "ko" : { "stringUnit" : { "state" : "translated", "value" : "미검증 (오래된 증거)" } },
+        "ru" : { "stringUnit" : { "state" : "translated", "value" : "Не доказано (устаревшие данные)" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "未验证（证据已过期）" } }
+      }
+    },
+    "Unverified" : {
+      "localizations" : {
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "Nicht verifiziert" } },
+        "ko" : { "stringUnit" : { "state" : "translated", "value" : "미검증" } },
+        "ru" : { "stringUnit" : { "state" : "translated", "value" : "Не проверено" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "未验证" } }
+      }
+    },
+    "vMLX revision" : {
+      "localizations" : {
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "vMLX-Revision" } },
+        "ko" : { "stringUnit" : { "state" : "translated", "value" : "vMLX 리비전" } },
+        "ru" : { "stringUnit" : { "state" : "translated", "value" : "Ревизия vMLX" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "vMLX 修订版本" } }
+      }
     }
   },
   "version" : "1.1"
