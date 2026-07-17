@@ -411,8 +411,12 @@ final class ChatWindowState: ObservableObject {
         let newTheme = Self.loadTheme(for: agentId)
         let oldConfig = theme.customThemeConfig
         let newConfig = newTheme.customThemeConfig
-        // Skip only if the full config is identical (not just the ID)
-        guard oldConfig != newConfig else { return }
+        // Skip only if the full config is identical (not just the ID) and the
+        // global font zoom is unchanged — the zoom lives on the theme instance,
+        // not in the config, so it must be compared separately.
+        let oldScale = (theme as? CustomizableTheme)?.fontScale
+        let newScale = (newTheme as? CustomizableTheme)?.fontScale
+        guard oldConfig != newConfig || oldScale != newScale else { return }
         let shouldRedecodeBackgroundImage = Self.needsBackgroundImageRedecode(
             oldConfig: oldConfig,
             newConfig: newConfig
