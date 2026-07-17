@@ -1108,6 +1108,15 @@ struct AgentDetailView: View {
     /// `Agent.memoryEnabled` (default true). The Abilities overview cards
     /// bind directly; `saveAgent` folds them back into the persisted agent.
     @State private var toolsEnabled: Bool = true
+    /// Turning a tool-backed ability on while Tools is off (or tapping its
+    /// "Inactive while Tools is off" chip) scrolls to the Tools card and
+    /// pulses the shared search-highlight glow on it, pointing at the
+    /// master switch that unlocks the ability. The nonce keys the scroll;
+    /// the generation counter lets a pulse's delayed auto-clear detect
+    /// that a newer tap superseded it.
+    @State private var scrollToToolsNonce = 0
+    @State private var toolsHighlightActive = false
+    @State private var toolsHighlightGeneration = 0
     @State private var memoryEnabled: Bool = true
     /// Local mirror of `Agent.settings.dbEnabled` (spec §5.5). The
     /// Abilities overview binds a card to this; `debouncedSave`
@@ -1418,14 +1427,21 @@ struct AgentDetailView: View {
             .environment(\.theme, themeManager.currentTheme)
             .id(selectedTab)
         default:
-            ScrollView {
-                VStack(alignment: .leading, spacing: 16) {
-                    scrollableTabContent
+            ScrollViewReader { proxy in
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 16) {
+                        scrollableTabContent
+                    }
+                    .padding(24)
+                    .id(selectedTab)
                 }
-                .padding(24)
-                .id(selectedTab)
+                .animation(nil, value: selectedTab)
+                .onChange(of: scrollToToolsNonce) { _, _ in
+                    withAnimation(.easeInOut(duration: 0.3)) {
+                        proxy.scrollTo(Self.toolsToggleScrollId, anchor: .center)
+                    }
+                }
             }
-            .animation(nil, value: selectedTab)
         }
     }
 
@@ -2864,6 +2880,46 @@ struct AgentDetailView: View {
         toolsEnabled ? nil : "Inactive while Tools is off"
     }
 
+    /// Scroll anchor for the Tools master card in the Abilities overview.
+    private static let toolsToggleScrollId = "abilities-tools-card"
+
+    /// `abilitySaveBinding` for tool-backed abilities: the write (and the
+    /// debounced save) still lands so users can pre-configure abilities
+    /// while Tools is off, but switching one ON in that state also points
+    /// at the master switch that keeps it inactive.
+    private func toolBackedSaveBinding(_ source: Binding<Bool>) -> Binding<Bool> {
+        Binding(
+            get: { source.wrappedValue },
+            set: { newValue in
+                source.wrappedValue = newValue
+                debouncedSave()
+                if newValue, !toolsEnabled {
+                    flashToolsToggle()
+                }
+            }
+        )
+    }
+
+    /// Scroll the Tools card into view and run one highlight breath on
+    /// it. Dropping the flag first gives `settingsSearchHighlight` a
+    /// fresh rising edge so a repeat tap re-fires; the delayed clear only
+    /// lands if no newer tap has bumped the generation, so a rapid second
+    /// tap can't cut its own glow short.
+    private func flashToolsToggle() {
+        scrollToToolsNonce += 1
+        toolsHighlightGeneration += 1
+        let generation = toolsHighlightGeneration
+        toolsHighlightActive = false
+        DispatchQueue.main.async {
+            guard generation == toolsHighlightGeneration else { return }
+            toolsHighlightActive = true
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2.2) {
+            guard generation == toolsHighlightGeneration else { return }
+            toolsHighlightActive = false
+        }
+    }
+
     @ViewBuilder
     private var abilityCards: some View {
         let isCustomAgent = agent.id != Agent.defaultId
@@ -2881,6 +2937,8 @@ struct AgentDetailView: View {
             configureLabel: "Choose tools & skills",
             onConfigure: { selectedTab = .builtIn(.capabilities) }
         )
+        .id(Self.toolsToggleScrollId)
+        .settingsSearchHighlight(toolsHighlightActive)
         // The default agent has no per-agent memory flag: its memory is
         // governed globally (Settings > Enable memory), so a per-agent
         // toggle here would be a dead control.
@@ -2915,16 +2973,18 @@ struct AgentDetailView: View {
                 title: "Charts",
                 subtitle: "Render data as inline chart cards.",
                 icon: "chart.bar.xaxis",
-                isOn: abilitySaveBinding($renderChartEnabled),
-                pausedNote: toolsPausedNote
+                isOn: toolBackedSaveBinding($renderChartEnabled),
+                pausedNote: toolsPausedNote,
+                onPausedNoteTap: flashToolsToggle
             )
             AgentAbilityCard(
                 title: "Speak Tool",
                 subtitle:
                     "Give the agent a tool it can call to read a reply aloud when you ask. For always-speak, use Auto Speak Responses in the Voice section.",
                 icon: "speaker.wave.2",
-                isOn: abilitySaveBinding($speakEnabled),
-                pausedNote: toolsPausedNote
+                isOn: toolBackedSaveBinding($speakEnabled),
+                pausedNote: toolsPausedNote,
+                onPausedNoteTap: flashToolsToggle
             )
 
             AgentAbilityGroupHeader(
@@ -2936,8 +2996,9 @@ struct AgentDetailView: View {
                 subtitle:
                     "Let the agent search its own memory mid-conversation to pull up past details on demand. Separate from Memory above, which only auto-injects and saves.",
                 icon: "magnifyingglass",
-                isOn: abilitySaveBinding($searchMemoryEnabled),
-                pausedNote: toolsPausedNote
+                isOn: toolBackedSaveBinding($searchMemoryEnabled),
+                pausedNote: toolsPausedNote,
+                onPausedNoteTap: flashToolsToggle
             )
 
             AgentAbilityGroupHeader(
@@ -2949,8 +3010,9 @@ struct AgentDetailView: View {
                 subtitle:
                     "Let the agent search the web through your search providers. Works out of the box with free sources; configure providers in Settings > Search.",
                 icon: "globe",
-                isOn: abilitySaveBinding($webSearchEnabled),
-                pausedNote: toolsPausedNote
+                isOn: toolBackedSaveBinding($webSearchEnabled),
+                pausedNote: toolsPausedNote,
+                onPausedNoteTap: flashToolsToggle
             )
 
             AgentAbilityGroupHeader(
@@ -2962,8 +3024,9 @@ struct AgentDetailView: View {
                 subtitle:
                     "Let the agent schedule its own follow-up runs and send you notifications. Run frequency and limits live in General → Configure → Scheduling.",
                 icon: "calendar.badge.clock",
-                isOn: abilitySaveBinding($selfSchedulingEnabled),
+                isOn: toolBackedSaveBinding($selfSchedulingEnabled),
                 pausedNote: toolsPausedNote,
+                onPausedNoteTap: flashToolsToggle,
                 configureLabel: "Schedules & watchers",
                 onConfigure: { selectedTab = .builtIn(.automation) }
             )
@@ -2977,8 +3040,9 @@ struct AgentDetailView: View {
                 subtitle:
                     "Give this agent a private encrypted database to remember structured data across runs.",
                 icon: "cylinder.split.1x2",
-                isOn: abilitySaveBinding($dbEnabled),
+                isOn: toolBackedSaveBinding($dbEnabled),
                 pausedNote: toolsPausedNote,
+                onPausedNoteTap: flashToolsToggle,
                 configureLabel: "Open Database",
                 onConfigure: { selectedTab = .builtIn(.database) }
             ) {

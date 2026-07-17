@@ -323,6 +323,9 @@ struct AgentAbilityCard<Accessory: View>: View {
     /// Rendered as a warning chip when the ability is gated off by a
     /// dependency even though its own switch may be on.
     var pausedNote: LocalizedStringKey? = nil
+    /// Makes the paused chip tappable — a "take me to the cause"
+    /// affordance (e.g. scroll to and highlight the Tools master card).
+    var onPausedNoteTap: (() -> Void)? = nil
     var configureLabel: LocalizedStringKey? = nil
     var onConfigure: (() -> Void)? = nil
     @ViewBuilder let accessory: () -> Accessory
@@ -335,6 +338,7 @@ struct AgentAbilityCard<Accessory: View>: View {
         isActive: Bool? = nil,
         isInteractive: Bool = true,
         pausedNote: LocalizedStringKey? = nil,
+        onPausedNoteTap: (() -> Void)? = nil,
         configureLabel: LocalizedStringKey? = nil,
         onConfigure: (() -> Void)? = nil,
         @ViewBuilder accessory: @escaping () -> Accessory
@@ -346,6 +350,7 @@ struct AgentAbilityCard<Accessory: View>: View {
         self.isActive = isActive
         self.isInteractive = isInteractive
         self.pausedNote = pausedNote
+        self.onPausedNoteTap = onPausedNoteTap
         self.configureLabel = configureLabel
         self.onConfigure = onConfigure
         self.accessory = accessory
@@ -381,7 +386,7 @@ struct AgentAbilityCard<Accessory: View>: View {
             }
 
             if let pausedNote {
-                HStack(spacing: 4) {
+                let chip = HStack(spacing: 4) {
                     Image(systemName: "pause.circle.fill")
                         .font(.system(size: 9, weight: .semibold))
                     Text(pausedNote, bundle: .module)
@@ -391,6 +396,16 @@ struct AgentAbilityCard<Accessory: View>: View {
                 .padding(.horizontal, 8)
                 .padding(.vertical, 3)
                 .background(Capsule().fill(theme.warningColor.opacity(0.12)))
+
+                Group {
+                    if let onPausedNoteTap {
+                        Button(action: onPausedNoteTap) { chip.contentShape(Capsule()) }
+                            .buttonStyle(.plain)
+                            .help(Text("Show the switch this depends on", bundle: .module))
+                    } else {
+                        chip
+                    }
+                }
                 .transition(.opacity.combined(with: .move(edge: .top)))
             }
 

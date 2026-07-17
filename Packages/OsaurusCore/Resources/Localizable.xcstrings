@@ -43538,6 +43538,7 @@
       }
     },
     "Curated reference material the agent can consult on demand." : {
+      "extractionState" : "stale",
       "localizations" : {
         "de" : {
           "stringUnit" : {
@@ -43606,6 +43607,7 @@
       }
     },
     "Curator" : {
+      "extractionState" : "stale",
       "localizations" : {
         "de" : {
           "stringUnit" : {
@@ -80633,6 +80635,7 @@
       }
     },
     "Let the agent search and read the knowledge collections granted below: curated guides, templates, and standards. Separate from memory, knowledge is yours to edit and never written by the agent." : {
+      "extractionState" : "stale",
       "localizations" : {
         "de" : {
           "stringUnit" : {
@@ -80910,6 +80913,7 @@
       }
     },
     "Let this agent draft document updates as pending proposals (it can also file and work staleness tickets). Nothing changes in a collection until you approve a proposal in the Knowledge section." : {
+      "extractionState" : "stale",
       "localizations" : {
         "de" : {
           "stringUnit" : {
@@ -95806,6 +95810,7 @@
       }
     },
     "No knowledge collections yet. Add one in the Knowledge section of this window." : {
+      "extractionState" : "stale",
       "localizations" : {
         "de" : {
           "stringUnit" : {
@@ -145236,6 +145241,40 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "顯示技術詳情"
+          }
+        }
+      }
+    },
+    "Show the switch this depends on" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Den Schalter anzeigen, von dem dies abhängt"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "이 기능이 의존하는 스위치 표시"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Показать переключатель, от которого это зависит"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "显示此功能所依赖的开关"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "顯示此功能所依賴的開關"
           }
         }
       }
