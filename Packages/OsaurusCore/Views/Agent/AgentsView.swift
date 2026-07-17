@@ -998,7 +998,11 @@ private enum DetailTabGroup: String, CaseIterable {
         case .abilities: return L("Abilities")
         case .connections: return L("Connections")
         case .automation: return L("Automation")
-        case .knowledge: return L("Knowledge")
+        // Labeled "Memory" (the group holds the Memory and Database tabs)
+        // so it can't be confused with the knowledge-collections feature,
+        // which lives in Abilities and in the main window's Knowledge
+        // section.
+        case .knowledge: return L("Memory")
         }
     }
 
