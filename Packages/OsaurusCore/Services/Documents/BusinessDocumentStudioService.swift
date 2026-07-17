@@ -8,6 +8,7 @@
 //  entry point for inspect, preview, and explicit export checks.
 //
 
+import Darwin
 import Foundation
 import UniformTypeIdentifiers
 
@@ -328,7 +329,7 @@ public enum BusinessDocumentStudioError: LocalizedError, Sendable {
     case unsafeTextPackageTarget(fileExtension: String)
     case packageTargetExtensionMismatch(targetFormatId: String, fileExtension: String)
     case textExportTooLarge(actual: Int, limit: Int)
-    case writeFailed(String)
+    case writeFailed
 
     public var errorDescription: String? {
         switch self {
@@ -338,20 +339,20 @@ public enum BusinessDocumentStudioError: LocalizedError, Sendable {
             return "Document adapter '\(expected)' returned unexpected format '\(actual)'."
         case .unsupportedExport(let sourceFormatId, let targetFormatId):
             return "Cannot export document format '\(sourceFormatId)' as '\(targetFormatId)'."
-        case .destinationOutsideAllowedDirectory(let url):
-            return "Export destination is outside the allowed directory: \(url.path)"
+        case .destinationOutsideAllowedDirectory:
+            return "Export destination is outside the allowed directory."
         case .destinationAlreadyExists(let url):
-            return "Export destination already exists: \(url.path)"
-        case .destinationIsNotFileURL(let url):
-            return "Export destination must be a local file URL: \(url.absoluteString)"
+            return "A file named '\(url.lastPathComponent)' already exists."
+        case .destinationIsNotFileURL:
+            return "Export destination must be a local file URL."
         case .unsafeTextPackageTarget(let fileExtension):
             return "Text fallback export cannot write structured package target .\(fileExtension)."
         case .packageTargetExtensionMismatch(let targetFormatId, let fileExtension):
             return "Export target '\(targetFormatId)' cannot write package extension .\(fileExtension)."
         case .textExportTooLarge(let actual, let limit):
             return "Text fallback export is \(actual) bytes, limit is \(limit) bytes."
-        case .writeFailed(let message):
-            return "Business document export failed: \(message)"
+        case .writeFailed:
+            return "Business document export failed. Check destination permissions and try again."
         }
     }
 }
@@ -366,6 +367,13 @@ public struct BusinessDocumentStudioService: Sendable {
     public func parse(url: URL) async throws -> StructuredDocument {
         let (adapter, limit) = try adapterAndLimit(for: url)
         return try await parse(url: url, adapter: adapter, limit: limit)
+    }
+
+    /// Chat ingress preserves the existing 10 MB `DocumentParser` ceiling
+    /// while honoring smaller format-specific `DocumentLimits` values.
+    public func chatIntakeLimit(for url: URL) throws -> Int64 {
+        let (_, formatLimit) = try adapterAndLimit(for: url)
+        return min(formatLimit, Int64(DocumentParser.maxFileSize))
     }
 
     private func parse(
@@ -431,33 +439,53 @@ public struct BusinessDocumentStudioService: Sendable {
     ) async throws -> BusinessDocumentStudioExportResult {
         let normalizedTarget = targetFormatId.trimmedLowercased
         try validateDestination(url, policy: policy)
+        try validateTarget(document, normalizedTarget: normalizedTarget, url: url)
+        let workingURL = Self.temporaryExportURL(for: url)
+        var completed = false
+        defer {
+            if !completed {
+                try? FileManager.default.removeItem(at: workingURL)
+            }
+        }
+        try Task.checkCancellation()
 
+        let result: BusinessDocumentStudioExportResult
         switch normalizedTarget {
         case "csv", "tsv":
-            try rejectTextExportPackageTarget(url)
             let delimiter: CSVDelimiter = normalizedTarget == "tsv" ? .tab : .comma
-            let result = try await CSVTableWorkflowService.export(document, to: url, delimiter: delimiter)
-            return BusinessDocumentStudioExportResult(
-                url: result.url,
+            let export: CSVTableExportResult
+            do {
+                export = try await CSVTableWorkflowService.export(document, to: workingURL, delimiter: delimiter)
+            } catch {
+                if Task.isCancelled { throw CancellationError() }
+                throw error
+            }
+            result = BusinessDocumentStudioExportResult(
+                url: export.url,
                 sourceFormatId: document.formatId,
-                targetFormatId: result.formatId,
-                bytesWritten: result.bytesWritten,
-                message: "Exported \(result.rowCount) row(s) and \(result.columnCount) column(s)."
+                targetFormatId: export.formatId,
+                bytesWritten: export.bytesWritten,
+                message: "Exported \(export.rowCount) row(s) and \(export.columnCount) column(s)."
             )
 
         case "xlsx":
-            try validateStructuredPackageTarget(url, targetFormatId: normalizedTarget)
-            let result = try await WorkbookWorkflowService.export(document, to: url, registry: registry)
-            return BusinessDocumentStudioExportResult(
-                url: result.url,
+            let export: WorkbookExportResult
+            do {
+                export = try await WorkbookWorkflowService.export(document, to: workingURL, registry: registry)
+            } catch {
+                if Task.isCancelled { throw CancellationError() }
+                throw error
+            }
+            result = BusinessDocumentStudioExportResult(
+                url: export.url,
                 sourceFormatId: document.formatId,
-                targetFormatId: result.formatId,
-                bytesWritten: result.bytesWritten,
-                message: "Exported workbook through the registered '\(result.formatId)' emitter."
+                targetFormatId: export.formatId,
+                bytesWritten: export.bytesWritten,
+                message: "Exported workbook through the registered '\(export.formatId)' emitter."
             )
 
         case "txt", "text", "plaintext":
-            return try exportTextFallback(document, to: url, policy: policy)
+            result = try exportTextFallback(document, to: workingURL, policy: policy)
 
         default:
             guard let emitter = registry.emitter(for: document),
@@ -468,20 +496,92 @@ public struct BusinessDocumentStudioService: Sendable {
                     targetFormatId: normalizedTarget
                 )
             }
-            try validateEmitterPackageTarget(url, targetFormatId: emitter.formatId.trimmedLowercased)
             do {
-                try await emitter.emit(document, to: url)
-                return BusinessDocumentStudioExportResult(
-                    url: url,
+                try await emitter.emit(document, to: workingURL)
+                result = BusinessDocumentStudioExportResult(
+                    url: workingURL,
                     sourceFormatId: document.formatId,
                     targetFormatId: emitter.formatId,
-                    bytesWritten: Self.fileSize(url),
+                    bytesWritten: Self.fileSize(workingURL),
                     message: "Exported document through the registered '\(emitter.formatId)' emitter."
                 )
             } catch {
-                throw BusinessDocumentStudioError.writeFailed(error.localizedDescription)
+                if Task.isCancelled { throw CancellationError() }
+                throw BusinessDocumentStudioError.writeFailed
             }
         }
+        try Task.checkCancellation()
+        if policy.allowOverwrite {
+            try installReplacing(from: workingURL, to: url)
+        } else {
+            try installWithoutOverwrite(from: workingURL, to: url)
+        }
+        completed = true
+        return BusinessDocumentStudioExportResult(
+            url: url,
+            sourceFormatId: result.sourceFormatId,
+            targetFormatId: result.targetFormatId,
+            bytesWritten: result.bytesWritten,
+            message: result.message
+        )
+    }
+
+    private func validateTarget(
+        _ document: StructuredDocument,
+        normalizedTarget: String,
+        url: URL
+    ) throws {
+        switch normalizedTarget {
+        case "csv", "tsv", "txt", "text", "plaintext":
+            try rejectTextExportPackageTarget(url)
+        case "xlsx":
+            try validateStructuredPackageTarget(url, targetFormatId: normalizedTarget)
+        default:
+            guard let emitter = registry.emitter(for: document),
+                emitter.formatId.lowercased() == normalizedTarget
+            else {
+                throw BusinessDocumentStudioError.unsupportedExport(
+                    sourceFormatId: document.formatId,
+                    targetFormatId: normalizedTarget
+                )
+            }
+            try validateEmitterPackageTarget(url, targetFormatId: emitter.formatId.trimmedLowercased)
+        }
+    }
+
+    private func installWithoutOverwrite(from temporaryURL: URL, to destinationURL: URL) throws {
+        // The working item is created beside the destination, so an exclusive
+        // rename is an atomic create-new install for both files and packages.
+        // Unlike a hard link, it also works on filesystems that do not support
+        // links and for directory-backed document formats.
+        let result = temporaryURL.path.withCString { source in
+            destinationURL.path.withCString { destination in
+                Darwin.renamex_np(source, destination, UInt32(RENAME_EXCL))
+            }
+        }
+        guard result == 0 else {
+            if errno == EEXIST {
+                throw BusinessDocumentStudioError.destinationAlreadyExists(destinationURL)
+            }
+            throw BusinessDocumentStudioError.writeFailed
+        }
+    }
+
+    private func installReplacing(from temporaryURL: URL, to destinationURL: URL) throws {
+        let result = temporaryURL.path.withCString { source in
+            destinationURL.path.withCString { destination in
+                Darwin.rename(source, destination)
+            }
+        }
+        guard result == 0 else { throw BusinessDocumentStudioError.writeFailed }
+    }
+
+    private static func temporaryExportURL(for destination: URL) -> URL {
+        let ext = destination.pathExtension
+        let stem = destination.deletingPathExtension().lastPathComponent
+        let suffix = ext.isEmpty ? "" : ".\(ext)"
+        return destination.deletingLastPathComponent()
+            .appendingPathComponent(".\(stem).\(UUID().uuidString).osaurus-export\(suffix)")
     }
 
     private func preview(
@@ -675,9 +775,6 @@ public struct BusinessDocumentStudioService: Sendable {
                 throw BusinessDocumentStudioError.destinationOutsideAllowedDirectory(url)
             }
         }
-        if !policy.allowOverwrite, FileManager.default.fileExists(atPath: url.path) {
-            throw BusinessDocumentStudioError.destinationAlreadyExists(url)
-        }
     }
 
     private func rejectTextExportPackageTarget(_ url: URL) throws {
@@ -742,7 +839,7 @@ public struct BusinessDocumentStudioService: Sendable {
                 message: "Exported document text fallback."
             )
         } catch {
-            throw BusinessDocumentStudioError.writeFailed(error.localizedDescription)
+            throw BusinessDocumentStudioError.writeFailed
         }
     }
 

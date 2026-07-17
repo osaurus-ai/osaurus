@@ -5,6 +5,7 @@
 //  Unified attachment model for images and documents in chat messages
 //
 
+import CryptoKit
 import Foundation
 
 #if canImport(ImageIO)
@@ -172,14 +173,20 @@ public struct Attachment: Codable, Sendable, Equatable, Identifiable {
         Attachment(kind: .document(filename: filename, content: content, fileSize: fileSize))
     }
 
-    public static func structuredDocument(_ document: StructuredDocument) -> Attachment {
+    public static func structuredDocument(
+        _ document: StructuredDocument,
+        provenance: DocumentAttachmentProvenance? = nil
+    ) -> Attachment {
         Attachment(
             kind: .document(
                 filename: document.filename,
                 content: document.textFallback,
                 fileSize: document.attachmentFileSize
             ),
-            structuredDocumentMetadata: StructuredDocumentAttachmentMetadata(document)
+            structuredDocumentMetadata: StructuredDocumentAttachmentMetadata(
+                document,
+                provenance: provenance
+            )
         )
     }
 
@@ -311,6 +318,38 @@ public struct Attachment: Codable, Sendable, Equatable, Identifiable {
         }
     }
 
+    /// Basename-only filename for user-visible chat surfaces. This strips
+    /// absolute directories before titles, prompts, and exports can persist
+    /// local paths.
+    public var redactedFilename: String? {
+        guard let filename else { return nil }
+        return Self.redactedFilename(from: filename)
+    }
+
+    /// Basename-only display label for attachment-only chat titles.
+    public var titleLabel: String {
+        redactedFilename ?? genericKindLabel
+    }
+
+    public static func redactedFilename(from raw: String, fallback: String = "attachment") -> String {
+        let basename = (raw.replacingOccurrences(of: "\\", with: "/") as NSString).lastPathComponent
+        let trimmed = basename.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty || trimmed == "." || trimmed == ".." ? fallback : trimmed
+    }
+
+    private var genericKindLabel: String {
+        switch kind {
+        case .image, .imageRef:
+            return "image"
+        case .document, .documentRef:
+            return "document"
+        case .audio, .audioRef:
+            return "audio"
+        case .video, .videoRef:
+            return "video"
+        }
+    }
+
     /// Audio format hint ("wav" / "mp3" / "m4a" / etc.). The host uses
     /// this both for display and to populate `MessageContentPart.audioInput.format`,
     /// which becomes the temp-file extension that drives vmlx's
@@ -332,13 +371,28 @@ public struct Attachment: Codable, Sendable, Equatable, Identifiable {
 
     /// Resolves the attachment to its raw image bytes — inline or
     /// hydrated from the blob store. Returns `nil` for non-image kinds
-    /// or read failures.
+    /// or read failures. Images carrying intake provenance fail closed when
+    /// their bytes no longer match the inspected content digest.
     public func loadImageData() -> Data? {
+        guard let data = unverifiedImageData() else { return nil }
+        guard let provenance = structuredDocumentMetadata?.provenance else { return data }
+        guard data.count <= AttachmentBlobStore.maximumImageBytes else { return nil }
+        guard provenance.isWellFormed else { return nil }
+        return Self.sha256(data) == provenance.contentSHA256 ? data : nil
+    }
+
+    /// Raw image hydration for integrity diagnostics. Callers that consume or
+    /// export media must use `loadImageData()` so provenance is enforced.
+    func unverifiedImageData() -> Data? {
         switch kind {
         case .image(let data):
             return data
-        case .imageRef(let hash, _):
-            return try? AttachmentBlobStore.read(hash)
+        case .imageRef(let hash, let byteCount):
+            return try? AttachmentBlobStore.read(
+                hash,
+                maximumBytes: AttachmentBlobStore.maximumImageBytes,
+                expectedByteCount: byteCount
+            )
         default:
             return nil
         }
@@ -357,8 +411,12 @@ public struct Attachment: Codable, Sendable, Equatable, Identifiable {
         switch kind {
         case .audio(let data, _, _):
             return data
-        case .audioRef(let hash, _, _, _):
-            return try? AttachmentBlobStore.read(hash)
+        case .audioRef(let hash, let byteCount, _, _):
+            return try? AttachmentBlobStore.read(
+                hash,
+                maximumBytes: AttachmentBlobStore.maximumAudioBytes,
+                expectedByteCount: byteCount
+            )
         default:
             return nil
         }
@@ -375,8 +433,12 @@ public struct Attachment: Codable, Sendable, Equatable, Identifiable {
         switch kind {
         case .video(let data, _):
             return data
-        case .videoRef(let hash, _, _):
-            return try? AttachmentBlobStore.read(hash)
+        case .videoRef(let hash, let byteCount, _):
+            return try? AttachmentBlobStore.read(
+                hash,
+                maximumBytes: AttachmentBlobStore.maximumVideoBytes,
+                expectedByteCount: byteCount
+            )
         default:
             return nil
         }
@@ -390,10 +452,30 @@ public struct Attachment: Codable, Sendable, Equatable, Identifiable {
         case .document(_, let content, _):
             return content
         case .documentRef(_, let hash, _):
-            return (try? AttachmentBlobStore.read(hash)).flatMap { String(data: $0, encoding: .utf8) }
+            return (try? AttachmentBlobStore.read(
+                hash,
+                maximumBytes: AttachmentBlobStore.maximumDocumentBytes
+            )).flatMap { String(data: $0, encoding: .utf8) }
         default:
             return nil
         }
+    }
+
+    /// Hydrates document text and verifies it against intake provenance when
+    /// available. Legacy attachments without provenance retain their existing
+    /// behavior; newly inspected documents fail closed on missing, corrupt, or
+    /// oversized content.
+    public func verifiedDocumentContent() -> String? {
+        guard let content = loadDocumentContent() else { return nil }
+        guard let provenance = structuredDocumentMetadata?.provenance else { return content }
+        let bytes = Data(content.utf8)
+        guard bytes.count <= AttachmentBlobStore.maximumDocumentBytes else { return nil }
+        guard provenance.isWellFormed else { return nil }
+        return Self.sha256(bytes) == provenance.contentSHA256 ? content : nil
+    }
+
+    static func sha256(_ data: Data) -> String {
+        SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
     }
 
     // MARK: - Display Helpers
@@ -456,7 +538,7 @@ public struct Attachment: Codable, Sendable, Equatable, Identifiable {
             // the send-budget gate (a 70 KB screenshot slipped under, a JPEG of
             // the same picture did not). Derive from pixel dimensions instead.
             return Attachment.estimatedImageTokens(forEncodedImage: data)
-        case .imageRef(_, _):
+        case .imageRef:
             // Spilled to the blob store: pixel dimensions aren't available here
             // (only the on-disk byte count), so fall back to a conservative
             // per-image constant rather than the misleading byte-based figure.
@@ -584,6 +666,9 @@ public struct StructuredDocumentAttachmentMetadata: Codable, Sendable, Equatable
     // Optional preserves metadata decoded from attachments saved before this field existed.
     // swiftlint:disable:next discouraged_optional_boolean
     public let hasActiveContent: Bool?
+    /// Path-free source and parsed-content identity captured during intake.
+    /// Optional for compatibility with attachments created by older builds.
+    public let provenance: DocumentAttachmentProvenance?
 
     public init(
         formatId: String,
@@ -597,7 +682,8 @@ public struct StructuredDocumentAttachmentMetadata: Codable, Sendable, Equatable
         inspectionStatus: DocumentSecurityMetadata.InspectionStatus? = nil,
         maximumSeverity: DocumentSecurityFinding.Severity? = nil,
         // swiftlint:disable:next discouraged_optional_boolean
-        hasActiveContent: Bool? = nil
+        hasActiveContent: Bool? = nil,
+        provenance: DocumentAttachmentProvenance? = nil
     ) {
         self.formatId = formatId
         self.representationFormatId = representationFormatId
@@ -610,9 +696,10 @@ public struct StructuredDocumentAttachmentMetadata: Codable, Sendable, Equatable
         self.inspectionStatus = inspectionStatus
         self.maximumSeverity = maximumSeverity
         self.hasActiveContent = hasActiveContent
+        self.provenance = provenance
     }
 
-    public init(_ document: StructuredDocument) {
+    public init(_ document: StructuredDocument, provenance: DocumentAttachmentProvenance? = nil) {
         let fileExtension =
             document.security.fileExtension
             ?? URL(fileURLWithPath: document.filename).pathExtension.lowercasedNonEmpty
@@ -630,8 +717,47 @@ public struct StructuredDocumentAttachmentMetadata: Codable, Sendable, Equatable
             structureSummary: document.structure.businessSummary,
             inspectionStatus: document.security.inspectionStatus,
             maximumSeverity: document.security.maximumSeverity,
-            hasActiveContent: document.security.hasActiveContent
+            hasActiveContent: document.security.hasActiveContent,
+            provenance: provenance
         )
+    }
+}
+
+/// Persisted path-free identity for an inspected document attachment.
+public struct DocumentAttachmentProvenance: Codable, Sendable, Equatable, Hashable {
+    public let sourceSHA256: String
+    public let contentSHA256: String
+    public let sourceTrust: DocumentSecurityMetadata.SourceTrust
+    public let inspectedAt: Date
+    public let sourceModificationTime: Date?
+    public let stableSourceID: String
+
+    public init(
+        sourceSHA256: String,
+        contentSHA256: String,
+        sourceTrust: DocumentSecurityMetadata.SourceTrust,
+        inspectedAt: Date,
+        sourceModificationTime: Date?,
+        stableSourceID: String
+    ) {
+        self.sourceSHA256 = sourceSHA256
+        self.contentSHA256 = contentSHA256
+        self.sourceTrust = sourceTrust
+        self.inspectedAt = inspectedAt
+        self.sourceModificationTime = sourceModificationTime
+        self.stableSourceID = stableSourceID
+    }
+
+    public var isWellFormed: Bool {
+        Self.isSHA256(sourceSHA256)
+            && Self.isSHA256(contentSHA256)
+            && Self.isSHA256(stableSourceID)
+    }
+
+    private static func isSHA256(_ value: String) -> Bool {
+        value.count == 64 && value.utf8.allSatisfy { byte in
+            (48...57).contains(byte) || (97...102).contains(byte)
+        }
     }
 }
 

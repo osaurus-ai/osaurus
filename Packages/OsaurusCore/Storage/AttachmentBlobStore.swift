@@ -23,17 +23,29 @@
 //
 
 import CryptoKit
+import Darwin
 import Foundation
 import os
 
 public enum AttachmentBlobError: LocalizedError {
     case writeFailed(String)
     case readFailed(String)
+    case invalidReference
+    case symbolicLink
+    case oversized(Int)
+    case sizeMismatch(expected: Int, actual: Int)
+    case integrityMismatch
 
     public var errorDescription: String? {
         switch self {
         case .writeFailed(let m): return "Failed to write attachment blob: \(m)"
         case .readFailed(let m): return "Failed to read attachment blob: \(m)"
+        case .invalidReference: return "Attachment blob reference is invalid."
+        case .symbolicLink: return "Attachment blob references may not resolve through a symbolic link."
+        case .oversized(let limit): return "Attachment blob exceeds the \(limit)-byte read limit."
+        case .sizeMismatch(let expected, let actual):
+            return "Attachment blob size mismatch (expected \(expected), found \(actual))."
+        case .integrityMismatch: return "Attachment blob content does not match its reference."
         }
     }
 }
@@ -44,6 +56,10 @@ public enum AttachmentBlobStore {
     /// 16 KB chosen to keep tiny inline icons / short snippets fast and
     /// to spill almost every screenshot or non-trivial document.
     public static let spillThreshold: Int = 16 * 1024
+    public static let maximumDocumentBytes = 64 * 1024 * 1024
+    public static let maximumImageBytes = 128 * 1024 * 1024
+    public static let maximumAudioBytes = 256 * 1024 * 1024
+    public static let maximumVideoBytes = 512 * 1024 * 1024
 
     private static let log = Logger(subsystem: "ai.osaurus", category: "storage.blobs")
 
@@ -57,13 +73,29 @@ public enum AttachmentBlobStore {
     /// Logical (plaintext) blob path `~/.osaurus/chat-history/blobs/<sha256>`.
     /// In plaintext mode the bytes live here; in encrypted mode the `.osec`
     /// twin (`blobURL(for:)`) holds the AES-GCM envelope instead.
-    public static func logicalBlobURL(for sha256: String) -> URL {
-        blobsDir().appendingPathComponent(sha256)
+    public static func logicalBlobURL(for sha256: String) throws -> URL {
+        try validatedLogicalBlobURL(for: sha256)
     }
 
     /// Encrypted blob twin `~/.osaurus/chat-history/blobs/<sha256>.osec`.
-    public static func blobURL(for sha256: String) -> URL {
-        blobsDir().appendingPathComponent("\(sha256).osec")
+    public static func blobURL(for sha256: String) throws -> URL {
+        try EncryptedFileStore.encryptedURL(for: validatedLogicalBlobURL(for: sha256))
+    }
+
+    public static func isValidContentHash(_ hash: String) -> Bool {
+        hash.count == 64 && hash.utf8.allSatisfy { byte in
+            (48 ... 57).contains(byte) || (97 ... 102).contains(byte)
+        }
+    }
+
+    private static func validatedLogicalBlobURL(for hash: String) throws -> URL {
+        guard isValidContentHash(hash) else { throw AttachmentBlobError.invalidReference }
+        let root = blobsDir().standardizedFileURL
+        let candidate = root.appendingPathComponent(hash, isDirectory: false).standardizedFileURL
+        guard candidate.deletingLastPathComponent().path == root.path else {
+            throw AttachmentBlobError.invalidReference
+        }
+        return candidate
     }
 
     // MARK: - Hashing
@@ -102,23 +134,110 @@ public enum AttachmentBlobStore {
 
     /// Read the blob with the given content hash (detection-first: plaintext
     /// twin preferred, `.osec` decrypted otherwise).
-    public static func read(_ hash: String) throws -> Data {
+    public static func read(
+        _ hash: String,
+        maximumBytes: Int = maximumVideoBytes,
+        expectedByteCount: Int? = nil
+    ) throws -> Data {
         do {
-            return try EncryptedFileStore.readPolicyAware(plaintextURL: logicalBlobURL(for: hash))
+            guard maximumBytes >= 0, maximumBytes <= maximumVideoBytes else {
+                throw AttachmentBlobError.oversized(maximumVideoBytes)
+            }
+            if let expectedByteCount {
+                guard expectedByteCount >= 0 else { throw AttachmentBlobError.invalidReference }
+                guard expectedByteCount <= maximumBytes else { throw AttachmentBlobError.oversized(maximumBytes) }
+            }
+
+            let logicalURL = try validatedLogicalBlobURL(for: hash)
+            guard let existingURL = EncryptedFileStore.existingTwin(forPlaintextURL: logicalURL) else {
+                throw EncryptedFileStoreError.fileMissing
+            }
+            let isEncrypted = try validateExistingBlobURL(
+                existingURL,
+                logicalURL: logicalURL,
+                maximumBytes: maximumBytes
+            )
+            let storedLimit = maximumBytes + (isEncrypted ? 29 : 0)
+            let stored = try boundedRead(existingURL, maximumBytes: storedLimit)
+            let data = isEncrypted ? try EncryptedFileStore.open(envelope: stored) : stored
+            guard data.count <= maximumBytes else { throw AttachmentBlobError.oversized(maximumBytes) }
+            if let expectedByteCount, data.count != expectedByteCount {
+                throw AttachmentBlobError.sizeMismatch(expected: expectedByteCount, actual: data.count)
+            }
+            guard contentHash(data) == hash else { throw AttachmentBlobError.integrityMismatch }
+            return data
+        } catch let error as AttachmentBlobError {
+            throw error
         } catch {
             throw AttachmentBlobError.readFailed(error.localizedDescription)
         }
     }
 
+    private static func validateExistingBlobURL(
+        _ existingURL: URL,
+        logicalURL: URL,
+        maximumBytes: Int
+    ) throws -> Bool {
+        let values = try existingURL.resourceValues(forKeys: [.isSymbolicLinkKey, .fileSizeKey])
+        guard values.isSymbolicLink != true else { throw AttachmentBlobError.symbolicLink }
+
+        let root = blobsDir().resolvingSymlinksInPath().standardizedFileURL
+        let resolvedParent = existingURL.resolvingSymlinksInPath().deletingLastPathComponent().standardizedFileURL
+        guard resolvedParent.path == root.path else { throw AttachmentBlobError.invalidReference }
+
+        let encrypted = existingURL.pathExtension == String(EncryptedFileStore.suffix.dropFirst())
+        let envelopeOverhead = encrypted ? 29 : 0
+        guard let fileSize = values.fileSize, fileSize <= maximumBytes + envelopeOverhead else {
+            throw AttachmentBlobError.oversized(maximumBytes)
+        }
+
+        let expectedPlain = logicalURL.standardizedFileURL
+        let expectedEncrypted = EncryptedFileStore.encryptedURL(for: expectedPlain).standardizedFileURL
+        let actual = existingURL.standardizedFileURL
+        guard actual == expectedPlain || actual == expectedEncrypted else {
+            throw AttachmentBlobError.invalidReference
+        }
+        return encrypted
+    }
+
+    private static func boundedRead(_ url: URL, maximumBytes: Int) throws -> Data {
+        let descriptor = Darwin.open(url.path, O_RDONLY | O_CLOEXEC | O_NOFOLLOW)
+        guard descriptor >= 0 else {
+            if errno == ELOOP { throw AttachmentBlobError.symbolicLink }
+            throw AttachmentBlobError.readFailed(String(cString: strerror(errno)))
+        }
+        var statBuffer = stat()
+        guard fstat(descriptor, &statBuffer) == 0 else {
+            let message = String(cString: strerror(errno))
+            Darwin.close(descriptor)
+            throw AttachmentBlobError.readFailed(message)
+        }
+        guard (statBuffer.st_mode & S_IFMT) == S_IFREG else {
+            Darwin.close(descriptor)
+            throw AttachmentBlobError.invalidReference
+        }
+        guard statBuffer.st_size <= off_t(maximumBytes) else {
+            Darwin.close(descriptor)
+            throw AttachmentBlobError.oversized(maximumBytes)
+        }
+        let handle = FileHandle(fileDescriptor: descriptor, closeOnDealloc: true)
+        defer { try? handle.close() }
+        let data = try handle.read(upToCount: maximumBytes + 1) ?? Data()
+        guard data.count <= maximumBytes else { throw AttachmentBlobError.oversized(maximumBytes) }
+        return data
+    }
+
     /// Returns true when a blob with this hash exists on disk (either twin).
     public static func exists(_ hash: String) -> Bool {
-        EncryptedFileStore.existingTwin(forPlaintextURL: logicalBlobURL(for: hash)) != nil
+        guard let url = try? validatedLogicalBlobURL(for: hash) else { return false }
+        return EncryptedFileStore.existingTwin(forPlaintextURL: url) != nil
     }
 
     /// Delete a blob. Caller is responsible for ensuring no other turn
     /// references it.
     public static func delete(_ hash: String) {
-        EncryptedFileStore.removeTwins(forPlaintextURL: logicalBlobURL(for: hash))
+        guard let url = try? validatedLogicalBlobURL(for: hash) else { return }
+        EncryptedFileStore.removeTwins(forPlaintextURL: url)
     }
 
     // MARK: - Spillover for `Attachment` arrays
@@ -142,7 +261,8 @@ public enum AttachmentBlobStore {
                 let hash = try write(data)
                 return Attachment(
                     id: attachment.id,
-                    kind: .imageRef(hash: hash, byteCount: data.count)
+                    kind: .imageRef(hash: hash, byteCount: data.count),
+                    structuredDocumentMetadata: attachment.structuredDocumentMetadata
                 )
             } catch {
                 log.warning("image spill failed; keeping inline (size=\(data.count)): \(error.localizedDescription)")

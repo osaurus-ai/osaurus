@@ -1537,8 +1537,8 @@ final class ChatSession: ObservableObject {
 
         var parts: [String] = []
         for doc in docs {
-            if let name = doc.filename, let text = doc.documentContent {
-                let attributes = attachedDocumentAttributes(for: doc, rawName: name)
+            if let text = doc.verifiedDocumentContent() {
+                let attributes = attachedDocumentAttributes(for: doc)
                 let safeText = xmlEscape(text)
                 parts.append("<attached_document \(attributes)>\n\(safeText)\n</attached_document>")
             }
@@ -1585,6 +1585,94 @@ final class ChatSession: ObservableObject {
         return ChatMessage(role: "user", content: messageText)
     }
 
+    enum AttachmentSendValidationError: LocalizedError, Equatable {
+        case integrityFailed
+
+        var errorDescription: String? {
+            "An attached file failed integrity verification. Remove it and attach the file again."
+        }
+    }
+
+    static func validateAttachmentsForSend(_ attachments: [Attachment]) throws {
+        for attachment in attachments where attachment.structuredDocumentMetadata?.provenance != nil {
+            if attachment.isDocument, attachment.verifiedDocumentContent() == nil {
+                throw AttachmentSendValidationError.integrityFailed
+            }
+            if attachment.isImage, attachment.loadImageData() == nil {
+                throw AttachmentSendValidationError.integrityFailed
+            }
+        }
+    }
+
+    /// Historical attachments are revalidated when hydrated and omitted when
+    /// unavailable. Only a new outbound payload may block the current send.
+    static func validateAttachmentsForNewTurn(
+        _ outbound: [Attachment],
+        historical _: [Attachment]
+    ) throws {
+        try validateAttachmentsForSend(outbound)
+    }
+
+    /// Determine whether an attachment turn can produce verified multipart
+    /// model input. Reference-backed media is hydrated here so a present but
+    /// corrupt encrypted blob cannot suppress the text-prefix fallback.
+    static func attachmentsRenderAsMultimodalParts(
+        _ attachments: [Attachment],
+        supportsImages: Bool,
+        supportsAudio: Bool,
+        supportsVideo: Bool
+    ) -> Bool {
+        attachments.contains { attachment in
+            switch attachment.kind {
+            case .image(let data):
+                guard supportsImages else { return false }
+                guard let provenance = attachment.structuredDocumentMetadata?.provenance else {
+                    return !data.isEmpty
+                }
+                return !data.isEmpty
+                    && data.count <= AttachmentBlobStore.maximumImageBytes
+                    && provenance.isWellFormed
+                    && AttachmentBlobStore.contentHash(data) == provenance.contentSHA256
+            case .imageRef(let hash, let byteCount):
+                guard supportsImages,
+                    byteCount >= 0,
+                    byteCount <= AttachmentBlobStore.maximumImageBytes,
+                    (try? AttachmentBlobStore.read(
+                        hash,
+                        maximumBytes: AttachmentBlobStore.maximumImageBytes,
+                        expectedByteCount: byteCount
+                    )) != nil
+                else { return false }
+                if let provenance = attachment.structuredDocumentMetadata?.provenance {
+                    return provenance.isWellFormed && provenance.contentSHA256 == hash
+                }
+                return true
+            case .audio(let data, _, _):
+                return supportsAudio && !data.isEmpty
+            case .audioRef(let hash, let byteCount, _, _):
+                return supportsAudio && byteCount >= 0
+                    && byteCount <= AttachmentBlobStore.maximumAudioBytes
+                    && (try? AttachmentBlobStore.read(
+                        hash,
+                        maximumBytes: AttachmentBlobStore.maximumAudioBytes,
+                        expectedByteCount: byteCount
+                    )) != nil
+            case .video(let data, _):
+                return supportsVideo && !data.isEmpty
+            case .videoRef(let hash, let byteCount, _):
+                return supportsVideo && byteCount >= 0
+                    && byteCount <= AttachmentBlobStore.maximumVideoBytes
+                    && (try? AttachmentBlobStore.read(
+                        hash,
+                        maximumBytes: AttachmentBlobStore.maximumVideoBytes,
+                        expectedByteCount: byteCount
+                    )) != nil
+            case .document, .documentRef:
+                return false
+            }
+        }
+    }
+
     /// Prepend a user turn's frozen memory / screen-context prefix to its
     /// rendered message. The prefix already carries its trailing separator
     /// (`SystemPromptComposer.composeInjectedUserPrefix`), so this is a pure
@@ -1609,7 +1697,7 @@ final class ChatSession: ObservableObject {
         format: String,
         localSamples: LocalAudioSamples?
     )? {
-        guard attachment.isAudio, let data = attachment.loadAudioData() else { return nil }
+        guard attachment.isAudio, let data = attachment.loadAudioData(), !data.isEmpty else { return nil }
         let format = attachment.audioFormat?
             .trimmingCharacters(in: .whitespacesAndNewlines)
             .lowercased()
@@ -1621,7 +1709,7 @@ final class ChatSession: ObservableObject {
     }
 
     private static func videoPayload(from attachment: Attachment) -> (data: Data, mimeSubtype: String)? {
-        guard attachment.isVideo, let data = attachment.loadVideoData() else { return nil }
+        guard attachment.isVideo, let data = attachment.loadVideoData(), !data.isEmpty else { return nil }
         return (data, videoMimeSubtype(for: attachment.filename))
     }
 
@@ -1641,19 +1729,9 @@ final class ChatSession: ObservableObject {
         }
     }
 
-    private static func escapeAttachmentName(_ raw: String) -> String {
-        xmlEscape(normalizedAttachmentName(raw))
-    }
-
-    private static func normalizedAttachmentName(_ raw: String) -> String {
-        let basename = (raw as NSString).lastPathComponent
-        let trimmed = basename.trimmingCharacters(in: .whitespacesAndNewlines)
-        return trimmed.isEmpty ? "attachment" : trimmed
-    }
-
-    private static func attachedDocumentAttributes(for attachment: Attachment, rawName: String) -> String {
+    private static func attachedDocumentAttributes(for attachment: Attachment) -> String {
         var attributes: [(name: String, value: String)] = [
-            ("name", normalizedAttachmentName(rawName))
+            ("name", attachment.redactedFilename ?? "attachment")
         ]
         if attachment.structuredDocumentMetadata != nil {
             if let summary = attachment.businessDocumentSummary {
@@ -3802,15 +3880,13 @@ final class ChatSession: ObservableObject {
         guard turn.injectedContextPrefix == nil else { return }
         // Parity with the legacy injector guard: a turn that renders as a
         // multimodal parts message never carries an injected prefix.
-        if !turn.attachments.isEmpty {
-            let rendered = Self.buildUserChatMessage(
-                content: turn.content,
-                attachments: turn.attachments,
-                supportsImages: selectedModelSupportsImages,
-                supportsAudio: selectedModelSupportsAudio,
-                supportsVideo: selectedModelSupportsVideo
-            )
-            if rendered.contentParts != nil { return }
+        if Self.attachmentsRenderAsMultimodalParts(
+            turn.attachments,
+            supportsImages: selectedModelSupportsImages,
+            supportsAudio: selectedModelSupportsAudio,
+            supportsVideo: selectedModelSupportsVideo
+        ) {
+            return
         }
         guard
             let prefix = SystemPromptComposer.composeInjectedUserPrefix(
@@ -3827,6 +3903,21 @@ final class ChatSession: ObservableObject {
         let hasContent = !trimmed.isEmpty || !attachments.isEmpty
         let isRegeneration = !hasContent && !turns.isEmpty
         guard hasContent || isRegeneration else { return }
+        do {
+            try Self.validateAttachmentsForNewTurn(
+                attachments,
+                historical: turns.flatMap(\.attachments)
+            )
+        } catch {
+            if input.isEmpty { input = text }
+            if pendingAttachments.isEmpty { pendingAttachments = attachments }
+            ToastManager.shared.error(
+                L("Could not send message"),
+                message: (error as? LocalizedError)?.errorDescription
+                    ?? L("An attached file failed integrity verification.")
+            )
+            return
+        }
         guard activeRunId == nil, !isStreaming else {
             restoreTurnsRollbackAfterAbortedRegeneration()
             return

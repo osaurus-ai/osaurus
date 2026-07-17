@@ -77,7 +77,7 @@ struct DocumentChip: View {
                 .font(.system(size: 11, weight: .medium))
                 .foregroundColor(theme.accentColor)
 
-            if let name = attachment.filename {
+            if let name = attachment.redactedFilename {
                 Text(name)
                     .font(theme.font(size: 11, weight: .medium))
                     .foregroundColor(theme.primaryText)

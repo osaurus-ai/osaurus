@@ -103,6 +103,39 @@ struct ChatSessionStoreTranscriptRecoveryTests {
         #expect(recovered.turns.map(\.content) == ["chat history wins"])
     }
 
+    @Test func existingAttachmentOnlyTurnIsNotDowngradedByTranscriptFallback() throws {
+        let db = MemoryDatabase()
+        try db.openInMemory()
+        defer { db.close() }
+
+        let sessionId = UUID(uuidString: "44444444-5555-6666-7777-888888888888")!
+        try db.insertTranscriptTurn(
+            agentId: Agent.defaultId.uuidString,
+            conversationId: sessionId.uuidString,
+            chunkIndex: 0,
+            role: "user",
+            content: "transcript text only",
+            tokenCount: 3
+        )
+
+        let attachment = Attachment.document(
+            filename: "/Users/mmeding/private/assessment.txt",
+            content: "rubric details",
+            fileSize: 13
+        )
+        let existingTurn = ChatTurnData(role: .user, content: "", attachments: [attachment])
+        let session = ChatSessionData(id: sessionId, turns: [existingTurn])
+
+        let recovered = ChatSessionStore.recoverTranscriptTurnsIfNeeded(
+            session,
+            memoryDatabase: db
+        )
+
+        #expect(recovered.turns.count == 1)
+        #expect(recovered.turns[0].content == "")
+        #expect(recovered.turns[0].attachments.first?.filename == "/Users/mmeding/private/assessment.txt")
+    }
+
     @Test func transcriptRecoverySkipsBlankAndUnknownRoles() throws {
         let db = MemoryDatabase()
         try db.openInMemory()
