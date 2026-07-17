@@ -36,6 +36,11 @@ struct AgentAbilityContextPreview: Equatable {
         var searchMemoryEnabled: Bool
         var webSearchEnabled: Bool
         var selfSchedulingEnabled: Bool
+        /// Knowledge retrieval tools plus the grant manifest section.
+        var knowledgeEnabled: Bool
+        /// Curator role — prices the proposal/ticket tools. Folded with
+        /// `knowledgeEnabled` at compute time like the real send path.
+        var knowledgeCuratorEnabled: Bool
         /// Autonomous (sandbox) execution — the Code Execution master switch.
         var codeExecutionEnabled: Bool
         /// The editor's local model selection (nil = inherit global default).
@@ -122,7 +127,15 @@ struct AgentAbilityContextPreview: Equatable {
             appleScriptEnabled: base.appleScriptEnabled,
             spawnableAgentNames: base.spawnableAgentNames,
             spawnableModelNames: base.spawnableModelNames,
-            spawnableModelNotes: base.spawnableModelNotes
+            spawnableModelNotes: base.spawnableModelNotes,
+            // Fold the draft flags with the persisted grant list the way
+            // `capture` pre-folds them: no grants means no knowledge tools
+            // or manifest regardless of the toggle.
+            knowledgeEnabled: draft.knowledgeEnabled && !base.knowledgeCollections.isEmpty,
+            knowledgeCuratorEnabled: draft.knowledgeEnabled
+                && draft.knowledgeCuratorEnabled
+                && !base.knowledgeCollections.isEmpty,
+            knowledgeCollections: draft.knowledgeEnabled ? base.knowledgeCollections : []
         )
 
         // Mirror ChatView's optimistic execution-mode estimate: autonomous-on

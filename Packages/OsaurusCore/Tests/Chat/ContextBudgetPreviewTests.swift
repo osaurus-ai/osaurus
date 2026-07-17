@@ -701,6 +701,8 @@ struct ContextBudgetPreviewTests {
             searchMemoryEnabled: false,
             webSearchEnabled: true,
             selfSchedulingEnabled: false,
+            knowledgeEnabled: false,
+            knowledgeCuratorEnabled: false,
             codeExecutionEnabled: false,
             model: model
         )

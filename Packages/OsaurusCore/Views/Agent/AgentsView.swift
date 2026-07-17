@@ -2834,6 +2834,8 @@ struct AgentDetailView: View {
             searchMemoryEnabled: searchMemoryEnabled,
             webSearchEnabled: webSearchEnabled,
             selfSchedulingEnabled: selfSchedulingEnabled,
+            knowledgeEnabled: knowledgeEnabled,
+            knowledgeCuratorEnabled: knowledgeCuratorEnabled,
             codeExecutionEnabled:
                 agentManager.effectiveAutonomousExec(for: agent.id)?.enabled == true,
             model: selectedModel
@@ -2850,6 +2852,7 @@ struct AgentDetailView: View {
                 renderChartEnabled,
                 speakEnabled,
                 searchMemoryEnabled,
+                knowledgeEnabled,
                 webSearchEnabled,
                 selfSchedulingEnabled,
                 dbEnabled,
@@ -2858,6 +2861,47 @@ struct AgentDetailView: View {
             ]
         }
         return flags
+    }
+
+    /// Per-collection grant checkmark row inside the Knowledge ability
+    /// card. Grants are re-enforced at tool execution time, so this UI is
+    /// the only way to widen an agent's knowledge scope.
+    private func knowledgeGrantRow(_ collection: KnowledgeCollection) -> some View {
+        let granted = knowledgeCollectionIds.contains(collection.id)
+        return Button {
+            if granted {
+                knowledgeCollectionIds.removeAll { $0 == collection.id }
+            } else {
+                knowledgeCollectionIds.append(collection.id)
+            }
+            debouncedSave()
+        } label: {
+            HStack(spacing: 8) {
+                Image(systemName: granted ? "checkmark.circle.fill" : "circle")
+                    .font(.system(size: 14))
+                    .foregroundColor(granted ? theme.accentColor : theme.tertiaryText)
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(collection.name)
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundColor(theme.primaryText)
+                    if !collection.summary.isEmpty {
+                        Text(collection.summary)
+                            .font(.system(size: 11))
+                            .foregroundColor(theme.tertiaryText)
+                            .lineLimit(2)
+                    }
+                }
+                Spacer(minLength: 8)
+                if !collection.isEnabled {
+                    Text("Disabled", bundle: .module)
+                        .font(.system(size: 10))
+                        .foregroundColor(theme.tertiaryText)
+                }
+            }
+            .padding(8)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
     }
 
     /// Wrap a local `@State` flag binding so writes also schedule the
@@ -3005,6 +3049,48 @@ struct AgentDetailView: View {
                 pausedNote: toolsPausedNote,
                 onPausedNoteTap: flashToolsToggle
             )
+
+            AgentAbilityGroupHeader(
+                label: "Knowledge",
+                description: "Curated reference material the agent can consult on demand."
+            )
+            AgentAbilityCard(
+                title: "Knowledge",
+                subtitle:
+                    "Let the agent search and read the knowledge collections granted below: curated guides, templates, and standards. Separate from memory, knowledge is yours to edit and never written by the agent.",
+                icon: "books.vertical",
+                isOn: toolBackedSaveBinding($knowledgeEnabled),
+                pausedNote: toolsPausedNote,
+                onPausedNoteTap: flashToolsToggle
+            ) {
+                if knowledgeEnabled {
+                    if knowledgeManager.collections.isEmpty {
+                        Text(
+                            "No knowledge collections yet. Add one in the Knowledge section of this window.",
+                            bundle: .module
+                        )
+                        .font(.system(size: 11))
+                        .foregroundColor(theme.tertiaryText)
+                    } else {
+                        VStack(alignment: .leading, spacing: 2) {
+                            ForEach(knowledgeManager.collections) { collection in
+                                knowledgeGrantRow(collection)
+                            }
+                        }
+                    }
+                }
+            }
+            if knowledgeEnabled {
+                AgentAbilityCard(
+                    title: "Curator",
+                    subtitle:
+                        "Let this agent draft document updates as pending proposals (it can also file and work staleness tickets). Nothing changes in a collection until you approve a proposal in the Knowledge section.",
+                    icon: "checkmark.seal",
+                    isOn: toolBackedSaveBinding($knowledgeCuratorEnabled),
+                    pausedNote: toolsPausedNote,
+                    onPausedNoteTap: flashToolsToggle
+                )
+            }
 
             AgentAbilityGroupHeader(
                 label: "Web",
