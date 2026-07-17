@@ -48,7 +48,7 @@ public struct ToolsInstall {
     }
 
     private static func installFromRegistry(pluginId: String, args: [String]) async {
-        var preferredVersion: SemanticVersion? = nil
+        var preferredVersion: SemanticVersion?
         if let idx = args.firstIndex(of: "--version"), idx + 1 < args.count {
             let vstr = args[idx + 1]
             preferredVersion = SemanticVersion.parse(vstr)
@@ -458,7 +458,7 @@ public struct ToolsInstall {
     }
 
     /// Creates a receipt.json for manual installations
-    private static func createManualInstallReceipt(pluginId: String, version: SemanticVersion, installDir: URL) throws {
+    static func createManualInstallReceipt(pluginId: String, version: SemanticVersion, installDir: URL) throws {
         // Find the dylib in the install directory
         guard let dylibURL = findFirstDylib(in: installDir) else {
             // No dylib found - skip receipt creation (plugin might not be fully built)
@@ -480,7 +480,7 @@ public struct ToolsInstall {
             arch: "arm64",
             public_keys: nil,
             artifact: .init(
-                url: "file://" + dylibURL.path,
+                url: dylibURL.absoluteString,
                 sha256: dylibSha,
                 minisign: nil,
                 size: dylibData.count
@@ -503,10 +503,8 @@ public struct ToolsInstall {
         else {
             return nil
         }
-        for case let fileURL as URL in enumerator {
-            if fileURL.pathExtension == "dylib" {
-                return fileURL
-            }
+        for case let fileURL as URL in enumerator where fileURL.pathExtension == "dylib" {
+            return fileURL
         }
         return nil
     }

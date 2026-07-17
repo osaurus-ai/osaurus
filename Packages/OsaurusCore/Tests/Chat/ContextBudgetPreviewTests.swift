@@ -681,6 +681,196 @@ struct ContextBudgetPreviewTests {
             #expect(preview.contextDisable == real.contextDisable)
         }
     }
+
+    // MARK: - Ability draft preview (Abilities → Overview)
+
+    /// A `Draft` mirroring the flags `withAgent` persists (tools on,
+    /// memory on, everything else off — `AgentSettings.defaultDisabled`).
+    private func persistedMatchingDraft(
+        toolsEnabled: Bool = true,
+        memoryEnabled: Bool = true,
+        dbEnabled: Bool = false,
+        model: String? = nil
+    ) -> AgentAbilityContextPreview.Draft {
+        AgentAbilityContextPreview.Draft(
+            toolsEnabled: toolsEnabled,
+            memoryEnabled: memoryEnabled,
+            dbEnabled: dbEnabled,
+            renderChartEnabled: false,
+            speakEnabled: false,
+            searchMemoryEnabled: false,
+            webSearchEnabled: true,
+            selfSchedulingEnabled: false,
+            codeExecutionEnabled: false,
+            model: model
+        )
+    }
+
+    /// The core honesty guarantee of the Abilities hero: a draft that
+    /// mirrors the PERSISTED flags must price the exact same sections and
+    /// tool tokens as the capture-based preview compose the chat popover
+    /// uses. If the draft-snapshot path drifted, the editor would show a
+    /// different number than the next real send.
+    @Test("ability draft matching persisted state == capture-based preview")
+    func abilityDraft_matchingPersisted_isIdenticalToCapturePreview() async {
+        await withAgent(toolSelectionMode: .auto) { agentId in
+            let captureBased = SystemPromptComposer.composePreviewContext(
+                agentId: agentId,
+                executionMode: .none
+            )
+            let preview = AgentAbilityContextPreview.compute(
+                agentId: agentId,
+                draft: persistedMatchingDraft()
+            )
+            let captureBreakdown = ContextBreakdown.from(context: captureBased)
+            #expect(preview.breakdown.allEntries.map(\.id) == captureBreakdown.allEntries.map(\.id))
+            #expect(preview.staticTokens == captureBreakdown.total)
+        }
+    }
+
+    /// Toggling an ability in the DRAFT (before any save) must move the
+    /// estimate: enabling the Agent DB adds its onboarding prompt section,
+    /// so the priced startup context strictly grows.
+    @Test("ability draft: enabling Database grows the startup estimate")
+    func abilityDraft_dbToggle_changesEstimate() async {
+        await withAgent(toolSelectionMode: .auto) { agentId in
+            let dbOff = AgentAbilityContextPreview.compute(
+                agentId: agentId,
+                draft: persistedMatchingDraft(dbEnabled: false)
+            )
+            let dbOn = AgentAbilityContextPreview.compute(
+                agentId: agentId,
+                draft: persistedMatchingDraft(dbEnabled: true)
+            )
+            #expect(dbOn.staticTokens > dbOff.staticTokens)
+        }
+    }
+
+    /// Tools-off in the draft collapses the estimate to the base prompt:
+    /// no tool schema tokens, platform + persona only — matching the
+    /// tools-off behavior of the real compose path.
+    @Test("ability draft: tools off collapses to base prompt")
+    func abilityDraft_toolsOff_collapsesToBase() async {
+        await withAgent(toolSelectionMode: .auto) { agentId in
+            let toolsOn = AgentAbilityContextPreview.compute(
+                agentId: agentId,
+                draft: persistedMatchingDraft(toolsEnabled: true, memoryEnabled: false)
+            )
+            let toolsOff = AgentAbilityContextPreview.compute(
+                agentId: agentId,
+                draft: persistedMatchingDraft(toolsEnabled: false, memoryEnabled: false)
+            )
+            #expect(toolsOff.staticTokens < toolsOn.staticTokens)
+            #expect(toolsOff.breakdown.allEntries.map(\.id) == ["platform", "persona"])
+        }
+    }
+
+    /// Memory is a per-turn injection, not a static prompt section, so it
+    /// must surface as a RANGE: upper bound = the configured memory budget,
+    /// and off → a single-value estimate. `withAgent` saves the default
+    /// config with memory enabled, so the budget is the validated default.
+    @Test("ability draft: memory widens the estimate into a budget-capped range")
+    func abilityDraft_memoryProducesRange() async {
+        await withAgent(toolSelectionMode: .auto) { agentId in
+            let expectedBudget = MemoryConfigurationStore.load().validated().memoryBudgetTokens
+
+            let memoryOn = AgentAbilityContextPreview.compute(
+                agentId: agentId,
+                draft: persistedMatchingDraft(memoryEnabled: true)
+            )
+            #expect(memoryOn.isRange)
+            #expect(memoryOn.memoryUpperTokens == expectedBudget)
+            #expect(memoryOn.highTokens == memoryOn.staticTokens + expectedBudget)
+
+            let memoryOff = AgentAbilityContextPreview.compute(
+                agentId: agentId,
+                draft: persistedMatchingDraft(memoryEnabled: false)
+            )
+            #expect(memoryOff.isRange == false)
+            #expect(memoryOff.memoryUpperTokens == 0)
+            #expect(memoryOff.lowTokens == memoryOff.highTokens)
+        }
+    }
+
+    /// Tiny-window models (Foundation) auto-disable tools + memory. The
+    /// ability preview must report the disable info AND zero out the
+    /// memory upper bound — claiming a memory range the composer will
+    /// never inject would be a lie.
+    @Test("ability draft: tiny model reports auto-disable and drops the memory range")
+    func abilityDraft_tinyModel_disablesMemoryRange() async {
+        await withAgent(toolSelectionMode: .auto) { agentId in
+            let preview = AgentAbilityContextPreview.compute(
+                agentId: agentId,
+                draft: persistedMatchingDraft(memoryEnabled: true, model: "foundation")
+            )
+            guard let info = preview.disable else {
+                Issue.record("disable info missing for foundation model")
+                return
+            }
+            #expect(info.sizeClass == .tiny)
+            #expect(info.disabledMemory)
+            #expect(preview.memoryUpperTokens == 0)
+            #expect(preview.isRange == false)
+            // Foundation's window is resolvable, so the ratio is computable.
+            #expect(preview.contextWindow != nil)
+        }
+    }
+}
+
+// MARK: - Ability preview math
+
+/// Pure unit tests for `AgentAbilityContextPreview`'s derived values —
+/// the range/ratio/format logic the Abilities hero renders. No composer
+/// or agent state involved.
+@MainActor
+struct AgentAbilityContextPreviewMathTests {
+
+    private func preview(
+        staticTokens: Int,
+        memoryUpper: Int = 0,
+        window: Int? = nil
+    ) -> AgentAbilityContextPreview {
+        AgentAbilityContextPreview(
+            breakdown: ContextBreakdown.from(manifest: PromptManifest(sections: [])),
+            staticTokens: staticTokens,
+            memoryUpperTokens: memoryUpper,
+            contextWindow: window,
+            disable: nil
+        )
+    }
+
+    @Test func rangeBoundsFollowMemoryUpper() {
+        let fixed = preview(staticTokens: 2000)
+        #expect(fixed.lowTokens == 2000)
+        #expect(fixed.highTokens == 2000)
+        #expect(fixed.isRange == false)
+
+        let ranged = preview(staticTokens: 2000, memoryUpper: 800)
+        #expect(ranged.lowTokens == 2000)
+        #expect(ranged.highTokens == 2800)
+        #expect(ranged.isRange)
+    }
+
+    @Test func windowFractionUsesWorstCaseAndClamps() {
+        #expect(preview(staticTokens: 1000, window: nil).windowFraction == nil)
+        #expect(preview(staticTokens: 1000, window: 0).windowFraction == nil)
+
+        let quarter = preview(staticTokens: 500, memoryUpper: 500, window: 4000)
+        #expect(quarter.windowFraction == 0.25)
+
+        // Worst case above the window clamps to 1 rather than overflowing
+        // the hero's usage bar.
+        let over = preview(staticTokens: 5000, memoryUpper: 1000, window: 4000)
+        #expect(over.windowFraction == 1.0)
+    }
+
+    @Test func tokenFormattingIsCompact() {
+        #expect(AgentAbilityContextPreview.format(tokens: 0) == "0")
+        #expect(AgentAbilityContextPreview.format(tokens: 999) == "999")
+        #expect(AgentAbilityContextPreview.format(tokens: 1000) == "1.0K")
+        #expect(AgentAbilityContextPreview.format(tokens: 3260) == "3.3K")
+        #expect(AgentAbilityContextPreview.format(tokens: 262_144) == "262K")
+    }
 }
 
 // MARK: - Bar Segment Widths

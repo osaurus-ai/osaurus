@@ -752,6 +752,166 @@ struct AgentDetailTabStrip<Tab: Hashable>: View {
     }
 }
 
+// MARK: - Grouped Tab Strip
+
+/// A named group of tabs for `AgentDetailGroupedTabStrip`. Groups render
+/// on the top row; the active group's tabs render as pills on a second
+/// row (skipped for single-tab groups).
+struct AgentDetailTabGroup<Tab: Hashable>: Identifiable {
+    let id: String
+    /// Already-localized display label (rendered verbatim).
+    let label: String
+    let icon: String
+    let items: [AgentDetailTabItem<Tab>]
+    /// Aggregate badge surfaced on the group button (e.g. automation count).
+    var badgeCount: Int? = nil
+    /// Renders the group button in the warning color — used when the
+    /// group contains a failed plugin so the problem is visible without
+    /// opening the group.
+    var isWarning: Bool = false
+
+    init(
+        id: String,
+        label: String,
+        icon: String,
+        items: [AgentDetailTabItem<Tab>],
+        badgeCount: Int? = nil,
+        isWarning: Bool = false
+    ) {
+        self.id = id
+        self.label = label
+        self.icon = icon
+        self.items = items
+        self.badgeCount = badgeCount
+        self.isWarning = isWarning
+    }
+}
+
+/// Two-level navigation for the agent detail view: a top row of five-ish
+/// stable groups (reusing `AgentDetailTabStrip`'s underline chrome) and a
+/// second row of pills for the tabs inside the active group. Replaces the
+/// old single strip of 14+ peers, which made every destination equally
+/// (in)visible.
+///
+/// Selection stays a single `Tab` binding so deep links and programmatic
+/// navigation keep working unchanged — the strip derives the active group
+/// from the selected tab. Tapping a group restores the last tab the user
+/// visited inside it (first tab on first visit).
+struct AgentDetailGroupedTabStrip<Tab: Hashable>: View {
+    @Environment(\.theme) private var theme
+
+    let groups: [AgentDetailTabGroup<Tab>]
+    @Binding var selection: Tab
+
+    /// Last tab visited per group id, so switching groups round-trips
+    /// back to where the user was.
+    @State private var lastSelectionByGroup: [String: Tab] = [:]
+
+    private var activeGroup: AgentDetailTabGroup<Tab>? {
+        groups.first { group in group.items.contains { $0.id == selection } } ?? groups.first
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            AgentDetailTabStrip(items: groupItems, selection: groupSelectionBinding)
+            if let group = activeGroup, group.items.count > 1 {
+                subTabRow(group)
+            }
+        }
+        .onChange(of: selection) { _, newValue in
+            if let group = groups.first(where: { $0.items.contains { $0.id == newValue } }) {
+                lastSelectionByGroup[group.id] = newValue
+            }
+        }
+    }
+
+    private var groupItems: [AgentDetailTabItem<String>] {
+        groups.map { group in
+            AgentDetailTabItem(
+                id: group.id,
+                label: group.label,
+                icon: group.icon,
+                badgeCount: group.badgeCount,
+                isWarning: group.isWarning
+            )
+        }
+    }
+
+    private var groupSelectionBinding: Binding<String> {
+        Binding(
+            get: { activeGroup?.id ?? groups.first?.id ?? "" },
+            set: { groupId in
+                guard let group = groups.first(where: { $0.id == groupId }) else { return }
+                if let remembered = lastSelectionByGroup[groupId],
+                    group.items.contains(where: { $0.id == remembered })
+                {
+                    selection = remembered
+                } else if let first = group.items.first {
+                    selection = first.id
+                }
+            }
+        )
+    }
+
+    @ViewBuilder
+    private func subTabRow(_ group: AgentDetailTabGroup<Tab>) -> some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 4) {
+                ForEach(group.items) { item in
+                    subTabPill(item)
+                }
+            }
+            .padding(.horizontal, 8)
+            .padding(.vertical, 6)
+        }
+    }
+
+    private func subTabPill(_ item: AgentDetailTabItem<Tab>) -> some View {
+        let isSelected = selection == item.id
+        let foreground: Color =
+            item.isWarning ? .orange : (isSelected ? theme.accentColor : theme.secondaryText)
+        return Button {
+            selection = item.id
+        } label: {
+            HStack(spacing: 5) {
+                Image(systemName: item.icon)
+                    .font(.system(size: 10, weight: isSelected ? .semibold : .regular))
+                Text(item.label)
+                    .font(.system(size: 11, weight: isSelected ? .semibold : .regular))
+                if let count = item.badgeCount {
+                    Text("\(count)", bundle: .module)
+                        .font(.system(size: 9, weight: .bold, design: .rounded))
+                        .foregroundColor(isSelected ? theme.accentColor : theme.tertiaryText)
+                        .padding(.horizontal, 5)
+                        .padding(.vertical, 1)
+                        .background(
+                            Capsule()
+                                .fill(
+                                    isSelected
+                                        ? theme.accentColor.opacity(0.12) : theme.inputBackground
+                                )
+                        )
+                }
+            }
+            .foregroundColor(foreground)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 5)
+            .background(
+                Capsule(style: .continuous)
+                    .fill(
+                        isSelected
+                            ? theme.accentColor.opacity(0.12)
+                            : (item.isWarning ? Color.orange.opacity(0.08) : Color.clear)
+                    )
+            )
+            .contentShape(Capsule(style: .continuous))
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(item.label)
+        .accessibilityAddTraits(isSelected ? [.isSelected] : [])
+    }
+}
+
 // MARK: - Tab Strip Preference Keys
 
 /// Natural width of the strip's HStack content (before horizontal clipping).

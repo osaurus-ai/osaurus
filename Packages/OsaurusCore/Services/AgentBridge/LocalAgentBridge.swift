@@ -335,6 +335,27 @@ public final class LocalAgentBridge: @unchecked Sendable, AgentRuntimeBridge {
         }
     }
 
+    /// Soft-delete many rows by primary key in a single serialized
+    /// transaction. Used by the Database workspace's bulk delete so a
+    /// large selection doesn't queue N separate bridge writes.
+    @discardableResult
+    public func softDeleteMany(
+        agentId: UUID,
+        table: String,
+        ids: [AgentSQLValue]
+    ) throws -> AgentMutationResult {
+        try serialized(agentId) {
+            let database = try AgentDatabaseStore.shared.database(for: agentId)
+            let affected = try database.softDeleteMany(
+                table: table,
+                ids: ids,
+                actor: self.currentActor(),
+                runId: ChatExecutionContext.currentRunId
+            )
+            return AgentMutationResult(rowsAffected: affected)
+        }
+    }
+
     @discardableResult
     public func restore(
         agentId: UUID,

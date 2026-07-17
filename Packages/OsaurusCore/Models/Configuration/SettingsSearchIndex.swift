@@ -638,6 +638,31 @@ public enum SettingsSearchIndex {
             subTab: "settings"
         ),
 
+        // MARK: Agents
+        // Landing anchors live on the Agents screen (`AgentsView`): the header
+        // glows for the overview entry; the agent grid glows for the database
+        // entry, where each custom agent card exposes an Open Database
+        // shortcut into that agent's Database workspace.
+        .init(
+            id: "agents.overview",
+            tab: .agents,
+            title: "Agents",
+            keywords: [
+                "agent", "assistant", "persona", "custom agent", "create agent",
+                "system prompt", "agent settings",
+            ]
+        ),
+        .init(
+            id: "agents.database",
+            tab: .agents,
+            section: "Knowledge",
+            title: "Agent Database",
+            keywords: [
+                "database", "tables", "rows", "saved views", "sql", "sqlite",
+                "agent data", "structured data", "encrypted database", "db",
+            ]
+        ),
+
         // MARK: Search
         .init(
             id: "search.providers",
