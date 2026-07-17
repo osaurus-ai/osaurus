@@ -283,6 +283,24 @@ final class PluginManager {
         for entry in scanResult.loadResults {
             switch entry.result {
             case .success(let loaded):
+                // Loaded plugin IDs must be unique: tools, routes, host
+                // contexts, and secrets are all keyed by plugin ID, so a
+                // second instance would silently shadow (or corrupt) the
+                // first. Keep the already-loaded instance and reject the
+                // newcomer (e.g. a version dir that contains two dylibs).
+                if let existing = plugins.first(where: { $0.plugin.id == loaded.plugin.id }) {
+                    let pluginId = loaded.plugin.id
+                    let errorMsg =
+                        "Duplicate plugin id '\(pluginId)': already loaded from \(existing.plugin.bundlePath); ignoring \(entry.url.path)"
+                    NSLog("[Osaurus] %@", errorMsg)
+                    failedPlugins[pluginId] = FailedPlugin(
+                        pluginId: pluginId,
+                        error: errorMsg,
+                        lastKnownManifest: loaded.plugin.manifest
+                    )
+                    await loaded.plugin.shutdown()
+                    continue
+                }
                 plugins.append(loaded)
                 loadedPluginPaths.insert(entry.url.path)
                 loadedNew = true
@@ -920,6 +938,60 @@ final class PluginManager {
         return current.patchVersion >= required.patchVersion
     }
 
+    // MARK: - Load-time validation (pure helpers)
+
+    /// Returns a message when the plugin's ABI table is missing any of the
+    /// five required function pointers. Every plugin — v1 or v2+ — must
+    /// provide the full required prefix; optional v2 callbacks stay optional.
+    nonisolated static func abiTableValidationFailure(_ api: osr_plugin_api) -> String? {
+        var missing: [String] = []
+        if api.free_string == nil { missing.append("free_string") }
+        if api.`init` == nil { missing.append("init") }
+        if api.destroy == nil { missing.append("destroy") }
+        if api.get_manifest == nil { missing.append("get_manifest") }
+        if api.invoke == nil { missing.append("invoke") }
+        guard !missing.isEmpty else { return nil }
+        return "Plugin ABI table is missing required function(s): \(missing.joined(separator: ", "))"
+    }
+
+    /// Returns a message when the manifest's `plugin_id` does not match the
+    /// install-directory-derived ID the receipt/consent/quarantine machinery
+    /// is keyed by.
+    nonisolated static func manifestIdentityValidationFailure(
+        manifest: PluginManifest,
+        directoryId: String
+    ) -> String? {
+        guard manifest.plugin_id != directoryId else { return nil }
+        return
+            "Plugin manifest declares plugin_id '\(manifest.plugin_id)' but is installed as '\(directoryId)'. Reinstall the plugin under its canonical ID."
+    }
+
+    /// Returns a message when the manifest declares an empty or duplicate
+    /// tool ID, or an empty or duplicate route ID.
+    nonisolated static func manifestCapabilityValidationFailure(_ manifest: PluginManifest) -> String? {
+        var seenToolIds = Set<String>()
+        for tool in manifest.capabilities.tools ?? [] {
+            let id = tool.id.trimmingCharacters(in: .whitespacesAndNewlines)
+            if id.isEmpty {
+                return "Plugin \(manifest.plugin_id) declares a tool with an empty id"
+            }
+            if !seenToolIds.insert(id).inserted {
+                return "Plugin \(manifest.plugin_id) declares duplicate tool id '\(id)'"
+            }
+        }
+        var seenRouteIds = Set<String>()
+        for route in manifest.capabilities.routes ?? [] {
+            let id = route.id.trimmingCharacters(in: .whitespacesAndNewlines)
+            if id.isEmpty {
+                return "Plugin \(manifest.plugin_id) declares a route with an empty id"
+            }
+            if !seenRouteIds.insert(id).inserted {
+                return "Plugin \(manifest.plugin_id) declares duplicate route id '\(id)'"
+            }
+        }
+        return nil
+    }
+
     /// Loads a single plugin from a dylib URL via dlopen + C ABI handshake.
     /// Tries v2 entry point first (with host API injection), then falls back to v1.
     nonisolated private static func loadPluginWithError(at url: URL) -> Result<LoadedPlugin, PluginLoadError> {
@@ -988,8 +1060,11 @@ final class PluginManager {
                 return .failure(PluginLoadError(message: errorMsg))
             }
 
-            let apiPtr = apiRawPtr.assumingMemoryBound(to: osr_plugin_api.self)
-            api = apiPtr.pointee
+            // Historical v1 structs contain ONLY the required prefix — reading
+            // the full `osr_plugin_api` here would read past the end of the
+            // plugin's static struct. Decode via the explicit prefix layout.
+            let prefixPtr = apiRawPtr.assumingMemoryBound(to: osr_plugin_api_v1.self)
+            api = osr_plugin_api(v1: prefixPtr.pointee)
             abiVersion = 1
             print(
                 "[Osaurus] Loaded plugin from \(url.lastPathComponent) (entry=v1 legacy). "
@@ -999,6 +1074,19 @@ final class PluginManager {
         } else {
             let errorMsg = "Missing plugin entry point (osaurus_plugin_entry_v2 or osaurus_plugin_entry)"
             print("[Osaurus] \(errorMsg) in \(url.lastPathComponent)")
+            dlclose(handle)
+            return .failure(PluginLoadError(message: errorMsg))
+        }
+
+        // Reject incomplete ABI tables BEFORE calling init. Accepting a nil
+        // `free_string` leaks every returned string, a nil `destroy` makes
+        // teardown impossible, and a nil `invoke` produces tools that can
+        // never run — none of which the plugin can fix after init has
+        // already handed out a live context.
+        if let abiError = abiTableValidationFailure(api) {
+            let errorMsg = "\(abiError) in \(url.lastPathComponent)"
+            print("[Osaurus] \(errorMsg)")
+            hostContext?.teardown()
             dlclose(handle)
             return .failure(PluginLoadError(message: errorMsg))
         }
@@ -1054,10 +1142,33 @@ final class PluginManager {
             return .failure(PluginLoadError(message: errorMsg))
         }
 
-        // If the manifest plugin_id differs from the directory-derived ID,
-        // re-register the host context under the canonical ID.
-        if let hc = hostContext, manifest.plugin_id != hc.pluginId {
-            PluginHostContext.rekeyContext(from: hc.pluginId, to: manifest.plugin_id)
+        // The install layout (`Tools/<plugin_id>/<version>/`) and the receipt
+        // are keyed by the directory-derived ID; verification, consent,
+        // quarantine, and secrets all use it. A manifest that declares a
+        // different ID would let a plugin masquerade under another plugin's
+        // identity (and previously just re-keyed the host context to the
+        // manifest's claim). Fail the load instead.
+        let directoryId = extractPluginId(from: url)
+        if let identityError = manifestIdentityValidationFailure(
+            manifest: manifest,
+            directoryId: directoryId
+        ) {
+            print("[Osaurus] \(identityError)")
+            api.destroy?(ctx)
+            hostContext?.teardown()
+            dlclose(handle)
+            return .failure(PluginLoadError(message: identityError, manifest: manifest))
+        }
+
+        // Reject empty or duplicate tool/route IDs up front — duplicate tool
+        // IDs would silently overwrite each other in the tool registry, and
+        // empty/duplicate route IDs break route dispatch and diagnostics.
+        if let capabilityError = manifestCapabilityValidationFailure(manifest) {
+            print("[Osaurus] \(capabilityError)")
+            api.destroy?(ctx)
+            hostContext?.teardown()
+            dlclose(handle)
+            return .failure(PluginLoadError(message: capabilityError, manifest: manifest))
         }
 
         // Enforce manifest-declared compatibility constraints. Authors

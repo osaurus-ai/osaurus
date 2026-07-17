@@ -197,6 +197,40 @@ struct osr_plugin_api {
     var on_task_event: osr_on_task_event_t?
 }
 
+/// Historical v1 layout: plugins compiled against the original header
+/// exported a static struct containing ONLY the five required function
+/// pointers — no `version` field, no optional callbacks. The v1 entry
+/// path must decode through this prefix instead of the full
+/// `osr_plugin_api`, otherwise the loader reads past the end of the
+/// plugin's static struct (out-of-bounds read into whatever the plugin
+/// binary placed after it).
+struct osr_plugin_api_v1 {
+    var free_string: osr_free_string_t?
+    var `init`: osr_init_t?
+    var destroy: osr_destroy_t?
+    var get_manifest: osr_get_manifest_t?
+    var invoke: osr_invoke_t?
+}
+
+extension osr_plugin_api {
+    /// Widens a legacy v1 prefix into the current layout with every
+    /// optional v2+ slot zeroed (`version == 0` matches the header's
+    /// "0 (or absent) for v1 plugins" contract).
+    init(v1 prefix: osr_plugin_api_v1) {
+        self.init(
+            free_string: prefix.free_string,
+            init: prefix.`init`,
+            destroy: prefix.destroy,
+            get_manifest: prefix.get_manifest,
+            invoke: prefix.invoke,
+            version: 0,
+            handle_route: nil,
+            on_config_changed: nil,
+            on_task_event: nil
+        )
+    }
+}
+
 // Entry point types
 typealias osr_plugin_entry_t = @convention(c) () -> UnsafeRawPointer?
 typealias osr_plugin_entry_v2_t = @convention(c) (UnsafeRawPointer?) -> UnsafeRawPointer?
