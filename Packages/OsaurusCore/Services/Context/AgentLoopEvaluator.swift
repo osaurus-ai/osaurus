@@ -854,7 +854,9 @@ public enum AgentLoopEvaluator {
                 )
                 // No tool schema on the wrap-up call (mirrors chat's
                 // `tools: nil`), so the token estimate excludes toolTokens.
-                promptTokensTotal += ContextBudgetManager.estimateTokens(for: trimmed)
+                let wrapUpInputTokens = ContextBudgetManager.estimateTokens(for: trimmed)
+                promptTokensTotal += wrapUpInputTokens
+                peakContextTokens = max(peakContextTokens, wrapUpInputTokens)
                 modelStepCount += 1
                 // STREAMING, like ChatView's post-cap call (`stream: true`,
                 // `tools: nil`): the non-streaming local path is not what

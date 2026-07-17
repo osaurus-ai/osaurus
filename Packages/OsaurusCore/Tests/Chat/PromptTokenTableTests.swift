@@ -70,7 +70,11 @@ struct PromptTokenTableTests {
                     compact: true
                 )
             ),
-            Row("discoveryNudge(non-sandbox)", full: SystemPromptTemplates.capabilityDiscoveryNudge),
+            Row(
+                "discoveryNudge(non-sandbox)",
+                full: SystemPromptTemplates.capabilityDiscoveryNudge,
+                compact: ""
+            ),
             Row(
                 "secretHandling",
                 full: SystemPromptTemplates.secretHandlingGuidance,

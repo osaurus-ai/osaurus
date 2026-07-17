@@ -161,16 +161,21 @@ enum ToolsTab: String, CaseIterable, AnimatedTabItem {
 
 // MARK: - Skills Tab (for SkillsView)
 
+/// Source-based filters for the Skills library. Every installed skill is
+/// automatically available to custom agents, so the tabs slice by where a
+/// skill came from rather than by an enablement state.
 enum SkillsTab: String, CaseIterable, AnimatedTabItem {
     case all = "All"
-    case installed = "Installed"
-    case defaults = "Default"
+    case builtIn = "Built-in"
+    case yours = "Yours"
+    case fromPlugins = "From Plugins"
 
     var title: String {
         switch self {
         case .all: return L("All")
-        case .installed: return L("Installed")
-        case .defaults: return L("Default")
+        case .builtIn: return L("Built-in")
+        case .yours: return L("Yours")
+        case .fromPlugins: return L("From Plugins")
         }
     }
 }

@@ -69,6 +69,87 @@ struct EnabledCapabilitiesManifestTests {
         #expect(skillIndex.lowerBound < toolIndex.lowerBound)
     }
 
+    @Test("skill governance is emitted only for verbose mixed groups")
+    func skillGovernanceGateMatchesManifestShape() throws {
+        let mixed = try #require(
+            SystemPromptTemplates.enabledCapabilitiesManifest(
+                groups: [
+                    Group(
+                        groupId: "browser",
+                        pluginDisplay: "Browser",
+                        skills: [Cap(name: "Browser Guide", description: "Use browser tools")],
+                        tools: [Cap(name: "browser_open", description: "Open a page")]
+                    )
+                ]
+            )
+        )
+        let toolsOnly = try #require(
+            SystemPromptTemplates.enabledCapabilitiesManifest(
+                groups: [
+                    Group(
+                        pluginDisplay: "Channels",
+                        skills: [],
+                        tools: [Cap(name: "list_channels", description: "List channels")]
+                    )
+                ]
+            )
+        )
+        let skillsOnly = try #require(
+            SystemPromptTemplates.enabledCapabilitiesManifest(
+                groups: [
+                    Group(
+                        pluginDisplay: "Standalone skills",
+                        skills: [Cap(name: "review", description: "Review code")],
+                        tools: []
+                    )
+                ]
+            )
+        )
+        let compactMixed = try #require(
+            SystemPromptTemplates.enabledCapabilitiesManifest(
+                groups: [
+                    Group(
+                        groupId: "browser",
+                        pluginDisplay: "Browser",
+                        skills: [Cap(name: "Browser Guide", description: "Use browser tools")],
+                        tools: [Cap(name: "browser_open", description: "Open a page")]
+                    )
+                ],
+                compact: true
+            )
+        )
+        let skillCap = SystemPromptTemplates.enabledManifestSkillCap
+        let overflowGoverned = try #require(
+            SystemPromptTemplates.enabledCapabilitiesManifest(
+                groups: [
+                    Group(
+                        pluginDisplay: "Earlier skills",
+                        skills: (0 ..< skillCap).map {
+                            Cap(name: "earlier_\($0)", description: "Earlier skill")
+                        },
+                        tools: []
+                    ),
+                    Group(
+                        pluginDisplay: "Overflow Browser",
+                        skills: [Cap(name: "Hidden Guide", description: "Use browser tools")],
+                        tools: [Cap(name: "browser_open", description: "Open a page")]
+                    ),
+                ]
+            )
+        )
+
+        #expect(SystemPromptTemplates.enabledManifestNeedsSkillGovernance(mixed, compact: false))
+        #expect(!SystemPromptTemplates.enabledManifestNeedsSkillGovernance(toolsOnly, compact: false))
+        #expect(!SystemPromptTemplates.enabledManifestNeedsSkillGovernance(skillsOnly, compact: false))
+        #expect(!SystemPromptTemplates.enabledManifestNeedsSkillGovernance(compactMixed, compact: true))
+        #expect(
+            SystemPromptTemplates.enabledManifestNeedsSkillGovernance(
+                overflowGoverned,
+                compact: false
+            )
+        )
+    }
+
     @Test("standalone skills render as a skills-only group with the loader intro")
     func standaloneSkillsGroupRenders() throws {
         // The composer enumerates every enabled non-plugin skill into a
@@ -155,6 +236,64 @@ struct EnabledCapabilitiesManifestTests {
         // references `plugin/<id>`/`plugin/calendar`, so a blanket
         // `!contains("plugin/")` would be wrong — assert on the display name.)
         #expect(!rendered.contains("— Built-in tools"))
+    }
+
+    @Test("skill cap collapses the universal-library overflow to a pointer line")
+    func skillCapCollapsesOverflow() throws {
+        // With the universal library, every installed skill is a manifest
+        // candidate — the render must stay bounded no matter how many the
+        // user imports. Past `enabledManifestSkillCap`, skills collapse to
+        // a +N pointer that routes through capabilities_discover.
+        let cap = SystemPromptTemplates.enabledManifestSkillCap
+        let skills = (0 ..< cap + 3).map { Cap(name: "skill_\($0)", description: "d") }
+        let groups = [
+            Group(pluginDisplay: "Skills (no plugin)", skills: skills, tools: [])
+        ]
+        let rendered = try #require(
+            SystemPromptTemplates.enabledCapabilitiesManifest(groups: groups)
+        )
+        #expect(rendered.contains("  skill/skill_0 — d"))
+        #expect(rendered.contains("  skill/skill_\(cap - 1) — d"))
+        #expect(!rendered.contains("skill/skill_\(cap) — d"))
+        #expect(rendered.contains("+3 more skill(s) — call capabilities_discover to list them."))
+    }
+
+    @Test("compact mode also caps the inline standalone-skills list")
+    func compactSkillCapCollapsesOverflow() throws {
+        // The standalone-skills bucket is the one unbounded inline list in
+        // compact mode (real plugins collapse to plugin/<id> lines), so it
+        // takes the same cap — small-context models are exactly where an
+        // unbounded skill menu hurts most.
+        let cap = SystemPromptTemplates.enabledManifestSkillCap
+        let skills = (0 ..< cap + 2).map { Cap(name: "skill_\($0)", description: "d") }
+        let groups = [
+            Group(pluginDisplay: "Skills (no plugin)", skills: skills, tools: [])
+        ]
+        let rendered = try #require(
+            SystemPromptTemplates.enabledCapabilitiesManifest(groups: groups, compact: true)
+        )
+        #expect(rendered.contains("  skill/skill_0"))
+        #expect(rendered.contains("  skill/skill_\(cap - 1)"))
+        #expect(!rendered.contains("skill/skill_\(cap)\n"))
+        #expect(rendered.contains("+2 more skill(s) — capabilities_discover lists them."))
+    }
+
+    @Test("intro warns that the frozen list may miss later installs")
+    func introCarriesStalenessHint() throws {
+        // The manifest is frozen at session start; skills installed
+        // mid-session are searchable but unlisted. Without this hint the
+        // model would deny them on the list's authority.
+        let groups = [
+            Group(pluginDisplay: "P", skills: [Cap(name: "s", description: "d")], tools: [])
+        ]
+        let verbose = try #require(
+            SystemPromptTemplates.enabledCapabilitiesManifest(groups: groups)
+        )
+        #expect(verbose.contains("frozen at session start"))
+        let compact = try #require(
+            SystemPromptTemplates.enabledCapabilitiesManifest(groups: groups, compact: true)
+        )
+        #expect(compact.contains("frozen at session start"))
     }
 
     @Test("token cap collapses overflow plugins to a pointer line")

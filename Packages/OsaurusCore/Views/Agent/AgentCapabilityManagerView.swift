@@ -2,15 +2,17 @@
 //  AgentCapabilityManagerView.swift
 //  osaurus
 //
-//  Full-tab takeover UI for managing an agent's enabled tools and skills,
-//  grouped by source (Built-in / per-Plugin / per-MCP-provider / Standalone Skills).
+//  Full-tab takeover UI for managing an agent's assigned tools, grouped by
+//  source (per-Plugin / per-MCP-provider / per-sandbox-plugin).
 //
-//  The picker is the single source of truth for what reaches the model. A top-level
-//  "Auto-discover" toggle decides whether the model sees the entire enabled set every
-//  turn (Manual) or a small always-loaded hot set that it grows on demand via
-//  `capabilities_discover` / `capabilities_load` (Auto). Either way, the per-item
-//  Enabled toggles in the table are honored at runtime — see `CapabilitySearch` and
-//  `SystemPromptComposer.compose` for the wiring.
+//  The picker is the single source of truth for which tools reach the model.
+//  A top-level "Auto-discover" toggle decides whether the model sees the
+//  entire assigned set every turn (Manual) or a small always-loaded hot set
+//  that it grows on demand via `capabilities_discover` / `capabilities_load`
+//  (Auto). Either way, the per-item toggles in the table are honored at
+//  runtime — see `CapabilitySearch` and `SystemPromptComposer.compose` for
+//  the wiring. Skills are not assigned per-agent: every installed skill is
+//  automatically available to custom agents (see the Skills library).
 //
 
 import SwiftUI
@@ -25,14 +27,12 @@ import SwiftUI
 enum CapabilitySource: Hashable {
     /// Built-in tools — always loaded by the runtime, shown for transparency.
     case builtIn
-    /// One per native dylib plugin (its tools and skills together).
+    /// One per native dylib plugin.
     case plugin(pluginId: String, displayName: String)
     /// One per remote MCP provider.
     case mcpProvider(name: String)
     /// One per provisioned sandbox plugin.
     case sandboxPlugin(pluginId: String)
-    /// Skills not associated with any plugin (built-in skills and user-created ones).
-    case standaloneSkills
 
     var groupId: String {
         switch self {
@@ -40,7 +40,6 @@ enum CapabilitySource: Hashable {
         case .plugin(let pluginId, _): return "src:plugin:\(pluginId)"
         case .mcpProvider(let name): return "src:mcp:\(name)"
         case .sandboxPlugin(let pluginId): return "src:sandbox:\(pluginId)"
-        case .standaloneSkills: return "src:standalone-skills"
         }
     }
 
@@ -50,7 +49,6 @@ enum CapabilitySource: Hashable {
         case .plugin(_, let name): return name
         case .mcpProvider(let name): return name
         case .sandboxPlugin(let pluginId): return pluginId
-        case .standaloneSkills: return L("Standalone Skills")
         }
     }
 
@@ -60,7 +58,6 @@ enum CapabilitySource: Hashable {
         case .plugin: return "puzzlepiece.extension"
         case .mcpProvider: return "antenna.radiowaves.left.and.right"
         case .sandboxPlugin: return "shippingbox"
-        case .standaloneSkills: return "lightbulb"
         }
     }
 
@@ -78,18 +75,14 @@ enum CapabilitySource: Hashable {
 
 enum CapabilityFilter: String, CaseIterable, Identifiable {
     case all
-    case enabled
-    case toolsOnly
-    case skillsOnly
+    case assigned
 
     var id: String { rawValue }
 
     var label: String {
         switch self {
         case .all: return L("All")
-        case .enabled: return L("Enabled")
-        case .toolsOnly: return L("Tools")
-        case .skillsOnly: return L("Skills")
+        case .assigned: return L("Assigned")
         }
     }
 }
@@ -101,19 +94,17 @@ enum CapabilityFilter: String, CaseIterable, Identifiable {
 /// pure so it can be diffed cheaply on every state change.
 ///
 /// Module-internal (not file-private) so `OsaurusCoreTests` can drive
-/// `build(_:)` and the `source(forTool:)` / `source(forSkill:)` classifiers
-/// directly. The "render rows from a controlled `Input`" surface is the
-/// regression seam for #1003 — the picker bug was caused by `childrenOf`
-/// disagreeing with `build`'s bucketing.
+/// `build(_:)` and the `source(forTool:)` classifier directly. The "render
+/// rows from a controlled `Input`" surface is the regression seam for #1003 —
+/// the picker bug was caused by `childrenOf` disagreeing with `build`'s
+/// bucketing.
 @MainActor
 enum CapabilityRowBuilder {
 
     struct Input {
         let visibleTools: [ToolRegistry.ToolEntry]
-        let visibleSkills: [Skill]
         let plugins: [PluginManager.LoadedPlugin]
         let enabledToolNames: Set<String>
-        let enabledSkillNames: Set<String>
         let toolMode: ToolSelectionMode
         let searchQuery: String
         let filter: CapabilityFilter
@@ -126,19 +117,15 @@ enum CapabilityRowBuilder {
             .lowercased()
         let hasSearch = !normalized.isEmpty
 
-        // Bucket tools and skills into their source group.
-        struct Bucket {
-            var tools: [ToolRegistry.ToolEntry] = []
-            var skills: [Skill] = []
-        }
-        var buckets: [String: Bucket] = [:]
+        // Bucket tools into their source group.
+        var buckets: [String: [ToolRegistry.ToolEntry]] = [:]
         var sources: [String: CapabilitySource] = [:]
         var sourceOrder: [String] = []
 
         func ensureSource(_ source: CapabilitySource) {
             let id = source.groupId
             if buckets[id] == nil {
-                buckets[id] = Bucket()
+                buckets[id] = []
                 sources[id] = source
                 sourceOrder.append(id)
             }
@@ -150,27 +137,20 @@ enum CapabilityRowBuilder {
             }
         )
 
-        // Bucket every tool / skill via the same classifier `childrenOf`
-        // uses. Routing both call sites through one helper is what keeps
+        // Bucket every tool via the same classifier `childrenOf` uses.
+        // Routing both call sites through one helper is what keeps
         // bulk-toggle and the rendered rows in sync (#1003) — if a future
         // tool source is ever added, only `source(forTool:)` needs to grow.
         for tool in input.visibleTools {
             let src = source(forTool: tool, pluginNameById: pluginNameById)
             ensureSource(src)
-            buckets[src.groupId]?.tools.append(tool)
-        }
-
-        for skill in input.visibleSkills {
-            let src = source(forSkill: skill, pluginNameById: pluginNameById)
-            ensureSource(src)
-            buckets[src.groupId]?.skills.append(skill)
+            buckets[src.groupId]?.append(tool)
         }
 
         // Stable order by `sortRank` (plugins, then MCP providers, then
-        // sandbox plugins, then standalone skills), tied broken alpha by
-        // display name. The built-in bucket may be present in `sources`
-        // but gets filtered out at row emission below — its sort rank
-        // doesn't matter.
+        // sandbox plugins), ties broken alpha by display name. The built-in
+        // bucket may be present in `sources` but gets filtered out at row
+        // emission below — its sort rank doesn't matter.
         sourceOrder.sort { lhs, rhs in
             guard let l = sources[lhs], let r = sources[rhs] else { return lhs < rhs }
             return sortRank(l) < sortRank(r)
@@ -181,7 +161,7 @@ enum CapabilityRowBuilder {
         // Emit rows.
         var rows: [CapabilityRow] = []
         for groupId in sourceOrder {
-            guard let source = sources[groupId], let bucket = buckets[groupId] else { continue }
+            guard let source = sources[groupId], let tools = buckets[groupId] else { continue }
 
             // Informational sources (built-in / runtime-managed tools)
             // can't be toggled per-row and are skipped by `childrenOf` in
@@ -190,16 +170,6 @@ enum CapabilityRowBuilder {
             // actionable. Hide the entire group from the picker.
             if source.isInformational { continue }
 
-            let tools = bucket.tools
-            let skills = bucket.skills
-
-            // Filter chip: whole groups can drop out.
-            switch input.filter {
-            case .toolsOnly where tools.isEmpty: continue
-            case .skillsOnly where skills.isEmpty: continue
-            default: break
-            }
-
             // Search: keep only items that match. If empty, drop the group.
             let filteredTools = tools.filter { entry in
                 guard !hasSearch else {
@@ -207,43 +177,29 @@ enum CapabilityRowBuilder {
                 }
                 return true
             }
-            let filteredSkills = skills.filter { skill in
-                guard !hasSearch else {
-                    return matches(query: normalized, name: skill.name, description: skill.description)
-                }
-                return true
-            }
 
-            // Filter chip: enabled-only refines per-item.
+            // Filter chip: assigned-only refines per-item.
             let toolsForRows: [ToolRegistry.ToolEntry] = {
-                if input.filter == .enabled {
+                if input.filter == .assigned {
                     return filteredTools.filter { input.enabledToolNames.contains($0.name) }
                 }
-                if input.filter == .skillsOnly { return [] }
                 return filteredTools
             }()
-            let skillsForRows: [Skill] = {
-                if input.filter == .enabled {
-                    return filteredSkills.filter { input.enabledSkillNames.contains($0.name) }
-                }
-                if input.filter == .toolsOnly { return [] }
-                return filteredSkills
-            }()
 
-            if hasSearch && toolsForRows.isEmpty && skillsForRows.isEmpty {
+            if hasSearch && toolsForRows.isEmpty {
                 continue
             }
-            if input.filter == .enabled && toolsForRows.isEmpty && skillsForRows.isEmpty {
+            if input.filter == .assigned && toolsForRows.isEmpty {
                 continue
             }
 
             // Informational groups were already dropped above, so every
             // remaining group has real per-row toggles and the count
             // reflects the agent's actual allowlist intersection.
-            let enabledCount =
-                toolsForRows.reduce(0) { $0 + (input.enabledToolNames.contains($1.name) ? 1 : 0) }
-                + skillsForRows.reduce(0) { $0 + (input.enabledSkillNames.contains($1.name) ? 1 : 0) }
-            let totalCount = toolsForRows.count + skillsForRows.count
+            let enabledCount = toolsForRows.reduce(0) {
+                $0 + (input.enabledToolNames.contains($1.name) ? 1 : 0)
+            }
+            let totalCount = toolsForRows.count
 
             // Auto-expand groups when actively searching so matches are visible at a glance.
             let isExpanded = hasSearch || input.expandedGroups.contains(groupId)
@@ -256,9 +212,7 @@ enum CapabilityRowBuilder {
                     enabledCount: enabledCount,
                     totalCount: totalCount,
                     isExpanded: isExpanded,
-                    toolCount: toolsForRows.count,
-                    skillCount: skillsForRows.count,
-                    hasRoutes: false
+                    toolCount: toolsForRows.count
                 )
             )
 
@@ -278,19 +232,6 @@ enum CapabilityRowBuilder {
                         isAgentRestricted: false,
                         catalogTokens: tool.estimatedTokens,
                         estimatedTokens: tool.estimatedTokens
-                    )
-                )
-            }
-            for skill in skillsForRows {
-                rows.append(
-                    .skill(
-                        id: "\(groupId)::skill::\(skill.id.uuidString)",
-                        name: skill.name,
-                        description: skill.description,
-                        enabled: input.enabledSkillNames.contains(skill.name),
-                        isBuiltIn: skill.isBuiltIn,
-                        isFromPlugin: skill.isFromPlugin,
-                        estimatedTokens: 0
                     )
                 )
             }
@@ -323,7 +264,6 @@ enum CapabilityRowBuilder {
         case .plugin: return 1
         case .mcpProvider: return 2
         case .sandboxPlugin: return 3
-        case .standaloneSkills: return 4
         }
     }
 
@@ -369,28 +309,19 @@ enum CapabilityRowBuilder {
         // group so they're still surfaced for transparency.
         return .builtIn
     }
-
-    /// Companion to `source(forTool:)` for skills. See that doc for the
-    /// "single source of truth" rationale.
-    static func source(forSkill skill: Skill, pluginNameById: [String: String]) -> CapabilitySource {
-        if let pid = skill.pluginId {
-            return .plugin(pluginId: pid, displayName: pluginNameById[pid] ?? pid)
-        }
-        return .standaloneSkills
-    }
 }
 
 // MARK: - Manager View
 
-/// Picker for an agent's enabled tools and skills, grouped by source. Hosts
-/// either as the Capabilities tab body (live mode → writes through
-/// `AgentManager`) or embedded in the Create Agent sheet (draft mode → writes
-/// through `@Binding`s the caller bakes into the new agent on save).
+/// Picker for an agent's assigned tools, grouped by source. Hosts either as
+/// the Tools tab body (live mode → writes through `AgentManager`) or embedded
+/// in the Create Agent sheet (draft mode → writes through `@Binding`s the
+/// caller bakes into the new agent on save).
 struct AgentCapabilityManagerView: View {
 
-    /// Where the picker reads and writes capability state.
+    /// Where the picker reads and writes tool state.
     ///
-    /// - `live`: Capabilities-tab path. Writes go through `AgentManager` and
+    /// - `live`: Tools-tab path. Writes go through `AgentManager` and
     ///   persist immediately; `.agentUpdated` notifications keep the local
     ///   mirror in sync.
     /// - `draft`: Create-sheet path. Writes flow into the caller's bindings
@@ -400,8 +331,7 @@ struct AgentCapabilityManagerView: View {
         case live(agentId: UUID)
         case draft(
             mode: Binding<ToolSelectionMode>,
-            tools: Binding<Set<String>>,
-            skills: Binding<Set<String>>
+            tools: Binding<Set<String>>
         )
     }
 
@@ -411,7 +341,7 @@ struct AgentCapabilityManagerView: View {
     let source: Source
     /// When non-nil, a "Done" affordance appears in the sticky header so the
     /// host (sheet / takeover) can be dismissed. When nil, the picker IS the
-    /// host (e.g. the Capabilities tab body) and there's nothing to go back to.
+    /// host (e.g. the Tools tab body) and there's nothing to go back to.
     let onDismiss: (() -> Void)?
 
     /// Embedded mode used when the picker sits inside a host sheet that
@@ -420,7 +350,7 @@ struct AgentCapabilityManagerView: View {
     /// Done affordance into the search row.
     let compact: Bool
 
-    /// Live-mode init used by the Capabilities tab.
+    /// Live-mode init used by the Tools tab.
     init(agentId: UUID, onDismiss: (() -> Void)?, compact: Bool = false) {
         self.source = .live(agentId: agentId)
         self.onDismiss = onDismiss
@@ -431,11 +361,10 @@ struct AgentCapabilityManagerView: View {
     init(
         draftMode: Binding<ToolSelectionMode>,
         draftTools: Binding<Set<String>>,
-        draftSkills: Binding<Set<String>>,
         onDismiss: (() -> Void)?,
         compact: Bool = false
     ) {
-        self.source = .draft(mode: draftMode, tools: draftTools, skills: draftSkills)
+        self.source = .draft(mode: draftMode, tools: draftTools)
         self.onDismiss = onDismiss
         self.compact = compact
     }
@@ -447,16 +376,14 @@ struct AgentCapabilityManagerView: View {
     @State private var filter: CapabilityFilter = .all
     @State private var expandedGroups: Set<String> = []
 
-    /// Local mirror of capability state. In live mode it's seeded from
+    /// Local mirror of tool state. In live mode it's seeded from
     /// `AgentManager` and re-synced on `.agentUpdated`; in draft mode it's
     /// seeded from the bindings and written back through them.
     @State private var enabledToolNames: Set<String> = []
-    @State private var enabledSkillNames: Set<String> = []
     @State private var toolMode: ToolSelectionMode = .auto
 
     /// Snapshot of the registries this turn (rebuilt on `.toolsListChanged`).
     @State private var visibleTools: [ToolRegistry.ToolEntry] = []
-    @State private var visibleSkills: [Skill] = []
     @State private var plugins: [PluginManager.LoadedPlugin] = []
 
     var body: some View {
@@ -481,8 +408,7 @@ struct AgentCapabilityManagerView: View {
                 onToggleGroup: handleToggleGroup,
                 onEnableAllInGroup: { handleBulkToggle(in: $0, enable: true) },
                 onDisableAllInGroup: { handleBulkToggle(in: $0, enable: false) },
-                onToggleTool: handleToggleTool,
-                onToggleSkill: handleToggleSkill
+                onToggleTool: handleToggleTool
             )
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .background(theme.primaryBackground)
@@ -517,7 +443,7 @@ struct AgentCapabilityManagerView: View {
                     Image(systemName: "wrench.and.screwdriver.fill")
                         .font(.system(size: 12, weight: .semibold))
                         .foregroundColor(theme.secondaryText)
-                    Text("Capabilities", bundle: .module)
+                    Text("Tools", bundle: .module)
                         .font(.system(size: 14, weight: .semibold))
                         .foregroundColor(theme.primaryText)
 
@@ -560,12 +486,11 @@ struct AgentCapabilityManagerView: View {
 
     private var summaryPill: some View {
         let toolCount = enabledToolNames.count
-        let skillCount = enabledSkillNames.count
         return HStack(spacing: 6) {
             Image(systemName: "checkmark.seal.fill")
                 .font(.system(size: 9))
             Text(
-                "\(toolCount) tool\(toolCount == 1 ? "" : "s") · \(skillCount) skill\(skillCount == 1 ? "" : "s")",
+                "\(toolCount) tool\(toolCount == 1 ? "" : "s") assigned",
                 bundle: .module
             )
             .font(.system(size: 10, weight: .medium))
@@ -647,13 +572,13 @@ struct AgentCapabilityManagerView: View {
                 )
 
             VStack(alignment: .leading, spacing: 2) {
-                Text("Auto-discover relevant capabilities", bundle: .module)
+                Text("Auto-discover relevant tools", bundle: .module)
                     .font(.system(size: 12, weight: .semibold))
                     .foregroundColor(theme.primaryText)
                 Text(
                     toolMode == .auto
-                        ? "The model starts with a small set and loads more from your enabled capabilities on demand."
-                        : "All enabled capabilities are sent to the model every turn.",
+                        ? "The model starts with a small set and loads more of your assigned tools on demand."
+                        : "All assigned tools are sent to the model every turn.",
                     bundle: .module
                 )
                 .font(.system(size: 11))
@@ -720,10 +645,8 @@ struct AgentCapabilityManagerView: View {
         CapabilityRowBuilder.build(
             CapabilityRowBuilder.Input(
                 visibleTools: visibleTools,
-                visibleSkills: visibleSkills,
                 plugins: plugins,
                 enabledToolNames: enabledToolNames,
-                enabledSkillNames: enabledSkillNames,
                 toolMode: toolMode,
                 searchQuery: searchText,
                 filter: filter,
@@ -741,26 +664,23 @@ struct AgentCapabilityManagerView: View {
         // picker only surfaces actionable groups. See
         // `CapabilityRowBuilder.build` for the filter.
         visibleTools = ToolRegistry.shared.listTools().filter { $0.enabled }
-        visibleSkills = SkillManager.shared.skills.filter { $0.enabled || !$0.isBuiltIn }
         plugins = PluginManager.shared.plugins
     }
 
-    /// Live mode only: ensure the agent's `manualToolNames` / `manualSkillNames`
-    /// fields are populated so the picker reads a real list instead of "nil".
+    /// Live mode only: ensure the agent's `manualToolNames` field is
+    /// populated so the picker reads a real list instead of "nil".
     /// Draft mode skips this — its bindings are seeded by the parent before
     /// the manager is shown.
     private func seedIfNeeded() {
         guard case .live(let agentId) = source else { return }
         let liveToolNames = ToolRegistry.shared.listDynamicTools().map(\.name)
-        let liveSkillNames = SkillManager.shared.skills.map(\.name)
         // If the registry hasn't loaded yet, don't seed an empty allowlist —
         // the next `.toolsListChanged` would treat every later-registered
-        // tool/skill as "newly discovered" and grow the agent back to full.
-        guard !(liveToolNames.isEmpty && liveSkillNames.isEmpty) else { return }
+        // tool as "newly discovered" and grow the agent back to full.
+        guard !liveToolNames.isEmpty else { return }
         agentManager.seedEnabledCapabilitiesIfNeeded(
             for: agentId,
-            defaultToolNames: liveToolNames,
-            defaultSkillNames: liveSkillNames
+            defaultToolNames: liveToolNames
         )
     }
 
@@ -769,10 +689,9 @@ struct AgentCapabilityManagerView: View {
         switch source {
         case .live:
             loadFromAgent()
-        case .draft(let mode, let tools, let skills):
+        case .draft(let mode, let tools):
             toolMode = mode.wrappedValue
             enabledToolNames = tools.wrappedValue
-            enabledSkillNames = skills.wrappedValue
         }
     }
 
@@ -780,7 +699,6 @@ struct AgentCapabilityManagerView: View {
         guard case .live(let agentId) = source else { return }
         toolMode = agentManager.effectiveToolSelectionMode(for: agentId)
         enabledToolNames = Set(agentManager.effectiveEnabledToolNames(for: agentId) ?? [])
-        enabledSkillNames = Set(agentManager.effectiveEnabledSkillNames(for: agentId) ?? [])
     }
 
     // MARK: - Toggle Handlers
@@ -796,18 +714,15 @@ struct AgentCapabilityManagerView: View {
     /// Bulk-flip every (non-restricted) child of a group on or off in one
     /// commit. Wired to the group header's enable-all / disable-all glyphs.
     private func handleBulkToggle(in groupId: String, enable: Bool) {
-        let (toolNames, skillNames) = childrenOf(groupId: groupId)
-        guard !toolNames.isEmpty || !skillNames.isEmpty else { return }
-        var nextTools = enabledToolNames
-        var nextSkills = enabledSkillNames
+        let toolNames = childrenOf(groupId: groupId)
+        guard !toolNames.isEmpty else { return }
+        var next = enabledToolNames
         if enable {
-            nextTools.formUnion(toolNames)
-            nextSkills.formUnion(skillNames)
+            next.formUnion(toolNames)
         } else {
-            nextTools.subtract(toolNames)
-            nextSkills.subtract(skillNames)
+            next.subtract(toolNames)
         }
-        commit(nextTools: nextTools, nextSkills: nextSkills)
+        commit(nextTools: next)
     }
 
     private func handleToggleTool(_ rowId: String, _ wasEnabled: Bool) {
@@ -818,23 +733,7 @@ struct AgentCapabilityManagerView: View {
         } else {
             next.insert(decoded.payload)
         }
-        commit(nextTools: next, nextSkills: enabledSkillNames)
-    }
-
-    private func handleToggleSkill(_ rowId: String) {
-        guard let decoded = CapabilityRowBuilder.decode(rowId: rowId), decoded.kind == "skill" else { return }
-        // Skill rows encode their UUID, not their name (the name can change
-        // when a plugin is renamed). Resolve via the live snapshot.
-        guard let uuid = UUID(uuidString: decoded.payload),
-            let skill = visibleSkills.first(where: { $0.id == uuid })
-        else { return }
-        var next = enabledSkillNames
-        if next.contains(skill.name) {
-            next.remove(skill.name)
-        } else {
-            next.insert(skill.name)
-        }
-        commit(nextTools: enabledToolNames, nextSkills: next)
+        commit(nextTools: next)
     }
 
     /// Collect every (non-restricted) child of a group directly from the live
@@ -847,9 +746,8 @@ struct AgentCapabilityManagerView: View {
     /// names matter for the rendered group header, but `groupId` only
     /// derives from the structural identity (`pluginId` / provider / etc.),
     /// so we don't need to materialize the lookup just to compare.
-    private func childrenOf(groupId: String) -> (tools: Set<String>, skills: Set<String>) {
+    private func childrenOf(groupId: String) -> Set<String> {
         var tools: Set<String> = []
-        var skills: Set<String> = []
 
         for tool in visibleTools {
             let source = CapabilityRowBuilder.source(forTool: tool, pluginNameById: [:])
@@ -860,33 +758,17 @@ struct AgentCapabilityManagerView: View {
             tools.insert(tool.name)
         }
 
-        for skill in visibleSkills {
-            let source = CapabilityRowBuilder.source(forSkill: skill, pluginNameById: [:])
-            guard source.groupId == groupId else { continue }
-            skills.insert(skill.name)
-        }
-
-        return (tools, skills)
+        return tools
     }
 
-    private func commit(nextTools: Set<String>, nextSkills: Set<String>) {
-        if nextTools != enabledToolNames {
-            enabledToolNames = nextTools
-            switch source {
-            case .live(let agentId):
-                agentManager.updateEnabledToolNames(Array(nextTools), for: agentId)
-            case .draft(_, let tools, _):
-                tools.wrappedValue = nextTools
-            }
-        }
-        if nextSkills != enabledSkillNames {
-            enabledSkillNames = nextSkills
-            switch source {
-            case .live(let agentId):
-                agentManager.updateEnabledSkillNames(Array(nextSkills), for: agentId)
-            case .draft(_, _, let skills):
-                skills.wrappedValue = nextSkills
-            }
+    private func commit(nextTools: Set<String>) {
+        guard nextTools != enabledToolNames else { return }
+        enabledToolNames = nextTools
+        switch source {
+        case .live(let agentId):
+            agentManager.updateEnabledToolNames(Array(nextTools), for: agentId)
+        case .draft(_, let tools):
+            tools.wrappedValue = nextTools
         }
     }
 
@@ -896,7 +778,7 @@ struct AgentCapabilityManagerView: View {
         switch source {
         case .live(let agentId):
             agentManager.updateToolSelectionMode(mode, for: agentId)
-        case .draft(let modeBinding, _, _):
+        case .draft(let modeBinding, _):
             modeBinding.wrappedValue = mode
         }
     }

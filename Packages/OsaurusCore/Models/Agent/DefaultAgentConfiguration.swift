@@ -65,10 +65,6 @@ public struct DefaultAgentConfiguration: Codable, Equatable, Sendable {
     /// and the runtime falls back to the live registry.
     public var manualToolNames: [String]?
 
-    /// Skill name allowlist for the Default agent. Mirrors
-    /// `manualToolNames` for skills.
-    public var manualSkillNames: [String]?
-
     public init(
         systemPrompt: String = "",
         defaultModel: String? = nil,
@@ -77,8 +73,7 @@ public struct DefaultAgentConfiguration: Codable, Equatable, Sendable {
         disableTools: Bool = false,
         autonomousExec: AutonomousExecConfig? = nil,
         toolSelectionMode: ToolSelectionMode? = nil,
-        manualToolNames: [String]? = nil,
-        manualSkillNames: [String]? = nil
+        manualToolNames: [String]? = nil
     ) {
         self.systemPrompt = systemPrompt
         self.defaultModel = defaultModel
@@ -88,7 +83,6 @@ public struct DefaultAgentConfiguration: Codable, Equatable, Sendable {
         self.autonomousExec = autonomousExec
         self.toolSelectionMode = toolSelectionMode
         self.manualToolNames = manualToolNames
-        self.manualSkillNames = manualSkillNames
     }
 
     public init(from decoder: Decoder) throws {
@@ -101,7 +95,8 @@ public struct DefaultAgentConfiguration: Codable, Equatable, Sendable {
         autonomousExec = try c.decodeIfPresent(AutonomousExecConfig.self, forKey: .autonomousExec)
         toolSelectionMode = try c.decodeIfPresent(ToolSelectionMode.self, forKey: .toolSelectionMode)
         manualToolNames = try c.decodeIfPresent([String].self, forKey: .manualToolNames)
-        manualSkillNames = try c.decodeIfPresent([String].self, forKey: .manualSkillNames)
+        // Legacy `manualSkillNames` keys are intentionally ignored: skills are
+        // universally available to custom agents.
     }
 
     public static var `default`: DefaultAgentConfiguration {

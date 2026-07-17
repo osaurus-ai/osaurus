@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 import OsaurusRepository
 import XCTest
@@ -203,5 +204,80 @@ final class ToolsInstallTests: XCTestCase {
             XCTAssertTrue(String(describing: error).contains("dev.example.other"))
             XCTAssertTrue(String(describing: error).contains("dev.example.current"))
         }
+    }
+
+    func testManualInstallReceiptIncludesArtifactMetadata() throws {
+        let dylibBytes = Data("manual-plugin-binary".utf8)
+        let dylibURL = tempDir.appendingPathComponent("ManualPlugin.dylib", isDirectory: false)
+        try dylibBytes.write(to: dylibURL)
+        let version = try XCTUnwrap(SemanticVersion.parse("1.2.3"))
+
+        try ToolsInstall.createManualInstallReceipt(
+            pluginId: "com.example.manual",
+            version: version,
+            installDir: tempDir
+        )
+
+        let receiptURL = tempDir.appendingPathComponent("receipt.json", isDirectory: false)
+        let receiptData = try Data(contentsOf: receiptURL)
+        let receipt = try JSONDecoder().decode(PluginReceipt.self, from: receiptData)
+        let expectedSha = Data(SHA256.hash(data: dylibBytes)).map { String(format: "%02x", $0) }.joined()
+
+        XCTAssertEqual(receipt.plugin_id, "com.example.manual")
+        XCTAssertEqual(receipt.version, version)
+        XCTAssertEqual(receipt.dylib_filename, "ManualPlugin.dylib")
+        XCTAssertEqual(receipt.dylib_sha256, expectedSha)
+        let artifactURL = try XCTUnwrap(URL(string: receipt.artifact.url))
+        XCTAssertEqual(artifactURL.scheme, "file")
+        XCTAssertEqual(
+            artifactURL.resolvingSymlinksInPath().path,
+            dylibURL.resolvingSymlinksInPath().path
+        )
+        XCTAssertEqual(receipt.artifact.sha256, expectedSha)
+        XCTAssertNil(receipt.artifact.minisign)
+        XCTAssertEqual(receipt.artifact.size, dylibBytes.count)
+
+        let json = try XCTUnwrap(JSONSerialization.jsonObject(with: receiptData) as? [String: Any])
+        XCTAssertNotNil(json["artifact"], "Manual install receipts must keep the artifact object required by PluginReceipt.")
+    }
+
+    func testManualInstallReceiptEncodesArtifactURLForPathsWithSpaces() throws {
+        let installDir = tempDir.appendingPathComponent("Manual Plugin With Spaces", isDirectory: true)
+        try FileManager.default.createDirectory(at: installDir, withIntermediateDirectories: true)
+        let dylibBytes = Data("manual-plugin-binary".utf8)
+        let dylibURL = installDir.appendingPathComponent("Manual Plugin.dylib", isDirectory: false)
+        try dylibBytes.write(to: dylibURL)
+        let version = try XCTUnwrap(SemanticVersion.parse("1.2.3"))
+
+        try ToolsInstall.createManualInstallReceipt(
+            pluginId: "com.example.manual",
+            version: version,
+            installDir: installDir
+        )
+
+        let receiptURL = installDir.appendingPathComponent("receipt.json", isDirectory: false)
+        let receiptData = try Data(contentsOf: receiptURL)
+        let receipt = try JSONDecoder().decode(PluginReceipt.self, from: receiptData)
+        let artifactURL = try XCTUnwrap(URL(string: receipt.artifact.url))
+
+        XCTAssertEqual(artifactURL.scheme, "file")
+        XCTAssertTrue(receipt.artifact.url.contains("%20"))
+        XCTAssertEqual(
+            artifactURL.resolvingSymlinksInPath().path,
+            dylibURL.resolvingSymlinksInPath().path
+        )
+    }
+
+    func testManualInstallReceiptSkipsWhenNoDylibExists() throws {
+        let version = try XCTUnwrap(SemanticVersion.parse("1.2.3"))
+
+        try ToolsInstall.createManualInstallReceipt(
+            pluginId: "com.example.empty",
+            version: version,
+            installDir: tempDir
+        )
+
+        let receiptURL = tempDir.appendingPathComponent("receipt.json", isDirectory: false)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: receiptURL.path))
     }
 }

@@ -157,9 +157,9 @@ public enum SystemPromptTemplates {
         ## Discovering more tools
 
         Your current tool list is a fixed starting set, not an exhaustive \
-        one. The Enabled capabilities list below names more you can pull in on \
-        demand and shows exactly how to load by id with capabilities_load. \
-        When a capability seems missing and is NOT named there, \
+        one. If an Enabled capabilities list appears below, its ids can be \
+        pulled in on demand with capabilities_load. When no list appears, or \
+        when a capability seems missing and is NOT named there, \
         `capabilities_discover({"query": "<what you need>"})` searches beyond \
         the listed set and returns IDs like `tool/sandbox_exec` or \
         `skill/plot-data` that you load the same way.
@@ -458,6 +458,14 @@ public enum SystemPromptTemplates {
     /// **Adjust against your context budget.**
     public static let enabledManifestToolCap = 70
 
+    /// Cap on total skill lines rendered before the remainder collapses to
+    /// a `+N more` pointer. Skills are universally available (no per-agent
+    /// assignment), so a user who imports a large library would otherwise
+    /// grow every custom agent's static prefix without bound. The nine
+    /// built-ins plus a healthy plugin set stay well under this; past it,
+    /// the model reaches the tail via `capabilities_discover`.
+    public static let enabledManifestSkillCap = 30
+
     /// Render the `## Enabled capabilities` manifest from a pre-grouped,
     /// pre-sorted list. Returns `nil` when there is nothing to surface so the
     /// caller can skip an empty section.
@@ -503,7 +511,8 @@ public enum SystemPromptTemplates {
                 Enabled for this session. Load a plugin with capabilities_load \
                 using its `plugin/<id>` (e.g. \
                 `capabilities_load({"ids": ["plugin/calendar"]})`); `tool/` and \
-                `skill/` ids load individually.
+                `skill/` ids load individually. List frozen at session start — \
+                capabilities_discover also finds anything installed since.
                 """
         } else {
             intro = """
@@ -513,7 +522,10 @@ public enum SystemPromptTemplates {
                 with its loadable id; some are already in your tool schema, others \
                 must be loaded first. To load one, call capabilities_load with its \
                 id exactly as shown \
-                (e.g. `capabilities_load({"ids": ["tool/<name>"]})`).
+                (e.g. `capabilities_load({"ids": ["tool/<name>"]})`). This list is \
+                frozen at session start; capabilities installed after that won't \
+                appear here but capabilities_discover still finds them — check it \
+                before declaring something unavailable.
 
                 Worked example — User: "You have a list_messages tool." If \
                 `tool/list_messages` is listed here, confirm it and capabilities_load \
@@ -533,10 +545,24 @@ public enum SystemPromptTemplates {
     private static func tieredCompactBlocks(
         _ groups: [ManifestPluginGroup]
     ) -> [String] {
-        groups.map { group in
+        var renderedSkillLines = 0
+        return groups.map { group in
             guard !group.groupId.isEmpty else {
+                // Synthetic groups (standalone skills, built-in image tools)
+                // list loadable ids inline. The standalone-skills bucket is
+                // the one unbounded list in compact mode — every installed
+                // skill lands here — so it takes the same running skill cap
+                // as the verbose renderer.
+                let remaining = max(enabledManifestSkillCap - renderedSkillLines, 0)
+                let skillsToShow = Array(group.skills.prefix(remaining))
+                let overflow = group.skills.count - skillsToShow.count
+                renderedSkillLines += skillsToShow.count
+
                 var lines = ["<\(group.pluginDisplay)>"]
-                lines.append(contentsOf: group.skills.map { "  skill/\($0.name)" })
+                lines.append(contentsOf: skillsToShow.map { "  skill/\($0.name)" })
+                if overflow > 0 {
+                    lines.append("  +\(overflow) more skill(s) — capabilities_discover lists them.")
+                }
                 lines.append(contentsOf: group.tools.map { "  tool/\($0.name)" })
                 return lines.joined(separator: "\n")
             }
@@ -557,11 +583,26 @@ public enum SystemPromptTemplates {
     ) -> [String] {
         var blocks: [String] = []
         var renderedToolLines = 0
+        var renderedSkillLines = 0
 
         for group in groups {
-            let skillLines = group.skills.map { skill -> String in
+            // Skills use the same running-cap pattern as tools. With the
+            // universal library every installed skill is a candidate line,
+            // so an unbounded render would scale the static prefix with the
+            // user's import habits rather than the session's needs.
+            let skillsRemaining = max(enabledManifestSkillCap - renderedSkillLines, 0)
+            let skillsToShow = Array(group.skills.prefix(skillsRemaining))
+            let skillOverflow = group.skills.count - skillsToShow.count
+            renderedSkillLines += skillsToShow.count
+
+            var skillLines = skillsToShow.map { skill -> String in
                 let desc = skill.description.isEmpty ? "Plugin skill." : skill.description
                 return "  skill/\(skill.name) — \(desc)"
+            }
+            if skillOverflow > 0 {
+                skillLines.append(
+                    "  +\(skillOverflow) more skill(s) — call capabilities_discover to list them."
+                )
             }
 
             let remaining = max(enabledManifestToolCap - renderedToolLines, 0)
@@ -615,6 +656,40 @@ public enum SystemPromptTemplates {
         the tools directly afterward without a separate capabilities_load per \
         tool.
         """
+
+    /// Whether the rendered manifest needs the verbose skill-first teaching
+    /// block above. Compact manifests already collapse a governed plugin to a
+    /// single `plugin/<id> — skill-governed` load action, so repeating the
+    /// skill-loading workflow there is redundant. Verbose manifests need the
+    /// block only when one plugin actually contains both a skill and tools.
+    static func enabledManifestNeedsSkillGovernance(
+        _ manifest: String,
+        compact: Bool
+    ) -> Bool {
+        guard !compact else { return false }
+
+        var groupHasSkill = false
+        var groupHasTools = false
+
+        func currentGroupNeedsGuidance() -> Bool {
+            groupHasSkill && groupHasTools
+        }
+
+        for rawLine in manifest.split(separator: "\n", omittingEmptySubsequences: false) {
+            let line = rawLine.trimmingCharacters(in: .whitespaces)
+            if line.hasPrefix("<plugin:") || (line.hasPrefix("<") && line.hasSuffix(">")) {
+                if currentGroupNeedsGuidance() { return true }
+                groupHasSkill = false
+                groupHasTools = false
+            } else if line.hasPrefix("skill/") || line.contains("more skill(s)") {
+                groupHasSkill = true
+            } else if line.hasPrefix("tool/") || line.contains("more tool(s)") {
+                groupHasTools = true
+            }
+        }
+
+        return currentGroupNeedsGuidance()
+    }
 
     // MARK: - Cross-cutting Engineering Discipline
 

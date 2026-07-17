@@ -2,7 +2,7 @@
 //  SkillManager.swift
 //  osaurus
 //
-//  Manages skill lifecycle - loading, saving, enabling, and catalog generation.
+//  Manages skill lifecycle - loading, saving, and catalog generation.
 //
 
 import Foundation
@@ -167,15 +167,7 @@ public final class SkillManager {
 
     /// Register a skill from a plugin. If a skill with the same pluginId and name already exists, update it.
     public func registerPluginSkill(_ skill: Skill) async {
-        // Check if we already have a skill from this plugin with the same name
-        if let existing = skills.first(where: { $0.pluginId == skill.pluginId && $0.name == skill.name }) {
-            // Update existing skill but preserve enabled state
-            var updated = skill
-            updated.enabled = existing.enabled
-            await SkillStore.save(updated)
-        } else {
-            await SkillStore.save(skill)
-        }
+        await SkillStore.save(skill)
         await refresh()
 
         Task { await SkillSearchService.shared.indexSkill(skill) }
@@ -199,35 +191,6 @@ public final class SkillManager {
         skills.filter { $0.pluginId == pluginId }
     }
 
-    public func setEnabled(_ enabled: Bool, for id: UUID) async {
-        guard var skill = skill(for: id) else { return }
-        skill.enabled = enabled
-        skill.updatedAt = Date()
-
-        // Create a saveable copy for built-in skills
-        if skill.isBuiltIn {
-            let saveable = Skill(
-                id: skill.id,
-                name: skill.name,
-                description: skill.description,
-                version: skill.version,
-                author: skill.author,
-                category: skill.category,
-                enabled: enabled,
-                instructions: skill.instructions,
-                isBuiltIn: true,
-                createdAt: skill.createdAt,
-                updatedAt: Date()
-            )
-            await SkillStore.save(saveable)
-        } else {
-            await SkillStore.save(skill)
-        }
-
-        await refresh()
-
-    }
-
     // MARK: - Lookup
 
     public func skill(for id: UUID) -> Skill? {
@@ -235,8 +198,39 @@ public final class SkillManager {
         return skills.first { $0.id == id }
     }
 
+    /// Case-insensitive name lookup with deterministic collision resolution.
+    ///
+    /// Skill names are not unique — a user skill can shadow a built-in or a
+    /// plugin skill. `skills` array order (built-ins first, then name) made
+    /// `first(where:)` pick the *built-in* on a tie, which inverts the
+    /// intuitive precedence: someone who deliberately authored a same-named
+    /// skill wants theirs. Resolution order:
+    ///   1. exact-case name match
+    ///   2. user-authored (not built-in, not plugin)
+    ///   3. built-in
+    ///   4. plugin-provided
+    ///   5. stable id tiebreak
     public func skill(named name: String) -> Skill? {
-        skills.first { $0.name.lowercased() == name.lowercased() }
+        let matches = skills(named: name)
+        guard matches.count > 1 else { return matches.first }
+        func tier(_ s: Skill) -> Int {
+            if s.isFromPlugin { return 2 }
+            return s.isBuiltIn ? 1 : 0
+        }
+        return matches.min { a, b in
+            let aExact = a.name == name
+            let bExact = b.name == name
+            if aExact != bExact { return aExact }
+            if tier(a) != tier(b) { return tier(a) < tier(b) }
+            return a.id.uuidString < b.id.uuidString
+        }
+    }
+
+    /// All skills sharing a (case-insensitive) name. More than one element
+    /// means `skill(named:)` had to break a tie; callers that surface skills
+    /// to the model can use this to disclose the ambiguity.
+    public func skills(named name: String) -> [Skill] {
+        skills.filter { $0.name.lowercased() == name.lowercased() }
     }
 
     // MARK: - Import/Export
@@ -317,13 +311,11 @@ public final class SkillManager {
     /// Unlike `importSkillsFromMarkdown(_:)` this path:
     /// - Keeps `pluginId` (required for grouping/uninstall).
     /// - Keeps `category` and `keywords`.
-    /// - Honours an existing-skill `enabled` state when re-importing the same
-    ///   plugin skill, just like `registerPluginSkill(_:)`.
+    /// - Reuses the existing skill id when re-importing the same plugin skill.
     @discardableResult
     public func importSkillsPreservingPluginId(_ skills: [Skill]) async -> [Skill] {
         var imported: [Skill] = []
         for parsedSkill in skills {
-            // Honour existing enabled state if this plugin+name already exists.
             let existing = self.skills.first(where: {
                 $0.pluginId == parsedSkill.pluginId && $0.name == parsedSkill.name
             })
@@ -336,7 +328,6 @@ public final class SkillManager {
                 author: parsedSkill.author,
                 category: parsedSkill.category,
                 keywords: parsedSkill.keywords,
-                enabled: existing?.enabled ?? parsedSkill.enabled,
                 instructions: parsedSkill.instructions,
                 isBuiltIn: false,
                 createdAt: existing?.createdAt ?? Date(),
@@ -459,7 +450,6 @@ public final class SkillManager {
                 version: parsed.version,
                 author: parsed.author,
                 category: parsed.category,
-                enabled: true,
                 instructions: parsed.instructions,
                 directoryName: parsed.xplaceholder_agentSkillsNamex
             )
@@ -658,42 +648,10 @@ public final class SkillManager {
 
     // MARK: - Catalog & Instructions
 
-    /// Builds the combined skill instructions section for an agent in manual mode,
-    /// or returns nil if the agent has no selected skills or is not in manual mode.
-    public func manualSkillPromptSection(for agentId: UUID) async -> String? {
-        guard let skillNames = AgentManager.shared.effectiveManualSkillNames(for: agentId),
-            !skillNames.isEmpty
-        else { return nil }
-        let instructions = await loadInstructions(for: skillNames)
-        guard !instructions.isEmpty else { return nil }
-        let sections = skillNames.compactMap { name -> String? in
-            guard let body = instructions[name] else { return nil }
-            return "## Skill: \(name)\n\n\(body)"
-        }
-        return sections.joined(separator: "\n\n")
-    }
-
-    /// Builds the combined skill instructions section for an agent's enabled skills,
-    /// regardless of tool selection mode. Returns nil when the agent has not been
-    /// seeded yet (legacy behaviour: skills only inject in Manual via the older
-    /// `manualSkillPromptSection`) or has no enabled skills.
-    public func enabledSkillPromptSection(for agentId: UUID) async -> String? {
-        guard let skillNames = AgentManager.shared.effectiveEnabledSkillNames(for: agentId),
-            !skillNames.isEmpty
-        else { return nil }
-        let instructions = await loadInstructions(for: skillNames)
-        guard !instructions.isEmpty else { return nil }
-        let sections = skillNames.compactMap { name -> String? in
-            guard let body = instructions[name] else { return nil }
-            return "## Skill: \(name)\n\n\(body)"
-        }
-        return sections.joined(separator: "\n\n")
-    }
-
     public func loadInstructions(for skillNames: [String]) async -> [String: String] {
         var result: [String: String] = [:]
         for name in skillNames {
-            if let skill = skill(named: name), skill.enabled {
+            if let skill = skill(named: name) {
                 result[name] = await buildFullInstructions(for: skill)
             }
         }
@@ -703,18 +661,32 @@ public final class SkillManager {
     public func loadInstructions(forIds ids: [UUID]) async -> [UUID: String] {
         var result: [UUID: String] = [:]
         for id in ids {
-            if let skill = skill(for: id), skill.enabled {
+            if let skill = skill(for: id) {
                 result[id] = await buildFullInstructions(for: skill)
             }
         }
         return result
     }
 
-    public func buildFullInstructions(for skill: Skill) async -> String {
+    /// Instructions plus reference materials, the complete "skill is active"
+    /// payload. Both delivery paths use this — the `/skill-name` slash
+    /// injection and `capabilities_load skill/<name>` — so a skill behaves
+    /// the same however it was invoked.
+    ///
+    /// `referenceBudget` caps the total characters of reference content
+    /// (NOT instructions). The slash path injects into the system prompt of
+    /// a single message and uses the default unlimited budget; the
+    /// capability-load path rides in a tool result that persists in history,
+    /// so it passes a finite budget and oversized references collapse to a
+    /// named omission note.
+    public func buildFullInstructions(
+        for skill: Skill,
+        referenceBudget: Int = .max
+    ) async -> String {
         var sections = [skill.instructions]
 
         if !skill.references.isEmpty {
-            let refs = await loadReferenceContents(for: skill)
+            let refs = await loadReferenceContents(for: skill, budget: referenceBudget)
             if !refs.isEmpty {
                 sections.append("\n## Reference Materials\n\n\(refs)")
             }
@@ -723,7 +695,7 @@ public final class SkillManager {
         return sections.joined(separator: "\n")
     }
 
-    private func loadReferenceContents(for skill: Skill) async -> String {
+    private func loadReferenceContents(for skill: Skill, budget: Int = .max) async -> String {
         let textExtensions: Set<String> = [
             "md", "txt", "json", "yaml", "yml", "xml", "html", "css", "js", "ts",
             "swift", "py", "rb", "go", "rs", "java", "kt", "c", "cpp", "h", "hpp",
@@ -731,6 +703,8 @@ public final class SkillManager {
         ]
 
         var contents: [String] = []
+        var usedBudget = 0
+        var omittedNames: [String] = []
         for file in skill.references {
             let ext = (file.name as NSString).pathExtension.lowercased()
             guard textExtensions.contains(ext) || ext.isEmpty else { continue }
@@ -738,15 +712,34 @@ public final class SkillManager {
                 contents.append("### \(file.name)\n*File too large (>\(formatSize(file.size)))*\n")
                 continue
             }
+            // Once the budget is exhausted, keep scanning only to name what
+            // was left out — a silent drop would let the model assume the
+            // skill has no further reference material.
+            guard usedBudget < budget else {
+                omittedNames.append(file.name)
+                continue
+            }
 
             do {
                 let data = try await SkillStore.readFile(from: skill, relativePath: file.relativePath)
                 if let text = String(data: data, encoding: .utf8) {
+                    if usedBudget + text.count > budget {
+                        omittedNames.append(file.name)
+                        continue
+                    }
+                    usedBudget += text.count
                     contents.append("### \(file.name)\n\n```\n\(text)\n```\n")
                 }
             } catch {
                 // Skip unreadable files
             }
+        }
+        if !omittedNames.isEmpty {
+            contents.append(
+                "### Omitted references\n*\(omittedNames.count) reference file(s) omitted to keep "
+                    + "this load small: \(omittedNames.joined(separator: ", ")). Invoking the skill "
+                    + "with its slash command includes them in full.*\n"
+            )
         }
         return contents.joined(separator: "\n")
     }
@@ -759,7 +752,6 @@ public final class SkillManager {
 
     // MARK: - Statistics
 
-    public var enabledCount: Int { skills.filter { $0.enabled }.count }
     public var customCount: Int { skills.filter { !$0.isBuiltIn }.count }
     public var categories: [String] { Array(Set(skills.compactMap { $0.category })).sorted() }
 }

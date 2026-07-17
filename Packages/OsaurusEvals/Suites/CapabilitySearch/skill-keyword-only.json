@@ -2,23 +2,13 @@
   "id": "capability_search.skill-keyword-only",
   "domain": "capability_search",
   "label": "capability search • skill • keyword-array path",
-  "query": "help me prioritize my tasks",
-  "notes": "Exercises the keywords-vs-description branch in `SkillSearchService.buildIndexText` (lines 236-241): the 'Productivity Coach' skill's keywords array carries 'prioritize' and 'tasks' as literal tokens but the description text uses softer phrasing. When `keywords` is non-empty, the index text is `name + keywords.joined(' ')` — description is dropped. Verifies the keyword path is actually contributing signal end-to-end.",
-  "fixtures": {
-    "enableSkills": [
-      "Research Analyst",
-      "Creative Brainstormer",
-      "Study Tutor",
-      "Productivity Coach",
-      "Content Summarizer",
-      "Debug Assistant",
-      "Data Visualizer"
-    ]
-  },
+  "query": "help me track my expenses",
+  "notes": "Exercises the keywords-vs-description branch in `SkillSearchService.buildIndexText`: the 'Data Keeper' skill's keywords array carries 'track' and 'expenses' as literal tokens but the description text uses softer phrasing ('Keep structured records across chats'). When `keywords` is non-empty, the index text is `name + keywords.joined(' ')` — description is dropped. Verifies the keyword path is actually contributing signal end-to-end.",
+  "fixtures": {},
   "expect": {
     "capabilitySearch": {
       "expectedSkills": {
-        "anyOf": ["Productivity Coach"],
+        "anyOf": ["Data Keeper"],
         "minMatches": 1
       }
     }

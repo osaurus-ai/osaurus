@@ -687,7 +687,8 @@ public struct SystemPromptComposer: Sendable {
     ///                                (sandbox: build-ladder variant, canCreatePlugins-aware)
     ///  15. enabledManifest           static, frozen, gated on capabilities_load
     ///                                (all enabled tools + plugin skills + standalone skills)
-    ///  16. skillsGovern              static body, paired with enabledManifest
+    ///  16. skillsGovern              static body, only for verbose manifests
+    ///                                with a skill-governed tool group
     ///  17. pluginCreator             static, injected when plugin creation is enabled
     ///                                (session-constant gate — joins the cached prefix)
     ///  18. agentDBSchema             dynamic, live schema snapshot (mutates mid-session)
@@ -1162,26 +1163,32 @@ public struct SystemPromptComposer: Sendable {
             !effectiveToolsOff,
             tools.contains(where: { $0.function.name == "capabilities_discover" })
         {
-            // Sandbox mode swaps the terminus ("tell the user it is
-            // unavailable") for an escalation ladder that ends in a build
-            // step, not denial — the sandbox can assemble most integrations
-            // from primitives. Outside sandbox there are no such primitives,
-            // so the original nudge (with its terminus) stays. The ladder's
-            // plugin-build rung is further gated on `canCreatePlugins`.
-            let nudge =
-                executionMode.usesSandboxTools
-                ? SystemPromptTemplates.capabilityDiscoveryNudgeSandbox(
+            // Sandbox mode needs its explicit build/escalation ladder.
+            // Verbose non-sandbox prompts retain the discover/load tutorial.
+            // Compact non-sandbox prompts already carry the complete contract
+            // in compact Grounding + the discovery/load tool schemas, so a
+            // second prose section would only repeat those instructions.
+            let nudge: String?
+            if executionMode.usesSandboxTools {
+                nudge = SystemPromptTemplates.capabilityDiscoveryNudgeSandbox(
                     canCreatePlugins: snapshot.canCreatePlugins,
                     compact: toolset.prefersCompactPrompt
                 )
-                : SystemPromptTemplates.capabilityDiscoveryNudge
-            composer.append(
-                .static(
-                    id: "capabilityNudge",
-                    label: L("Capability Discovery"),
-                    content: nudge
+            } else {
+                nudge =
+                    toolset.prefersCompactPrompt
+                    ? nil
+                    : SystemPromptTemplates.capabilityDiscoveryNudge
+            }
+            if let nudge {
+                composer.append(
+                    .static(
+                        id: "capabilityNudge",
+                        label: L("Capability Discovery"),
+                        content: nudge
+                    )
                 )
-            )
+            }
         }
 
         // Enabled capabilities manifest: the grounded answer to "do you
@@ -1196,12 +1203,12 @@ public struct SystemPromptComposer: Sendable {
         // the old "Plugin Companions" and "Skill Suggestions" sections.
         //
         // The string is rendered+frozen in `resolveEnabledManifest` and
-        // injected as a STATIC section (paired with `skillsGovern`) so it
-        // joins the cached KV prefix and stays byte-stable across turns —
-        // the manifest no longer shrinks as the agent loads tools. Together
-        // with `pluginCreator` below it closes out the static block, so both
-        // must precede every dynamic section (the static prefix ends at the
-        // first dynamic section).
+        // injected as a STATIC section so it joins the cached KV prefix and
+        // stays byte-stable across turns — the manifest no longer shrinks as
+        // the agent loads tools. Verbose manifests receive the companion
+        // `skillsGovern` block only when a plugin actually contains both a
+        // skill and tools; compact manifests already encode that workflow in
+        // their single `plugin/<id> — skill-governed` load action.
         if let manifestSection = toolset.enabledManifest, !manifestSection.isEmpty {
             composer.append(
                 .static(
@@ -1210,13 +1217,18 @@ public struct SystemPromptComposer: Sendable {
                     content: manifestSection
                 )
             )
-            composer.append(
-                .static(
-                    id: "skillsGovern",
-                    label: L("Skills that govern tool groups"),
-                    content: SystemPromptTemplates.skillsGovernToolGroups
+            if SystemPromptTemplates.enabledManifestNeedsSkillGovernance(
+                manifestSection,
+                compact: toolset.prefersCompactPrompt
+            ) {
+                composer.append(
+                    .static(
+                        id: "skillsGovern",
+                        label: L("Skills that govern tool groups"),
+                        content: SystemPromptTemplates.skillsGovernToolGroups
+                    )
                 )
-            )
+            }
         }
 
         // Plugin-creator injection: inject the `## Building new tools` section
@@ -1311,10 +1323,10 @@ public struct SystemPromptComposer: Sendable {
 
     }
 
-    /// Build the **complete** enabled-capabilities manifest: every tool and
-    /// skill the agent has enabled, regardless of what landed in this turn's
-    /// tool schema. Reads the agent's enabled tool + skill allowlists and the
-    /// live registry — MUST run on the main actor.
+    /// Build the **complete** enabled-capabilities manifest: every tool the
+    /// agent has enabled plus every installed skill, regardless of what landed
+    /// in this turn's tool schema. Reads the agent's enabled tool allowlist and
+    /// the live registries — MUST run on the main actor.
     ///
     /// This is a static enumeration, not a per-turn delta. Under Design C the
     /// rendered string is frozen at session start and injected as a static
@@ -1326,10 +1338,10 @@ public struct SystemPromptComposer: Sendable {
     ///
     /// Contents:
     /// - **Tools**: all enabled dynamic tools, grouped by plugin.
-    /// - **Plugin skills**: enabled skills carrying a `pluginId`, in their
+    /// - **Plugin skills**: installed skills carrying a `pluginId`, in their
     ///   plugin group (skills never enter the tool schema, so they are what
     ///   the "Skills that govern tool groups" rule binds to).
-    /// - **Standalone skills**: enabled skills with no `pluginId`, enumerated
+    /// - **Standalone skills**: installed skills with no `pluginId`, enumerated
     ///   directly from `SkillManager` into a trailing "Skills (no plugin)"
     ///   group — no embedding search, no query ranking.
     ///
@@ -1342,15 +1354,19 @@ public struct SystemPromptComposer: Sendable {
         agentId: UUID
     ) -> [SystemPromptTemplates.ManifestPluginGroup] {
         let allowedTools = AgentManager.shared.effectiveEnabledToolNames(for: agentId).map(Set.init)
-        let allowedSkills = AgentManager.shared.effectiveEnabledSkillNames(for: agentId).map(Set.init)
 
         // Tools: live dynamic catalog is already enabled-filtered; intersect
         // with the agent allowlist (nil = legacy global). The complete set —
         // no enabled-minus-loaded subtraction, so the manifest stays constant
         // as the agent loads tools mid-session.
         var toolsByGroup: [String: [SystemPromptTemplates.ManifestCapability]] = [:]
+        let hasEnabledAgentChannel = AgentChannelConfigurationStore.load()
+            .connections
+            .contains(where: \.enabled)
         for entry in ToolRegistry.shared.listDynamicTools() {
             guard allowedTools?.contains(entry.name) ?? true,
+                hasEnabledAgentChannel
+                    || !ToolRegistry.agentChannelToolNames.contains(entry.name),
                 let group = ToolRegistry.shared.groupName(for: entry.name),
                 !group.isEmpty
             else { continue }
@@ -1359,15 +1375,13 @@ public struct SystemPromptComposer: Sendable {
             )
         }
 
-        // Plugin skills (pluginId != nil) that the agent has enabled, plus
-        // standalone skills (pluginId == nil) collected for the trailing
-        // synthetic group. Both come straight from `SkillManager` — no search.
+        // Plugin skills (pluginId != nil), plus standalone skills
+        // (pluginId == nil) collected for the trailing synthetic group. Every
+        // installed skill is universally available to custom agents; both come
+        // straight from `SkillManager` — no search.
         var skillsByGroup: [String: [SystemPromptTemplates.ManifestCapability]] = [:]
         var standaloneCaps: [SystemPromptTemplates.ManifestCapability] = []
         for skill in SkillManager.shared.skills {
-            guard skill.enabled,
-                allowedSkills?.contains(skill.name) ?? true
-            else { continue }
             let cap = SystemPromptTemplates.ManifestCapability(
                 name: skill.name,
                 description: skill.description
@@ -1751,6 +1765,20 @@ public struct SystemPromptComposer: Sendable {
             agentId: agentId,
             modelOverride: model
         )
+        return composePreviewContext(snapshot: snapshot, executionMode: executionMode)
+    }
+
+    /// Snapshot-taking variant of `composePreviewContext`. Lets the agent
+    /// editor price a DRAFT capability state (local toggles that haven't
+    /// gone through the debounced save yet) by constructing the snapshot
+    /// itself instead of capturing the persisted one — while still running
+    /// the exact section + tool gates the next real send would.
+    @MainActor
+    static func composePreviewContext(
+        snapshot: AgentConfigSnapshot,
+        executionMode: ExecutionMode
+    ) -> ComposedContext {
+        let agentId = snapshot.agentId
         var composer = forChat(
             snapshot: snapshot,
             agentId: agentId,

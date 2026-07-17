@@ -1109,6 +1109,107 @@ public final class AgentDatabase: @unchecked Sendable {
         }
     }
 
+    /// Soft-delete many rows by primary key in ONE transaction. The
+    /// per-row `softDelete(table:whereClause:)` path costs a full
+    /// transaction + changelog write per call, which makes the UI's
+    /// bulk delete O(n) serial transactions; this variant batches the
+    /// UPDATE (chunked to stay under SQLite's bind-variable limit)
+    /// while still logging one `_changelog` row per affected row so
+    /// the audit trail stays row-granular.
+    @discardableResult
+    public func softDeleteMany(
+        table: String,
+        ids: [AgentSQLValue],
+        actor: AgentDatabaseActor,
+        runId: UUID? = nil
+    ) throws -> Int {
+        try Self.validateIdentifier(table)
+        try Self.requireNotReservedTable(table)
+        guard !ids.isEmpty else { return 0 }
+
+        return try inTransaction { _ in
+            guard try self.tableHasColumnUnlocked(table, column: "_deleted_at") else {
+                throw AgentDatabaseError.invalidArgument(
+                    "table '\(table)' has no `_deleted_at` column (it was created "
+                        + "with raw SQL, not db_create_table), so soft delete isn't "
+                        + "available. Use `db_execute` with a DELETE statement to "
+                        + "remove rows from this table."
+                )
+            }
+            guard try self.tableHasColumnUnlocked(table, column: "id") else {
+                throw AgentDatabaseError.invalidArgument(
+                    "table '\(table)' has no `id` column, so bulk soft delete by id isn't available."
+                )
+            }
+
+            var totalAffected = 0
+            // Chunk to stay well under SQLITE_MAX_VARIABLE_NUMBER (999
+            // historically) even if a caller passes a huge selection.
+            let chunkSize = 400
+            var index = 0
+            while index < ids.count {
+                let chunk = Array(ids[index ..< min(index + chunkSize, ids.count)])
+                index += chunkSize
+
+                let placeholders = (1 ... chunk.count).map { "?\($0)" }.joined(separator: ", ")
+
+                // Capture before-rows for the changelog (live rows only —
+                // already-deleted rows are untouched by the UPDATE below).
+                var beforeRows: [[String: AgentSQLValue]] = []
+                let selectSQL =
+                    "SELECT * FROM \(table) WHERE id IN (\(placeholders)) AND _deleted_at IS NULL"
+                var stmt: OpaquePointer?
+                guard sqlite3_prepare_v2(self.db, selectSQL, -1, &stmt, nil) == SQLITE_OK,
+                    let s = stmt
+                else {
+                    throw AgentDatabaseError.failedToPrepare(String(cString: sqlite3_errmsg(self.db)))
+                }
+                for (i, value) in chunk.enumerated() {
+                    Self.bind(s, index: i + 1, value: value)
+                }
+                let colCount = Int(sqlite3_column_count(s))
+                var colNames: [String] = []
+                for c in 0 ..< colCount {
+                    colNames.append(sqlite3_column_name(s, Int32(c)).map { String(cString: $0) } ?? "")
+                }
+                while sqlite3_step(s) == SQLITE_ROW {
+                    var row: [String: AgentSQLValue] = [:]
+                    for c in 0 ..< colCount {
+                        row[colNames[c]] = Self.readColumn(s, index: c)
+                    }
+                    beforeRows.append(row)
+                }
+                sqlite3_finalize(s)
+
+                let updateSQL = """
+                        UPDATE \(table) SET _deleted_at = strftime('%s','now')
+                        WHERE id IN (\(placeholders)) AND _deleted_at IS NULL
+                    """
+                try self.transactionalStep(updateSQL) { stmt in
+                    for (i, value) in chunk.enumerated() {
+                        Self.bind(stmt, index: i + 1, value: value)
+                    }
+                }
+                totalAffected += Int(sqlite3_changes(self.db))
+
+                for row in beforeRows {
+                    let pk = Self.stringifyPK(row["id"] ?? row.first?.value)
+                    try self.appendChangelogUnlocked(
+                        runId: runId,
+                        actor: actor,
+                        op: .softDelete,
+                        tableName: table,
+                        rowPK: pk,
+                        beforeJSON: Self.jsonEncode(row),
+                        afterJSON: nil,
+                        sql: nil
+                    )
+                }
+            }
+            return totalAffected
+        }
+    }
+
     @discardableResult
     public func restore(
         table: String,

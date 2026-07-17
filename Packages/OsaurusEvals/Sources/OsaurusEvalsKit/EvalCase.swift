@@ -93,21 +93,6 @@ public struct EvalCase: Sendable, Codable, Identifiable {
         /// `EvalRunner.runCapabilitySearchCase`. Other domains
         /// ignore this field.
         public let seedMethods: [SeedMethod]?
-        /// Skill names to flip `enabled = true` on for the duration
-        /// of the case (and restore afterwards). Used by
-        /// `capability_search` skill-lane fixtures because every
-        /// built-in skill ships disabled-by-default and
-        /// `SkillSearchService.search` post-filters disabled skills
-        /// out — so a recall fixture against e.g. "Research Analyst"
-        /// silently returns 0 unless we toggle it on first.
-        ///
-        /// Mutates the user's persistent skill state for the run
-        /// window only; the runner snapshots prior state and
-        /// restores it after the case body. Restoration is
-        /// best-effort, not crash-safe — a process crash mid-case
-        /// can leave a built-in skill flipped on. Re-running any
-        /// case that names the same skill converges the state back.
-        public let enableSkills: [String]?
         /// Tool names to grant the agent for the duration of a
         /// `capability_claims` case (and restore afterwards). The agent's
         /// enabled set is what the enabled-capabilities manifest is built
@@ -210,7 +195,6 @@ public struct EvalCase: Sendable, Codable, Identifiable {
         public init(
             requirePlugins: [String]? = nil,
             seedMethods: [SeedMethod]? = nil,
-            enableSkills: [String]? = nil,
             enableTools: [String]? = nil,
             ensureToolsDisabled: [String]? = nil,
             workspaceFiles: [WorkspaceFile]? = nil,
@@ -223,7 +207,6 @@ public struct EvalCase: Sendable, Codable, Identifiable {
         ) {
             self.requirePlugins = requirePlugins
             self.seedMethods = seedMethods
-            self.enableSkills = enableSkills
             self.enableTools = enableTools
             self.ensureToolsDisabled = ensureToolsDisabled
             self.workspaceFiles = workspaceFiles

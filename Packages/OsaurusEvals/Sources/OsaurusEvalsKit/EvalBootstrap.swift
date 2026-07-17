@@ -588,10 +588,7 @@ public extension EvalSuite {
                 needsMethods
                 || expect?.expectedMethods != nil
                 || !(testCase.fixtures.seedMethods?.isEmpty ?? true)
-            needsSkills =
-                needsSkills
-                || expect?.expectedSkills != nil
-                || !(testCase.fixtures.enableSkills?.isEmpty ?? true)
+            needsSkills = needsSkills || expect?.expectedSkills != nil
         }
 
         return EvalSearchIndexBootstrapScope(

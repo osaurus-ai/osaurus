@@ -28,7 +28,6 @@ struct SkillEditorSheet: View {
     @State private var author: String = ""
     @State private var category: String = ""
     @State private var instructions: String = ""
-    @State private var enabled: Bool = true
 
     @State private var hasAppeared = false
 
@@ -75,7 +74,6 @@ struct SkillEditorSheet: View {
             || (category.isEmpty ? nil : category.trimmingCharacters(in: .whitespacesAndNewlines))
                 != original.category
             || instructions.trimmingCharacters(in: .whitespacesAndNewlines) != original.instructions
-            || enabled != original.enabled
     }
 
     var body: some View {
@@ -210,7 +208,7 @@ struct SkillEditorSheet: View {
                                 .foregroundColor(themeManager.currentTheme.secondaryText)
 
                             SkillStyledTextField(
-                                placeholder: L("e.g., Research Analyst"),
+                                placeholder: L("e.g., Web Researcher"),
                                 text: $name,
                                 icon: nil
                             )
@@ -283,50 +281,6 @@ struct SkillEditorSheet: View {
                     }
                 }
 
-                // Status Section
-                SkillEditorSection(title: L("Status"), icon: "checkmark.circle.fill") {
-                    HStack {
-                        HStack(spacing: 8) {
-                            Image(systemName: enabled ? "checkmark.circle.fill" : "circle")
-                                .font(.system(size: 14, weight: .medium))
-                                .foregroundColor(
-                                    enabled
-                                        ? themeManager.currentTheme.successColor
-                                        : themeManager.currentTheme.tertiaryText
-                                )
-
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text("Enabled", bundle: .module)
-                                    .font(.system(size: 13, weight: .medium))
-                                    .foregroundColor(themeManager.currentTheme.primaryText)
-                                Text(enabled ? L("Skill is available for use") : L("Skill is hidden"))
-                                    .font(.system(size: 11))
-                                    .foregroundColor(themeManager.currentTheme.tertiaryText)
-                            }
-                        }
-
-                        Spacer()
-
-                        Toggle("", isOn: $enabled)
-                            .toggleStyle(.switch)
-                            .controlSize(.small)
-                            .labelsHidden()
-                    }
-                    .padding(12)
-                    .background(
-                        RoundedRectangle(cornerRadius: 8)
-                            .fill(themeManager.currentTheme.inputBackground)
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 8)
-                                    .stroke(
-                                        enabled
-                                            ? themeManager.currentTheme.successColor.opacity(0.3)
-                                            : themeManager.currentTheme.inputBorder,
-                                        lineWidth: 1
-                                    )
-                            )
-                    )
-                }
             }
             .padding(20)
         }
@@ -471,7 +425,6 @@ struct SkillEditorSheet: View {
         author = skill.author ?? ""
         category = skill.category ?? ""
         instructions = skill.instructions
-        enabled = skill.enabled
     }
 
     private func saveSkill() {
@@ -486,7 +439,6 @@ struct SkillEditorSheet: View {
             version: version.trimmingCharacters(in: .whitespacesAndNewlines),
             author: author.isEmpty ? nil : author.trimmingCharacters(in: .whitespacesAndNewlines),
             category: category.isEmpty ? nil : category.trimmingCharacters(in: .whitespacesAndNewlines),
-            enabled: enabled,
             instructions: trimmedInstructions,
             isBuiltIn: false,
             createdAt: existingCreatedAt ?? Date(),

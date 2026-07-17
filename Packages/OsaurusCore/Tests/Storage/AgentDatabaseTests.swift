@@ -640,4 +640,163 @@ struct AgentDatabaseTests {
         #expect(pkRows.first?[1] == .text("slug"))
         #expect(info.rows.contains { $0[1] == .text("id") } == false)
     }
+
+    // MARK: - Batched soft delete (Database workspace bulk action)
+
+    private func seedNotes(_ db: AgentDatabase, count: Int) throws -> [Int64] {
+        try db.createTable(
+            name: "notes",
+            purpose: "bulk soft-delete fixture",
+            columns: [AgentColumnSpec(name: "title", type: "TEXT", nullable: false)],
+            indexes: [],
+            actor: .agent,
+            runId: nil
+        )
+        var ids: [Int64] = []
+        for i in 0 ..< count {
+            ids.append(
+                try db.insert(
+                    table: "notes",
+                    row: ["title": .text("row \(i)")],
+                    actor: .agent,
+                    runId: nil
+                )
+            )
+        }
+        return ids
+    }
+
+    @Test
+    func softDeleteManyTombstonesSelectedRowsInOneCall() throws {
+        let db = try makeDB()
+        let ids = try seedNotes(db, count: 5)
+        let runId = UUID()
+
+        let affected = try db.softDeleteMany(
+            table: "notes",
+            ids: ids.prefix(3).map { .integer($0) },
+            actor: .user,
+            runId: runId
+        )
+        #expect(affected == 3)
+
+        let live = try db.query(sql: "SELECT COUNT(*) FROM notes WHERE _deleted_at IS NULL")
+        #expect(live.rows[0][0] == .integer(2))
+        let deleted = try db.query(sql: "SELECT COUNT(*) FROM notes WHERE _deleted_at IS NOT NULL")
+        #expect(deleted.rows[0][0] == .integer(3))
+
+        // One audit entry per tombstoned row, with the caller's actor + run.
+        let log = try db.query(
+            sql: "SELECT actor, run_id FROM _changelog WHERE op = 'soft_delete' AND table_name = 'notes'"
+        )
+        #expect(log.rows.count == 3)
+        for row in log.rows {
+            #expect(row[0] == .text("user"))
+            #expect(row[1] == .text(runId.uuidString))
+        }
+    }
+
+    @Test
+    func softDeleteManySkipsAlreadyDeletedRows() throws {
+        let db = try makeDB()
+        let ids = try seedNotes(db, count: 3)
+        _ = try db.softDelete(
+            table: "notes",
+            whereClause: ["id": .integer(ids[0])],
+            actor: .agent,
+            runId: nil
+        )
+
+        // Re-deleting a tombstoned row is a no-op: affected counts only the
+        // two live rows, and no duplicate changelog entry is written for it.
+        let affected = try db.softDeleteMany(
+            table: "notes",
+            ids: ids.map { .integer($0) },
+            actor: .user,
+            runId: nil
+        )
+        #expect(affected == 2)
+        let log = try db.query(
+            sql: "SELECT COUNT(*) FROM _changelog WHERE op = 'soft_delete' AND table_name = 'notes'"
+        )
+        #expect(log.rows[0][0] == .integer(3))
+    }
+
+    @Test
+    func softDeleteManyEmptySelectionIsANoOp() throws {
+        let db = try makeDB()
+        _ = try seedNotes(db, count: 2)
+        let affected = try db.softDeleteMany(table: "notes", ids: [], actor: .user, runId: nil)
+        #expect(affected == 0)
+        let live = try db.query(sql: "SELECT COUNT(*) FROM notes WHERE _deleted_at IS NULL")
+        #expect(live.rows[0][0] == .integer(2))
+    }
+
+    @Test
+    func softDeleteManyChunksLargeSelections() throws {
+        // 450 ids crosses the 400-per-statement chunk boundary, exercising
+        // the multi-chunk path within one transaction.
+        let db = try makeDB()
+        let ids = try seedNotes(db, count: 450)
+        let affected = try db.softDeleteMany(
+            table: "notes",
+            ids: ids.map { .integer($0) },
+            actor: .user,
+            runId: nil
+        )
+        #expect(affected == 450)
+        let live = try db.query(sql: "SELECT COUNT(*) FROM notes WHERE _deleted_at IS NULL")
+        #expect(live.rows[0][0] == .integer(0))
+    }
+
+    @Test
+    func softDeleteManyRejectsRawSQLTables() throws {
+        let db = try makeDB()
+        // A raw-SQL table without managed columns can't be soft-deleted.
+        _ = try db.execute(sql: "CREATE TABLE raw_rows (n INTEGER)", actor: .agent, runId: nil)
+        #expect(throws: (any Error).self) {
+            try db.softDeleteMany(table: "raw_rows", ids: [.integer(1)], actor: .user, runId: nil)
+        }
+    }
+
+    // MARK: - Full-result export (Database workspace CSV export)
+
+    @Test
+    func exportStreamsEveryFilteredRowNotJustTheLoadedPage() throws {
+        // The workspace browser pages 200 rows at a time; export must walk
+        // the FULL filtered result via the streaming cursor regardless.
+        let db = try makeDB()
+        let ids = try seedNotes(db, count: 250)
+        _ = try db.softDelete(
+            table: "notes",
+            whereClause: ["id": .integer(ids[0])],
+            actor: .agent,
+            runId: nil
+        )
+
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("osaurus-export-test-\(UUID().uuidString).csv")
+        defer { try? FileManager.default.removeItem(at: url) }
+
+        // Same SQL shape the workspace's Active-filter export builds.
+        let sql = "SELECT * FROM \"notes\" WHERE _deleted_at IS NULL"
+        let probe = try db.query(sql: sql, params: [], limit: 1, offset: 0)
+        let result = try DatabaseExport.streamWrite(
+            url: url,
+            format: .csv,
+            maxBytes: 1_073_741_824,
+            headerColumns: probe.columns
+        ) { emit in
+            _ = try db.forEachQueryRow(sql: sql, params: []) { columns, row in
+                try emit(columns, row)
+            }
+        }
+        #expect(result.rowsExported == 249)
+        #expect(!result.truncated)
+
+        let contents = try String(contentsOf: url, encoding: .utf8)
+        // Header + 249 data lines.
+        let lines = contents.split(separator: "\n", omittingEmptySubsequences: true)
+        #expect(lines.count == 250)
+    }
 }

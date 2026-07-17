@@ -131,7 +131,6 @@ public struct InstalledClaudeSkill: Identifiable, Equatable, Sendable {
     public let name: String
     public let description: String
     public let category: String?
-    public let enabled: Bool
     /// Full SKILL.md instructions body. Surfaced in the preview popover.
     public let instructions: String
     public let keywords: [String]
@@ -145,7 +144,6 @@ public struct InstalledClaudeSkill: Identifiable, Equatable, Sendable {
         name: String,
         description: String,
         category: String?,
-        enabled: Bool,
         instructions: String = "",
         keywords: [String] = [],
         version: String = "1.0.0",
@@ -157,7 +155,6 @@ public struct InstalledClaudeSkill: Identifiable, Equatable, Sendable {
         self.name = name
         self.description = description
         self.category = category
-        self.enabled = enabled
         self.instructions = instructions
         self.keywords = keywords
         self.version = version
@@ -534,7 +531,6 @@ public final class InstalledClaudePluginsAggregator: ObservableObject {
                         name: skill.name,
                         description: skill.description,
                         category: skill.category,
-                        enabled: skill.enabled,
                         instructions: skill.instructions,
                         keywords: skill.keywords,
                         version: skill.version,

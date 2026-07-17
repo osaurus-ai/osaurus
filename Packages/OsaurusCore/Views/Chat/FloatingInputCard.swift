@@ -1429,6 +1429,10 @@ extension FloatingInputCard {
             } else if !hasContent {
                 print("[FloatingInputCard] Silence timeout without content - closing voice input")
                 stopVoiceInputFromTimeout()
+                ToastManager.shared.infoLocalized(
+                    "No Speech Detected",
+                    message: "Nothing was sent."
+                )
             }
         }
     }

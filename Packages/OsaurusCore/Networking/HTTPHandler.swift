@@ -2892,7 +2892,8 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
     private static func enrichWithAgentContext(
         _ request: ChatCompletionRequest,
         agentId: String?,
-        executionMode: ExecutionMode
+        executionMode: ExecutionMode,
+        modelOverride: String? = nil
     ) async -> ChatCompletionRequest {
         guard let agentId, !agentId.isEmpty,
             let agentUUID = UUID(uuidString: agentId)
@@ -2907,6 +2908,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         let composed = await SystemPromptComposer.composeChatContext(
             agentId: agentUUID,
             executionMode: executionMode,
+            model: modelOverride,
             query: query,
             messages: enriched.messages,
             toolsDisabled: globalToolsDisabled
@@ -4967,7 +4969,8 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             let enrichedReq = await Self.enrichWithAgentContext(
                 req,
                 agentId: agentId.uuidString,
-                executionMode: executionMode
+                executionMode: executionMode,
+                modelOverride: model
             )
             var messages = enrichedReq.messages
             let tools = enrichedReq.tools ?? []

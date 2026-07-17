@@ -30,7 +30,7 @@
 //   13. capabilityNudge           static, gated on capabilities_discover
 //   14. enabledManifest           static, frozen (all enabled tools +
 //                                  plugin skills + standalone skills)
-//   15. skillsGovern              static (paired with enabledManifest)
+//   15. skillsGovern              static (verbose governed manifests only)
 //   16. pluginCreator             static (session-constant gate)
 //   17. agentDBSchema             dynamic, live schema snapshot
 //   18. sandboxState              dynamic, installed packages + secrets
