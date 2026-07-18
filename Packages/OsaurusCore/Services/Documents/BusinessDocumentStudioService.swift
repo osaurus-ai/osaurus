@@ -8,6 +8,7 @@
 //  entry point for inspect, preview, and explicit export checks.
 //
 
+import Darwin
 import Foundation
 import UniformTypeIdentifiers
 
@@ -465,7 +466,7 @@ public struct BusinessDocumentStudioService: Sendable {
     public func makeAttachment(for document: StructuredDocument) throws -> Attachment {
         guard !document.textFallback.isEmpty else {
             throw BusinessDocumentStudioError.attachmentHandoffUnavailable(
-                "Workspace attachment handoff requires a non-empty text fallback."
+                "Attachment payload validation requires a non-empty text fallback."
             )
         }
         return Attachment.structuredDocument(document)
@@ -479,35 +480,60 @@ public struct BusinessDocumentStudioService: Sendable {
     ) async throws -> BusinessDocumentStudioExportResult {
         let normalizedTarget = targetFormatId.trimmedLowercased
         try validateDestination(url, policy: policy)
+        try validateTargetExtension(url, targetFormatId: normalizedTarget, document: document)
 
+        let stagingURL = Self.stagingURL(for: url)
+        defer { try? FileManager.default.removeItem(at: stagingURL) }
+        let rendered = try await renderExport(
+            document,
+            as: normalizedTarget,
+            to: stagingURL,
+            policy: policy
+        )
+
+        // Arbitrary emitters may ignore cancellation. They only own the random
+        // staging leaf; cancellation is enforced here before final-path commit.
+        try Task.checkCancellation()
+        try validateDestination(url, policy: policy)
+        try Task.checkCancellation()
+        try Self.commit(stagingURL, to: url, allowOverwrite: policy.allowOverwrite)
+
+        return BusinessDocumentStudioExportResult(
+            url: url,
+            sourceFormatId: document.formatId,
+            targetFormatId: rendered.targetFormatId,
+            bytesWritten: Self.fileSize(url),
+            message: rendered.message
+        )
+    }
+
+    private func renderExport(
+        _ document: StructuredDocument,
+        as normalizedTarget: String,
+        to stagingURL: URL,
+        policy: BusinessDocumentStudioExportPolicy
+    ) async throws -> RenderedExport {
         switch normalizedTarget {
         case "csv", "tsv":
-            try rejectTextExportPackageTarget(url)
             let delimiter: CSVDelimiter = normalizedTarget == "tsv" ? .tab : .comma
-            let result = try await CSVTableWorkflowService.export(document, to: url, delimiter: delimiter)
+            let result = try await CSVTableWorkflowService.export(document, to: stagingURL, delimiter: delimiter)
             let rowLabel = result.rowCount == 1 ? "1 row" : "\(result.rowCount) rows"
             let columnLabel = result.columnCount == 1 ? "1 column" : "\(result.columnCount) columns"
-            return BusinessDocumentStudioExportResult(
-                url: result.url,
-                sourceFormatId: document.formatId,
+            return RenderedExport(
                 targetFormatId: result.formatId,
-                bytesWritten: result.bytesWritten,
                 message: "Exported \(rowLabel) and \(columnLabel)."
             )
 
         case "xlsx":
-            try validateStructuredPackageTarget(url, targetFormatId: normalizedTarget)
-            let result = try await WorkbookWorkflowService.export(document, to: url, registry: registry)
-            return BusinessDocumentStudioExportResult(
-                url: result.url,
-                sourceFormatId: document.formatId,
+            let result = try await WorkbookWorkflowService.export(document, to: stagingURL, registry: registry)
+            return RenderedExport(
                 targetFormatId: result.formatId,
-                bytesWritten: result.bytesWritten,
                 message: "Exported workbook through the registered '\(result.formatId)' emitter."
             )
 
         case "txt", "text", "plaintext":
-            return try exportTextFallback(document, to: url, policy: policy)
+            let result = try exportTextFallback(document, to: stagingURL, policy: policy)
+            return RenderedExport(targetFormatId: result.targetFormatId, message: result.message)
 
         default:
             guard let emitter = registry.emitter(for: document),
@@ -518,19 +544,37 @@ public struct BusinessDocumentStudioService: Sendable {
                     targetFormatId: normalizedTarget
                 )
             }
-            try validateEmitterPackageTarget(url, targetFormatId: emitter.formatId.trimmedLowercased)
             do {
-                try await emitter.emit(document, to: url)
-                return BusinessDocumentStudioExportResult(
-                    url: url,
-                    sourceFormatId: document.formatId,
+                try await emitter.emit(document, to: stagingURL)
+                return RenderedExport(
                     targetFormatId: emitter.formatId,
-                    bytesWritten: Self.fileSize(url),
                     message: "Exported document through the registered '\(emitter.formatId)' emitter."
                 )
+            } catch is CancellationError {
+                throw CancellationError()
             } catch {
                 throw BusinessDocumentStudioError.writeFailed(error.localizedDescription)
             }
+        }
+    }
+
+    private func validateTargetExtension(
+        _ url: URL,
+        targetFormatId: String,
+        document: StructuredDocument
+    ) throws {
+        switch targetFormatId {
+        case "csv", "tsv", "txt", "text", "plaintext":
+            try rejectTextExportPackageTarget(url)
+        case "xlsx":
+            try validateStructuredPackageTarget(url, targetFormatId: targetFormatId)
+        default:
+            guard let emitter = registry.emitter(for: document),
+                emitter.formatId.lowercased() == targetFormatId
+            else {
+                return
+            }
+            try validateEmitterPackageTarget(url, targetFormatId: emitter.formatId.trimmedLowercased)
         }
     }
 
@@ -558,8 +602,7 @@ public struct BusinessDocumentStudioService: Sendable {
         }
 
         if let pdfPPTX = try? PDFPPTXWorkflowService(registry: registry)
-            .preview(document, policy: policy.pdfPPTXPreview)
-        {
+            .preview(document, policy: policy.pdfPPTXPreview) {
             switch pdfPPTX {
             case .pdf(let preview):
                 return .pdf(Self.pdfPreview(preview))
@@ -713,7 +756,7 @@ public struct BusinessDocumentStudioService: Sendable {
         )
     }
 
-    private func validateDestination(
+    func validateDestination(
         _ url: URL,
         policy: BusinessDocumentStudioExportPolicy
     ) throws {
@@ -721,15 +764,42 @@ public struct BusinessDocumentStudioService: Sendable {
             throw BusinessDocumentStudioError.destinationIsNotFileURL(url)
         }
         if let allowedDirectory = policy.allowedDirectory {
-            let root = allowedDirectory.standardizedFileURL.resolvingSymlinksInPath().path
-            let parent = url.deletingLastPathComponent().standardizedFileURL.resolvingSymlinksInPath().path
-            guard parent == root || parent.hasPrefix(root + "/") else {
+            guard Self.isContainedDestination(url, in: allowedDirectory) else {
                 throw BusinessDocumentStudioError.destinationOutsideAllowedDirectory(url)
             }
         }
         if !policy.allowOverwrite, FileManager.default.fileExists(atPath: url.path) {
             throw BusinessDocumentStudioError.destinationAlreadyExists(url)
         }
+    }
+
+    /// Resolve only filesystem components that already exist. This keeps
+    /// firmlink aliases such as `/var` and `/private/var` symmetric for a new
+    /// leaf while still following an existing symlink leaf or parent to expose
+    /// an escape from the allowed root.
+    private static func isContainedDestination(_ destination: URL, in allowedDirectory: URL) -> Bool {
+        guard allowedDirectory.isFileURL else { return false }
+        let root = allowedDirectory.standardizedFileURL.resolvingSymlinksInPath().standardizedFileURL
+        let candidate = destination.standardizedFileURL
+        var existingAncestor = candidate
+
+        while !FileManager.default.fileExists(atPath: existingAncestor.path) {
+            let parent = existingAncestor.deletingLastPathComponent()
+            guard parent.path != existingAncestor.path else { break }
+            existingAncestor = parent
+        }
+
+        let resolvedAncestor = existingAncestor.resolvingSymlinksInPath().standardizedFileURL
+        let existingComponentCount = existingAncestor.pathComponents.count
+        let unresolvedTail = candidate.pathComponents.dropFirst(existingComponentCount)
+        guard !unresolvedTail.contains("."), !unresolvedTail.contains("..") else { return false }
+        let resolvedCandidate = unresolvedTail.reduce(resolvedAncestor) { partialURL, component in
+            partialURL.appendingPathComponent(component)
+        }.standardizedFileURL
+        let rootPath = root.path
+        return rootPath == "/"
+            ? resolvedCandidate.path != rootPath
+            : resolvedCandidate.path.hasPrefix(rootPath + "/")
     }
 
     private func rejectTextExportPackageTarget(_ url: URL) throws {
@@ -915,8 +985,8 @@ public struct BusinessDocumentStudioService: Sendable {
             isAvailable: !document.textFallback.isEmpty,
             label: "Structured document attachment",
             message: document.textFallback.isEmpty
-                ? "No text fallback is available for workspace attachment handoff."
-                : "Can be handed to workspace attachments with structured metadata and text fallback.",
+                ? "No text fallback is available for attachment payload validation."
+                : "A structured attachment payload with metadata and text fallback can be validated.",
             fallbackUTF8Bytes: document.textFallback.utf8.count
         )
 
@@ -1104,8 +1174,46 @@ public struct BusinessDocumentStudioService: Sendable {
         }
     }
 
+    private static func stagingURL(for destination: URL) -> URL {
+        let fileExtension = destination.pathExtension
+        let stem = destination.deletingPathExtension().lastPathComponent
+        let suffix = fileExtension.isEmpty ? "" : ".\(fileExtension)"
+        let filename = ".\(stem).osaurus-export-\(UUID().uuidString)\(suffix)"
+        return destination.deletingLastPathComponent().appendingPathComponent(filename)
+    }
+
+    /// The rename itself carries overwrite policy so a destination appearing
+    /// after validation cannot be clobbered without consent. Both paths are
+    /// siblings, making the successful commit atomic on the containing volume.
+    private static func commit(
+        _ stagingURL: URL,
+        to destination: URL,
+        allowOverwrite: Bool
+    ) throws {
+        let status = stagingURL.path.withCString { sourcePath in
+            destination.path.withCString { destinationPath in
+                if allowOverwrite {
+                    return Darwin.rename(sourcePath, destinationPath)
+                }
+                return renamex_np(sourcePath, destinationPath, UInt32(RENAME_EXCL))
+            }
+        }
+        guard status == 0 else {
+            let errorCode = errno
+            if !allowOverwrite, errorCode == EEXIST {
+                throw BusinessDocumentStudioError.destinationAlreadyExists(destination)
+            }
+            throw BusinessDocumentStudioError.writeFailed(String(cString: strerror(errorCode)))
+        }
+    }
+
     private static func fileSize(_ url: URL) -> Int64 {
         Int64((try? url.resourceValues(forKeys: [.fileSizeKey]))?.fileSize ?? 0)
+    }
+
+    private struct RenderedExport {
+        let targetFormatId: String
+        let message: String
     }
 
     private static let structuredPackageExtensions: Set<String> = [

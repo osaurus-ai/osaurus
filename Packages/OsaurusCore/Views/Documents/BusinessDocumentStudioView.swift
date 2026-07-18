@@ -15,7 +15,7 @@ struct BusinessDocumentStudioView: View {
     private let sourceURL: URL?
     private let claimSourceURL: ((URL) -> Bool)?
     @State private var currentSourceURL: URL?
-    @State private var workspaceAttachmentStatus: WorkspaceAttachmentStatus?
+    @State private var attachmentValidationStatus: AttachmentValidationStatus?
 
     init(
         sourceURL: URL? = nil,
@@ -37,12 +37,12 @@ struct BusinessDocumentStudioView: View {
         }
         .frame(minWidth: 720, minHeight: 520)
         .task(id: currentSourceURL) {
-            workspaceAttachmentStatus = nil
+            attachmentValidationStatus = nil
             guard let currentSourceURL else { return }
             await presenter.load(url: currentSourceURL)
         }
         .onChange(of: sourceURL) { _, newValue in
-            workspaceAttachmentStatus = nil
+            attachmentValidationStatus = nil
             guard let newValue else {
                 currentSourceURL = nil
                 return
@@ -67,7 +67,7 @@ struct BusinessDocumentStudioView: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text(verbatim: "Business Document Workbench")
                     .font(.system(size: 15, weight: .semibold))
-                Text(verbatim: "Import, extract, export, and hand off")
+                Text(verbatim: "Import, inspect, export, and validate")
                     .font(.system(size: 12))
                     .foregroundStyle(.secondary)
             }
@@ -163,7 +163,7 @@ struct BusinessDocumentStudioView: View {
                             }
                         }
                     }
-                    StudioSection(title: "Workspace Attachment Handoff") {
+                    StudioSection(title: "Attachment Payload Validation") {
                         handoffView(presentation)
                     }
                     if !presenter.artifactStatuses.isEmpty {
@@ -451,10 +451,10 @@ struct BusinessDocumentStudioView: View {
 
             HStack(alignment: .center, spacing: 10) {
                 Button {
-                    prepareWorkspaceAttachment()
+                    validateAttachmentPayload()
                 } label: {
                     Label {
-                        Text(verbatim: "Check Attachment")
+                        Text(verbatim: "Validate Attachment")
                     } icon: {
                         Image(systemName: "paperclip")
                     }
@@ -466,22 +466,22 @@ struct BusinessDocumentStudioView: View {
                 .help(
                     presentation.isAttachmentHandoffAvailable
                         ? "Validate that this document can become a structured attachment payload"
-                        : "Attachment handoff is unavailable for this document"
+                        : "Attachment payload validation is unavailable for this document"
                 )
 
-                if let workspaceAttachmentStatus {
+                if let attachmentValidationStatus {
                     Label {
-                        Text(verbatim: workspaceAttachmentStatus.message)
+                        Text(verbatim: attachmentValidationStatus.message)
                             .lineLimit(2)
                     } icon: {
                         Image(
-                            systemName: workspaceAttachmentStatus.isFailure
+                            systemName: attachmentValidationStatus.isFailure
                                 ? "xmark.octagon"
                                 : "checkmark.circle"
                         )
                     }
                         .font(.system(size: 12))
-                        .foregroundStyle(workspaceAttachmentStatus.isFailure ? Color.red : Color.secondary)
+                        .foregroundStyle(attachmentValidationStatus.isFailure ? Color.red : Color.secondary)
                 }
             }
         }
@@ -585,16 +585,16 @@ struct BusinessDocumentStudioView: View {
         }
     }
 
-    private func prepareWorkspaceAttachment() {
+    private func validateAttachmentPayload() {
         do {
-            let attachment = try presenter.makeWorkspaceAttachment()
+            let attachment = try presenter.makeAttachmentPayloadForValidation()
             let filename = attachment.filename ?? "structured document"
-            workspaceAttachmentStatus = WorkspaceAttachmentStatus(
+            attachmentValidationStatus = AttachmentValidationStatus(
                 message: "Attachment payload validated for \(filename); no chat or workspace state changed.",
                 isFailure: false
             )
         } catch {
-            workspaceAttachmentStatus = WorkspaceAttachmentStatus(
+            attachmentValidationStatus = AttachmentValidationStatus(
                 message: error.localizedDescription,
                 isFailure: true
             )
@@ -666,7 +666,7 @@ struct BusinessDocumentStudioView: View {
     }
 }
 
-private struct WorkspaceAttachmentStatus: Equatable {
+private struct AttachmentValidationStatus: Equatable {
     let message: String
     let isFailure: Bool
 }

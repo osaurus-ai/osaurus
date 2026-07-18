@@ -91,14 +91,14 @@ struct BusinessDocumentStudioPresenterTests {
         #expect(failure.message.contains("Document read failed"))
     }
 
-    @Test func workbookValidationBlockedExportIsPresented() throws {
+    @Test func workbookValidationBlockedExportIsPresented() async throws {
         let registry = DocumentFormatRegistry()
         registry.register(emitter: XLSXEmitter())
         let presenter = BusinessDocumentStudioPresenter(
             service: BusinessDocumentStudioService(registry: registry)
         )
 
-        try presenter.load(document: Self.workbookDocument(includeFormula: true))
+        try await presenter.load(document: Self.workbookDocument(includeFormula: true))
 
         let presentation = try Self.loadedPresentation(from: presenter)
         let xlsx = try #require(presentation.exportOptions.first { $0.targetFormatId == "xlsx" })
@@ -124,7 +124,7 @@ struct BusinessDocumentStudioPresenterTests {
         let target = outputDirectory.appendingPathComponent("report.pdf")
         defer { try? FileManager.default.removeItem(at: outputDirectory) }
 
-        try presenter.load(document: Self.pdfDocument())
+        try await presenter.load(document: Self.pdfDocument())
         let presentation = try Self.loadedPresentation(from: presenter)
 
         let pdf = try #require(presentation.exportOptions.first { $0.targetFormatId == "pdf" })
@@ -150,17 +150,17 @@ struct BusinessDocumentStudioPresenterTests {
         #expect(status.safetyLabel == "No artifact written")
     }
 
-    @Test func workspaceAttachmentHandoffProducesStructuredDocumentAttachment() throws {
+    @Test func attachmentPayloadValidationProducesStructuredDocumentAttachment() async throws {
         let presenter = BusinessDocumentStudioPresenter(
             service: BusinessDocumentStudioService(registry: DocumentFormatRegistry())
         )
 
-        try presenter.load(document: Self.pdfDocument())
+        try await presenter.load(document: Self.pdfDocument())
 
         let presentation = try Self.loadedPresentation(from: presenter)
         #expect(presentation.isAttachmentHandoffAvailable)
 
-        let attachment = try presenter.makeWorkspaceAttachment()
+        let attachment = try presenter.makeAttachmentPayloadForValidation()
 
         #expect(attachment.filename == "report.pdf")
         #expect(attachment.structuredDocumentMetadata?.formatId == "pdf")
@@ -168,23 +168,23 @@ struct BusinessDocumentStudioPresenterTests {
         #expect(attachment.businessDocumentSummary?.chipDetailLabel.contains("PDF") == true)
     }
 
-    @Test func emptyTextFallbackShowsUnavailableHandoffAndBlocksAttachmentCreation() throws {
+    @Test func emptyTextFallbackShowsUnavailableValidationAndBlocksAttachmentCreation() async throws {
         let presenter = BusinessDocumentStudioPresenter(
             service: BusinessDocumentStudioService(registry: DocumentFormatRegistry())
         )
 
-        try presenter.load(document: Self.plainTextDocument(text: ""))
+        try await presenter.load(document: Self.plainTextDocument(text: ""))
 
         let presentation = try Self.loadedPresentation(from: presenter)
-        #expect(presentation.businessRows.contains(.init(label: "Workspace handoff", value: "Unavailable")))
+        #expect(presentation.businessRows.contains(.init(label: "Attachment validation", value: "Unavailable")))
         #expect(presentation.handoffRows.contains(.init(label: "Status", value: "Unavailable")))
         #expect(!presentation.isAttachmentHandoffAvailable)
         let fallbackRow = try #require(presentation.handoffRows.first { $0.label == "Text fallback" })
         #expect(fallbackRow.value.contains("0") || fallbackRow.value.lowercased().contains("zero"))
 
         do {
-            _ = try presenter.makeWorkspaceAttachment()
-            Issue.record("Expected empty text fallback to block workspace attachment creation")
+            _ = try presenter.makeAttachmentPayloadForValidation()
+            Issue.record("Expected empty text fallback to block attachment payload validation")
         } catch BusinessDocumentStudioPresenterError.attachmentHandoffUnavailable(let message) {
             #expect(message.contains("non-empty text fallback"))
         } catch {
@@ -192,12 +192,12 @@ struct BusinessDocumentStudioPresenterTests {
         }
     }
 
-    @Test func presentationPreviewSurfacesSlideExtractionAndMissingEmitter() throws {
+    @Test func presentationPreviewSurfacesSlideExtractionAndMissingEmitter() async throws {
         let presenter = BusinessDocumentStudioPresenter(
             service: BusinessDocumentStudioService(registry: DocumentFormatRegistry())
         )
 
-        try presenter.load(document: Self.presentationDocument())
+        try await presenter.load(document: Self.presentationDocument())
 
         let presentation = try Self.loadedPresentation(from: presenter)
         #expect(presentation.importRows.contains(.init(label: "Document kind", value: "Slides")))
@@ -212,12 +212,12 @@ struct BusinessDocumentStudioPresenterTests {
         #expect(pptx.statusLabel == "Missing emitter")
     }
 
-    @Test func pdfAndSlideTableExtractionSummariesSurfaceSampledTables() throws {
+    @Test func pdfAndSlideTableExtractionSummariesSurfaceSampledTables() async throws {
         let presenter = BusinessDocumentStudioPresenter(
             service: BusinessDocumentStudioService(registry: DocumentFormatRegistry())
         )
 
-        try presenter.load(document: Self.pdfDocumentWithTable())
+        try await presenter.load(document: Self.pdfDocumentWithTable())
 
         var presentation = try Self.loadedPresentation(from: presenter)
         #expect(presentation.businessRows.contains(.init(label: "Tables", value: "1")))
@@ -230,7 +230,7 @@ struct BusinessDocumentStudioPresenterTests {
             row.label == "Table row 1" && row.value == "Region | Revenue"
         } == true)
 
-        try presenter.load(document: Self.presentationDocument(includeTable: true))
+        try await presenter.load(document: Self.presentationDocument(includeTable: true))
 
         presentation = try Self.loadedPresentation(from: presenter)
         #expect(presentation.businessRows.contains(.init(label: "Tables", value: "1")))
@@ -253,7 +253,7 @@ struct BusinessDocumentStudioPresenterTests {
         let target = outputDirectory.appendingPathComponent("notes.txt")
         defer { try? FileManager.default.removeItem(at: outputDirectory) }
 
-        try presenter.load(document: Self.plainTextDocument())
+        try await presenter.load(document: Self.plainTextDocument())
         let presentation = try Self.loadedPresentation(from: presenter)
         let text = try #require(presentation.exportOptions.first { $0.targetFormatId == "txt" })
         #expect(text.canExport)
@@ -284,7 +284,7 @@ struct BusinessDocumentStudioPresenterTests {
         try "private".write(to: target, atomically: true, encoding: .utf8)
         defer { try? FileManager.default.removeItem(at: outputDirectory) }
 
-        try presenter.load(document: Self.plainTextDocument())
+        try await presenter.load(document: Self.plainTextDocument())
         await presenter.export(optionID: "txt", to: target, allowedDirectory: outputDirectory)
 
         guard case .awaitingOverwriteConsent(let request) = presenter.exportState else {
@@ -318,7 +318,7 @@ struct BusinessDocumentStudioPresenterTests {
         try "old".write(to: target, atomically: true, encoding: .utf8)
         defer { try? FileManager.default.removeItem(at: outputDirectory) }
 
-        try presenter.load(document: Self.plainTextDocument())
+        try await presenter.load(document: Self.plainTextDocument())
         await presenter.export(optionID: "txt", to: target, allowedDirectory: outputDirectory)
 
         guard case .awaitingOverwriteConsent = presenter.exportState else {
@@ -351,7 +351,7 @@ struct BusinessDocumentStudioPresenterTests {
             try? FileManager.default.removeItem(at: outsideDirectory)
         }
 
-        try presenter.load(document: Self.plainTextDocument())
+        try await presenter.load(document: Self.plainTextDocument())
         await presenter.export(optionID: "txt", to: target, allowedDirectory: allowedDirectory)
 
         guard case .blocked(let block) = presenter.exportState else {
@@ -372,7 +372,7 @@ struct BusinessDocumentStudioPresenterTests {
         let target = outputDirectory.appendingPathComponent("fake.pdf")
         defer { try? FileManager.default.removeItem(at: outputDirectory) }
 
-        try presenter.load(document: Self.plainTextDocument())
+        try await presenter.load(document: Self.plainTextDocument())
         await presenter.export(optionID: "txt", to: target, allowedDirectory: outputDirectory)
 
         guard case .blocked(let block) = presenter.exportState else {
@@ -397,7 +397,7 @@ struct BusinessDocumentStudioPresenterTests {
         try "old".write(to: target, atomically: true, encoding: .utf8)
         defer { try? FileManager.default.removeItem(at: outputDirectory) }
 
-        try presenter.load(document: Self.plainTextDocument())
+        try await presenter.load(document: Self.plainTextDocument())
         await presenter.export(optionID: "txt", to: target, allowedDirectory: outputDirectory)
 
         guard case .awaitingOverwriteConsent = presenter.exportState else {
@@ -425,7 +425,7 @@ struct BusinessDocumentStudioPresenterTests {
         let target = outputDirectory.appendingPathComponent("fake.pdf")
         defer { try? FileManager.default.removeItem(at: outputDirectory) }
 
-        try presenter.load(document: Self.plainTextDocument())
+        try await presenter.load(document: Self.plainTextDocument())
         await presenter.export(optionID: "txt", to: target, allowedDirectory: outputDirectory)
         await presenter.export(optionID: "txt", to: target, allowedDirectory: outputDirectory)
 
@@ -441,7 +441,7 @@ struct BusinessDocumentStudioPresenterTests {
         let outputDirectory = try Self.temporaryDirectory()
         defer { try? FileManager.default.removeItem(at: outputDirectory) }
 
-        try presenter.load(document: Self.plainTextDocument())
+        try await presenter.load(document: Self.plainTextDocument())
         for index in 0..<12 {
             let target = outputDirectory.appendingPathComponent("artifact-\(index).txt")
             await presenter.export(optionID: "txt", to: target, allowedDirectory: outputDirectory)
@@ -508,7 +508,7 @@ struct BusinessDocumentStudioPresenterTests {
         #expect(presentation.importRows.contains { $0.label == "Source" && $0.value == secondURL.path })
     }
 
-    @Test func staleExportCompletionCannotPublishAfterDocumentSwitch() async throws {
+    @Test func documentSwitchCancelsAndJoinsExportWithoutWritingOldDestination() async throws {
         let gate = BusinessDocumentStudioExportGate()
         let registry = DocumentFormatRegistry()
         registry.register(emitter: SuspendedPDFEmitter(gate: gate))
@@ -517,30 +517,43 @@ struct BusinessDocumentStudioPresenterTests {
         )
         let outputDirectory = try Self.temporaryDirectory()
         let target = outputDirectory.appendingPathComponent("stale.pdf")
+        let originalBytes = Data("original-pdf".utf8)
+        try originalBytes.write(to: target)
         defer { try? FileManager.default.removeItem(at: outputDirectory) }
 
-        try presenter.load(document: Self.pdfDocument())
+        try await presenter.load(document: Self.pdfDocument())
         let export = Task {
-            await presenter.export(optionID: "pdf", to: target, allowedDirectory: outputDirectory)
+            await presenter.export(
+                optionID: "pdf",
+                to: target,
+                allowedDirectory: outputDirectory,
+                allowOverwrite: true
+            )
         }
         await gate.waitUntilStarted()
         #expect(presenter.isExportInProgress)
 
-        try presenter.load(
-            document: Self.plainTextDocument(text: "replacement", filename: "replacement.txt")
-        )
-        #expect(!presenter.isExportInProgress)
-        #expect(presenter.exportState == .idle)
-        #expect(presenter.artifactStatuses.isEmpty)
-        #expect(try Self.loadedPresentation(from: presenter).title == "replacement.txt")
+        let replacementLoad = Task {
+            try await presenter.load(
+                document: Self.plainTextDocument(text: "replacement", filename: "replacement.txt")
+            )
+        }
+        await gate.waitUntilCancellationObserved()
+
+        #expect(presenter.isExportInProgress)
+        #expect(try Data(contentsOf: target) == originalBytes)
 
         await gate.releaseAll()
+        try await replacementLoad.value
         #expect(await export.value)
 
         #expect(!presenter.isExportInProgress)
         #expect(presenter.exportState == .idle)
         #expect(presenter.artifactStatuses.isEmpty)
         #expect(try Self.loadedPresentation(from: presenter).title == "replacement.txt")
+        #expect(try Data(contentsOf: target) == originalBytes)
+        let remainingNames = try FileManager.default.contentsOfDirectory(atPath: outputDirectory.path)
+        #expect(!remainingNames.contains { $0.contains(".osaurus-export-") })
     }
 
     @Test func activeExportRejectsConcurrentExportAndOverwriteActions() async throws {
@@ -556,7 +569,7 @@ struct BusinessDocumentStudioPresenterTests {
         try Data("existing".utf8).write(to: target)
         defer { try? FileManager.default.removeItem(at: outputDirectory) }
 
-        try presenter.load(document: Self.pdfDocument())
+        try await presenter.load(document: Self.pdfDocument())
         #expect(await presenter.export(optionID: "pdf", to: target, allowedDirectory: outputDirectory))
         guard case .awaitingOverwriteConsent(let request) = presenter.exportState else {
             Issue.record("Expected overwrite consent state, got \(presenter.exportState)")
@@ -604,14 +617,14 @@ struct BusinessDocumentStudioPresenterTests {
         try "existing".write(to: target, atomically: true, encoding: .utf8)
         defer { try? FileManager.default.removeItem(at: outputDirectory) }
 
-        try presenter.load(document: Self.plainTextDocument())
+        try await presenter.load(document: Self.plainTextDocument())
         #expect(await presenter.export(optionID: "txt", to: target, allowedDirectory: outputDirectory))
         guard case .awaitingOverwriteConsent(let request) = presenter.exportState else {
             Issue.record("Expected overwrite consent state, got \(presenter.exportState)")
             return
         }
 
-        try presenter.load(
+        try await presenter.load(
             document: Self.plainTextDocument(text: "replacement", filename: "replacement.txt")
         )
         let staleConfirmation = await presenter.confirmPendingOverwrite(requestID: request.id)
@@ -625,14 +638,14 @@ struct BusinessDocumentStudioPresenterTests {
         #expect(try String(contentsOf: target, encoding: .utf8) == "existing")
     }
 
-    @Test func presentationRowsUseStableUniqueIdentifiers() throws {
+    @Test func presentationRowsUseStableUniqueIdentifiers() async throws {
         let registry = DocumentFormatRegistry()
         registry.register(emitter: XLSXEmitter())
         let presenter = BusinessDocumentStudioPresenter(
             service: BusinessDocumentStudioService(registry: registry)
         )
 
-        try presenter.load(document: Self.workbookDocument())
+        try await presenter.load(document: Self.workbookDocument())
 
         let presentation = try Self.loadedPresentation(from: presenter)
         #expect(Set(presentation.summaryRows.map(\.id)).count == presentation.summaryRows.count)
@@ -1030,8 +1043,10 @@ private struct SuspendedBusinessDocumentAdapter: DocumentFormatAdapter {
 private actor BusinessDocumentStudioExportGate {
     private var invocationCount = 0
     private var isReleased = false
+    private var didObserveCancellation = false
     private var startWaiters: [CheckedContinuation<Void, Never>] = []
     private var releaseWaiters: [CheckedContinuation<Void, Never>] = []
+    private var cancellationWaiters: [CheckedContinuation<Void, Never>] = []
 
     func suspend() async {
         invocationCount += 1
@@ -1039,8 +1054,12 @@ private actor BusinessDocumentStudioExportGate {
         startWaiters.removeAll()
         waiters.forEach { $0.resume() }
         guard !isReleased else { return }
-        await withCheckedContinuation { continuation in
-            releaseWaiters.append(continuation)
+        await withTaskCancellationHandler {
+            await withCheckedContinuation { continuation in
+                releaseWaiters.append(continuation)
+            }
+        } onCancel: {
+            Task { await self.recordCancellation() }
         }
     }
 
@@ -1048,6 +1067,13 @@ private actor BusinessDocumentStudioExportGate {
         guard invocationCount == 0 else { return }
         await withCheckedContinuation { continuation in
             startWaiters.append(continuation)
+        }
+    }
+
+    func waitUntilCancellationObserved() async {
+        guard !didObserveCancellation else { return }
+        await withCheckedContinuation { continuation in
+            cancellationWaiters.append(continuation)
         }
     }
 
@@ -1061,6 +1087,13 @@ private actor BusinessDocumentStudioExportGate {
     func callCount() -> Int {
         invocationCount
     }
+
+    private func recordCancellation() {
+        didObserveCancellation = true
+        let waiters = cancellationWaiters
+        cancellationWaiters.removeAll()
+        waiters.forEach { $0.resume() }
+    }
 }
 
 private struct SuspendedPDFEmitter: DocumentFormatEmitter {
@@ -1073,6 +1106,8 @@ private struct SuspendedPDFEmitter: DocumentFormatEmitter {
 
     func emit(_ document: StructuredDocument, to url: URL) async throws {
         await gate.suspend()
+        // Deliberately ignore cancellation. The production service must keep
+        // this late write confined to staging rather than the selected path.
         try Data("fixture-pdf".utf8).write(to: url, options: .atomic)
     }
 }

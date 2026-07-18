@@ -34,12 +34,22 @@ representation:
   tables with row/column/cell counts and a first sampled row where available.
 - PDF and slide preview sections include sampled table rows, not just table
   counts, so users can verify extracted structure before exporting.
-- Workspace attachment handoff is surfaced through the existing
-  `Attachment.structuredDocument(_:)` API. The workbench reports whether a text
-  fallback is available and can create an attachment that carries structured
-  document metadata without touching workspace routing code. Empty text
-  fallbacks are reported as unavailable and attachment creation fails with a
-  typed workbench error instead of creating a misleading empty attachment.
+- Attachment payload validation uses the existing
+  `Attachment.structuredDocument(_:)` API in memory. The workbench reports
+  whether a text fallback is available and validates the structured metadata
+  payload without injecting it into chat or changing workspace state. Empty
+  text fallbacks are reported as unavailable and validation fails with a typed
+  workbench error instead of creating a misleading empty attachment.
+
+### Relationship to chat file changes (#2078)
+
+- A workbench export is an explicit user save to the selected destination. It
+  does not run through chat agent tools, writable combined-mode path routing,
+  or `SandboxWorkspaceChangeTracker`, so it does not appear in the chat
+  Changes sheet and does not claim chat-scoped undo support.
+- Attachment payload validation constructs and checks an attachment in memory.
+  It does not add the attachment to a chat, write into either workspace, or
+  activate #2078's host-folder write mode.
 
 ## Export and Artifacts
 

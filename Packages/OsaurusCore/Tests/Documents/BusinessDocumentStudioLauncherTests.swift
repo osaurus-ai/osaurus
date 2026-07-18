@@ -64,6 +64,34 @@ struct BusinessDocumentStudioLauncherTests {
         #expect(cache.sourceURL(for: secondWindow) == secondSource.standardizedFileURL)
     }
 
+    @Test func sourceAndSymlinkAliasShareOneWindowIdentity() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("business-document-source-\(UUID().uuidString)", isDirectory: true)
+        let source = directory.appendingPathComponent("report.pdf")
+        let alias = directory.appendingPathComponent("report-alias.pdf")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        try Data("fixture".utf8).write(to: source)
+        try FileManager.default.createSymbolicLink(at: alias, withDestinationURL: source)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let cache = BusinessDocumentStudioWindowCache<WindowToken>()
+        let sourceWindow = WindowToken()
+        let aliasWindow = WindowToken()
+        guard case .claimed = cache.claim(source, for: sourceWindow) else {
+            Issue.record("Expected the source window claim to succeed")
+            return
+        }
+        guard case .occupied(let owner) = cache.claim(alias, for: aliasWindow) else {
+            Issue.record("Expected the symlink alias to resolve to the existing owner")
+            return
+        }
+
+        #expect(owner === sourceWindow)
+        #expect(cache.window(for: alias) === sourceWindow)
+        #expect(cache.sourceURL(for: sourceWindow) == source.resolvingSymlinksInPath().standardizedFileURL)
+        #expect(BusinessDocumentStudioSourceIdentity.standardized(alias) == source.resolvingSymlinksInPath())
+    }
+
     @Test func sourceTransitionRequiresClaimBeforeReturningAcceptedURL() {
         let selected = URL(fileURLWithPath: "/tmp/folder/../report.pdf")
         var claimedURL: URL?

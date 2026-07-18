@@ -105,7 +105,7 @@ public enum BusinessDocumentStudioLauncher {
 
 enum BusinessDocumentStudioSourceIdentity {
     static func standardized(_ url: URL) -> URL {
-        url.standardizedFileURL
+        url.standardizedFileURL.resolvingSymlinksInPath().standardizedFileURL
     }
 
     static func acceptedSourceURL(

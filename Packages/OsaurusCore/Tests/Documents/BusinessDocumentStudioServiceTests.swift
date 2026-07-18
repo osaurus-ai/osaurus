@@ -304,6 +304,113 @@ struct BusinessDocumentStudioServiceTests {
         #expect(!FileManager.default.fileExists(atPath: missingOutside.path))
     }
 
+    @Test func exportRejectsExistingSymlinkLeafEscapingAllowedDirectory() async throws {
+        let service = BusinessDocumentStudioService(registry: DocumentFormatRegistry())
+        let outputDirectory = try Self.temporaryDirectory()
+        let outsideDirectory = try Self.temporaryDirectory()
+        let outsideTarget = outsideDirectory.appendingPathComponent("private.txt")
+        let symlink = outputDirectory.appendingPathComponent("report.txt")
+        try "private".write(to: outsideTarget, atomically: true, encoding: .utf8)
+        try FileManager.default.createSymbolicLink(at: symlink, withDestinationURL: outsideTarget)
+        defer {
+            try? FileManager.default.removeItem(at: outputDirectory)
+            try? FileManager.default.removeItem(at: outsideDirectory)
+        }
+
+        do {
+            _ = try await service.export(
+                Self.plainTextDocument(text: "replacement"),
+                as: "txt",
+                to: symlink,
+                policy: BusinessDocumentStudioExportPolicy(
+                    allowedDirectory: outputDirectory,
+                    allowOverwrite: true
+                )
+            )
+            Issue.record("Expected an escaping symlink leaf to be rejected")
+        } catch BusinessDocumentStudioError.destinationOutsideAllowedDirectory(let url) {
+            #expect(url == symlink)
+        } catch {
+            Issue.record("Expected destinationOutsideAllowedDirectory, got \(error)")
+        }
+
+        #expect(try String(contentsOf: outsideTarget, encoding: .utf8) == "private")
+        #expect(try symlink.resourceValues(forKeys: [.isSymbolicLinkKey]).isSymbolicLink == true)
+    }
+
+    @Test func exportAllowsExistingSymlinkLeafResolvingWithinAllowedDirectory() async throws {
+        let service = BusinessDocumentStudioService(registry: DocumentFormatRegistry())
+        let outputDirectory = try Self.temporaryDirectory()
+        let inRootTarget = outputDirectory.appendingPathComponent("stored.txt")
+        let symlink = outputDirectory.appendingPathComponent("report.txt")
+        try "stored".write(to: inRootTarget, atomically: true, encoding: .utf8)
+        try FileManager.default.createSymbolicLink(at: symlink, withDestinationURL: inRootTarget)
+        defer { try? FileManager.default.removeItem(at: outputDirectory) }
+
+        let result = try await service.export(
+            Self.plainTextDocument(text: "replacement"),
+            as: "txt",
+            to: symlink,
+            policy: BusinessDocumentStudioExportPolicy(
+                allowedDirectory: outputDirectory,
+                allowOverwrite: true
+            )
+        )
+
+        #expect(result.url == symlink)
+        #expect(try String(contentsOf: symlink, encoding: .utf8) == "replacement")
+        #expect(try String(contentsOf: inRootTarget, encoding: .utf8) == "stored")
+        #expect(try symlink.resourceValues(forKeys: [.isSymbolicLinkKey]).isSymbolicLink == false)
+    }
+
+    @Test func exportTreatsVarAndPrivateVarAsSameAllowedDirectory() async throws {
+        let directoryName = "business-document-studio-firmlink-\(UUID().uuidString)"
+        let privateRoot = URL(fileURLWithPath: "/private/var/tmp")
+            .appendingPathComponent(directoryName, isDirectory: true)
+        let varRoot = URL(fileURLWithPath: "/var/tmp")
+            .appendingPathComponent(directoryName, isDirectory: true)
+        try FileManager.default.createDirectory(at: privateRoot, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: privateRoot) }
+
+        let target = varRoot.appendingPathComponent("report.txt")
+        let result = try await BusinessDocumentStudioService(registry: DocumentFormatRegistry()).export(
+            Self.plainTextDocument(text: "firmlink-safe"),
+            as: "txt",
+            to: target,
+            policy: BusinessDocumentStudioExportPolicy(allowedDirectory: privateRoot)
+        )
+
+        #expect(result.url == target)
+        #expect(try String(contentsOf: target, encoding: .utf8) == "firmlink-safe")
+    }
+
+    @Test func destinationAppearingDuringRenderIsNotOverwrittenWithoutConsent() async throws {
+        let outputDirectory = try Self.temporaryDirectory()
+        let target = outputDirectory.appendingPathComponent("raced.pdf")
+        let registry = DocumentFormatRegistry()
+        registry.register(emitter: DestinationCreatingPDFEmitter(finalURL: target))
+        let service = BusinessDocumentStudioService(registry: registry)
+        defer { try? FileManager.default.removeItem(at: outputDirectory) }
+
+        do {
+            _ = try await service.export(
+                Self.pdfDocument(),
+                as: "pdf",
+                to: target,
+                policy: BusinessDocumentStudioExportPolicy(allowedDirectory: outputDirectory)
+            )
+            Issue.record("Expected the raced destination to retain exclusive ownership")
+        } catch BusinessDocumentStudioError.destinationAlreadyExists(let url) {
+            #expect(url == target)
+        } catch {
+            Issue.record("Expected destinationAlreadyExists, got \(error)")
+        }
+
+        #expect(try String(contentsOf: target, encoding: .utf8) == "racer")
+        let remainingNames = try FileManager.default.contentsOfDirectory(atPath: outputDirectory.path)
+        #expect(!remainingNames.contains { $0.contains(".osaurus-export-") })
+    }
+
     @Test func inspectPDFWrapsPreviewAndMissingEmitterExportOption() throws {
         let service = BusinessDocumentStudioService(registry: DocumentFormatRegistry())
         let inspection = try service.inspect(Self.pdfDocument())
@@ -512,5 +619,19 @@ private struct StubPackageEmitter: DocumentFormatEmitter {
 
     func emit(_ document: StructuredDocument, to url: URL) async throws {
         try Data("emitted:\(formatId)".utf8).write(to: url, options: .atomic)
+    }
+}
+
+private struct DestinationCreatingPDFEmitter: DocumentFormatEmitter {
+    let finalURL: URL
+    let formatId = "pdf"
+
+    func canEmit(_ document: StructuredDocument) -> Bool {
+        document.representation.underlying is PDFDocumentRepresentation
+    }
+
+    func emit(_ document: StructuredDocument, to url: URL) async throws {
+        try Data("rendered".utf8).write(to: url, options: .atomic)
+        try Data("racer".utf8).write(to: finalURL, options: .atomic)
     }
 }

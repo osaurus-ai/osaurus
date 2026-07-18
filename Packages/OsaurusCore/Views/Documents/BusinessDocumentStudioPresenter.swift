@@ -38,7 +38,8 @@ final class BusinessDocumentStudioPresenter: ObservableObject {
     private var inspection: BusinessDocumentStudioInspection?
     private var pendingOverwrite: PendingExport?
     private var documentGeneration = UUID()
-    private var activeExportRequest: ExportRequest?
+    private var activeDocumentTransition: UUID?
+    private var activeExport: ActiveExport?
 
     init(service: BusinessDocumentStudioService = BusinessDocumentStudioService()) {
         self.service = service
@@ -48,6 +49,10 @@ final class BusinessDocumentStudioPresenter: ObservableObject {
         url: URL,
         policy: BusinessDocumentStudioPolicy = .standard
     ) async {
+        let transition = registerDocumentTransition()
+        defer { finishDocumentTransition(transition) }
+        await cancelActiveExportAndWait()
+        guard !Task.isCancelled, transition == activeDocumentTransition else { return }
         let generation = beginDocumentTransition(loadState: .loading(url))
 
         do {
@@ -71,7 +76,12 @@ final class BusinessDocumentStudioPresenter: ObservableObject {
         document: StructuredDocument,
         sourceURL: URL? = nil,
         policy: BusinessDocumentStudioPolicy = .standard
-    ) throws {
+    ) async throws {
+        let transition = registerDocumentTransition()
+        defer { finishDocumentTransition(transition) }
+        await cancelActiveExportAndWait()
+        try Task.checkCancellation()
+        guard transition == activeDocumentTransition else { return }
         let inspection = try service.inspect(document, policy: policy)
         let generation = beginDocumentTransition(loadState: .idle)
         commit(
@@ -90,7 +100,7 @@ final class BusinessDocumentStudioPresenter: ObservableObject {
         allowOverwrite: Bool = false,
         maxTextExportUTF8Bytes: Int = BusinessDocumentStudioExportPolicy.standard.maxTextExportUTF8Bytes
     ) async -> Bool {
-        guard activeExportRequest == nil else { return false }
+        guard activeDocumentTransition == nil, activeExport == nil else { return false }
         guard let document, let inspection else {
             exportState = .failed("No document is loaded.")
             return false
@@ -115,8 +125,30 @@ final class BusinessDocumentStudioPresenter: ObservableObject {
             return false
         }
 
+        do {
+            try service.validateDestination(
+                destination,
+                policy: BusinessDocumentStudioExportPolicy(
+                    allowedDirectory: allowedDirectory,
+                    allowOverwrite: true,
+                    maxTextExportUTF8Bytes: maxTextExportUTF8Bytes
+                )
+            )
+        } catch let error as BusinessDocumentStudioError {
+            let mapped = mapServiceError(error, optionID: option.targetFormatId)
+            exportState = mapped
+            appendArtifactStatus(
+                BusinessDocumentStudioArtifactStatus(exportState: mapped, optionID: option.targetFormatId)
+            )
+            return false
+        } catch {
+            let message = error.localizedDescription
+            exportState = .failed(message)
+            appendArtifactStatus(.failed(optionID: option.targetFormatId, message: message, path: destination.path))
+            return false
+        }
+
         if !allowOverwrite,
-            Self.canCheckExistence(destination: destination, allowedDirectory: allowedDirectory),
             FileManager.default.fileExists(atPath: destination.path) {
             let request = BusinessDocumentStudioOverwriteRequest(
                 optionID: option.targetFormatId,
@@ -132,12 +164,8 @@ final class BusinessDocumentStudioPresenter: ObservableObject {
         }
 
         let exportRequest = ExportRequest(documentGeneration: documentGeneration)
-        activeExportRequest = exportRequest
-        isExportInProgress = true
-        exportState = .exporting(optionID: option.targetFormatId)
-
-        do {
-            let result = try await service.export(
+        let exportTask = Task { [service] in
+            try await service.export(
                 document,
                 as: option.targetFormatId,
                 to: destination,
@@ -147,10 +175,20 @@ final class BusinessDocumentStudioPresenter: ObservableObject {
                     maxTextExportUTF8Bytes: maxTextExportUTF8Bytes
                 )
             )
+        }
+        activeExport = ActiveExport(request: exportRequest, task: exportTask)
+        isExportInProgress = true
+        exportState = .exporting(optionID: option.targetFormatId)
+
+        do {
+            let result = try await exportTask.value
             guard complete(exportRequest) else { return true }
             let receipt = BusinessDocumentStudioExportReceipt(result: result)
             exportState = .succeeded(receipt)
             appendArtifactStatus(BusinessDocumentStudioArtifactStatus(receipt: receipt))
+        } catch is CancellationError {
+            guard complete(exportRequest) else { return true }
+            exportState = .idle
         } catch let error as BusinessDocumentStudioError {
             guard complete(exportRequest) else { return true }
             let mapped = mapServiceError(error, optionID: option.targetFormatId)
@@ -171,7 +209,7 @@ final class BusinessDocumentStudioPresenter: ObservableObject {
 
     @discardableResult
     func confirmPendingOverwrite(requestID: UUID? = nil) async -> Bool {
-        guard activeExportRequest == nil else { return false }
+        guard activeExport == nil else { return false }
         guard let pendingOverwrite else {
             if requestID == nil {
                 exportState = .failed("No overwrite is waiting for confirmation.")
@@ -194,7 +232,7 @@ final class BusinessDocumentStudioPresenter: ObservableObject {
 
     @discardableResult
     func cancelPendingOverwrite(requestID: UUID? = nil) -> Bool {
-        guard activeExportRequest == nil else { return false }
+        guard activeExport == nil else { return false }
         guard let pendingOverwrite else {
             if requestID == nil {
                 exportState = .idle
@@ -220,7 +258,7 @@ final class BusinessDocumentStudioPresenter: ObservableObject {
         return true
     }
 
-    func makeWorkspaceAttachment() throws -> Attachment {
+    func makeAttachmentPayloadForValidation() throws -> Attachment {
         guard let document else {
             throw BusinessDocumentStudioPresenterError.noDocumentLoaded
         }
@@ -329,12 +367,35 @@ final class BusinessDocumentStudioPresenter: ObservableObject {
         }
     }
 
-    /// Starting a new document abandons prior async ownership. Late callbacks
-    /// can still finish their file work, but cannot publish into this generation.
+    private func registerDocumentTransition() -> UUID {
+        let transition = UUID()
+        activeDocumentTransition = transition
+        return transition
+    }
+
+    private func finishDocumentTransition(_ transition: UUID) {
+        guard activeDocumentTransition == transition else { return }
+        activeDocumentTransition = nil
+    }
+
+    /// A document transition cannot revoke an emitter synchronously. Cancel
+    /// and join the task while the main actor remains suspended; the service's
+    /// staging contract keeps an emitter that ignores cancellation away from
+    /// the selected destination until this join finishes.
+    private func cancelActiveExportAndWait() async {
+        guard let activeExport else { return }
+        activeExport.task.cancel()
+        _ = try? await activeExport.task.value
+        guard self.activeExport?.request == activeExport.request else { return }
+        self.activeExport = nil
+        isExportInProgress = false
+    }
+
+    /// Starting a new document occurs only after prior export ownership has
+    /// been joined, so resetting presentation state cannot hide pending writes.
     private func beginDocumentTransition(loadState: LoadState) -> UUID {
         let generation = UUID()
         documentGeneration = generation
-        activeExportRequest = nil
         isExportInProgress = false
         document = nil
         inspection = nil
@@ -360,12 +421,12 @@ final class BusinessDocumentStudioPresenter: ObservableObject {
     /// Only the request that still owns the current generation may publish a
     /// completion. A newer export or document transition makes this a no-op.
     private func complete(_ request: ExportRequest) -> Bool {
-        guard activeExportRequest == request,
+        guard activeExport?.request == request,
             request.documentGeneration == documentGeneration
         else {
             return false
         }
-        activeExportRequest = nil
+        activeExport = nil
         isExportInProgress = false
         return true
     }
@@ -381,14 +442,6 @@ final class BusinessDocumentStudioPresenter: ObservableObject {
         artifactStatuses.removeAll { $0.id == pendingStatusID }
     }
 
-    private static func canCheckExistence(destination: URL, allowedDirectory: URL?) -> Bool {
-        guard destination.isFileURL else { return false }
-        guard let allowedDirectory else { return true }
-        let root = allowedDirectory.standardizedFileURL.resolvingSymlinksInPath().path
-        let parent = destination.deletingLastPathComponent().standardizedFileURL.resolvingSymlinksInPath().path
-        return parent == root || parent.hasPrefix(root + "/")
-    }
-
     private struct PendingExport: Equatable {
         let request: BusinessDocumentStudioOverwriteRequest
         let documentGeneration: UUID
@@ -397,6 +450,11 @@ final class BusinessDocumentStudioPresenter: ObservableObject {
     private struct ExportRequest: Equatable {
         let id = UUID()
         let documentGeneration: UUID
+    }
+
+    private struct ActiveExport {
+        let request: ExportRequest
+        let task: Task<BusinessDocumentStudioExportResult, any Error>
     }
 }
 
@@ -499,7 +557,7 @@ struct BusinessDocumentStudioPresentation: Equatable {
             ("Extraction summary", summary.headline),
             ("Fields", "\(summary.fields.count)"),
             ("Tables", "\(summary.tables.count)"),
-            ("Workspace handoff", summary.attachmentHandoff.isAvailable ? "Available" : "Unavailable"),
+            ("Attachment validation", summary.attachmentHandoff.isAvailable ? "Available" : "Unavailable"),
         ])
     }
 
