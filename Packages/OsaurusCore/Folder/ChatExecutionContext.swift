@@ -120,6 +120,15 @@ public enum ChatExecutionContext {
     /// when `hostReadOnlyScope` is non-nil.
     @TaskLocal public static var allowHostSecretReads: Bool = false
 
+    /// Combined-mode write grant: `true` when the active agent's
+    /// `allowHostFolderWrites` opt-in is on for the current execution.
+    /// Bound by `ToolRegistry.execute` alongside `hostReadOnlyScope` so
+    /// tool BODIES that route by path (`file_copy`) can gate host-bound
+    /// destinations at execute time — schema visibility alone can't,
+    /// because the same tool serves both directions. `false` in every
+    /// other mode (and in read-only combined mode).
+    @TaskLocal public static var allowHostFolderWrites: Bool = false
+
     /// Sandbox identity for combined mode, letting the unified host
     /// `file_*` tools serve an absolute `/workspace/...` path from the
     /// Linux sandbox (path-routed file access). Bound by

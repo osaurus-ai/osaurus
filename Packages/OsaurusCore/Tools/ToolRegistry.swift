@@ -450,7 +450,7 @@ public final class ToolRegistry: ObservableObject {
     /// list below stays a derived union with a single source of truth per
     /// tool family.
     nonisolated static let externallyDeniedHostToolNames: Set<String> = [
-        "file_write", "file_edit", "shell_run", "git_commit", "file_undo",
+        "file_write", "file_edit", "file_copy", "shell_run", "git_commit", "file_undo",
         // Curator draft path: never invocable from external surfaces.
         "propose_knowledge_update",
     ]
@@ -874,25 +874,27 @@ public final class ToolRegistry: ObservableObject {
             do {
                 result = try await ChatExecutionContext.$hostReadOnlyScope.withValue(policy.scope) {
                     try await ChatExecutionContext.$allowHostSecretReads.withValue(policy.allowSecretReads) {
-                        try await ChatExecutionContext.$sandboxReadBridge.withValue(readBridge) {
-                            try await ChatExecutionContext.$sandboxAgentName.withValue(sandboxAgent) {
-                                if tool.bypassRegistryTimeout {
+                        try await ChatExecutionContext.$allowHostFolderWrites.withValue(policy.allowFolderWrites) {
+                            try await ChatExecutionContext.$sandboxReadBridge.withValue(readBridge) {
+                                try await ChatExecutionContext.$sandboxAgentName.withValue(sandboxAgent) {
+                                    if tool.bypassRegistryTimeout {
+                                        return Self.normalizeToolResult(
+                                            try await Self.runToolBodyUntimed(
+                                                tool,
+                                                argumentsJSON: effectiveArgumentsJSON
+                                            ),
+                                            tool: name
+                                        )
+                                    }
                                     return Self.normalizeToolResult(
-                                        try await Self.runToolBodyUntimed(
+                                        try await Self.runToolBody(
                                             tool,
-                                            argumentsJSON: effectiveArgumentsJSON
+                                            argumentsJSON: effectiveArgumentsJSON,
+                                            timeoutSeconds: Self.defaultToolTimeoutSeconds
                                         ),
                                         tool: name
                                     )
                                 }
-                                return Self.normalizeToolResult(
-                                    try await Self.runToolBody(
-                                        tool,
-                                        argumentsJSON: effectiveArgumentsJSON,
-                                        timeoutSeconds: Self.defaultToolTimeoutSeconds
-                                    ),
-                                    tool: name
-                                )
                             }
                         }
                     }
@@ -926,11 +928,16 @@ public final class ToolRegistry: ObservableObject {
     /// `.sandbox(hostRead: ctx)`. Resolved once per call so the two
     /// task-locals stay consistent, and inert (`nil` / `false`) in plain
     /// folder and plain sandbox modes.
-    private var combinedHostReadPolicy: (scope: URL?, allowSecretReads: Bool) {
+    private var combinedHostReadPolicy: (scope: URL?, allowSecretReads: Bool, allowFolderWrites: Bool) {
         guard toolsByName.keys.contains("sandbox_exec"),
             let root = FolderContextService.cachedRootPath
-        else { return (nil, false) }
-        return (root, resolvedAutonomousExecConfig?.allowHostSecretReads ?? false)
+        else { return (nil, false, false) }
+        let config = resolvedAutonomousExecConfig
+        return (
+            root,
+            config?.allowHostSecretReads ?? false,
+            config?.allowHostFolderWrites ?? false
+        )
     }
 
     /// Sandbox identity bound around every tool body in combined mode so the
@@ -1657,6 +1664,16 @@ public final class ToolRegistry: ObservableObject {
         "file_write", "file_edit",
     ]
 
+    /// Folder tools that exist ONLY for combined mode. `file_copy` bridges
+    /// file bytes between the workspace and the sandbox — meaningless in
+    /// plain folder mode (shell `cp` covers host-side copies) and in plain
+    /// sandbox mode (no workspace). Visible in BOTH read-only and writable
+    /// combined mode; host-bound destinations are gated at execute time on
+    /// the `allowHostFolderWrites` grant, not by hiding the tool.
+    static let combinedModeBridgeToolNames: Set<String> = [
+        "file_copy"
+    ]
+
     /// Runtime-managed tools are execution infrastructure, always loaded when registered.
     var runtimeManagedToolNames: Set<String> {
         Self.folderToolNames.union(builtInSandboxToolNames)
@@ -1713,11 +1730,20 @@ public final class ToolRegistry: ObservableObject {
             var folderExcluded = Self.folderToolNames
             if mode.allowsHostReadTools {
                 folderExcluded.subtract(Self.folderReadOnlyToolNames)
+                // The workspace<->sandbox byte bridge is visible in BOTH
+                // combined variants — copies INTO the workspace are gated
+                // at execute time on the write grant.
+                folderExcluded.subtract(Self.combinedModeBridgeToolNames)
             }
             if mode.allowsHostWriteTools {
                 folderExcluded.subtract(Self.folderWriteToolNames)
             }
             excluded.formUnion(folderExcluded)
+        } else {
+            // Plain folder mode: hide the combined-mode-only bridge —
+            // there is no sandbox to bridge to, and `shell_run` (`cp`)
+            // covers host-side copies.
+            excluded.formUnion(Self.combinedModeBridgeToolNames)
         }
         if !mode.usesSandboxTools {
             excluded.formUnion(builtInSandboxToolNames)
@@ -2001,6 +2027,15 @@ public final class ToolRegistry: ObservableObject {
         + "folder (tracked, undoable), an absolute `/workspace/...` path writes the Linux "
         + "sandbox scratch area."
 
+    /// Staging hint appended to `sandbox_exec`'s rendered description in
+    /// combined mode: commands cannot see the workspace, and `file_copy`
+    /// (not `file_read`+`file_write`) is how bytes — especially binaries —
+    /// get into the sandbox first.
+    private static let combinedModeExecStagingNote =
+        " The sandbox has no mount of the user's workspace — stage a workspace file "
+        + "(any type, including binaries like PDFs and images) into `/workspace/...` "
+        + "with `file_copy` before processing it."
+
     /// In combined sandbox + host-read mode the host `file_*` tools are the
     /// single, path-routed read family (and, with the write grant, the
     /// single write family). Annotate their rendered specs so the model
@@ -2020,10 +2055,21 @@ public final class ToolRegistry: ObservableObject {
                 description = base + Self.combinedModeFileRoutingNote
             } else if writable, Self.folderWriteToolNames.contains(name) {
                 description = base + Self.combinedModeWriteRoutingNote
+            } else if name == "sandbox_exec" {
+                var updated = base
+                if writable {
+                    // `sandbox_write_file` is hidden in writable combined
+                    // mode; don't advertise a tool that isn't in the schema
+                    // — point at the unified writer.
+                    updated = updated.replacingOccurrences(
+                        of: "`sandbox_write_file`",
+                        with: "`file_write` (with a `/workspace/...` path)"
+                    )
+                }
+                description = updated + Self.combinedModeExecStagingNote
             } else if writable, base.contains("`sandbox_write_file`") {
-                // `sandbox_write_file` is hidden in writable combined mode;
-                // don't let `sandbox_exec` (and friends) advertise a tool
-                // that isn't in the schema — point at the unified writer.
+                // Any other tool referencing the hidden `sandbox_write_file`
+                // in writable combined mode gets the same retarget.
                 description = base.replacingOccurrences(
                     of: "`sandbox_write_file`",
                     with: "`file_write` (with a `/workspace/...` path)"

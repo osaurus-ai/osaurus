@@ -71,7 +71,10 @@ container.
 - `hostFolder: true` → **combined mode**: the case temp workspace (with
   `workspaceFiles`) becomes the read-only host context
   (`ExecutionMode.sandbox(hostRead: ctx)`); `file_read` / `file_search` stay
-  host-side. Omitted/false → pure sandbox mode.
+  host-side. Omitted/false → pure sandbox mode. Combined mode also surfaces
+  `file_copy`, the byte bridge that moves files (including binaries) between
+  the workspace and the sandbox; host-bound destinations require
+  `allowHostFolderWrites`.
 - `allowHostFolderWrites: true` (combined mode only) → **writable combined
   mode** (`ExecutionMode.sandbox(hostRead: ctx, hostWrite: true)`):
   `file_write` / `file_edit` join the schema, path-routed like the readers

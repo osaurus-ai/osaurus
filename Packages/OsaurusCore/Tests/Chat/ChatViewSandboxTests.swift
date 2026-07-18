@@ -113,6 +113,9 @@ struct ChatViewSandboxTests {
         #expect(prompt.contains("file_write") == false)
         #expect(prompt.contains("file_edit") == false)
         #expect(prompt.contains("sandbox_write_file"))
+        // The byte bridge is taught even in read-only combined mode —
+        // staging a workspace file INTO the sandbox is semantically a read.
+        #expect(prompt.contains("file_copy"))
     }
 
     @Test
@@ -148,6 +151,8 @@ struct ChatViewSandboxTests {
         // Exec is still sandbox-only — no host shell.
         #expect(prompt.contains("sandbox_exec"))
         #expect(prompt.contains("shell_run") == false)
+        // The byte bridge for binaries is taught in the writable variant too.
+        #expect(prompt.contains("file_copy"))
     }
 
     @Test

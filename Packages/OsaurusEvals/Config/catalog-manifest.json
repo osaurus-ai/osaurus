@@ -378,6 +378,8 @@
     "SandboxFrontier": [
       "sandbox.artifact-from-sandbox",
       "sandbox.background-process",
+      "sandbox.binary-bridge-roundtrip",
+      "sandbox.binary-bridge-stage",
       "sandbox.code-exec-basics",
       "sandbox.exec-discipline",
       "sandbox.fix-failing-tests",

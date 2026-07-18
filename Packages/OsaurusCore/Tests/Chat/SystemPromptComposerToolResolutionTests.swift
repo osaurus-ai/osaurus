@@ -405,6 +405,10 @@ struct SystemPromptComposerToolResolutionTests {
                     #expect(names.contains("sandbox_write_file"))
                     // `sandbox_edit_file` folded into `sandbox_write_file`.
                     #expect(!names.contains("sandbox_edit_file"))
+                    // The workspace<->sandbox byte bridge is visible even
+                    // in read-only combined mode (host-bound destinations
+                    // are gated at execute time).
+                    #expect(names.contains("file_copy"))
                     // Global egress + loop tools remain.
                     #expect(names.contains("share_artifact"))
                 }
@@ -440,6 +444,8 @@ struct SystemPromptComposerToolResolutionTests {
                     #expect(!names.contains("shell_run"))
                     #expect(!names.contains("git_commit"))
                     #expect(!names.contains("file_undo"))
+                    // The byte bridge stays visible in the writable variant.
+                    #expect(names.contains("file_copy"))
 
                     // Hidden ≠ unregistered: the sandbox writer must stay
                     // callable (the bridge routes `/workspace/...` writes
@@ -553,6 +559,43 @@ struct SystemPromptComposerToolResolutionTests {
                 }
                 // `file_tree` no longer exists as a separate tool.
                 #expect(byName["file_tree"] == nil)
+                // `file_copy` is combined-mode-only: plain folder mode has
+                // no sandbox to bridge to (`shell_run` `cp` covers copies).
+                #expect(byName["file_copy"] == nil)
+            }
+        }
+    }
+
+    @Test
+    func fileCopy_hiddenOutsideCombinedMode_andExecAdvertisesStagingInCombined() async {
+        await withSandboxAgent(autonomous: true) { agentId in
+            withRegisteredSandboxBuiltins {
+                withRegisteredFolderTools { folder in
+                    // Plain sandbox mode (no host folder): every folder tool
+                    // is hidden, including the bridge.
+                    let plainSandbox = Set(
+                        SystemPromptComposer.resolveTools(
+                            agentId: agentId,
+                            executionMode: .sandbox(hostRead: nil)
+                        ).map { $0.function.name }
+                    )
+                    #expect(!plainSandbox.contains("file_copy"))
+
+                    // Combined mode: `sandbox_exec`'s rendered spec must
+                    // point at `file_copy` for staging workspace files —
+                    // commands can't see the workspace, and this is where
+                    // small models look first.
+                    let specs = ToolRegistry.shared.alwaysLoadedSpecs(
+                        mode: .sandbox(hostRead: folder)
+                    )
+                    let execDesc =
+                        specs.first { $0.function.name == "sandbox_exec" }?
+                        .function.description ?? ""
+                    #expect(
+                        execDesc.contains("file_copy"),
+                        "sandbox_exec must advertise the file_copy staging path in combined mode"
+                    )
+                }
             }
         }
     }

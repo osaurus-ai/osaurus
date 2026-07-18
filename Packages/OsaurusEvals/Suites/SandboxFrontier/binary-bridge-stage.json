@@ -1,0 +1,34 @@
+{
+  "id": "sandbox.binary-bridge-stage",
+  "domain": "agent_loop",
+  "label": "sandbox • combined mode: file_copy stages a host binary into the VM for sandbox_exec",
+  "query": "My workspace contains assets/logo.png — a binary asset that file_read cannot open. Stage it into your sandbox with file_copy, then compute its SHA-256 hash with sandbox_exec (sha256sum) and report the full 64-character hash.",
+  "notes": "Pins the binary-bridge dead end from the live transcript: in combined mode raw bytes only cross via file_copy (file_read extracts text, sandbox_exec has no workspace mount). Read-only variant — the workspace->sandbox direction needs no write grant. The .png is seeded with pinned text bytes so the hash is deterministic while file_read still refuses it by extension. sha256('PNGDATA-OSAURUS-EVAL-BRIDGE-1\\n') = 937790e7...",
+  "fixtures": {
+    "sandbox": {
+      "hostFolder": true
+    },
+    "workspaceFiles": [
+      {
+        "path": "assets/logo.png",
+        "contents": "PNGDATA-OSAURUS-EVAL-BRIDGE-1\n"
+      }
+    ]
+  },
+  "expect": {
+    "agentLoop": {
+      "maxIterations": 12,
+      "mustCallToolsInOrder": [
+        "file_copy",
+        "sandbox_exec"
+      ],
+      "mustNotCallTools": [
+        "file_write",
+        "shell_run"
+      ],
+      "finalTextContains": [
+        "937790e79ba6e433c7d895a7be1df49752556e56c43b1d45467be5ff17496047"
+      ]
+    }
+  }
+}

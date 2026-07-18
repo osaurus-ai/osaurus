@@ -3389,6 +3389,10 @@ enum FolderToolFactory {
             FileUndoTool(rootPath: rootPath),
             FileSearchTool(rootPath: rootPath),
             ShellRunTool(rootPath: rootPath),
+            // Combined-mode bridge: registered with the folder set (it
+            // needs the root) but hidden outside combined sandbox +
+            // host-read mode (`ToolRegistry.combinedModeBridgeToolNames`).
+            FileCopyTool(rootPath: rootPath),
         ]
     }
 

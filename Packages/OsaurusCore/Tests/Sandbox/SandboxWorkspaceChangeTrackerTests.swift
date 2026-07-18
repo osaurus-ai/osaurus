@@ -614,6 +614,49 @@ struct SandboxWorkspaceChangeTrackerTests {
         #expect(await env.tracker.changes(for: Self.session).isEmpty)
     }
 
+    /// A real `file_copy` execution inside a host checkpoint (the wrap the
+    /// registry takes for `mutatesHostFolder` tools) must land as a
+    /// created, undoable row attributed to `file_copy` — the bridge tool's
+    /// copies show up in the Changes sheet like any other host write.
+    @Test
+    func fileCopy_hostBoundCopy_recordsUndoableCreatedRow() async throws {
+        let env = try makeEnv()
+        defer { env.cleanup() }
+        let bytes = Data([0x89, 0x50, 0x4E, 0x47, 0x00, 0xFF])
+        let source = env.hostFolder.appendingPathComponent("photo.png")
+        try bytes.write(to: source)
+
+        let tool = FileCopyTool(rootPath: env.hostFolder)
+        let bridge = SandboxReadBridge(
+            agentName: Self.agent, home: "/workspace/agents/\(Self.agent)")
+        let token = await env.tracker.beginHostCheckpoint(
+            sessionId: Self.session, folderPath: env.hostFolder.path, sourceTool: "file_copy")
+        _ = try await ChatExecutionContext.$sandboxReadBridge.withValue(bridge) {
+            try await ChatExecutionContext.$allowHostFolderWrites.withValue(true) {
+                try await tool.execute(
+                    argumentsJSON: #"{"source":"photo.png","destination":"photo-copy.png"}"#
+                )
+            }
+        }
+        await env.tracker.endCheckpoint(token)
+
+        let changes = await env.tracker.changes(for: Self.session)
+        #expect(changes.count == 1)
+        let row = try #require(changes.first)
+        #expect(row.root == .hostFolder)
+        #expect(row.kind == .created)
+        #expect(row.relativePath == "photo-copy.png")
+        #expect(row.sourceTool == "file_copy")
+
+        // Undo removes the copied file (binary-safe, like any created row).
+        let result = await env.tracker.undoChange(id: row.id, sessionId: Self.session)
+        #expect(result == .undone)
+        #expect(
+            !FileManager.default.fileExists(
+                atPath: env.hostFolder.appendingPathComponent("photo-copy.png").path))
+        #expect(try Data(contentsOf: source) == bytes, "the source must be untouched")
+    }
+
     @Test
     func hostFolderKey_isStableAndFilesystemSafe() {
         let key = SandboxWorkspaceChangeTracker.hostFolderKey("/Users/me/My Projects/app")
