@@ -27,6 +27,42 @@ struct SkillArchiveProcessRunnerTests {
         #expect(!result.timedOut)
     }
 
+    @Test func dispatchStreamReadsThroughDuplicateAfterClosingOriginalHandle() throws {
+        let pipe = Pipe()
+        let originalDescriptor = pipe.fileHandleForReading.fileDescriptor
+        let capture = SkillArchiveStreamCapture()
+        let stream = try SkillArchiveDispatchOutputStream(
+            fileHandle: pipe.fileHandleForReading,
+            chunkBytes: 64
+        )
+
+        #expect(fcntl(originalDescriptor, F_GETFD) == -1)
+        #expect(errno == EBADF)
+
+        stream.start(
+            onChunk: { capture.append($0) },
+            onCompletion: { capture.finish(error: $0) }
+        )
+        try pipe.fileHandleForWriting.write(contentsOf: Data("duplicated descriptor".utf8))
+        try pipe.fileHandleForWriting.close()
+
+        #expect(capture.waitForCompletion(timeoutSeconds: 1))
+        #expect(capture.output == "duplicated descriptor")
+        #expect(capture.error == nil)
+    }
+
+    @Test func repeatedRunsKeepDescriptorLifecycleStable() throws {
+        for _ in 0..<100 {
+            let result = try SkillArchiveProcessRunner.run(
+                executablePath: "/usr/bin/printf",
+                arguments: ["x"],
+                timeoutSeconds: 2
+            )
+            #expect(result.output == "x")
+            #expect(result.terminationStatus == 0)
+        }
+    }
+
     @Test func outputLimitKeepsDrainingUntilProcessExits() throws {
         let fixtureURL = FileManager.default.temporaryDirectory.appendingPathComponent(
             "osaurus-runner-output-\(UUID().uuidString)"
@@ -52,42 +88,61 @@ struct SkillArchiveProcessRunnerTests {
     }
 
     @Test func timeoutForceKillsAndReapsTermIgnoringProcess() async throws {
-        let root = FileManager.default.temporaryDirectory.appendingPathComponent(
-            "osaurus-runner-timeout-\(UUID().uuidString)",
-            isDirectory: true
-        )
-        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
-        defer { try? FileManager.default.removeItem(at: root) }
-
-        let scriptURL = root.appendingPathComponent("ignore-term.sh")
-        let readyURL = root.appendingPathComponent("ready")
-        try """
-        #!/bin/sh
-        trap '' TERM
-        printf 'ready\n' > "$1"
-        while :; do :; done
-        """
-        .write(to: scriptURL, atomically: true, encoding: .utf8)
-        try FileManager.default.setAttributes(
-            [.posixPermissions: 0o700],
-            ofItemAtPath: scriptURL.path
-        )
+        let fixture = try Self.makeTermIgnoringFixture(prefix: "timeout")
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let clock = ContinuousClock()
+        let startedAt = clock.now
 
         let task = Task.detached {
             try SkillArchiveProcessRunner.run(
-                executablePath: scriptURL.path,
-                arguments: [readyURL.path],
+                executablePath: fixture.script.path,
+                arguments: [fixture.pidFile.path],
                 timeoutSeconds: 1,
                 configuration: SkillArchiveProcessConfiguration(cleanupGraceSeconds: 0.1)
             )
         }
 
-        let fixtureBecameReady = await Self.waitForFile(at: readyURL)
+        let fixtureBecameReady = await Self.waitForFile(at: fixture.pidFile)
         let result = try await task.value
 
         #expect(fixtureBecameReady)
         #expect(result.timedOut)
         #expect(result.terminationStatus == SIGKILL)
+        #expect(startedAt.duration(to: clock.now) < .seconds(3))
+    }
+
+    @Test func cancellationForceKillsTermIgnoringProcessWithinBound() async throws {
+        let fixture = try Self.makeTermIgnoringFixture(prefix: "cancellation")
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+
+        let task = Task.detached {
+            try SkillArchiveProcessRunner.run(
+                executablePath: fixture.script.path,
+                arguments: [fixture.pidFile.path],
+                timeoutSeconds: 30,
+                configuration: SkillArchiveProcessConfiguration(cleanupGraceSeconds: 0.1)
+            )
+        }
+
+        guard let processID = await Self.waitForProcessID(at: fixture.pidFile) else {
+            task.cancel()
+            _ = try? await task.value
+            Issue.record("TERM-hostile fixture did not publish its process ID")
+            return
+        }
+        let clock = ContinuousClock()
+        let cancelledAt = clock.now
+        task.cancel()
+
+        do {
+            _ = try await task.value
+            Issue.record("Expected CancellationError")
+        } catch is CancellationError {
+            #expect(cancelledAt.duration(to: clock.now) < .seconds(2))
+            #expect(await Self.waitForProcessExit(processID))
+        } catch {
+            Issue.record("Unexpected error: \(error)")
+        }
     }
 
     @Test func outputReadErrorIsPropagatedInsteadOfBecomingEOF() throws {
@@ -135,6 +190,32 @@ struct SkillArchiveProcessRunnerTests {
         #expect(stream.completionDelivered)
     }
 
+    @Test func neverCompletingDrainCancellationFailsWithinBound() throws {
+        let stream = NeverCompletingSkillArchiveOutputStream()
+        let clock = ContinuousClock()
+        let startedAt = clock.now
+
+        do {
+            _ = try SkillArchiveProcessRunner.run(
+                executablePath: "/usr/bin/true",
+                arguments: [],
+                timeoutSeconds: 2,
+                configuration: SkillArchiveProcessConfiguration(
+                    cleanupGraceSeconds: 0.05,
+                    outputStream: stream
+                )
+            )
+            Issue.record("Expected an incomplete output drain error")
+        } catch let error as SkillArchiveProcessRunnerError {
+            #expect(error == .outputDrainIncomplete)
+        } catch {
+            Issue.record("Unexpected error: \(error)")
+        }
+
+        #expect(stream.cancelRequested)
+        #expect(startedAt.duration(to: clock.now) < .seconds(1))
+    }
+
     @Test func cancellationReapsProcessAndJoinsReaderBeforeThrowing() async {
         let stream = StalledSkillArchiveOutputStream()
         let task = Task.detached {
@@ -171,6 +252,86 @@ struct SkillArchiveProcessRunnerTests {
         }
         return false
     }
+
+    private static func waitForProcessExit(_ processID: pid_t) async -> Bool {
+        for _ in 0..<100 {
+            if Darwin.kill(processID, 0) == -1, errno == ESRCH { return true }
+            try? await Task.sleep(nanoseconds: 10_000_000)
+        }
+        return false
+    }
+
+    private static func waitForProcessID(at url: URL) async -> pid_t? {
+        for _ in 0..<200 {
+            if let contents = try? String(contentsOf: url, encoding: .utf8),
+                let processID = pid_t(contents.trimmingCharacters(in: .whitespacesAndNewlines)) {
+                return processID
+            }
+            try? await Task.sleep(nanoseconds: 10_000_000)
+        }
+        return nil
+    }
+
+    private static func makeTermIgnoringFixture(
+        prefix: String
+    ) throws -> (root: URL, script: URL, pidFile: URL) {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(
+            "osaurus-runner-\(prefix)-\(UUID().uuidString)",
+            isDirectory: true
+        )
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+
+        let script = root.appendingPathComponent("ignore-term.sh")
+        let pidFile = root.appendingPathComponent("pid")
+        try """
+        #!/bin/sh
+        trap '' TERM
+        printf '%s\n' "$$" > "$1"
+        while :; do :; done
+        """
+        .write(to: script, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes(
+            [.posixPermissions: 0o700],
+            ofItemAtPath: script.path
+        )
+        return (root, script, pidFile)
+    }
+}
+
+private final class SkillArchiveStreamCapture: @unchecked Sendable {
+    private let lock = NSLock()
+    private let completed = DispatchSemaphore(value: 0)
+    private var data = Data()
+    private var completionError: NSError?
+
+    func append(_ chunk: Data) {
+        lock.lock()
+        data.append(chunk)
+        lock.unlock()
+    }
+
+    func finish(error: (any Error)?) {
+        lock.lock()
+        completionError = error as NSError?
+        lock.unlock()
+        completed.signal()
+    }
+
+    func waitForCompletion(timeoutSeconds: TimeInterval) -> Bool {
+        completed.wait(timeout: .now() + timeoutSeconds) == .success
+    }
+
+    var output: String {
+        lock.lock()
+        defer { lock.unlock() }
+        return String(data: data, encoding: .utf8) ?? ""
+    }
+
+    var error: NSError? {
+        lock.lock()
+        defer { lock.unlock() }
+        return completionError
+    }
 }
 
 private enum InjectedSkillArchiveReadError: Error, Equatable {
@@ -187,6 +348,28 @@ private final class FailingSkillArchiveOutputStream: SkillArchiveProcessOutputSt
     }
 
     func cancel() {}
+}
+
+private final class NeverCompletingSkillArchiveOutputStream: SkillArchiveProcessOutputStreaming, @unchecked Sendable {
+    private let lock = NSLock()
+    private var didRequestCancel = false
+
+    func start(
+        onChunk: @escaping @Sendable (Data) -> Void,
+        onCompletion: @escaping @Sendable ((any Error)?) -> Void
+    ) {}
+
+    func cancel() {
+        lock.lock()
+        didRequestCancel = true
+        lock.unlock()
+    }
+
+    var cancelRequested: Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return didRequestCancel
+    }
 }
 
 /// Models DispatchIO's asynchronous cleanup callback: cancellation schedules

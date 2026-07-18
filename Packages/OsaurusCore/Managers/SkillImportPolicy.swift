@@ -182,9 +182,11 @@ public struct SkillImportPolicy: Sendable, Equatable {
         do {
             result = try SkillArchiveProcessRunner.run(
                 executablePath: "/usr/bin/unzip",
-                arguments: ["-l", zipURL.path],
+                arguments: ["-l", "--", zipURL.path],
                 timeoutSeconds: 30
             )
+        } catch is CancellationError {
+            throw CancellationError()
         } catch {
             throw SkillFileError.archiveListingFailed(error.localizedDescription)
         }
@@ -241,6 +243,7 @@ struct SkillArchiveProcessResult: Sendable, Equatable {
 
 enum SkillArchiveProcessRunnerError: Error, Sendable, Equatable {
     case outputDrainIncomplete
+    case processTerminationIncomplete
 }
 
 protocol SkillArchiveProcessOutputStreaming: Sendable {
@@ -258,17 +261,30 @@ struct SkillArchiveProcessConfiguration: Sendable {
     let chunkBytes: Int
     let cleanupGraceSeconds: TimeInterval
     let outputStream: (any SkillArchiveProcessOutputStreaming)?
+    let deferredCleanupURL: URL?
 
     init(
         outputLimitBytes: Int = 256 * 1024,
         chunkBytes: Int = 16 * 1024,
         cleanupGraceSeconds: TimeInterval = 2,
-        outputStream: (any SkillArchiveProcessOutputStreaming)? = nil
+        outputStream: (any SkillArchiveProcessOutputStreaming)? = nil,
+        deferredCleanupURL: URL? = nil
     ) {
         self.outputLimitBytes = outputLimitBytes
         self.chunkBytes = chunkBytes
         self.cleanupGraceSeconds = cleanupGraceSeconds
         self.outputStream = outputStream
+        self.deferredCleanupURL = deferredCleanupURL
+    }
+
+    func withDeferredCleanupURL(_ url: URL) -> Self {
+        Self(
+            outputLimitBytes: outputLimitBytes,
+            chunkBytes: chunkBytes,
+            cleanupGraceSeconds: cleanupGraceSeconds,
+            outputStream: outputStream,
+            deferredCleanupURL: url
+        )
     }
 }
 
@@ -280,6 +296,11 @@ enum SkillArchiveProcessRunner {
         case timedOut
         case cancelled
         case outputReadFailed
+    }
+
+    private enum ReapOutcome {
+        case reaped
+        case incomplete
     }
 
     static func run(
@@ -300,23 +321,33 @@ enum SkillArchiveProcessRunner {
         process.standardOutput = pipe
         process.standardError = pipe
 
-        let terminated = DispatchSemaphore(value: 0)
-        process.terminationHandler = { _ in
-            terminated.signal()
-        }
-
-        try process.run()
-        try? pipe.fileHandleForWriting.close()
-
-        let outputStream = configuration.outputStream
-            ?? SkillArchiveDispatchOutputStream(
+        let outputStream: any SkillArchiveProcessOutputStreaming
+        if let configuredStream = configuration.outputStream {
+            try? pipe.fileHandleForReading.close()
+            outputStream = configuredStream
+        } else {
+            outputStream = try SkillArchiveDispatchOutputStream(
                 fileHandle: pipe.fileHandleForReading,
                 chunkBytes: configuration.chunkBytes
             )
+        }
         let reader = SkillArchiveProcessOutputReader(
             outputStream: outputStream,
             maxBytes: configuration.outputLimitBytes
         )
+
+        let terminated = SkillArchiveProcessTerminationLatch()
+        process.terminationHandler = { _ in
+            terminated.signal()
+        }
+
+        do {
+            try process.run()
+        } catch {
+            process.terminationHandler = nil
+            throw error
+        }
+        try? pipe.fileHandleForWriting.close()
         reader.start()
 
         let waitOutcome = Self.waitForProcess(
@@ -324,31 +355,54 @@ enum SkillArchiveProcessRunner {
             reader: reader,
             timeoutSeconds: timeoutSeconds
         )
+        let reapOutcome: ReapOutcome
         switch waitOutcome {
         case .exited:
-            process.waitUntilExit()
+            reapOutcome = .reaped
         case .timedOut, .cancelled, .outputReadFailed:
-            Self.stopAndReap(
+            reapOutcome = Self.stopAndReap(
                 process,
                 terminated: terminated,
                 graceSeconds: configuration.cleanupGraceSeconds
             )
         }
-        process.terminationHandler = nil
+
+        let terminationStatus: Int32?
+        switch reapOutcome {
+        case .reaped:
+            terminationStatus = process.terminationStatus
+            process.terminationHandler = nil
+        case .incomplete:
+            terminationStatus = nil
+            SkillArchiveDeferredProcessReaper.shared.adopt(
+                process,
+                terminated: terminated,
+                cleanupURL: configuration.deferredCleanupURL
+            )
+        }
 
         let completion: SkillArchiveProcessOutputCompletion
         if let drained = reader.waitForEnd(timeoutSeconds: configuration.cleanupGraceSeconds) {
             completion = drained
         } else {
-            // DispatchIO cancellation waits for its cleanup callback, so no
-            // descriptor callback can race deletion of an extraction directory.
-            _ = reader.cancelAndWait()
+            let cancelledDrain = reader.cancelAndWait(
+                timeoutSeconds: configuration.cleanupGraceSeconds
+            )
+            if reapOutcome == .incomplete {
+                throw SkillArchiveProcessRunnerError.processTerminationIncomplete
+            }
+            guard cancelledDrain != nil else {
+                throw SkillArchiveProcessRunnerError.outputDrainIncomplete
+            }
             if waitOutcome == .cancelled || Task.isCancelled {
                 throw CancellationError()
             }
             throw SkillArchiveProcessRunnerError.outputDrainIncomplete
         }
 
+        guard let terminationStatus else {
+            throw SkillArchiveProcessRunnerError.processTerminationIncomplete
+        }
         if waitOutcome == .cancelled || Task.isCancelled {
             throw CancellationError()
         }
@@ -357,7 +411,7 @@ enum SkillArchiveProcessRunner {
         }
 
         return SkillArchiveProcessResult(
-            terminationStatus: process.terminationStatus,
+            terminationStatus: terminationStatus,
             output: completion.output,
             outputTruncated: completion.outputWasTruncated,
             timedOut: waitOutcome == .timedOut
@@ -365,7 +419,7 @@ enum SkillArchiveProcessRunner {
     }
 
     private static func waitForProcess(
-        terminated: DispatchSemaphore,
+        terminated: SkillArchiveProcessTerminationLatch,
         reader: SkillArchiveProcessOutputReader,
         timeoutSeconds: TimeInterval
     ) -> WaitOutcome {
@@ -377,13 +431,13 @@ enum SkillArchiveProcessRunner {
         while true {
             if Task.isCancelled { return .cancelled }
             if reader.readErrorDetected { return .outputReadFailed }
-            if terminated.wait(timeout: .now()) == .success { return .exited }
+            if terminated.wait(timeout: .now()) { return .exited }
 
             let now = DispatchTime.now().uptimeNanoseconds
             guard now < deadline else { return .timedOut }
             let remaining = deadline - now
             let waitNanoseconds = Int(min(remaining, UInt64(Self.waitPollNanoseconds)))
-            if terminated.wait(timeout: .now() + .nanoseconds(waitNanoseconds)) == .success {
+            if terminated.wait(timeout: .now() + .nanoseconds(waitNanoseconds)) {
                 return .exited
             }
         }
@@ -391,27 +445,22 @@ enum SkillArchiveProcessRunner {
 
     private static func stopAndReap(
         _ process: Process,
-        terminated: DispatchSemaphore,
+        terminated: SkillArchiveProcessTerminationLatch,
         graceSeconds: TimeInterval
-    ) {
-        if terminated.wait(timeout: .now()) == .timedOut {
-            if process.isRunning {
-                process.terminate()
-            }
+    ) -> ReapOutcome {
+        if terminated.wait(timeout: .now()) { return .reaped }
 
-            let graceDeadline = DispatchTime.now() + .nanoseconds(Self.nanoseconds(graceSeconds))
-            if terminated.wait(timeout: graceDeadline) == .timedOut,
-                terminated.wait(timeout: .now()) == .timedOut,
-                process.isRunning {
-                // The termination latch is checked immediately before SIGKILL
-                // so Foundation has not announced and reaped this child PID.
-                _ = Darwin.kill(process.processIdentifier, SIGKILL)
-            }
+        if process.isRunning {
+            process.terminate()
         }
+        let terminationDeadline = DispatchTime.now() + .nanoseconds(Self.nanoseconds(graceSeconds))
+        if terminated.wait(timeout: terminationDeadline) { return .reaped }
 
-        // Cleanup callers may remove process inputs and outputs as soon as run
-        // returns, so a bounded post-kill wait is not sufficient here.
-        process.waitUntilExit()
+        if !terminated.isTerminated, process.isRunning {
+            _ = Darwin.kill(process.processIdentifier, SIGKILL)
+        }
+        let killDeadline = DispatchTime.now() + .nanoseconds(Self.nanoseconds(graceSeconds))
+        return terminated.wait(timeout: killDeadline) ? .reaped : .incomplete
     }
 
     private static func nanoseconds(_ seconds: TimeInterval) -> Int {
@@ -419,6 +468,95 @@ enum SkillArchiveProcessRunner {
         let maxSafeSeconds = TimeInterval(Int.max / 1_000_000_000)
         if seconds >= maxSafeSeconds { return Int.max }
         return Int(seconds * 1_000_000_000)
+    }
+}
+
+private final class SkillArchiveProcessTerminationLatch: @unchecked Sendable {
+    private let lock = NSLock()
+    private let semaphore = DispatchSemaphore(value: 0)
+    private var terminated = false
+    private var observers: [@Sendable () -> Void] = []
+
+    var isTerminated: Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return terminated
+    }
+
+    func signal() {
+        lock.lock()
+        guard !terminated else {
+            lock.unlock()
+            return
+        }
+        terminated = true
+        let pendingObservers = observers
+        observers.removeAll()
+        lock.unlock()
+
+        semaphore.signal()
+        for observer in pendingObservers {
+            observer()
+        }
+    }
+
+    func wait(timeout: DispatchTime) -> Bool {
+        if isTerminated { return true }
+        return semaphore.wait(timeout: timeout) == .success
+    }
+
+    func whenTerminated(_ observer: @escaping @Sendable () -> Void) {
+        lock.lock()
+        if terminated {
+            lock.unlock()
+            observer()
+        } else {
+            observers.append(observer)
+            lock.unlock()
+        }
+    }
+}
+
+/// Keeps Foundation's process source alive after the bounded caller contract
+/// expires, and removes process-owned output only after Foundation confirms
+/// termination.
+private final class SkillArchiveDeferredProcessReaper: @unchecked Sendable {
+    static let shared = SkillArchiveDeferredProcessReaper()
+
+    private struct Entry {
+        let process: Process
+        let cleanupURL: URL?
+    }
+
+    private let lock = NSLock()
+    private let cleanupQueue = DispatchQueue(label: "ai.osaurus.skill-archive-reaper", qos: .utility)
+    private var entries: [UUID: Entry] = [:]
+
+    func adopt(
+        _ process: Process,
+        terminated: SkillArchiveProcessTerminationLatch,
+        cleanupURL: URL?
+    ) {
+        let id = UUID()
+        lock.lock()
+        entries[id] = Entry(process: process, cleanupURL: cleanupURL)
+        lock.unlock()
+
+        terminated.whenTerminated { [weak self] in
+            self?.finish(id: id)
+        }
+    }
+
+    private func finish(id: UUID) {
+        cleanupQueue.async { [self] in
+            lock.lock()
+            let entry = entries.removeValue(forKey: id)
+            lock.unlock()
+
+            if let cleanupURL = entry?.cleanupURL {
+                try? FileManager.default.removeItem(at: cleanupURL)
+            }
+        }
     }
 }
 
@@ -456,9 +594,10 @@ private final class SkillArchiveProcessOutputReader: @unchecked Sendable {
         return completionSnapshot()
     }
 
-    func cancelAndWait() -> SkillArchiveProcessOutputCompletion {
+    func cancelAndWait(timeoutSeconds: TimeInterval) -> SkillArchiveProcessOutputCompletion? {
         outputStream.cancel()
-        done.wait()
+        let deadline = DispatchTime.now() + .nanoseconds(Self.nanoseconds(timeoutSeconds))
+        guard done.wait(timeout: deadline) == .success else { return nil }
         return completionSnapshot()
     }
 
@@ -524,26 +663,40 @@ private final class SkillArchiveProcessOutputReader: @unchecked Sendable {
     }
 }
 
-/// DispatchIO owns descriptor access until its cleanup callback runs. Retaining
-/// the FileHandle prevents ARC from closing that descriptor before the join.
-private final class SkillArchiveDispatchOutputStream: SkillArchiveProcessOutputStreaming, @unchecked Sendable {
+/// DispatchIO exclusively controls a duplicated descriptor and closes it only
+/// after the cleanup callback says no operation can still use it.
+final class SkillArchiveDispatchOutputStream: SkillArchiveProcessOutputStreaming, @unchecked Sendable {
     private let state: SkillArchiveDispatchOutputState
     private let channel: DispatchIO
-    private let fileHandle: FileHandle
     private let chunkBytes: Int
     private let queue = DispatchQueue(label: "ai.osaurus.skill-archive-output", qos: .utility)
 
-    init(fileHandle: FileHandle, chunkBytes: Int) {
+    init(fileHandle: FileHandle, chunkBytes: Int) throws {
+        let duplicatedDescriptor = fcntl(fileHandle.fileDescriptor, F_DUPFD_CLOEXEC, 0)
+        guard duplicatedDescriptor >= 0 else {
+            let duplicationError = errno
+            try? fileHandle.close()
+            throw NSError(domain: NSPOSIXErrorDomain, code: Int(duplicationError))
+        }
+
+        do {
+            try fileHandle.close()
+        } catch {
+            _ = Darwin.close(duplicatedDescriptor)
+            throw error
+        }
+
         let state = SkillArchiveDispatchOutputState()
         self.state = state
-        self.fileHandle = fileHandle
         self.chunkBytes = chunkBytes
         self.channel = DispatchIO(
             type: .stream,
-            fileDescriptor: fileHandle.fileDescriptor,
+            fileDescriptor: duplicatedDescriptor,
             queue: queue
         ) { errorCode in
-            state.finishCleanup(errorCode: errorCode)
+            let closeResult = Darwin.close(duplicatedDescriptor)
+            let closeError = closeResult == 0 ? 0 : errno
+            state.finishCleanup(errorCode: errorCode == 0 ? closeError : errorCode)
         }
     }
 
