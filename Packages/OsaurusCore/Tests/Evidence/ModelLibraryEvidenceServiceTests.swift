@@ -146,7 +146,7 @@ struct ModelLibraryEvidenceServiceTests {
     }
 
     @Test
-    func laterScanRemovesOwnedReportsForRemovedModelAndPreservesOtherProducers() throws {
+    func recreatedServiceReconcilesRemovedModelsAndPreservesOtherProducers() throws {
         let fixture = try ModelEvidenceFixture()
         let retained = try fixture.model(id: "org/retained", config: #"{"model_type":"qwen3"}"#)
         let removed = try fixture.model(id: "org/removed", config: #"{"model_type":"qwen3"}"#)
@@ -161,9 +161,9 @@ struct ModelLibraryEvidenceServiceTests {
                 status: .passed
             )
         )
-        let service = ModelLibraryEvidenceService(registry: registry)
+        let firstService = ModelLibraryEvidenceService(registry: registry)
 
-        let first = service.registerEvidence(
+        let first = firstService.registerEvidence(
             for: [retained, removed],
             proofDescriptors: try fixture.completeProofDescriptors(for: removed.id)
         )
@@ -173,12 +173,14 @@ struct ModelLibraryEvidenceServiceTests {
                 + removedRow.proofReportIDs
         )
 
-        let second = service.registerEvidence(for: [retained])
+        let recreatedService = ModelLibraryEvidenceService(registry: registry)
+        let second = recreatedService.registerEvidence(for: [retained])
         let remainingReportIDs = Set(second.reports.map(\.id))
 
         #expect(removedRow.proofReportIDs.count == 3)
         #expect(removedReportIDs.isDisjoint(with: remainingReportIDs))
-        #expect(second.reports.contains { $0.id == "unrelated-report" })
+        #expect(!second.reports.contains { $0.id == "unrelated-report" })
+        #expect(!recreatedService.snapshot().reports.contains { $0.id == "unrelated-report" })
         #expect(registry.list().contains { $0.id == "unrelated-report" })
     }
 
@@ -296,6 +298,76 @@ struct ModelLibraryEvidenceServiceTests {
         #expect(runtimeReport.counts.blocked == 1)
         #expect(runtimeReport.metadata["evidence_validation"] == "passing generation proof must record token/s")
         #expect(row.requirements.first { $0.kind == .tokenRate }?.state == .blocked)
+    }
+
+    @Test
+    func passingRuntimeWithoutMemoryProofDoesNotPassMemoryRequirement() throws {
+        let fixture = try ModelEvidenceFixture()
+        let model = try fixture.model(id: "org/runtime-without-memory", config: #"{"model_type":"qwen3"}"#)
+        let runtimeArtifact = try fixture.writeArtifact(named: "proof/runtime-without-memory.json")
+        let service = ModelLibraryEvidenceService(
+            registry: EvidenceReportRegistryService(now: fixture.clock)
+        )
+
+        let snapshot = service.registerEvidence(
+            for: [model],
+            proofDescriptors: [
+                ModelEvidenceProofDescriptor(
+                    modelId: model.id,
+                    kind: .runtime,
+                    artifactPath: runtimeArtifact.path,
+                    status: .passed,
+                    counts: EvidenceReportCounts(total: 1, passed: 1),
+                    metadata: ["tokens_per_second": "17.2"]
+                ),
+            ]
+        )
+        let row = try #require(snapshot.rows.first)
+        let runtimeReport = try #require(snapshot.reports.first { $0.kind == .runtime })
+
+        #expect(row.supportState == .partial)
+        #expect(runtimeReport.status == .passed)
+        #expect(row.requirements.first { $0.kind == .runtimeGeneration }?.state == .passed)
+        #expect(row.requirements.first { $0.kind == .tokenRate }?.state == .passed)
+        #expect(row.requirements.first { $0.kind == .memoryFootprint }?.state == .blocked)
+    }
+
+    @Test
+    func failedMemoryProofOverridesBarePassingRuntimeForMemoryRequirement() throws {
+        let fixture = try ModelEvidenceFixture()
+        let model = try fixture.model(id: "org/mixed-memory-proof", config: #"{"model_type":"qwen3"}"#)
+        let runtimeArtifact = try fixture.writeArtifact(named: "proof/mixed-runtime.json")
+        let memoryArtifact = try fixture.writeArtifact(named: "proof/mixed-memory.json")
+        let service = ModelLibraryEvidenceService(
+            registry: EvidenceReportRegistryService(now: fixture.clock)
+        )
+
+        let snapshot = service.registerEvidence(
+            for: [model],
+            proofDescriptors: [
+                ModelEvidenceProofDescriptor(
+                    modelId: model.id,
+                    kind: .runtime,
+                    artifactPath: runtimeArtifact.path,
+                    status: .passed,
+                    counts: EvidenceReportCounts(total: 1, passed: 1),
+                    metadata: ["tokens_per_second": "15.8"]
+                ),
+                ModelEvidenceProofDescriptor(
+                    modelId: model.id,
+                    kind: .memory,
+                    artifactPath: memoryArtifact.path,
+                    status: .failed,
+                    counts: EvidenceReportCounts(total: 1, failed: 1),
+                    metadata: ["physical_footprint_within_limit": "false"]
+                ),
+            ]
+        )
+        let row = try #require(snapshot.rows.first)
+
+        #expect(row.supportState == .unsupported)
+        #expect(row.requirements.first { $0.kind == .runtimeGeneration }?.state == .passed)
+        #expect(row.requirements.first { $0.kind == .memoryFootprint }?.state == .failed)
     }
 
     @Test
@@ -428,9 +500,8 @@ struct ModelLibraryEvidenceServiceTests {
     func registryMetadataAndRowsDoNotExposeFullBundlePaths() throws {
         let fixture = try ModelEvidenceFixture()
         let model = try fixture.model(id: "org/redacted", config: #"{"model_type":"qwen3"}"#)
-        let service = ModelLibraryEvidenceService(
-            registry: EvidenceReportRegistryService(now: fixture.clock)
-        )
+        let registry = EvidenceReportRegistryService(now: fixture.clock)
+        let service = ModelLibraryEvidenceService(registry: registry)
 
         let snapshot = service.registerEvidence(for: [model])
         let row = try #require(snapshot.rows.first)
@@ -441,6 +512,65 @@ struct ModelLibraryEvidenceServiceTests {
         #expect(row.metadata.values.allSatisfy { !$0.contains(fixture.root.path) })
         #expect(cacheReport.metadata["bundle_path"] == "<redacted>")
         #expect(cacheReport.metadata.values.allSatisfy { !$0.contains(fixture.root.path) })
+        #expect(!cacheReport.id.contains(fixture.root.path))
+        #expect(!cacheReport.artifact.path.contains(fixture.root.path))
+        #expect(!cacheReport.artifact.path.hasPrefix("/"))
+        #expect(
+            registry.localArtifactURL(forReportID: cacheReport.id, producer: "model-library-evidence")
+                == model.localDirectory.standardizedFileURL
+        )
+        #expect(
+            !String(decoding: try service.snapshot().stableJSONData(), as: UTF8.self)
+                .contains(fixture.root.path)
+        )
+    }
+
+    @Test
+    func proofIdentityNormalizesModelAndArtifactInputsWithoutPublishingPaths() throws {
+        let fixture = try ModelEvidenceFixture()
+        let model = try fixture.model(id: "org/stable-proof", config: #"{"model_type":"qwen3"}"#)
+        let artifact = try fixture.writeArtifact(named: "proof/stable-runtime.json")
+        let registry = EvidenceReportRegistryService(now: fixture.clock)
+        let firstService = ModelLibraryEvidenceService(registry: registry)
+        let first = firstService.registerEvidence(
+            for: [model],
+            proofDescriptors: [
+                ModelEvidenceProofDescriptor(
+                    modelId: "  \(model.id)  ",
+                    kind: .runtime,
+                    artifactPath: artifact.path,
+                    status: .passed,
+                    metadata: ["tokens_per_second": "12.0"]
+                ),
+            ]
+        )
+        let firstProofID = try #require(first.rows.first?.proofReportIDs.first)
+
+        let aliasedPath = artifact.deletingLastPathComponent()
+            .appendingPathComponent("alias")
+            .appendingPathComponent("..")
+            .appendingPathComponent(artifact.lastPathComponent)
+            .path
+        let recreatedService = ModelLibraryEvidenceService(registry: registry)
+        let second = recreatedService.registerEvidence(
+            for: [model],
+            proofDescriptors: [
+                ModelEvidenceProofDescriptor(
+                    modelId: model.id,
+                    kind: .runtime,
+                    artifactPath: aliasedPath,
+                    status: .passed,
+                    metadata: ["tokens_per_second": "12.0"]
+                ),
+            ]
+        )
+        let secondProofID = try #require(second.rows.first?.proofReportIDs.first)
+        let proofReport = try #require(second.report(id: secondProofID))
+
+        #expect(firstProofID == secondProofID)
+        #expect(!secondProofID.contains(fixture.root.path))
+        #expect(!proofReport.artifact.path.contains(fixture.root.path))
+        #expect(!proofReport.artifact.path.hasPrefix("/"))
     }
 
     private func report(

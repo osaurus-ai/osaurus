@@ -131,10 +131,15 @@ struct ModelEvidenceProofDescriptor: Equatable, Sendable {
         metadata: [String: String] = [:],
         artifactError: String? = nil
     ) {
-        self.modelId = modelId
+        self.modelId = EvidenceReportIdentity.normalizedLogicalValue(modelId)
         self.kind = kind
-        self.source = source ?? "model-library-\(kind.rawValue)-proof"
-        self.artifactPath = artifactPath
+        let normalizedSource = source.map(EvidenceReportIdentity.normalizedLogicalValue)
+        if let normalizedSource, !normalizedSource.isEmpty {
+            self.source = normalizedSource
+        } else {
+            self.source = "model-library-\(kind.rawValue)-proof"
+        }
+        self.artifactPath = artifactPath.trimmingCharacters(in: .whitespacesAndNewlines)
         self.status = status
         self.counts = counts
         self.startedAt = startedAt

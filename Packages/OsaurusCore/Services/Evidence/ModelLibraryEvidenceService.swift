@@ -8,9 +8,11 @@
 
 import Foundation
 
-final class ModelLibraryEvidenceService {
+final class ModelLibraryEvidenceService: @unchecked Sendable {
+    private static let registryProducer = "model-library-evidence"
+
     private let registry: EvidenceReportRegistryService
-    private var ownedReportIDs: Set<String> = []
+    private let lock = NSLock()
 
     init(registry: EvidenceReportRegistryService = EvidenceReportRegistryService()) {
         self.registry = registry
@@ -22,15 +24,21 @@ final class ModelLibraryEvidenceService {
         proofDescriptors: [ModelEvidenceProofDescriptor] = [],
         filter: ModelEvidenceFilter = ModelEvidenceFilter()
     ) -> ModelEvidenceSnapshot {
-        let proofDescriptorsByModel = Dictionary(grouping: proofDescriptors, by: { $0.modelId })
+        lock.lock()
+        defer { lock.unlock() }
+
+        let proofDescriptorsByModel = Dictionary(
+            grouping: proofDescriptors,
+            by: { Self.normalizedProofInput($0.modelId) }
+        )
         var rows: [ModelEvidenceRow] = []
-        var currentReportIDs: Set<String> = []
+        var registryDescriptors: [EvidenceReportDescriptor] = []
 
         for model in models {
             let report = Self.compatibilityReport(for: model)
             let preflightState = Self.supportState(from: report.preflight.status)
             let groupKind = Self.groupKind(from: report)
-            let modelProofDescriptors = proofDescriptorsByModel[model.id] ?? []
+            let modelProofDescriptors = proofDescriptorsByModel[Self.normalizedProofInput(model.id)] ?? []
             let proofAssessments = Self.proofAssessments(for: model, descriptors: modelProofDescriptors)
             let supportState = Self.supportState(
                 preflightState: preflightState,
@@ -46,8 +54,7 @@ final class ModelLibraryEvidenceService {
                     preflightState: preflightState,
                     proofAssessments: proofAssessments
                 )
-            registry.register(descriptors)
-            currentReportIDs.formUnion(descriptors.compactMap(\.id))
+            registryDescriptors.append(contentsOf: descriptors)
             let proofIDs = proofAssessments.map(\.reportID).sorted()
 
             rows.append(
@@ -75,22 +82,24 @@ final class ModelLibraryEvidenceService {
             )
         }
 
-        // Reconcile only rows registered by this service instance so a shared
-        // registry can retain reports from independent evidence producers.
-        registry.remove(ids: ownedReportIDs.subtracting(currentReportIDs))
-        ownedReportIDs = currentReportIDs
+        let reports = registry.reconcile(
+            producer: Self.registryProducer,
+            descriptors: registryDescriptors
+        )
 
         let sortedRows = rows.sorted(by: Self.sortRows)
         return ModelEvidenceSnapshot(
             rows: sortedRows,
             visibleRows: sortedRows.filter(filter.includes),
             groups: Self.groups(from: sortedRows),
-            reports: registry.list()
+            reports: reports
         )
     }
 
     func snapshot(_ filter: EvidenceReportFilter = EvidenceReportFilter()) -> EvidenceReportRegistrySnapshot {
-        registry.snapshot(filter)
+        lock.lock()
+        defer { lock.unlock() }
+        return registry.snapshot(producer: Self.registryProducer, filter: filter)
     }
 
     private static func compatibilityReport(for model: MLXModel) -> ModelCompatibilityDiagnostics.Report {
@@ -488,6 +497,14 @@ final class ModelLibraryEvidenceService {
         passed: (ProofAssessment) -> Bool,
         missingDetail: String
     ) -> ModelEvidenceRequirementStatus {
+        if let failure = assessments.first(where: { $0.status == .failed || $0.status == .error }) {
+            return ModelEvidenceRequirementStatus(
+                kind: kind,
+                state: .failed,
+                reportID: failure.reportID,
+                detail: failure.summaryDetail
+            )
+        }
         if let passing = assessments.first(where: passed) {
             return ModelEvidenceRequirementStatus(
                 kind: kind,
@@ -506,15 +523,33 @@ final class ModelLibraryEvidenceService {
         }
 
         let ranked = assessments.sorted { lhs, rhs in
-            requirementStateRank(state(from: lhs.status)) > requirementStateRank(state(from: rhs.status))
+            requirementStateRank(proofRequirementState(for: lhs, passed: passed))
+                > requirementStateRank(proofRequirementState(for: rhs, passed: passed))
         }
         let best = ranked[0]
+        let bestState = proofRequirementState(for: best, passed: passed)
+        let detail = best.status == .passed
+            ? "\(best.summaryDetail) \(missingDetail)"
+            : best.summaryDetail
         return ModelEvidenceRequirementStatus(
             kind: kind,
-            state: state(from: best.status),
+            state: bestState,
             reportID: best.reportID,
-            detail: best.summaryDetail
+            detail: detail
         )
+    }
+
+    private static func proofRequirementState(
+        for assessment: ProofAssessment,
+        passed: (ProofAssessment) -> Bool
+    ) -> ModelEvidenceRequirementState {
+        if passed(assessment) {
+            return .passed
+        }
+        if assessment.status == .passed {
+            return .blocked
+        }
+        return state(from: assessment.status)
     }
 
     private static func state(from status: EvidenceReportStatus) -> ModelEvidenceRequirementState {
@@ -536,11 +571,11 @@ final class ModelLibraryEvidenceService {
 
     private static func requirementStateRank(_ state: ModelEvidenceRequirementState) -> Int {
         switch state {
-        case .passed:
-            return 6
         case .failed:
-            return 5
+            return 6
         case .blocked:
+            return 5
+        case .passed:
             return 4
         case .partial:
             return 3
@@ -559,11 +594,15 @@ final class ModelLibraryEvidenceService {
             let reportID = proofID(
                 modelId: model.id,
                 kind: descriptor.kind,
+                source: descriptor.source,
                 artifactPath: descriptor.artifactPath
             )
+            let artifactURL = URL(
+                fileURLWithPath: descriptor.artifactPath.trimmingCharacters(in: .whitespacesAndNewlines)
+            ).standardizedFileURL
             let artifactUnavailable =
                 descriptor.artifactError?.isEmpty == false
-                || !FileManager.default.fileExists(atPath: descriptor.artifactPath)
+                || !FileManager.default.fileExists(atPath: artifactURL.path)
             let tokensPerSecond = tokenRate(from: descriptor.metadata)
             let memoryProofResult = memoryProof(from: descriptor.metadata)
             let provesMemoryFootprint = memoryProofResult == .passed
@@ -642,7 +681,8 @@ final class ModelLibraryEvidenceService {
         }
         resolved.total = max(
             resolved.total,
-            resolved.passed + resolved.failed + resolved.errored + resolved.skipped + resolved.blocked
+            resolved.passed + resolved.failed + resolved.errored + resolved.skipped
+                + resolved.blocked + resolved.warnings
         )
         return resolved
     }
@@ -685,19 +725,40 @@ final class ModelLibraryEvidenceService {
     }
 
     private static func localCacheID(for modelId: String) -> String {
-        "model-library-cache|\(modelId)"
+        stableModelReportID(prefix: "model-library-cache", modelId: modelId)
     }
 
     private static func compatibilityID(for modelId: String) -> String {
-        "model-library-preflight|\(modelId)"
+        stableModelReportID(prefix: "model-library-preflight", modelId: modelId)
     }
 
     private static func proofID(
         modelId: String,
         kind: ModelEvidenceProofKind,
+        source: String,
         artifactPath: String
     ) -> String {
-        "model-library-\(kind.rawValue)-proof|\(modelId)|\(artifactPath)"
+        let artifactURL = URL(
+            fileURLWithPath: artifactPath.trimmingCharacters(in: .whitespacesAndNewlines)
+        ).standardizedFileURL
+        let artifactIdentity = EvidenceReportIdentity.contentDigest(at: artifactURL)
+            .map { "sha256:\($0)" }
+            ?? "name:\(normalizedProofInput(artifactURL.lastPathComponent))"
+        let seed = [
+            normalizedProofInput(modelId),
+            kind.rawValue,
+            normalizedProofInput(source),
+            artifactIdentity,
+        ].joined(separator: "|")
+        return "model-library-\(kind.rawValue)-proof:\(EvidenceReportIdentity.digest(seed))"
+    }
+
+    private static func stableModelReportID(prefix: String, modelId: String) -> String {
+        "\(prefix):\(EvidenceReportIdentity.digest(normalizedProofInput(modelId)))"
+    }
+
+    private static func normalizedProofInput(_ value: String) -> String {
+        EvidenceReportIdentity.normalizedLogicalValue(value)
     }
 
     private static func redactedPath(_ path: String?) -> String? {
