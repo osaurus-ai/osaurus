@@ -296,27 +296,31 @@ public final class EvidenceReportRegistryService: @unchecked Sendable {
     ) -> EvidenceReportCounts {
         guard descriptorStatus != resolvedStatus else { return counts }
 
-        var resolved = counts
-        resolved.passed = 0
+        let normalizedTotal = max(
+            1,
+            max(
+                counts.total,
+                counts.passed + counts.failed + counts.errored + counts.skipped
+                    + counts.blocked + counts.warnings
+            )
+        )
+        var resolved = EvidenceReportCounts(total: normalizedTotal)
         switch resolvedStatus {
         case .failed:
-            resolved.failed = max(1, resolved.failed)
+            resolved.failed = normalizedTotal
         case .error:
-            resolved.errored = max(1, resolved.errored)
+            resolved.errored = normalizedTotal
         case .blocked:
-            resolved.blocked = max(1, resolved.blocked)
+            resolved.blocked = normalizedTotal
         case .unavailable:
-            resolved.skipped = max(1, resolved.skipped)
+            resolved.skipped = normalizedTotal
         case .partial:
-            resolved.warnings = max(1, resolved.warnings)
-        case .passed, .unknown:
-            break
+            resolved.warnings = normalizedTotal
+        case .passed:
+            resolved.passed = normalizedTotal
+        case .unknown:
+            resolved.total = 0
         }
-        resolved.total = max(
-            resolved.total,
-            resolved.passed + resolved.failed + resolved.errored + resolved.skipped
-                + resolved.blocked + resolved.warnings
-        )
         return resolved
     }
 

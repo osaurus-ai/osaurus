@@ -38,7 +38,7 @@ Missing artifacts, descriptor errors, missing token/s on passing generation
 proof, and missing memory proof on passing memory rows are downgraded before the
 row support state is computed.
 
-Each scan reconciles only report IDs previously registered by the same model
-evidence service instance. Removed models and omitted proofs therefore leave no
-orphaned projection rows, while reports from other registry producers remain
-untouched.
+Each scan atomically replaces the complete `model-library-evidence` producer
+scope in the registry. Removed models and omitted proofs therefore leave no
+orphaned projection rows even when the service is recreated, while reports from
+other registry producers remain untouched.

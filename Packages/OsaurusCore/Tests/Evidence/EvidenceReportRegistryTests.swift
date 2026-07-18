@@ -149,13 +149,17 @@ struct EvidenceReportRegistryTests {
                 source: "runtime-live-proof",
                 artifactURL: artifact,
                 status: .passed,
-                counts: EvidenceReportCounts(total: 1, passed: 1)
+                counts: EvidenceReportCounts(
+                    total: 3,
+                    passed: 1,
+                    blocked: 1,
+                    warnings: 1
+                )
             )
         )
         #expect(unavailable.status == .unavailable)
         #expect(unavailable.artifact.availability == .unavailable)
-        #expect(unavailable.counts.passed == 0)
-        #expect(unavailable.counts.skipped == 1)
+        #expect(unavailable.counts == EvidenceReportCounts(total: 3, skipped: 3))
         #expect(unavailable.generation > available.generation)
 
         let failed = service.register(

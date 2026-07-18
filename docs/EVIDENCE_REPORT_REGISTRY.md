@@ -15,26 +15,31 @@ rendered by future surfaces.
   `provider`, `model_compatibility`, `cache`, or `custom`.
 - `source`: the producing flow, such as `evals-pr-evidence` or
   `provider-connectivity`.
-- `artifactPath`: the local artifact path. Relative paths can be resolved
-  against a caller-provided base URL.
+- `artifactPath`: the machine-local artifact path used during registration and
+  resolution. It is never serialized as an absolute path.
+- `artifactLocator`: an optional privacy-safe relative locator exported in the
+  summary. When omitted, the registry derives an opaque content/path digest.
 - `status` and `counts`: summary outcome fields from the producer.
 - `startedAt`, `completedAt`, and registration time.
 - `metadata`: string metadata, redacted at registration before storage.
 
-`EvidenceReportSummary` is the canonical output. Missing artifact paths are
-kept as explicit rows with `status = unavailable` and
-`artifact.availability = unavailable`. Descriptors that already know they
-failed to parse or validate can pass `artifactError`, which produces an
-explicit `error` row.
+`EvidenceReportSummary` is the canonical output. Its `artifact.path` is a safe
+relative or opaque locator; machine-local resolution remains private to the
+registry service. Missing artifacts stay explicit with unavailable or error
+availability. Known failed, errored, blocked, and partial outcomes retain that
+status instead of being rewritten as successful or merely unavailable.
 
 ## Behavior
 
-`EvidenceReportRegistryService` stores summaries in memory, dedupes repeated
-descriptors by explicit `id` or by `(kind, source, artifactPath)`, and supports
-filters for kind, source, status, and artifact availability. Re-registering the
-same identity is a deliberate refresh: the incoming summary replaces the prior
-one even when its artifact has since become unavailable. Stable JSON output uses
-the package canonical encoder with sorted keys and ISO-8601 dates.
+`EvidenceReportRegistryService` stores summaries in memory, derives stable IDs
+from an explicit privacy-safe ID or normalized artifact content/locator
+identity, and supports filters for kind, source, status, and artifact
+availability. Re-registering the same identity is a deliberate refresh: the
+incoming summary replaces the prior one even when its artifact has since become
+unavailable. Producer-scoped reconciliation atomically replaces one producer's
+complete report set without deleting unrelated producers. Monotonic generations
+determine projection precedence. Stable JSON output uses the package canonical
+encoder with sorted keys and ISO-8601 dates.
 
 Metadata is redacted before it reaches the registry. Sensitive keys such as API
 keys, authorization headers, passwords, private keys, credentials, and token
@@ -75,7 +80,7 @@ local directories and external cache/import candidates are grouped and excluded
 from default visible rows, so large local caches do not flood model views. A
 consumer can opt into those groups for repair or audit workflows.
 
-Full bundle paths are not copied into model row metadata. The registry artifact
-path remains the local source-of-truth pointer, but model evidence metadata uses
-redacted display paths such as `.../repo-name` and stores `bundle_path` as
-`<redacted>`.
+Full bundle paths are not copied into model row metadata or serialized artifact
+locators. Model evidence metadata uses redacted display paths such as
+`.../repo-name` and stores `bundle_path` as `<redacted>`; machine-local artifact
+resolution remains an in-process registry concern.

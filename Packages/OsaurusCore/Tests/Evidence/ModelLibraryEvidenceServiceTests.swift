@@ -497,6 +497,84 @@ struct ModelLibraryEvidenceServiceTests {
     }
 
     @Test
+    func missingBlockedAndPartialProofArtifactsPreserveIncompleteTruth() throws {
+        let fixture = try ModelEvidenceFixture()
+        let model = try fixture.model(id: "org/missing-incomplete-proofs", config: #"{"model_type":"qwen3"}"#)
+        let service = ModelLibraryEvidenceService(
+            registry: EvidenceReportRegistryService(now: fixture.clock)
+        )
+
+        let snapshot = service.registerEvidence(
+            for: [model],
+            proofDescriptors: [
+                ModelEvidenceProofDescriptor(
+                    modelId: model.id,
+                    kind: .runtime,
+                    artifactPath: fixture.root.appendingPathComponent("proof/missing-blocked.json").path,
+                    status: .blocked,
+                    counts: EvidenceReportCounts(total: 1, blocked: 1)
+                ),
+                ModelEvidenceProofDescriptor(
+                    modelId: model.id,
+                    kind: .benchmark,
+                    artifactPath: fixture.root.appendingPathComponent("proof/missing-partial.json").path,
+                    status: .partial,
+                    counts: EvidenceReportCounts(total: 2, passed: 1, warnings: 1)
+                ),
+            ]
+        )
+        let row = try #require(snapshot.rows.first)
+        let runtime = try #require(snapshot.reports.first { $0.kind == .runtime })
+        let benchmark = try #require(snapshot.reports.first { $0.kind == .benchmark })
+
+        #expect(row.supportState == .partial)
+        #expect(runtime.status == .blocked)
+        #expect(runtime.counts == EvidenceReportCounts(total: 1, blocked: 1))
+        #expect(runtime.artifact.availability == .unavailable)
+        #expect(benchmark.status == .partial)
+        #expect(benchmark.counts == EvidenceReportCounts(total: 2, passed: 1, warnings: 1))
+        #expect(benchmark.artifact.availability == .unavailable)
+        #expect(row.requirements.first { $0.kind == .runtimeGeneration }?.state == .blocked)
+        #expect(row.requirements.first { $0.kind == .benchmarkOrEval }?.state == .partial)
+    }
+
+    @Test
+    func unavailableProofRewriteNormalizesAllOutcomeCounts() throws {
+        let fixture = try ModelEvidenceFixture()
+        let model = try fixture.model(id: "org/missing-mixed-count-proof", config: #"{"model_type":"qwen3"}"#)
+        let service = ModelLibraryEvidenceService(
+            registry: EvidenceReportRegistryService(now: fixture.clock)
+        )
+
+        let snapshot = service.registerEvidence(
+            for: [model],
+            proofDescriptors: [
+                ModelEvidenceProofDescriptor(
+                    modelId: model.id,
+                    kind: .runtime,
+                    artifactPath: fixture.root.appendingPathComponent("proof/missing-mixed.json").path,
+                    status: .passed,
+                    counts: EvidenceReportCounts(
+                        total: 4,
+                        passed: 1,
+                        failed: 1,
+                        blocked: 1,
+                        warnings: 1
+                    ),
+                    metadata: [
+                        "tokens_per_second": "12.0",
+                        "physical_footprint_within_limit": "true",
+                    ]
+                ),
+            ]
+        )
+        let runtime = try #require(snapshot.reports.first { $0.kind == .runtime })
+
+        #expect(runtime.status == .unavailable)
+        #expect(runtime.counts == EvidenceReportCounts(total: 4, skipped: 4))
+    }
+
+    @Test
     func registryMetadataAndRowsDoNotExposeFullBundlePaths() throws {
         let fixture = try ModelEvidenceFixture()
         let model = try fixture.model(id: "org/redacted", config: #"{"model_type":"qwen3"}"#)
