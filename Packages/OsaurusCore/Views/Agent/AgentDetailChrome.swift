@@ -15,12 +15,11 @@
 //      Insights").
 //    - `AgentDetailMetadataRow` / `AgentDetailStatusRow` are the fixed-width
 //      label/value rows used inside those cards.
-//    - `AgentDetailGroupedTabStrip` is the local detail's two-level
-//      navigation: folder-style group tabs whose selected tab opens into a
-//      tinted drawer bar of sub-tab pills.
-//    - `AgentDetailTabStrip` is the flat, horizontally-scrollable tab strip
-//      (with overflow fades + chevrons) used by the remote Overview/Activity
-//      shell; both strips share `AgentDetailOverflowScroller`.
+//    - `AgentDetailGroupedTabStrip` is the shared two-level navigation:
+//      folder-style group tabs whose selected tab opens into a tinted drawer
+//      bar of sub-tab pills (single-tab groups render no drawer). The local
+//      detail feeds it five groups; the remote detail feeds it
+//      Overview/Activity as single-item groups.
 //
 //  Sheet-specific chrome (headers, footers, button styles, text fields) lives
 //  in `AgentSheetChrome.swift`; this file is for the persistent detail panes.
@@ -550,7 +549,8 @@ struct AgentSwitcherPopover: View {
 
 // MARK: - Tab Strip
 
-/// A single tab in `AgentDetailTabStrip`. `id` doubles as the selection value.
+/// A single tab in `AgentDetailGroupedTabStrip`. `id` doubles as the
+/// selection value.
 struct AgentDetailTabItem<Tab: Hashable>: Identifiable {
     let id: Tab
     /// Already-localized display label (rendered verbatim).
@@ -581,89 +581,11 @@ struct AgentDetailTabItem<Tab: Hashable>: Identifiable {
     }
 }
 
-/// Flat, horizontally-scrollable tab strip with edge fades + "more" chevrons
-/// that appear only when the strip overflows its viewport. Used by the remote
-/// agent detail (Overview / Activity); the local detail uses
-/// `AgentDetailGroupedTabStrip` instead.
-struct AgentDetailTabStrip<Tab: Hashable>: View {
-    @Environment(\.theme) private var theme
-
-    let items: [AgentDetailTabItem<Tab>]
-    @Binding var selection: Tab
-
-    var body: some View {
-        AgentDetailOverflowScroller(selection: selection) {
-            HStack(spacing: 0) {
-                ForEach(items) { item in
-                    tabButton(item)
-                        .id(item.id)
-                }
-            }
-            .padding(.horizontal, 4)
-        }
-    }
-
-    private func tabButton(_ item: AgentDetailTabItem<Tab>) -> some View {
-        let isSelected = selection == item.id
-        // Warning tabs use the system warning color regardless of selection so
-        // the user can spot them at a glance even in a long tab strip; the
-        // accent color is reserved for the happy-path "selected" signal.
-        let foreground: Color
-        if item.isWarning {
-            foreground = .orange
-        } else if isSelected {
-            foreground = theme.accentColor
-        } else {
-            foreground = theme.tertiaryText
-        }
-        return Button {
-            selection = item.id
-        } label: {
-            VStack(spacing: 0) {
-                HStack(spacing: 5) {
-                    Image(systemName: item.icon)
-                        .font(.system(size: 11, weight: isSelected ? .semibold : .regular))
-
-                    Text(item.label)
-                        .font(.system(size: 12, weight: isSelected ? .semibold : .regular))
-
-                    if let count = item.badgeCount {
-                        Text("\(count)", bundle: .module)
-                            .font(.system(size: 9, weight: .bold, design: .rounded))
-                            .foregroundColor(isSelected ? theme.accentColor : theme.tertiaryText)
-                            .padding(.horizontal, 5)
-                            .padding(.vertical, 1)
-                            .background(
-                                Capsule()
-                                    .fill(
-                                        isSelected
-                                            ? theme.accentColor.opacity(0.12) : theme.inputBackground
-                                    )
-                            )
-                    }
-                }
-                .foregroundColor(foreground)
-                .padding(.horizontal, 12)
-                .padding(.top, 10)
-                .padding(.bottom, 8)
-
-                Rectangle()
-                    .fill(isSelected ? (item.isWarning ? Color.orange : theme.accentColor) : Color.clear)
-                    .frame(height: 2)
-            }
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(PlainButtonStyle())
-    }
-}
-
 // MARK: - Overflow Scroller
 
 /// Shared horizontal-overflow chrome for the detail tab rows: edge fades +
 /// floating "more" chevrons that appear only when the content overflows its
-/// viewport, plus auto-scrolling the active selection into view. Extracted
-/// from `AgentDetailTabStrip` so the grouped strip's segmented row keeps the
-/// exact same overflow behavior on narrow windows.
+/// viewport, plus auto-scrolling the active selection into view.
 private struct AgentDetailOverflowScroller<Selection: Hashable, Content: View>: View {
     @Environment(\.theme) private var theme
 
