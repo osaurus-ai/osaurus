@@ -15819,6 +15819,41 @@
         }
       }
     },
+    "Agents propose, you approve" : {
+      "comment" : "What's New (0.22.7) page title — knowledge curation.",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Agenten schlagen vor, Sie genehmigen"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "에이전트가 제안하고, 사용자가 승인합니다"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Агенты предлагают, вы утверждаете"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "智能体提议，由您批准"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "智能體提議，由您核准"
+          }
+        }
+      }
+    },
     "Agents run shell commands safely" : {
       "localizations" : {
         "de" : {
@@ -58111,6 +58146,41 @@
         }
       }
     },
+    "Each agent only sees the knowledge bases you check in its Abilities tab. Everything else stays invisible to it. Edit a file in the folder and the index updates live, no restart needed." : {
+      "comment" : "What's New (0.22.7) page description — per-agent grants.",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Jeder Agent sieht nur die Wissensdatenbanken, die Sie in seinem Abilities-Tab auswählen. Alles andere bleibt für ihn unsichtbar. Bearbeiten Sie eine Datei im Ordner, und der Index wird sofort aktualisiert, ganz ohne Neustart."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "각 에이전트는 Abilities 탭에서 선택한 지식 베이스만 볼 수 있습니다. 그 외에는 전혀 보이지 않습니다. 폴더의 파일을 수정하면 재시작 없이 색인이 즉시 갱신됩니다."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Каждый агент видит только те базы знаний, которые вы отметили на его вкладке Abilities. Всё остальное для него невидимо. Измените файл в папке, и индекс обновится сразу, без перезапуска."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "每个智能体只能看到您在其“能力”标签页中勾选的知识库，其余内容对它完全不可见。编辑文件夹中的文件，索引会实时更新，无需重启。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "每個智能體只能看到您在其「能力」分頁中勾選的知識庫，其餘內容對它完全不可見。編輯資料夾中的檔案，索引會即時更新，無需重新啟動。"
+          }
+        }
+      }
+    },
     "Each generated AppleScript is shown for your approval before it runs." : {
       "extractionState" : "manual",
       "localizations" : {
@@ -74147,6 +74217,41 @@
         }
       }
     },
+    "Granted per agent" : {
+      "comment" : "What's New (0.22.7) page title — per-agent grants.",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Pro Agent freigegeben"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "에이전트별로 부여"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Доступ отдельно для каждого агента"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "按智能体授权"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "按智能體授權"
+          }
+        }
+      }
+    },
     "Greeting" : {
       "localizations" : {
         "de" : {
@@ -83020,6 +83125,76 @@
         }
       }
     },
+    "Introducing" : {
+      "comment" : "What's New (0.22.7) headline lead-in, rendered before \"Knowledge Base\".",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Neu:"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "신규:"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Новинка:"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "全新推出："
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "全新推出："
+          }
+        }
+      }
+    },
+    "Introducing Knowledge Base" : {
+      "comment" : "What's New (0.22.7) eyebrow shown on pages after the first.",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Neu: Wissensdatenbank"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "신규: 지식 베이스"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Новинка: база знаний"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "全新推出：知识库"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "全新推出：知識庫"
+          }
+        }
+      }
+    },
     "Invalid" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -84936,6 +85111,41 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "知識"
+          }
+        }
+      }
+    },
+    "Knowledge Base" : {
+      "comment" : "What's New (0.22.7) page title — knowledge base feature.",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Wissensdatenbank"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "지식 베이스"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "База знаний"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "知识库"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "知識庫"
           }
         }
       }
@@ -111156,6 +111366,41 @@
         }
       }
     },
+    "Open Knowledge" : {
+      "comment" : "What's New (0.22.7) CTA — opens Management → Knowledge.",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Wissen öffnen"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "지식 열기"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Открыть «Знания»"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "打开知识"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "開啟知識"
+          }
+        }
+      }
+    },
     "Open Models" : {
       "localizations" : {
         "de" : {
@@ -121696,6 +121941,41 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "讓 Osaurus 指向一個包含指南、範本、規範的資料夾，並授權給代理，讓它們可以按需查閱。支援 Markdown、純文字、程式碼、PDF、Word、Excel、PowerPoint 和 CSV 檔案。"
+          }
+        }
+      }
+    },
+    "Point Osaurus at folders of reference material like team guides, standards, specs, and spreadsheets, and your agents can search and read them on demand. Markdown, plain text, code, PDF, Word, Excel, PowerPoint, and CSV files are all indexed, entirely on your Mac." : {
+      "comment" : "What's New (0.22.7) page description — knowledge base feature.",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Verweisen Sie Osaurus auf Ordner mit Referenzmaterial wie Team-Leitfäden, Standards, Spezifikationen und Tabellen, und Ihre Agenten können sie bei Bedarf durchsuchen und lesen. Markdown, reiner Text, Code, PDF, Word, Excel, PowerPoint und CSV-Dateien werden alle indiziert, vollständig auf Ihrem Mac."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "팀 가이드, 표준, 사양, 스프레드시트 같은 참고 자료 폴더를 Osaurus에 지정하면 에이전트가 필요할 때 검색하고 읽을 수 있습니다. 마크다운, 일반 텍스트, 코드, PDF, Word, Excel, PowerPoint, CSV 파일이 모두 색인되며, 전부 Mac에서 처리됩니다."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Укажите Osaurus папки со справочными материалами, такими как командные руководства, стандарты, спецификации и таблицы, и ваши агенты смогут искать и читать их по запросу. Файлы Markdown, обычный текст, код, PDF, Word, Excel, PowerPoint и CSV индексируются полностью на вашем Mac."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "将 Osaurus 指向包含团队指南、标准、规范和表格等参考资料的文件夹，您的智能体即可按需搜索和阅读。Markdown、纯文本、代码、PDF、Word、Excel、PowerPoint 和 CSV 文件都会被索引，完全在您的 Mac 上进行。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "將 Osaurus 指向包含團隊指南、標準、規格和表格等參考資料的資料夾，您的智能體即可按需搜尋和閱讀。Markdown、純文字、程式碼、PDF、Word、Excel、PowerPoint 和 CSV 檔案都會被索引，完全在您的 Mac 上進行。"
           }
         }
       }
@@ -177400,6 +177680,41 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "在功能選項卡中開啓生成式問候，以使用AI撰寫的問候語。"
+          }
+        }
+      }
+    },
+    "Turn on the Curator ability and an agent can flag stale documents and draft updates, but nothing is ever written until you review the diff and approve it in the Knowledge tab." : {
+      "comment" : "What's New (0.22.7) page description — knowledge curation.",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Aktivieren Sie die Kurator-Fähigkeit, und ein Agent kann veraltete Dokumente melden und Aktualisierungen entwerfen. Geschrieben wird aber erst, wenn Sie den Diff geprüft und im Wissen-Tab genehmigt haben."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "큐레이터 기능을 켜면 에이전트가 오래된 문서를 표시하고 수정안을 작성할 수 있습니다. 하지만 지식 탭에서 변경 내용을 검토하고 승인하기 전까지는 아무것도 기록되지 않습니다."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Включите способность «Куратор», и агент сможет помечать устаревшие документы и готовить обновления. Но ничего не будет записано, пока вы не просмотрите изменения и не утвердите их во вкладке «Знания»."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "开启“维护者”能力后，智能体可以标记过期文档并起草更新，但在您于“知识”标签页中审阅差异并批准之前，任何内容都不会被写入。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "開啟「維護者」能力後，智能體可以標記過期文件並草擬更新，但在您於「知識」分頁中審閱差異並核准之前，任何內容都不會被寫入。"
           }
         }
       }
