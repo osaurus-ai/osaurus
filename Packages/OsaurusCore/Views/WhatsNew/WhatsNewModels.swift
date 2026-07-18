@@ -34,6 +34,8 @@ public enum WhatsNewAction: Hashable, Sendable {
     case openSubagentSettings
     /// Open Settings → Search (native web search providers).
     case openSearchSettings
+    /// Open Management → Knowledge (collections list + curation inbox).
+    case openKnowledgeSettings
 }
 
 public struct WhatsNewPage: Identifiable, Hashable, Sendable {
@@ -93,6 +95,7 @@ public enum WhatsNewContent {
         computerUse_0_20_7,
         imageAndSpawn_0_21_0,
         nativeSearch_0_21_11,
+        knowledge_0_22_7,
     ]
 
     /// First-launch announcement for the Privacy Filter feature.
@@ -260,6 +263,40 @@ public enum WhatsNewContent {
                 systemImage: "antenna.radiowaves.left.and.right",
                 actionLabel: "Open Search settings",
                 action: .openSearchSettings
+            ),
+        ]
+    )
+
+    /// First-launch announcement for knowledge collections in 0.22.7.
+    /// Three pages: what a collection is and the formats it indexes,
+    /// the per-agent grant model in the Abilities tab, and the curator
+    /// propose/approve loop. The final CTA deep-links to
+    /// Management → Knowledge via `openKnowledgeSettings`.
+    private static let knowledge_0_22_7 = WhatsNewRelease(
+        version: "0.22.7",
+        pages: [
+            WhatsNewPage(
+                id: "knowledge-0.22.7:summary",
+                title: "Knowledge collections",
+                description:
+                    "Point Osaurus at folders of reference material — team guides, standards, specs, spreadsheets — and your agents can search and read them on demand. Markdown, plain text, code, PDF, Word, Excel, PowerPoint, and CSV files are all indexed, entirely on your Mac.",
+                systemImage: "books.vertical.fill"
+            ),
+            WhatsNewPage(
+                id: "knowledge-0.22.7:grants",
+                title: "Granted per agent",
+                description:
+                    "Each agent only sees the collections you check in its Abilities tab — everything else stays invisible to it. Edit a file in the folder and the index updates live, no restart needed.",
+                systemImage: "checklist"
+            ),
+            WhatsNewPage(
+                id: "knowledge-0.22.7:curation",
+                title: "Agents propose, you approve",
+                description:
+                    "Turn on the Curator ability and an agent can flag stale documents and draft updates — but nothing is ever written until you review the diff and approve it in the Knowledge tab.",
+                systemImage: "checkmark.seal.fill",
+                actionLabel: "Open Knowledge",
+                action: .openKnowledgeSettings
             ),
         ]
     )
