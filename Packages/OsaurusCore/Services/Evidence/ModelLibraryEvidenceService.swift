@@ -10,6 +10,7 @@ import Foundation
 
 final class ModelLibraryEvidenceService {
     private let registry: EvidenceReportRegistryService
+    private var ownedReportIDs: Set<String> = []
 
     init(registry: EvidenceReportRegistryService = EvidenceReportRegistryService()) {
         self.registry = registry
@@ -23,6 +24,7 @@ final class ModelLibraryEvidenceService {
     ) -> ModelEvidenceSnapshot {
         let proofDescriptorsByModel = Dictionary(grouping: proofDescriptors, by: { $0.modelId })
         var rows: [ModelEvidenceRow] = []
+        var currentReportIDs: Set<String> = []
 
         for model in models {
             let report = Self.compatibilityReport(for: model)
@@ -44,12 +46,9 @@ final class ModelLibraryEvidenceService {
                     preflightState: preflightState,
                     proofAssessments: proofAssessments
                 )
-            let summaries = registry.register(descriptors)
-            let proofIDPrefix = "model-library-"
-            let proofIDs = summaries
-                .filter { $0.id.hasPrefix(proofIDPrefix) && $0.id.contains("-proof|") }
-                .map(\.id)
-                .sorted()
+            registry.register(descriptors)
+            currentReportIDs.formUnion(descriptors.compactMap(\.id))
+            let proofIDs = proofAssessments.map(\.reportID).sorted()
 
             rows.append(
                 ModelEvidenceRow(
@@ -75,6 +74,11 @@ final class ModelLibraryEvidenceService {
                 )
             )
         }
+
+        // Reconcile only rows registered by this service instance so a shared
+        // registry can retain reports from independent evidence producers.
+        registry.remove(ids: ownedReportIDs.subtracting(currentReportIDs))
+        ownedReportIDs = currentReportIDs
 
         let sortedRows = rows.sorted(by: Self.sortRows)
         return ModelEvidenceSnapshot(
@@ -207,7 +211,7 @@ final class ModelLibraryEvidenceService {
             source: proof.source,
             artifactPath: proof.artifactPath,
             status: assessment.status,
-            counts: proof.counts,
+            counts: assessment.counts,
             startedAt: proof.startedAt,
             completedAt: proof.completedAt,
             metadata: metadata,
@@ -305,6 +309,9 @@ final class ModelLibraryEvidenceService {
         }
         if report.localBundle.kind != .available {
             return .unproven
+        }
+        if preflightState == .unproven {
+            return proofAssessments.isEmpty ? .unproven : .partial
         }
 
         let runtimeProof = proofAssessments.contains {
@@ -558,11 +565,19 @@ final class ModelLibraryEvidenceService {
                 descriptor.artifactError?.isEmpty == false
                 || !FileManager.default.fileExists(atPath: descriptor.artifactPath)
             let tokensPerSecond = tokenRate(from: descriptor.metadata)
-            let provesMemoryFootprint = memoryProof(from: descriptor.metadata) == true
+            let memoryProofResult = memoryProof(from: descriptor.metadata)
+            let provesMemoryFootprint = memoryProofResult == .passed
             var status = descriptor.status
             var validationMessages: [String] = []
 
-            if artifactUnavailable {
+            let isMemoryEvidence = descriptor.kind == .runtime || descriptor.kind == .memory
+            if isMemoryEvidence,
+                memoryProofResult == .failed,
+                descriptor.status != .failed,
+                descriptor.status != .error {
+                status = .failed
+                validationMessages.append("physical footprint exceeded the intended limit")
+            } else if artifactUnavailable {
                 switch descriptor.status {
                 case .failed, .error:
                     status = descriptor.status
@@ -590,11 +605,46 @@ final class ModelLibraryEvidenceService {
                 descriptor: descriptor,
                 reportID: reportID,
                 status: status,
+                counts: assessmentCounts(
+                    descriptor.counts,
+                    resolvedStatus: status,
+                    originalStatus: descriptor.status
+                ),
                 tokensPerSecond: tokensPerSecond,
                 provesMemoryFootprint: provesMemoryFootprint,
                 validationMessages: validationMessages
             )
         }
+    }
+
+    private static func assessmentCounts(
+        _ counts: EvidenceReportCounts,
+        resolvedStatus: EvidenceReportStatus,
+        originalStatus: EvidenceReportStatus
+    ) -> EvidenceReportCounts {
+        guard resolvedStatus != originalStatus else { return counts }
+
+        var resolved = counts
+        resolved.passed = 0
+        switch resolvedStatus {
+        case .failed:
+            resolved.failed = max(1, resolved.failed)
+        case .error:
+            resolved.errored = max(1, resolved.errored)
+        case .blocked:
+            resolved.blocked = max(1, resolved.blocked)
+        case .unavailable:
+            resolved.skipped = max(1, resolved.skipped)
+        case .partial:
+            resolved.warnings = max(1, resolved.warnings)
+        case .passed, .unknown:
+            break
+        }
+        resolved.total = max(
+            resolved.total,
+            resolved.passed + resolved.failed + resolved.errored + resolved.skipped + resolved.blocked
+        )
+        return resolved
     }
 
     private static func tokenRate(from metadata: [String: String]) -> Double? {
@@ -606,7 +656,7 @@ final class ModelLibraryEvidenceService {
         return nil
     }
 
-    private static func memoryProof(from metadata: [String: String]) -> Bool? {
+    private static func memoryProof(from metadata: [String: String]) -> MemoryProofResult {
         for key in [
             "physical_footprint_within_limit",
             "memory_within_limit",
@@ -618,13 +668,13 @@ final class ModelLibraryEvidenceService {
                 continue
             }
             if ["true", "yes", "passed", "pass", "within_limit", "1"].contains(value) {
-                return true
+                return .passed
             }
             if ["false", "no", "failed", "fail", "over_limit", "0"].contains(value) {
-                return false
+                return .failed
             }
         }
-        return nil
+        return .missing
     }
 
     private static func sortRows(_ lhs: ModelEvidenceRow, _ rhs: ModelEvidenceRow) -> Bool {
@@ -663,6 +713,7 @@ final class ModelLibraryEvidenceService {
         let descriptor: ModelEvidenceProofDescriptor
         let reportID: String
         let status: EvidenceReportStatus
+        let counts: EvidenceReportCounts
         let tokensPerSecond: Double?
         let provesMemoryFootprint: Bool
         let validationMessages: [String]
@@ -684,5 +735,11 @@ final class ModelLibraryEvidenceService {
             }
             return "\(descriptor.source) \(status.rawValue)."
         }
+    }
+
+    private enum MemoryProofResult {
+        case passed
+        case failed
+        case missing
     }
 }

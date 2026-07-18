@@ -65,6 +65,44 @@ struct ModelLibraryEvidenceServiceTests {
     }
 
     @Test
+    func externalBundleWithFullProofsStaysPartialWhilePreflightIsMissing() throws {
+        let fixture = try ModelEvidenceFixture()
+        let externalURL = try fixture.writeBundle(
+            relativePath: "external/full-proofs",
+            config: #"{"model_type":"qwen3"}"#
+        )
+        let model = MLXModel(
+            id: "org/external-full-proofs",
+            name: "External Full Proofs",
+            description: "",
+            downloadURL: "",
+            bundleDirectory: externalURL,
+            externalSource: ExternalModelLocator.Source.huggingFaceCache.rawValue
+        )
+        let service = ModelLibraryEvidenceService(
+            registry: EvidenceReportRegistryService(now: fixture.clock)
+        )
+
+        let snapshot = service.registerEvidence(
+            for: [model],
+            proofDescriptors: try fixture.completeProofDescriptors(for: model.id)
+        )
+        let row = try #require(snapshot.rows.first)
+        let preflight = try #require(
+            row.requirements.first { $0.kind == .compatibilityPreflight }
+        )
+
+        #expect(row.supportState == .partial)
+        #expect(row.supportState != .supported)
+        #expect(preflight.state == .missing)
+        #expect(
+            row.requirements
+                .filter { $0.kind != .compatibilityPreflight }
+                .allSatisfy { $0.state == .passed }
+        )
+    }
+
+    @Test
     func incompleteAndExternalCacheCandidatesAreGroupedAndHiddenByDefault() throws {
         let fixture = try ModelEvidenceFixture()
         let ready = try fixture.model(id: "org/ready", config: #"{"model_type":"qwen3"}"#)
@@ -105,6 +143,70 @@ struct ModelLibraryEvidenceServiceTests {
             )
         )
         #expect(Set(expanded.visibleRows.map(\.modelId)) == [ready.id, incomplete.id, external.id])
+    }
+
+    @Test
+    func laterScanRemovesOwnedReportsForRemovedModelAndPreservesOtherProducers() throws {
+        let fixture = try ModelEvidenceFixture()
+        let retained = try fixture.model(id: "org/retained", config: #"{"model_type":"qwen3"}"#)
+        let removed = try fixture.model(id: "org/removed", config: #"{"model_type":"qwen3"}"#)
+        let unrelatedArtifact = try fixture.writeArtifact(named: "other/report.json")
+        let registry = EvidenceReportRegistryService(now: fixture.clock)
+        registry.register(
+            EvidenceReportDescriptor(
+                id: "unrelated-report",
+                kind: .provider,
+                source: "independent-producer",
+                artifactURL: unrelatedArtifact,
+                status: .passed
+            )
+        )
+        let service = ModelLibraryEvidenceService(registry: registry)
+
+        let first = service.registerEvidence(
+            for: [retained, removed],
+            proofDescriptors: try fixture.completeProofDescriptors(for: removed.id)
+        )
+        let removedRow = try #require(first.rows.first { $0.modelId == removed.id })
+        let removedReportIDs = Set(
+            [removedRow.cacheReportID, removedRow.compatibilityReportID]
+                + removedRow.proofReportIDs
+        )
+
+        let second = service.registerEvidence(for: [retained])
+        let remainingReportIDs = Set(second.reports.map(\.id))
+
+        #expect(removedRow.proofReportIDs.count == 3)
+        #expect(removedReportIDs.isDisjoint(with: remainingReportIDs))
+        #expect(second.reports.contains { $0.id == "unrelated-report" })
+        #expect(registry.list().contains { $0.id == "unrelated-report" })
+    }
+
+    @Test
+    func laterScanRemovesProofReportsNoLongerSuppliedForRetainedModel() throws {
+        let fixture = try ModelEvidenceFixture()
+        let model = try fixture.model(id: "org/proof-removed", config: #"{"model_type":"qwen3"}"#)
+        let registry = EvidenceReportRegistryService(now: fixture.clock)
+        let service = ModelLibraryEvidenceService(registry: registry)
+
+        let first = service.registerEvidence(
+            for: [model],
+            proofDescriptors: try fixture.completeProofDescriptors(for: model.id)
+        )
+        let firstRow = try #require(first.rows.first)
+        let removedProofIDs = Set(firstRow.proofReportIDs)
+
+        let second = service.registerEvidence(for: [model])
+        let secondRow = try #require(second.rows.first)
+        let remainingReportIDs = Set(second.reports.map(\.id))
+
+        #expect(removedProofIDs.count == 3)
+        #expect(secondRow.proofReportIDs.isEmpty)
+        #expect(secondRow.supportState == .unproven)
+        #expect(removedProofIDs.isDisjoint(with: remainingReportIDs))
+        #expect(remainingReportIDs.contains(secondRow.cacheReportID))
+        #expect(remainingReportIDs.contains(secondRow.compatibilityReportID))
+        #expect(registry.list().map(\.id).allSatisfy { !removedProofIDs.contains($0) })
     }
 
     @Test
@@ -179,6 +281,7 @@ struct ModelLibraryEvidenceServiceTests {
                     kind: .runtime,
                     artifactPath: runtimeArtifact.path,
                     status: .passed,
+                    counts: EvidenceReportCounts(total: 1, passed: 1),
                     metadata: ["physical_footprint_within_limit": "true"]
                 ),
             ]
@@ -189,8 +292,49 @@ struct ModelLibraryEvidenceServiceTests {
 
         #expect(row.supportState == .partial)
         #expect(runtimeReport.status == .blocked)
+        #expect(runtimeReport.counts.passed == 0)
+        #expect(runtimeReport.counts.blocked == 1)
         #expect(runtimeReport.metadata["evidence_validation"] == "passing generation proof must record token/s")
         #expect(row.requirements.first { $0.kind == .tokenRate }?.state == .blocked)
+    }
+
+    @Test
+    func explicitOverLimitPhysicalFootprintFailsProofAndSupportRow() throws {
+        let fixture = try ModelEvidenceFixture()
+        let model = try fixture.model(id: "org/over-memory-limit", config: #"{"model_type":"qwen3"}"#)
+        let runtimeArtifact = try fixture.writeArtifact(named: "proof/runtime-over-limit.json")
+        let service = ModelLibraryEvidenceService(
+            registry: EvidenceReportRegistryService(now: fixture.clock)
+        )
+
+        let snapshot = service.registerEvidence(
+            for: [model],
+            proofDescriptors: [
+                ModelEvidenceProofDescriptor(
+                    modelId: model.id,
+                    kind: .runtime,
+                    artifactPath: runtimeArtifact.path,
+                    status: .passed,
+                    counts: EvidenceReportCounts(total: 1, passed: 1),
+                    metadata: [
+                        "tokens_per_second": "18.4",
+                        "physical_footprint_within_limit": "false",
+                    ]
+                ),
+            ]
+        )
+        let row = try #require(snapshot.rows.first)
+        let runtimeReport = try #require(snapshot.reports.first { $0.kind == .runtime })
+
+        #expect(row.supportState == .unsupported)
+        #expect(runtimeReport.status == .failed)
+        #expect(runtimeReport.counts.passed == 0)
+        #expect(runtimeReport.counts.failed == 1)
+        #expect(
+            runtimeReport.metadata["evidence_validation"]
+                == "physical footprint exceeded the intended limit"
+        )
+        #expect(row.requirements.first { $0.kind == .memoryFootprint }?.state == .failed)
     }
 
     @Test

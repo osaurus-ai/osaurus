@@ -31,11 +31,10 @@ explicit `error` row.
 
 `EvidenceReportRegistryService` stores summaries in memory, dedupes repeated
 descriptors by explicit `id` or by `(kind, source, artifactPath)`, and supports
-filters for kind, source, status, and artifact availability. Stable JSON output
-uses the package canonical encoder with sorted keys and ISO-8601 dates.
-Watcher scoreboard discovery uses the same registry service precedence, so a
-newer registration replaces an older available summary when an explicit ID is
-reused.
+filters for kind, source, status, and artifact availability. Re-registering the
+same identity is a deliberate refresh: the incoming summary replaces the prior
+one even when its artifact has since become unavailable. Stable JSON output uses
+the package canonical encoder with sorted keys and ISO-8601 dates.
 
 Metadata is redacted before it reaches the registry. Sensitive keys such as API
 keys, authorization headers, passwords, private keys, credentials, and token

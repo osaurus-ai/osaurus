@@ -56,6 +56,12 @@ public final class EvidenceReportRegistryService {
         summariesByID.removeAll()
     }
 
+    public func remove(ids: Set<String>) {
+        for id in ids {
+            summariesByID.removeValue(forKey: id)
+        }
+    }
+
     private func makeSummary(
         from descriptor: EvidenceReportDescriptor,
         relativeTo baseURL: URL?
@@ -155,26 +161,10 @@ public final class EvidenceReportRegistryService {
         _ existing: EvidenceReportSummary,
         _ incoming: EvidenceReportSummary
     ) -> EvidenceReportSummary {
-        let existingRank = availabilityRank(existing.artifact.availability)
-        let incomingRank = availabilityRank(incoming.artifact.availability)
-        if incomingRank != existingRank {
-            return incomingRank > existingRank ? incoming : existing
-        }
         if incoming.registeredAt != existing.registeredAt {
             return incoming.registeredAt > existing.registeredAt ? incoming : existing
         }
-        return Self.sortSummaries(existing, incoming) ? existing : incoming
-    }
-
-    private func availabilityRank(_ availability: EvidenceArtifactAvailability) -> Int {
-        switch availability {
-        case .available:
-            return 3
-        case .error:
-            return 2
-        case .unavailable:
-            return 1
-        }
+        return incoming
     }
 
     private static func sortSummaries(

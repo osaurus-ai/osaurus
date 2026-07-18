@@ -120,6 +120,55 @@ struct EvidenceReportRegistryTests {
     }
 
     @Test
+    func sameIDReregistrationRefreshesDeletedArtifactAndFailureTruth() throws {
+        let fixture = try RegistryFixture()
+        let service = EvidenceReportRegistryService(now: fixture.clock)
+        let artifact = try fixture.writeArtifact(named: "runtime/refresh.json")
+        let reportID = "runtime-refresh"
+
+        let available = service.register(
+            EvidenceReportDescriptor(
+                id: reportID,
+                kind: .runtime,
+                source: "runtime-live-proof",
+                artifactURL: artifact,
+                status: .passed,
+                counts: EvidenceReportCounts(total: 1, passed: 1)
+            )
+        )
+        #expect(available.status == .passed)
+        #expect(available.artifact.availability == .available)
+
+        try FileManager.default.removeItem(at: artifact)
+        let unavailable = service.register(
+            EvidenceReportDescriptor(
+                id: reportID,
+                kind: .runtime,
+                source: "runtime-live-proof",
+                artifactURL: artifact,
+                status: .passed,
+                counts: EvidenceReportCounts(total: 1, passed: 1)
+            )
+        )
+        #expect(unavailable.status == .unavailable)
+        #expect(unavailable.artifact.availability == .unavailable)
+
+        let failed = service.register(
+            EvidenceReportDescriptor(
+                id: reportID,
+                kind: .runtime,
+                source: "runtime-live-proof",
+                artifactURL: artifact,
+                status: .failed,
+                counts: EvidenceReportCounts(total: 1, failed: 1)
+            )
+        )
+        #expect(failed.status == .failed)
+        #expect(failed.artifact.availability == .unavailable)
+        #expect(service.list() == [failed])
+    }
+
+    @Test
     func descriptorErrorsBecomeErrorRows() throws {
         let fixture = try RegistryFixture()
         let service = EvidenceReportRegistryService(now: fixture.clock)

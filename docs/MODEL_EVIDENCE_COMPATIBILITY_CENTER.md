@@ -6,7 +6,8 @@ until live evidence rows are registered.
 
 ## Status contract
 
-- `supported`: local/import state is available, compatibility is not blocked,
+- `supported`: local/import state is available, compatibility preflight is
+  supported,
   and passing runtime, token/s, memory, cache, and benchmark or eval evidence is
   registered for the exact model row.
 - `partial`: compatibility or proof evidence exists, but at least one required
@@ -36,3 +37,8 @@ benchmark/eval requirement.
 Missing artifacts, descriptor errors, missing token/s on passing generation
 proof, and missing memory proof on passing memory rows are downgraded before the
 row support state is computed.
+
+Each scan reconciles only report IDs previously registered by the same model
+evidence service instance. Removed models and omitted proofs therefore leave no
+orphaned projection rows, while reports from other registry producers remain
+untouched.
