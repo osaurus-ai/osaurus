@@ -302,6 +302,30 @@ struct MLXBatchAdapter {
         private var nativeMTPWarmModels: Set<String> = []
         private var lastEffectiveGenerationSettings: [String: EffectiveGenerationSettings] = [:]
 
+        /// Per-model count of engine handles held by in-flight `generate`
+        /// calls. Incremented synchronously (via `beginGenerate`) at the top
+        /// of `engine(for:)` — before the first await, so the handle is
+        /// counted from the instant a request commits to submitting — and
+        /// decremented by `endGenerate(model:)` from the producer task once
+        /// the upstream stream has fully drained. Closes the TOCTOU in
+        /// `shutdownEngineIfIdle`: a request can hold the engine handle
+        /// across several awaits before its submission raises the engine's
+        /// pending/active counts; in that window pending == active == 0, and
+        /// a concurrent idle shutdown would make the submit return vmlx's
+        /// `.cancelled` info — the client would get an empty 200.
+        private var inFlightHandleCounts: [String: Int] = [:]
+
+        /// Models with an idle shutdown claimed but not yet completed. The
+        /// claim is inserted in the SAME actor slice as
+        /// `shutdownEngineIfIdle`'s final handle-count re-check, and
+        /// `engine(for:)` checks it in the SAME slice as its handle-count
+        /// increment — so either the request's handle lands first (the
+        /// shutdown observes it and declines) or the claim lands first (the
+        /// request parks until the doomed engine is fully drained, then
+        /// resolves a fresh one through the coalescer).
+        private var idleShutdownClaims: Set<String> = []
+        private var idleShutdownWaiters: [String: [CheckedContinuation<Void, Never>]] = [:]
+
         /// Returns the cached engine for `modelName`, creating it on first
         /// use from the supplied `ModelContainer`. The container's existing
         /// cache coordinator is captured automatically by `makeBatchEngine`.
@@ -320,6 +344,32 @@ struct MLXBatchAdapter {
         /// past this gate the upstream stream finishes cleanly instead of
         /// restarting GPU work.
         func engine(
+            for modelName: String,
+            container: ModelContainer,
+            maxBatchSize: Int
+        ) async -> BatchEngine {
+            // Count this caller's handle BEFORE the first await, in the same
+            // actor slice as the idle-shutdown claim check below. The
+            // matching decrement is `endGenerate(model:)`, called from the
+            // producer task after the upstream stream has fully drained.
+            beginGenerate(model: modelName)
+            // If an idle shutdown is mid-flight, park until it completes:
+            // the coalescer can still hand out the doomed engine until the
+            // drain tombstone lands, and a handle to it would surface as a
+            // spurious `.cancelled` (empty 200) on submit.
+            while idleShutdownClaims.contains(modelName) {
+                await withCheckedContinuation { continuation in
+                    idleShutdownWaiters[modelName, default: []].append(continuation)
+                }
+            }
+            return await resolveEngine(
+                for: modelName,
+                container: container,
+                maxBatchSize: maxBatchSize
+            )
+        }
+
+        private func resolveEngine(
             for modelName: String,
             container: ModelContainer,
             maxBatchSize: Int
@@ -360,8 +410,10 @@ struct MLXBatchAdapter {
                     // Rebuild via the same path. The new engine is
                     // constructed with `maxBatchSize` directly, so the
                     // resize check on the recursive call sees a match and
-                    // skips `updateMaxBatchSize`.
-                    return await self.engine(
+                    // skips `updateMaxBatchSize`. Recurse into
+                    // `resolveEngine` (not `engine(for:)`) so the caller's
+                    // handle is counted exactly once.
+                    return await self.resolveEngine(
                         for: modelName,
                         container: container,
                         maxBatchSize: maxBatchSize
@@ -496,6 +548,96 @@ struct MLXBatchAdapter {
                 ssmCompanionMisses: ssmMisses,
                 ssmCompanionReDerives: ssmReDerives
             )
+        }
+
+        /// Observed demand on the RESOLVED engine for `modelName`:
+        /// pending + active counts, or 0 when no engine exists. Peek only —
+        /// never creates an engine. This is the auto-batch-sizing overlap
+        /// signal source; it deliberately reads exactly one pending/active
+        /// pair so the hot path gains no extra cross-actor chatter.
+        func pendingAndActiveCount(for modelName: String) async -> Int {
+            guard let engine = await coalescer.resolvedValue(for: modelName) else { return 0 }
+            let pending = await engine.pendingCount
+            let active = await engine.activeCount
+            return pending + active
+        }
+
+        /// Actual `maxBatchSize` of the RESOLVED engine for `modelName`, or
+        /// `nil` when no engine exists. Peek only — never creates an engine.
+        /// Used by the auto-batch-sizing path so a decayed recommendation
+        /// never hot-resizes a cached engine DOWN on the request path.
+        func resolvedEngineMaxBatchSize(for modelName: String) async -> Int? {
+            guard let engine = await coalescer.resolvedValue(for: modelName) else { return nil }
+            return await engine.maxBatchSize
+        }
+
+        /// Synchronous half of the in-flight-handle accounting: count one
+        /// engine handle for `modelName`. Called at the top of
+        /// `engine(for:)`; internal (not private) so the pairing with
+        /// `shutdownEngineIfIdle` is testable without a real `BatchEngine`.
+        func beginGenerate(model modelName: String) {
+            inFlightHandleCounts[modelName, default: 0] += 1
+        }
+
+        /// Balance for the handle counted in `engine(for:)` /
+        /// `beginGenerate(model:)`. Called from the `generate` producer task
+        /// after the upstream stream has fully drained — i.e. once all of
+        /// the request's engine work is done.
+        func endGenerate(model modelName: String) {
+            let remaining = (inFlightHandleCounts[modelName] ?? 0) - 1
+            if remaining > 0 {
+                inFlightHandleCounts[modelName] = remaining
+            } else {
+                inFlightHandleCounts[modelName] = nil
+            }
+        }
+
+        /// Number of engine handles currently held by in-flight `generate`
+        /// calls for `modelName`. Diagnostic/test accessor.
+        func inFlightHandleCount(for modelName: String) -> Int {
+            inFlightHandleCounts[modelName] ?? 0
+        }
+
+        /// Auto-batch-sizing decay teardown: shut the engine down ONLY when
+        /// it is fully idle — no in-flight handle (a request between
+        /// `engine(for:)` and its submission raising pending), no pending
+        /// work, and no active work — so the next request rebuilds fresh at
+        /// `maxBatchSize == 1` and regains compiled-decode eligibility (a
+        /// hot-resize down does NOT recover the compiled path — see the
+        /// vmlx invariant cited in `InferenceFeatureFlags`). Returns `true`
+        /// when no engine exists or teardown completed; `false` means
+        /// "busy, retry later" (the `BatchAutoscaler` decay loop retries).
+        ///
+        /// TOCTOU discipline: the handle count is checked again in the SAME
+        /// actor slice that claims the shutdown (the pending/active reads
+        /// suspend this actor, so a request may have taken a handle
+        /// meanwhile), and `engine(for:)` increments its count in the same
+        /// slice as it checks the claim. A handle acquired before the claim
+        /// makes this method decline; one acquired after parks until the
+        /// drained engine is gone and then resolves a fresh engine — no
+        /// request can be left holding a handle to the torn-down engine, so
+        /// no submit can surface a spurious `.cancelled` (empty 200).
+        func shutdownEngineIfIdle(for modelName: String) async -> Bool {
+            guard inFlightHandleCounts[modelName, default: 0] == 0 else { return false }
+            guard let engine = await coalescer.resolvedValue(for: modelName) else {
+                // No engine — but re-verify no handle was taken while this
+                // actor was suspended on the peek (a first-fetch may be
+                // mid-creation through the coalescer).
+                return inFlightHandleCounts[modelName, default: 0] == 0
+            }
+            let pending = await engine.pendingCount
+            let active = await engine.activeCount
+            guard pending == 0, active == 0 else { return false }
+            // Final handle re-check + shutdown claim in ONE actor slice
+            // (see the TOCTOU discipline note above).
+            guard inFlightHandleCounts[modelName, default: 0] == 0 else { return false }
+            idleShutdownClaims.insert(modelName)
+            await shutdownEngine(for: modelName)
+            idleShutdownClaims.remove(modelName)
+            if let waiters = idleShutdownWaiters.removeValue(forKey: modelName) {
+                for waiter in waiters { waiter.resume() }
+            }
+            return true
         }
 
         /// Shut down and remove the engine for `modelName`. Safe to call
@@ -1012,6 +1154,18 @@ struct MLXBatchAdapter {
         }
     }
 
+    /// Auto-batch-sizing resolution of the size actually used for a
+    /// request: never below the cached engine's current size, so a decayed
+    /// recommendation cannot hot-resize an active engine down on the
+    /// request path (a resize down never restores compiled decode). With no
+    /// cached engine the recommendation is used as-is — the fresh build
+    /// (post decay-sweep teardown) is exactly how shrink-to-1 regains
+    /// compile eligibility.
+    static func autoEffectiveMaxBatchSize(recommended: Int, cachedEngineSize: Int?) -> Int {
+        guard let cachedEngineSize else { return recommended }
+        return max(recommended, cachedEngineSize)
+    }
+
     static func shouldEnableCompiledBatchDecode(modelName: String, maxBatchSize: Int) -> Bool {
         maxBatchSize == 1
             && !Hy3ReasoningProfile.matches(modelId: modelName)
@@ -1058,6 +1212,51 @@ struct MLXBatchAdapter {
     ) async throws -> PreparedStream {
         let trace = generation.ttftTrace
         trace?.mark("batch_prepare_start")
+        // Auto batch sizing (opt-in): record this submission's observed
+        // demand and re-resolve the batch size BEFORE the solo lease. Both
+        // orderings are load-bearing:
+        //   * With `maxBatchSize == 1` the solo lease serializes overlapping
+        //     same-model requests upstream of the engine, so pending/active
+        //     counts read after the lease would never exceed 1 and overlap
+        //     could never be observed — the signal MUST be captured
+        //     pre-lease (one Registry peek + one pending/active read pair;
+        //     the +1 counts this submission).
+        //   * Re-resolving after recording lets the request that CREATES the
+        //     overlap escalate itself (skipping the solo lease and joining
+        //     the batch) instead of hot-resizing the engine down below live
+        //     demand with a stale single-slot value: the sample just
+        //     recorded keeps the recommendation >= the observed concurrency.
+        // When the flag is off this block does nothing and the resolved
+        // value from the caller is used unchanged.
+        var effectiveMaxBatchSize = maxBatchSize
+        if InferenceFeatureFlags.autoBatchSizingEnabled {
+            let observedDemand =
+                await Registry.shared.pendingAndActiveCount(for: modelName) + 1
+            await BatchAutoscaler.shared.recordSubmission(
+                model: modelName,
+                pendingAndActive: observedDemand
+            )
+            let recommended = await InferenceFeatureFlags.mlxBatchEngineMaxBatchSize(
+                model: modelName
+            )
+            // Decay-on-read must NOT hot-resize the cached engine DOWN on
+            // the request path: a resize down never restores compiled decode
+            // (vmlx Stage 1B invariant) — it only sheds slots mid-traffic.
+            // When the fresh recommendation is lower than the engine's
+            // actual size, keep serving this request at the cached size;
+            // shrink-to-1 belongs exclusively to the decay sweep's
+            // tombstoned shutdown+rebuild (`Registry.shutdownEngineIfIdle`).
+            // Reporting the cached size as `effectiveMaxBatchSize` also
+            // keeps `effectiveGenerationSettings.compiledBatchDecode`
+            // honest: it is computed from the size the engine actually
+            // runs at, not from a recommendation the engine never adopted.
+            effectiveMaxBatchSize = Self.autoEffectiveMaxBatchSize(
+                recommended: recommended,
+                cachedEngineSize: await Registry.shared.resolvedEngineMaxBatchSize(
+                    for: modelName
+                )
+            )
+        }
         // Prefill diagnostics: a generation step's clock starts HERE. The
         // solo-lease acquire below blocks until the PREVIOUS step's producer
         // task has released — and that release happens only after vmlx's
@@ -1065,10 +1264,10 @@ struct MLXBatchAdapter {
         // exactly how long this step waited on the prior step's KV store.
         let genEnterAt = CFAbsoluteTimeGetCurrent()
         PrefillDebugLog.shared.log(
-            "==GEN GENERATE-ENTER model=\(modelName) maxBatch=\(maxBatchSize)"
+            "==GEN GENERATE-ENTER model=\(modelName) maxBatch=\(effectiveMaxBatchSize)"
         )
         let soloLease =
-            maxBatchSize == 1
+            effectiveMaxBatchSize == 1
             ? await Registry.shared.acquireSoloLease(for: modelName)
             : nil
         if Task.isCancelled {
@@ -1138,13 +1337,13 @@ struct MLXBatchAdapter {
         // Identifiers and counts only, never prompt content.
         CrashReportingService.recordBreadcrumb(
             category: "inference.generate",
-            message: "begin model=\(modelName) input_tokens=\(prepared.promptTokens.count) batch=\(maxBatchSize)"
+            message: "begin model=\(modelName) input_tokens=\(prepared.promptTokens.count) batch=\(effectiveMaxBatchSize)"
         )
 
         let engine = await Registry.shared.engine(
             for: modelName,
             container: container,
-            maxBatchSize: maxBatchSize
+            maxBatchSize: effectiveMaxBatchSize
         )
 
         // Honor the model's shipped generation defaults when the OpenAI-wire
@@ -1174,7 +1373,7 @@ struct MLXBatchAdapter {
             modelName: modelName,
             generation: generation,
             runtimeDefaults: runtime.generation,
-            maxBatchSize: maxBatchSize,
+            maxBatchSize: effectiveMaxBatchSize,
             modelDefaults: modelDefaults,
             draftStrategy: effectiveDraftStrategy,
             nativeMTPExplicitSamplingFallback: nativeMTPExplicitSamplingFallback,
@@ -1287,7 +1486,7 @@ struct MLXBatchAdapter {
         trace?.mark("batch_submit")
         CrashReportingService.recordBreadcrumb(
             category: "inference.generate",
-            message: "submit model=\(modelName) batch=\(maxBatchSize)"
+            message: "submit model=\(modelName) batch=\(effectiveMaxBatchSize)"
         )
         // Take the Metal gate's SHARED (generation) lock BEFORE submitting the
         // slot, so an external MLX user — the Model2Vec embedder behind
@@ -1355,6 +1554,11 @@ struct MLXBatchAdapter {
             // the producer task always runs to completion, so the pair always
             // balances.
             await MetalGate.shared.exitGeneration(model: modelName)
+            // Balance the in-flight-handle count taken in
+            // `Registry.engine(for:)`. Only now — with the upstream stream
+            // fully drained — is it safe for an idle-shutdown sweep to tear
+            // this engine down.
+            await Registry.shared.endGenerate(model: modelName)
         }
 
         continuation.onTermination = { @Sendable _ in

@@ -289,4 +289,12 @@ public actor TaskCoalescer<Value: Sendable> {
     public func resolvedValues() -> [Value] {
         Array(values.values)
     }
+
+    /// Keyed peek at a resolved entry. Returns `nil` for absent, in-flight,
+    /// or draining keys — never joins a creation and never starts one. Used
+    /// by demand probes (auto batch sizing) that must not force an engine
+    /// into existence just to observe it.
+    public func resolvedValue(for key: String) -> Value? {
+        values[key]
+    }
 }
