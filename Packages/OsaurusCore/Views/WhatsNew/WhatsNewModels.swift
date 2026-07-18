@@ -289,7 +289,7 @@ public enum WhatsNewContent {
                 title: "Knowledge Base",
                 titlePrefix: "Introducing",
                 description:
-                    "Point Osaurus at folders of reference material — team guides, standards, specs, spreadsheets — and your agents can search and read them on demand. Markdown, plain text, code, PDF, Word, Excel, PowerPoint, and CSV files are all indexed, entirely on your Mac.",
+                    "Point Osaurus at folders of reference material like team guides, standards, specs, and spreadsheets, and your agents can search and read them on demand. Markdown, plain text, code, PDF, Word, Excel, PowerPoint, and CSV files are all indexed, entirely on your Mac.",
                 systemImage: "books.vertical.fill"
             ),
             WhatsNewPage(
@@ -297,7 +297,7 @@ public enum WhatsNewContent {
                 title: "Granted per agent",
                 eyebrow: "Introducing Knowledge Base",
                 description:
-                    "Each agent only sees the knowledge bases you check in its Abilities tab — everything else stays invisible to it. Edit a file in the folder and the index updates live, no restart needed.",
+                    "Each agent only sees the knowledge bases you check in its Abilities tab. Everything else stays invisible to it. Edit a file in the folder and the index updates live, no restart needed.",
                 systemImage: "checklist"
             ),
             WhatsNewPage(
@@ -305,7 +305,7 @@ public enum WhatsNewContent {
                 title: "Agents propose, you approve",
                 eyebrow: "Introducing Knowledge Base",
                 description:
-                    "Turn on the Curator ability and an agent can flag stale documents and draft updates — but nothing is ever written until you review the diff and approve it in the Knowledge tab.",
+                    "Turn on the Curator ability and an agent can flag stale documents and draft updates, but nothing is ever written until you review the diff and approve it in the Knowledge tab.",
                 systemImage: "checkmark.seal.fill",
                 actionLabel: "Open Knowledge",
                 action: .openKnowledgeSettings
