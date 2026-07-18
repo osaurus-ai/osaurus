@@ -154,9 +154,17 @@ enum MCPConfigurationImportService {
                 || normalizedKey == "COOKIE"
                 || normalizedKey == "PROXY_AUTHORIZATION"
                 || normalizedKey.contains("API_KEY")
+                || normalizedKey.contains("APIKEY")
                 || normalizedKey.contains("TOKEN")
+                || normalizedKey.contains("SECRET")
+                || normalizedKey.contains("PASSWORD")
+                || normalizedKey.contains("PASSWD")
+                || normalizedKey.contains("CREDENTIAL")
         }
-        let markers = ["TOKEN", "SECRET", "PASSWORD", "PASSWD", "CREDENTIAL", "API_KEY", "AUTH"]
+        let markers = [
+            "TOKEN", "SECRET", "PASSWORD", "PASSWD", "CREDENTIAL",
+            "API_KEY", "APIKEY", "AUTH", "SERVICE_ROLE",
+        ]
         let credentialNames: Set<String> = [
             "AWS_ACCESS_KEY_ID", "AZURE_CLIENT_ID", "DATABASE_URL", "DB_URL",
             "MONGODB_URI", "MYSQL_PWD", "REDIS_URL", "SESSION_ID",

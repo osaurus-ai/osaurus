@@ -183,5 +183,30 @@ final class MCPStdioTransportErrorTests: XCTestCase {
                 "/usr/local/bin/mcp-server"
             )
         }
+
+        func testHostEnvironmentAcceptsOrdinaryProviderValues() throws {
+            let merged = try MCPStdioHostRunner.mergedEnvironmentForTesting(
+                inherited: ["PATH": "/usr/bin", "LANG": "en_US.UTF-8"],
+                provider: ["MCP_LOG_LEVEL": "debug", "MCP_TOKEN": "canary"]
+            )
+
+            XCTAssertEqual(merged["PATH"], "/usr/bin")
+            XCTAssertEqual(merged["MCP_LOG_LEVEL"], "debug")
+            XCTAssertEqual(merged["MCP_TOKEN"], "canary")
+        }
+
+        func testHostEnvironmentRejectsProcessControlOverrides() throws {
+            for key in ["PATH", "DYLD_INSERT_LIBRARIES", "LD_PRELOAD", "OBJC_PRINT_LOAD_METHODS"] {
+                XCTAssertThrowsError(
+                    try MCPStdioHostRunner.mergedEnvironmentForTesting(
+                        inherited: ["PATH": "/usr/bin"],
+                        provider: [key: "canary"]
+                    )
+                ) { error in
+                    XCTAssertEqual(error as? MCPStdioTransportError, .unsafeEnvironmentKey(key))
+                    XCTAssertFalse(error.localizedDescription.contains("canary"))
+                }
+            }
+        }
     }
 #endif

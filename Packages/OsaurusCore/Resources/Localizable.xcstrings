@@ -58,6 +58,9 @@
     "Host paths" : {
       "shouldTranslate" : false
     },
+    "Host execution cannot override a protected environment variable." : {
+      "shouldTranslate" : false
+    },
     "Import Configuration" : {
       "shouldTranslate" : false
     },
@@ -68,6 +71,9 @@
       "shouldTranslate" : false
     },
     "Review a server before adding it" : {
+      "shouldTranslate" : false
+    },
+    "Remove the protected variable or select Sandbox." : {
       "shouldTranslate" : false
     },
     "Test this imported configuration before saving it." : {

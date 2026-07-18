@@ -21,6 +21,7 @@ public enum MCPProviderProbeReasonCode: String, Codable, Sendable, Equatable {
     case invalidURL
     case missingCommand
     case commandNotFound
+    case unsafeEnvironment
     case sandboxUnavailable
     case spawnFailed
     case processExited
@@ -589,6 +590,15 @@ public enum MCPProviderProbeService {
                     reasonCode: .commandNotFound,
                     message: L("The configured stdio command was not found."),
                     action: L("Use an absolute executable path or select Sandbox.")
+                )
+            case .unsafeEnvironmentKey:
+                return failure(
+                    provider: provider,
+                    startedAt: startedAt,
+                    stage: .configuration,
+                    reasonCode: .unsafeEnvironment,
+                    message: L("Host execution cannot override a protected environment variable."),
+                    action: L("Remove the protected variable or select Sandbox.")
                 )
             case .sandboxUnavailable:
                 return failure(

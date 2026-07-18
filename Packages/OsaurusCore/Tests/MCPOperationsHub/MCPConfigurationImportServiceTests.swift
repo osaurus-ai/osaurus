@@ -131,12 +131,16 @@ struct MCPConfigurationImportServiceTests {
 
     @Test func classifiesCommonSecretNamesConservatively() {
         for key in [
-            "API_KEY", "OPENAI_KEY", "GH_PAT", "client-secret", "AUTH_TOKEN", "PASSWORD",
-            "AWS_ACCESS_KEY_ID", "AZURE_CLIENT_ID", "DATABASE_URL", "MYSQL_PWD", "SESSION_ID",
+            "API_KEY", "APIKEY", "OPENAI_APIKEY", "OPENAI_KEY", "GH_PAT",
+            "client-secret", "AUTH_TOKEN", "PASSWORD", "SUPABASE_SERVICE_ROLE",
+            "AWS_ACCESS_KEY_ID", "AZURE_CLIENT_ID", "DATABASE_URL", "MYSQL_PWD",
+            "SESSION_ID",
         ] {
             #expect(MCPConfigurationImportService.likelySecretKey(key))
         }
-        #expect(MCPConfigurationImportService.likelySecretKey("Authorization", isHeader: true))
+        for header in ["Authorization", "X-ApiKey", "X-Secret", "X-Password"] {
+            #expect(MCPConfigurationImportService.likelySecretKey(header, isHeader: true))
+        }
         #expect(!MCPConfigurationImportService.likelySecretKey("LOG_LEVEL"))
         #expect(!MCPConfigurationImportService.likelySecretKey("Accept", isHeader: true))
     }

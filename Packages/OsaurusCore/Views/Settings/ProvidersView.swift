@@ -1665,18 +1665,35 @@ private struct ProviderEditSheet: View {
         transition(to: .chooseProvider)
     }
 
-    /// Reset the draft to a blank slate. Used when transitioning between phases
-    /// so a previous selection's name / url / OAuth state doesn't leak through.
-    /// Token state is dropped from Keychain via `resetDraftOAuthState`. Manual
-    /// OAuth override fields are also wiped so a half-typed Client ID /
-    /// Client Secret from one template doesn't bleed into the next.
+    /// Reset every connection-specific draft field before moving between
+    /// catalog choices. Imported configurations can contain credentials and
+    /// host-execution settings, so a partial reset would let a discarded
+    /// import bleed into the next provider.
     private func clearDraft(authType: MCPProviderAuthType, name: String = "", url: String = "") {
+        probeGate.invalidate()
         self.name = name
         self.url = url
         self.authType = authType
+        transport = .http
+        executionHost = .sandbox
+        command = ""
+        argsString = ""
+        workingDirectory = ""
+        envEntries.removeAll()
+        streamingEnabled = false
+        discoveryTimeout = 20
+        toolCallTimeout = 45
+        autoConnect = true
         clearBearerToken = false
         customHeaders.removeAll()
+        isTesting = false
         testResult = nil
+        testResultFingerprint = nil
+        importedSetupRequiresProbe = false
+        credentialSaveError = nil
+        showAdvanced = false
+        showImportConfiguration = false
+        isSigningIn = false
         manualAuthEndpoint = ""
         manualTokenEndpoint = ""
         manualClientId = ""

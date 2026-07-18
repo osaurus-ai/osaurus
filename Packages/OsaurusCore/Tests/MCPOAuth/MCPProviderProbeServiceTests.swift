@@ -75,6 +75,30 @@ struct MCPProviderProbeServiceTests {
         #expect(result.action?.contains("command") == true)
     }
 
+    #if os(macOS)
+    @Test func hostStdioProbeRejectsProcessControlEnvironmentWithoutLeakingValue() async {
+        let provider = MCPProvider(
+            id: UUID(),
+            name: "Unsafe environment fixture",
+            url: "",
+            authType: .none,
+            transport: .stdio,
+            executionHost: .host,
+            command: "/bin/sh",
+            env: ["DYLD_INSERT_LIBRARIES": "secret-canary"]
+        )
+
+        let result = await MCPProviderProbeService.probeStdio(provider: provider)
+
+        #expect(!result.succeeded)
+        #expect(result.reasonCode == .unsafeEnvironment)
+        #expect(result.stage == .configuration)
+        #expect(result.action?.contains("Sandbox") == true)
+        #expect(!result.message.contains("secret-canary"))
+        #expect(!result.pasteboardText.contains("secret-canary"))
+    }
+    #endif
+
     @Test func failedStdioProbeDoesNotCopyOrPersistConfiguredPath() async throws {
         let root = try makeTemporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }
