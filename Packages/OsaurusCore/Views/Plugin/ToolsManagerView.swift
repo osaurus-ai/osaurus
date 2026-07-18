@@ -1023,7 +1023,7 @@ private struct SandboxPluginToolCard: View {
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(PlainButtonStyle())
-                .accessibilityLabel(Text("Custom tool \(plugin.name), \(toolCount) tools"))
+                .accessibilityLabel(Text("Custom tool \(plugin.name), \(toolCount) tools", bundle: .module))
 
                 Menu {
                     Button(action: onEdit) {
@@ -1068,7 +1068,7 @@ private struct SandboxPluginToolCard: View {
                 .menuStyle(.borderlessButton)
                 .fixedSize()
                 .onHover { isMenuHovering = $0 }
-                .accessibilityLabel(Text("Actions for \(plugin.name)"))
+                .accessibilityLabel(Text("Actions for \(plugin.name)", bundle: .module))
             }
 
             if isExpanded {
@@ -1261,7 +1261,8 @@ private struct ToolPluginCard: View {
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(PlainButtonStyle())
-                .accessibilityLabel(Text("Plugin \(plugin.displayName), \(tools.count) tools"))
+                .accessibilityLabel(
+                    Text("Plugin \(plugin.displayName), \(tools.count) tools", bundle: .module))
             }
 
             if isExpanded, let loadError = plugin.loadError {
@@ -1416,7 +1417,8 @@ private struct RemoteProviderToolsCard: View {
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(PlainButtonStyle())
-                .accessibilityLabel(Text("Connection \(provider.name), \(tools.count) tools"))
+                .accessibilityLabel(
+                    Text("Connection \(provider.name), \(tools.count) tools", bundle: .module))
 
                 Menu {
                     Button(action: onDisconnect) {
@@ -1439,7 +1441,7 @@ private struct RemoteProviderToolsCard: View {
                 .menuStyle(.borderlessButton)
                 .fixedSize()
                 .onHover { isMenuHovering = $0 }
-                .accessibilityLabel(Text("Actions for \(provider.name)"))
+                .accessibilityLabel(Text("Actions for \(provider.name)", bundle: .module))
             }
 
             if isExpanded && !tools.isEmpty {

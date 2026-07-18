@@ -101,7 +101,10 @@ struct ToolPolicyMenu: View {
         .fixedSize()
         .help(Text("Choose whether this tool runs automatically, asks first, or is blocked", bundle: .module))
         .accessibilityLabel(
-            Text("Permission behavior for \(toolName): \(ToolPolicyStyle.title(for: info.effectivePolicy))")
+            Text(
+                "Permission behavior for \(toolName): \(ToolPolicyStyle.title(for: info.effectivePolicy))",
+                bundle: .module
+            )
         )
     }
 }
@@ -128,7 +131,7 @@ struct ToolEnableToggle: View {
         .labelsHidden()
         .scaleEffect(0.85)
         .help(Text("Turn this tool on or off", bundle: .module))
-        .accessibilityLabel(Text("Enable \(entry.name)"))
+        .accessibilityLabel(Text("Enable \(entry.name)", bundle: .module))
     }
 }
 
@@ -157,7 +160,7 @@ struct ToolCatalogStatusPill: View {
             .padding(.vertical, 2)
             .background(Capsule().fill(tint.opacity(0.12)))
             .help(Text(detail))
-            .accessibilityLabel(Text("Status: \(status.displayLabel). \(detail)"))
+            .accessibilityLabel(Text("Status: \(status.displayLabel). \(detail)", bundle: .module))
     }
 }
 
