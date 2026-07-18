@@ -124,7 +124,7 @@
     "Host stdio" : {
       "shouldTranslate" : false
     },
-    "JSON \\(type(of: object)) argument" : {
+    "JSON argument" : {
       "shouldTranslate" : false
     },
     "Missing Keychain values for: \\(missingSecretEnvironmentKeys.joined(separator: \", \"))." : {
