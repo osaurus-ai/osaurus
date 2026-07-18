@@ -89,4 +89,31 @@ struct OpenRouterReauthorizationSessionTests {
         #expect(acceptedCurrentFailure)
         #expect(session.status == .failed("current failure"))
     }
+
+    @Test func currentFailureRedactsCredentialHeaderAndLocalPathCanaries() throws {
+        var session = OpenRouterReauthorizationSession()
+        let requestID = UUID()
+        session.begin(requestID: requestID, apiKeyInput: "old-key")
+        let secret = "sk-or-v1-private-123456789"
+        let localPath = "/Users/mmeding/Secrets/openrouter.json"
+        let bearer = "private-bearer-token-123456789"
+
+        let accepted = session.acceptFailure(
+            requestID: requestID,
+            currentAPIKeyInput: "old-key",
+            message: "Exchange failed for \(secret) at \(localPath); Authorization: Bearer \(bearer)"
+        )
+
+        #expect(accepted)
+        guard case .failed(let message) = session.status else {
+            Issue.record("Expected the current failure to be stored")
+            return
+        }
+        #expect(!message.contains(secret))
+        #expect(!message.contains(localPath))
+        #expect(!message.contains(bearer))
+        #expect(message.contains("sk-***"))
+        #expect(message.contains("/[redacted-local-path]"))
+        #expect(message.contains("Authorization=***"))
+    }
 }

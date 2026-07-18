@@ -473,7 +473,8 @@ public enum ProviderNetworkDiagnostics {
             state: state,
             proxy: proxy,
             apiKeyPresent: apiKeyPresent,
-            oauthTokensPresent: oauthTokensPresent
+            oauthTokensPresent: oauthTokensPresent,
+            manualModelRecovery: provider.providerType == .azureOpenAI ? .azureDeploymentIDs : .unavailable
         ) else {
             return nil
         }

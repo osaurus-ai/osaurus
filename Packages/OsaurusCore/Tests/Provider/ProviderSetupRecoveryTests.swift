@@ -75,6 +75,34 @@ struct ProviderSetupRecoveryTests {
         #expect(failure.pasteboardText.contains("detail=ChatGPT/Codex sign-in callback timed out"))
     }
 
+    @Test func recoveryDetailRedactsCredentialHeaderAndLocalPathCanaries() throws {
+        let secret = "sk-private-recovery-123456789"
+        let localPath = "/Users/mmeding/Secrets/provider.json"
+        let bearer = "private-bearer-token-123456789"
+        let failure = ProviderFailureClassifier.classifySetupFailure(
+            provider: Self.provider(authType: .openAICodexOAuth),
+            error: NSError(
+                domain: "ProviderSetupRecoveryTests",
+                code: 7,
+                userInfo: [NSLocalizedDescriptionKey: "OAuth failed"]
+            ),
+            proxy: .disabled,
+            apiKeyPresent: false,
+            oauthTokensPresent: false,
+            diagnosticMessage: "OAuth failed for \(secret) at \(localPath); Authorization: Bearer \(bearer)"
+        )
+
+        let recoveryDetail = try #require(failure.recoveryDetail)
+        for projection in [recoveryDetail, failure.detailForDisplay, failure.userMessage, failure.pasteboardText] {
+            #expect(!projection.contains(secret))
+            #expect(!projection.contains(localPath))
+            #expect(!projection.contains(bearer))
+        }
+        #expect(recoveryDetail.contains("sk-***"))
+        #expect(recoveryDetail.contains("/[redacted-local-path]"))
+        #expect(recoveryDetail.contains("Authorization=***"))
+    }
+
     @Test func oauthFailureWithStoredTokensDoesNotClaimTokensAreMissing() {
         let failure = ProviderFailureClassifier.classifySetupFailure(
             provider: Self.provider(authType: .openAICodexOAuth),
@@ -168,8 +196,10 @@ struct ProviderSetupRecoveryTests {
             ("No models available from provider", .modelsSchemaMismatch),
             ("HTTP 404", .badResponse),
             ("HTTP 405", .badResponse),
+            ("HTTP 501", .badResponse),
             ("HTTP 404 from /models", .modelsEndpointUnavailable),
             ("HTTP 405 from the models endpoint", .modelsEndpointUnavailable),
+            ("HTTP 501 during model discovery", .modelsEndpointUnavailable),
             ("invalid request: unsupported field", .requestRejected),
             ("unexpected provider failure", .unknown),
         ]
@@ -214,6 +244,122 @@ struct ProviderSetupRecoveryTests {
         )
 
         #expect(failure.classification.bucket == .modelsEndpointUnavailable)
+    }
+
+    @Test func nativeProviderModelDiscoveryFailuresDoNotSuggestOpenAIManualModelWorkaround() {
+        let providerTypes: [RemoteProviderType] = [.anthropic, .gemini, .openAICodex]
+        let statuses = [404, 405, 501]
+
+        for providerType in providerTypes {
+            for status in statuses {
+                let failure = ProviderFailureClassifier.classifySetupFailure(
+                    provider: Self.provider(providerType: providerType),
+                    error: NSError(
+                        domain: "ProviderSetupRecoveryTests",
+                        code: status,
+                        userInfo: [NSLocalizedDescriptionKey: "HTTP \(status) from /models"]
+                    ),
+                    proxy: .disabled,
+                    apiKeyPresent: true,
+                    oauthTokensPresent: false
+                )
+
+                #expect(failure.classification.bucket == .modelsEndpointUnavailable)
+                #expect(!failure.classification.action.localizedCaseInsensitiveContains("manual model"))
+                #expect(!failure.classification.action.localizedCaseInsensitiveContains("openai-compatible"))
+            }
+        }
+    }
+
+    @Test func manualModelGuidanceRequiresCompatibleProviderAndExposedFlow() {
+        let error = NSError(
+            domain: "ProviderSetupRecoveryTests",
+            code: 404,
+            userInfo: [NSLocalizedDescriptionKey: "HTTP 404 from /models"]
+        )
+        let openAIWithEditor = ProviderFailureClassifier.classifySetupFailure(
+            provider: Self.provider(providerType: .openaiLegacy),
+            error: error,
+            proxy: .disabled,
+            apiKeyPresent: true,
+            oauthTokensPresent: false,
+            manualModelRecovery: .openAICompatibleModelIDs
+        )
+        let openAIWithoutEditor = ProviderFailureClassifier.classifySetupFailure(
+            provider: Self.provider(providerType: .openaiLegacy),
+            error: error,
+            proxy: .disabled,
+            apiKeyPresent: true,
+            oauthTokensPresent: false,
+            manualModelRecovery: .unavailable
+        )
+        let anthropicWithWrongCapability = ProviderFailureClassifier.classifySetupFailure(
+            provider: Self.provider(providerType: .anthropic),
+            error: error,
+            proxy: .disabled,
+            apiKeyPresent: true,
+            oauthTokensPresent: false,
+            manualModelRecovery: .openAICompatibleModelIDs
+        )
+        let azureWithDeployments = ProviderFailureClassifier.classifySetupFailure(
+            provider: Self.provider(providerType: .azureOpenAI),
+            error: error,
+            proxy: .disabled,
+            apiKeyPresent: true,
+            oauthTokensPresent: false,
+            manualModelRecovery: .azureDeploymentIDs
+        )
+
+        #expect(openAIWithEditor.classification.action.localizedCaseInsensitiveContains("manual model"))
+        #expect(!openAIWithoutEditor.classification.action.localizedCaseInsensitiveContains("manual model"))
+        #expect(!anthropicWithWrongCapability.classification.action.localizedCaseInsensitiveContains("manual model"))
+        #expect(azureWithDeployments.classification.action.localizedCaseInsensitiveContains("deployment/model"))
+        #expect(!azureWithDeployments.classification.action.localizedCaseInsensitiveContains("openai-compatible"))
+    }
+
+    @Test func onboardingContextNeverOffersManualModelRecovery() {
+        let providerTypes: [RemoteProviderType] = [.openaiLegacy, .openResponses, .anthropic, .gemini, .openAICodex]
+
+        for providerType in providerTypes {
+            let failure = ProviderFailureClassifier.classifySetupFailure(
+                provider: Self.provider(providerType: providerType),
+                error: NSError(
+                    domain: "ProviderSetupRecoveryTests",
+                    code: 501,
+                    userInfo: [NSLocalizedDescriptionKey: "HTTP 501 during model discovery"]
+                ),
+                proxy: .disabled,
+                apiKeyPresent: true,
+                oauthTokensPresent: false,
+                manualModelRecovery: .unavailable
+            )
+
+            #expect(failure.classification.bucket == .modelsEndpointUnavailable)
+            #expect(!failure.classification.action.localizedCaseInsensitiveContains("manual model"))
+            #expect(!failure.classification.action.localizedCaseInsensitiveContains("deployment/model"))
+        }
+    }
+
+    @Test func ongoingNativeProviderDiagnosticsDoNotSuggestManualModelRecovery() throws {
+        for providerType in [RemoteProviderType.anthropic, .gemini, .openAICodex] {
+            let provider = Self.provider(providerType: providerType)
+            var state = RemoteProviderState(providerId: provider.id)
+            state.lastError = "HTTP 405 from the models endpoint"
+
+            let classification = try #require(
+                ProviderFailureClassifier.classify(
+                    provider: provider,
+                    state: state,
+                    proxy: .disabled,
+                    apiKeyPresent: true,
+                    oauthTokensPresent: false
+                )
+            )
+
+            #expect(classification.bucket == .modelsEndpointUnavailable)
+            #expect(!classification.action.localizedCaseInsensitiveContains("manual model"))
+            #expect(!classification.action.localizedCaseInsensitiveContains("openai-compatible"))
+        }
     }
 
     @Test func proxyFailureStaysDistinctFromOriginFailure() {
@@ -274,7 +420,8 @@ struct ProviderSetupRecoveryTests {
         host: String = "api.example.com",
         basePath: String = "/v1",
         manualModelIds: [String] = [],
-        authType: RemoteProviderAuthType = .apiKey
+        authType: RemoteProviderAuthType = .apiKey,
+        providerType: RemoteProviderType = .openaiLegacy
     ) -> RemoteProvider {
         RemoteProvider(
             name: "Example",
@@ -282,7 +429,7 @@ struct ProviderSetupRecoveryTests {
             providerProtocol: .https,
             basePath: basePath,
             authType: authType,
-            providerType: .openaiLegacy,
+            providerType: providerType,
             manualModelIds: manualModelIds
         )
     }

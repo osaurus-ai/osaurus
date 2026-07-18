@@ -165,6 +165,7 @@ private struct AddProviderFlow: View {
     @State private var isTesting = false
     @State private var testResult: ProviderTestResult?
     @State private var testRequestID: UUID?
+    @State private var customTestGate = CustomProviderSetupSuccessGate()
     @State private var draftProviderID = UUID()
     @State private var hasAppeared = false
     /// Guards against saving twice: a successful test auto-finalizes the add,
@@ -602,7 +603,7 @@ private struct AddProviderFlow: View {
 
             // Footer
             sheetFooter(canProceed: canTestCustom) {
-                if testResult?.isSuccess == true {
+                if hasCurrentSuccessfulTest {
                     saveCustomProvider()
                 } else {
                     testCustomProvider()
@@ -628,6 +629,7 @@ private struct AddProviderFlow: View {
                 oauthTokens = nil
                 selectedAuthMethod = .apiKey
                 testResult = nil
+                customTestGate.invalidate()
                 customName = ""
                 customHost = ""
                 customPort = ""
@@ -1300,7 +1302,7 @@ private struct AddProviderFlow: View {
 
     @ViewBuilder
     private var testResultBadge: some View {
-        if let result = testResult {
+        if let result = testResultForDisplay {
             HStack(spacing: 6) {
                 switch result {
                 case .success(let models):
@@ -1362,7 +1364,7 @@ private struct AddProviderFlow: View {
     private var actionButtonTitle: String {
         let oauthKind = selectedOAuthKind
         if isTesting { return oauthKind != nil ? L("Signing in...") : L("Testing...") }
-        if testResult?.isSuccess == true || canSaveKnownProviderWithoutSuccessfulTest { return L("Add Provider") }
+        if hasCurrentSuccessfulTest || canSaveKnownProviderWithoutSuccessfulTest { return L("Add Provider") }
         if case .failure = testResult { return L("Retry") }
         if let oauthKind {
             return NSLocalizedString(oauthKind.ctaTitle, bundle: .module, comment: "")
@@ -1371,9 +1373,20 @@ private struct AddProviderFlow: View {
     }
 
     private var actionButtonColor: Color {
-        if testResult?.isSuccess == true || canSaveKnownProviderWithoutSuccessfulTest { return theme.successColor }
+        if hasCurrentSuccessfulTest || canSaveKnownProviderWithoutSuccessfulTest { return theme.successColor }
         if case .failure = testResult { return theme.errorColor }
         return theme.accentColor
+    }
+
+    private var hasCurrentSuccessfulTest: Bool {
+        guard testResult?.isSuccess == true else { return false }
+        guard selectedPreset == .custom else { return true }
+        return customTestGate.allowsAdd(current: currentCustomTestSnapshot())
+    }
+
+    private var testResultForDisplay: ProviderTestResult? {
+        guard selectedPreset == .custom, testResult?.isSuccess == true else { return testResult }
+        return hasCurrentSuccessfulTest ? testResult : nil
     }
 
     private var canTestCustom: Bool {
@@ -1530,7 +1543,8 @@ private struct AddProviderFlow: View {
                         proxy: GlobalProxySettings.currentDiagnostic(),
                         apiKeyPresent: !apiKey.isEmpty,
                         oauthTokensPresent: oauthTokens != nil,
-                        diagnosticMessage: diagnosticMessage
+                        diagnosticMessage: diagnosticMessage,
+                        manualModelRecovery: preset == .azureOpenAI ? .azureDeploymentIDs : .unavailable
                     )
                     withAnimation {
                         testResult = .failure(failure); isTesting = false
@@ -1586,43 +1600,39 @@ private struct AddProviderFlow: View {
     }
 
     func testCustomProvider() {
-        let trimmedHost = customHost.trimmingCharacters(in: .whitespaces)
-        let trimmedBasePath = customBasePath.trimmingCharacters(in: .whitespaces)
-        let port: Int? = customPort.trimmingCharacters(in: .whitespaces).isEmpty ? nil : Int(customPort)
-        let testApiKey = customAuthType == .apiKey && !apiKey.isEmpty ? apiKey : nil
-        let testedProvider = draftCustomProvider()
-        let testedAPIKeyInput = apiKey
-        let testedHeaders = customHeaders
+        let testedSnapshot = currentCustomTestSnapshot()
+        let testedProvider = testedSnapshot.provider
+        let testApiKey = testedProvider.authType == .apiKey && !testedSnapshot.apiKeyInput.isEmpty
+            ? testedSnapshot.apiKeyInput
+            : nil
 
         isTesting = true
         testResult = nil
+        customTestGate.invalidate()
         let requestID = UUID()
         testRequestID = requestID
 
         Task {
             do {
                 let models = try await RemoteProviderManager.shared.testConnection(
-                    host: trimmedHost,
-                    providerProtocol: customProtocol,
-                    port: port,
-                    basePath: trimmedBasePath.isEmpty ? "/v1" : trimmedBasePath,
-                    authType: customAuthType,
-                    providerType: .openaiLegacy,
+                    host: testedProvider.host,
+                    providerProtocol: testedProvider.providerProtocol,
+                    port: testedProvider.port,
+                    basePath: testedProvider.basePath,
+                    authType: testedProvider.authType,
+                    providerType: testedProvider.providerType,
                     apiKey: testApiKey,
-                    headers: HeaderEntry.buildHeaders(from: testedHeaders),
+                    headers: HeaderEntry.buildHeaders(from: testedSnapshot.headers),
                     manualModelIds: testedProvider.manualModelIds
                 )
                 await MainActor.run {
                     guard testRequestID == requestID else { return }
-                    guard matchesCustomTestInputs(
-                        provider: testedProvider,
-                        apiKeyInput: testedAPIKeyInput,
-                        headers: testedHeaders
-                    ) else {
+                    guard currentCustomTestSnapshot() == testedSnapshot else {
                         isTesting = false
                         return
                     }
                     withAnimation {
+                        customTestGate.recordSuccess(testedSnapshot)
                         testResult = .success(models); isTesting = false
                     }
                 }
@@ -1631,11 +1641,7 @@ private struct AddProviderFlow: View {
                 await MainActor.run {
                     guard testRequestID == requestID else { return }
                     guard testResult?.isSuccess == true,
-                        matchesCustomTestInputs(
-                            provider: testedProvider,
-                            apiKeyInput: testedAPIKeyInput,
-                            headers: testedHeaders
-                        )
+                        customTestGate.allowsAdd(current: currentCustomTestSnapshot())
                     else { return }
                     saveCustomProvider()
                 }
@@ -1645,15 +1651,12 @@ private struct AddProviderFlow: View {
                     error: error,
                     proxy: GlobalProxySettings.currentDiagnostic(),
                     apiKeyPresent: testApiKey != nil,
-                    oauthTokensPresent: false
+                    oauthTokensPresent: false,
+                    manualModelRecovery: .unavailable
                 )
                 await MainActor.run {
                     guard testRequestID == requestID else { return }
-                    guard matchesCustomTestInputs(
-                        provider: testedProvider,
-                        apiKeyInput: testedAPIKeyInput,
-                        headers: testedHeaders
-                    ) else {
+                    guard currentCustomTestSnapshot() == testedSnapshot else {
                         isTesting = false
                         return
                     }
@@ -1666,29 +1669,9 @@ private struct AddProviderFlow: View {
     }
 
     private func saveCustomProvider() {
-        guard !hasFinalized else { return }
+        guard !hasFinalized, hasCurrentSuccessfulTest else { return }
         hasFinalized = true
-        let trimmedName = customName.trimmingCharacters(in: .whitespaces)
-        let trimmedHost = customHost.trimmingCharacters(in: .whitespaces)
-        let trimmedBasePath = customBasePath.trimmingCharacters(in: .whitespaces)
-        let (regularHeaders, secretKeys) = HeaderEntry.partition(customHeaders)
-
-        let remoteProvider = RemoteProvider(
-            name: trimmedName.isEmpty ? "Custom Provider" : trimmedName,
-            host: trimmedHost,
-            providerProtocol: customProtocol,
-            port: Int(customPort),
-            basePath: trimmedBasePath.isEmpty ? "/v1" : trimmedBasePath,
-            customHeaders: regularHeaders,
-            authType: customAuthType,
-            providerType: .openaiLegacy,
-            enabled: true,
-            autoConnect: true,
-            timeout: timeout,
-            disableTimeout: disableTimeout,
-            manualModelIds: parseManualModelIds(manualModelIdsText),
-            secretHeaderKeys: secretKeys
-        )
+        let remoteProvider = currentCustomTestSnapshot().provider
 
         saveSecretHeaders(for: remoteProvider.id)
         let savedApiKey = customAuthType == .apiKey && !apiKey.isEmpty ? apiKey : nil
@@ -1771,6 +1754,7 @@ private struct AddProviderFlow: View {
 
     private func draftCustomProvider() -> RemoteProvider {
         let trimmedName = customName.trimmingCharacters(in: .whitespaces)
+        let trimmedPort = customPort.trimmingCharacters(in: .whitespaces)
         let trimmedBasePath = customBasePath.trimmingCharacters(in: .whitespaces)
         let (regularHeaders, secretKeys) = HeaderEntry.partition(customHeaders)
         return RemoteProvider(
@@ -1778,7 +1762,7 @@ private struct AddProviderFlow: View {
             name: trimmedName.isEmpty ? "Custom Provider" : trimmedName,
             host: customHost.trimmingCharacters(in: .whitespaces),
             providerProtocol: customProtocol,
-            port: Int(customPort),
+            port: trimmedPort.isEmpty ? nil : Int(trimmedPort),
             basePath: trimmedBasePath.isEmpty ? "/v1" : trimmedBasePath,
             customHeaders: regularHeaders,
             authType: customAuthType,
@@ -1790,14 +1774,17 @@ private struct AddProviderFlow: View {
         )
     }
 
-    private func matchesCustomTestInputs(
-        provider testedProvider: RemoteProvider,
-        apiKeyInput testedAPIKeyInput: String,
-        headers testedHeaders: [HeaderEntry]
-    ) -> Bool {
-        draftCustomProvider() == testedProvider
-            && apiKey == testedAPIKeyInput
-            && customHeaders == testedHeaders
+    private func currentCustomTestSnapshot() -> CustomProviderSetupTestSnapshot {
+        CustomProviderSetupTestSnapshot(
+            provider: draftCustomProvider(),
+            nameInput: customName,
+            hostInput: customHost,
+            portInput: customPort,
+            basePathInput: customBasePath,
+            apiKeyInput: apiKey,
+            manualModelIdsInput: manualModelIdsText,
+            headers: customHeaders
+        )
     }
 
     private func copySetupFailure(_ failure: ProviderSetupFailure) {
@@ -1880,7 +1867,7 @@ struct OpenRouterReauthorizationSession: Sendable, Equatable {
         guard consumeCurrentRequest(requestID: requestID, currentAPIKeyInput: currentAPIKeyInput) else {
             return false
         }
-        status = .failed(message)
+        status = .failed(ProviderDiagnosticRedactor.safe(message, maxLength: 360))
         return true
     }
 
@@ -2859,6 +2846,8 @@ private struct EditProviderFlow: View {
         let testedHeaders = customHeaders
         let testedAPIKeyPresent = testApiKey != nil || apiKeyPresent
         let testedOAuthTokensPresent = oauthTokensPresent
+        let testedManualModelRecovery: ProviderManualModelRecovery =
+            matchedPreset == .azureOpenAI ? .azureDeploymentIDs : .unavailable
 
         Task {
             do {
@@ -2907,7 +2896,8 @@ private struct EditProviderFlow: View {
                     proxy: GlobalProxySettings.currentDiagnostic(),
                     apiKeyPresent: testedAPIKeyPresent,
                     oauthTokensPresent: testedOAuthTokensPresent,
-                    diagnosticMessage: diagnosticMessage
+                    diagnosticMessage: diagnosticMessage,
+                    manualModelRecovery: testedManualModelRecovery
                 )
                 await MainActor.run {
                     guard testRequestID == requestID else { return }
@@ -3124,6 +3114,38 @@ struct HeaderEntry: Identifiable, Equatable {
             }
         }
         return (regular, secretKeys)
+    }
+}
+
+/// Exact custom-provider inputs bound to a successful connection test. Raw text
+/// fields stay alongside the normalized provider so semantically equivalent
+/// edits (for example `443` to `0443`) still require a fresh test.
+struct CustomProviderSetupTestSnapshot: Equatable {
+    var provider: RemoteProvider
+    var nameInput: String
+    var hostInput: String
+    var portInput: String
+    var basePathInput: String
+    var apiKeyInput: String
+    var manualModelIdsInput: String
+    var headers: [HeaderEntry]
+}
+
+/// A green custom-provider result authorizes Add only while every current input
+/// still equals the snapshot used by that test.
+struct CustomProviderSetupSuccessGate: Equatable {
+    private(set) var successfulSnapshot: CustomProviderSetupTestSnapshot?
+
+    mutating func recordSuccess(_ snapshot: CustomProviderSetupTestSnapshot) {
+        successfulSnapshot = snapshot
+    }
+
+    mutating func invalidate() {
+        successfulSnapshot = nil
+    }
+
+    func allowsAdd(current snapshot: CustomProviderSetupTestSnapshot) -> Bool {
+        successfulSnapshot == snapshot
     }
 }
 

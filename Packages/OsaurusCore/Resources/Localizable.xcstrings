@@ -191651,6 +191651,12 @@
     "Check the host, port, base path, DNS, VPN, and whether a local server is running." : {
       "shouldTranslate" : false
     },
+    "Check this provider's model catalog format and try again." : {
+      "shouldTranslate" : false
+    },
+    "Check this provider's model catalog support and try again." : {
+      "shouldTranslate" : false
+    },
     "Confirm the endpoint returns an OpenAI-shaped model list or add manual model IDs." : {
       "shouldTranslate" : false
     },
@@ -191718,6 +191724,9 @@
       "shouldTranslate" : false
     },
     "Save an API key or secret credential header, then test again." : {
+      "shouldTranslate" : false
+    },
+    "Select a model exposed by this provider and try again." : {
       "shouldTranslate" : false
     },
     "Select a model exposed by this provider or add the correct manual model ID." : {

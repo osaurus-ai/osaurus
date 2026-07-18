@@ -102,6 +102,15 @@ struct ProviderSetupFailure: Sendable, Equatable {
     }
 }
 
+/// Manual model recovery must describe a control the current surface actually
+/// exposes. Provider type is checked separately so native APIs never inherit an
+/// OpenAI-compatible workaround from an overly broad caller.
+enum ProviderManualModelRecovery: Sendable, Equatable {
+    case unavailable
+    case openAICompatibleModelIDs
+    case azureDeploymentIDs
+}
+
 enum ProviderFailureClassifier {
     static func classifySetupFailure(
         provider: RemoteProvider,
@@ -109,8 +118,12 @@ enum ProviderFailureClassifier {
         proxy: GlobalProxyDiagnosticState,
         apiKeyPresent: Bool,
         oauthTokensPresent: Bool,
-        diagnosticMessage: String? = nil
+        diagnosticMessage: String? = nil,
+        manualModelRecovery: ProviderManualModelRecovery = .unavailable
     ) -> ProviderSetupFailure {
+        let safeDiagnosticMessage = diagnosticMessage.map {
+            ProviderDiagnosticRedactor.safe($0, maxLength: 360)
+        }
         let oauthContext = usesOAuthTokens(provider.authType)
         let credentialPresent =
             apiKeyPresent || oauthTokensPresent || hasCredentialHeader(provider)
@@ -128,21 +141,26 @@ enum ProviderFailureClassifier {
         } else if missingOAuthTokens {
             result = classification(
                 .oauthTokenMissing,
-                detail: diagnosticMessage ?? error.localizedDescription
+                detail: safeDiagnosticMessage ?? error.localizedDescription
             )
         } else {
             result = classifyMessage(
-                diagnosticMessage ?? error.localizedDescription,
+                safeDiagnosticMessage ?? error.localizedDescription,
                 proxy: proxy,
                 credentialPresent: credentialPresent,
                 oauthContext: oauthContext
             )
         }
+        let contextualizedResult = applyingRecoveryContext(
+            to: result,
+            providerType: provider.providerType,
+            manualModelRecovery: manualModelRecovery
+        )
 
         return ProviderSetupFailure(
-            classification: result,
-            recoveryDetail: diagnosticMessage,
-            pasteboardDetail: setupPasteboardDetail(classification: result, replay: replay),
+            classification: contextualizedResult,
+            recoveryDetail: safeDiagnosticMessage,
+            pasteboardDetail: setupPasteboardDetail(classification: contextualizedResult, replay: replay),
             providerType: provider.providerType,
             authType: provider.authType,
             providerProtocol: provider.providerProtocol,
@@ -160,7 +178,8 @@ enum ProviderFailureClassifier {
         state: RemoteProviderState?,
         proxy: GlobalProxyDiagnosticState,
         apiKeyPresent: Bool,
-        oauthTokensPresent: Bool
+        oauthTokensPresent: Bool,
+        manualModelRecovery: ProviderManualModelRecovery = .unavailable
     ) -> ProviderFailureClassification? {
         guard provider.enabled else { return nil }
         if state?.isConnected == true {
@@ -172,16 +191,24 @@ enum ProviderFailureClassifier {
         switch provider.authType {
         case .apiKey:
             if !apiKeyPresent && !hasCredentialHeader(provider) {
-                return classification(
-                    .missingCredential,
-                    detail: L("No API key or secret credential header is available for this provider.")
+                return applyingRecoveryContext(
+                    to: classification(
+                        .missingCredential,
+                        detail: L("No API key or secret credential header is available for this provider.")
+                    ),
+                    providerType: provider.providerType,
+                    manualModelRecovery: manualModelRecovery
                 )
             }
         case .openAICodexOAuth, .xaiOAuth:
             if !oauthTokensPresent {
-                return classification(
-                    .oauthTokenMissing,
-                    detail: L("No OAuth tokens are available for this provider.")
+                return applyingRecoveryContext(
+                    to: classification(
+                        .oauthTokenMissing,
+                        detail: L("No OAuth tokens are available for this provider.")
+                    ),
+                    providerType: provider.providerType,
+                    manualModelRecovery: manualModelRecovery
                 )
             }
         case .none:
@@ -196,17 +223,25 @@ enum ProviderFailureClassifier {
                 credentialPresent: credentialPresent,
                 oauthContext: usesOAuthTokens(provider.authType)
             ) {
-                return replayClassification
+                return applyingRecoveryContext(
+                    to: replayClassification,
+                    providerType: provider.providerType,
+                    manualModelRecovery: manualModelRecovery
+                )
             }
         }
 
         if let error = state?.lastError, !error.isEmpty {
             let credentialPresent = apiKeyPresent || oauthTokensPresent || hasCredentialHeader(provider)
-            return classifyMessage(
-                error,
-                proxy: proxy,
-                credentialPresent: credentialPresent,
-                oauthContext: usesOAuthTokens(provider.authType)
+            return applyingRecoveryContext(
+                to: classifyMessage(
+                    error,
+                    proxy: proxy,
+                    credentialPresent: credentialPresent,
+                    oauthContext: usesOAuthTokens(provider.authType)
+                ),
+                providerType: provider.providerType,
+                manualModelRecovery: manualModelRecovery
             )
         }
 
@@ -367,7 +402,7 @@ enum ProviderFailureClassifier {
         if lower.contains("invalid /models response") {
             return classification(.modelsSchemaMismatch, detail: detail)
         }
-        if lower.contains("http 404") || lower.contains("http 405") {
+        if lower.contains("http 404") || lower.contains("http 405") || lower.contains("http 501") {
             let bucket: ProviderFailureBucket = messageHasModelDiscoveryContext(lower)
                 ? .modelsEndpointUnavailable
                 : .badResponse
@@ -417,6 +452,24 @@ enum ProviderFailureClassifier {
             detail: ProviderDiagnosticRedactor.safe(detail, maxLength: 360),
             action: action(for: bucket),
             severity: bucket == .unknown ? .warning : .blocked
+        )
+    }
+
+    private static func applyingRecoveryContext(
+        to classification: ProviderFailureClassification,
+        providerType: RemoteProviderType,
+        manualModelRecovery: ProviderManualModelRecovery
+    ) -> ProviderFailureClassification {
+        ProviderFailureClassification(
+            bucket: classification.bucket,
+            title: classification.title,
+            detail: classification.detail,
+            action: action(
+                for: classification.bucket,
+                providerType: providerType,
+                manualModelRecovery: manualModelRecovery
+            ),
+            severity: classification.severity
         )
     }
 
@@ -474,7 +527,11 @@ enum ProviderFailureClassifier {
         }
     }
 
-    private static func action(for bucket: ProviderFailureBucket) -> String {
+    private static func action(
+        for bucket: ProviderFailureBucket,
+        providerType: RemoteProviderType? = nil,
+        manualModelRecovery: ProviderManualModelRecovery = .unavailable
+    ) -> String {
         switch bucket {
         case .missingCredential:
             return L("Save an API key or secret credential header, then test again.")
@@ -491,18 +548,44 @@ enum ProviderFailureClassifier {
         case .proxyConnectFailed:
             return L("Test with the proxy disabled or verify the proxy host, port, and authentication.")
         case .modelsEndpointUnavailable:
-            return L("Add manual model IDs if this OpenAI-compatible provider does not expose /models.")
+            if providerSupportsOpenAIManualModels(providerType, recovery: manualModelRecovery) {
+                return L("Add manual model IDs if this OpenAI-compatible provider does not expose /models.")
+            }
+            if providerType == .azureOpenAI, manualModelRecovery == .azureDeploymentIDs {
+                return L("Add at least one deployment/model ID in Advanced.")
+            }
+            return L("Check this provider's model catalog support and try again.")
         case .modelsSchemaMismatch:
-            return L("Confirm the endpoint returns an OpenAI-shaped model list or add manual model IDs.")
+            if providerSupportsOpenAIManualModels(providerType, recovery: manualModelRecovery) {
+                return L("Confirm the endpoint returns an OpenAI-shaped model list or add manual model IDs.")
+            }
+            if providerType == .azureOpenAI, manualModelRecovery == .azureDeploymentIDs {
+                return L("Add at least one deployment/model ID in Advanced.")
+            }
+            return L("Check this provider's model catalog format and try again.")
         case .requestRejected:
             return L("Review provider compatibility for unsupported request fields, tools, or response formats.")
         case .unsupportedModel:
-            return L("Select a model exposed by this provider or add the correct manual model ID.")
+            if providerSupportsOpenAIManualModels(providerType, recovery: manualModelRecovery) {
+                return L("Select a model exposed by this provider or add the correct manual model ID.")
+            }
+            if providerType == .azureOpenAI, manualModelRecovery == .azureDeploymentIDs {
+                return L("Add at least one deployment/model ID in Advanced.")
+            }
+            return L("Select a model exposed by this provider and try again.")
         case .badResponse:
             return L("Copy diagnostics with the redacted response and check provider status or compatibility.")
         case .unknown:
             return L("Copy diagnostics and include the redacted request evidence when reporting this issue.")
         }
+    }
+
+    private static func providerSupportsOpenAIManualModels(
+        _ providerType: RemoteProviderType?,
+        recovery: ProviderManualModelRecovery
+    ) -> Bool {
+        guard recovery == .openAICompatibleModelIDs else { return false }
+        return providerType == .openaiLegacy || providerType == .openResponses
     }
 
     private static func bodyLooksLikeRequestShapeRejection(_ body: String) -> Bool {

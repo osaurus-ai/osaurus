@@ -801,7 +801,8 @@ final class ConfigureAIState: ObservableObject {
                         proxy: GlobalProxySettings.currentDiagnostic(),
                         apiKeyPresent: !self.apiKey.isEmpty,
                         oauthTokensPresent: self.oauthTokens != nil,
-                        diagnosticMessage: diagnosticMessage
+                        diagnosticMessage: diagnosticMessage,
+                        manualModelRecovery: .unavailable
                     )
                 )
                 self.isTesting = false
