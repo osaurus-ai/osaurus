@@ -1286,6 +1286,7 @@ private struct ProviderEditSheet: View {
     @State private var isTesting: Bool = false
     @State private var testResult: TestResult?
     @State private var testResultFingerprint: String?
+    @State private var testResultSetupFingerprint: String?
     @State private var probeGate = MCPProviderProbeGate()
     @State private var probeTask: Task<Void, Never>?
     @State private var activeProbeReservation: MCPProviderProbeReservation?
@@ -1409,6 +1410,7 @@ private struct ProviderEditSheet: View {
             isTesting = false
             testResult = nil
             testResultFingerprint = nil
+            testResultSetupFingerprint = nil
         }
     }
 
@@ -1712,6 +1714,7 @@ private struct ProviderEditSheet: View {
         isTesting = false
         testResult = nil
         testResultFingerprint = nil
+        testResultSetupFingerprint = nil
         importedSetupRequiresProbe = false
         credentialSaveError = nil
         showAdvanced = false
@@ -3097,6 +3100,7 @@ private struct ProviderEditSheet: View {
         }
         testResult = nil
         testResultFingerprint = nil
+        testResultSetupFingerprint = nil
         probeGate.invalidate()
         isTesting = false
         importedSetupRequiresProbe = true
@@ -3116,6 +3120,7 @@ private struct ProviderEditSheet: View {
         isTesting = true
         testResult = nil
         testResultFingerprint = nil
+        testResultSetupFingerprint = nil
 
         probeTask?.cancel()
         probeTask = Task {
@@ -3188,6 +3193,7 @@ private struct ProviderEditSheet: View {
                 guard accepted else { return }
                 testResult = result.succeeded ? .success(result) : .failure(result)
                 testResultFingerprint = fingerprint
+                testResultSetupFingerprint = context.setupFingerprint
             }
         }
     }
@@ -3206,27 +3212,17 @@ private struct ProviderEditSheet: View {
     }
 
     private func parseStdioFields() -> ParsedStdioFields {
-        var regularEnv: [String: String] = [:]
-        var secretEnvKeys: [String] = []
-        for entry in envEntries {
-            let key = entry.key.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !key.isEmpty else { continue }
-            if entry.isSecret {
-                secretEnvKeys.append(key)
-            } else if !entry.value.isEmpty {
-                // Skip empty regular env vars — persisting `KEY=""`
-                // would silently shadow whatever the subprocess
-                // inherits from its environment, which is almost
-                // never what the user intended.
-                regularEnv[key] = entry.value
-            }
-        }
+        // Use the same last-row-wins contract as probing and credential
+        // persistence so a duplicate key cannot remain both plain and secret.
+        let normalizedEnvironment = MCPProviderOperationsFieldNormalizer.normalize(
+            envEntries.map { (key: $0.key, value: $0.value, isSecret: $0.isSecret) }
+        )
         let trimmedCwd = workingDirectory.trimmingCharacters(in: .whitespaces)
         return ParsedStdioFields(
             command: command.trimmingCharacters(in: .whitespaces),
             args: ShellArgs.split(argsString),
-            env: regularEnv,
-            secretEnvKeys: secretEnvKeys,
+            env: normalizedEnvironment.regular,
+            secretEnvKeys: normalizedEnvironment.secretKeys,
             workingDirectory: trimmedCwd.isEmpty ? nil : trimmedCwd
         )
     }
@@ -3314,6 +3310,7 @@ private struct ProviderEditSheet: View {
         case nil:
             verifiedProbeResult = nil
         }
+        let verifiedSetupFingerprint = testResultSetupFingerprint
 
         // Blank values preserve existing Keychain entries. Explicit values
         // are committed atomically with bearer-token intent by the manager.
@@ -3342,8 +3339,12 @@ private struct ProviderEditSheet: View {
             )
             return
         }
-        if let verifiedProbeResult {
-            MCPProviderHealthSnapshotStore.record(verifiedProbeResult, for: updatedProvider)
+        if let verifiedProbeResult, let verifiedSetupFingerprint {
+            MCPProviderHealthSnapshotStore.restore(
+                verifiedProbeResult,
+                for: updatedProvider,
+                verifiedSetupFingerprint: verifiedSetupFingerprint
+            )
         }
         dismiss()
     }

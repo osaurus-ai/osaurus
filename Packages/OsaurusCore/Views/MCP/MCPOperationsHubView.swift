@@ -809,6 +809,7 @@ private struct MCPOperationsProviderEditor: View {
     @State private var isTesting = false
     @State private var probeResult: MCPProviderProbeResult?
     @State private var probeResultFingerprint: String?
+    @State private var probeResultSetupFingerprint: String?
     @State private var probeGate = MCPProviderProbeGate()
     @State private var probeTask: Task<Void, Never>?
     @State private var activeProbeReservation: MCPProviderProbeReservation?
@@ -932,6 +933,7 @@ private struct MCPOperationsProviderEditor: View {
             probeGate.invalidate()
             probeResult = nil
             probeResultFingerprint = nil
+            probeResultSetupFingerprint = nil
             isTesting = false
         }
         .onDisappear {
@@ -1195,6 +1197,7 @@ private struct MCPOperationsProviderEditor: View {
         credentialSaveError = nil
         let provider = makeProvider()
         let verifiedProbeResult = currentProbeResult
+        let verifiedSetupFingerprint = probeResultSetupFingerprint
         guard onSave(
             provider,
             MCPProviderBearerTokenEdit.fromBearerField(
@@ -1210,8 +1213,12 @@ private struct MCPOperationsProviderEditor: View {
             )
             return
         }
-        if let verifiedProbeResult {
-            MCPProviderHealthSnapshotStore.record(verifiedProbeResult, for: provider)
+        if let verifiedProbeResult, let verifiedSetupFingerprint {
+            MCPProviderHealthSnapshotStore.restore(
+                verifiedProbeResult,
+                for: provider,
+                verifiedSetupFingerprint: verifiedSetupFingerprint
+            )
         }
         dismiss()
     }
@@ -1221,6 +1228,7 @@ private struct MCPOperationsProviderEditor: View {
         isTesting = true
         probeResult = nil
         probeResultFingerprint = nil
+        probeResultSetupFingerprint = nil
         let provider = makeProvider()
         let fingerprint = currentProbeFingerprint
         let localAttempt = probeGate.start(fingerprint: fingerprint)
@@ -1301,6 +1309,7 @@ private struct MCPOperationsProviderEditor: View {
                 guard accepted else { return }
                 probeResult = result
                 probeResultFingerprint = fingerprint
+                probeResultSetupFingerprint = context.setupFingerprint
             }
         }
     }

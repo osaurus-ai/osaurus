@@ -385,6 +385,87 @@ struct MCPProviderProbeServiceTests {
         #expect(MCPProviderHealthSnapshotStore.snapshot(providerId: provider.id) == nil)
     }
 
+    @Test func postSaveRestoreRequiresExactCurrentCredentialFingerprint() throws {
+        let root = try makeTemporaryRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        MCPProviderHealthSnapshotStore.overrideURL = root.appendingPathComponent("mcp-health.json")
+        defer { MCPProviderHealthSnapshotStore.overrideURL = nil }
+
+        let provider = MCPProvider(
+            id: UUID(),
+            name: "Restore fixture",
+            url: "https://example.test/mcp",
+            authType: .oauth
+        )
+        let verifiedContext = MCPProviderProbeContext.make(
+            provider: provider,
+            authorizationToken: "oauth-token-a",
+            secretHeaderValues: [:],
+            secretEnvironmentValues: [:]
+        )
+        let rotatedContext = MCPProviderProbeContext.make(
+            provider: provider,
+            authorizationToken: "oauth-token-b",
+            secretHeaderValues: [:],
+            secretEnvironmentValues: [:]
+        )
+        let result = probeResult(provider: provider, finishedAt: 20, toolName: "fixture")
+
+        #expect(
+            !MCPProviderHealthSnapshotStore.restore(
+                result,
+                for: provider,
+                verifiedSetupFingerprint: verifiedContext.setupFingerprint,
+                captureCurrentSetupFingerprint: { rotatedContext.setupFingerprint }
+            )
+        )
+        #expect(MCPProviderHealthSnapshotStore.snapshot(providerId: provider.id) == nil)
+
+        #expect(
+            MCPProviderHealthSnapshotStore.restore(
+                result,
+                for: provider,
+                verifiedSetupFingerprint: verifiedContext.setupFingerprint,
+                captureCurrentSetupFingerprint: { verifiedContext.setupFingerprint }
+            )
+        )
+        #expect(MCPProviderHealthSnapshotStore.snapshot(providerId: provider.id)?.lastProbe == result)
+    }
+
+    @Test func credentialMutationDuringPostSaveRecaptureInvalidatesRestore() throws {
+        let root = try makeTemporaryRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        MCPProviderHealthSnapshotStore.overrideURL = root.appendingPathComponent("mcp-health.json")
+        defer { MCPProviderHealthSnapshotStore.overrideURL = nil }
+
+        let provider = MCPProvider(
+            id: UUID(),
+            name: "Restore race fixture",
+            url: "https://example.test/mcp",
+            authType: .bearerToken
+        )
+        let context = MCPProviderProbeContext.make(
+            provider: provider,
+            authorizationToken: "credential",
+            secretHeaderValues: [:],
+            secretEnvironmentValues: [:]
+        )
+        let result = probeResult(provider: provider, finishedAt: 20, toolName: "fixture")
+
+        #expect(
+            !MCPProviderHealthSnapshotStore.restore(
+                result,
+                for: provider,
+                verifiedSetupFingerprint: context.setupFingerprint,
+                captureCurrentSetupFingerprint: {
+                    MCPProviderHealthSnapshotStore.clear(providerId: provider.id)
+                    return context.setupFingerprint
+                }
+            )
+        )
+        #expect(MCPProviderHealthSnapshotStore.snapshot(providerId: provider.id) == nil)
+    }
+
     @Test func credentialMutationInvalidatesMatchingInFlightAttempt() throws {
         let root = try makeTemporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }

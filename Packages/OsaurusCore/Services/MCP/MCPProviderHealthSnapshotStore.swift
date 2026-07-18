@@ -102,6 +102,52 @@ public enum MCPProviderHealthSnapshotStore {
         return recorded
     }
 
+    /// Restores an editor probe after its configuration and credentials have
+    /// been saved. Reserving before credential recapture makes a concurrent
+    /// Keychain mutation invalidate the restore instead of reviving stale
+    /// health for a different credential set.
+    @discardableResult
+    static func restore(
+        _ result: MCPProviderProbeResult,
+        for provider: MCPProvider,
+        verifiedSetupFingerprint: String
+    ) -> Bool {
+        restore(
+            result,
+            for: provider,
+            verifiedSetupFingerprint: verifiedSetupFingerprint,
+            captureCurrentSetupFingerprint: {
+                MCPProviderProbeContext.captureStored(provider: provider).setupFingerprint
+            }
+        )
+    }
+
+    @discardableResult
+    static func restore(
+        _ result: MCPProviderProbeResult,
+        for provider: MCPProvider,
+        verifiedSetupFingerprint: String,
+        captureCurrentSetupFingerprint: () -> String
+    ) -> Bool {
+        let reservation = reserveProbe(providerId: provider.id)
+        let currentSetupFingerprint = captureCurrentSetupFingerprint()
+        guard currentSetupFingerprint == verifiedSetupFingerprint,
+            let attempt = beginProbe(
+                reservation,
+                setupFingerprint: verifiedSetupFingerprint
+            )
+        else {
+            cancelProbe(reservation)
+            return false
+        }
+        return record(
+            result,
+            for: provider,
+            attempt: attempt,
+            currentSetupFingerprint: currentSetupFingerprint
+        )
+    }
+
     /// Reserves the next provider generation before credential capture starts.
     /// This closes the window where an older surface could finish while the new
     /// surface is waiting on Keychain.
