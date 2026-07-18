@@ -458,7 +458,7 @@ public enum MCPProviderOperationsHub {
                     transport: .stdio,
                     status: .blocked,
                     title: L("Host command not found"),
-                    detail: L("`\(command)` was not found on the app PATH or common local bin directories."),
+                    detail: L("The host command was not found on the app PATH or common local bin directories."),
                     redactedCommandLine: redactedCommandLine,
                     resolvedExecutablePath: nil,
                     searchPath: searchPath,

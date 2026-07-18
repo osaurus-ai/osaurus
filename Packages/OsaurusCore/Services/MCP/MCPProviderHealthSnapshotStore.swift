@@ -36,12 +36,29 @@ public struct MCPProviderHealthSnapshot: Codable, Identifiable, Sendable, Equata
     }
 }
 
+struct MCPProviderProbeReservation: Sendable, Equatable {
+    fileprivate let providerId: UUID
+    fileprivate let generation: UInt64
+}
+
+struct MCPProviderHealthProbeAttempt: Sendable, Equatable {
+    fileprivate let providerId: UUID
+    fileprivate let generation: UInt64
+    fileprivate let setupFingerprint: String
+}
+
 public enum MCPProviderHealthSnapshotStore {
     nonisolated(unsafe) public static var overrideURL: URL?
     private static let lock = NSLock()
+    nonisolated(unsafe) private static var probeStates: [UUID: ProbeState] = [:]
 
     private struct Envelope: Codable, Sendable, Equatable {
         var snapshots: [MCPProviderHealthSnapshot]
+    }
+
+    private struct ProbeState {
+        var generation: UInt64
+        var setupFingerprint: String?
     }
 
     public static func load() -> [UUID: MCPProviderHealthSnapshot] {
@@ -55,8 +72,14 @@ public enum MCPProviderHealthSnapshotStore {
         guard let data = try? Data(contentsOf: url) else { return [:] }
         guard let envelope = try? JSONDecoder().decode(Envelope.self, from: data) else { return [:] }
         return envelope.snapshots.reduce(into: [:]) { snapshots, snapshot in
-            if let existing = snapshots[snapshot.providerId], existing.updatedAt > snapshot.updatedAt {
-                return
+            if let existing = snapshots[snapshot.providerId] {
+                if existing.lastProbe.finishedAt > snapshot.lastProbe.finishedAt {
+                    return
+                }
+                if existing.lastProbe.finishedAt == snapshot.lastProbe.finishedAt,
+                    existing.updatedAt > snapshot.updatedAt {
+                    return
+                }
             }
             snapshots[snapshot.providerId] = snapshot
         }
@@ -66,22 +89,98 @@ public enum MCPProviderHealthSnapshotStore {
         load()[providerId]
     }
 
-    public static func record(_ result: MCPProviderProbeResult, for provider: MCPProvider) {
-        withLock {
-            var snapshots = loadUnlocked()
-            snapshots[provider.id] = MCPProviderHealthSnapshot(
-                providerId: provider.id,
-                providerName: provider.name,
-                transportSummary: result.transportSummary,
-                lastProbe: result
-            )
-            saveUnlocked(snapshots)
+    /// Direct write path for non-UI callers and tests. UI probes must use a
+    /// shared attempt so a completion from another surface cannot win late.
+    @discardableResult
+    static func record(_ result: MCPProviderProbeResult, for provider: MCPProvider) -> Bool {
+        let recorded = withLock {
+            recordUnlocked(result, for: provider)
         }
-        notify(providerId: provider.id)
+        if recorded {
+            notify(providerId: provider.id)
+        }
+        return recorded
+    }
+
+    /// Reserves the next provider generation before credential capture starts.
+    /// This closes the window where an older surface could finish while the new
+    /// surface is waiting on Keychain.
+    static func reserveProbe(providerId: UUID) -> MCPProviderProbeReservation {
+        withLock {
+            let generation = advanceProbeGenerationUnlocked(providerId: providerId)
+            return MCPProviderProbeReservation(providerId: providerId, generation: generation)
+        }
+    }
+
+    /// Binds an in-memory setup hash to a reservation. Raw credentials never
+    /// enter shared state, persistence, notifications, or logs.
+    static func beginProbe(
+        _ reservation: MCPProviderProbeReservation,
+        setupFingerprint: String
+    ) -> MCPProviderHealthProbeAttempt? {
+        withLock {
+            guard var state = probeStates[reservation.providerId],
+                state.generation == reservation.generation
+            else { return nil }
+            state.setupFingerprint = setupFingerprint
+            probeStates[reservation.providerId] = state
+            return MCPProviderHealthProbeAttempt(
+                providerId: reservation.providerId,
+                generation: reservation.generation,
+                setupFingerprint: setupFingerprint
+            )
+        }
+    }
+
+    /// Cancels only the generation owned by this reservation. A stale editor
+    /// cannot invalidate a newer list, hub, bulk, or editor probe.
+    static func cancelProbe(_ reservation: MCPProviderProbeReservation) {
+        withLock {
+            guard probeStates[reservation.providerId]?.generation == reservation.generation else {
+                return
+            }
+            _ = advanceProbeGenerationUnlocked(providerId: reservation.providerId)
+        }
+    }
+
+    /// Records only the newest cross-surface attempt when the provider and its
+    /// effective credentials still have the setup hash captured at probe start.
+    @discardableResult
+    static func record(
+        _ result: MCPProviderProbeResult,
+        for provider: MCPProvider,
+        attempt: MCPProviderHealthProbeAttempt,
+        currentSetupFingerprint: String?
+    ) -> Bool {
+        let recorded = withLock {
+            guard attempt.providerId == provider.id,
+                result.providerId == provider.id,
+                var state = probeStates[provider.id],
+                state.generation == attempt.generation,
+                state.setupFingerprint == attempt.setupFingerprint
+            else { return false }
+
+            // An attempt is single-use even when its completion is rejected.
+            state.setupFingerprint = nil
+            probeStates[provider.id] = state
+            guard currentSetupFingerprint == attempt.setupFingerprint else { return false }
+            return recordUnlocked(result, for: provider)
+        }
+        if recorded {
+            notify(providerId: provider.id)
+        }
+        return recorded
+    }
+
+    static func invalidateProbeAttempts(providerId: UUID) {
+        withLock {
+            _ = advanceProbeGenerationUnlocked(providerId: providerId)
+        }
     }
 
     public static func clear(providerId: UUID) {
         withLock {
+            _ = advanceProbeGenerationUnlocked(providerId: providerId)
             var snapshots = loadUnlocked()
             snapshots.removeValue(forKey: providerId)
             saveUnlocked(snapshots)
@@ -112,6 +211,35 @@ public enum MCPProviderHealthSnapshotStore {
         } catch {
             print("[Osaurus] Failed to save MCP health snapshots: \(error)")
         }
+    }
+
+    private static func recordUnlocked(
+        _ result: MCPProviderProbeResult,
+        for provider: MCPProvider
+    ) -> Bool {
+        guard result.providerId == provider.id else { return false }
+        var snapshots = loadUnlocked()
+        if let existing = snapshots[provider.id],
+            existing.lastProbe.finishedAt > result.finishedAt {
+            return false
+        }
+        snapshots[provider.id] = MCPProviderHealthSnapshot(
+            providerId: provider.id,
+            providerName: provider.name,
+            transportSummary: result.transportSummary,
+            lastProbe: result
+        )
+        saveUnlocked(snapshots)
+        return true
+    }
+
+    private static func advanceProbeGenerationUnlocked(providerId: UUID) -> UInt64 {
+        var generation = (probeStates[providerId]?.generation ?? 0) &+ 1
+        if generation == 0 {
+            generation = 1
+        }
+        probeStates[providerId] = ProbeState(generation: generation, setupFingerprint: nil)
+        return generation
     }
 
     private static func withLock<T>(_ operation: () -> T) -> T {

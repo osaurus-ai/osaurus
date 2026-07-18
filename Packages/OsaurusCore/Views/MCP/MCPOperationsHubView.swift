@@ -720,36 +720,37 @@ struct MCPOperationsHubView: View {
 
     private func probe(_ provider: MCPProvider) {
         guard !probingProviderIds.contains(provider.id) else { return }
+        let reservation = MCPProviderHealthSnapshotStore.reserveProbe(providerId: provider.id)
         probingProviderIds.insert(provider.id)
         Task {
-            let result: MCPProviderProbeResult
-            switch provider.transport {
-            case .http:
-                let credentials = await Task.detached(priority: .utility) {
-                    let token: String? =
-                        switch provider.authType {
-                        case .bearerToken:
-                            MCPProviderKeychain.getToken(for: provider.id)
-                        case .oauth:
-                            MCPProviderKeychain.getOAuthTokens(for: provider.id)?.accessToken
-                        case .none:
-                            nil
+            let context = await Task.detached(priority: .utility) {
+                MCPProviderProbeContext.captureStored(provider: provider)
+            }.value
+            if !Task.isCancelled,
+                let attempt = MCPProviderHealthSnapshotStore.beginProbe(
+                    reservation,
+                    setupFingerprint: context.setupFingerprint
+                ) {
+                let result = await context.probe()
+                if !Task.isCancelled {
+                    let currentProvider = await MainActor.run {
+                        manager.configuration.provider(id: provider.id)
+                    }
+                    let currentFingerprint = await Task.detached(priority: .utility) {
+                        currentProvider.map {
+                            MCPProviderProbeContext.captureStored(provider: $0).setupFingerprint
                         }
-                    return (token, provider.resolvedHeaders())
-                }.value
-                result = await MCPProviderProbeService.probeHTTP(
-                    providerId: provider.id,
-                    name: provider.name,
-                    url: provider.url,
-                    token: credentials.0,
-                    headers: credentials.1,
-                    streamingEnabled: provider.streamingEnabled,
-                    discoveryTimeout: provider.discoveryTimeout
-                )
-            case .stdio:
-                result = await MCPProviderProbeService.probeStdio(provider: provider)
+                    }.value
+                    _ = await Task.detached(priority: .utility) {
+                        MCPProviderHealthSnapshotStore.record(
+                            result,
+                            for: context.provider,
+                            attempt: attempt,
+                            currentSetupFingerprint: currentFingerprint
+                        )
+                    }.value
+                }
             }
-            MCPProviderHealthSnapshotStore.record(result, for: provider)
             await MainActor.run {
                 probingProviderIds.remove(provider.id)
                 refreshAll(reconcileSelection: true)
@@ -809,6 +810,7 @@ private struct MCPOperationsProviderEditor: View {
     @State private var probeResult: MCPProviderProbeResult?
     @State private var probeGate = MCPProviderProbeGate()
     @State private var probeTask: Task<Void, Never>?
+    @State private var activeProbeReservation: MCPProviderProbeReservation?
     @State private var credentialSaveError: String?
 
     var body: some View {
@@ -925,6 +927,7 @@ private struct MCPOperationsProviderEditor: View {
         .onChange(of: currentProbeFingerprint) { _, _ in
             probeTask?.cancel()
             probeTask = nil
+            cancelActiveProbeReservation()
             probeGate.invalidate()
             probeResult = nil
             isTesting = false
@@ -932,6 +935,7 @@ private struct MCPOperationsProviderEditor: View {
         .onDisappear {
             probeTask?.cancel()
             probeTask = nil
+            cancelActiveProbeReservation()
             probeGate.invalidate()
             isTesting = false
         }
@@ -1211,39 +1215,82 @@ private struct MCPOperationsProviderEditor: View {
         isTesting = true
         let provider = makeProvider()
         let fingerprint = currentProbeFingerprint
-        let attempt = probeGate.start(fingerprint: fingerprint)
+        let localAttempt = probeGate.start(fingerprint: fingerprint)
+        let reservation = MCPProviderHealthSnapshotStore.reserveProbe(providerId: provider.id)
+        activeProbeReservation = reservation
+        let bearerTokenField = token
+        let clearBearerTokenRequested = clearBearerToken
+        let secretHeaderOverrides = secretValues(headerEntries)
+        let secretEnvironmentOverrides = secretValues(envEntries)
         probeTask?.cancel()
         probeTask = Task {
-            let result: MCPProviderProbeResult
-            switch provider.transport {
-            case .http:
-                result = await MCPProviderProbeService.probeHTTP(
-                    providerId: provider.id,
-                    name: provider.name,
-                    url: provider.url,
-                    token: bearerTokenForProbe(provider: provider),
-                    headers: headersForProbe(provider: provider),
-                    streamingEnabled: provider.streamingEnabled,
-                    discoveryTimeout: provider.discoveryTimeout
-                )
-            case .stdio:
-                result = await MCPProviderProbeService.probeStdio(
+            let context = await Task.detached(priority: .utility) {
+                MCPProviderProbeContext.capture(
                     provider: provider,
-                    secretEnvOverrides: secretEnvironmentValues(provider: provider)
+                    bearerTokenField: bearerTokenField,
+                    clearBearerToken: clearBearerTokenRequested,
+                    secretHeaderOverrides: secretHeaderOverrides,
+                    secretEnvironmentOverrides: secretEnvironmentOverrides
                 )
+            }.value
+            guard !Task.isCancelled,
+                let sharedAttempt = MCPProviderHealthSnapshotStore.beginProbe(
+                    reservation,
+                    setupFingerprint: context.setupFingerprint
+                )
+            else {
+                await MainActor.run {
+                    guard probeGate.isCurrent(localAttempt) else { return }
+                    if activeProbeReservation == reservation {
+                        activeProbeReservation = nil
+                    }
+                    isTesting = false
+                    probeTask = nil
+                }
+                return
             }
+
+            let result = await context.probe()
+            let localStillCurrent = await MainActor.run {
+                probeGate.isCurrent(localAttempt) && currentProbeFingerprint == fingerprint
+            }
+            guard !Task.isCancelled, localStillCurrent else { return }
+
+            let storedProvider = await MainActor.run {
+                MCPProviderManager.shared.configuration.provider(id: provider.id)
+            }
+            let storedFingerprint = await Task.detached(priority: .utility) {
+                storedProvider.map {
+                    MCPProviderProbeContext.captureStored(provider: $0).setupFingerprint
+                }
+            }.value
+            let stillCurrentAfterRecapture = await MainActor.run {
+                probeGate.isCurrent(localAttempt) && currentProbeFingerprint == fingerprint
+            }
+            guard !Task.isCancelled, stillCurrentAfterRecapture else { return }
+            _ = await Task.detached(priority: .utility) {
+                MCPProviderHealthSnapshotStore.record(
+                    result,
+                    for: context.provider,
+                    attempt: sharedAttempt,
+                    currentSetupFingerprint: storedFingerprint
+                )
+            }.value
+
             await MainActor.run {
-                let isCurrentAttempt = probeGate.isCurrent(attempt)
+                let isCurrentAttempt = probeGate.isCurrent(localAttempt)
                 let accepted = probeGate.accept(
-                    attempt,
+                    localAttempt,
                     currentFingerprint: currentProbeFingerprint,
                     succeeded: result.succeeded
                 )
                 guard isCurrentAttempt else { return }
                 isTesting = false
                 probeTask = nil
+                if activeProbeReservation == reservation {
+                    activeProbeReservation = nil
+                }
                 guard accepted else { return }
-                MCPProviderHealthSnapshotStore.record(result, for: provider)
                 probeResult = result
             }
         }
@@ -1291,7 +1338,7 @@ private struct MCPOperationsProviderEditor: View {
                 || workingDirectory.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                 ? nil
                 : workingDirectory.trimmingCharacters(in: .whitespacesAndNewlines)
-        )
+        ).scopedToActiveTransport()
     }
 
     private func normalizedEntries(_ entries: [KeyValueEntry]) -> (regular: [String: String], secretKeys: [String]) {
@@ -1314,51 +1361,6 @@ private struct MCPOperationsProviderEditor: View {
         return headerWrites + environmentWrites
     }
 
-    private func bearerTokenForProbe(provider: MCPProvider) -> String? {
-        let trimmed = token.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !trimmed.isEmpty { return trimmed }
-        if clearBearerToken { return nil }
-
-        switch provider.authType {
-        case .bearerToken:
-            return self.provider?.getToken()
-        case .oauth:
-            return self.provider?.getOAuthTokens()?.accessToken
-        case .none:
-            return nil
-        }
-    }
-
-    private func headersForProbe(provider: MCPProvider) -> [String: String] {
-        var headers = provider.customHeaders
-        for entry in headerEntries where entry.isSecret {
-            let key = entry.key.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !key.isEmpty else { continue }
-            if !entry.value.isEmpty {
-                headers[key] = entry.value
-            } else if let value = MCPProviderKeychain.getHeaderSecret(key: key, for: provider.id),
-                !value.isEmpty {
-                headers[key] = value
-            }
-        }
-        return headers
-    }
-
-    private func secretEnvironmentValues(provider: MCPProvider) -> [String: String] {
-        var values: [String: String] = [:]
-        for entry in envEntries where entry.isSecret {
-            let key = entry.key.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !key.isEmpty else { continue }
-            if !entry.value.isEmpty {
-                values[key] = entry.value
-            } else if let value = MCPProviderKeychain.getEnvSecret(key: key, for: provider.id),
-                !value.isEmpty {
-                values[key] = value
-            }
-        }
-        return values
-    }
-
     private func secretValues(_ entries: [KeyValueEntry]) -> [String: String] {
         var values: [String: String] = [:]
         for entry in entries where entry.isSecret {
@@ -1367,6 +1369,12 @@ private struct MCPOperationsProviderEditor: View {
             values[key] = entry.value
         }
         return values
+    }
+
+    private func cancelActiveProbeReservation() {
+        guard let activeProbeReservation else { return }
+        MCPProviderHealthSnapshotStore.cancelProbe(activeProbeReservation)
+        self.activeProbeReservation = nil
     }
 }
 

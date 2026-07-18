@@ -197,7 +197,9 @@ public enum MCPProviderKeychain {
 
     @discardableResult
     public static func saveToken(_ token: String, for providerId: UUID) -> Bool {
-        setData(Data(token.utf8), account: tokenAccount(for: providerId))
+        invalidatingProbeOnSuccess(providerId: providerId) {
+            setData(Data(token.utf8), account: tokenAccount(for: providerId))
+        }
     }
 
     public static func getToken(for providerId: UUID) -> String? {
@@ -206,7 +208,9 @@ public enum MCPProviderKeychain {
 
     @discardableResult
     public static func deleteToken(for providerId: UUID) -> Bool {
-        deleteItem(account: tokenAccount(for: providerId))
+        invalidatingProbeOnSuccess(providerId: providerId) {
+            deleteItem(account: tokenAccount(for: providerId))
+        }
     }
 
     public static func hasToken(for providerId: UUID) -> Bool {
@@ -218,7 +222,9 @@ public enum MCPProviderKeychain {
     @discardableResult
     public static func saveOAuthTokens(_ tokens: MCPOAuthTokens, for providerId: UUID) -> Bool {
         guard let data = try? JSONEncoder().encode(tokens) else { return false }
-        return setData(data, account: oauthAccount(for: providerId))
+        return invalidatingProbeOnSuccess(providerId: providerId) {
+            setData(data, account: oauthAccount(for: providerId))
+        }
     }
 
     public static func getOAuthTokens(for providerId: UUID) -> MCPOAuthTokens? {
@@ -228,7 +234,9 @@ public enum MCPProviderKeychain {
 
     @discardableResult
     public static func deleteOAuthTokens(for providerId: UUID) -> Bool {
-        deleteItem(account: oauthAccount(for: providerId))
+        invalidatingProbeOnSuccess(providerId: providerId) {
+            deleteItem(account: oauthAccount(for: providerId))
+        }
     }
 
     public static func hasOAuthTokens(for providerId: UUID) -> Bool {
@@ -243,7 +251,9 @@ public enum MCPProviderKeychain {
 
     @discardableResult
     public static func saveOAuthClientSecret(_ clientSecret: String, for providerId: UUID) -> Bool {
-        setData(Data(clientSecret.utf8), account: oauthClientSecretAccount(for: providerId))
+        invalidatingProbeOnSuccess(providerId: providerId) {
+            setData(Data(clientSecret.utf8), account: oauthClientSecretAccount(for: providerId))
+        }
     }
 
     public static func getOAuthClientSecret(for providerId: UUID) -> String? {
@@ -253,14 +263,18 @@ public enum MCPProviderKeychain {
 
     @discardableResult
     public static func deleteOAuthClientSecret(for providerId: UUID) -> Bool {
-        deleteItem(account: oauthClientSecretAccount(for: providerId))
+        invalidatingProbeOnSuccess(providerId: providerId) {
+            deleteItem(account: oauthClientSecretAccount(for: providerId))
+        }
     }
 
     // MARK: - Header secrets
 
     @discardableResult
     public static func saveHeaderSecret(_ value: String, key: String, for providerId: UUID) -> Bool {
-        setData(Data(value.utf8), account: headerAccount(key: key, for: providerId))
+        invalidatingProbeOnSuccess(providerId: providerId) {
+            setData(Data(value.utf8), account: headerAccount(key: key, for: providerId))
+        }
     }
 
     public static func getHeaderSecret(key: String, for providerId: UUID) -> String? {
@@ -270,14 +284,18 @@ public enum MCPProviderKeychain {
 
     @discardableResult
     public static func deleteHeaderSecret(key: String, for providerId: UUID) -> Bool {
-        deleteItem(account: headerAccount(key: key, for: providerId))
+        invalidatingProbeOnSuccess(providerId: providerId) {
+            deleteItem(account: headerAccount(key: key, for: providerId))
+        }
     }
 
     // MARK: - Env secrets (stdio subprocess)
 
     @discardableResult
     public static func saveEnvSecret(_ value: String, key: String, for providerId: UUID) -> Bool {
-        setData(Data(value.utf8), account: envAccount(key: key, for: providerId))
+        invalidatingProbeOnSuccess(providerId: providerId) {
+            setData(Data(value.utf8), account: envAccount(key: key, for: providerId))
+        }
     }
 
     public static func getEnvSecret(key: String, for providerId: UUID) -> String? {
@@ -287,7 +305,9 @@ public enum MCPProviderKeychain {
 
     @discardableResult
     public static func deleteEnvSecret(key: String, for providerId: UUID) -> Bool {
-        deleteItem(account: envAccount(key: key, for: providerId))
+        invalidatingProbeOnSuccess(providerId: providerId) {
+            deleteItem(account: envAccount(key: key, for: providerId))
+        }
     }
 
     // MARK: - Bulk delete
@@ -297,6 +317,7 @@ public enum MCPProviderKeychain {
     /// or env secrets. Used when removing a provider entirely or resetting
     /// the app.
     public static func deleteAllSecrets(for providerId: UUID) {
+        MCPProviderHealthSnapshotStore.invalidateProbeAttempts(providerId: providerId)
         if KeychainQueryHelpers.disablesKeychainForProcess { return }
         // Targeted deletes (cheap, idempotent).
         deleteToken(for: providerId)
@@ -351,5 +372,16 @@ public enum MCPProviderKeychain {
     private static func deleteItem(account: String) -> Bool {
         if KeychainQueryHelpers.disablesKeychainForProcess { return true }
         return Keychain.delete(service: service, account: account)
+    }
+
+    private static func invalidatingProbeOnSuccess(
+        providerId: UUID,
+        operation: () -> Bool
+    ) -> Bool {
+        let succeeded = operation()
+        if succeeded {
+            MCPProviderHealthSnapshotStore.invalidateProbeAttempts(providerId: providerId)
+        }
+        return succeeded
     }
 }

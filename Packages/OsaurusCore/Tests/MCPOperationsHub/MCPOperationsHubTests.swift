@@ -164,8 +164,39 @@ struct MCPOperationsHubTests {
 
         #expect(plan.status == .blocked)
         #expect(plan.title.contains("not found"))
+        #expect(!plan.detail.contains("not-installed"))
         #expect(plan.resolvedExecutablePath == nil)
         #expect(plan.searchPath?.contains("/empty/bin") == true)
+    }
+
+    @Test func hostLaunchPlanDetailDoesNotExposeCommandPathCanaries() {
+        for command in [
+            "raw-command-canary",
+            "/private/customer-work/absolute-command-canary",
+            "~/customer-work/tilde-command-canary",
+        ] {
+            let provider = MCPProvider(
+                id: UUID(),
+                name: "Missing",
+                url: "",
+                authType: .none,
+                transport: .stdio,
+                executionHost: .host,
+                command: command
+            )
+
+            let plan = MCPProviderOperationsHub.launchPlan(
+                for: provider,
+                processEnvironment: ["PATH": "/empty/bin"],
+                secretEnvValues: [:],
+                isExecutable: { _ in false },
+                directoryExists: { _ in true }
+            )
+
+            #expect(!plan.detail.contains(command))
+            #expect(!plan.detail.contains("customer-work"))
+            #expect(!plan.detail.contains("command-canary"))
+        }
     }
 
     @Test func callHistoryStoreBoundsAndRedactsRecords() throws {

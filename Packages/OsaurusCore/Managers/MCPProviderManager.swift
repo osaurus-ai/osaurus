@@ -174,6 +174,7 @@ public final class MCPProviderManager: ObservableObject {
         ) else { return false }
 
         configuration.add(provider)
+        MCPProviderHealthSnapshotStore.invalidateProbeAttempts(providerId: provider.id)
         MCPProviderConfigurationStore.save(configuration)
         // KPI: a user-configured MCP tool provider. Only the transport kind
         // is captured — never the command, URL, or args.
@@ -237,6 +238,7 @@ public final class MCPProviderManager: ObservableObject {
         }
 
         configuration.update(provider)
+        MCPProviderHealthSnapshotStore.invalidateProbeAttempts(providerId: provider.id)
         MCPProviderConfigurationStore.save(configuration)
 
         // If the user switched away from OAuth, drop any cached tokens for this provider.
@@ -293,6 +295,7 @@ public final class MCPProviderManager: ObservableObject {
     /// When enabled is false, disconnects from the provider
     public func setEnabled(_ enabled: Bool, for providerId: UUID) {
         configuration.setEnabled(enabled, for: providerId)
+        MCPProviderHealthSnapshotStore.invalidateProbeAttempts(providerId: providerId)
         MCPProviderConfigurationStore.save(configuration)
 
         if enabled {
@@ -900,6 +903,7 @@ public final class MCPProviderManager: ObservableObject {
             provider.enabled = true
         }
         configuration.update(provider)
+        MCPProviderHealthSnapshotStore.invalidateProbeAttempts(providerId: provider.id)
         MCPProviderConfigurationStore.save(configuration)
 
         // Clear the "needs sign in" badge.

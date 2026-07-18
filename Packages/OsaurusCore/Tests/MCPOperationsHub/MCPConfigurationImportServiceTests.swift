@@ -225,6 +225,46 @@ struct MCPConfigurationImportServiceTests {
         #expect(provider.env["TOKEN"] == nil)
     }
 
+    @Test func storedAndEditorProbeContextsShareCanonicalCredentialFingerprint() {
+        let provider = MCPProvider(
+            id: UUID(),
+            name: "Canonical fixture",
+            url: "https://example.test/mcp",
+            enabled: false,
+            customHeaders: ["Accept": "application/json"],
+            streamingEnabled: true,
+            discoveryTimeout: 37,
+            toolCallTimeout: 61,
+            autoConnect: false,
+            secretHeaderKeys: ["X-API-Key"],
+            authType: .bearerToken,
+            pluginId: "fixture-plugin"
+        )
+        let storedContext = MCPProviderProbeContext.make(
+            provider: provider,
+            authorizationToken: "bearer-secret-canary",
+            secretHeaderValues: ["X-API-Key": "header-secret-canary"],
+            secretEnvironmentValues: [:]
+        )
+        let editorContext = MCPProviderProbeContext.make(
+            provider: provider,
+            authorizationToken: "bearer-secret-canary",
+            secretHeaderValues: ["X-API-Key": "header-secret-canary"],
+            secretEnvironmentValues: [:]
+        )
+        let rotatedContext = MCPProviderProbeContext.make(
+            provider: provider,
+            authorizationToken: "rotated-secret-canary",
+            secretHeaderValues: ["X-API-Key": "header-secret-canary"],
+            secretEnvironmentValues: [:]
+        )
+
+        #expect(storedContext.setupFingerprint == editorContext.setupFingerprint)
+        #expect(storedContext.setupFingerprint != rotatedContext.setupFingerprint)
+        #expect(!storedContext.setupFingerprint.contains("bearer-secret-canary"))
+        #expect(!storedContext.setupFingerprint.contains("header-secret-canary"))
+    }
+
     @Test func probeGateRejectsStaleCompletionAndBindsSuccessToCurrentInputs() {
         var gate = MCPProviderProbeGate()
         let first = gate.start(fingerprint: "first")

@@ -256,6 +256,131 @@ enum MCPProviderProbeRedactor {
     }
 }
 
+/// Immutable provider and credential snapshot for one explicit UI probe. Raw
+/// credentials stay private to this short-lived value; shared ordering state
+/// receives only `setupFingerprint`.
+struct MCPProviderProbeContext: Sendable {
+    let provider: MCPProvider
+    let setupFingerprint: String
+
+    private let authorizationToken: String?
+    private let headers: [String: String]
+    private let secretEnvironmentValues: [String: String]
+
+    static func captureStored(provider: MCPProvider) -> MCPProviderProbeContext {
+        capture(
+            provider: provider,
+            bearerTokenField: "",
+            clearBearerToken: false,
+            secretHeaderOverrides: [:],
+            secretEnvironmentOverrides: [:]
+        )
+    }
+
+    static func capture(
+        provider: MCPProvider,
+        bearerTokenField: String,
+        clearBearerToken: Bool,
+        secretHeaderOverrides: [String: String],
+        secretEnvironmentOverrides: [String: String]
+    ) -> MCPProviderProbeContext {
+        let authorizationToken: String? =
+            switch provider.authType {
+            case .bearerToken:
+                MCPProviderBearerProbeInput.resolved(
+                    fieldValue: bearerTokenField,
+                    clearRequested: clearBearerToken,
+                    storedValue: MCPProviderKeychain.getToken(for: provider.id)
+                )
+            case .oauth:
+                MCPProviderKeychain.getOAuthTokens(for: provider.id)?.accessToken
+            case .none:
+                nil
+            }
+        let secretHeaderValues = resolveSecrets(
+            keys: provider.secretHeaderKeys,
+            overrides: secretHeaderOverrides,
+            readStoredValue: { MCPProviderKeychain.getHeaderSecret(key: $0, for: provider.id) }
+        )
+        let secretEnvironmentValues = resolveSecrets(
+            keys: provider.secretEnvKeys,
+            overrides: secretEnvironmentOverrides,
+            readStoredValue: { MCPProviderKeychain.getEnvSecret(key: $0, for: provider.id) }
+        )
+        return make(
+            provider: provider,
+            authorizationToken: authorizationToken,
+            secretHeaderValues: secretHeaderValues,
+            secretEnvironmentValues: secretEnvironmentValues
+        )
+    }
+
+    static func make(
+        provider: MCPProvider,
+        authorizationToken: String?,
+        secretHeaderValues: [String: String],
+        secretEnvironmentValues: [String: String]
+    ) -> MCPProviderProbeContext {
+        var headers = provider.customHeaders
+        for (key, value) in secretHeaderValues where provider.secretHeaderKeys.contains(key) {
+            headers[key] = value
+        }
+        return MCPProviderProbeContext(
+            provider: provider,
+            setupFingerprint: MCPProviderSetupFingerprint.make(
+                provider: provider,
+                bearerToken: authorizationToken,
+                secretHeaderValues: secretHeaderValues,
+                secretEnvironmentValues: secretEnvironmentValues
+            ),
+            authorizationToken: authorizationToken,
+            headers: headers,
+            secretEnvironmentValues: secretEnvironmentValues
+        )
+    }
+
+    func probe() async -> MCPProviderProbeResult {
+        switch provider.transport {
+        case .http:
+            return await MCPProviderProbeService.probeHTTP(
+                providerId: provider.id,
+                name: provider.name,
+                url: provider.url,
+                token: authorizationToken,
+                headers: headers,
+                streamingEnabled: provider.streamingEnabled,
+                discoveryTimeout: provider.discoveryTimeout
+            )
+        case .stdio:
+            // Put the captured values directly on an ephemeral provider so a
+            // later Keychain write cannot change which credentials this probe uses.
+            var frozenProvider = provider
+            for key in frozenProvider.secretEnvKeys {
+                frozenProvider.env.removeValue(forKey: key)
+            }
+            frozenProvider.env.merge(secretEnvironmentValues) { _, captured in captured }
+            frozenProvider.secretEnvKeys = []
+            return await MCPProviderProbeService.probeStdio(provider: frozenProvider)
+        }
+    }
+
+    private static func resolveSecrets(
+        keys: [String],
+        overrides: [String: String],
+        readStoredValue: (String) -> String?
+    ) -> [String: String] {
+        var values: [String: String] = [:]
+        for key in keys {
+            if let override = overrides[key], !override.isEmpty {
+                values[key] = override
+            } else if let stored = readStoredValue(key) {
+                values[key] = stored
+            }
+        }
+        return values
+    }
+}
+
 private struct MCPStdioProbeProcessExitError: LocalizedError, Sendable {
     let status: Int32
 

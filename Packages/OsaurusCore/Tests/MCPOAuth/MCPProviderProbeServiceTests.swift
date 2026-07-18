@@ -155,6 +155,191 @@ struct MCPProviderProbeServiceTests {
         #expect(snapshots[providerId]?.providerName == "Newer")
     }
 
+    @Test func sharedProbeGateRejectsOlderSurfaceAndAcceptsLatestAttempt() throws {
+        let root = try makeTemporaryRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let snapshotFile = root.appendingPathComponent("mcp-health.json")
+        MCPProviderHealthSnapshotStore.overrideURL = snapshotFile
+        defer { MCPProviderHealthSnapshotStore.overrideURL = nil }
+
+        let provider = MCPProvider(
+            id: UUID(),
+            name: "Cross-surface fixture",
+            url: "https://example.test/mcp",
+            authType: .bearerToken
+        )
+        let olderContext = MCPProviderProbeContext.make(
+            provider: provider,
+            authorizationToken: "older-secret-canary",
+            secretHeaderValues: [:],
+            secretEnvironmentValues: [:]
+        )
+        let olderReservation = MCPProviderHealthSnapshotStore.reserveProbe(providerId: provider.id)
+        let olderAttempt = try #require(
+            MCPProviderHealthSnapshotStore.beginProbe(
+                olderReservation,
+                setupFingerprint: olderContext.setupFingerprint
+            )
+        )
+
+        let latestContext = MCPProviderProbeContext.make(
+            provider: provider,
+            authorizationToken: "latest-secret-canary",
+            secretHeaderValues: [:],
+            secretEnvironmentValues: [:]
+        )
+        let latestReservation = MCPProviderHealthSnapshotStore.reserveProbe(providerId: provider.id)
+        let latestAttempt = try #require(
+            MCPProviderHealthSnapshotStore.beginProbe(
+                latestReservation,
+                setupFingerprint: latestContext.setupFingerprint
+            )
+        )
+        MCPProviderHealthSnapshotStore.cancelProbe(olderReservation)
+
+        let latestResult = probeResult(provider: provider, finishedAt: 20, toolName: "latest")
+        #expect(
+            MCPProviderHealthSnapshotStore.record(
+                latestResult,
+                for: provider,
+                attempt: latestAttempt,
+                currentSetupFingerprint: latestContext.setupFingerprint
+            )
+        )
+
+        // The older surface finishes last, but its superseded generation must
+        // not replace the accepted result even with a later wall-clock date.
+        let olderResult = probeResult(provider: provider, finishedAt: 30, toolName: "older")
+        #expect(
+            !MCPProviderHealthSnapshotStore.record(
+                olderResult,
+                for: provider,
+                attempt: olderAttempt,
+                currentSetupFingerprint: olderContext.setupFingerprint
+            )
+        )
+        #expect(MCPProviderHealthSnapshotStore.snapshot(providerId: provider.id)?.lastProbe.toolNames == ["latest"])
+
+        let persisted = try String(contentsOf: snapshotFile, encoding: .utf8)
+        #expect(!persisted.contains("older-secret-canary"))
+        #expect(!persisted.contains("latest-secret-canary"))
+    }
+
+    @Test func sharedProbeGateRejectsProviderAndCredentialFingerprintChanges() throws {
+        let root = try makeTemporaryRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        MCPProviderHealthSnapshotStore.overrideURL = root.appendingPathComponent("mcp-health.json")
+        defer { MCPProviderHealthSnapshotStore.overrideURL = nil }
+
+        let provider = MCPProvider(
+            id: UUID(),
+            name: "Fingerprint fixture",
+            url: "https://example.test/mcp",
+            authType: .bearerToken
+        )
+        let originalContext = MCPProviderProbeContext.make(
+            provider: provider,
+            authorizationToken: "credential-one",
+            secretHeaderValues: [:],
+            secretEnvironmentValues: [:]
+        )
+
+        let editedReservation = MCPProviderHealthSnapshotStore.reserveProbe(providerId: provider.id)
+        let editedAttempt = try #require(
+            MCPProviderHealthSnapshotStore.beginProbe(
+                editedReservation,
+                setupFingerprint: originalContext.setupFingerprint
+            )
+        )
+        var editedProvider = provider
+        editedProvider.url = "https://edited.example.test/mcp"
+        let editedContext = MCPProviderProbeContext.make(
+            provider: editedProvider,
+            authorizationToken: "credential-one",
+            secretHeaderValues: [:],
+            secretEnvironmentValues: [:]
+        )
+        #expect(
+            !MCPProviderHealthSnapshotStore.record(
+                probeResult(provider: provider, finishedAt: 10, toolName: "edited"),
+                for: provider,
+                attempt: editedAttempt,
+                currentSetupFingerprint: editedContext.setupFingerprint
+            )
+        )
+
+        let credentialReservation = MCPProviderHealthSnapshotStore.reserveProbe(providerId: provider.id)
+        let credentialAttempt = try #require(
+            MCPProviderHealthSnapshotStore.beginProbe(
+                credentialReservation,
+                setupFingerprint: originalContext.setupFingerprint
+            )
+        )
+        let rotatedCredentialContext = MCPProviderProbeContext.make(
+            provider: provider,
+            authorizationToken: "credential-two",
+            secretHeaderValues: [:],
+            secretEnvironmentValues: [:]
+        )
+        #expect(
+            !MCPProviderHealthSnapshotStore.record(
+                probeResult(provider: provider, finishedAt: 11, toolName: "rotated"),
+                for: provider,
+                attempt: credentialAttempt,
+                currentSetupFingerprint: rotatedCredentialContext.setupFingerprint
+            )
+        )
+        #expect(MCPProviderHealthSnapshotStore.snapshot(providerId: provider.id) == nil)
+    }
+
+    @Test func credentialMutationInvalidatesMatchingInFlightAttempt() throws {
+        let root = try makeTemporaryRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        MCPProviderHealthSnapshotStore.overrideURL = root.appendingPathComponent("mcp-health.json")
+        defer { MCPProviderHealthSnapshotStore.overrideURL = nil }
+
+        let provider = MCPProvider(id: UUID(), name: "Mutation fixture", url: "https://example.test/mcp")
+        let context = MCPProviderProbeContext.make(
+            provider: provider,
+            authorizationToken: "same-current-value",
+            secretHeaderValues: [:],
+            secretEnvironmentValues: [:]
+        )
+        let reservation = MCPProviderHealthSnapshotStore.reserveProbe(providerId: provider.id)
+        let attempt = try #require(
+            MCPProviderHealthSnapshotStore.beginProbe(
+                reservation,
+                setupFingerprint: context.setupFingerprint
+            )
+        )
+
+        MCPProviderHealthSnapshotStore.invalidateProbeAttempts(providerId: provider.id)
+
+        #expect(
+            !MCPProviderHealthSnapshotStore.record(
+                probeResult(provider: provider, finishedAt: 10, toolName: "invalidated"),
+                for: provider,
+                attempt: attempt,
+                currentSetupFingerprint: context.setupFingerprint
+            )
+        )
+    }
+
+    @Test func directRecordCannotDemoteSnapshotByFinishedAt() throws {
+        let root = try makeTemporaryRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        MCPProviderHealthSnapshotStore.overrideURL = root.appendingPathComponent("mcp-health.json")
+        defer { MCPProviderHealthSnapshotStore.overrideURL = nil }
+
+        let provider = MCPProvider(id: UUID(), name: "Timestamp fixture", url: "https://example.test/mcp")
+        let newest = probeResult(provider: provider, finishedAt: 20, toolName: "newest")
+        let older = probeResult(provider: provider, finishedAt: 10, toolName: "older")
+
+        #expect(MCPProviderHealthSnapshotStore.record(newest, for: provider))
+        #expect(!MCPProviderHealthSnapshotStore.record(older, for: provider))
+        #expect(MCPProviderHealthSnapshotStore.snapshot(providerId: provider.id)?.lastProbe.toolNames == ["newest"])
+    }
+
     #if os(macOS)
     @Test func hostStdioProbeRejectsProcessControlEnvironmentWithoutLeakingValue() async {
         let provider = MCPProvider(
@@ -487,6 +672,27 @@ struct MCPProviderProbeServiceTests {
             return ProviderDiagnosticRow(id: id, title: "missing", value: "missing", severity: .blocked)
         }
         return found
+    }
+
+    private func probeResult(
+        provider: MCPProvider,
+        finishedAt: TimeInterval,
+        toolName: String
+    ) -> MCPProviderProbeResult {
+        MCPProviderProbeResult(
+            providerId: provider.id,
+            providerName: provider.name,
+            transportSummary: "HTTP https://example.test/redacted-path",
+            startedAt: Date(timeIntervalSince1970: finishedAt - 1),
+            finishedAt: Date(timeIntervalSince1970: finishedAt),
+            succeeded: true,
+            stage: .listTools,
+            reasonCode: .succeeded,
+            toolCount: 1,
+            toolNames: [toolName],
+            message: "Connected",
+            action: nil
+        )
     }
 
     private static let hostFixtureScript = #"""

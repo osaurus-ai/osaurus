@@ -202,7 +202,7 @@
     "\\(result.count) character(s)" : {
       "shouldTranslate" : false
     },
-    "`\\(command)` was not found on the app PATH or common local bin directories." : {
+    "The host command was not found on the app PATH or common local bin directories." : {
       "shouldTranslate" : false
     },
     "stdio command not set" : {
