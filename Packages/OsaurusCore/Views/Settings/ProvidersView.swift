@@ -21,6 +21,7 @@ struct ProvidersView: View {
     @State private var reconnectingAll = false
     @State private var probingAll = false
     @State private var probingProviderIds: Set<UUID> = []
+    @State private var showOperationsHub = false
 
     var body: some View {
         ScrollView {
@@ -72,7 +73,13 @@ struct ProvidersView: View {
                             onSaveBearerToken: { token in
                                 // Persist directly to Keychain (the provider record
                                 // itself doesn't change) and immediately retry.
-                                _ = MCPProviderKeychain.saveToken(token, for: report.id)
+                                guard MCPProviderKeychain.saveToken(token, for: report.id) else {
+                                    _ = ToastManager.shared.error(
+                                        L("Credentials could not be saved"),
+                                        message: L("Check Keychain access and try again.")
+                                    )
+                                    return
+                                }
                                 refreshCredentialPresence()
                                 // Enable the provider so the retry connect doesn't no-op.
                                 if !report.provider.enabled {
@@ -114,20 +121,39 @@ struct ProvidersView: View {
                 for: Foundation.Notification.Name.mcpProviderHealthSnapshotChanged
             )
         ) { _ in
-            refreshHealthSnapshots()
+            Task { @MainActor in
+                refreshHealthSnapshots()
+            }
         }
         .sheet(isPresented: $showAddSheet) {
-            ProviderEditSheet(provider: nil) { provider, token in
-                manager.addProvider(provider, token: token)
-                refreshCredentialPresence()
+            ProviderEditSheet(provider: nil) { provider, tokenEdit, secretWrites in
+                let saved = manager.addProvider(
+                    provider,
+                    token: tokenEdit.tokenForNewProvider,
+                    secretWrites: secretWrites
+                )
+                if saved { refreshCredentialPresence() }
+                return saved
             }
         }
         .sheet(item: $editingProvider) { provider in
-            ProviderEditSheet(provider: provider) { updatedProvider, token in
-                manager.updateProvider(updatedProvider, token: token)
-                refreshCredentialPresence()
-                refreshHealthSnapshots()
+            ProviderEditSheet(provider: provider) { updatedProvider, tokenEdit, secretWrites in
+                let saved = manager.updateProvider(
+                    updatedProvider,
+                    tokenEdit: tokenEdit,
+                    secretWrites: secretWrites
+                )
+                if saved {
+                    refreshCredentialPresence()
+                    refreshHealthSnapshots()
+                }
+                return saved
             }
+        }
+        .sheet(isPresented: $showOperationsHub) {
+            MCPOperationsHubView()
+                .environment(\.theme, theme)
+                .frame(width: 980, height: 720)
         }
     }
 
@@ -213,12 +239,17 @@ struct ProvidersView: View {
     private func probeEnabledProviders() {
         let targets = manager.configuration.providers.filter(\.enabled)
         guard !targets.isEmpty else { return }
+        let requests = targets.map {
+            (
+                provider: $0,
+                reservation: MCPProviderHealthSnapshotStore.reserveProbe(providerId: $0.id)
+            )
+        }
         probingAll = true
         probingProviderIds.formUnion(targets.map(\.id))
         Task {
-            for provider in targets {
-                let result = await probeResult(for: provider)
-                MCPProviderHealthSnapshotStore.record(result, for: provider)
+            for request in requests {
+                await runProbe(provider: request.provider, reservation: request.reservation)
             }
             await MainActor.run {
                 refreshHealthSnapshots()
@@ -230,10 +261,10 @@ struct ProvidersView: View {
 
     private func probeProvider(_ provider: MCPProvider) {
         guard !probingProviderIds.contains(provider.id) else { return }
+        let reservation = MCPProviderHealthSnapshotStore.reserveProbe(providerId: provider.id)
         probingProviderIds.insert(provider.id)
         Task {
-            let result = await probeResult(for: provider)
-            MCPProviderHealthSnapshotStore.record(result, for: provider)
+            await runProbe(provider: provider, reservation: reservation)
             await MainActor.run {
                 refreshHealthSnapshots()
                 _ = probingProviderIds.remove(provider.id)
@@ -241,36 +272,37 @@ struct ProvidersView: View {
         }
     }
 
-    private func probeResult(for provider: MCPProvider) async -> MCPProviderProbeResult {
-        switch provider.transport {
-        case .http:
-            let credentials = await Task.detached(priority: .utility) {
-                let token: String? =
-                    switch provider.authType {
-                    case .bearerToken:
-                        MCPProviderKeychain.getToken(for: provider.id)
-                    case .oauth:
-                        MCPProviderKeychain.getOAuthTokens(for: provider.id)?.accessToken
-                    case .none:
-                        nil
-                    }
-                return (
-                    token,
-                    provider.resolvedHeaders()
-                )
-            }.value
-            return await MCPProviderProbeService.probeHTTP(
-                providerId: provider.id,
-                name: provider.name,
-                url: provider.url,
-                token: credentials.0,
-                headers: credentials.1,
-                streamingEnabled: provider.streamingEnabled,
-                discoveryTimeout: provider.discoveryTimeout
+    @MainActor
+    private func runProbe(
+        provider: MCPProvider,
+        reservation: MCPProviderProbeReservation
+    ) async {
+        let context = await Task.detached(priority: .utility) {
+            MCPProviderProbeContext.captureStored(provider: provider)
+        }.value
+        guard !Task.isCancelled,
+            let attempt = MCPProviderHealthSnapshotStore.beginProbe(
+                reservation,
+                setupFingerprint: context.setupFingerprint
             )
-        case .stdio:
-            return await MCPProviderProbeService.probeStdio(provider: provider)
-        }
+        else { return }
+
+        let result = await context.probe()
+        guard !Task.isCancelled else { return }
+        let currentProvider = manager.configuration.provider(id: provider.id)
+        let currentFingerprint = await Task.detached(priority: .utility) {
+            currentProvider.map {
+                MCPProviderProbeContext.captureStored(provider: $0).setupFingerprint
+            }
+        }.value
+        _ = await Task.detached(priority: .utility) {
+            MCPProviderHealthSnapshotStore.record(
+                result,
+                for: context.provider,
+                attempt: attempt,
+                currentSetupFingerprint: currentFingerprint
+            )
+        }.value
     }
 
     private func copyHubReport() {
@@ -292,22 +324,46 @@ struct ProvidersView: View {
             title: "Connections",
             description: "Connect services that give your agents more tools, using MCP (Model Context Protocol)"
         ) {
-            Button(action: { showAddSheet = true }) {
-                HStack(spacing: 6) {
-                    Image(systemName: "plus")
-                        .font(.system(size: 12, weight: .semibold))
-                    Text("Add Connection", bundle: .module)
-                        .font(.system(size: 13, weight: .semibold))
-                }
-                .foregroundColor(.white)
-                .padding(.horizontal, 14)
-                .padding(.vertical, 8)
-                .background(
-                    RoundedRectangle(cornerRadius: 8)
-                        .fill(theme.accentColor)
-                )
+            HStack(spacing: 8) {
+                Button(action: { showOperationsHub = true }, label: {
+                    HStack(spacing: 6) {
+                        Image(systemName: "slider.horizontal.3")
+                            .font(.system(size: 12, weight: .semibold))
+                        Text("Operations", bundle: .module)
+                            .font(.system(size: 13, weight: .medium))
+                    }
+                    .foregroundColor(theme.primaryText)
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 8)
+                    .background(
+                        RoundedRectangle(cornerRadius: 8)
+                            .fill(theme.tertiaryBackground)
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 8)
+                                    .stroke(theme.inputBorder, lineWidth: 1)
+                            )
+                    )
+                })
+                .buttonStyle(PlainButtonStyle())
+                .localizedHelp("Open MCP operations hub")
+
+                Button(action: { showAddSheet = true }, label: {
+                    HStack(spacing: 6) {
+                        Image(systemName: "plus")
+                            .font(.system(size: 12, weight: .semibold))
+                        Text("Add Connection", bundle: .module)
+                            .font(.system(size: 13, weight: .semibold))
+                    }
+                    .foregroundColor(.white)
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 8)
+                    .background(
+                        RoundedRectangle(cornerRadius: 8)
+                            .fill(theme.accentColor)
+                    )
+                })
+                .buttonStyle(PlainButtonStyle())
             }
-            .buttonStyle(PlainButtonStyle())
         }
     }
 
@@ -1209,7 +1265,7 @@ private struct ProviderEditSheet: View {
     @Environment(\.dismiss) private var dismiss
 
     let provider: MCPProvider?
-    let onSave: (MCPProvider, String?) -> Void
+    let onSave: (MCPProvider, MCPProviderBearerTokenEdit, [MCPProviderSecretWrite]) -> Bool
 
     /// Stable identity for "draft" providers (sheet not yet saved). Reused so OAuth
     /// tokens persisted to Keychain mid-flow stay tied to the provider once saved.
@@ -1218,6 +1274,7 @@ private struct ProviderEditSheet: View {
     @State private var name: String = ""
     @State private var url: String = ""
     @State private var token: String = ""
+    @State private var clearBearerToken: Bool = false
     @State private var customHeaders: [HeaderEntry] = []
     @State private var streamingEnabled: Bool = false
     @State private var discoveryTimeout: Double = 20
@@ -1228,7 +1285,15 @@ private struct ProviderEditSheet: View {
 
     @State private var isTesting: Bool = false
     @State private var testResult: TestResult?
+    @State private var testResultFingerprint: String?
+    @State private var testResultSetupFingerprint: String?
+    @State private var probeGate = MCPProviderProbeGate()
+    @State private var probeTask: Task<Void, Never>?
+    @State private var activeProbeReservation: MCPProviderProbeReservation?
+    @State private var importedSetupRequiresProbe = false
+    @State private var showImportConfiguration = false
     @State private var showAdvanced: Bool = false
+    @State private var credentialSaveError: String?
 
     @State private var isSigningIn: Bool = false
     @State private var oauthError: String?
@@ -1324,6 +1389,29 @@ private struct ProviderEditSheet: View {
                 .stroke(themeManager.currentTheme.primaryBorder, lineWidth: 1)
         )
         .onAppear { loadProvider() }
+        .onDisappear {
+            probeTask?.cancel()
+            probeTask = nil
+            cancelActiveProbeReservation()
+            probeGate.invalidate()
+            isTesting = false
+        }
+        .sheet(isPresented: $showImportConfiguration) {
+            MCPConfigurationImportSheet { imported in
+                applyImportedConfiguration(imported)
+            }
+        }
+        .onChange(of: currentProbeFingerprint) { _, fingerprint in
+            guard testResultFingerprint != fingerprint else { return }
+            probeTask?.cancel()
+            probeTask = nil
+            cancelActiveProbeReservation()
+            probeGate.invalidate()
+            isTesting = false
+            testResult = nil
+            testResultFingerprint = nil
+            testResultSetupFingerprint = nil
+        }
     }
 
     @ViewBuilder
@@ -1450,10 +1538,17 @@ private struct ProviderEditSheet: View {
 
     @ViewBuilder
     private var sheetFooter: some View {
-        HStack(spacing: 12) {
-            footerLeading
-            Spacer()
-            footerTrailing
+        VStack(alignment: .leading, spacing: 8) {
+            if let credentialSaveError {
+                Label(credentialSaveError, systemImage: "exclamationmark.triangle.fill")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundColor(themeManager.currentTheme.errorColor)
+            }
+            HStack(spacing: 12) {
+                footerLeading
+                Spacer()
+                footerTrailing
+            }
         }
         .padding(.horizontal, 24)
         .padding(.vertical, 16)
@@ -1530,7 +1625,7 @@ private struct ProviderEditSheet: View {
                 Group {
                     if isTesting {
                         ProgressView().scaleEffect(0.6)
-                    } else if let result = testResult {
+                    } else if let result = currentTestResult {
                         switch result {
                         case .success:
                             Image(systemName: "checkmark.circle.fill")
@@ -1546,7 +1641,7 @@ private struct ProviderEditSheet: View {
                 }
                 .frame(width: 16, height: 16)
 
-                if let result = testResult {
+                if let result = currentTestResult {
                     switch result {
                     case .success(let probe):
                         Text(
@@ -1592,17 +1687,39 @@ private struct ProviderEditSheet: View {
         transition(to: .chooseProvider)
     }
 
-    /// Reset the draft to a blank slate. Used when transitioning between phases
-    /// so a previous selection's name / url / OAuth state doesn't leak through.
-    /// Token state is dropped from Keychain via `resetDraftOAuthState`. Manual
-    /// OAuth override fields are also wiped so a half-typed Client ID /
-    /// Client Secret from one template doesn't bleed into the next.
+    /// Reset every connection-specific draft field before moving between
+    /// catalog choices. Imported configurations can contain credentials and
+    /// host-execution settings, so a partial reset would let a discarded
+    /// import bleed into the next provider.
     private func clearDraft(authType: MCPProviderAuthType, name: String = "", url: String = "") {
+        probeTask?.cancel()
+        probeTask = nil
+        cancelActiveProbeReservation()
+        probeGate.invalidate()
         self.name = name
         self.url = url
         self.authType = authType
+        transport = .http
+        executionHost = .sandbox
+        command = ""
+        argsString = ""
+        workingDirectory = ""
+        envEntries.removeAll()
+        streamingEnabled = false
+        discoveryTimeout = 20
+        toolCallTimeout = 45
+        autoConnect = true
+        clearBearerToken = false
         customHeaders.removeAll()
+        isTesting = false
         testResult = nil
+        testResultFingerprint = nil
+        testResultSetupFingerprint = nil
+        importedSetupRequiresProbe = false
+        credentialSaveError = nil
+        showAdvanced = false
+        showImportConfiguration = false
+        isSigningIn = false
         manualAuthEndpoint = ""
         manualTokenEndpoint = ""
         manualClientId = ""
@@ -2173,6 +2290,21 @@ private struct ProviderEditSheet: View {
 
     private var configureCustomBody: some View {
         VStack(alignment: .leading, spacing: 16) {
+            HStack {
+                Spacer()
+                Button {
+                    showImportConfiguration = true
+                } label: {
+                    Label {
+                        Text("Import Configuration", bundle: .module)
+                    } icon: {
+                        Image(systemName: "square.and.arrow.down")
+                    }
+                        .font(.system(size: 12, weight: .medium))
+                }
+                .buttonStyle(.borderless)
+            }
+
             EditorCard(title: "Connection", icon: "link") {
                 VStack(alignment: .leading, spacing: 14) {
                     MCPStyledTextField(
@@ -2203,6 +2335,14 @@ private struct ProviderEditSheet: View {
                                 placeholder: "Optional - stored securely in Keychain",
                                 text: $token
                             )
+                            if isEditing {
+                                MCPToggleRow(
+                                    title: "Clear saved token",
+                                    description: "Remove the Keychain token on save",
+                                    isOn: $clearBearerToken
+                                )
+                                .disabled(!token.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                            }
                         case .oauth:
                             oauthSection
                         }
@@ -2218,9 +2358,25 @@ private struct ProviderEditSheet: View {
                 stdioEnvCard
             }
 
+            if importedSetupNeedsProbe {
+                HStack(alignment: .top, spacing: 8) {
+                    Image(systemName: "checkmark.shield.fill")
+                        .foregroundColor(themeManager.currentTheme.accentColor)
+                    Text(
+                        "Test this imported configuration before saving it.",
+                        bundle: .module
+                    )
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundColor(themeManager.currentTheme.secondaryText)
+                }
+                .padding(10)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(themeManager.currentTheme.accentColor.opacity(0.08))
+            }
+
             advancedCard
 
-            if let result = testResult {
+            if let result = currentTestResult {
                 probeResultCard(result.probeResult)
             }
         }
@@ -2740,10 +2896,16 @@ private struct ProviderEditSheet: View {
             let trimmedClientId = manualClientId.trimmingCharacters(in: .whitespaces)
             let trimmedClientSecret = manualClientSecret.trimmingCharacters(in: .whitespaces)
             guard !trimmedClientId.isEmpty, !trimmedClientSecret.isEmpty else { return }
-            MCPProviderKeychain.saveOAuthClientSecret(
+            guard MCPProviderKeychain.saveOAuthClientSecret(
                 trimmedClientSecret,
                 for: effectiveProviderId
-            )
+            ) else {
+                oauthError = String(
+                    localized: "Credentials could not be saved to Keychain. Check Keychain access and try again.",
+                    bundle: .module
+                )
+                return
+            }
         }
 
         isSigningIn = true
@@ -2816,7 +2978,7 @@ private struct ProviderEditSheet: View {
     }
 
     private var testResultColor: Color {
-        guard let result = testResult else { return themeManager.currentTheme.secondaryText }
+        guard let result = currentTestResult else { return themeManager.currentTheme.secondaryText }
         switch result {
         case .success: return themeManager.currentTheme.successColor
         case .failure: return themeManager.currentTheme.errorColor
@@ -2824,7 +2986,7 @@ private struct ProviderEditSheet: View {
     }
 
     private var testResultBackground: Color {
-        guard let result = testResult else { return themeManager.currentTheme.tertiaryBackground }
+        guard let result = currentTestResult else { return themeManager.currentTheme.tertiaryBackground }
         switch result {
         case .success: return themeManager.currentTheme.successColor.opacity(0.12)
         case .failure: return themeManager.currentTheme.errorColor.opacity(0.12)
@@ -2833,12 +2995,21 @@ private struct ProviderEditSheet: View {
 
     private var canSave: Bool {
         guard !name.trimmingCharacters(in: .whitespaces).isEmpty else { return false }
+        let hasRequiredFields: Bool
         switch transport {
         case .http:
-            return !url.trimmingCharacters(in: .whitespaces).isEmpty
+            hasRequiredFields = !url.trimmingCharacters(in: .whitespaces).isEmpty
         case .stdio:
-            return !command.trimmingCharacters(in: .whitespaces).isEmpty
+            hasRequiredFields = !command.trimmingCharacters(in: .whitespaces).isEmpty
         }
+        guard hasRequiredFields else { return false }
+        return !importedSetupRequiresProbe
+            || probeGate.hasCurrentSuccess(fingerprint: currentProbeFingerprint)
+    }
+
+    private var importedSetupNeedsProbe: Bool {
+        importedSetupRequiresProbe
+            && !probeGate.hasCurrentSuccess(fingerprint: currentProbeFingerprint)
     }
 
     private func loadProvider() {
@@ -2854,6 +3025,7 @@ private struct ProviderEditSheet: View {
         draftId = provider.id
         name = provider.name
         url = provider.url
+        clearBearerToken = false
         streamingEnabled = provider.streamingEnabled
         discoveryTimeout = provider.discoveryTimeout
         toolCallTimeout = provider.toolCallTimeout
@@ -2904,47 +3076,125 @@ private struct ProviderEditSheet: View {
         phase = .configureCustom
     }
 
-    private func testConnection() {
-        isTesting = true
-        testResult = nil
-
-        Task {
-            let provider = makeProbeProvider()
-            let result: MCPProviderProbeResult
-            switch transport {
-            case .http:
-                result = await MCPProviderProbeService.probeHTTP(
-                    providerId: provider.id,
-                    name: provider.name,
-                    url: provider.url,
-                    token: httpTestToken(),
-                    headers: buildHeaders(),
-                    streamingEnabled: provider.streamingEnabled,
-                    discoveryTimeout: provider.discoveryTimeout
-                )
-            case .stdio:
-                result = await MCPProviderProbeService.probeStdio(provider: provider)
-            }
-            MCPProviderHealthSnapshotStore.record(result, for: provider)
-
-            await MainActor.run {
-                testResult = result.succeeded ? .success(result) : .failure(result)
-                isTesting = false
-            }
+    private func applyImportedConfiguration(_ imported: MCPImportedServerConfiguration) {
+        probeTask?.cancel()
+        probeTask = nil
+        cancelActiveProbeReservation()
+        name = imported.name
+        transport = imported.transport
+        url = imported.url
+        streamingEnabled = imported.streamingEnabled
+        command = imported.command
+        argsString = ShellArgs.join(imported.args)
+        workingDirectory = imported.workingDirectory ?? ""
+        executionHost = .sandbox
+        authType = .none
+        token = ""
+        clearBearerToken = false
+        oauthConfig = nil
+        customHeaders = imported.headers.map {
+            HeaderEntry(key: $0.key, value: $0.value, isSecret: $0.isSecret)
         }
+        envEntries = imported.environment.map {
+            HeaderEntry(key: $0.key, value: $0.value, isSecret: $0.isSecret)
+        }
+        testResult = nil
+        testResultFingerprint = nil
+        testResultSetupFingerprint = nil
+        probeGate.invalidate()
+        isTesting = false
+        importedSetupRequiresProbe = true
+        phase = .configureCustom
     }
 
-    /// Token to use for the HTTP test request. OAuth providers reuse the
-    /// access token already in Keychain so the user can probe the server
-    /// before clicking Save.
-    private func httpTestToken() -> String? {
-        switch authType {
-        case .bearerToken:
-            return token.isEmpty ? nil : token
-        case .oauth:
-            return MCPProviderKeychain.getOAuthTokens(for: effectiveProviderId)?.accessToken
-        case .none:
-            return nil
+    private func testConnection() {
+        let provider = makeProvider()
+        let fingerprint = currentProbeFingerprint
+        let localAttempt = probeGate.start(fingerprint: fingerprint)
+        let reservation = MCPProviderHealthSnapshotStore.reserveProbe(providerId: provider.id)
+        activeProbeReservation = reservation
+        let bearerTokenField = token
+        let clearBearerTokenRequested = clearBearerToken
+        let secretHeaderOverrides = secretHeaderValues()
+        let secretEnvironmentOverrides = secretEnvironmentValues()
+        isTesting = true
+        testResult = nil
+        testResultFingerprint = nil
+        testResultSetupFingerprint = nil
+
+        probeTask?.cancel()
+        probeTask = Task {
+            let context = await Task.detached(priority: .utility) {
+                MCPProviderProbeContext.capture(
+                    provider: provider,
+                    bearerTokenField: bearerTokenField,
+                    clearBearerToken: clearBearerTokenRequested,
+                    secretHeaderOverrides: secretHeaderOverrides,
+                    secretEnvironmentOverrides: secretEnvironmentOverrides
+                )
+            }.value
+            guard !Task.isCancelled,
+                let sharedAttempt = MCPProviderHealthSnapshotStore.beginProbe(
+                    reservation,
+                    setupFingerprint: context.setupFingerprint
+                )
+            else {
+                await MainActor.run {
+                    guard probeGate.isCurrent(localAttempt) else { return }
+                    if activeProbeReservation == reservation {
+                        activeProbeReservation = nil
+                    }
+                    isTesting = false
+                    probeTask = nil
+                }
+                return
+            }
+
+            let result = await context.probe()
+            let localStillCurrent = await MainActor.run {
+                probeGate.isCurrent(localAttempt) && currentProbeFingerprint == fingerprint
+            }
+            guard !Task.isCancelled, localStillCurrent else { return }
+
+            let storedProvider = await MainActor.run {
+                MCPProviderManager.shared.configuration.provider(id: provider.id)
+            }
+            let storedFingerprint = await Task.detached(priority: .utility) {
+                storedProvider.map {
+                    MCPProviderProbeContext.captureStored(provider: $0).setupFingerprint
+                }
+            }.value
+            let stillCurrentAfterRecapture = await MainActor.run {
+                probeGate.isCurrent(localAttempt) && currentProbeFingerprint == fingerprint
+            }
+            guard !Task.isCancelled, stillCurrentAfterRecapture else { return }
+            _ = await Task.detached(priority: .utility) {
+                MCPProviderHealthSnapshotStore.record(
+                    result,
+                    for: context.provider,
+                    attempt: sharedAttempt,
+                    currentSetupFingerprint: storedFingerprint
+                )
+            }.value
+
+            await MainActor.run {
+                let isCurrentAttempt = probeGate.isCurrent(localAttempt)
+                let accepted = probeGate.accept(
+                    localAttempt,
+                    currentFingerprint: currentProbeFingerprint,
+                    succeeded: result.succeeded
+                )
+                guard isCurrentAttempt else { return }
+                isTesting = false
+                probeTask = nil
+                if activeProbeReservation == reservation {
+                    activeProbeReservation = nil
+                }
+                guard accepted else { return }
+                testResult = result.succeeded ? .success(result) : .failure(result)
+                testResultFingerprint = fingerprint
+                testResultSetupFingerprint = context.setupFingerprint
+            }
         }
     }
 
@@ -2962,151 +3212,141 @@ private struct ProviderEditSheet: View {
     }
 
     private func parseStdioFields() -> ParsedStdioFields {
-        var regularEnv: [String: String] = [:]
-        var secretEnvKeys: [String] = []
-        for entry in envEntries where !entry.key.isEmpty {
-            if entry.isSecret {
-                secretEnvKeys.append(entry.key)
-            } else if !entry.value.isEmpty {
-                // Skip empty regular env vars — persisting `KEY=""`
-                // would silently shadow whatever the subprocess
-                // inherits from its environment, which is almost
-                // never what the user intended.
-                regularEnv[entry.key] = entry.value
-            }
-        }
+        // Use the same last-row-wins contract as probing and credential
+        // persistence so a duplicate key cannot remain both plain and secret.
+        let normalizedEnvironment = MCPProviderOperationsFieldNormalizer.normalize(
+            envEntries.map { (key: $0.key, value: $0.value, isSecret: $0.isSecret) }
+        )
         let trimmedCwd = workingDirectory.trimmingCharacters(in: .whitespaces)
         return ParsedStdioFields(
             command: command.trimmingCharacters(in: .whitespaces),
             args: ShellArgs.split(argsString),
-            env: regularEnv,
-            secretEnvKeys: secretEnvKeys,
+            env: normalizedEnvironment.regular,
+            secretEnvKeys: normalizedEnvironment.secretKeys,
             workingDirectory: trimmedCwd.isEmpty ? nil : trimmedCwd
         )
     }
 
-    /// Synthesize an in-memory `MCPProvider` from the current editor
-    /// state so we can hand it to `testStdioConnection`. This is **not**
-    /// persisted; it lives just long enough to spawn + handshake.
-    private func makeStdioProbeProvider() -> MCPProvider {
+    /// Builds the exact provider shape shared by probing, fingerprinting, and
+    /// save so an untouched editor hashes identically to the stored provider.
+    private func makeProvider() -> MCPProvider {
         let fields = parseStdioFields()
+        let normalizedHeaders = MCPProviderOperationsFieldNormalizer.normalize(
+            customHeaders.map { ($0.key, $0.value, $0.isSecret) }
+        )
         return MCPProvider(
             id: effectiveProviderId,
-            name: name.isEmpty ? "Stdio test" : name,
-            url: "",
-            authType: .none,
-            transport: .stdio,
-            executionHost: executionHost,
-            command: fields.command,
-            args: fields.args,
-            env: fields.env,
-            secretEnvKeys: fields.secretEnvKeys,
-            workingDirectory: fields.workingDirectory
-        )
-    }
-
-    private func makeProbeProvider() -> MCPProvider {
-        switch transport {
-        case .http:
-            return MCPProvider(
-                id: effectiveProviderId,
-                name: name.isEmpty ? "HTTP MCP probe" : name,
-                url: url.trimmingCharacters(in: .whitespaces),
-                customHeaders: buildHeaders(),
-                streamingEnabled: streamingEnabled,
-                discoveryTimeout: discoveryTimeout,
-                toolCallTimeout: toolCallTimeout,
-                authType: authType,
-                transport: .http
-            )
-        case .stdio:
-            return makeStdioProbeProvider()
-        }
-    }
-
-    private func save() {
-        let trimmedName = name.trimmingCharacters(in: .whitespaces)
-        let trimmedURL = url.trimmingCharacters(in: .whitespaces)
-
-        // Separate regular headers from secret headers
-        var regularHeaders: [String: String] = [:]
-        var secretKeys: [String] = []
-
-        for header in customHeaders where !header.key.isEmpty {
-            if header.isSecret {
-                secretKeys.append(header.key)
-            } else {
-                regularHeaders[header.key] = header.value
-            }
-        }
-
-        // Merge any manual OAuth overrides into the saved config so they
-        // survive past sheet dismissal, even if the user hasn't clicked
-        // Sign In yet.
-        let oauthForSave: MCPOAuthConfig? =
-            authType == .oauth ? mergedManualOAuthConfig() : nil
-
-        // Stdio fields (command + args + env). Shared with the
-        // test-connection probe so the two paths can't drift.
-        let stdio = parseStdioFields()
-
-        let updatedProvider = MCPProvider(
-            id: effectiveProviderId,
-            name: trimmedName,
-            url: trimmedURL,
+            name: name.trimmingCharacters(in: .whitespaces),
+            url: transport == .http ? url.trimmingCharacters(in: .whitespaces) : "",
             enabled: provider?.enabled ?? true,
-            customHeaders: regularHeaders,
-            streamingEnabled: streamingEnabled,
+            customHeaders: transport == .http ? normalizedHeaders.regular : [:],
+            streamingEnabled: transport == .http && streamingEnabled,
             discoveryTimeout: discoveryTimeout,
             toolCallTimeout: toolCallTimeout,
             autoConnect: autoConnect,
-            secretHeaderKeys: secretKeys,
-            authType: authType,
-            oauth: oauthForSave,
-            // Preserve the plugin grouping so an edit-then-save on a
-            // Claude-plugin-imported provider doesn't strip its uninstall
-            // tag.
+            secretHeaderKeys: transport == .http ? normalizedHeaders.secretKeys : [],
+            authType: transport == .http ? authType : .none,
+            oauth: transport == .http && authType == .oauth ? mergedManualOAuthConfig() : nil,
             pluginId: provider?.pluginId,
             transport: transport,
             executionHost: executionHost,
-            command: stdio.command,
-            args: stdio.args,
-            env: stdio.env,
-            secretEnvKeys: stdio.secretEnvKeys,
-            workingDirectory: stdio.workingDirectory
+            command: transport == .stdio ? fields.command : "",
+            args: transport == .stdio ? fields.args : [],
+            env: transport == .stdio ? fields.env : [:],
+            secretEnvKeys: transport == .stdio ? fields.secretEnvKeys : [],
+            workingDirectory: transport == .stdio ? fields.workingDirectory : nil
         )
-
-        // Save secret env values to Keychain. Like the bearer/secret-header
-        // path, blank values mean "don't overwrite" so the user can leave
-        // sensitive fields alone after the first save.
-        for entry in envEntries
-        where entry.isSecret && !entry.key.isEmpty && !entry.value.isEmpty {
-            _ = MCPProviderKeychain.saveEnvSecret(
-                entry.value,
-                key: entry.key,
-                for: updatedProvider.id
-            )
-        }
-
-        // Save secret header values to Keychain
-        for header in customHeaders where header.isSecret && !header.key.isEmpty && !header.value.isEmpty {
-            MCPProviderKeychain.saveHeaderSecret(header.value, key: header.key, for: updatedProvider.id)
-        }
-
-        // Pass token (empty string means no change, nil means keep existing).
-        // For OAuth this is unused (tokens went through MCPOAuthService directly).
-        let tokenToSave: String? = (authType == .bearerToken && !token.isEmpty) ? token : nil
-
-        onSave(updatedProvider, tokenToSave)
-        dismiss()
     }
 
-    private func buildHeaders() -> [String: String] {
-        var headers: [String: String] = [:]
-        for header in customHeaders where !header.key.isEmpty && !header.value.isEmpty {
-            headers[header.key] = header.value
+    private var currentProbeFingerprint: String {
+        let provider = makeProvider()
+        return MCPProviderSetupFingerprint.make(
+            provider: provider,
+            bearerToken: authType == .bearerToken
+                ? MCPProviderBearerProbeInput.fingerprint(
+                    fieldValue: token,
+                    clearRequested: clearBearerToken
+                )
+                : nil,
+            secretHeaderValues: secretHeaderValues(),
+            secretEnvironmentValues: secretEnvironmentValues()
+        )
+    }
+
+    private var currentTestResult: TestResult? {
+        guard testResultFingerprint == currentProbeFingerprint else { return nil }
+        return testResult
+    }
+
+    private func secretHeaderValues() -> [String: String] {
+        MCPProviderOperationsFieldNormalizer.secretOverrides(
+            customHeaders.map { (key: $0.key, value: $0.value, isSecret: $0.isSecret) }
+        )
+    }
+
+    private func secretEnvironmentValues() -> [String: String] {
+        MCPProviderOperationsFieldNormalizer.secretOverrides(
+            envEntries.map { (key: $0.key, value: $0.value, isSecret: $0.isSecret) }
+        )
+    }
+
+    private func cancelActiveProbeReservation() {
+        guard let activeProbeReservation else { return }
+        MCPProviderHealthSnapshotStore.cancelProbe(activeProbeReservation)
+        self.activeProbeReservation = nil
+    }
+
+    private func save() {
+        credentialSaveError = nil
+        if importedSetupRequiresProbe
+            && !probeGate.hasCurrentSuccess(fingerprint: currentProbeFingerprint) {
+            return
         }
-        return headers
+        let updatedProvider = makeProvider()
+        let verifiedProbeResult: MCPProviderProbeResult?
+        switch currentTestResult {
+        case .success(let result), .failure(let result):
+            verifiedProbeResult = result
+        case nil:
+            verifiedProbeResult = nil
+        }
+        let verifiedSetupFingerprint = testResultSetupFingerprint
+
+        // Blank values preserve existing Keychain entries. Explicit values
+        // are committed atomically with bearer-token intent by the manager.
+        let secretWrites: [MCPProviderSecretWrite]
+        switch transport {
+        case .http:
+            secretWrites = MCPProviderOperationsFieldNormalizer.secretWrites(
+                customHeaders.map { (key: $0.key, value: $0.value, isSecret: $0.isSecret) },
+                storage: .header
+            )
+        case .stdio:
+            secretWrites = MCPProviderOperationsFieldNormalizer.secretWrites(
+                envEntries.map { (key: $0.key, value: $0.value, isSecret: $0.isSecret) },
+                storage: .environment
+            )
+        }
+        let tokenEdit = MCPProviderBearerTokenEdit.fromBearerField(
+            token,
+            authType: updatedProvider.authType,
+            clearRequested: clearBearerToken
+        )
+        guard onSave(updatedProvider, tokenEdit, secretWrites) else {
+            credentialSaveError = String(
+                localized: "Credentials could not be saved to Keychain. Check Keychain access and try again.",
+                bundle: .module
+            )
+            return
+        }
+        if let verifiedProbeResult, let verifiedSetupFingerprint {
+            MCPProviderHealthSnapshotStore.restore(
+                verifiedProbeResult,
+                for: updatedProvider,
+                verifiedSetupFingerprint: verifiedSetupFingerprint
+            )
+        }
+        dismiss()
     }
 }
 

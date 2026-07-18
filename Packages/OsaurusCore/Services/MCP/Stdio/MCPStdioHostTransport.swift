@@ -49,7 +49,10 @@
         /// lifetime.
         public let transport: StdioTransport
 
-        public init(provider: MCPProvider) throws {
+        public init(
+            provider: MCPProvider,
+            secretEnvOverrides: [String: String] = [:]
+        ) throws {
             guard !provider.command.isEmpty else {
                 throw MCPStdioTransportError.missingCommand
             }
@@ -57,7 +60,10 @@
             self.command = provider.command
             self.args = provider.args
 
-            let mergedEnv = Self.buildEnv(provider: provider)
+            let mergedEnv = try Self.buildEnv(
+                provider: provider,
+                secretEnvOverrides: secretEnvOverrides
+            )
             let executablePath = try Self.resolveExecutablePath(
                 command: Self.expandUserPath(provider.command),
                 env: mergedEnv
@@ -96,12 +102,40 @@
         /// Process env = inherited app env merged with the provider's
         /// own env (plain + Keychain-resolved secrets). Provider entries
         /// win on key conflicts.
-        private static func buildEnv(provider: MCPProvider) -> [String: String] {
+        private static func buildEnv(
+            provider: MCPProvider,
+            secretEnvOverrides: [String: String]
+        ) throws -> [String: String] {
             var env = ProcessInfo.processInfo.environment
-            for (key, value) in provider.resolvedEnv() {
+            let providerEnvironment = MCPStdioEnvironmentResolver.providerEnvironment(
+                provider: provider,
+                secretEnvOverrides: secretEnvOverrides
+            )
+            if let unsafeKey = providerEnvironment.keys.sorted().first(where: isProtectedHostEnvironmentKey) {
+                throw MCPStdioTransportError.unsafeEnvironmentKey(unsafeKey)
+            }
+            for (key, value) in providerEnvironment {
                 env[key] = value
             }
             return env
+        }
+
+        /// Provider configuration must not replace variables that control
+        /// executable lookup, dynamic loading, Objective-C runtime behavior,
+        /// or host process identity. Sandbox execution remains available for
+        /// definitions that genuinely need a custom environment namespace.
+        private static func isProtectedHostEnvironmentKey(_ key: String) -> Bool {
+            let normalized = key.uppercased()
+            if [
+                "PATH", "HOME", "USER", "LOGNAME", "SHELL", "TMPDIR",
+                "PWD", "OLDPWD", "SHLVL", "_",
+            ].contains(normalized) {
+                return true
+            }
+            return [
+                "DYLD_", "LD_", "OBJC_", "MALLOC_", "NSZOMBIE",
+                "NSDEALLOCATEZOMBIES", "__XPC_", "XPC_",
+            ].contains { normalized.hasPrefix($0) }
         }
 
         /// Resolve `command` to an absolute path the kernel can exec.
@@ -178,6 +212,16 @@
             env: [String: String]
         ) throws -> String {
             try resolveExecutablePath(command: expandUserPath(command), env: env)
+        }
+
+        static func mergedEnvironmentForTesting(
+            inherited: [String: String],
+            provider: [String: String]
+        ) throws -> [String: String] {
+            if let unsafeKey = provider.keys.sorted().first(where: isProtectedHostEnvironmentKey) {
+                throw MCPStdioTransportError.unsafeEnvironmentKey(unsafeKey)
+            }
+            return inherited.merging(provider) { _, configured in configured }
         }
 
         /// Set once a global spawn slot is held so `stop()` releases exactly
@@ -285,6 +329,7 @@
         case missingCommand
         case processSpawnFailed(String)
         case sandboxUnavailable
+        case unsafeEnvironmentKey(String)
         /// Bare-name command (e.g. `npx`) wasn't on `PATH`. `searchedPath`
         /// is the colon-separated string we actually walked — useful for
         /// nvm / asdf users whose Node lives under their home dir but is
@@ -308,6 +353,9 @@
             case .sandboxUnavailable:
                 return
                     "This provider is configured to run in the Osaurus sandbox, but the sandbox runtime is not currently available."
+            case .unsafeEnvironmentKey(let key):
+                return
+                    "Host execution cannot override the protected environment variable '\(key)'. Use Sandbox or remove that variable."
             case .commandNotFound(let command, _):
                 return
                     "`\(command)` was \(Self.commandNotFoundMarker). Use a full path (e.g. /opt/homebrew/bin/npx) or switch to Sandbox."

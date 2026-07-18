@@ -124,7 +124,11 @@ final class ComputerUseEvidencePackTests: XCTestCase {
             modelId: "scripted",
             driver: driver,
             gate: ComputerUseGate(policy: AutonomyPolicy(globalPreset: .autonomous)),
-            feed: SubagentFeed(toolCallId: "evidence-ax", kindId: "computer_use", title: "read the title field"),
+            feed: SubagentFeed(
+                toolCallId: "evidence-ax",
+                kindId: SubagentCapabilityRegistry.computerUse.id,
+                title: "read the title field"
+            ),
             interrupt: InterruptToken(),
             confirm: { _ in true },
             limits: RunLimits(maxSteps: 2, wallClockSeconds: 30),

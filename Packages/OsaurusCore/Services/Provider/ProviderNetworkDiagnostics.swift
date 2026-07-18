@@ -722,14 +722,16 @@ public enum ProviderNetworkDiagnostics {
     private static func mcpEndpointSubtitle(for provider: MCPProvider) -> String {
         switch provider.transport {
         case .http:
-            return provider.url
+            return MCPProviderProbeRedactor.safeHTTPURLForDiagnostics(provider.url)
         case .stdio:
-            let args = ShellArgs.join(provider.args)
-            return args.isEmpty ? provider.command : "\(provider.command) \(args)"
+            return "stdio command configured"
         }
     }
 
     private static func safeDiagnostic(_ raw: String) -> String {
-        ProviderDiagnosticRedactor.safe(raw, maxLength: 280)
+        ProviderDiagnosticRedactor.safe(
+            MCPProviderProbeRedactor.safeDiagnosticFragment(raw, maxLength: 280),
+            maxLength: 280
+        )
     }
 }

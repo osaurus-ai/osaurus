@@ -103,9 +103,52 @@ subprocess and therefore do not send traffic through URLSession's proxy path.
 The Test button now records a provider health snapshot after the explicit
 initialize/listTools probe. The copied probe result includes the stable reason
 code (`succeeded`, `invalidURL`, `missingCommand`, `commandNotFound`,
-`sandboxUnavailable`, `spawnFailed`, `timeout`, `authRequired`,
+`sandboxUnavailable`, `spawnFailed`, `processExited`, `timeout`, `authRequired`,
 `protocolError`, or `connectionFailed`) plus the stage that failed, but never
 includes credentials, env values, headers, request bodies, or tokens.
+
+### Importing an existing MCP configuration
+
+The Custom Server editor can import JSON from clients that use an `mcpServers`
+object. Choose **Import Configuration**, paste JSON or choose a `.json` file,
+select one server, review its command or URL, and confirm which environment or
+header fields are secrets. Imported fields marked **Secret** stay in the editor
+until Save and are then stored in Keychain rather than `mcp.json`.
+
+```json
+{
+  "mcpServers": {
+    "company-search": {
+      "command": "/opt/homebrew/bin/uvx",
+      "args": ["company-search-mcp"],
+      "env": {
+        "COMPANY_API_TOKEN": "paste-token-here"
+      }
+    }
+  }
+}
+```
+
+The importer accepts stdio `command`, `args`, `env`, and `cwd` fields, plus
+HTTP `url` and `headers` fields. Explicit types `stdio`, `http`,
+`streamable-http`, and `sse` are supported. It rejects mixed URL/command
+records, embedded URL credentials, duplicate JSON keys, unsafe header values,
+and configurations that exceed the import limits. Importing only fills the
+editor; it does not run a command. Review the command and arguments before
+running Test because a configured package runner or shell command can download
+or execute code inside the selected execution host.
+
+Imported definitions must pass the current editor Test before Save. The test
+uses in-memory secret values without writing them first. A successful test is
+invalidated if any command, URL, argument, execution-host, auth, header, env, or
+secret input changes.
+
+Stdio imports default to **Sandbox**. A host path in the command, arguments, or
+working directory is shown as a warning but never switches the execution host
+automatically. Choose **Host** only for a trusted server that genuinely needs a
+host virtual environment or host files. A macOS GUI app may not inherit the
+same `PATH` as Terminal; use an absolute executable path when the probe reports
+`commandNotFound`.
 
 ---
 
@@ -175,6 +218,31 @@ host-stdio counts, and the segmented filter lets you narrow the row list to all,
 attention, connected, stdio, HTTP, or disabled providers. The hub actions can
 probe every enabled provider, reconnect every enabled provider, or copy a single
 redacted support report for the whole provider set.
+
+The reusable **MCP Operations Hub** surface builds on the same provider data and
+adds an operator-focused detail view for each local stdio or HTTP/SSE provider:
+
+- Add or edit HTTP/SSE providers and local stdio providers from one compact
+  editor.
+- Test providers with the same explicit initialize/listTools probe used by the
+  provider rows. Successful and failed tests update the persisted health
+  snapshot.
+- Resolve stdio launch details before the process starts: host commands show the
+  executable path found on the app `PATH` plus common local-bin fallbacks, while
+  sandbox commands show the quoted command that will run inside the sandbox.
+- Show working-directory and environment-key state without printing environment
+  values. Secret env keys are listed by key name only, and missing Keychain
+  values are called out before launch.
+- Show authentication status separately from transport health: no-auth, bearer
+  token present/missing, OAuth signed in/missing, or OAuth sign-in required.
+- Copy a single redacted diagnostic bundle for a provider or for the whole hub.
+  Command arguments, probe messages, auth errors, and call-history errors are
+  passed through the same redaction path used by MCP probe diagnostics.
+- Read persisted MCP call-history records when present. The history format keeps
+  provider/tool names, timestamps, durations, success state, JSON argument keys,
+  result sizes, and redacted errors; it does not store raw argument values or raw
+  tool output. Production MCP tool executions populate this history through the
+  provider manager.
 
 For stdio providers, diagnostics distinguish sandbox vs host execution and point
 command-not-found failures at the executable path/PATH fix. For HTTP/SSE

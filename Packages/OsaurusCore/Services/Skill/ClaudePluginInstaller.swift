@@ -569,13 +569,22 @@ public final class ClaudePluginInstaller {
                                     + classifiedEnv.placeholderSecrets,
                                 workingDirectory: expandedCwd
                             )
-                            MCPProviderManager.shared.addProvider(provider, token: nil)
-                            for (key, value) in classifiedEnv.realSecrets {
-                                _ = MCPProviderKeychain.saveEnvSecret(
-                                    value,
-                                    key: key,
-                                    for: provider.id
+                            let secretWrites = classifiedEnv.realSecrets.map {
+                                MCPProviderSecretWrite(
+                                    storage: .environment,
+                                    key: $0.key,
+                                    value: $0.value
                                 )
+                            }
+                            guard MCPProviderManager.shared.addProvider(
+                                provider,
+                                token: nil,
+                                secretWrites: secretWrites
+                            ) else {
+                                summary.errors.append(
+                                    "MCP provider \(server.name): credentials could not be saved"
+                                )
+                                continue
                             }
                             if !classifiedEnv.placeholderSecrets.isEmpty {
                                 summary.stdioProvidersNeedingConfiguration.append(
@@ -621,13 +630,22 @@ public final class ClaudePluginInstaller {
                                 oauth: oauthConfig,
                                 pluginId: pluginId
                             )
-                            MCPProviderManager.shared.addProvider(provider, token: nil)
-                            for (key, value) in classified.realSecrets {
-                                _ = MCPProviderKeychain.saveHeaderSecret(
-                                    value,
-                                    key: key,
-                                    for: provider.id
+                            let secretWrites = classified.realSecrets.map {
+                                MCPProviderSecretWrite(
+                                    storage: .header,
+                                    key: $0.key,
+                                    value: $0.value
                                 )
+                            }
+                            guard MCPProviderManager.shared.addProvider(
+                                provider,
+                                token: nil,
+                                secretWrites: secretWrites
+                            ) else {
+                                summary.errors.append(
+                                    "MCP provider \(server.name): credentials could not be saved"
+                                )
+                                continue
                             }
                             summary.oauthProvidersNeedingSignIn.append(
                                 .init(id: provider.id, name: server.name)
@@ -635,8 +653,7 @@ public final class ClaudePluginInstaller {
                             if !classified.placeholderSecrets.isEmpty
                                 && !summary.placeholderTokensSkipped.contains(
                                     where: { $0.id == provider.id }
-                                )
-                            {
+                                ) {
                                 summary.placeholderTokensSkipped.append(
                                     .init(
                                         id: provider.id,
@@ -671,16 +688,22 @@ public final class ClaudePluginInstaller {
                                 authType: hasAnySecretSlot ? .bearerToken : .none,
                                 pluginId: pluginId
                             )
-                            MCPProviderManager.shared.addProvider(
-                                provider,
-                                token: hasRealToken ? server.token : nil
-                            )
-                            for (key, value) in classified.realSecrets {
-                                _ = MCPProviderKeychain.saveHeaderSecret(
-                                    value,
-                                    key: key,
-                                    for: provider.id
+                            let secretWrites = classified.realSecrets.map {
+                                MCPProviderSecretWrite(
+                                    storage: .header,
+                                    key: $0.key,
+                                    value: $0.value
                                 )
+                            }
+                            guard MCPProviderManager.shared.addProvider(
+                                provider,
+                                token: hasRealToken ? server.token : nil,
+                                secretWrites: secretWrites
+                            ) else {
+                                summary.errors.append(
+                                    "MCP provider \(server.name): credentials could not be saved"
+                                )
+                                continue
                             }
                             if server.tokenIsPlaceholder || !classified.placeholderSecrets.isEmpty {
                                 var missing = classified.placeholderSecrets
