@@ -289,14 +289,14 @@ struct ProvidersView: View {
 
     private var headerSection: some View {
         SectionHeader(
-            title: "MCP Providers",
-            description: "Connect to remote MCP servers to access additional tools"
+            title: "Connections",
+            description: "Connect services that give your agents more tools, using MCP (Model Context Protocol)"
         ) {
             Button(action: { showAddSheet = true }) {
                 HStack(spacing: 6) {
                     Image(systemName: "plus")
                         .font(.system(size: 12, weight: .semibold))
-                    Text("Add Provider", bundle: .module)
+                    Text("Add Connection", bundle: .module)
                         .font(.system(size: 13, weight: .semibold))
                 }
                 .foregroundColor(.white)
@@ -322,11 +322,11 @@ struct ProvidersView: View {
                     .foregroundColor(theme.accentColor)
             }
 
-            Text("No MCP providers yet", bundle: .module)
+            Text("No connections yet", bundle: .module)
                 .font(.system(size: 17, weight: .semibold))
                 .foregroundColor(theme.primaryText)
 
-            Text("Connect to a remote MCP server to give Osaurus more tools.", bundle: .module)
+            Text("Connect a service to give your agents more tools.", bundle: .module)
                 .font(.system(size: 14))
                 .foregroundColor(theme.secondaryText)
                 .multilineTextAlignment(.center)
@@ -372,7 +372,7 @@ private struct MCPServerHubPanel: View {
                         .background(Circle().fill(statusColor.opacity(0.12)))
 
                     VStack(alignment: .leading, spacing: 2) {
-                        Text("MCP Server Hub", bundle: .module)
+                        Text("Connection Health", bundle: .module)
                             .font(.system(size: 14, weight: .semibold))
                             .foregroundColor(theme.primaryText)
                             .lineLimit(1)
@@ -386,29 +386,55 @@ private struct MCPServerHubPanel: View {
 
                 Spacer()
 
-                hubIconButton(
-                    systemName: "antenna.radiowaves.left.and.right",
-                    isBusy: isProbing,
-                    isDisabled: isProbing || snapshot.enabledCount == 0,
-                    help: "Probe enabled",
-                    action: onProbeAll
-                )
+                if isProbing || isReconnecting {
+                    ProgressView()
+                        .scaleEffect(0.55)
+                        .frame(width: 28, height: 28)
+                }
 
-                hubIconButton(
-                    systemName: "arrow.clockwise",
-                    isBusy: isReconnecting,
-                    isDisabled: isReconnecting || snapshot.enabledCount == 0,
-                    help: "Reconnect enabled",
-                    action: onReconnectAll
-                )
+                // Diagnostics live behind a single secondary-actions menu so
+                // the default view stays approachable; the operations remain
+                // one click away for troubleshooting.
+                Menu {
+                    Button(action: onReconnectAll) {
+                        Label {
+                            Text("Reconnect All", bundle: .module)
+                        } icon: {
+                            Image(systemName: "arrow.clockwise")
+                        }
+                    }
+                    .disabled(isReconnecting || snapshot.enabledCount == 0)
 
-                hubIconButton(
-                    systemName: "doc.on.doc",
-                    isBusy: false,
-                    isDisabled: snapshot.totalCount == 0,
-                    help: "Copy diagnostics",
-                    action: onCopyReport
-                )
+                    Button(action: onProbeAll) {
+                        Label {
+                            Text("Test Connections", bundle: .module)
+                        } icon: {
+                            Image(systemName: "antenna.radiowaves.left.and.right")
+                        }
+                    }
+                    .disabled(isProbing || snapshot.enabledCount == 0)
+
+                    Divider()
+
+                    Button(action: onCopyReport) {
+                        Label {
+                            Text("Copy Diagnostics", bundle: .module)
+                        } icon: {
+                            Image(systemName: "doc.on.doc")
+                        }
+                    }
+                    .disabled(snapshot.totalCount == 0)
+                } label: {
+                    Image(systemName: "ellipsis.circle")
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundColor(theme.secondaryText)
+                        .frame(width: 28, height: 28)
+                        .background(Circle().fill(theme.tertiaryBackground))
+                }
+                .menuStyle(.borderlessButton)
+                .fixedSize()
+                .help(Text("Connection maintenance and diagnostics", bundle: .module))
+                .accessibilityLabel(Text("Connection maintenance and diagnostics", bundle: .module))
             }
 
             LazyVGrid(
@@ -447,31 +473,6 @@ private struct MCPServerHubPanel: View {
                         .stroke(statusColor.opacity(0.35), lineWidth: 1)
                 )
         )
-    }
-
-    private func hubIconButton(
-        systemName: String,
-        isBusy: Bool,
-        isDisabled: Bool,
-        help: LocalizedStringKey,
-        action: @escaping () -> Void
-    ) -> some View {
-        Button(action: action) {
-            if isBusy {
-                ProgressView()
-                    .scaleEffect(0.55)
-                    .frame(width: 28, height: 28)
-            } else {
-                Image(systemName: systemName)
-                    .font(.system(size: 12, weight: .semibold))
-                    .frame(width: 28, height: 28)
-            }
-        }
-        .buttonStyle(PlainButtonStyle())
-        .foregroundColor(theme.secondaryText)
-        .background(Circle().fill(theme.tertiaryBackground))
-        .disabled(isDisabled)
-        .localizedHelp(help)
     }
 
     private var statusColor: Color {
@@ -1346,7 +1347,7 @@ private struct ProviderEditSheet: View {
         if isEditing {
             return (
                 "pencil.circle.fill",
-                Text("Edit MCP Provider", bundle: .module),
+                Text("Edit Connection", bundle: .module),
                 Text("Modify your MCP server connection", bundle: .module)
             )
         }
@@ -1354,7 +1355,7 @@ private struct ProviderEditSheet: View {
         case .chooseProvider:
             return (
                 "square.grid.2x2.fill",
-                Text("Add MCP Provider", bundle: .module),
+                Text("Add Connection", bundle: .module),
                 Text("Choose a service to connect", bundle: .module)
             )
         case .configureKnown(let template):
@@ -1491,13 +1492,13 @@ private struct ProviderEditSheet: View {
         cancelButton
         if case .configureKnown(let template) = phase {
             primarySaveButton(
-                label: Text("Add Provider", bundle: .module),
+                label: Text("Add Connection", bundle: .module),
                 enabled: canSaveKnown(template)
             )
         }
         if case .configureCustom = phase {
             primarySaveButton(
-                label: Text(isEditing ? "Save" : "Add Provider", bundle: .module),
+                label: Text(isEditing ? "Save" : "Add Connection", bundle: .module),
                 enabled: canSave
             )
         }

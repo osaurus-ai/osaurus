@@ -897,14 +897,12 @@ struct GitHubImportSheet: View {
         cancel()
     }
 
-    /// Deep-link from the install summary to the Remote MCP providers tab.
+    /// Deep-link from the install summary to the Tools Connections tab.
     /// Used by the OAuth + placeholder-token install notices so the user
     /// doesn't have to hunt through the sidebar for where Sign In lives.
     private func openMCPProvider(id: UUID?) {
         ManagementStateManager.shared.selectedTab = .tools
-        // ToolsTab is internal to OsaurusCore; we know the Remote sub-tab is
-        // raw value "Remote" from `ToolsTab.remote = "Remote"`.
-        ManagementStateManager.shared.pendingToolsSubTab = "Remote"
+        ManagementStateManager.shared.pendingToolsSubTab = ToolsTab.connections.rawValue
         ManagementStateManager.shared.pendingMCPProviderEditId = id
         cancel()
     }

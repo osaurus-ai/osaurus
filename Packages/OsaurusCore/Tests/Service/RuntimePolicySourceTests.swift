@@ -2642,23 +2642,20 @@ struct RuntimePolicySourceTests {
             "Tools settings must source runtime-managed and built-in sandbox tools from ToolRegistry, not plugin/provider catalogs."
         )
         #expect(
-            toolsView.contains("Runtime Tools")
-                && toolsView.contains("Built-in Sandbox Tools"),
-            "Tools settings must render explicit rows for chat-visible runtime tools."
+            toolsView.contains("builtInNativeToolEntries + runtimeManagedToolEntries"),
+            "Runtime-managed tools must render inside the Built-in catalog group so chat-visible folder/sandbox tools never look missing."
         )
         #expect(
             toolsView.contains("RuntimeManagedToolEntryRow")
-                && toolsView.contains("badge: runtimeBadge(for: entry)")
-                && (toolsView.contains("badge: \"Sandbox\"")
-                    || toolsView.contains("badge: L(\"Sandbox\")")),
-            "Runtime-managed tools must be visible as operational rows without pretending they are normal plugin toggle rows."
+                && toolsView.contains("badge: sourceBadge(for: entry)")
+                && toolsView.contains("return L(\"Sandbox\")")
+                && toolsView.contains("return L(\"Folder\")"),
+            "Runtime-managed tools must be visible as operational rows with concrete Folder/Sandbox origin badges, without pretending they are normal plugin toggle rows."
         )
         #expect(
-            toolsView.contains(".available: availableShown + runtimeShown")
-                && toolsView.contains(
-                    ".sandbox: SandboxPluginLibrary.shared.plugins.count + builtInSandboxToolEntries.count"
-                ),
-            "Tools tab badges must count the runtime rows they render so Settings cannot show 0 while chat has folder/sandbox tools."
+            toolsView.contains("rowsByName[$0.name]?.source == .sandboxPlugin")
+                && toolsView.contains("union(customTools.map(\\.name))"),
+            "The All tab must give custom (sandbox-plugin) tools their own group and exclude them from the built-in fallback so every registered tool has exactly one home."
         )
     }
 
@@ -2672,22 +2669,21 @@ struct RuntimePolicySourceTests {
         )
         #expect(
             toolsView.contains("private func cappedGroup<Row: View>"),
-            "Flat built-in/runtime tool groups should use the shared capped renderer."
+            "Flat built-in/custom tool groups should use the shared capped renderer."
         )
         #expect(
             toolsView.contains("private var visibleTools: [ToolRegistry.ToolEntry]")
                 && toolsView.contains("ShowAllToolsButton("),
-            "Plugin and remote provider cards should cap expanded rows and expose an explicit show-all control."
+            "Plugin and connection cards should cap expanded rows and expose an explicit show-all control."
         )
 
         let sandboxCardStart = try #require(toolsView.range(of: "private struct SandboxPluginToolCard"))
-        let hoverBackgroundStart = try #require(
+        let sandboxCardEnd =
             toolsView.range(
-                of: "private struct HoverableCardBackground",
+                of: "// MARK: - Tool Plugin Card",
                 range: sandboxCardStart.upperBound ..< toolsView.endIndex
-            )
-        )
-        let sandboxCard = String(toolsView[sandboxCardStart.lowerBound ..< hoverBackgroundStart.lowerBound])
+            )?.lowerBound ?? toolsView.endIndex
+        let sandboxCard = String(toolsView[sandboxCardStart.lowerBound ..< sandboxCardEnd])
 
         #expect(
             sandboxCard.contains("@State private var showAllTools = false")
@@ -2695,7 +2691,7 @@ struct RuntimePolicySourceTests {
                 && sandboxCard.contains("toolGroupRenderCapValue")
                 && sandboxCard.contains("ForEach(visibleToolSpecs, id: \\.id)")
                 && sandboxCard.contains("ShowAllToolsButton("),
-            "Sandbox plugin cards must use the same capped expansion path as other tool cards; otherwise a large JSON tool recipe can freeze the Tools page."
+            "Custom tool cards must use the same capped expansion path as other tool cards; otherwise a large JSON tool recipe can freeze the Tools page."
         )
     }
 

@@ -573,7 +573,7 @@ struct PluginsView: View {
                             )
                         }
                         if pluginsWithMissingPermissionsCount > 0 {
-                            ToolPermissionBanner(count: pluginsWithMissingPermissionsCount)
+                            ToolPermissionBanner(count: pluginsWithMissingPermissionsCount, subject: .plugins)
                         }
 
                         LazyVGrid(

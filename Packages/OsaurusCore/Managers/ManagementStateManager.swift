@@ -57,9 +57,10 @@ public final class ManagementStateManager: ObservableObject {
     @Published public var pendingScheduleEditId: UUID?
 
     /// One-shot request to focus a specific sub-tab inside `ToolsManagerView`
-    /// (`available`, `remote`, or `sandbox`). Used by the Claude plugin
-    /// import summary to deep-link to the Remote MCP providers tab after
-    /// installing OAuth or bearer-token providers that need finishing touches.
+    /// (`All`, `Connections`, or `Custom`; legacy `Available`/`Remote`/
+    /// `Sandbox` values are still accepted). Used by the Claude plugin import
+    /// summary to deep-link to the Connections tab after installing OAuth or
+    /// bearer-token providers that need finishing touches.
     @Published public var pendingToolsSubTab: String?
 
     /// One-shot request to open the editor for a specific MCP provider id.
