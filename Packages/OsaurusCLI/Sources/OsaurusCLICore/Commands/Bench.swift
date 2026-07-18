@@ -394,12 +394,18 @@ public struct BenchCommand: Command {
 
     enum KVMatrixError: LocalizedError {
         case malformedConfig(String)
+        case runtimeSettingsReadbackMismatch
+        case persistedSettingsReadbackMismatch
         case restoreFailed(String)
 
         var errorDescription: String? {
             switch self {
             case .malformedConfig(let detail):
                 return "server-runtime.json does not look like a runtime settings file (\(detail))"
+            case .runtimeSettingsReadbackMismatch:
+                return "runtime settings readback differs from the requested probe; Osaurus normalized or migrated additional fields, or another settings writer changed them"
+            case .persistedSettingsReadbackMismatch:
+                return "server-runtime.json differs from /admin/runtime-settings readback; preserving it as an unrecognized settings change"
             case .restoreFailed(let detail):
                 return "could not restore server-runtime.json (\(detail))"
             }
@@ -418,14 +424,39 @@ public struct BenchCommand: Command {
     ) async -> Never {
         let configURL = runtimeConfigFileURL()
         let originalData: Data
-        let codecConfigData: [String: Data]
         do {
             originalData = try Data(contentsOf: configURL)
-            // Validate up front so we never restart on a file we could not
-            // mutate (and therefore could not have restored) safely.
+        } catch {
+            fputs(
+                "Cannot use \(configURL.path): \(error.localizedDescription)\nLaunch Osaurus once so the runtime settings file exists.\n",
+                stderr)
+            exit(EXIT_FAILURE)
+        }
+        guard
+            let baselineResponse = await fetchJSON(
+                base.appendingPathComponent("admin/runtime-settings")),
+            let baselineSettingsData = runtimeSettingsData(
+                inRuntimeSettingsResponse: baselineResponse)
+        else {
+            fputs(
+                "Cannot read canonical settings from /admin/runtime-settings; no runtime settings were changed.\n",
+                stderr)
+            exit(EXIT_FAILURE)
+        }
+        guard (try? Data(contentsOf: configURL)) == originalData else {
+            fputs(
+                "server-runtime.json changed while reading the canonical runtime-settings baseline; no runtime settings were changed.\n",
+                stderr)
+            exit(EXIT_FAILURE)
+        }
+        let codecConfigData: [String: Data]
+        do {
+            // Build probes from the running app's canonical settings rather
+            // than potentially pre-normalized disk bytes. The exact disk bytes
+            // remain the restoration source.
             codecConfigData = try Dictionary(
                 uniqueKeysWithValues: kvMatrixCodecs.map { codec in
-                    (codec, try configData(settingLiveKVCodec: codec, in: originalData))
+                    (codec, try configData(settingLiveKVCodec: codec, in: baselineSettingsData))
                 })
         } catch {
             fputs(
@@ -450,17 +481,19 @@ public struct BenchCommand: Command {
                 stderr)
             exit(EXIT_FAILURE)
         }
+        var ownedConfigData =
+            [originalData, baselineSettingsData] + Array(codecConfigData.values)
         armKVMatrixRestore(
             configURL: configURL,
             originalData: originalData,
-            ownedData: [originalData] + Array(codecConfigData.values),
+            ownedData: ownedConfigData,
             backup: backup
         )
         installKVMatrixSignalHandlers()
 
         fputs(
             "KV matrix for \(model): codecs \(kvMatrixCodecs), prompt sizes \(options.promptTokens), \(options.runs) run(s) each.\n"
-                + "Each codec needs a full app restart; the original config is restored on clean completion. Concurrent edits are preserved and keep the pre-run backup at \(backup.path).\n",
+                + "Each codec needs a full app restart; the original config is restored on clean completion. Unrecognized settings changes are preserved and keep the pre-run backup at \(backup.path).\n",
             stderr)
 
         var codecBlocks: [[String: Any]] = []
@@ -470,17 +503,17 @@ public struct BenchCommand: Command {
         var lastWrittenData: Data?
 
         measurement: for codec in kvMatrixCodecs {
+            guard let mutated = codecConfigData[codec] else {
+                fatal = "missing prepared config for codec \(codec)"
+                break measurement
+            }
             do {
-                guard let mutated = codecConfigData[codec] else {
-                    fatal = "missing prepared config for codec \(codec)"
-                    break measurement
-                }
                 let expected = lastWrittenData ?? originalData
                 guard try writeKVMatrixConfig(
                     at: configURL, expectedData: expected, newData: mutated)
                 else {
                     fatal =
-                        "server-runtime.json changed during the run; refusing to overwrite concurrent changes"
+                        "server-runtime.json changed after the last verified runtime-settings readback; refusing to overwrite the unrecognized file"
                     break measurement
                 }
                 didMutateConfig = true
@@ -494,7 +527,12 @@ public struct BenchCommand: Command {
                 fatal = "server did not come back healthy after restart for codec \(codec)"
                 break measurement
             }
-            guard let active = await activeLiveKVCodec(base: base) else {
+            guard
+                let runtimeSettingsResponse = await fetchJSON(
+                    base.appendingPathComponent("admin/runtime-settings")),
+                let active = activeLiveKVCodec(
+                    inRuntimeSettingsResponse: runtimeSettingsResponse)
+            else {
                 fatal =
                     "cannot verify codec \"\(codec)\": /admin/runtime-settings did not return cache.liveKVCodec"
                 break measurement
@@ -502,6 +540,28 @@ public struct BenchCommand: Command {
             guard active == codec else {
                 fatal =
                     "server reports live KV codec \"\(active)\" after restart (expected \"\(codec)\") — aborting so cells are not mislabeled"
+                break measurement
+            }
+            do {
+                let persistedData = try Data(contentsOf: configURL)
+                try verifyKVMatrixReadback(
+                    requestedData: mutated,
+                    runtimeSettingsResponse: runtimeSettingsResponse,
+                    persistedData: persistedData)
+                // ServerRuntimeSettingsStore may re-encode the file while
+                // loading. Adopt those verified bytes for the next exact CAS;
+                // semantic changes beyond the canonical probe fail above.
+                lastWrittenData = persistedData
+                if !ownedConfigData.contains(persistedData) {
+                    ownedConfigData.append(persistedData)
+                }
+                armKVMatrixRestore(
+                    configURL: configURL,
+                    originalData: originalData,
+                    ownedData: ownedConfigData,
+                    backup: backup)
+            } catch {
+                fatal = "[\(codec)] \(error.localizedDescription)"
                 break measurement
             }
             // Absorb the cold model load after the restart so it doesn't
@@ -594,32 +654,62 @@ public struct BenchCommand: Command {
             )
         }
 
-        // Restore the user's config bytes unconditionally (defer-style: this
-        // runs on the fatal paths above too), then restart once more so the
-        // running server matches the restored on-disk settings again.
+        // Restore the user's exact bytes, reload them, verify the app's
+        // canonical interpretation, then re-pin the exact bytes because load
+        // normalization may have re-encoded or migrated the file.
         if didMutateConfig {
             var restored = false
+            var restoreFailure: String?
             if let lastWrittenData {
                 do {
-                    restored = try restoreKVMatrixConfig(
+                    let restoredForReload = try restoreKVMatrixConfig(
                         at: configURL,
                         expectedData: [lastWrittenData],
                         originalData: originalData)
+                    guard restoredForReload else {
+                        throw KVMatrixError.restoreFailed(
+                            "server-runtime.json no longer matches a verified KV-matrix state")
+                    }
+                    guard await restartServerForConfigReload(port: options.port) else {
+                        throw KVMatrixError.restoreFailed(
+                            "server did not come back healthy after loading the original config")
+                    }
+                    guard
+                        let restoredResponse = await fetchJSON(
+                            base.appendingPathComponent("admin/runtime-settings"))
+                    else {
+                        throw KVMatrixError.restoreFailed(
+                            "/admin/runtime-settings was unavailable after reload")
+                    }
+                    let normalizedRestoredData = try Data(contentsOf: configURL)
+                    try verifyKVMatrixReadback(
+                        requestedData: baselineSettingsData,
+                        runtimeSettingsResponse: restoredResponse,
+                        persistedData: normalizedRestoredData)
+                    guard try writeKVMatrixConfig(
+                        at: configURL,
+                        expectedData: normalizedRestoredData,
+                        newData: originalData)
+                    else {
+                        throw KVMatrixError.restoreFailed(
+                            "server-runtime.json changed after restoration readback")
+                    }
+                    restored = true
                 } catch {
-                    let restoreFailure = "restore failed: \(error.localizedDescription)"
-                    fatal = fatal.map { "\($0); \(restoreFailure)" } ?? restoreFailure
+                    restoreFailure = error.localizedDescription
                 }
             }
             if restored {
-                fputs("Restored original \(configURL.lastPathComponent).\n", stderr)
-            } else {
-                let restoreFailure =
-                    "server-runtime.json changed during the run; concurrent changes were preserved and the original bytes remain in \(backup.path)"
-                if !((fatal ?? "").contains("restore failed")) {
-                    fatal = fatal.map { "\($0); \(restoreFailure)" } ?? restoreFailure
-                }
                 fputs(
-                    "Concurrent modification detected. Refusing to overwrite \(configURL.path). The current file was preserved; the pre-run bytes remain in \(backup.path).\n",
+                    "Restored byte-identical original \(configURL.lastPathComponent) after canonical reload.\n",
+                    stderr)
+            } else {
+                let detail = restoreFailure ?? "exact restoration could not be verified"
+                let recoveryFailure =
+                    "\(detail); the current settings file was preserved and the original bytes remain in \(backup.path)"
+                fatal = fatal.map { "\($0); \(recoveryFailure)" } ?? recoveryFailure
+                fputs(
+                    "KV matrix could not verify exact settings restoration: \(recoveryFailure).\n",
                     stderr)
             }
             // Disarm the signal-handler safety net; keep the sidecar backup
@@ -627,12 +717,7 @@ public struct BenchCommand: Command {
             clearKVMatrixRestore()
             disarmKVMatrixSignalHandlers()
             if restored { try? FileManager.default.removeItem(at: backup) }
-            if restored {
-                if await restartServerForConfigReload(port: options.port) == false {
-                    fatal = fatal
-                        ?? "server did not come back healthy after restoring the original config"
-                }
-            } else {
+            if !restored {
                 _ = await AppControl.terminateAppAndWait()
             }
         } else {
@@ -688,7 +773,7 @@ public struct BenchCommand: Command {
                 "ttft": "request start → first non-empty content delta",
                 "decode_tps": "(completion_tokens - 1) / (last delta - first delta)",
                 "codec_application":
-                    "cache.liveKVCodec written to server-runtime.json (TurboQuant uses explicit 3/3 bits), full app restart per codec, active setting verified after every restart, effective mode verified from /admin/cache-stats after generation, and original config restored afterwards",
+                    "probe documents derived from canonical GET /admin/runtime-settings, cache.liveKVCodec written to server-runtime.json (TurboQuant uses explicit 3/3 bits), full app restart per codec, semantic API and disk readback verified after every restart, verified app re-encodings adopted for the next byte-exact write guard, effective mode verified from /admin/cache-stats after generation, and the byte-exact original restored, canonically reloaded, then re-pinned",
                 "codec_verified":
                     "always true in an emitted report; settings and effective runtime mode are both verified, and any unavailable endpoint, malformed response, or mismatch aborts the run",
                 "low_confidence":
@@ -824,7 +909,7 @@ public struct BenchCommand: Command {
                     stderr)
             } else {
                 fputs(
-                    "\nInterrupted after a concurrent config edit. The current file was preserved; pre-run bytes remain in \(state.backup.path). Restart Osaurus to apply the current file.\n",
+                    "\nInterrupted after an unrecognized config change. The current file was preserved; pre-run bytes remain in \(state.backup.path). Restart Osaurus to apply the current file.\n",
                     stderr)
             }
         } catch {
@@ -835,14 +920,16 @@ public struct BenchCommand: Command {
         return true
     }
 
-    /// Restores only when the on-disk bytes are still owned by this run.
-    /// Returning false preserves a concurrent writer's changes and keeps the
-    /// sidecar backup available for manual reconciliation.
+    /// Restores only when the on-disk document is still semantically owned by
+    /// this run. App load may re-encode a probe; semantic equality accepts that
+    /// rewrite while still rejecting changes to any setting value.
     static func restoreKVMatrixConfig(
         at configURL: URL, expectedData: [Data], originalData: Data
     ) throws -> Bool {
         let current = try Data(contentsOf: configURL)
-        guard expectedData.contains(current) else { return false }
+        guard expectedData.contains(where: { configDocumentsMatch(current, $0) }) else {
+            return false
+        }
         try originalData.write(to: configURL, options: .atomic)
         guard try Data(contentsOf: configURL) == originalData else {
             throw KVMatrixError.restoreFailed("post-write byte verification failed")
@@ -900,6 +987,54 @@ public struct BenchCommand: Command {
         return cache["liveKVCodec"] as? String
     }
 
+    /// Extracts the Codable settings document from the admin response. Probe
+    /// configs are based on this canonical runtime state so load-time repairs
+    /// such as legacy MTP `off` -> `auto` are not reintroduced from stale bytes.
+    static func runtimeSettingsData(
+        inRuntimeSettingsResponse response: [String: Any]
+    ) -> Data? {
+        guard let settings = response["settings"],
+              JSONSerialization.isValidJSONObject(settings)
+        else { return nil }
+        return try? JSONSerialization.data(
+            withJSONObject: settings, options: [.prettyPrinted, .sortedKeys])
+    }
+
+    static func configDocumentsMatch(_ lhs: Data, _ rhs: Data) -> Bool {
+        if lhs == rhs { return true }
+        guard
+            let lhsObject = try? JSONSerialization.jsonObject(with: lhs),
+            let rhsObject = try? JSONSerialization.jsonObject(with: rhs),
+            JSONSerialization.isValidJSONObject(lhsObject),
+            JSONSerialization.isValidJSONObject(rhsObject),
+            let normalizedLHS = try? JSONSerialization.data(
+                withJSONObject: lhsObject, options: [.sortedKeys]),
+            let normalizedRHS = try? JSONSerialization.data(
+                withJSONObject: rhsObject, options: [.sortedKeys])
+        else { return false }
+        return normalizedLHS == normalizedRHS
+    }
+
+    /// Confirms that both the running snapshot and the file persisted during
+    /// app load still describe exactly the requested probe. Formatting-only
+    /// rewrites are accepted; any value change remains fail-closed.
+    static func verifyKVMatrixReadback(
+        requestedData: Data,
+        runtimeSettingsResponse: [String: Any],
+        persistedData: Data
+    ) throws {
+        guard
+            let runtimeData = runtimeSettingsData(
+                inRuntimeSettingsResponse: runtimeSettingsResponse),
+            configDocumentsMatch(requestedData, runtimeData)
+        else {
+            throw KVMatrixError.runtimeSettingsReadbackMismatch
+        }
+        guard configDocumentsMatch(runtimeData, persistedData) else {
+            throw KVMatrixError.persistedSettingsReadbackMismatch
+        }
+    }
+
     static func kvMatrixIsLowConfidence(completionTokens: [Int]) -> Bool {
         completionTokens.contains { $0 < kvMatrixLowConfidenceCompletionTokens }
     }
@@ -938,16 +1073,6 @@ public struct BenchCommand: Command {
             try? await Task.sleep(nanoseconds: 500_000_000)
         }
         return false
-    }
-
-    /// Codec the running server actually applied (GET /admin/runtime-settings,
-    /// the automation companion of the Server Settings panel). Nil when the
-    /// endpoint is unavailable or malformed. The caller fails closed because
-    /// an unverified codec label cannot be used as runtime evidence.
-    static func activeLiveKVCodec(base: URL) async -> String? {
-        guard let response = await fetchJSON(base.appendingPathComponent("admin/runtime-settings"))
-        else { return nil }
-        return activeLiveKVCodec(inRuntimeSettingsResponse: response)
     }
 
     /// `/admin/runtime-settings` serializes the settings value through its
@@ -1256,8 +1381,9 @@ public struct BenchCommand: Command {
             per prompt size: uncached/cached TTFT and decode tok/s. It edits
             cache.liveKVCodec in server-runtime.json and restarts the app per
             codec (the file is only read at launch). The original is restored
-            on clean completion; concurrent edits are preserved with a pre-run
-            recovery backup. Measurement only — it changes no defaults.
+            on clean completion; unrecognized settings changes are preserved
+            with a pre-run recovery backup. Measurement only — it changes no
+            defaults.
 
             """, stderr)
     }

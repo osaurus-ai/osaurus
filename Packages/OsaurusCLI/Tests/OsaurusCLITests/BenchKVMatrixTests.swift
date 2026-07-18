@@ -49,6 +49,115 @@ final class BenchKVMatrixTests: XCTestCase {
         XCTAssertEqual(cache["turboQuantValueBits"] as? Int, 3)
     }
 
+    func testCanonicalProbeAcceptsLoadNormalizationAndReencoding() throws {
+        let preNormalization = Data(
+            """
+            {
+              "cache" : {
+                "liveKVCodec" : "engine_selected"
+              },
+              "contractVersion" : 1,
+              "mtp" : {
+                "acceptedTokensOnlyEnterBaseCache" : true,
+                "draftTokenLimit" : null,
+                "keepDraftCacheSeparate" : true,
+                "mode" : "off"
+              }
+            }
+            """.utf8)
+        var canonical = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: preNormalization) as? [String: Any])
+        var mtp = try XCTUnwrap(canonical["mtp"] as? [String: Any])
+        mtp["mode"] = "auto"
+        canonical["mtp"] = mtp
+
+        let canonicalData = try XCTUnwrap(
+            BenchCommand.runtimeSettingsData(
+                inRuntimeSettingsResponse: ["settings": canonical]))
+        let probe = try BenchCommand.configData(
+            settingLiveKVCodec: "turboquant",
+            in: canonicalData)
+        let probeObject = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: probe) as? [String: Any])
+        let appReencoded = try JSONSerialization.data(
+            withJSONObject: probeObject, options: [.sortedKeys])
+
+        XCTAssertFalse(BenchCommand.configDocumentsMatch(preNormalization, canonicalData))
+        XCTAssertNotEqual(probe, appReencoded)
+        XCTAssertNoThrow(
+            try BenchCommand.verifyKVMatrixReadback(
+                requestedData: probe,
+                runtimeSettingsResponse: ["settings": probeObject],
+                persistedData: appReencoded))
+        XCTAssertFalse(
+            BenchCommand.configDocumentsMatch(
+                Data(#"{"enabled":true}"#.utf8),
+                Data(#"{"enabled":1}"#.utf8)))
+
+        let dir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("kv-matrix-normalized-restore-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let configURL = dir.appendingPathComponent("server-runtime.json")
+        try appReencoded.write(to: configURL, options: .atomic)
+
+        XCTAssertTrue(
+            try BenchCommand.restoreKVMatrixConfig(
+                at: configURL,
+                expectedData: [probe],
+                originalData: preNormalization))
+        XCTAssertEqual(try Data(contentsOf: configURL), preNormalization)
+    }
+
+    func testSemanticReadbackMismatchDoesNotClaimConcurrentModification() throws {
+        let requested = try BenchCommand.configData(
+            settingLiveKVCodec: "turboquant",
+            in: sampleConfig)
+        var changed = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: requested) as? [String: Any])
+        changed["generation"] = ["temperature": 0.75]
+        let changedData = try JSONSerialization.data(withJSONObject: changed)
+
+        XCTAssertThrowsError(
+            try BenchCommand.verifyKVMatrixReadback(
+                requestedData: requested,
+                runtimeSettingsResponse: ["settings": changed],
+                persistedData: changedData)
+        ) { error in
+            XCTAssertTrue(error.localizedDescription.contains("normalized or migrated"))
+            XCTAssertTrue(error.localizedDescription.contains("another settings writer"))
+            XCTAssertFalse(
+                error.localizedDescription.localizedCaseInsensitiveContains(
+                    "concurrent modification"))
+        }
+    }
+
+    func testPersistedReadbackMismatchDoesNotClaimConcurrentModification() throws {
+        let requested = try BenchCommand.configData(
+            settingLiveKVCodec: "turboquant",
+            in: sampleConfig)
+        let requestedObject = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: requested) as? [String: Any])
+        var changedOnDisk = requestedObject
+        changedOnDisk["generation"] = ["temperature": 0.75]
+        let changedData = try JSONSerialization.data(withJSONObject: changedOnDisk)
+
+        XCTAssertThrowsError(
+            try BenchCommand.verifyKVMatrixReadback(
+                requestedData: requested,
+                runtimeSettingsResponse: ["settings": requestedObject],
+                persistedData: changedData)
+        ) { error in
+            XCTAssertTrue(
+                error.localizedDescription.contains(
+                    "differs from /admin/runtime-settings readback"))
+            XCTAssertTrue(error.localizedDescription.contains("unrecognized settings change"))
+            XCTAssertFalse(
+                error.localizedDescription.localizedCaseInsensitiveContains(
+                    "concurrent modification"))
+        }
+    }
+
     func testEffectiveKVModeRequiresMatchingCacheEnabledModel() {
         let response: [String: Any] = [
             "models": [
