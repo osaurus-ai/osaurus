@@ -632,7 +632,7 @@ public final class MCPProviderManager: ObservableObject {
                     return nil
                 }.joined(separator: "\n")
                 let message = errorText.isEmpty ? "Tool returned error" : errorText
-                recordProviderToolCall(
+                await recordProviderToolCall(
                     provider: provider,
                     toolName: toolName,
                     argumentsJSON: argumentsJSON,
@@ -646,7 +646,7 @@ public final class MCPProviderManager: ObservableObject {
 
             // Convert content to string
             let result = MCPProviderTool.convertMCPContent(content)
-            recordProviderToolCall(
+            await recordProviderToolCall(
                 provider: provider,
                 toolName: toolName,
                 argumentsJSON: argumentsJSON,
@@ -658,7 +658,7 @@ public final class MCPProviderManager: ObservableObject {
             return result
         } catch {
             if !didRecordCall {
-                recordProviderToolCall(
+                await recordProviderToolCall(
                     provider: provider,
                     toolName: toolName,
                     argumentsJSON: argumentsJSON,
@@ -705,20 +705,21 @@ public final class MCPProviderManager: ObservableObject {
         succeeded: Bool,
         result: String? = nil,
         errorMessage: String? = nil
-    ) {
-        MCPProviderCallHistoryStore.record(
-            MCPProviderCallRecord(
-                providerId: provider.id,
-                providerName: provider.name,
-                toolName: toolName,
-                startedAt: startedAt,
-                finishedAt: Date(),
-                succeeded: succeeded,
-                argumentSummary: MCPProviderCallRecord.summarizeArguments(argumentsJSON),
-                resultSummary: result.map(MCPProviderCallRecord.summarizeResult),
-                errorMessage: errorMessage
-            )
+    ) async {
+        let record = MCPProviderCallRecord(
+            providerId: provider.id,
+            providerName: provider.name,
+            toolName: toolName,
+            startedAt: startedAt,
+            finishedAt: Date(),
+            succeeded: succeeded,
+            argumentSummary: MCPProviderCallRecord.summarizeArguments(argumentsJSON),
+            resultSummary: result.map(MCPProviderCallRecord.summarizeResult),
+            errorMessage: errorMessage
         )
+        await Task.detached(priority: .utility) {
+            MCPProviderCallHistoryStore.record(record)
+        }.value
     }
 
     #if DEBUG

@@ -789,6 +789,8 @@ private struct MCPOperationsProviderEditor: View {
     @State private var envEntries: [KeyValueEntry] = []
     @State private var isTesting = false
     @State private var probeResult: MCPProviderProbeResult?
+    @State private var probeGate = MCPProviderProbeGate()
+    @State private var probeTask: Task<Void, Never>?
     @State private var credentialSaveError: String?
 
     var body: some View {
@@ -902,6 +904,19 @@ private struct MCPOperationsProviderEditor: View {
         .frame(width: 560, height: 680)
         .background(theme.primaryBackground)
         .onAppear(perform: load)
+        .onChange(of: currentProbeFingerprint) { _, _ in
+            probeTask?.cancel()
+            probeTask = nil
+            probeGate.invalidate()
+            probeResult = nil
+            isTesting = false
+        }
+        .onDisappear {
+            probeTask?.cancel()
+            probeTask = nil
+            probeGate.invalidate()
+            isTesting = false
+        }
     }
 
     private var httpFields: some View {
@@ -1177,7 +1192,10 @@ private struct MCPOperationsProviderEditor: View {
         guard canTest else { return }
         isTesting = true
         let provider = makeProvider()
-        Task {
+        let fingerprint = currentProbeFingerprint
+        let attempt = probeGate.start(fingerprint: fingerprint)
+        probeTask?.cancel()
+        probeTask = Task {
             let result: MCPProviderProbeResult
             switch provider.transport {
             case .http:
@@ -1197,10 +1215,32 @@ private struct MCPOperationsProviderEditor: View {
                 )
             }
             await MainActor.run {
+                guard probeGate.accept(
+                    attempt,
+                    currentFingerprint: currentProbeFingerprint,
+                    succeeded: result.succeeded
+                ) else { return }
+                MCPProviderHealthSnapshotStore.record(result, for: provider)
                 probeResult = result
                 isTesting = false
+                probeTask = nil
             }
         }
+    }
+
+    private var currentProbeFingerprint: String {
+        let provider = makeProvider()
+        return MCPProviderSetupFingerprint.make(
+            provider: provider,
+            bearerToken: provider.authType == .bearerToken
+                ? MCPProviderBearerProbeInput.fingerprint(
+                    fieldValue: token,
+                    clearRequested: clearBearerToken
+                )
+                : nil,
+            secretHeaderValues: secretValues(headerEntries),
+            secretEnvironmentValues: secretValues(envEntries)
+        )
     }
 
     private func makeProvider() -> MCPProvider {
@@ -1294,6 +1334,16 @@ private struct MCPOperationsProviderEditor: View {
                 !value.isEmpty {
                 values[key] = value
             }
+        }
+        return values
+    }
+
+    private func secretValues(_ entries: [KeyValueEntry]) -> [String: String] {
+        var values: [String: String] = [:]
+        for entry in entries where entry.isSecret {
+            let key = entry.key.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !key.isEmpty else { continue }
+            values[key] = entry.value
         }
         return values
     }

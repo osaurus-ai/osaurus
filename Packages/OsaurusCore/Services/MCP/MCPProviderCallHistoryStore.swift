@@ -96,7 +96,7 @@ public struct MCPProviderCallRecord: Codable, Identifiable, Sendable, Equatable 
         if let array = object as? [Any] {
             return L("Array with \(array.count) item(s)")
         }
-        return L("JSON \(type(of: object)) argument")
+        return L("JSON \(String(describing: type(of: object))) argument")
     }
 
     public static func summarizeResult(_ result: String) -> String {

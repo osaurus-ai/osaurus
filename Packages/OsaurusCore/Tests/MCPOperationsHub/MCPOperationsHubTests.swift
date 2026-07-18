@@ -395,6 +395,18 @@ struct MCPOperationsHubTests {
         #expect(!pasteboard.contains("#fragment"))
     }
 
+    @Test func diagnosticRedactorHidesPrefixedKeysAndOpaqueTokenFormats() {
+        let diagnostic = MCPProviderProbeRedactor.safeDiagnosticFragment(
+            "OPENAI_API_KEY=sk-1234567890 GH_TOKEN=ghp_1234567890 slack=xoxb-1234567890"
+        )
+
+        #expect(!diagnostic.contains("sk-1234567890"))
+        #expect(!diagnostic.contains("ghp_1234567890"))
+        #expect(!diagnostic.contains("xoxb-1234567890"))
+        #expect(diagnostic.contains("OPENAI_API_KEY=***"))
+        #expect(diagnostic.contains("GH_TOKEN=***"))
+    }
+
     @Test func blankBearerTokenFieldPreservesExistingSecret() {
         var saved: [String] = []
         var deleteCount = 0

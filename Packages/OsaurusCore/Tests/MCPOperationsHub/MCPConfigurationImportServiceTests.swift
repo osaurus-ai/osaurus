@@ -176,9 +176,27 @@ struct MCPConfigurationImportServiceTests {
             secretHeaderValues: [:],
             secretEnvironmentValues: ["TOKEN": "one"]
         )
+        changedProvider = provider
+        changedProvider.discoveryTimeout = 60
+        let changedDiscoveryTimeout = MCPProviderSetupFingerprint.make(
+            provider: changedProvider,
+            bearerToken: nil,
+            secretHeaderValues: [:],
+            secretEnvironmentValues: ["TOKEN": "one"]
+        )
+        changedProvider = provider
+        changedProvider.toolCallTimeout = 90
+        let changedToolCallTimeout = MCPProviderSetupFingerprint.make(
+            provider: changedProvider,
+            bearerToken: nil,
+            secretHeaderValues: [:],
+            secretEnvironmentValues: ["TOKEN": "one"]
+        )
 
         #expect(original != changedSecret)
         #expect(original != changedArgument)
+        #expect(original != changedDiscoveryTimeout)
+        #expect(original != changedToolCallTimeout)
         #expect(!original.contains("one"))
     }
 

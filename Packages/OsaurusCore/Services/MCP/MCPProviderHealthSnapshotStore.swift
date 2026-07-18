@@ -38,12 +38,19 @@ public struct MCPProviderHealthSnapshot: Codable, Identifiable, Sendable, Equata
 
 public enum MCPProviderHealthSnapshotStore {
     nonisolated(unsafe) public static var overrideURL: URL?
+    private static let lock = NSLock()
 
     private struct Envelope: Codable, Sendable, Equatable {
         var snapshots: [MCPProviderHealthSnapshot]
     }
 
     public static func load() -> [UUID: MCPProviderHealthSnapshot] {
+        withLock {
+            loadUnlocked()
+        }
+    }
+
+    private static func loadUnlocked() -> [UUID: MCPProviderHealthSnapshot] {
         let url = fileURL()
         guard let data = try? Data(contentsOf: url) else { return [:] }
         guard let envelope = try? JSONDecoder().decode(Envelope.self, from: data) else { return [:] }
@@ -55,25 +62,35 @@ public enum MCPProviderHealthSnapshotStore {
     }
 
     public static func record(_ result: MCPProviderProbeResult, for provider: MCPProvider) {
-        var snapshots = load()
-        snapshots[provider.id] = MCPProviderHealthSnapshot(
-            providerId: provider.id,
-            providerName: provider.name,
-            transportSummary: result.transportSummary,
-            lastProbe: result
-        )
-        save(snapshots)
+        withLock {
+            var snapshots = loadUnlocked()
+            snapshots[provider.id] = MCPProviderHealthSnapshot(
+                providerId: provider.id,
+                providerName: provider.name,
+                transportSummary: result.transportSummary,
+                lastProbe: result
+            )
+            saveUnlocked(snapshots)
+        }
         notify(providerId: provider.id)
     }
 
     public static func clear(providerId: UUID) {
-        var snapshots = load()
-        snapshots.removeValue(forKey: providerId)
-        save(snapshots)
+        withLock {
+            var snapshots = loadUnlocked()
+            snapshots.removeValue(forKey: providerId)
+            saveUnlocked(snapshots)
+        }
         notify(providerId: providerId)
     }
 
     public static func save(_ snapshots: [UUID: MCPProviderHealthSnapshot]) {
+        withLock {
+            saveUnlocked(snapshots)
+        }
+    }
+
+    private static func saveUnlocked(_ snapshots: [UUID: MCPProviderHealthSnapshot]) {
         let url = fileURL()
         OsaurusPaths.ensureExistsSilent(url.deletingLastPathComponent())
         let ordered = snapshots.values.sorted {
@@ -90,6 +107,12 @@ public enum MCPProviderHealthSnapshotStore {
         } catch {
             print("[Osaurus] Failed to save MCP health snapshots: \(error)")
         }
+    }
+
+    private static func withLock<T>(_ operation: () -> T) -> T {
+        lock.lock()
+        defer { lock.unlock() }
+        return operation()
     }
 
     private static func fileURL() -> URL {

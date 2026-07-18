@@ -1281,6 +1281,7 @@ private struct ProviderEditSheet: View {
     @State private var testResult: TestResult?
     @State private var testResultFingerprint: String?
     @State private var probeGate = MCPProviderProbeGate()
+    @State private var probeTask: Task<Void, Never>?
     @State private var importedSetupRequiresProbe = false
     @State private var showImportConfiguration = false
     @State private var showAdvanced: Bool = false
@@ -1380,6 +1381,12 @@ private struct ProviderEditSheet: View {
                 .stroke(themeManager.currentTheme.primaryBorder, lineWidth: 1)
         )
         .onAppear { loadProvider() }
+        .onDisappear {
+            probeTask?.cancel()
+            probeTask = nil
+            probeGate.invalidate()
+            isTesting = false
+        }
         .sheet(isPresented: $showImportConfiguration) {
             MCPConfigurationImportSheet { imported in
                 applyImportedConfiguration(imported)
@@ -1387,6 +1394,10 @@ private struct ProviderEditSheet: View {
         }
         .onChange(of: currentProbeFingerprint) { _, fingerprint in
             guard testResultFingerprint != fingerprint else { return }
+            probeTask?.cancel()
+            probeTask = nil
+            probeGate.invalidate()
+            isTesting = false
             testResult = nil
             testResultFingerprint = nil
         }
@@ -1670,6 +1681,8 @@ private struct ProviderEditSheet: View {
     /// host-execution settings, so a partial reset would let a discarded
     /// import bleed into the next provider.
     private func clearDraft(authType: MCPProviderAuthType, name: String = "", url: String = "") {
+        probeTask?.cancel()
+        probeTask = nil
         probeGate.invalidate()
         self.name = name
         self.url = url
@@ -3051,6 +3064,8 @@ private struct ProviderEditSheet: View {
     }
 
     private func applyImportedConfiguration(_ imported: MCPImportedServerConfiguration) {
+        probeTask?.cancel()
+        probeTask = nil
         name = imported.name
         transport = imported.transport
         url = imported.url
@@ -3084,7 +3099,8 @@ private struct ProviderEditSheet: View {
         testResult = nil
         testResultFingerprint = nil
 
-        Task {
+        probeTask?.cancel()
+        probeTask = Task {
             let result: MCPProviderProbeResult
             switch context.provider.transport {
             case .http:
@@ -3118,6 +3134,7 @@ private struct ProviderEditSheet: View {
                 testResult = result.succeeded ? .success(result) : .failure(result)
                 testResultFingerprint = context.fingerprint
                 isTesting = false
+                probeTask = nil
             }
         }
     }
@@ -3188,6 +3205,8 @@ private struct ProviderEditSheet: View {
             id: effectiveProviderId,
             name: name.isEmpty ? "Stdio test" : name,
             url: "",
+            discoveryTimeout: discoveryTimeout,
+            toolCallTimeout: toolCallTimeout,
             authType: .none,
             transport: .stdio,
             executionHost: executionHost,

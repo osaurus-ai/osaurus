@@ -75,6 +75,42 @@ struct MCPProviderProbeServiceTests {
         #expect(result.action?.contains("command") == true)
     }
 
+    @Test func healthSnapshotStoreSerializesConcurrentProviderWrites() async throws {
+        let root = try makeTemporaryRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        MCPProviderHealthSnapshotStore.overrideURL = root.appendingPathComponent("mcp-health.json")
+        defer { MCPProviderHealthSnapshotStore.overrideURL = nil }
+
+        let providers = (0..<24).map { index in
+            MCPProvider(id: UUID(), name: "Provider \(index)", url: "https://example.com/mcp")
+        }
+        await withTaskGroup(of: Void.self) { group in
+            for provider in providers {
+                group.addTask {
+                    let result = MCPProviderProbeResult(
+                        providerId: provider.id,
+                        providerName: provider.name,
+                        transportSummary: "HTTP https://example.com/redacted-path",
+                        startedAt: Date(timeIntervalSince1970: 1),
+                        finishedAt: Date(timeIntervalSince1970: 2),
+                        succeeded: true,
+                        stage: .listTools,
+                        reasonCode: .succeeded,
+                        toolCount: 1,
+                        toolNames: ["fixture"],
+                        message: "Connected",
+                        action: nil
+                    )
+                    MCPProviderHealthSnapshotStore.record(result, for: provider)
+                }
+            }
+        }
+
+        let snapshots = MCPProviderHealthSnapshotStore.load()
+        #expect(snapshots.count == providers.count)
+        #expect(Set(snapshots.keys) == Set(providers.map(\.id)))
+    }
+
     #if os(macOS)
     @Test func hostStdioProbeRejectsProcessControlEnvironmentWithoutLeakingValue() async {
         let provider = MCPProvider(

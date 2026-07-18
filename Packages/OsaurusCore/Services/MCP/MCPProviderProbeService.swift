@@ -200,12 +200,24 @@ enum MCPProviderProbeRedactor {
             (#"(?i)authorization\s*[:=]\s*(?:bearer\s+)?[^\s,;}]+\"?"#, "credential=***"),
             (#"(?i)\bbearer\s+[A-Za-z0-9._~+/=-]+"#, "credential=***"),
             (
+                #"(?i)\"([A-Za-z0-9_]*(?:access_token|refresh_token|code_verifier|client_secret|api_key|apikey|password|secret|token)[A-Za-z0-9_]*)\"\s*:\s*\"[^\"]*\""#,
+                #""$1":"***""#
+            ),
+            (
+                #"(?i)\b([A-Za-z0-9_]*(?:access_token|refresh_token|code_verifier|client_secret|api_key|apikey|password|secret|token)[A-Za-z0-9_]*)=([^&\s,;}]+)"#,
+                "$1=***"
+            ),
+            (
                 #"(?i)\"(access_token|refresh_token|code_verifier|code|verifier|client_secret|api_key|apikey|password|secret|token)\"\s*:\s*\"[^\"]*\""#,
                 #""$1":"***""#
             ),
             (
                 #"(?i)\b(access_token|refresh_token|code_verifier|code|verifier|client_secret|api_key|apikey|password|secret|token)=([^&\s,;}]+)"#,
                 "$1=***"
+            ),
+            (
+                #"(?i)\b(?:sk-[A-Za-z0-9_-]{8,}|gh[pousr]_[A-Za-z0-9_]{8,}|xox[baprs]-[A-Za-z0-9-]{8,})\b"#,
+                "credential=***"
             ),
             (#"\beyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\b"#, "jwt=***"),
             (#"(?:~|/(?:Users|home|private|var|tmp|opt|Library))/[^\s,;}\]]+"#, "<redacted-path>"),
