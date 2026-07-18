@@ -354,9 +354,8 @@ public final class MCPProviderManager: ObservableObject {
 
             // Connect under a timeout. Without this, a stdio subprocess that
             // spawned successfully but never speaks MCP would leave the card
-            // stuck on "Connecting…" indefinitely. `discoverTools` already
-            // uses `withTimeout` for the second leg of the handshake — we
-            // mirror that for the first.
+            // stuck on "Connecting…" indefinitely. `discoverTools` uses the
+            // same cancellation-aware timeout for the second leg.
             try await MCPAsyncTimeout.run(seconds: provider.discoveryTimeout) {
                 _ = try await client.connect(transport: transport)
             }
