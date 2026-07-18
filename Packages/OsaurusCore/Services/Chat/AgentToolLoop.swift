@@ -707,6 +707,36 @@ enum AgentToolLoop {
         return (obj["ok"] as? Bool) == true
     }
 
+    /// Interactive desktop subagents can partially affect external state
+    /// before returning a terminal failure. Once one reports a canonical,
+    /// non-retryable failure, the chat surface must not ask the parent model
+    /// to guess what happened or launch another blind automation attempt.
+    ///
+    /// `invalid_args` and `not_found` deliberately remain recoverable: the
+    /// parent can correct the call shape or choose a different target. Other
+    /// tools retain their existing envelope/pivot behavior; this safety stop
+    /// is scoped to the three desktop subagent entry points implicated by the
+    /// shared execution/finalization contract.
+    static func isTerminalDesktopSubagentFailure(toolName: String, result: String) -> Bool {
+        guard ["computer_use", "applescript", "mac_query"].contains(toolName) else {
+            return false
+        }
+        guard ToolEnvelope.isError(result),
+            let data = result.data(using: .utf8),
+            let envelope = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+            envelope["retryable"] as? Bool == false,
+            let rawKind = envelope["kind"] as? String,
+            let kind = ToolEnvelope.Kind(rawValue: rawKind)
+        else { return false }
+
+        switch kind {
+        case .invalidArgs, .notFound:
+            return false
+        case .rejected, .timeout, .executionError, .toolNotFound, .unavailable, .userDenied:
+            return true
+        }
+    }
+
     /// Shared user-facing text for the `.overBudget` exit: the request
     /// cannot fit the model's context window even after every compaction
     /// lever was exhausted. Each surface wraps this in its own envelope
@@ -1192,12 +1222,17 @@ enum AgentToolLoop {
                         for (index, entry) in toExecute.enumerated()
                         where index < executions.count {
                             let execution = executions[index]
+                            let wasError = execution.isError
+                                || Self.isTerminalDesktopSubagentFailure(
+                                    toolName: entry.invocation.toolName,
+                                    result: execution.result
+                                )
                             slotted[entry.slot] = AgentLoopToolOutcome(
                                 invocation: entry.invocation,
                                 callId: entry.callId,
                                 result: execution.result,
                                 wasDeduped: false,
-                                wasError: execution.isError
+                                wasError: wasError
                             )
                             if execution.endRun {
                                 endRunSlots.insert(entry.slot)
@@ -1248,12 +1283,17 @@ enum AgentToolLoop {
                             } else if let execution = await executeBatch(
                                 [(deferred.invocation, deferred.callId)]
                             ).first {
+                                let wasError = execution.isError
+                                    || Self.isTerminalDesktopSubagentFailure(
+                                        toolName: deferred.invocation.toolName,
+                                        result: execution.result
+                                    )
                                 slotted[slot] = AgentLoopToolOutcome(
                                     invocation: deferred.invocation,
                                     callId: deferred.callId,
                                     result: execution.result,
                                     wasDeduped: false,
-                                    wasError: execution.isError
+                                    wasError: wasError
                                 )
                                 if execution.endRun {
                                     endRunSlots.insert(slot)
@@ -1345,6 +1385,11 @@ enum AgentToolLoop {
                         }
 
                         let execution = await hooks.executeTool(invocation, callId)
+                        let wasError = execution.isError
+                            || Self.isTerminalDesktopSubagentFailure(
+                                toolName: invocation.toolName,
+                                result: execution.result
+                            )
 
                         // Surface intercepts (chat `complete`/`clarify`) end the
                         // run before the call is recorded — the intercept already
@@ -1371,14 +1416,14 @@ enum AgentToolLoop {
                                 callId: callId,
                                 result: execution.result,
                                 wasDeduped: false,
-                                wasError: execution.isError
+                                wasError: wasError
                             )
                         )
 
                         if await hooks.isCancelled() {
                             return RunResult(exit: .cancelled, iterations: iteration)
                         }
-                        if execution.isError, policy.stopOnToolRejection {
+                        if wasError, policy.stopOnToolRejection {
                             return RunResult(exit: .toolRejected, iterations: iteration)
                         }
                     }

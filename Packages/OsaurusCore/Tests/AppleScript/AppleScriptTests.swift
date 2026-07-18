@@ -1837,6 +1837,37 @@ struct AppleScriptCapabilityGatingTests {
     }
 }
 
+// MARK: - Parent tool-selection contract
+
+@Suite("AppleScript parent tool-selection guidance")
+struct AppleScriptToolSelectionGuidanceTests {
+    @Test("mac_query is scoped to the current request, including its argument schema")
+    func macQueryDescriptionRejectsInventedConversationQueries() throws {
+        #expect(MacQueryTool.toolDescription.contains("current user request"))
+        #expect(MacQueryTool.toolDescription.contains("Never invent a state question"))
+
+        let parametersValue = try #require(MacQueryTool().parameters)
+        guard case .object(let parameters) = parametersValue,
+            case .object(let properties)? = parameters["properties"],
+            case .object(let question)? = properties["question"],
+            case .string(let description)? = question["description"]
+        else {
+            Issue.record("mac_query.question must keep a string description in its object schema")
+            return
+        }
+        #expect(description.contains("current user's request"))
+        #expect(description.contains("do not invent a question"))
+    }
+
+    @Test("full and compact parent prompts preserve the same selection boundary")
+    func parentPromptsRejectInventedConversationQueries() {
+        #expect(SystemPromptTemplates.appleScriptGuidance.contains("current user request"))
+        #expect(SystemPromptTemplates.appleScriptGuidance.contains("Do not invent a Mac-state question"))
+        #expect(SystemPromptTemplates.appleScriptGuidanceCompact.contains("current user request"))
+        #expect(SystemPromptTemplates.appleScriptGuidanceCompact.contains("Never invent a state question"))
+    }
+}
+
 // MARK: - Mock app world (evals executor double)
 
 @Suite("MockAppleScriptWorld")

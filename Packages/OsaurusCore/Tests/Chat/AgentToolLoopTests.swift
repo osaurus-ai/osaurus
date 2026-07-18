@@ -376,6 +376,142 @@ struct AgentToolLoopTests {
         #expect(surface.batchOutcomes[0].map(\.wasError) == [true, false])
     }
 
+    @Test func terminalComputerUseEnvelopeStopsChatWithoutParentFollowUp() async throws {
+        let surface = ScriptedLoopSurface(steps: [
+            .toolCalls([inv("computer_use")]),
+            .toolCalls([inv("computer_use")]),
+        ])
+        surface.toolResults["computer_use"] = AgentLoopToolExecution(
+            result: ToolEnvelope.failure(
+                kind: .executionError,
+                message: "The model could not produce a valid action.",
+                tool: "computer_use",
+                retryable: false
+            ),
+            isError: false
+        )
+
+        let result = try await AgentToolLoop.run(
+            policy: chatPolicy(),
+            state: AgentTaskState(),
+            hooks: surface.makeHooks()
+        )
+
+        #expect(result == AgentToolLoop.RunResult(exit: .toolRejected, iterations: 1))
+        #expect(surface.executedCalls.map(\.name) == ["computer_use"])
+    }
+
+    @Test func terminalMacQueryEnvelopeStopsChatBeforeHallucinatedAnswer() async throws {
+        let surface = ScriptedLoopSurface(steps: [
+            .toolCalls([inv("mac_query")]),
+            .finalResponse,
+        ])
+        surface.toolResults["mac_query"] = AgentLoopToolExecution(
+            result: ToolEnvelope.failure(
+                kind: .executionError,
+                message: "The query failed.",
+                tool: "mac_query",
+                retryable: false
+            ),
+            isError: false
+        )
+
+        let result = try await AgentToolLoop.run(
+            policy: chatPolicy(),
+            state: AgentTaskState(),
+            hooks: surface.makeHooks()
+        )
+
+        #expect(result == AgentToolLoop.RunResult(exit: .toolRejected, iterations: 1))
+        #expect(surface.builtNotices.count == 1, "No second model iteration may fabricate a value")
+    }
+
+    @Test func batchExecutorMarksReturnedTerminalDesktopFailureAsRejection() async throws {
+        let surface = ScriptedLoopSurface(steps: [
+            .toolCalls([inv("mac_query")]),
+            .finalResponse,
+        ])
+        var hooks = surface.makeHooks()
+        hooks.executeBatch = { calls in
+            calls.map { call in
+                AgentLoopToolExecution(
+                    result: ToolEnvelope.failure(
+                        kind: .executionError,
+                        message: "The query failed.",
+                        tool: call.invocation.toolName,
+                        retryable: false
+                    ),
+                    // Mirrors ToolRegistry-returned envelopes in ChatView:
+                    // the tool body returned JSON instead of throwing.
+                    isError: false
+                )
+            }
+        }
+
+        let result = try await AgentToolLoop.run(
+            policy: chatPolicy(),
+            state: AgentTaskState(),
+            hooks: hooks
+        )
+
+        #expect(result == AgentToolLoop.RunResult(exit: .toolRejected, iterations: 1))
+        #expect(surface.batchOutcomes.count == 1)
+        #expect(surface.batchOutcomes[0].map(\.wasError) == [true])
+        #expect(surface.builtNotices.count == 1, "The real Chat batch path must not run the parent again")
+    }
+
+    @Test func correctableDesktopSubagentFailuresStillReachParentForPivot() async throws {
+        for kind in [ToolEnvelope.Kind.invalidArgs, .notFound] {
+            let surface = ScriptedLoopSurface(steps: [
+                .toolCalls([inv("mac_query")]),
+                .finalResponse,
+            ])
+            surface.toolResults["mac_query"] = AgentLoopToolExecution(
+                result: ToolEnvelope.failure(
+                    kind: kind,
+                    message: "correct this call",
+                    tool: "mac_query",
+                    retryable: false
+                ),
+                isError: false
+            )
+
+            let result = try await AgentToolLoop.run(
+                policy: chatPolicy(),
+                state: AgentTaskState(),
+                hooks: surface.makeHooks()
+            )
+
+            #expect(result.exit == .finalResponse, "kind=\(kind.rawValue)")
+            #expect(surface.builtNotices.count == 2, "kind=\(kind.rawValue)")
+        }
+    }
+
+    @Test func unrelatedNonretryableExecutionFailureKeepsExistingPivotBehavior() async throws {
+        let surface = ScriptedLoopSurface(steps: [
+            .toolCalls([inv("file_read")]),
+            .finalResponse,
+        ])
+        surface.toolResults["file_read"] = AgentLoopToolExecution(
+            result: ToolEnvelope.failure(
+                kind: .executionError,
+                message: "read failed",
+                tool: "file_read",
+                retryable: false
+            ),
+            isError: false
+        )
+
+        let result = try await AgentToolLoop.run(
+            policy: chatPolicy(),
+            state: AgentTaskState(),
+            hooks: surface.makeHooks()
+        )
+
+        #expect(result.exit == .finalResponse)
+        #expect(surface.builtNotices.count == 2)
+    }
+
     @Test func surfaceInterceptEndsRunWithoutRecording() async throws {
         let surface = ScriptedLoopSurface(steps: [
             .toolCalls([inv("complete", #"{"summary":"done the work"}"#), inv("never_runs")])

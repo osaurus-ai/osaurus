@@ -811,7 +811,7 @@ public enum SystemPromptTemplates {
         ## Mac automation (AppleScript)
 
         - Two tools drive this Mac with an on-device AppleScript model (Finder, Safari, Mail, Notes, Music, Calendar, System Events, app + system state). Both write and run the script for you — do NOT write AppleScript yourself from here.
-        - To READ information, call `mac_query` with the whole question (e.g. "the front Safari tab URL", "the selected Finder items", "the current track and volume"). It runs read-only, needs no confirmation, and returns the actual `values` plus a per-step transcript. Prefer it whenever you just need to know something.
+        - To READ information needed by the current user request, call `mac_query` with the whole question (e.g. "the front Safari tab URL", "the selected Finder items", "the current track and volume"). It runs read-only, needs no confirmation, and returns the actual `values` plus a per-step transcript. Do not invent a Mac-state question merely to acknowledge feedback or conversation.
         - To CHANGE something, call `applescript` with the whole task. Depending on the user's setting each script is shown for approval or auto-run with a warning, so write the task plainly and let that gate handle confirmation — don't ask the user for permission yourself first.
         - When the task must insert EXACT text (a verbatim transcription, quotes, code, or a long note body), pass that text in `applescript`'s `content` argument and keep `task` as the instruction (e.g. task "Set the body of the note 'Quotes' to the provided content", content = the exact text). The subagent inserts it verbatim via a placeholder, so nothing is dropped, reordered, or mis-escaped — never paste large literal text only into `task`.
         - When the task needs SEVERAL exact blocks (a subject and a body, say), pass them in `applescript`'s `contents` argument as a `{name: text}` map (e.g. contents = {"subject": …, "body": …}); the subagent inserts each verbatim via its own placeholder. Use `content` for a single block and `contents` for several.
@@ -825,7 +825,7 @@ public enum SystemPromptTemplates {
     /// result, and the not-for-shell/files/web boundary).
     public static let appleScriptGuidanceCompact = """
         ## Mac automation (AppleScript)
-        - To READ Mac/app state (Finder, Safari, Mail, Music, System Events, volume, …) use `mac_query(question)`: read-only, no confirmation, returns the actual `values`.
+        - To READ Mac/app state needed by the current user request (Finder, Safari, Mail, Music, System Events, volume, …) use `mac_query(question)`: read-only, no confirmation, returns the actual `values`. Never invent a state question just to acknowledge feedback/conversation.
         - To CHANGE something use `applescript(task)`: each script is shown for approval or auto-run per the user's setting. Don't write AppleScript yourself.
         - To insert EXACT/verbatim text (transcription, quote, code, long body) OR an exact existing identifier that must match precisely (a note title, file path, mailbox, or URL), pass it via `applescript(content=…)` or `applescript(contents={name:text})` and reference it by placeholder — reproduced verbatim instead of re-typed, so an exact name can't be mistyped. Use `contents` for several blocks.
         - Both return `status` + `values` + `errors` (with AppleScript error numbers) — read `values` to confirm, use `errors` to retry/fix. Not for shell, files, or web.

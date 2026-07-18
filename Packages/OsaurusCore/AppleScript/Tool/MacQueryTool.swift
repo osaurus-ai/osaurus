@@ -29,8 +29,10 @@ final class MacQueryTool: OsaurusTool, @unchecked Sendable {
         + "nothing), and returns the actual value(s) plus a per-step transcript. Use it to READ state: "
         + "the front Safari tab/URL, selected Finder items, the current Music track, unread Mail, "
         + "Calendar events, clipboard, window titles, or system state (volume, brightness, battery, "
-        + "running apps). To CHANGE anything, use `applescript` instead. Not for shell, files, or web "
-        + "requests — those have dedicated tools."
+        + "running apps). Call it only when the current user request asks for Mac/app state, or that "
+        + "state is necessary to complete the requested task. Never invent a state question merely "
+        + "to acknowledge feedback or conversation. To CHANGE anything, use `applescript` instead. "
+        + "Not for shell, files, or web requests — those have dedicated tools."
 
     let description = MacQueryTool.toolDescription
 
@@ -42,7 +44,9 @@ final class MacQueryTool: OsaurusTool, @unchecked Sendable {
                 "type": .string("string"),
                 "description": .string(
                     "The information to read from the Mac, in plain language, naming the app when it "
-                        + "matters. Example: \"What is the URL of the front Safari tab?\""
+                        + "matters. It must answer or be necessary for the current user's request; do "
+                        + "not invent a question for conversational acknowledgements. Example: "
+                        + "\"What is the URL of the front Safari tab?\""
                 ),
             ]),
             "content": .object([
