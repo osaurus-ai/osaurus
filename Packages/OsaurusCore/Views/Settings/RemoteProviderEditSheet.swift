@@ -165,6 +165,7 @@ private struct AddProviderFlow: View {
     @State private var isTesting = false
     @State private var testResult: ProviderTestResult?
     @State private var testRequestID: UUID?
+    @State private var knownTestGate = KnownProviderSetupSuccessGate()
     @State private var customTestGate = CustomProviderSetupSuccessGate()
     @State private var draftProviderID = UUID()
     @State private var hasAppeared = false
@@ -523,7 +524,7 @@ private struct AddProviderFlow: View {
 
             // Footer
             sheetFooter(canProceed: canTest) {
-                if testResult?.isSuccess == true || canSaveKnownProviderWithoutSuccessfulTest {
+                if knownProviderSaveAuthorization.allowsSave {
                     saveKnownProvider()
                 } else {
                     testKnownProvider()
@@ -629,6 +630,7 @@ private struct AddProviderFlow: View {
                 oauthTokens = nil
                 selectedAuthMethod = .apiKey
                 testResult = nil
+                knownTestGate.invalidate()
                 customTestGate.invalidate()
                 customName = ""
                 customHost = ""
@@ -694,6 +696,7 @@ private struct AddProviderFlow: View {
         knownBasePath = config.basePath
         manualModelIdsText = config.defaultManualModelIds.joined(separator: "\n")
         testResult = nil
+        knownTestGate.invalidate()
     }
 
     private var azureConnectionSection: some View {
@@ -1364,7 +1367,7 @@ private struct AddProviderFlow: View {
     private var actionButtonTitle: String {
         let oauthKind = selectedOAuthKind
         if isTesting { return oauthKind != nil ? L("Signing in...") : L("Testing...") }
-        if hasCurrentSuccessfulTest || canSaveKnownProviderWithoutSuccessfulTest { return L("Add Provider") }
+        if hasCurrentSuccessfulTest || knownProviderSaveAuthorization.allowsSave { return L("Add Provider") }
         if case .failure = testResult { return L("Retry") }
         if let oauthKind {
             return NSLocalizedString(oauthKind.ctaTitle, bundle: .module, comment: "")
@@ -1373,19 +1376,31 @@ private struct AddProviderFlow: View {
     }
 
     private var actionButtonColor: Color {
-        if hasCurrentSuccessfulTest || canSaveKnownProviderWithoutSuccessfulTest { return theme.successColor }
+        if hasCurrentSuccessfulTest { return theme.successColor }
+        if knownProviderSaveAuthorization == .unverifiedAzureManualModels { return theme.accentColor }
         if case .failure = testResult { return theme.errorColor }
         return theme.accentColor
     }
 
     private var hasCurrentSuccessfulTest: Bool {
         guard testResult?.isSuccess == true else { return false }
-        guard selectedPreset == .custom else { return true }
-        return customTestGate.allowsAdd(current: currentCustomTestSnapshot())
+        if selectedPreset == .custom {
+            return customTestGate.allowsAdd(current: currentCustomTestSnapshot())
+        }
+        return knownProviderSaveAuthorization == .verified
+    }
+
+    private var knownProviderSaveAuthorization: KnownProviderSetupSaveAuthorization {
+        guard let preset = selectedPreset, preset != .custom else { return .denied }
+        return knownTestGate.authorization(
+            current: currentKnownTestSnapshot(for: preset),
+            hasSuccessfulResult: testResult?.isSuccess == true,
+            allowsUnverifiedAzureSave: canSaveKnownProviderWithoutSuccessfulTest
+        )
     }
 
     private var testResultForDisplay: ProviderTestResult? {
-        guard selectedPreset == .custom, testResult?.isSuccess == true else { return testResult }
+        guard testResult?.isSuccess == true else { return testResult }
         return hasCurrentSuccessfulTest ? testResult : nil
     }
 
@@ -1400,12 +1415,14 @@ private struct AddProviderFlow: View {
         let config = preset.configuration
         let connection = knownProviderConnection(for: preset)
         let oauthKind = selectedOAuthKind
-        let testedProvider = draftKnownProvider(for: preset)
+        let testedSnapshot = currentKnownTestSnapshot(for: preset)
+        let testedProvider = testedSnapshot.provider
         let testedAPIKeyInput = apiKey
-        let testedHeaders = customHeaders
+        let testedHeaders = testedSnapshot.headers
 
         isTesting = true
         testResult = nil
+        knownTestGate.invalidate()
         let requestID = UUID()
         testRequestID = requestID
 
@@ -1417,11 +1434,7 @@ private struct AddProviderFlow: View {
                     let didApply = await MainActor.run {
                         guard knownTestIsCurrent(
                             requestID: requestID,
-                            preset: preset,
-                            provider: testedProvider,
-                            oauthKind: oauthKind,
-                            apiKeyInput: testedAPIKeyInput,
-                            headers: testedHeaders
+                            snapshot: testedSnapshot
                         ) else { return false }
                         oauthTokens = tokens
                         return true
@@ -1436,11 +1449,7 @@ private struct AddProviderFlow: View {
                     let didApply = await MainActor.run {
                         guard knownTestIsCurrent(
                             requestID: requestID,
-                            preset: preset,
-                            provider: testedProvider,
-                            oauthKind: oauthKind,
-                            apiKeyInput: testedAPIKeyInput,
-                            headers: testedHeaders
+                            snapshot: testedSnapshot
                         ) else { return false }
                         apiKey = key
                         return true
@@ -1467,11 +1476,7 @@ private struct AddProviderFlow: View {
                     let didApply = await MainActor.run {
                         guard knownTestIsCurrent(
                             requestID: requestID,
-                            preset: preset,
-                            provider: testedProvider,
-                            oauthKind: oauthKind,
-                            apiKeyInput: testedAPIKeyInput,
-                            headers: testedHeaders
+                            snapshot: testedSnapshot
                         ) else { return false }
                         oauthTokens = tokens
                         return true
@@ -1494,13 +1499,10 @@ private struct AddProviderFlow: View {
                 await MainActor.run {
                     guard knownTestIsCurrent(
                         requestID: requestID,
-                        preset: preset,
-                        provider: testedProvider,
-                        oauthKind: oauthKind,
-                        apiKeyInput: testedAPIKeyInput,
-                        headers: testedHeaders
+                        snapshot: testedSnapshot
                     ) else { return }
                     withAnimation {
+                        knownTestGate.recordSuccess(testedSnapshot)
                         testResult = .success(models); isTesting = false
                     }
                 }
@@ -1512,11 +1514,7 @@ private struct AddProviderFlow: View {
                     guard testResult?.isSuccess == true,
                         knownTestIsCurrent(
                             requestID: requestID,
-                            preset: preset,
-                            provider: testedProvider,
-                            oauthKind: oauthKind,
-                            apiKeyInput: testedAPIKeyInput,
-                            headers: testedHeaders
+                            snapshot: testedSnapshot
                         )
                     else { return }
                     saveKnownProvider()
@@ -1525,11 +1523,7 @@ private struct AddProviderFlow: View {
                 await MainActor.run {
                     guard knownTestIsCurrent(
                         requestID: requestID,
-                        preset: preset,
-                        provider: testedProvider,
-                        oauthKind: oauthKind,
-                        apiKeyInput: testedAPIKeyInput,
-                        headers: testedHeaders
+                        snapshot: testedSnapshot
                     ) else { return }
                     let diagnosticMessage: String?
                     switch oauthKind {
@@ -1555,7 +1549,7 @@ private struct AddProviderFlow: View {
     }
 
     private func saveKnownProvider() {
-        guard !hasFinalized else { return }
+        guard !hasFinalized, knownProviderSaveAuthorization.allowsSave else { return }
         guard let preset = selectedPreset else { return }
         hasFinalized = true
         let config = preset.configuration
@@ -1715,41 +1709,28 @@ private struct AddProviderFlow: View {
     @MainActor
     private func knownTestIsCurrent(
         requestID: UUID,
-        preset: ProviderPreset,
-        provider testedProvider: RemoteProvider,
-        oauthKind testedOAuthKind: ProviderOAuthKind?,
-        apiKeyInput testedAPIKeyInput: String,
-        headers testedHeaders: [HeaderEntry]
+        snapshot testedSnapshot: KnownProviderSetupTestSnapshot
     ) -> Bool {
         guard testRequestID == requestID else { return false }
-        guard matchesKnownTestInputs(
-            preset: preset,
-            provider: testedProvider,
-            oauthKind: testedOAuthKind,
-            apiKeyInput: testedAPIKeyInput,
-            headers: testedHeaders
-        ) else {
+        guard selectedPreset == testedSnapshot.preset,
+            currentKnownTestSnapshot(for: testedSnapshot.preset) == testedSnapshot
+        else {
             isTesting = false
             return false
         }
         return true
     }
 
-    private func matchesKnownTestInputs(
-        preset: ProviderPreset,
-        provider testedProvider: RemoteProvider,
-        oauthKind testedOAuthKind: ProviderOAuthKind?,
-        apiKeyInput testedAPIKeyInput: String,
-        headers testedHeaders: [HeaderEntry]
-    ) -> Bool {
-        guard selectedOAuthKind == testedOAuthKind,
-            draftKnownProvider(for: preset) == testedProvider,
-            customHeaders == testedHeaders
-        else { return false }
-
-        // Browser sign-in is expected to populate credentials while the test
-        // is running. Pasted-key flows must retain the exact tested input.
-        return testedOAuthKind != nil || apiKey == testedAPIKeyInput
+    private func currentKnownTestSnapshot(for preset: ProviderPreset) -> KnownProviderSetupTestSnapshot {
+        let credential: KnownProviderSetupCredentialIdentity = selectedOAuthKind.map {
+            .oauth($0)
+        } ?? .apiKey(apiKey)
+        return KnownProviderSetupTestSnapshot(
+            preset: preset,
+            provider: draftKnownProvider(for: preset),
+            credential: credential,
+            headers: customHeaders
+        )
     }
 
     private func draftCustomProvider() -> RemoteProvider {
@@ -3114,6 +3095,58 @@ struct HeaderEntry: Identifiable, Equatable {
             }
         }
         return (regular, secretKeys)
+    }
+}
+
+/// Credential identity used by a known-provider test. Browser OAuth is stable
+/// while sign-in populates a key or token; pasted-key flows bind the exact text.
+enum KnownProviderSetupCredentialIdentity: Equatable {
+    case apiKey(String)
+    case oauth(ProviderOAuthKind)
+}
+
+/// The same complete input identity used to reject stale async known-provider
+/// completions, retained after success so footer saves cannot bypass that check.
+struct KnownProviderSetupTestSnapshot: Equatable {
+    var preset: ProviderPreset
+    var provider: RemoteProvider
+    var credential: KnownProviderSetupCredentialIdentity
+    var headers: [HeaderEntry]
+}
+
+enum KnownProviderSetupSaveAuthorization: Equatable {
+    case denied
+    case verified
+    case unverifiedAzureManualModels
+
+    var allowsSave: Bool {
+        self != .denied
+    }
+}
+
+struct KnownProviderSetupSuccessGate: Equatable {
+    private(set) var successfulSnapshot: KnownProviderSetupTestSnapshot?
+
+    mutating func recordSuccess(_ snapshot: KnownProviderSetupTestSnapshot) {
+        successfulSnapshot = snapshot
+    }
+
+    mutating func invalidate() {
+        successfulSnapshot = nil
+    }
+
+    func authorization(
+        current snapshot: KnownProviderSetupTestSnapshot,
+        hasSuccessfulResult: Bool,
+        allowsUnverifiedAzureSave: Bool
+    ) -> KnownProviderSetupSaveAuthorization {
+        if hasSuccessfulResult, successfulSnapshot == snapshot {
+            return .verified
+        }
+        if allowsUnverifiedAzureSave {
+            return .unverifiedAzureManualModels
+        }
+        return .denied
     }
 }
 
