@@ -14,10 +14,8 @@ import Testing
 
 @testable import OsaurusCore
 
-/// These integration tests synchronously wait on real `Process` instances and
-/// share the service actor. Running every case concurrently can exhaust Swift's
-/// cooperative executor in the full Xcode suite, leaving one random git process
-/// test suspended until the per-test timeout kills it.
+/// These integration tests run real git processes through one shared service
+/// actor, so keep the cases from competing with one another.
 @Suite(.serialized)
 struct KnowledgeGitSyncTests {
 
@@ -31,34 +29,49 @@ struct KnowledgeGitSyncTests {
 
     /// Run raw git for test setup (distinct from the service under test).
     @discardableResult
-    private func git(_ args: [String], cwd: URL) throws -> String {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: Self.gitPath)
-        process.arguments = args
-        process.currentDirectoryURL = cwd
-        var env = ProcessInfo.processInfo.environment
-        env["GIT_TERMINAL_PROMPT"] = "0"
-        env["GIT_CONFIG_GLOBAL"] = "/dev/null"
-        env["GIT_CONFIG_SYSTEM"] = "/dev/null"
-        env["GIT_AUTHOR_NAME"] = "Test"
-        env["GIT_AUTHOR_EMAIL"] = "test@example.com"
-        env["GIT_COMMITTER_NAME"] = "Test"
-        env["GIT_COMMITTER_EMAIL"] = "test@example.com"
-        process.environment = env
-        let out = Pipe()
-        process.standardOutput = out
-        process.standardError = out
-        try process.run()
-        process.waitUntilExit()
-        let data = out.fileHandleForReading.readDataToEndOfFile()
-        let text = String(data: data, encoding: .utf8) ?? ""
-        if process.terminationStatus != 0 {
-            throw NSError(
-                domain: "git", code: Int(process.terminationStatus),
-                userInfo: [NSLocalizedDescriptionKey: "git \(args.joined(separator: " ")): \(text)"]
-            )
+    private func git(_ args: [String], cwd: URL) async throws -> String {
+        try await withCheckedThrowingContinuation { continuation in
+            let process = Process()
+            process.executableURL = URL(fileURLWithPath: Self.gitPath)
+            process.arguments = args
+            process.currentDirectoryURL = cwd
+            var env = ProcessInfo.processInfo.environment
+            env["GIT_TERMINAL_PROMPT"] = "0"
+            env["GIT_CONFIG_GLOBAL"] = "/dev/null"
+            env["GIT_CONFIG_SYSTEM"] = "/dev/null"
+            env["GIT_AUTHOR_NAME"] = "Test"
+            env["GIT_AUTHOR_EMAIL"] = "test@example.com"
+            env["GIT_COMMITTER_NAME"] = "Test"
+            env["GIT_COMMITTER_EMAIL"] = "test@example.com"
+            process.environment = env
+            let out = Pipe()
+            process.standardOutput = out
+            process.standardError = out
+            process.terminationHandler = { terminatedProcess in
+                let data = out.fileHandleForReading.readDataToEndOfFile()
+                let text = String(data: data, encoding: .utf8) ?? ""
+                guard terminatedProcess.terminationStatus == 0 else {
+                    continuation.resume(
+                        throwing: NSError(
+                            domain: "git",
+                            code: Int(terminatedProcess.terminationStatus),
+                            userInfo: [
+                                NSLocalizedDescriptionKey:
+                                    "git \(args.joined(separator: " ")): \(text)"
+                            ]
+                        )
+                    )
+                    return
+                }
+                continuation.resume(returning: text)
+            }
+            do {
+                try process.run()
+            } catch {
+                process.terminationHandler = nil
+                continuation.resume(throwing: error)
+            }
         }
-        return text
     }
 
     private func tempDir() throws -> URL {
@@ -68,26 +81,26 @@ struct KnowledgeGitSyncTests {
         return dir
     }
 
-    private func configureIdentity(_ repo: URL) throws {
-        try git(["config", "user.name", "Test"], cwd: repo)
-        try git(["config", "user.email", "test@example.com"], cwd: repo)
+    private func configureIdentity(_ repo: URL) async throws {
+        try await git(["config", "user.name", "Test"], cwd: repo)
+        try await git(["config", "user.email", "test@example.com"], cwd: repo)
     }
 
     /// Create a bare "remote" plus a working clone with one initial commit
     /// pushed. Returns (remote, workingClone).
-    private func makeRemoteAndClone() throws -> (remote: URL, work: URL) {
+    private func makeRemoteAndClone() async throws -> (remote: URL, work: URL) {
         let root = try tempDir()
         let remote = root.appendingPathComponent("remote.git", isDirectory: true)
-        try git(["init", "--bare", "--initial-branch=main", remote.path], cwd: root)
+        try await git(["init", "--bare", "--initial-branch=main", remote.path], cwd: root)
         let work = root.appendingPathComponent("work", isDirectory: true)
-        try git(["clone", remote.path, work.path], cwd: root)
-        try configureIdentity(work)
+        try await git(["clone", remote.path, work.path], cwd: root)
+        try await configureIdentity(work)
         try "seed\n".write(
             to: work.appendingPathComponent("index.md"), atomically: true, encoding: .utf8
         )
-        try git(["add", "-A"], cwd: work)
-        try git(["commit", "-m", "seed"], cwd: work)
-        try git(["push", "origin", "main"], cwd: work)
+        try await git(["add", "-A"], cwd: work)
+        try await git(["commit", "-m", "seed"], cwd: work)
+        try await git(["push", "origin", "main"], cwd: work)
         return (remote, work)
     }
 
@@ -100,7 +113,7 @@ struct KnowledgeGitSyncTests {
     @Test
     func detectsOriginOfAdoptedRepo() async throws {
         guard Self.gitAvailable else { return }
-        let (remote, work) = try makeRemoteAndClone()
+        let (remote, work) = try await makeRemoteAndClone()
 
         let detected = await KnowledgeGitSyncService.shared.remoteURL(of: work)
         #expect(detected == remote.path)
@@ -110,7 +123,10 @@ struct KnowledgeGitSyncTests {
     func remoteURLIsNilForRepoWithoutRemote() async throws {
         guard Self.gitAvailable else { return }
         let repo = try tempDir()
-        try git(["init", "--initial-branch=main", repo.path], cwd: repo.deletingLastPathComponent())
+        try await git(
+            ["init", "--initial-branch=main", repo.path],
+            cwd: repo.deletingLastPathComponent()
+        )
 
         let detected = await KnowledgeGitSyncService.shared.remoteURL(of: repo)
         #expect(detected == nil)
@@ -121,7 +137,7 @@ struct KnowledgeGitSyncTests {
     @Test
     func commitDocumentThenPushAdvancesRemote() async throws {
         guard Self.gitAvailable else { return }
-        let (remote, work) = try makeRemoteAndClone()
+        let (remote, work) = try await makeRemoteAndClone()
         let coll = collection(at: work)
 
         try "updated body\n".write(
@@ -136,14 +152,14 @@ struct KnowledgeGitSyncTests {
         if case .updated = push {} else { Issue.record("expected push .updated, got \(push)") }
 
         // The bare remote now carries the new commit's file content.
-        let show = try git(["show", "HEAD:index.md"], cwd: remote)
+        let show = try await git(["show", "HEAD:index.md"], cwd: remote)
         #expect(show.contains("updated body"))
     }
 
     @Test
     func commitWithNoChangesIsUpToDate() async throws {
         guard Self.gitAvailable else { return }
-        let (_, work) = try makeRemoteAndClone()
+        let (_, work) = try await makeRemoteAndClone()
         let coll = collection(at: work)
 
         // Rewrite identical bytes: git finds nothing to commit.
@@ -161,19 +177,19 @@ struct KnowledgeGitSyncTests {
     @Test
     func pullFastForwardsFromRemote() async throws {
         guard Self.gitAvailable else { return }
-        let (remote, work) = try makeRemoteAndClone()
+        let (remote, work) = try await makeRemoteAndClone()
 
         // A second clone pushes a new commit to the remote.
         let root = remote.deletingLastPathComponent()
         let other = root.appendingPathComponent("other", isDirectory: true)
-        try git(["clone", remote.path, other.path], cwd: root)
-        try configureIdentity(other)
+        try await git(["clone", remote.path, other.path], cwd: root)
+        try await configureIdentity(other)
         try "from other\n".write(
             to: other.appendingPathComponent("note.md"), atomically: true, encoding: .utf8
         )
-        try git(["add", "-A"], cwd: other)
-        try git(["commit", "-m", "add note"], cwd: other)
-        try git(["push", "origin", "main"], cwd: other)
+        try await git(["add", "-A"], cwd: other)
+        try await git(["commit", "-m", "add note"], cwd: other)
+        try await git(["push", "origin", "main"], cwd: other)
 
         let coll = collection(at: work)
         let pulled = await KnowledgeGitSyncService.shared.pull(coll)
@@ -192,26 +208,26 @@ struct KnowledgeGitSyncTests {
     @Test
     func divergentHistoryNeedsAttention() async throws {
         guard Self.gitAvailable else { return }
-        let (remote, work) = try makeRemoteAndClone()
+        let (remote, work) = try await makeRemoteAndClone()
 
         // Remote gains a commit via a second clone...
         let root = remote.deletingLastPathComponent()
         let other = root.appendingPathComponent("other", isDirectory: true)
-        try git(["clone", remote.path, other.path], cwd: root)
-        try configureIdentity(other)
+        try await git(["clone", remote.path, other.path], cwd: root)
+        try await configureIdentity(other)
         try "remote side\n".write(
             to: other.appendingPathComponent("r.md"), atomically: true, encoding: .utf8
         )
-        try git(["add", "-A"], cwd: other)
-        try git(["commit", "-m", "remote commit"], cwd: other)
-        try git(["push", "origin", "main"], cwd: other)
+        try await git(["add", "-A"], cwd: other)
+        try await git(["commit", "-m", "remote commit"], cwd: other)
+        try await git(["push", "origin", "main"], cwd: other)
 
         // ...while the working clone makes its own conflicting local commit.
         try "local side\n".write(
             to: work.appendingPathComponent("l.md"), atomically: true, encoding: .utf8
         )
-        try git(["add", "-A"], cwd: work)
-        try git(["commit", "-m", "local commit"], cwd: work)
+        try await git(["add", "-A"], cwd: work)
+        try await git(["commit", "-m", "local commit"], cwd: work)
 
         let coll = collection(at: work)
         let outcome = await KnowledgeGitSyncService.shared.sync(coll)

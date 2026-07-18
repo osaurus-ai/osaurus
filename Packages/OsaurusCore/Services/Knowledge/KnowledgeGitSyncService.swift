@@ -191,7 +191,11 @@ public actor KnowledgeGitSyncService {
     // MARK: - Repo probes
 
     private func headCommit(in folder: URL) -> String? {
-        let result = runGit(["rev-parse", "HEAD"], cwd: folder, timeout: Self.localTimeout)
+        let result = runGit(
+            ["rev-parse", "HEAD"],
+            cwd: folder,
+            timeout: Self.localTimeout
+        )
         guard result.succeeded else { return nil }
         return result.stdout.trimmingCharacters(in: .whitespacesAndNewlines)
     }
@@ -220,7 +224,11 @@ public actor KnowledgeGitSyncService {
         return stdout.isEmpty ? "git exited with status \(result.exitCode)." : stdout
     }
 
-    private func runGit(_ arguments: [String], cwd: URL, timeout: TimeInterval) -> GitResult {
+    private func runGit(
+        _ arguments: [String],
+        cwd: URL,
+        timeout: TimeInterval
+    ) -> GitResult {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: Self.gitPath)
         process.arguments = arguments
@@ -238,9 +246,17 @@ public actor KnowledgeGitSyncService {
         process.standardOutput = stdoutPipe
         process.standardError = stderrPipe
 
+        // `Process.waitUntilExit()` can remain blocked after a short-lived
+        // child has disappeared on macOS 26. Observe Foundation's termination
+        // callback instead, while preserving the actor's serial operation
+        // ordering.
+        let exited = DispatchSemaphore(value: 0)
+        process.terminationHandler = { _ in exited.signal() }
+
         do {
             try process.run()
         } catch {
+            process.terminationHandler = nil
             return GitResult(
                 exitCode: -1,
                 stdout: "",
@@ -249,21 +265,17 @@ public actor KnowledgeGitSyncService {
             )
         }
 
-        // Watchdog: terminate a wedged process at the deadline. Reads
-        // happen on the pipes after exit; git's output volumes here are
-        // small (no --progress), so pipe back-pressure is not a concern.
-        let deadline = DispatchTime.now() + timeout
-        var timedOut = false
-        let group = DispatchGroup()
-        group.enter()
-        DispatchQueue.global(qos: .utility).async {
-            process.waitUntilExit()
-            group.leave()
-        }
-        if group.wait(timeout: deadline) == .timedOut {
-            timedOut = true
-            process.terminate()
-            group.wait()
+        guard exited.wait(timeout: .now() + timeout) == .success else {
+            process.terminationHandler = nil
+            if process.isRunning {
+                process.terminate()
+            }
+            return GitResult(
+                exitCode: -1,
+                stdout: "",
+                stderr: "",
+                timedOut: true
+            )
         }
 
         let stdout =
@@ -284,7 +296,7 @@ public actor KnowledgeGitSyncService {
             exitCode: process.terminationStatus,
             stdout: stdout,
             stderr: stderr,
-            timedOut: timedOut
+            timedOut: false
         )
     }
 }
