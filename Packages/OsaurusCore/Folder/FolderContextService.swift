@@ -42,6 +42,12 @@ public final class FolderContextService: ObservableObject {
         _folderRootPathLock.withLock { _folderCachedRootPath }
     }
 
+    /// Test-only: override the cached root path without building a full
+    /// folder context (no bookmarks, no tool registration).
+    nonisolated static func _setCachedRootPathForTesting(_ url: URL?) {
+        _folderRootPathLock.withLock { _folderCachedRootPath = url }
+    }
+
     private let bookmarkKey = "FolderContextBookmark"
     private var securityScopedResource: URL?
 

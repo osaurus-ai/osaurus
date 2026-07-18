@@ -35,6 +35,9 @@ final class SandboxPluginTool: OsaurusTool, @unchecked Sendable {
 
     let requiresSandbox = true
 
+    /// Plugin commands are arbitrary shell inside the agent home.
+    var mutatesSandboxWorkspace: Bool { true }
+
     init(spec: SandboxToolSpec, plugin: SandboxPlugin) {
         self.name = "\(plugin.id)_\(spec.id)"
         self.description = spec.description

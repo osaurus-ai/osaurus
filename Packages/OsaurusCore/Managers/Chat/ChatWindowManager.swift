@@ -1109,14 +1109,27 @@ private struct ChatToolbarActionView: View {
 }
 
 private struct ChatToolbarActionContent: View {
-    let windowState: ChatWindowState
+    // Must observe windowState directly: with a plain `let`, SwiftUI sees the
+    // unchanged object reference and skips this view's body when only a
+    // published property (e.g. `sandboxChangesCount` after an undo) changed —
+    // the outer ChatToolbarActionView re-rendering is not enough.
+    @ObservedObject var windowState: ChatWindowState
     @ObservedObject var session: ChatSession
 
     var body: some View {
-        Group {
-            if session.turns.isEmpty {
-                EmptyView()
-            } else {
+        HStack(spacing: 0) {
+            // Sandbox "Changes" entrypoint: only when the current chat has
+            // tracked workspace changes, and never for remote-agent chats
+            // (those run on another machine's sandbox).
+            if windowState.sandboxChangesCount > 0,
+                windowState.selectedDiscoveredAgentProviderId == nil
+            {
+                ChatToolbarChangesButton(
+                    count: windowState.sandboxChangesCount,
+                    action: { windowState.isChangesSheetPresented = true }
+                )
+            }
+            if !session.turns.isEmpty {
                 HeaderActionButton(
                     icon: "plus",
                     help: "New chat",
@@ -1125,6 +1138,52 @@ private struct ChatToolbarActionContent: View {
             }
         }
         .environment(\.theme, windowState.theme)
+    }
+}
+
+/// Compact icon + count pill for the chat toolbar that opens the
+/// session-scoped sandbox Changes sheet. Neutral chip colors (secondary text
+/// on a tertiary capsule) so it sits quietly beside the `HeaderActionButton`s,
+/// warming to accent on hover like they do.
+private struct ChatToolbarChangesButton: View {
+    let count: Int
+    let action: () -> Void
+
+    @State private var isHovered = false
+    @Environment(\.theme) private var theme
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 4) {
+                Image(systemName: "clock.arrow.circlepath")
+                    .font(.system(size: 11, weight: .semibold))
+                Text("\(count)")
+                    .font(.system(size: 11, weight: .semibold, design: .monospaced))
+            }
+            .foregroundColor(isHovered ? theme.accentColor : theme.secondaryText)
+            .frame(height: 28)
+            .padding(.horizontal, 9)
+            .background(
+                Capsule().fill(theme.tertiaryBackground.opacity(isHovered ? 1 : 0.7))
+            )
+            .overlay(
+                Capsule().stroke(theme.primaryBorder.opacity(0.4), lineWidth: 1)
+            )
+            // The plus and pin buttons live in separate NSToolbarItems, so
+            // AppKit adds ~8pt of inter-item spacing between them on top of
+            // their built-in 4pt paddings (~16pt visual gap). The badge sits
+            // in the same item as the plus, so it must supply that spacing
+            // itself: 12pt here + the plus's own 4pt ≈ the same 16pt gap.
+            .padding(.trailing, 12)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .onHover { hovering in
+            withAnimation(.easeOut(duration: 0.15)) {
+                isHovered = hovering
+            }
+        }
+        .help(Text(LocalizedStringKey("File changes"), bundle: .module))
     }
 }
 

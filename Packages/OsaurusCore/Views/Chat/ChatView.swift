@@ -2912,10 +2912,13 @@ final class ChatSession: ObservableObject {
 
     private func estimatedChatExecutionMode(agentId: UUID) -> ExecutionMode {
         let folder = activeFolderContext(for: agentId)
-        let autonomous = AgentManager.shared.effectiveAutonomousExec(for: agentId)?.enabled == true
+        let config = AgentManager.shared.effectiveAutonomousExec(for: agentId)
+        let autonomous = config?.enabled == true
+        let hostWrites = config?.allowHostFolderWrites == true
         let resolved = ToolRegistry.shared.resolveExecutionMode(
             folderContext: folder,
-            autonomousEnabled: autonomous
+            autonomousEnabled: autonomous,
+            allowHostFolderWrites: hostWrites
         )
         // Optimistic estimate: when autonomous is on but sandbox tools haven't
         // registered yet, report `.sandbox` so the budget preview matches what
@@ -2923,7 +2926,7 @@ final class ChatSession: ObservableObject {
         // Thread the folder through so the combined sandbox + host-read mode
         // is estimated correctly when a folder is also mounted.
         if autonomous && resolved.usesSandboxTools == false {
-            return .sandbox(hostRead: folder)
+            return .sandbox(hostRead: folder, hostWrite: folder != nil && hostWrites)
         }
         return resolved
     }
@@ -3121,13 +3124,15 @@ final class ChatSession: ObservableObject {
     /// `ToolRegistry` then applies the priority rule (sandbox > folder >
     /// none) and decides whether sandbox tools actually came online.
     func prepareChatExecutionMode(agentId: UUID) async -> ExecutionMode {
-        let autonomous = AgentManager.shared.effectiveAutonomousExec(for: agentId)?.enabled == true
+        let config = AgentManager.shared.effectiveAutonomousExec(for: agentId)
+        let autonomous = config?.enabled == true
         if autonomous {
             await SandboxToolRegistrar.shared.registerTools(for: agentId)
         }
         return ToolRegistry.shared.resolveExecutionMode(
             folderContext: activeFolderContext(for: agentId),
-            autonomousEnabled: autonomous
+            autonomousEnabled: autonomous,
+            allowHostFolderWrites: config?.allowHostFolderWrites == true
         )
     }
 
@@ -6357,6 +6362,17 @@ struct ChatView: View {
                 }
             )
             .environment(\.theme, windowState.theme)
+        }
+        // Session-scoped sandbox Changes list + undo, opened from the
+        // toolbar's Changes button.
+        .sheet(isPresented: $windowState.isChangesSheetPresented) {
+            if let sid = session.sessionId {
+                ChatChangesView(
+                    sessionId: sid,
+                    onClose: { windowState.isChangesSheetPresented = false }
+                )
+                .environment(\.theme, windowState.theme)
+            }
         }
         .sheet(item: $pendingDiscoveredAgent) { agent in
             if agent.isUnverifiableSecureChannelPeer {

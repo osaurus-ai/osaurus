@@ -320,9 +320,15 @@ public enum SystemPromptTemplates {
     /// `canCreatePlugins` toggles the two plugin-build bullets: when the agent
     /// cannot create plugins, they are dropped so the section spends no context
     /// describing an unavailable path.
+    ///
+    /// `hostWritableCombined` swaps the SOUL edit verb: in writable combined
+    /// mode `sandbox_write_file` is hidden, so the bullet names the unified
+    /// `file_write` (with the absolute `/workspace/...` home path — `~` would
+    /// route to the host workspace under the path rule).
     public static func selfImprovementGuidance(
         canCreatePlugins: Bool,
-        compact: Bool = false
+        compact: Bool = false,
+        hostWritableCombined: Bool = false
     ) -> String {
         let persistence =
             compact
@@ -334,10 +340,14 @@ public enum SystemPromptTemplates {
             : "- Build or update a sandbox plugin when you notice any of these: you just completed a multi-step integration that worked, you found the working path after hitting dead ends, the user corrected your approach, or the same integration is coming up again. Capture the working path while you still have it."
         let pluginFix =
             "- When a plugin you built turns out wrong or incomplete, fix the plugin itself rather than working around it. Plugins improve through use."
+        let soulVerb =
+            hostWritableCombined
+            ? "`file_write` (absolute `/workspace/...` path to your sandbox home's `SOUL.md`)"
+            : "`sandbox_write_file`"
         let soul =
             compact
-            ? "- Record durable cross-session patterns in `~/SOUL.md` via `sandbox_write_file` (applies next session); keep session facts and one-off paths out."
-            : "- When you observe a durable, cross-session pattern in how the user works, record it in `~/SOUL.md` with `sandbox_write_file` (edits apply on the next session). Capture stable preferences, conventions, environment facts, and lessons learned; keep session facts, one-off paths, and project details out."
+            ? "- Record durable cross-session patterns in `~/SOUL.md` via \(soulVerb) (applies next session); keep session facts and one-off paths out."
+            : "- When you observe a durable, cross-session pattern in how the user works, record it in `~/SOUL.md` with \(soulVerb) (edits apply on the next session). Capture stable preferences, conventions, environment facts, and lessons learned; keep session facts, one-off paths, and project details out."
         let secret =
             "- Anything you build that touches a secret follows Secret handling."
 
@@ -362,7 +372,19 @@ public enum SystemPromptTemplates {
     /// register → verify loop); the *when-to-build* triggers live in
     /// `selfImprovementGuidance` and the discovery ladder. Body only — the
     /// gate supplies the heading and intro line.
-    public static let pluginCreatorInstructions = """
+    public static let pluginCreatorInstructions = pluginCreatorInstructionsBody()
+
+    /// Writable-combined-mode aware variant: `sandbox_write_file` is hidden
+    /// there, so step 2 names the unified `file_write` with the absolute
+    /// `/workspace/...` path rule instead of steering at a hidden tool.
+    public static func pluginCreatorInstructionsBody(
+        hostWritableCombined: Bool = false
+    ) -> String {
+        let writeStep =
+            hostWritableCombined
+            ? "2. **Write files** under `plugins/{service}/` in your sandbox home with `file_write` (absolute `/workspace/...` paths) — scripts first, then `plugin.json`. `sandbox_plugin_register` packages the whole directory automatically: do NOT inline script contents or add a `files` field. Binary files are rejected — regenerate them in `setup` instead."
+            : "2. **Write files** under `plugins/{service}/` with `sandbox_write_file` — scripts first, then `plugin.json`. `sandbox_plugin_register` packages the whole directory automatically: do NOT inline script contents or add a `files` field. Binary files are rejected — regenerate them in `setup` instead."
+        return """
         A sandbox plugin is a JSON recipe (`plugin.json`) plus helper scripts
         that run in your sandbox. Use one when you need to connect to a service
         you have no tools for AND it has an API you can call from Python or
@@ -372,7 +394,7 @@ public enum SystemPromptTemplates {
         ### Steps
 
         1. **Secrets.** If the API needs a key or token, collect it via Secret handling (`sandbox_secret_check`, then `sandbox_secret_set` with `value` omitted). Declare the names in `plugin.json` `secrets`; never put a secret value in chat or in plugin files.
-        2. **Write files** under `plugins/{service}/` with `sandbox_write_file` — scripts first, then `plugin.json`. `sandbox_plugin_register` packages the whole directory automatically: do NOT inline script contents or add a `files` field. Binary files are rejected — regenerate them in `setup` instead.
+        \(writeStep)
         3. **Write `plugin.json`** (SandboxPlugin schema):
 
         ```json
@@ -406,6 +428,7 @@ public enum SystemPromptTemplates {
         - Use well-maintained libraries, validate required parameters, return structured JSON, and paginate list operations.
         - Tool names are auto-prefixed with the plugin id (e.g. `notion_list_databases`).
         """
+    }
 
     // MARK: - Enabled Capabilities Manifest
 
@@ -1045,6 +1068,7 @@ public enum SystemPromptTemplates {
     public static func sandbox(
         home: String = "",
         hostReadCombined: Bool = false,
+        hostWritable: Bool = false,
         backgroundEnabled: Bool = false,
         compact: Bool = false
     ) -> String {
@@ -1055,7 +1079,8 @@ public enum SystemPromptTemplates {
             // hints absorbed into the dispatch tail.
             let dispatch =
                 hostReadCombined
-                ? sandboxToolGuideCombinedCompact(backgroundEnabled: backgroundEnabled)
+                ? sandboxToolGuideCombinedCompact(
+                    backgroundEnabled: backgroundEnabled, hostWritable: hostWritable)
                 : sandboxToolGuideCompact(backgroundEnabled: backgroundEnabled)
             return """
 
@@ -1072,7 +1097,7 @@ public enum SystemPromptTemplates {
 
             \(sandboxEnvironmentBlock(home: home))
 
-            \(hostReadCombined ? sandboxToolGuideCombined(backgroundEnabled: backgroundEnabled) : sandboxToolGuide(backgroundEnabled: backgroundEnabled))
+            \(hostReadCombined ? sandboxToolGuideCombined(backgroundEnabled: backgroundEnabled, hostWritable: hostWritable) : sandboxToolGuide(backgroundEnabled: backgroundEnabled))
 
             \(sandboxRuntimeHints(hostReadCombined: hostReadCombined))
             """
@@ -1169,14 +1194,28 @@ public enum SystemPromptTemplates {
     /// tools are the single, path-routed read family, so reads/lists/searches
     /// are NOT done with `sandbox_read_file` / `sandbox_search_files` (hidden
     /// in this mode). The `## Files` block spells out the path routing.
-    private static func sandboxToolGuideCombined(backgroundEnabled: Bool) -> String {
+    /// With `hostWritable` (the `allowHostFolderWrites` opt-in) the writers
+    /// unify too: `file_write` / `file_edit` are the ONLY write family
+    /// (`sandbox_write_file` is hidden), routed by the same path rule.
+    private static func sandboxToolGuideCombined(
+        backgroundEnabled: Bool,
+        hostWritable: Bool = false
+    ) -> String {
         let shellBullet = sandboxShellBullet(backgroundEnabled: backgroundEnabled)
+        let writeBullet =
+            hostWritable
+            ? "- Write/edit files: `file_write` (whole file) / `file_edit` (`old_string`+`new_string`, one exact match). The path picks the filesystem: relative = the user's workspace (tracked, undoable), `/workspace/...` = sandbox."
+            : "- Sandbox writes: `sandbox_write_file` (pass `path` first, then `content` to write the whole file, or `old_string`+`new_string` to edit one match — your workspace is read-only)."
+        let scriptBullet =
+            hostWritable
+            ? "- Multi-line code/scripts: `file_write` the script to a `/workspace/...` path, then `sandbox_exec` to run it (e.g. `python3 script.py`). NEVER embed multi-line code in `python3 -c` / `node -e`: the JSON→shell→code escaping breaks."
+            : "- Multi-line code/scripts: `sandbox_write_file` the script, then `sandbox_exec` to run it (e.g. `python3 script.py`). NEVER embed multi-line code in `python3 -c` / `node -e`: the JSON→shell→code escaping breaks."
         return """
             Tool dispatch:
             - Read files / list dirs / search: `file_read` (reads a file or lists a directory — the path decides), `file_search` (they reach both your workspace and `/workspace/...` sandbox paths — see `## Files`).
-            - Sandbox writes: `sandbox_write_file` (pass `path` first, then `content` to write the whole file, or `old_string`+`new_string` to edit one match — your workspace is read-only).
+            \(writeBullet)
             \(shellBullet)
-            - Multi-line code/scripts: `sandbox_write_file` the script, then `sandbox_exec` to run it (e.g. `python3 script.py`). NEVER embed multi-line code in `python3 -c` / `node -e`: the JSON→shell→code escaping breaks.
+            \(scriptBullet)
             - Run independent calls in parallel; chain dependent shell steps with `&&`.
             """
     }
@@ -1210,16 +1249,25 @@ public enum SystemPromptTemplates {
     }
 
     /// Compact combined-mode dispatch + absorbed runtime hints. Mirrors
-    /// `sandboxToolGuideCombined` (host `file_*` read family, sandbox writes).
-    private static func sandboxToolGuideCombinedCompact(backgroundEnabled: Bool) -> String {
+    /// `sandboxToolGuideCombined` (host `file_*` read family; sandbox
+    /// writes, or the unified path-routed writers when `hostWritable`).
+    private static func sandboxToolGuideCombinedCompact(
+        backgroundEnabled: Bool,
+        hostWritable: Bool = false
+    ) -> String {
         let shell =
             backgroundEnabled
             ? "`sandbox_exec` (single-line; `background:true` + `sandbox_process` for servers)"
             : "`sandbox_exec` (single-line)"
+        let filesLine =
+            hostWritable
+            ? "- Read/list/search: `file_read`, `file_search`; write/edit: `file_write` / `file_edit`. The path picks the filesystem: relative = the user's workspace (tracked, undoable), `/workspace/...` = sandbox — see `## Files`."
+            : "- Read/list/search: `file_read`, `file_search` (reach your workspace and `/workspace/...` sandbox paths — see `## Files`). Sandbox writes: `sandbox_write_file` (`path` FIRST, then `content` whole-file or `old_string`+`new_string` edit; workspace is read-only)."
+        let scriptWriter = hostWritable ? "`file_write` a `/workspace/...` script" : "`sandbox_write_file` a script"
         return """
             Tool dispatch:
-            - Read/list/search: `file_read`, `file_search` (reach your workspace and `/workspace/...` sandbox paths — see `## Files`). Sandbox writes: `sandbox_write_file` (`path` FIRST, then `content` whole-file or `old_string`+`new_string` edit; workspace is read-only).
-            - Shell: \(shell). Multi-line code: `sandbox_write_file` a script then `sandbox_exec` it (e.g. `python3 script.py`) — never `python3 -c` / `node -e`.
+            \(filesLine)
+            - Shell: \(shell). Multi-line code: \(scriptWriter) then `sandbox_exec` it (e.g. `python3 script.py`) — never `python3 -c` / `node -e`.
             - Install deps with `sandbox_install` (`pip`/`npm`/`apk`); inspect large logs with \(sandboxReadFileHintCombined). Run independent calls in parallel; chain dependent steps with `&&`. Sandbox is disposable.
             """
     }
@@ -1386,11 +1434,14 @@ public enum SystemPromptTemplates {
     /// attached so the composer can append unconditionally.
     public static func combinedHostRead(
         from folderContext: FolderContext?,
-        allowSecretReads: Bool = false
+        allowSecretReads: Bool = false,
+        writable: Bool = false
     ) -> String {
         guard let folder = folderContext else { return "" }
 
-        var lines: [String] = ["## Host workspace (read-only)"]
+        var lines: [String] = [
+            writable ? "## Host workspace" : "## Host workspace (read-only)"
+        ]
         lines.append("**Path:** \(folder.rootPath.path)")
         if folder.projectType != .unknown {
             lines.append("**Project Type:** \(folder.projectType.displayName)")
@@ -1410,7 +1461,7 @@ public enum SystemPromptTemplates {
 
         section += """
 
-            \(unifiedFilesBlock(allowSecretReads: allowSecretReads))
+            \(unifiedFilesBlock(allowSecretReads: allowSecretReads, writable: writable))
 
             """
 
@@ -1434,18 +1485,35 @@ public enum SystemPromptTemplates {
     /// The load-bearing mental model for combined mode under the unified,
     /// path-routed file tools: ONE reader (`file_read`, which also lists
     /// directories) and ONE search tool (`file_search`) reach two storage
-    /// areas by path — the read-only workspace (default) and the
-    /// `/workspace/...` sandbox scratch area; one writer
-    /// (`sandbox_write_file`, which also edits) targets the sandbox. This
-    /// replaces the older `## Two filesystems` framing that asked the model
-    /// to pick between `file_*` and `sandbox_*` read families (the
-    /// disambiguation weak models kept getting wrong). The final sentence
-    /// reflects the per-agent secret-read setting.
-    static func unifiedFilesBlock(allowSecretReads: Bool) -> String {
+    /// areas by path — the workspace (default) and the `/workspace/...`
+    /// sandbox scratch area. Read-only mode keeps writes in the sandbox
+    /// (`sandbox_write_file`); WRITABLE mode (`allowHostFolderWrites`)
+    /// unifies the writers too — `file_write` / `file_edit` routed by the
+    /// same path rule. This replaces the older `## Two filesystems`
+    /// framing that asked the model to pick between `file_*` and
+    /// `sandbox_*` families (the disambiguation weak models kept getting
+    /// wrong). The final sentence reflects the per-agent secret-read
+    /// setting.
+    static func unifiedFilesBlock(allowSecretReads: Bool, writable: Bool = false) -> String {
         let secretLine =
             allowSecretReads
             ? "Workspace secret files (`.env`, keys, credentials) are readable because you enabled secret reads — handle them carefully and never copy them into the sandbox or off-host."
             : "Workspace secret files (`.env`, keys, credentials) are refused."
+        if writable {
+            return """
+                ## Files
+
+                Your file tools reach two storage areas, and the PATH decides which:
+                - Relative path (or `/Users/...`) = the user's **workspace** folder. Every write there is tracked and the user can undo it.
+                - `/workspace/...` path = the **sandbox** scratch area.
+
+                Rules:
+                - Read / list / search either area with `file_read` and `file_search`.
+                - Write either area with `file_write` (whole file) or `file_edit` (`old_string`+`new_string`).
+                - Commands run ONLY in the sandbox (`sandbox_exec`), which has no copy of the workspace. To run code against a workspace file, `file_read` it and pass the content in; write results back with `file_write`.
+                - Prefer `/workspace/...` for scratch and iterative work; write to the workspace when the user wants the file in their folder. Surface chat deliverables with `share_artifact`. \(secretLine) Secret files also cannot be written.
+                """
+        }
         return """
             ## Files
 
@@ -1453,7 +1521,7 @@ public enum SystemPromptTemplates {
             - **Workspace** (your read-only host folder) — the default. For "what's in my workspace / on my Desktop", use `file_read` (it reads a file or lists a directory) and `file_search`. Relative paths and `/Users/...` paths are the workspace.
             - **Sandbox** scratch area — pass a `/workspace/...` path to the SAME `file_read` / `file_search`.
 
-            The workspace is read-only: create or change files with `sandbox_write_file` (pass `content` to write the whole file, or `old_string`+`new_string` to edit one match — it writes the sandbox), and run commands with `sandbox_exec` (it runs in the sandbox, which has no copy of the workspace — `file_read` a workspace file and pass its content in if a command needs it). Surface results with `share_artifact`. \(secretLine)
+            The workspace is read-only — you cannot create, edit, or delete files in it, so never offer to; say so if asked (the user can enable folder writes in the agent's sandbox settings). Create or change files with `sandbox_write_file` (pass `content` to write the whole file, or `old_string`+`new_string` to edit one match — it writes the sandbox), and run commands with `sandbox_exec` (it runs in the sandbox, which has no copy of the workspace — `file_read` a workspace file and pass its content in if a command needs it). Surface results with `share_artifact`. \(secretLine)
             """
     }
 

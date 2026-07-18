@@ -1368,6 +1368,9 @@ final class DBExportTool: OsaurusTool, @unchecked Sendable {
         + "JSONL/NDJSON (auto-detected from the path extension). Returns a "
         + "small summary only."
 
+    /// Can write the extract into the sandbox workspace (`/workspace/...`).
+    var mutatesSandboxWorkspace: Bool { true }
+
     let parameters: JSONValue? = .object([
         "type": .string("object"),
         "additionalProperties": .bool(false),

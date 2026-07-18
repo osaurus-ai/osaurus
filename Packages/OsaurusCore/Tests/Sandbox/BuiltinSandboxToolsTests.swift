@@ -1147,6 +1147,184 @@ struct BuiltinSandboxToolsTests {
         let calls = await runner.calls
         #expect(calls.isEmpty, "a default/relative path must stay on the host, not hit the sandbox")
     }
+
+    /// WRITABLE combined mode: `file_write` on a `/workspace/...` path
+    /// routes to the sandbox writer (readForDiff → mkdir → printf) and
+    /// re-labels the success envelope with the calling tool's name, so
+    /// `file_write` keeps one output shape on both routes.
+    @Test @MainActor
+    func combinedMode_fileWrite_workspacePathRoutesToSandboxWriter() async throws {
+        let runner = MockSandboxToolCommandRunner(
+            rootResults: [],
+            agentResults: [
+                .init(stdout: "0\n", stderr: "", exitCode: 0),  // readForDiff: no prior file
+                .init(stdout: "", stderr: "", exitCode: 0),  // mkdir -p
+                .init(stdout: "", stderr: "", exitCode: 0),  // printf write
+            ]
+        )
+        let bridge = SandboxReadBridge(
+            agentName: "test-agent",
+            home: "/workspace/agents/test-agent"
+        )
+        let hostRoot = URL(fileURLWithPath: "/tmp/osaurus-combined-write-\(UUID().uuidString)")
+
+        let output = try await withRegisteredSandboxTools(runner: runner) {
+            try await ChatExecutionContext.$sandboxReadBridge.withValue(bridge) {
+                try await FileWriteTool(rootPath: hostRoot).execute(
+                    argumentsJSON:
+                        #"{"path":"/workspace/agents/test-agent/notes.txt","content":"hello"}"#
+                )
+            }
+        }
+
+        let payload = try successPayload(output)
+        #expect(payload["path"] as? String == "/workspace/agents/test-agent/notes.txt")
+        #expect(payload["action"] as? String == "create")
+        // Envelope re-labeled as the calling tool.
+        #expect(output.contains(#""tool":"file_write""#) || output.contains(#""tool" : "file_write""#))
+
+        let calls = await runner.calls
+        let writeCmd = calls.compactMap { call -> String? in
+            guard case .agent(_, let cmd) = call else { return nil }
+            return cmd.contains("printf") ? cmd : nil
+        }.first
+        #expect(writeCmd?.contains("/workspace/agents/test-agent/notes.txt") == true)
+    }
+
+    /// WRITABLE combined mode: `file_edit` on a `/workspace/...` path
+    /// routes to the sandbox writer's in-place edit branch (`old_string`
+    /// present selects it — same argument shape as the host tool).
+    @Test @MainActor
+    func combinedMode_fileEdit_workspacePathRoutesToSandboxEditBranch() async throws {
+        let runner = MockSandboxToolCommandRunner(
+            rootResults: [],
+            agentResults: [
+                .init(stdout: "1\nold text\n", stderr: "", exitCode: 0),  // readForDiff
+                .init(stdout: "", stderr: "", exitCode: 0),  // mkdir tmp
+                .init(stdout: "", stderr: "", exitCode: 0),  // printf old
+                .init(stdout: "", stderr: "", exitCode: 0),  // printf new
+                .init(stdout: "replaced 1 line(s) with 1 line(s)\n", stderr: "", exitCode: 0),  // python replace
+                .init(stdout: "1\nnew text\n", stderr: "", exitCode: 0),  // post-edit readForDiff (if any)
+            ]
+        )
+        let bridge = SandboxReadBridge(
+            agentName: "test-agent",
+            home: "/workspace/agents/test-agent"
+        )
+        let hostRoot = URL(fileURLWithPath: "/tmp/osaurus-combined-edit-\(UUID().uuidString)")
+
+        let output = try await withRegisteredSandboxTools(runner: runner) {
+            try await ChatExecutionContext.$sandboxReadBridge.withValue(bridge) {
+                try await FileEditTool(rootPath: hostRoot).execute(
+                    argumentsJSON:
+                        #"{"path":"/workspace/agents/test-agent/app.py","old_string":"old","new_string":"new"}"#
+                )
+            }
+        }
+
+        #expect(!ToolEnvelope.isError(output), "edit route should succeed: \(output)")
+        #expect(output.contains(#""tool":"file_edit""#) || output.contains(#""tool" : "file_edit""#))
+
+        let calls = await runner.calls
+        let issuedPython = calls.contains { call in
+            guard case .agent(_, let cmd) = call else { return false }
+            return cmd.contains("python3")
+        }
+        #expect(issuedPython, "the sandbox edit branch runs the python replace script")
+    }
+
+    /// Combined mode: a relative path keeps `file_write` on the host even
+    /// with a bridge bound — the path, not the mode, picks the filesystem.
+    @Test @MainActor
+    func combinedMode_fileWrite_relativePathStaysOnHost() async throws {
+        let runner = MockSandboxToolCommandRunner(rootResults: [], agentResults: [])
+        let bridge = SandboxReadBridge(
+            agentName: "test-agent",
+            home: "/workspace/agents/test-agent"
+        )
+        let hostRoot = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("osaurus-host-write-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: hostRoot, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: hostRoot) }
+
+        let output = try await withRegisteredSandboxTools(runner: runner) {
+            try await ChatExecutionContext.$sandboxReadBridge.withValue(bridge) {
+                try await FileWriteTool(rootPath: hostRoot).execute(
+                    argumentsJSON: #"{"path":"notes.txt","content":"hello host"}"#
+                )
+            }
+        }
+
+        #expect(!ToolEnvelope.isError(output))
+        let written = try String(
+            contentsOf: hostRoot.appendingPathComponent("notes.txt"), encoding: .utf8)
+        #expect(written == "hello host")
+        let calls = await runner.calls
+        #expect(calls.isEmpty, "a relative path must write the host, not the sandbox")
+    }
+
+    /// `dry_run` previews are host-only; the sandbox route refuses them
+    /// with a clear invalid-args envelope instead of silently writing.
+    @Test @MainActor
+    func combinedMode_fileWrite_dryRunOnWorkspacePathIsRefused() async throws {
+        let runner = MockSandboxToolCommandRunner(rootResults: [], agentResults: [])
+        let bridge = SandboxReadBridge(
+            agentName: "test-agent",
+            home: "/workspace/agents/test-agent"
+        )
+        let hostRoot = URL(fileURLWithPath: "/tmp/osaurus-combined-dryrun-\(UUID().uuidString)")
+
+        let output = try await withRegisteredSandboxTools(runner: runner) {
+            try await ChatExecutionContext.$sandboxReadBridge.withValue(bridge) {
+                try await FileWriteTool(rootPath: hostRoot).execute(
+                    argumentsJSON:
+                        #"{"path":"/workspace/agents/test-agent/x.txt","content":"y","dry_run":true}"#
+                )
+            }
+        }
+
+        #expect(ToolEnvelope.isError(output))
+        #expect(output.contains("dry_run"))
+        let calls = await runner.calls
+        #expect(calls.isEmpty, "a refused dry_run must not touch the sandbox")
+    }
+
+    /// Combined mode: secret-file writes on the HOST branch are refused
+    /// (the write channel is the tampering half of the agent-as-bridge
+    /// surface); the same write succeeds in plain folder mode (no scope).
+    @Test @MainActor
+    func combinedMode_fileWrite_refusesHostSecretPaths() async throws {
+        let hostRoot = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("osaurus-secret-write-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: hostRoot, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: hostRoot) }
+
+        // Combined mode (host scope bound): refuse.
+        let refused = try await ChatExecutionContext.$hostReadOnlyScope.withValue(hostRoot) {
+            try await FileWriteTool(rootPath: hostRoot).execute(
+                argumentsJSON: #"{"path":".env","content":"SECRET=1"}"#
+            )
+        }
+        #expect(ToolEnvelope.isError(refused))
+        #expect(refused.contains("secret"))
+        #expect(!FileManager.default.fileExists(atPath: hostRoot.appendingPathComponent(".env").path))
+
+        // Same gate covers file_edit.
+        let editRefused = try await ChatExecutionContext.$hostReadOnlyScope.withValue(hostRoot) {
+            try await FileEditTool(rootPath: hostRoot).execute(
+                argumentsJSON: #"{"path":".env","old_string":"a","new_string":"b"}"#
+            )
+        }
+        #expect(ToolEnvelope.isError(editRefused))
+        #expect(editRefused.contains("secret"))
+
+        // Plain folder mode (no scope): the gate is inert.
+        let allowed = try await FileWriteTool(rootPath: hostRoot).execute(
+            argumentsJSON: #"{"path":".env","content":"SECRET=1"}"#
+        )
+        #expect(!ToolEnvelope.isError(allowed))
+        #expect(FileManager.default.fileExists(atPath: hostRoot.appendingPathComponent(".env").path))
+    }
 }
 
 /// In-memory fake of `SandboxToolCommandRunning` for the sandbox tool

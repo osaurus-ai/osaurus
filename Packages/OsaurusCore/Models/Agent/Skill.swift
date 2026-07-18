@@ -345,7 +345,8 @@ public struct Skill: Codable, Identifiable, Sendable, Equatable {
                     - Never write commit messages that overstate what changed
 
                     ## Boundaries
-                    - These tools exist only while a folder is mounted; if they are missing, ask the user to attach a working folder
+                    - Only use the tools above that are actually in your tool list. In sandbox mode the folder may be read-only and shell/git run in the sandbox instead — the `## Files` rules in your system prompt win over this skill
+                    - If none of these tools are present, ask the user to attach a working folder
                     - Stay inside the mounted folder; do not attempt paths outside it
                     """,
                 isBuiltIn: true,

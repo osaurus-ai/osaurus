@@ -479,6 +479,23 @@ internal func sandboxBridgeSearch(
     )
 }
 
+/// Write or edit a sandbox file for a WRITABLE-combined-mode
+/// `file_write` / `file_edit` call on a `/workspace/...` path. Forwards
+/// the (already-validated) arguments to the sandbox writer — presence of
+/// `old_string` selects the in-place edit branch, exactly like the host
+/// tools' argument shapes — and re-labels the success envelope with the
+/// calling tool's name so each tool has one output shape on both routes.
+internal func sandboxBridgeWrite(
+    _ bridge: SandboxReadBridge,
+    tool: String,
+    args: [String: Any]
+) async throws -> String {
+    let raw = try await SandboxWriteFileTool(agentName: bridge.agentName, home: bridge.home)
+        .execute(argumentsJSON: encodeBridgeArgs(args))
+    guard !ToolEnvelope.isError(raw) else { return raw }
+    return ToolEnvelope.success(tool: tool, result: ToolEnvelope.successPayload(raw))
+}
+
 /// Re-shape a sandbox read/search success envelope into the host-style
 /// text envelope the unified `file_*` tools return, so a given tool has
 /// one output shape regardless of route. Sandbox failure envelopes (which
@@ -1531,7 +1548,10 @@ private func shellEscapeSingleQuoted(_ s: String) -> String {
 
 // MARK: - sandbox_write_file
 
-private struct SandboxWriteFileTool: OsaurusTool, @unchecked Sendable {
+// Internal (not private): writable combined mode routes host
+// `file_write` / `file_edit` calls with `/workspace/...` paths through
+// this tool via `sandboxBridgeWrite`.
+internal struct SandboxWriteFileTool: OsaurusTool, @unchecked Sendable {
     let name = "sandbox_write_file"
     let description =
         "Write a file, or edit it in place — always pass `path` (that exact key) as the FIRST argument. "
@@ -1542,6 +1562,8 @@ private struct SandboxWriteFileTool: OsaurusTool, @unchecked Sendable {
         + "context lines if needed; it fails if `old_string` is missing or matches multiple locations."
     let agentName: String
     let home: String
+
+    var mutatesSandboxWorkspace: Bool { true }
 
     var parameters: JSONValue? {
         .object([
@@ -1879,6 +1901,9 @@ private struct SandboxExecTool: OsaurusTool, @unchecked Sendable {
     /// `timeout` (idle ceiling) as the safety net.
     var bypassRegistryTimeout: Bool { true }
 
+    /// Arbitrary shell (mv/rm/redirects/build output) mutates the workspace.
+    var mutatesSandboxWorkspace: Bool { true }
+
     var parameters: JSONValue? {
         // The "Ignored when `background:true`" caveat only makes sense when
         // the background flag is actually advertised.
@@ -2023,6 +2048,19 @@ private struct SandboxExecTool: OsaurusTool, @unchecked Sendable {
                     logFile: logFile,
                     command: command
                 )
+                // The job's file mutations land after this tool call
+                // returns, so the foreground checkpoint can't see them.
+                // Record a pending pre-manifest now; the tracker
+                // reconciles when the job exits/is killed (or after
+                // relaunch for jobs that died with the previous run).
+                if let sessionId = ChatExecutionContext.currentSessionId, !sessionId.isEmpty {
+                    await SandboxWorkspaceChangeTracker.shared.registerBackgroundJob(
+                        sessionId: sessionId,
+                        agentName: agentName,
+                        pid: pid,
+                        sourceTool: name
+                    )
+                }
                 // Tee the log file into the chat UI so background jobs
                 // get the same Cursor-style live tail as foreground
                 // ones. Terminate maps to `kill -<sig> <pid>` via
@@ -2217,6 +2255,10 @@ private func registerBackgroundLiveExec(
                 let killedByUser = await userTerminated.value
                 statusBox.send(killedByUser ? .killed(reason: "user") : .exited(0))
                 tailer.stop()
+                // Fold the finished job's workspace mutations into the
+                // owning chat's tracked change set.
+                await SandboxWorkspaceChangeTracker.shared.finalizeBackgroundJob(
+                    agentName: agentName, pid: pid)
                 // Pid is gone — release the registry entry (after its grace
                 // tail) so it doesn't leak for the lifetime of the process.
                 // The grace window keeps the terminal status observable for a
@@ -2341,6 +2383,10 @@ private struct SandboxProcessTool: OsaurusTool, @unchecked Sendable {
     let agentName: String
     let home: String
 
+    /// `kill` can stop a job mid-write; wrapping in a checkpoint keeps the
+    /// change list honest about whatever state the files were left in.
+    var mutatesSandboxWorkspace: Bool { true }
+
     var parameters: JSONValue? {
         .object([
             "type": .string("object"),
@@ -2422,6 +2468,8 @@ private struct SandboxProcessTool: OsaurusTool, @unchecked Sendable {
             let tail = await tailIfTracked(job: job, lines: tailLines)
             if !alive {
                 await SandboxBackgroundJobs.shared.unregister(agentName: agentName, pid: pid)
+                await SandboxWorkspaceChangeTracker.shared.finalizeBackgroundJob(
+                    agentName: agentName, pid: pid)
             }
             return sandboxSuccess(
                 tool: name,
@@ -2453,6 +2501,8 @@ private struct SandboxProcessTool: OsaurusTool, @unchecked Sendable {
             let tail = await tailIfTracked(job: job, lines: tailLines)
             if exited {
                 await SandboxBackgroundJobs.shared.unregister(agentName: agentName, pid: pid)
+                await SandboxWorkspaceChangeTracker.shared.finalizeBackgroundJob(
+                    agentName: agentName, pid: pid)
             }
             return sandboxSuccess(
                 tool: name,
@@ -2476,6 +2526,8 @@ private struct SandboxProcessTool: OsaurusTool, @unchecked Sendable {
             let dead = killResult.stdout.contains("dead")
             if dead {
                 await SandboxBackgroundJobs.shared.unregister(agentName: agentName, pid: pid)
+                await SandboxWorkspaceChangeTracker.shared.finalizeBackgroundJob(
+                    agentName: agentName, pid: pid)
             }
             return sandboxSuccess(
                 tool: name,
@@ -2634,6 +2686,10 @@ private struct SandboxInstallTool: OsaurusTool, @unchecked Sendable {
     let agentId: String
     let agentName: String
     let home: String
+
+    /// pip/npm write lockfiles + manifests into the agent workspace
+    /// (dependency dirs themselves are excluded from tracking).
+    var mutatesSandboxWorkspace: Bool { true }
 
     var parameters: JSONValue? {
         .object([

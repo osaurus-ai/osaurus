@@ -83,7 +83,7 @@ struct ChatHistoryMigrationRepairTests {
 
     /// The exact reproduced failure state: `user_version = 1`, all columns
     /// through v7 present, only `router_billing` missing. Opening must NOT
-    /// throw, must add `router_billing`, must reconcile the version to 8,
+    /// throw, must add `router_billing`, must reconcile the version to the latest,
     /// must return the pre-existing turns (not nil), and a fresh save must
     /// round-trip.
     @Test
@@ -118,7 +118,7 @@ struct ChatHistoryMigrationRepairTests {
             try db.open()  // must not throw on the duplicate-column ALTER
             defer { db.close() }
 
-            #expect(self.diskUserVersion() == 8)
+            #expect(self.diskUserVersion() == 9)
             #expect(self.diskColumns(table: "turns").contains("router_billing"))
 
             let loaded = db.loadSession(id: sid)
@@ -145,7 +145,7 @@ struct ChatHistoryMigrationRepairTests {
 
     /// A store whose `user_version` is stuck at 1 but already carries every
     /// column (including v8). Every migration ALTER must be skipped, the
-    /// version reconciled to 8, and data must still load + save.
+    /// version reconciled to the latest, and data must still load + save.
     @Test
     func stuckV1WithAllColumnsPresentOpensCleanly() async throws {
         try await runWithPlaintextRoot {
@@ -172,7 +172,7 @@ struct ChatHistoryMigrationRepairTests {
             try db.open()
             defer { db.close() }
 
-            #expect(self.diskUserVersion() == 8)
+            #expect(self.diskUserVersion() == 9)
             let loaded = db.loadSession(id: sid)
             #expect(loaded?.turns.count == 1)
             #expect(loaded?.turns.first?.content == "already fully columned")
@@ -194,7 +194,7 @@ struct ChatHistoryMigrationRepairTests {
     /// A store stalled before the v3/v4 session columns: `content_hash`
     /// present but `archived`/`capabilities` missing. Here it is the
     /// metadata path (`loadAllMetadata` / `saveSession`) that breaks
-    /// pre-fix. Opening must add the columns, reconcile to 8, and both the
+    /// pre-fix. Opening must add the columns, reconcile to the latest, and both the
     /// sidebar metadata query and saves must succeed.
     @Test
     func stuckV1MissingArchivedAndCapabilitiesHeals() async throws {
@@ -220,7 +220,7 @@ struct ChatHistoryMigrationRepairTests {
             try db.open()
             defer { db.close() }
 
-            #expect(self.diskUserVersion() == 8)
+            #expect(self.diskUserVersion() == 9)
             #expect(self.diskColumns(table: "sessions").contains("archived"))
             #expect(self.diskColumns(table: "sessions").contains("capabilities"))
 
@@ -248,7 +248,7 @@ struct ChatHistoryMigrationRepairTests {
             try db.open()
             defer { db.close() }
 
-            #expect(self.diskUserVersion() == 8)
+            #expect(self.diskUserVersion() == 9)
 
             let id = UUID()
             try db.saveSession(

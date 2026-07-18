@@ -79,9 +79,16 @@
         /// download from silently growing into a multi-GB hash job.
         private static let maxArtifactDownloadBytes: Int = 512 * 1024 * 1024
 
-        /// Host-side Unix socket path for the bridge server (relayed into guest via vsock)
+        /// Host-side Unix socket path for the bridge server (relayed into guest via vsock).
+        /// Symlinks are resolved because a Unix socket path is capped at 104
+        /// bytes: the evals harness points `OsaurusPaths` at a deep temp root
+        /// whose `container/` is a symlink to the real (short) container dir,
+        /// and binding through the unresolved path overflows the cap
+        /// (`unixDomainSocketPathTooLong`) and kills every VM boot. In
+        /// production the path has no symlinks and is unchanged.
         private static var bridgeSocketPath: String {
-            OsaurusPaths.container().appendingPathComponent("bridge.sock").path
+            OsaurusPaths.container().resolvingSymlinksInPath()
+                .appendingPathComponent("bridge.sock").path
         }
         /// Where the bridge socket appears inside the guest container
         private static let guestBridgeSocketPath = "/tmp/osaurus-bridge.sock"

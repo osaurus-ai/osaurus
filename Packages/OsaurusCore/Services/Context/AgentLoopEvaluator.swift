@@ -158,9 +158,11 @@ public enum AgentLoopSandboxMode: Sendable, Equatable {
     /// Pure sandbox: every file/exec tool is a `sandbox_*` tool; no
     /// host folder tools are registered (`.sandbox(hostRead: nil)`).
     case pure
-    /// Combined mode: the eval workspace becomes the READ-ONLY host
-    /// context — `file_read` / `file_search` stay host-side while
-    /// writes/execution happen in the VM (`.sandbox(hostRead: ctx)`).
+    /// Combined mode: the eval workspace becomes the host context —
+    /// `file_read` / `file_search` stay host-side while execution happens
+    /// in the VM (`.sandbox(hostRead: ctx)`). Read-only by default; the
+    /// evaluator's `hostFolderWritesEnabled` flag composes the writable
+    /// shape (`hostWrite: true`) instead.
     case combined
 }
 
@@ -217,6 +219,7 @@ public enum AgentLoopEvaluator {
         maxTokens: Int? = nil,
         stopOnToolRejection: Bool = false,
         sandbox: AgentLoopSandboxMode? = nil,
+        hostFolderWritesEnabled: Bool = false,
         cancelAfterToolCalls: Int? = nil
     ) async -> AgentLoopTranscript {
         // The Default agent's schema is hard-restricted to the 8-tool
@@ -329,7 +332,12 @@ public enum AgentLoopEvaluator {
             // `wantsHostFolder` guarantees folderContext is non-nil here.
             executionMode = .hostFolder(folderContext!)
         case .combined:
-            executionMode = .sandbox(hostRead: folderContext)
+            // `hostFolderWritesEnabled` is the eval-side mirror of the
+            // agent's `allowHostFolderWrites` opt-in: default (false) keeps
+            // the read-only combined shape; true composes the writable
+            // combined shape (unified `file_write`/`file_edit`,
+            // `sandbox_write_file` hidden).
+            executionMode = .sandbox(hostRead: folderContext, hostWrite: hostFolderWritesEnabled)
         case .pure:
             executionMode = .sandbox(hostRead: nil)
         }

@@ -84,7 +84,15 @@ struct SessionToolState: Sendable {
         // (host read tools present) than plain sandbox, so it gets its
         // own fingerprint — toggling a folder on/off while sandbox stays
         // on must invalidate any cached tool state for the prior surface.
-        case .sandbox(let hostRead): modeTag = hostRead == nil ? "sandbox" : "sandbox+hostread"
+        // The write grant changes the surface again (`file_write` /
+        // `file_edit` appear, `sandbox_write_file` hides), so it forks
+        // the fingerprint too.
+        case .sandbox(let hostRead, let hostWrite):
+            if hostRead == nil {
+                modeTag = "sandbox"
+            } else {
+                modeTag = hostWrite ? "sandbox+hostwrite" : "sandbox+hostread"
+            }
         case .none: modeTag = "none"
         }
         return "\(modeTag)/\(toolMode.rawValue)"

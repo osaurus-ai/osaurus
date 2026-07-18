@@ -114,6 +114,10 @@ final class ChatSessionsManager: ObservableObject {
             currentSessionId = nil
         }
         sessions.removeAll { $0.id == id }
+        // Drop the session's tracked sandbox changes + baseline snapshot
+        // (the DB rows cascade in deleteSession; this clears the in-memory
+        // cache, pending background-job records, and baseline clone).
+        Task { await SandboxWorkspaceChangeTracker.shared.purgeSession(id.uuidString) }
     }
 
     /// Rename a session.

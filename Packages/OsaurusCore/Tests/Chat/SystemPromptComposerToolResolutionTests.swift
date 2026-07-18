@@ -413,6 +413,87 @@ struct SystemPromptComposerToolResolutionTests {
     }
 
     @Test
+    func writableCombinedMode_showsUnifiedWritersHidesSandboxWriterAndShell() async {
+        // Writable combined mode (`allowHostFolderWrites`): `file_write` /
+        // `file_edit` join the schema as the single, path-routed write
+        // family; the redundant `sandbox_write_file` hides (like the
+        // sandbox read tools), and shell / git / `file_undo` stay hidden —
+        // exec is sandbox-only, undo lives in the Changes sheet.
+        await withSandboxAgent(autonomous: true) { agentId in
+            withRegisteredSandboxBuiltins {
+                withRegisteredFolderTools { folder in
+                    let tools = SystemPromptComposer.resolveTools(
+                        agentId: agentId,
+                        executionMode: .sandbox(hostRead: folder, hostWrite: true)
+                    )
+                    let names = Set(tools.map { $0.function.name })
+                    // The unified read family stays.
+                    #expect(names.contains("file_read"))
+                    #expect(names.contains("file_search"))
+                    // The unified write family joins.
+                    #expect(names.contains("file_write"))
+                    #expect(names.contains("file_edit"))
+                    // Exactly one write family: the sandbox writer hides.
+                    #expect(!names.contains("sandbox_write_file"))
+                    // Exec stays sandbox-only; undo stays in the sheet.
+                    #expect(names.contains("sandbox_exec"))
+                    #expect(!names.contains("shell_run"))
+                    #expect(!names.contains("git_commit"))
+                    #expect(!names.contains("file_undo"))
+
+                    // Hidden ≠ unregistered: the sandbox writer must stay
+                    // callable (the bridge routes `/workspace/...` writes
+                    // through it).
+                    let callable = ToolRegistry.shared.specs(forTools: ["sandbox_write_file"])
+                    #expect(callable.count == 1)
+                }
+            }
+        }
+    }
+
+    @Test
+    func writableCombinedMode_writeSpecsAdvertisePathRouting() async {
+        // The write tools' rendered specs must carry the path-routing
+        // contract, and `sandbox_exec` must stop pointing at the hidden
+        // `sandbox_write_file`.
+        await withSandboxAgent(autonomous: true) { _ in
+            withRegisteredSandboxBuiltins {
+                withRegisteredFolderTools { folder in
+                    let specs = ToolRegistry.shared.alwaysLoadedSpecs(
+                        mode: .sandbox(hostRead: folder, hostWrite: true)
+                    )
+                    let byName = Dictionary(
+                        uniqueKeysWithValues: specs.map { ($0.function.name, $0) }
+                    )
+                    for writeTool in ["file_write", "file_edit"] {
+                        let desc = byName[writeTool]?.function.description ?? ""
+                        #expect(
+                            desc.contains("/workspace/"),
+                            "\(writeTool) should advertise the sandbox route in writable combined mode"
+                        )
+                    }
+                    let execDesc = byName["sandbox_exec"]?.function.description ?? ""
+                    #expect(
+                        !execDesc.contains("sandbox_write_file"),
+                        "sandbox_exec must not advertise the hidden sandbox_write_file"
+                    )
+
+                    // Read-only combined mode keeps today's surface: no
+                    // write routing note because the writers are hidden,
+                    // and `sandbox_write_file` visible with its references
+                    // intact.
+                    let readOnly = ToolRegistry.shared.alwaysLoadedSpecs(
+                        mode: .sandbox(hostRead: folder)
+                    )
+                    let readOnlyNames = Set(readOnly.map { $0.function.name })
+                    #expect(!readOnlyNames.contains("file_write"))
+                    #expect(readOnlyNames.contains("sandbox_write_file"))
+                }
+            }
+        }
+    }
+
+    @Test
     func combinedMode_unifiedReadTools_advertiseRoutingAndKeepSandboxReadCallable() async {
         // The unified `file_*` read tools must tell the model (at the
         // schema level) that they also reach `/workspace/...` sandbox

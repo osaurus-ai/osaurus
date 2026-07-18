@@ -382,6 +382,7 @@
       "sandbox.exec-discipline",
       "sandbox.fix-failing-tests",
       "sandbox.host-folder-combined",
+      "sandbox.host-folder-writable",
       "sandbox.host-secret-refusal",
       "sandbox.install-and-use",
       "sandbox.json-sum-values",
@@ -392,7 +393,9 @@
       "sandbox.reverse-string",
       "sandbox.secrets-roundtrip",
       "sandbox.sum-range-stdout",
-      "sandbox.two-module-import"
+      "sandbox.two-module-import",
+      "sandbox.writable-path-discipline",
+      "sandbox.writable-secret-write-refusal"
     ],
     "Schema": [
       "schema.additional-properties-rejected",

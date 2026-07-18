@@ -107,6 +107,47 @@ struct ChatViewSandboxTests {
         // separate `file_tree`.
         #expect(prompt.contains("file_read"))
         #expect(prompt.contains("file_tree") == false)
+        // Read-only combined mode must say so explicitly (no offering to
+        // write) and must not advertise the hidden host writers.
+        #expect(prompt.contains("read-only"))
+        #expect(prompt.contains("file_write") == false)
+        #expect(prompt.contains("file_edit") == false)
+        #expect(prompt.contains("sandbox_write_file"))
+    }
+
+    @Test
+    func buildSystemPrompt_writableCombinedMode_emitsPathRoutedWriteContract() async {
+        let folder = FolderContext(
+            rootPath: URL(fileURLWithPath: "/tmp/osaurus-writable-prompt-\(UUID().uuidString)"),
+            projectType: .swift,
+            tree: "./\nREADME.md\nSources/App.swift",
+            manifest: nil,
+            gitStatus: nil,
+            isGitRepo: false,
+            contextFiles: nil
+        )
+        let ctx = await SystemPromptComposer.composeChatContext(
+            agentId: Agent.defaultId,
+            executionMode: .sandbox(hostRead: folder, hostWrite: true)
+        )
+        let prompt = ctx.prompt
+
+        // Writable framing: workspace section drops the read-only marker.
+        #expect(prompt.contains("## Host workspace"))
+        #expect(prompt.contains("## Host workspace (read-only)") == false)
+        // The small-model contract: path decides filesystem, writers are
+        // the unified `file_write` / `file_edit`, exec stays sandbox-only,
+        // host writes are tracked/undoable.
+        #expect(prompt.contains("## Files"))
+        #expect(prompt.contains("file_write"))
+        #expect(prompt.contains("file_edit"))
+        #expect(prompt.contains("PATH decides"))
+        #expect(prompt.contains("tracked"))
+        // The hidden sandbox writer must not be advertised anywhere.
+        #expect(prompt.contains("sandbox_write_file") == false)
+        // Exec is still sandbox-only — no host shell.
+        #expect(prompt.contains("sandbox_exec"))
+        #expect(prompt.contains("shell_run") == false)
     }
 
     @Test

@@ -236,14 +236,31 @@ enum FolderToolHelpers {
 
     /// Run a git command and return the output.
     /// A 30-second timeout prevents indefinite hangs (e.g. credential prompts, network issues).
+    ///
+    /// `confineWritesToDirectory: true` (mutating commands like add/commit)
+    /// wraps git in Seatbelt so its writes stay inside `directory` — `.git`
+    /// is in there, so staging/committing works while e.g. `git config
+    /// --global` writes get blocked. Fails closed if `sandbox-exec` is
+    /// unavailable.
     static func runGitCommand(
         arguments: [String],
         in directory: URL,
-        timeout: Int = 30
+        timeout: Int = 30,
+        confineWritesToDirectory: Bool = false
     ) async throws -> (output: String, exitCode: Int32) {
         let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/git")
-        process.arguments = arguments
+        if confineWritesToDirectory {
+            let invocation = try ShellSandboxProfile.wrappedInvocation(
+                executable: "/usr/bin/git",
+                arguments: arguments,
+                writableRoot: directory
+            )
+            process.executableURL = invocation.executableURL
+            process.arguments = invocation.arguments
+        } else {
+            process.executableURL = URL(fileURLWithPath: "/usr/bin/git")
+            process.arguments = arguments
+        }
         process.currentDirectoryURL = directory
 
         let pipe = Pipe()
@@ -356,6 +373,23 @@ enum FolderToolHelpers {
                 "Refused to read '\(relativePath)': secret files (.env, private keys, "
                 + "credentials) are blocked in read-only sandbox mode to prevent leaking "
                 + "secrets into the sandbox. This is not retryable.",
+            tool: tool,
+            retryable: false
+        )
+    }
+
+    /// Write-side sibling of `secretRefusalEnvelope`: in writable combined
+    /// mode a sandbox-driven agent must not create or overwrite secret
+    /// files in the host workspace (same agent-as-bridge rationale as the
+    /// read denylist, tampering instead of exfiltration). Same activation
+    /// gate — inert in plain folder mode.
+    static func secretWriteRefusalEnvelope(relativePath: String, tool: String) -> String {
+        ToolEnvelope.failure(
+            kind: .rejected,
+            message:
+                "Refused to write '\(relativePath)': secret files (.env, private keys, "
+                + "credentials) cannot be created or modified in sandbox mode. This is "
+                + "not retryable.",
             tool: tool,
             retryable: false
         )
@@ -1445,6 +1479,7 @@ struct FileWriteTool: OsaurusTool, PermissionedTool {
 
     var requirements: [String] { [] }
     var defaultPermissionPolicy: ToolPermissionPolicy { .auto }
+    var mutatesHostFolder: Bool { true }
 
     private let rootPath: URL
 
@@ -1479,7 +1514,38 @@ struct FileWriteTool: OsaurusTool, PermissionedTool {
         }
         let dryRun = coerceBool(args["dry_run"]) ?? false
 
+        // Writable combined mode: an absolute `/workspace/...` path is the
+        // Linux sandbox — route to the sandbox writer so this one tool
+        // writes either filesystem by path (mirrors `file_read`).
+        if combinedFileRoute(path: relativePath) == .sandbox,
+            let bridge = ChatExecutionContext.sandboxReadBridge
+        {
+            if dryRun {
+                return ToolEnvelope.failure(
+                    kind: .invalidArgs,
+                    message:
+                        "`dry_run` previews are not supported for `/workspace/...` sandbox paths — "
+                        + "write directly, or preview host-folder paths only.",
+                    field: "dry_run",
+                    expected: "omit `dry_run` for sandbox paths",
+                    tool: name
+                )
+            }
+            return try await sandboxBridgeWrite(
+                bridge,
+                tool: name,
+                args: ["path": relativePath, "content": content]
+            )
+        }
+
         let fileURL = try FolderToolHelpers.resolvePath(relativePath, rootPath: rootPath)
+        // Writable combined mode: refuse secret-file writes on the host —
+        // the write channel is the tampering half of the agent-as-bridge
+        // surface. Inert in plain folder mode (no host scope bound).
+        if FolderToolHelpers.shouldRefuseSecret(fileURL: fileURL) {
+            return FolderToolHelpers.secretWriteRefusalEnvelope(
+                relativePath: relativePath, tool: name)
+        }
         if let rejected = WorkspaceWriteSafety.structuredTextWriteRejection(
             path: relativePath,
             fileExtension: fileURL.pathExtension.lowercased(),
@@ -1599,6 +1665,7 @@ struct FileEditTool: OsaurusTool, PermissionedTool {
 
     var requirements: [String] { [] }
     var defaultPermissionPolicy: ToolPermissionPolicy { .auto }
+    var mutatesHostFolder: Bool { true }
 
     private let rootPath: URL
 
@@ -1646,7 +1713,41 @@ struct FileEditTool: OsaurusTool, PermissionedTool {
         }
         let dryRun = coerceBool(args["dry_run"]) ?? false
 
+        // Writable combined mode: an absolute `/workspace/...` path is the
+        // Linux sandbox — route to the sandbox writer's in-place edit
+        // branch (`old_string` present selects it), mirroring `file_read`.
+        if combinedFileRoute(path: relativePath) == .sandbox,
+            let bridge = ChatExecutionContext.sandboxReadBridge
+        {
+            if dryRun {
+                return ToolEnvelope.failure(
+                    kind: .invalidArgs,
+                    message:
+                        "`dry_run` previews are not supported for `/workspace/...` sandbox paths — "
+                        + "edit directly, or preview host-folder paths only.",
+                    field: "dry_run",
+                    expected: "omit `dry_run` for sandbox paths",
+                    tool: name
+                )
+            }
+            return try await sandboxBridgeWrite(
+                bridge,
+                tool: name,
+                args: [
+                    "path": relativePath,
+                    "old_string": oldString,
+                    "new_string": newString,
+                ]
+            )
+        }
+
         let fileURL = try FolderToolHelpers.resolvePath(relativePath, rootPath: rootPath)
+        // Same secret-write gate as `file_write` — the denylist must not be
+        // bypassable by switching to the edit tool.
+        if FolderToolHelpers.shouldRefuseSecret(fileURL: fileURL) {
+            return FolderToolHelpers.secretWriteRefusalEnvelope(
+                relativePath: relativePath, tool: name)
+        }
         if let rejected = WorkspaceWriteSafety.structuredTextWriteRejection(
             path: relativePath,
             fileExtension: fileURL.pathExtension.lowercased(),
@@ -1982,6 +2083,9 @@ struct FileUndoTool: OsaurusTool, PermissionedTool {
     var requirements: [String] { [] }
     /// Mutates the working folder — same gate class as `file_write`.
     var defaultPermissionPolicy: ToolPermissionPolicy { .auto }
+    /// Restores coalesce back OUT of the Changes list when the tracker
+    /// re-diffs against the baseline.
+    var mutatesHostFolder: Bool { true }
 
     private let rootPath: URL
 
@@ -2644,6 +2748,7 @@ struct ShellRunTool: OsaurusTool, PermissionedTool {
 
     var requirements: [String] { ["permission:shell"] }
     var defaultPermissionPolicy: ToolPermissionPolicy { .ask }
+    var mutatesHostFolder: Bool { true }
 
     /// Streaming exec opts out of the registry's wall-clock cap. Long
     /// commands rely on the user's [Terminate] button + the optional
@@ -2695,9 +2800,29 @@ struct ShellRunTool: OsaurusTool, PermissionedTool {
         // identically to bash.
         let prefixedCommand = "set -o pipefail; \(command)"
 
+        // Seatbelt confinement: writes outside the selected folder (+ temp
+        // dirs) are kernel-denied and inherited by every child process.
+        // Fail closed — never run the shell unconfined.
+        let invocation: (executableURL: URL, arguments: [String])
+        do {
+            invocation = try ShellSandboxProfile.wrappedInvocation(
+                executable: "/bin/zsh",
+                arguments: ["-c", prefixedCommand],
+                writableRoot: rootPath
+            )
+        } catch {
+            return ToolEnvelope.failure(
+                kind: .unavailable,
+                message: "Cannot confine `shell_run` to the working folder: "
+                    + error.localizedDescription,
+                tool: name,
+                retryable: false
+            )
+        }
+
         let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/bin/zsh")
-        process.arguments = ["-c", prefixedCommand]
+        process.executableURL = invocation.executableURL
+        process.arguments = invocation.arguments
         process.currentDirectoryURL = rootPath
 
         let stdoutPipe = Pipe()
@@ -3203,7 +3328,8 @@ struct GitCommitTool: OsaurusTool, PermissionedTool {
         let stageArgs = (files != nil && !files!.isEmpty) ? ["add"] + files! : ["add", "-A"]
         let (stageOutput, stageExitCode) = try await FolderToolHelpers.runGitCommand(
             arguments: stageArgs,
-            in: rootPath
+            in: rootPath,
+            confineWritesToDirectory: true
         )
 
         if stageExitCode != 0 {
@@ -3213,7 +3339,8 @@ struct GitCommitTool: OsaurusTool, PermissionedTool {
         // Commit
         let (commitOutput, commitExitCode) = try await FolderToolHelpers.runGitCommand(
             arguments: ["commit", "-m", message],
-            in: rootPath
+            in: rootPath,
+            confineWritesToDirectory: true
         )
 
         if commitExitCode != 0 {

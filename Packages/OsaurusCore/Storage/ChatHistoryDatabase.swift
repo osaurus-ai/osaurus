@@ -141,7 +141,7 @@ public final class ChatHistoryDatabase: @unchecked Sendable {
 
     /// Highest schema version this build knows how to produce. Opening a DB
     /// stamped newer than this is refused (forward-version fail-fast).
-    private static let latestSchemaVersion = 8
+    private static let latestSchemaVersion = 9
 
     private func runMigrations() throws {
         let current = try getSchemaVersion()
@@ -165,6 +165,7 @@ public final class ChatHistoryDatabase: @unchecked Sendable {
         if current < 6 { try runMigrationStep(6, migrateToV6) }
         if current < 7 { try runMigrationStep(7, migrateToV7) }
         if current < 8 { try runMigrationStep(8, migrateToV8) }
+        if current < 9 { try runMigrationStep(9, migrateToV9) }
     }
 
     /// Run one migration body atomically. Called only from `runMigrations`,
@@ -332,6 +333,38 @@ public final class ChatHistoryDatabase: @unchecked Sendable {
     private func migrateToV8() throws {
         try addColumnIfMissing("turns", "router_billing", "TEXT")
         try setSchemaVersion(8)
+    }
+
+    /// v9: add `sandbox_changes` — one row per net outstanding sandbox
+    /// workspace change per chat session, backing the chat "Changes" list
+    /// and its undo across app relaunches. No FK on sessions: a change can
+    /// be recorded before the session row's first save lands; cleanup is
+    /// explicit in `deleteSession`.
+    private func migrateToV9() throws {
+        try executeRaw(
+            """
+                CREATE TABLE IF NOT EXISTS sandbox_changes (
+                    id                 TEXT PRIMARY KEY,
+                    session_id         TEXT NOT NULL,
+                    agent_name         TEXT NOT NULL,
+                    root               TEXT NOT NULL,
+                    relative_path      TEXT NOT NULL,
+                    entry_type         TEXT NOT NULL,
+                    kind               TEXT NOT NULL,
+                    state              TEXT NOT NULL,
+                    baseline_signature TEXT,
+                    current_signature  TEXT,
+                    source_tool        TEXT NOT NULL DEFAULT '',
+                    first_changed_at   REAL NOT NULL,
+                    last_changed_at    REAL NOT NULL,
+                    UNIQUE(session_id, agent_name, root, relative_path)
+                )
+            """
+        )
+        try executeRaw(
+            "CREATE INDEX IF NOT EXISTS idx_sandbox_changes_session ON sandbox_changes (session_id)"
+        )
+        try setSchemaVersion(9)
     }
 
     // MARK: - Public API: sessions
@@ -689,6 +722,12 @@ public final class ChatHistoryDatabase: @unchecked Sendable {
             Self.bindText(stmt, index: 1, value: id.uuidString)
         }
 
+        // Manual cascade: sandbox change rows are keyed by session id but
+        // carry no FK (they can be written before the session row exists).
+        _ = try? executeUpdate("DELETE FROM sandbox_changes WHERE session_id = ?1") { stmt in
+            Self.bindText(stmt, index: 1, value: id.uuidString)
+        }
+
         // Best-effort GC. We re-check each hash against the surviving
         // rows; anything still referenced stays.
         for hash in ownedRefs {
@@ -696,6 +735,123 @@ public final class ChatHistoryDatabase: @unchecked Sendable {
                 AttachmentBlobStore.delete(hash)
             }
         }
+    }
+
+    // MARK: - Public API: sandbox changes
+
+    /// Insert or update one net sandbox-workspace change row. Coalescing
+    /// happens upstream in `SandboxWorkspaceChangeTracker`; here we only
+    /// guarantee at most one row per (session, agent, root, path) even when
+    /// the in-memory cache and a prior on-disk row disagree on the row id.
+    public func upsertSandboxChange(_ change: SandboxWorkspaceChange) throws {
+        try inTransaction { _ in
+            try self.transactionalStep(
+                """
+                DELETE FROM sandbox_changes
+                WHERE id = ?1
+                   OR (session_id = ?2 AND agent_name = ?3 AND root = ?4 AND relative_path = ?5)
+                """
+            ) { stmt in
+                Self.bindText(stmt, index: 1, value: change.id.uuidString)
+                Self.bindText(stmt, index: 2, value: change.sessionId)
+                Self.bindText(stmt, index: 3, value: change.agentName)
+                Self.bindText(stmt, index: 4, value: change.root.rawValue)
+                Self.bindText(stmt, index: 5, value: change.relativePath)
+            }
+            try self.transactionalStep(
+                """
+                INSERT INTO sandbox_changes
+                    (id, session_id, agent_name, root, relative_path, entry_type,
+                     kind, state, baseline_signature, current_signature, source_tool,
+                     first_changed_at, last_changed_at)
+                VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)
+                """
+            ) { stmt in
+                Self.bindText(stmt, index: 1, value: change.id.uuidString)
+                Self.bindText(stmt, index: 2, value: change.sessionId)
+                Self.bindText(stmt, index: 3, value: change.agentName)
+                Self.bindText(stmt, index: 4, value: change.root.rawValue)
+                Self.bindText(stmt, index: 5, value: change.relativePath)
+                Self.bindText(stmt, index: 6, value: change.entryType.rawValue)
+                Self.bindText(stmt, index: 7, value: change.kind.rawValue)
+                Self.bindText(stmt, index: 8, value: change.state.rawValue)
+                Self.bindText(stmt, index: 9, value: change.baselineSignature)
+                Self.bindText(stmt, index: 10, value: change.currentSignature)
+                Self.bindText(stmt, index: 11, value: change.sourceTool)
+                sqlite3_bind_double(stmt, 12, change.firstChangedAt.timeIntervalSince1970)
+                sqlite3_bind_double(stmt, 13, change.lastChangedAt.timeIntervalSince1970)
+            }
+        }
+    }
+
+    public func deleteSandboxChange(id: UUID) throws {
+        _ = try executeUpdate("DELETE FROM sandbox_changes WHERE id = ?1") { stmt in
+            Self.bindText(stmt, index: 1, value: id.uuidString)
+        }
+    }
+
+    public func deleteSandboxChanges(sessionId: String) throws {
+        _ = try executeUpdate("DELETE FROM sandbox_changes WHERE session_id = ?1") { stmt in
+            Self.bindText(stmt, index: 1, value: sessionId)
+        }
+    }
+
+    public func loadSandboxChanges(sessionId: String) -> [SandboxWorkspaceChange] {
+        var changes: [SandboxWorkspaceChange] = []
+        do {
+            try prepareAndExecute(
+                """
+                SELECT id, session_id, agent_name, root, relative_path, entry_type,
+                       kind, state, baseline_signature, current_signature, source_tool,
+                       first_changed_at, last_changed_at
+                FROM sandbox_changes
+                WHERE session_id = ?1
+                ORDER BY relative_path ASC
+                """,
+                bind: { stmt in Self.bindText(stmt, index: 1, value: sessionId) },
+                process: { stmt in
+                    while sqlite3_step(stmt) == SQLITE_ROW {
+                        guard
+                            let id = UUID(uuidString: String(cString: sqlite3_column_text(stmt, 0))),
+                            let root = SandboxWorkspaceRootKind(
+                                rawValue: String(cString: sqlite3_column_text(stmt, 3))),
+                            let entryType = SandboxChangeEntryType(
+                                rawValue: String(cString: sqlite3_column_text(stmt, 5))),
+                            let kind = SandboxChangeKind(
+                                rawValue: String(cString: sqlite3_column_text(stmt, 6))),
+                            let state = SandboxChangeState(
+                                rawValue: String(cString: sqlite3_column_text(stmt, 7)))
+                        else { continue }
+                        changes.append(
+                            SandboxWorkspaceChange(
+                                id: id,
+                                sessionId: String(cString: sqlite3_column_text(stmt, 1)),
+                                agentName: String(cString: sqlite3_column_text(stmt, 2)),
+                                root: root,
+                                relativePath: String(cString: sqlite3_column_text(stmt, 4)),
+                                entryType: entryType,
+                                kind: kind,
+                                state: state,
+                                baselineSignature: sqlite3_column_text(stmt, 8).map {
+                                    String(cString: $0)
+                                },
+                                currentSignature: sqlite3_column_text(stmt, 9).map {
+                                    String(cString: $0)
+                                },
+                                sourceTool: String(cString: sqlite3_column_text(stmt, 10)),
+                                firstChangedAt: Date(
+                                    timeIntervalSince1970: sqlite3_column_double(stmt, 11)),
+                                lastChangedAt: Date(
+                                    timeIntervalSince1970: sqlite3_column_double(stmt, 12))
+                            )
+                        )
+                    }
+                }
+            )
+        } catch {
+            print("[ChatHistoryDatabase] loadSandboxChanges failed: \(error)")
+        }
+        return changes
     }
 
     /// Returns true when at least one turn (in any session) still

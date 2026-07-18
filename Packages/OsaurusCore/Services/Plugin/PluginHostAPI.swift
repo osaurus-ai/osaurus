@@ -936,7 +936,9 @@ final class PluginHostContext: @unchecked Sendable {
             () -> (ExecutionMode, String?, ToolSelectionMode) in
             let mode = ToolRegistry.shared.resolveExecutionMode(
                 folderContext: FolderContextService.shared.currentContext,
-                autonomousEnabled: resolved.autonomousEnabled
+                autonomousEnabled: resolved.autonomousEnabled,
+                allowHostFolderWrites: AgentManager.shared.effectiveAutonomousExec(for: agentId)?
+                    .allowHostFolderWrites == true
             )
             // Snapshot the agent's effective model so it can ride along to
             // `composeChatContext` as the chat-model fallback

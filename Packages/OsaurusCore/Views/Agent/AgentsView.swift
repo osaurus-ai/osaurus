@@ -5498,6 +5498,16 @@ struct AgentDetailView: View {
             ) { allow in
                 updateAutonomousExec(from: execConfig) { $0.allowHostSecretReads = allow }
             }
+
+            featureCard(
+                title: "Edit Folder Files",
+                subtitle:
+                    "With a working folder, allow creating and editing its files (tracked and undoable in Changes). Off keeps the folder read-only.",
+                isOn: execConfig?.allowHostFolderWrites ?? false,
+                interactive: interactive
+            ) { allow in
+                updateAutonomousExec(from: execConfig) { $0.allowHostFolderWrites = allow }
+            }
         }
     }
 

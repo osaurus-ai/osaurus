@@ -308,6 +308,7 @@ extension EvalRunner {
             contextWindowOverride: exp.contextWindowOverride,
             stopOnToolRejection: exp.stopOnToolRejection ?? false,
             sandbox: sandboxMode,
+            hostFolderWritesEnabled: sandboxFixture?.allowHostFolderWrites == true,
             cancelAfterToolCalls: exp.cancelAfterToolCalls
         )
 
@@ -675,6 +676,7 @@ extension EvalRunner {
             maxCommandsPerTurn: fixture.maxCommandsPerTurn ?? 10,
             pluginCreate: fixture.pluginCreate ?? true,
             allowHostSecretReads: fixture.allowHostSecretReads ?? false,
+            allowHostFolderWrites: fixture.allowHostFolderWrites ?? false,
             sandboxNetworkEnabled: fixture.networkEnabled ?? true,
             backgroundProcessEnabled: fixture.backgroundProcessEnabled ?? false
         )

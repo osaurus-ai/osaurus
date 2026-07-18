@@ -773,7 +773,8 @@ public struct SystemPromptComposer: Sendable {
                     label: L("Self-Improvement"),
                     content: SystemPromptTemplates.selfImprovementGuidance(
                         canCreatePlugins: snapshot.canCreatePlugins,
-                        compact: toolset.prefersCompactPrompt
+                        compact: toolset.prefersCompactPrompt,
+                        hostWritableCombined: executionMode.allowsHostWriteTools
                     )
                 )
             )
@@ -1096,6 +1097,7 @@ public struct SystemPromptComposer: Sendable {
                     content: SystemPromptTemplates.sandbox(
                         home: sandboxHome,
                         hostReadCombined: executionMode.hostReadContext != nil,
+                        hostWritable: executionMode.allowsHostWriteTools,
                         backgroundEnabled: snapshot.autonomousConfig?.backgroundProcessEnabled ?? false,
                         compact: toolset.prefersCompactPrompt
                     )
@@ -1116,20 +1118,22 @@ public struct SystemPromptComposer: Sendable {
             if !state.isEmpty {
                 sandboxStateSection = state
             }
-            // Combined mode: a read-only host workspace rides alongside
-            // the sandbox. Append the read-only workspace section + the
-            // two-filesystem block AFTER the sandbox section so the agent
+            // Combined mode: a host workspace rides alongside the sandbox
+            // (read-only, or writable via the `allowHostFolderWrites`
+            // opt-in). Append the workspace section + the `## Files`
+            // path-routing block AFTER the sandbox section so the agent
             // reads sandbox framing first, then learns the workspace is a
-            // separate, read-only filesystem. Static so it joins the
-            // cached prefix.
+            // separate filesystem. Static so it joins the cached prefix.
             if let hostRead = executionMode.hostReadContext {
+                let writable = executionMode.allowsHostWriteTools
                 composer.append(
                     .static(
                         id: "combinedHostRead",
-                        label: L("Host Workspace (read-only)"),
+                        label: writable ? L("Host Workspace") : L("Host Workspace (read-only)"),
                         content: SystemPromptTemplates.combinedHostRead(
                             from: hostRead,
-                            allowSecretReads: snapshot.autonomousConfig?.allowHostSecretReads ?? false
+                            allowSecretReads: snapshot.autonomousConfig?.allowHostSecretReads ?? false,
+                            writable: writable
                         )
                     )
                 )
@@ -1270,7 +1274,9 @@ public struct SystemPromptComposer: Sendable {
                     id: "pluginCreator",
                     label: L("Plugin Creator"),
                     content: PluginCreatorGate.section(
-                        instructions: SystemPromptTemplates.pluginCreatorInstructions
+                        instructions: SystemPromptTemplates.pluginCreatorInstructionsBody(
+                            hostWritableCombined: executionMode.allowsHostWriteTools
+                        )
                     )
                 )
             )

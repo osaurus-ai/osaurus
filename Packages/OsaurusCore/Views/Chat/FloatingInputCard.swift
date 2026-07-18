@@ -3347,22 +3347,54 @@ extension FloatingInputCard {
     }
 
     /// True when sandbox is on AND a folder is selected — combined mode,
-    /// where the host workspace is read-only and exec runs in the VM.
+    /// where exec runs in the VM and the host workspace is read-only
+    /// unless the agent's folder-writes opt-in is on.
     private var isCombinedMode: Bool {
         isSandboxEnabled && folderContextService.hasActiveFolder
     }
 
+    /// The `allowHostFolderWrites` opt-in for the current agent: in
+    /// combined mode, `file_write` / `file_edit` may mutate the selected
+    /// folder (tracked + undoable). Drives the chip's lock badge and the
+    /// context-menu toggle.
+    private var allowsFolderWritesInSandboxMode: Bool {
+        agentManager.effectiveAutonomousExec(for: effectiveAgentId)?
+            .allowHostFolderWrites == true
+    }
+
+    /// Combined mode with the folder still read-only — the state the
+    /// chip's lock badge makes visible.
+    private var isFolderReadOnly: Bool {
+        isCombinedMode && !allowsFolderWritesInSandboxMode
+    }
+
     /// Folder chip tooltip. In combined mode it spells out the read-only
-    /// contract so users don't expect in-place edits.
+    /// (or tracked-writes) contract so users know what to expect.
     private func folderChipHelp(hasFolder: Bool) -> Text {
         if hasFolder && isSandboxEnabled {
-            return Text(
-                localized: "Working folder is read-only in sandbox mode — code runs in the sandbox"
-            )
+            return allowsFolderWritesInSandboxMode
+                ? Text(
+                    localized:
+                        "Sandbox mode: folder edits are allowed, tracked, and undoable — code runs in the sandbox"
+                )
+                : Text(
+                    localized:
+                        "Working folder is read-only in sandbox mode — code runs in the sandbox. Right-click to allow writes."
+                )
         }
         return hasFolder
             ? Text(localized: "Change working folder")
             : Text(localized: "Select a working folder")
+    }
+
+    /// Flip the agent's `allowHostFolderWrites` opt-in from the chip's
+    /// context menu — recovery is one click at the point of confusion.
+    private func toggleFolderWritesInSandboxMode() {
+        let agentId = effectiveAgentId
+        let manager = agentManager
+        var config = manager.effectiveAutonomousExec(for: agentId) ?? .default
+        config.allowHostFolderWrites.toggle()
+        Task { try? await manager.updateAutonomousExec(config, for: agentId) }
     }
 
     private var sandboxHelpText: String {
@@ -3377,7 +3409,9 @@ extension FloatingInputCard {
             return "Sandbox is starting up — click to view progress."
         } else if isCombinedMode {
             base =
-                "Combined mode: the selected folder is read-only and all code runs in the sandbox. Click to disable."
+                allowsFolderWritesInSandboxMode
+                ? "Combined mode: folder edits are tracked and undoable; all code runs in the sandbox. Click to disable."
+                : "Combined mode: the selected folder is read-only and all code runs in the sandbox. Click to disable."
         } else if isSandboxEnabled && isSandboxRunning {
             base = "Sandbox is active — click to disable. Right-click for settings."
         } else if isSandboxEnabled {
@@ -4178,6 +4212,19 @@ extension FloatingInputCard {
                             Image(systemName: "arrow.clockwise")
                         }
                     }
+                    // Combined mode only: the read-only default is the
+                    // confusing state, so the opt-out lives right on the
+                    // chip. Plain folder mode is always writable — no
+                    // toggle to show.
+                    if isCombinedMode {
+                        Divider()
+                        Toggle(isOn: Binding(
+                            get: { allowsFolderWritesInSandboxMode },
+                            set: { _ in toggleFolderWritesInSandboxMode() }
+                        )) {
+                            Text("Allow Writes in Sandbox Mode", bundle: .module)
+                        }
+                    }
                     Divider()
                     Button(role: .destructive) {
                         folderContextService.clearFolder()
@@ -4227,6 +4274,15 @@ extension FloatingInputCard {
                     .foregroundColor(canEdit ? theme.secondaryText : theme.tertiaryText)
                     .lineLimit(1)
                     .truncationMode(.middle)
+
+                // Visible read-only state for combined mode — the tooltip
+                // alone wasn't discoverable. No badge when writes are
+                // allowed (writable is the unmarked, expected state).
+                if isFolderReadOnly {
+                    Image(systemName: "lock.fill")
+                        .font(theme.font(size: CGFloat(theme.captionSize) - 3, weight: .semibold))
+                        .foregroundColor(theme.tertiaryText)
+                }
             } else if canEdit && !compact {
                 Text("Folder", bundle: .module)
                     .font(theme.font(size: CGFloat(theme.captionSize), weight: .medium))

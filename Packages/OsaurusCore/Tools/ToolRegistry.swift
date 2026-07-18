@@ -827,30 +827,87 @@ public final class ToolRegistry: ObservableObject {
             // mode, leaving plain folder + plain sandbox modes untouched.
             let policy = combinedHostReadPolicy
             let sandboxAgent = activeSandboxAgentName
-            let result = try await ChatExecutionContext.$hostReadOnlyScope.withValue(policy.scope) {
-                try await ChatExecutionContext.$allowHostSecretReads.withValue(policy.allowSecretReads) {
-                    try await ChatExecutionContext.$sandboxReadBridge.withValue(combinedSandboxReadBridge) {
-                        try await ChatExecutionContext.$sandboxAgentName.withValue(sandboxAgent) {
-                            if tool.bypassRegistryTimeout {
+            // Sandbox change tracking: wrap mutation-capable sandbox tools
+            // in a workspace checkpoint so every file the call creates,
+            // edits, deletes, or moves lands in the owning chat's Changes
+            // list. Only when the call is attributable (session id bound)
+            // and a sandbox agent identity is resolvable.
+            let readBridge = combinedSandboxReadBridge
+            // Sandbox tools checkpoint the sandbox roots; host-folder tools
+            // checkpoint the user-selected folder. In WRITABLE combined mode
+            // the unified `file_write`/`file_edit` can mutate EITHER
+            // filesystem (a `/workspace/...` path routes through the sandbox
+            // bridge), so they take both checkpoints — the untouched side
+            // diffs to zero rows and costs one manifest scan.
+            var changeCheckpoints: [SandboxWorkspaceChangeTracker.CheckpointToken] = []
+            if let sessionId = ChatExecutionContext.currentSessionId, !sessionId.isEmpty {
+                if tool.mutatesSandboxWorkspace, let agentName = sandboxAgent {
+                    changeCheckpoints.append(
+                        await SandboxWorkspaceChangeTracker.shared.beginCheckpoint(
+                            sessionId: sessionId,
+                            agentName: agentName,
+                            sourceTool: name
+                        )
+                    )
+                } else if tool.mutatesHostFolder {
+                    if let folderRoot = FolderContextService.cachedRootPath {
+                        changeCheckpoints.append(
+                            await SandboxWorkspaceChangeTracker.shared.beginHostCheckpoint(
+                                sessionId: sessionId,
+                                folderPath: folderRoot.standardizedFileURL.path,
+                                sourceTool: name
+                            )
+                        )
+                    }
+                    if let bridge = readBridge {
+                        changeCheckpoints.append(
+                            await SandboxWorkspaceChangeTracker.shared.beginCheckpoint(
+                                sessionId: sessionId,
+                                agentName: bridge.agentName,
+                                sourceTool: name
+                            )
+                        )
+                    }
+                }
+            }
+            let result: String
+            do {
+                result = try await ChatExecutionContext.$hostReadOnlyScope.withValue(policy.scope) {
+                    try await ChatExecutionContext.$allowHostSecretReads.withValue(policy.allowSecretReads) {
+                        try await ChatExecutionContext.$sandboxReadBridge.withValue(readBridge) {
+                            try await ChatExecutionContext.$sandboxAgentName.withValue(sandboxAgent) {
+                                if tool.bypassRegistryTimeout {
+                                    return Self.normalizeToolResult(
+                                        try await Self.runToolBodyUntimed(
+                                            tool,
+                                            argumentsJSON: effectiveArgumentsJSON
+                                        ),
+                                        tool: name
+                                    )
+                                }
                                 return Self.normalizeToolResult(
-                                    try await Self.runToolBodyUntimed(
+                                    try await Self.runToolBody(
                                         tool,
-                                        argumentsJSON: effectiveArgumentsJSON
+                                        argumentsJSON: effectiveArgumentsJSON,
+                                        timeoutSeconds: Self.defaultToolTimeoutSeconds
                                     ),
                                     tool: name
                                 )
                             }
-                            return Self.normalizeToolResult(
-                                try await Self.runToolBody(
-                                    tool,
-                                    argumentsJSON: effectiveArgumentsJSON,
-                                    timeoutSeconds: Self.defaultToolTimeoutSeconds
-                                ),
-                                tool: name
-                            )
                         }
                     }
                 }
+            } catch {
+                // Bodies normally fold errors into envelopes, but the
+                // checkpoints must still reconcile whatever was written
+                // before a throw (e.g. cancellation mid-write).
+                for checkpoint in changeCheckpoints {
+                    await SandboxWorkspaceChangeTracker.shared.endCheckpoint(checkpoint)
+                }
+                throw error
+            }
+            for checkpoint in changeCheckpoints {
+                await SandboxWorkspaceChangeTracker.shared.endCheckpoint(checkpoint)
             }
             if PrefillDebugLog.shared.isEnabled, name.hasPrefix("capabilities_") {
                 let flat = result.replacingOccurrences(of: "\n", with: " ")
@@ -1592,6 +1649,14 @@ public final class ToolRegistry: ObservableObject {
         "file_read", "file_search",
     ]
 
+    /// The write subset of the folder tools that joins the schema in
+    /// WRITABLE combined mode (`allowHostFolderWrites` opt-in). Only the
+    /// file writers — never `shell_run` / git / `file_undo`, so exec
+    /// stays sandbox-only and undo stays in the Changes sheet.
+    static let folderWriteToolNames: Set<String> = [
+        "file_write", "file_edit",
+    ]
+
     /// Runtime-managed tools are execution infrastructure, always loaded when registered.
     var runtimeManagedToolNames: Set<String> {
         Self.folderToolNames.union(builtInSandboxToolNames)
@@ -1642,10 +1707,15 @@ public final class ToolRegistry: ObservableObject {
             // Combined sandbox + host-read mode keeps the read-only host
             // subset (`file_read` / `file_search`) visible while still
             // hiding host write / edit / shell / git — exec is
-            // sandbox-only, the host is read-only.
+            // sandbox-only. With the `allowHostFolderWrites` opt-in the
+            // file writers (`file_write` / `file_edit`) join too; shell /
+            // git / `file_undo` stay hidden regardless.
             var folderExcluded = Self.folderToolNames
             if mode.allowsHostReadTools {
                 folderExcluded.subtract(Self.folderReadOnlyToolNames)
+            }
+            if mode.allowsHostWriteTools {
+                folderExcluded.subtract(Self.folderWriteToolNames)
             }
             excluded.formUnion(folderExcluded)
         }
@@ -1659,6 +1729,13 @@ public final class ToolRegistry: ObservableObject {
             // lists directories). They stay registered (just hidden from the
             // schema) so tear-down and capability indexing see them.
             excluded.formUnion(Self.sandboxReadToolNames)
+            if mode.allowsHostWriteTools {
+                // Writable combined mode: `file_write` / `file_edit` are the
+                // single, path-routed WRITE family too (`/workspace/...`
+                // routes to the sandbox writer), so hide the redundant
+                // `sandbox_write_file` the same way.
+                excluded.formUnion(Self.sandboxWriteToolNames)
+            }
         }
         if mode.usesHostFolderTools || mode.usesSandboxTools {
             excluded.formUnion(folderConflictingToolNames)
@@ -1681,6 +1758,13 @@ public final class ToolRegistry: ObservableObject {
         "sandbox_read_file", "sandbox_search_files",
     ]
 
+    /// Sandbox write tool made redundant by the path-routed `file_write` /
+    /// `file_edit` in WRITABLE combined mode. Hidden from the schema there
+    /// (still registered, mirroring `sandboxReadToolNames`).
+    static let sandboxWriteToolNames: Set<String> = [
+        "sandbox_write_file"
+    ]
+
     /// Resolve the active execution mode for a chat send. Single source of
     /// truth: callers pass the user's explicit intent (autonomous toggle +
     /// optional folder context) and we apply the priority rule once.
@@ -1698,15 +1782,21 @@ public final class ToolRegistry: ObservableObject {
     /// `autonomousEnabled` alone implied `.sandbox`.
     func resolveExecutionMode(
         folderContext: FolderContext?,
-        autonomousEnabled: Bool
+        autonomousEnabled: Bool,
+        allowHostFolderWrites: Bool = false
     ) -> ExecutionMode {
         if autonomousEnabled, toolsByName.keys.contains("sandbox_exec") {
             // Combined mode: exec runs in the sandbox, and any mounted
-            // folder rides along as a read-only host workspace
-            // (`hostRead`). When no folder is picked this is plain
-            // sandbox mode. Either way exec is confined to the VM, which
-            // has no mount of the host workspace.
-            return .sandbox(hostRead: folderContext)
+            // folder rides along as a host workspace (`hostRead`) —
+            // read-only unless the agent's `allowHostFolderWrites`
+            // opt-in grants `file_write`/`file_edit`. When no folder is
+            // picked this is plain sandbox mode. Either way exec is
+            // confined to the VM, which has no mount of the host
+            // workspace.
+            return .sandbox(
+                hostRead: folderContext,
+                hostWrite: folderContext != nil && allowHostFolderWrites
+            )
         }
         if let folderContext {
             return .hostFolder(folderContext)
@@ -1905,21 +1995,47 @@ public final class ToolRegistry: ObservableObject {
         " In this mode the `path` may also be an absolute `/workspace/...` location, "
         + "which reads the Linux sandbox scratch area instead of your workspace."
 
+    /// Write-tool variant of the routing note for WRITABLE combined mode.
+    private static let combinedModeWriteRoutingNote =
+        " In this mode the `path` decides the filesystem: a relative path writes the user's "
+        + "folder (tracked, undoable), an absolute `/workspace/...` path writes the Linux "
+        + "sandbox scratch area."
+
     /// In combined sandbox + host-read mode the host `file_*` tools are the
-    /// single, path-routed read family. Annotate their rendered specs so
-    /// the model knows they reach `/workspace/...` sandbox paths too. Inert
-    /// (returns `specs` unchanged) in every other mode and for every other
-    /// tool, so pure folder / pure sandbox schemas are untouched.
+    /// single, path-routed read family (and, with the write grant, the
+    /// single write family). Annotate their rendered specs so the model
+    /// knows they reach `/workspace/...` sandbox paths too, and retarget
+    /// `sandbox_exec`'s `sandbox_write_file` references at the unified
+    /// writers when `sandbox_write_file` is hidden. Inert (returns `specs`
+    /// unchanged) in every other mode and for every other tool, so pure
+    /// folder / pure sandbox schemas are untouched.
     private func annotatedForCombinedMode(_ specs: [Tool], mode: ExecutionMode) -> [Tool] {
         guard mode.usesSandboxTools, mode.allowsHostReadTools else { return specs }
+        let writable = mode.allowsHostWriteTools
         return specs.map { spec in
-            guard Self.folderReadOnlyToolNames.contains(spec.function.name) else { return spec }
+            let name = spec.function.name
             let base = spec.function.description ?? ""
+            let description: String
+            if Self.folderReadOnlyToolNames.contains(name) {
+                description = base + Self.combinedModeFileRoutingNote
+            } else if writable, Self.folderWriteToolNames.contains(name) {
+                description = base + Self.combinedModeWriteRoutingNote
+            } else if writable, base.contains("`sandbox_write_file`") {
+                // `sandbox_write_file` is hidden in writable combined mode;
+                // don't let `sandbox_exec` (and friends) advertise a tool
+                // that isn't in the schema — point at the unified writer.
+                description = base.replacingOccurrences(
+                    of: "`sandbox_write_file`",
+                    with: "`file_write` (with a `/workspace/...` path)"
+                )
+            } else {
+                return spec
+            }
             return Tool(
                 type: spec.type,
                 function: ToolFunction(
-                    name: spec.function.name,
-                    description: base + Self.combinedModeFileRoutingNote,
+                    name: name,
+                    description: description,
                     parameters: spec.function.parameters
                 )
             )
