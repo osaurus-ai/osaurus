@@ -522,6 +522,11 @@ public final class SchedulerDatabase: @unchecked Sendable {
         return id
     }
 
+    /// Commits the first terminal state for a run. Reconciliation, cancellation,
+    /// and completion can race, so later writers must not rewrite an existing
+    /// terminal audit record. Returns false when the row was already terminal
+    /// or no longer exists.
+    @discardableResult
     public func recordRunEnd(
         runId: UUID,
         status: AgentRunStatus,
@@ -530,7 +535,8 @@ public final class SchedulerDatabase: @unchecked Sendable {
         tokensOut: Int? = nil,
         costUSD: Double? = nil,
         error: String? = nil
-    ) throws {
+    ) throws -> Bool {
+        var didTerminalize = false
         try prepareAndExecute(
             """
                 UPDATE agent_runs SET
@@ -540,7 +546,7 @@ public final class SchedulerDatabase: @unchecked Sendable {
                     tokens_out = ?5,
                     cost_usd   = ?6,
                     error      = ?7
-                WHERE id = ?1
+                WHERE id = ?1 AND status = ?8
             """,
             bind: { stmt in
                 Self.bindText(stmt, index: 1, value: runId.uuidString)
@@ -550,6 +556,7 @@ public final class SchedulerDatabase: @unchecked Sendable {
                 Self.bindOptionalInt(stmt, index: 5, value: tokensOut)
                 Self.bindOptionalDouble(stmt, index: 6, value: costUSD)
                 Self.bindText(stmt, index: 7, value: error)
+                Self.bindText(stmt, index: 8, value: AgentRunStatus.running.rawValue)
             },
             process: { stmt in
                 let step = sqlite3_step(stmt)
@@ -558,8 +565,10 @@ public final class SchedulerDatabase: @unchecked Sendable {
                         "recordRunEnd: step returned \(step)"
                     )
                 }
+                didTerminalize = sqlite3_changes(self.db) == 1
             }
         )
+        return didTerminalize
     }
 
     /// Reverse-chrono runs for one agent, optionally bounded above by

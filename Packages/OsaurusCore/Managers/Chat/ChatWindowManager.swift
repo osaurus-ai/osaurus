@@ -25,6 +25,16 @@ public struct ChatWindowInfo: Identifiable, Sendable {
     }
 }
 
+struct ChatWindowLiveSessionOwnership: Sendable, Equatable {
+    let sessionId: UUID?
+    let agentId: UUID?
+}
+
+struct ChatWindowSessionReference: Identifiable, Sendable, Equatable {
+    let id: UUID
+    let sessionAgentId: UUID?
+}
+
 /// Manages multiple chat windows in the application
 @MainActor
 public final class ChatWindowManager: NSObject, ObservableObject {
@@ -378,6 +388,43 @@ public final class ChatWindowManager: NSObject, ObservableObject {
             return windows[windowId]
         }
         return windows.values.first { $0.sessionId == sessionId }
+    }
+
+    /// Resolves the currently displayed session and its live owner. Security-
+    /// sensitive callers must use this instead of `ChatWindowInfo`, whose
+    /// agent/session fields describe window creation and can become stale after
+    /// the user switches conversations.
+    func findLiveWindow(bySessionId sessionId: UUID) -> ChatWindowSessionReference? {
+        let liveSessions = windowStates.mapValues { state in
+            ChatWindowLiveSessionOwnership(
+                sessionId: state.session.sessionId,
+                agentId: state.session.agentId
+            )
+        }
+        return Self.resolveLiveWindow(
+            bySessionId: sessionId,
+            windows: windows,
+            liveSessions: liveSessions
+        )
+    }
+
+    /// Pure resolver used by focused ownership tests. Requiring both registry
+    /// entries makes a missing live state fail closed; creation-time ownership
+    /// is never used to authorize a focus operation.
+    nonisolated static func resolveLiveWindow(
+        bySessionId sessionId: UUID,
+        windows: [UUID: ChatWindowInfo],
+        liveSessions: [UUID: ChatWindowLiveSessionOwnership]
+    ) -> ChatWindowSessionReference? {
+        guard let (windowId, ownership) = liveSessions.first(where: { _, ownership in
+            ownership.sessionId == sessionId
+        }), windows[windowId] != nil else {
+            return nil
+        }
+        return ChatWindowSessionReference(
+            id: windowId,
+            sessionAgentId: ownership.agentId
+        )
     }
 
     /// Check if any windows are visible

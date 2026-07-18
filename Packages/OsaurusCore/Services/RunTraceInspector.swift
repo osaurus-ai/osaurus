@@ -10,6 +10,69 @@
 import Darwin
 import Foundation
 
+private enum RunTraceTextSafety {
+    private static let localPathRules: [(pattern: String, replacement: String)] = [
+        (
+            #"(?i)(^|[\s\"'])(~/(?:[^\s\"'<>]+))"#,
+            "$1[REDACTED_PATH]"
+        ),
+        (
+            #"(?i)(^|[\s\"'])(Users/(?:[^\s\"'<>]+))"#,
+            "$1[REDACTED_PATH]"
+        ),
+        (
+            #"(?i)(?:file://)?/(?:Users|home|private|var|tmp|Library|opt)/[^\s\"'<>]+"#,
+            "[REDACTED_PATH]"
+        ),
+        (
+            #"(?i)\b[A-Z]:\\(?:[^\\\s\"'<>]+\\)+[^\\\s\"'<>]*"#,
+            "[REDACTED_PATH]"
+        ),
+        (
+            #"\\\\[^\\\s\"'<>]+\\[^\s\"'<>]+"#,
+            "[REDACTED_PATH]"
+        ),
+    ]
+
+    static func containsUnsafeUnicode(_ value: String) -> Bool {
+        value.unicodeScalars.contains { isUnsafeUnicode($0.value) }
+    }
+
+    static func sanitizedText(_ value: String) -> String {
+        String(value.unicodeScalars.map { scalar -> Character in
+            isUnsafeUnicode(scalar.value) ? "�" : Character(String(scalar))
+        })
+    }
+
+    static func containsLocalPath(_ value: String) -> Bool {
+        localPathRules.contains { rule in
+            guard let regex = try? NSRegularExpression(pattern: rule.pattern) else { return false }
+            return regex.firstMatch(
+                in: value,
+                range: NSRange(value.startIndex..<value.endIndex, in: value)
+            ) != nil
+        }
+    }
+
+    static func redactingLocalPaths(in value: String) -> String {
+        localPathRules.reduce(value) { current, rule in
+            guard let regex = try? NSRegularExpression(pattern: rule.pattern) else { return current }
+            return regex.stringByReplacingMatches(
+                in: current,
+                range: NSRange(current.startIndex..<current.endIndex, in: current),
+                withTemplate: rule.replacement
+            )
+        }
+    }
+
+    private static func isUnsafeUnicode(_ code: UInt32) -> Bool {
+        (code < 0x20 && code != 0x09 && code != 0x0A && code != 0x0D)
+            || (0x202A ... 0x202E).contains(code)
+            || (0x2066 ... 0x2069).contains(code)
+            || code == 0x200E || code == 0x200F || code == 0x061C
+    }
+}
+
 public struct RunTraceInspection: Codable, Sendable, Equatable {
     public enum ExportError: LocalizedError, Sendable, Equatable {
         case unsafe(String)
@@ -216,43 +279,15 @@ public struct RunTraceInspection: Codable, Sendable, Equatable {
     }
 
     private static func containsUnsafeUnicode(_ value: String) -> Bool {
-        value.unicodeScalars.contains { scalar in
-            let code = scalar.value
-            return (code < 0x20 && code != 0x09 && code != 0x0A && code != 0x0D)
-                || (0x202A ... 0x202E).contains(code)
-                || (0x2066 ... 0x2069).contains(code)
-                || code == 0x200E || code == 0x200F || code == 0x061C
-        }
+        RunTraceTextSafety.containsUnsafeUnicode(value)
     }
 
     private static func sanitizedDisplayText(_ value: String) -> String {
-        String(value.unicodeScalars.map { scalar -> Character in
-            let code = scalar.value
-            if (code < 0x20 && code != 0x09 && code != 0x0A && code != 0x0D)
-                || (0x202A ... 0x202E).contains(code)
-                || (0x2066 ... 0x2069).contains(code)
-                || code == 0x200E || code == 0x200F || code == 0x061C {
-                return "�"
-            }
-            return Character(String(scalar))
-        })
+        RunTraceTextSafety.sanitizedText(value)
     }
 
     private static func containsLocalPath(_ value: String) -> Bool {
-        let patterns = [
-            #"(?i)(?:file://)?/(?:Users|home|private|var|tmp|Library|opt)/[^\s\"'<>]+"#,
-            #"(?i)(?:^|[\s\"'])~/(?:[^\s\"'<>]+)"#,
-            #"(?i)(?:^|[\s\"'])Users/(?:[^\s\"'<>]+)"#,
-            #"(?i)\b[A-Z]:\\(?:[^\\\s\"'<>]+\\)+[^\\\s\"'<>]*"#,
-            #"\\\\[^\\\s\"'<>]+\\[^\s\"'<>]+"#,
-        ]
-        return patterns.contains { pattern in
-            guard let regex = try? NSRegularExpression(pattern: pattern) else { return false }
-            return regex.firstMatch(
-                in: value,
-                range: NSRange(value.startIndex..<value.endIndex, in: value)
-            ) != nil
-        }
+        RunTraceTextSafety.containsLocalPath(value)
     }
 
     public struct Summary: Codable, Sendable, Equatable {
@@ -1568,12 +1603,23 @@ public enum RunTraceInspector {
         return sanitizeText(fileName.isEmpty ? "(source path redacted)" : fileName)
     }
 
+    /// Redacts untrusted diagnostic text for direct UI rendering without
+    /// truncating the status or root cause. This intentionally shares the
+    /// inspector's embedded-JSON and inline-secret rules, then removes local
+    /// paths and unsafe directional/control characters from the full string.
+    static func redactedDisplayText(_ value: String, options: Options = Options()) -> String {
+        let embedded = redactEmbeddedJSONObjects(value, path: "$.display", options: options)
+        let inline = redactInlineSecrets(embedded.text, path: "$.display")
+        let withoutPaths = RunTraceTextSafety.redactingLocalPaths(in: inline.text)
+        return RunTraceTextSafety.sanitizedText(withoutPaths)
+    }
+
     private static func redactInlineSecrets(_ value: String, path: String) -> (text: String, paths: [String]) {
         var redacted = value
         var matched = false
         let patterns = [
             (
-                #"(?i)(["']?(?:api[_-]?key|apikey|authorization|bearer|cookies?|credentials?|keychain|passwords?|private_key|secrets?|session_token|token)["']?\s*:\s*["'])[^"']+(["'])"#,
+                #"(?i)(["']?(?:api[_-]?key|apikey|authorization|bearer|cookies?|credentials?|keychain|passwords?|private[_-]?key|secrets?|access[_-]?token|refresh[_-]?token|id[_-]?token|auth[_-]?token|session[_-]?token|token)["']?\s*[:=]\s*["'])[^"']+(["'])"#,
                 "$1[REDACTED]$2"
             ),
             (#"(?i)(bearer\s+)[A-Za-z0-9._\-+/=]{8,}"#, "$1[REDACTED]"),
@@ -1908,16 +1954,7 @@ public enum RunTraceInspector {
     }
 
     private static func sanitizeText(_ value: String) -> String {
-        String(value.unicodeScalars.map { scalar -> Character in
-            let code = scalar.value
-            if (code < 0x20 && code != 0x09 && code != 0x0A && code != 0x0D)
-                || (0x202A ... 0x202E).contains(code)
-                || (0x2066 ... 0x2069).contains(code)
-                || code == 0x200E || code == 0x200F || code == 0x061C {
-                return "�"
-            }
-            return Character(String(scalar))
-        })
+        RunTraceTextSafety.sanitizedText(value)
     }
 
     private static func collectionLimitViolation(in root: [String: Any], options: Options) -> String? {

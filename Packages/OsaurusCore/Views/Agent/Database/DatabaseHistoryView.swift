@@ -24,6 +24,24 @@ enum ActivityRunChatRouting {
     static func sessionBelongsToRun(sessionAgentId: UUID?, runAgentId: UUID) -> Bool {
         (sessionAgentId ?? Agent.defaultId) == runAgentId
     }
+
+    static func canFocus(_ window: ChatWindowSessionReference, forRunAgentId runAgentId: UUID) -> Bool {
+        sessionBelongsToRun(
+            sessionAgentId: window.sessionAgentId,
+            runAgentId: runAgentId
+        )
+    }
+}
+
+enum ActivityRunDisplayText {
+    static func redacted(_ value: String) -> String {
+        RunTraceInspector.redactedDisplayText(value)
+    }
+}
+
+struct ActivityRunRefreshKey: Equatable, Sendable {
+    let agentId: UUID
+    let liveRunIds: Set<UUID>
 }
 
 enum ActivityRunFilter: String, CaseIterable, Identifiable {
@@ -105,7 +123,14 @@ struct DatabaseHistoryView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(theme.primaryBackground)
-        .task(id: backgroundManager.liveAgentRunIds) { await activityRefreshLoop() }
+        .task(
+            id: ActivityRunRefreshKey(
+                agentId: agentId,
+                liveRunIds: backgroundManager.liveAgentRunIds
+            )
+        ) {
+            await activityRefreshLoop()
+        }
         .onChange(of: agentId) { _, _ in
             didReconcileInterruptedRuns = false
             actionError = nil
@@ -193,7 +218,7 @@ struct DatabaseHistoryView: View {
             if isLoadingRuns {
                 ProgressView().padding(24)
             } else if let loadError {
-                Text(loadError)
+                Text(ActivityRunDisplayText.redacted(loadError))
                     .font(.system(size: 11))
                     .foregroundColor(.red)
                     .padding(16)
@@ -306,7 +331,10 @@ struct DatabaseHistoryView: View {
                                 RunTraceDiagnosticView(inspection: traceInspection)
                             }
                             if let traceLoadError {
-                                Text("Changelog unavailable: \(traceLoadError)", bundle: .module)
+                                Text(
+                                    "Changelog unavailable: \(ActivityRunDisplayText.redacted(traceLoadError))",
+                                    bundle: .module
+                                )
                                     .font(.system(size: 10))
                                     .foregroundColor(.orange)
                                     .padding(12)
@@ -369,7 +397,7 @@ struct DatabaseHistoryView: View {
                 }
             }
             if let error = run.error, !error.isEmpty {
-                Text(error)
+                Text(ActivityRunDisplayText.redacted(error))
                     .font(.system(size: 11, design: .monospaced))
                     .foregroundColor(.red)
                     .lineLimit(3)
@@ -434,7 +462,7 @@ struct DatabaseHistoryView: View {
                 Spacer()
             }
             if let actionError {
-                Text(actionError)
+                Text(ActivityRunDisplayText.redacted(actionError))
                     .font(.system(size: 10))
                     .foregroundColor(.red)
             }
@@ -459,22 +487,22 @@ struct DatabaseHistoryView: View {
     private func changelogRowView(_ row: ChangelogEntry) -> some View {
         VStack(alignment: .leading, spacing: 2) {
             HStack(spacing: 6) {
-                Text(row.op)
+                Text(ActivityRunDisplayText.redacted(row.op))
                     .font(.system(size: 10, weight: .bold, design: .monospaced))
                     .foregroundColor(theme.accentColor)
                 if let table = row.tableName {
-                    Text(table)
+                    Text(ActivityRunDisplayText.redacted(table))
                         .font(.system(size: 10, design: .monospaced))
                         .foregroundColor(theme.primaryText)
                 }
                 if let pk = row.rowPK {
-                    Text(pk)
+                    Text(ActivityRunDisplayText.redacted(pk))
                         .font(.system(size: 10, design: .monospaced))
                         .foregroundColor(theme.tertiaryText)
                         .lineLimit(1)
                 }
                 Spacer()
-                Text(row.actor)
+                Text(ActivityRunDisplayText.redacted(row.actor))
                     .font(.system(size: 9))
                     .foregroundColor(theme.tertiaryText)
                 Text(row.timestamp.formatted(date: .omitted, time: .standard))
@@ -482,7 +510,7 @@ struct DatabaseHistoryView: View {
                     .foregroundColor(theme.tertiaryText)
             }
             if let sql = row.sql, !sql.isEmpty {
-                Text(sql)
+                Text(ActivityRunDisplayText.redacted(sql))
                     .font(.system(size: 9, design: .monospaced))
                     .foregroundColor(theme.tertiaryText)
                     .lineLimit(2)
@@ -606,11 +634,8 @@ struct DatabaseHistoryView: View {
             actionError = String(localized: "No chat is linked to this run.", bundle: .module)
             return
         }
-        if let existing = ChatWindowManager.shared.findWindow(bySessionId: sessionId) {
-            guard ActivityRunChatRouting.sessionBelongsToRun(
-                sessionAgentId: existing.agentId,
-                runAgentId: run.agentId
-            ) else {
+        if let existing = ChatWindowManager.shared.findLiveWindow(bySessionId: sessionId) {
+            guard ActivityRunChatRouting.canFocus(existing, forRunAgentId: run.agentId) else {
                 actionError = String(
                     localized: "The linked chat belongs to another agent.",
                     bundle: .module

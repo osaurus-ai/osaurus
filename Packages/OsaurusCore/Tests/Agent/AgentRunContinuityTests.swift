@@ -105,6 +105,108 @@ struct AgentRunContinuityTests {
         #expect(run.error == nil)
     }
 
+    @Test func recordRunEndDoesNotOverwriteAnExistingTerminalState() throws {
+        let database = SchedulerDatabase()
+        try database.openInMemory()
+        defer { database.close() }
+
+        let agentId = UUID()
+        let runId = try database.recordRunStart(
+            agentId: agentId,
+            triggerKind: .user,
+            instructions: "first terminal state wins"
+        )
+        let interruptedAt = Date(timeIntervalSince1970: 1_000)
+        let lateCompletionAt = Date(timeIntervalSince1970: 2_000)
+
+        #expect(
+            try database.recordRunEnd(
+                runId: runId,
+                status: .interrupted,
+                endedAt: interruptedAt,
+                error: "process stopped"
+            )
+        )
+        #expect(
+            try !database.recordRunEnd(
+                runId: runId,
+                status: .success,
+                endedAt: lateCompletionAt,
+                tokensIn: 99,
+                tokensOut: 101
+            )
+        )
+
+        let run = try #require(database.runs(agentId: agentId).first)
+        #expect(run.status == .interrupted)
+        #expect(run.endedAt == interruptedAt)
+        #expect(run.tokensIn == nil)
+        #expect(run.tokensOut == nil)
+        #expect(run.error == "process stopped")
+    }
+
+    @Test func concurrentRunEndContendersCommitExactlyOnePayload() async throws {
+        let database = SchedulerDatabase()
+        try database.openInMemory()
+        defer { database.close() }
+
+        let agentId = UUID()
+        let runId = try database.recordRunStart(
+            agentId: agentId,
+            triggerKind: .watcher,
+            instructions: "race terminal writers"
+        )
+        let results = try await withThrowingTaskGroup(of: TerminalAttemptResult.self) { group in
+            group.addTask {
+                TerminalAttemptResult(
+                    status: .success,
+                    didWin: try database.recordRunEnd(
+                        runId: runId,
+                        status: .success,
+                        endedAt: Date(timeIntervalSince1970: 3_000),
+                        tokensIn: 11,
+                        error: "success payload"
+                    )
+                )
+            }
+            group.addTask {
+                TerminalAttemptResult(
+                    status: .cancelled,
+                    didWin: try database.recordRunEnd(
+                        runId: runId,
+                        status: .cancelled,
+                        endedAt: Date(timeIntervalSince1970: 4_000),
+                        tokensIn: 22,
+                        error: "cancel payload"
+                    )
+                )
+            }
+
+            var collected: [TerminalAttemptResult] = []
+            for try await result in group {
+                collected.append(result)
+            }
+            return collected
+        }
+
+        #expect(results.filter(\.didWin).count == 1)
+        let winner = try #require(results.first { $0.didWin })
+        let run = try #require(database.runs(agentId: agentId).first)
+        #expect(run.status == winner.status)
+        switch winner.status {
+        case .success:
+            #expect(run.endedAt == Date(timeIntervalSince1970: 3_000))
+            #expect(run.tokensIn == 11)
+            #expect(run.error == "success payload")
+        case .cancelled:
+            #expect(run.endedAt == Date(timeIntervalSince1970: 4_000))
+            #expect(run.tokensIn == 22)
+            #expect(run.error == "cancel payload")
+        default:
+            Issue.record("unexpected terminal contender won: \(winner.status)")
+        }
+    }
+
     @Test func reconciliationOnlyInterruptsOrphanedPreProcessRows() throws {
         let database = SchedulerDatabase()
         try database.openInMemory()
@@ -259,7 +361,7 @@ struct AgentRunContinuityTests {
             triggerPayload: "missed",
             instructions: "scheduled work"
         )
-        try database.recordRunEnd(runId: runId, status: .cancelled)
+        #expect(try database.recordRunEnd(runId: runId, status: .cancelled))
 
         let run = try #require(database.runs(agentId: agentId).first)
         #expect(run.sessionId == nil)
@@ -323,6 +425,90 @@ struct AgentRunContinuityTests {
         )
     }
 
+    @Test func liveWindowOwnershipRefusesCreationAgentMetadataAfterSessionSwitch() throws {
+        let runAgentId = UUID()
+        let currentSessionAgentId = UUID()
+        let sessionId = UUID()
+        let windowId = UUID()
+        let creationInfo = ChatWindowInfo(
+            id: windowId,
+            agentId: runAgentId,
+            sessionId: sessionId
+        )
+        let reference = try #require(
+            ChatWindowManager.resolveLiveWindow(
+                bySessionId: sessionId,
+                windows: [windowId: creationInfo],
+                liveSessions: [
+                    windowId: ChatWindowLiveSessionOwnership(
+                        sessionId: sessionId,
+                        agentId: currentSessionAgentId
+                    )
+                ]
+            )
+        )
+
+        #expect(
+            ActivityRunChatRouting.sessionBelongsToRun(
+                sessionAgentId: creationInfo.agentId,
+                runAgentId: runAgentId
+            ),
+            "creation metadata demonstrates the stale authorization path"
+        )
+        #expect(reference.sessionAgentId == currentSessionAgentId)
+        #expect(!ActivityRunChatRouting.canFocus(reference, forRunAgentId: runAgentId))
+        #expect(
+            ChatWindowManager.resolveLiveWindow(
+                bySessionId: sessionId,
+                windows: [windowId: creationInfo],
+                liveSessions: [:]
+            ) == nil,
+            "missing live window state must fail closed"
+        )
+    }
+
+    @Test func activityRunErrorDisplayRedactsCanariesWithoutHidingRootCause() {
+        let context = String(repeating: "provider context ", count: 200)
+        let raw =
+            "HTTP 401 authorization failed; bearer activity-error-secret at "
+            + "/Users/canary/.config/provider.json\u{202E}. \(context)Root cause: account disabled."
+        let redacted = ActivityRunDisplayText.redacted(raw)
+
+        #expect(redacted.contains("HTTP 401 authorization failed"))
+        #expect(redacted.contains("Root cause: account disabled."))
+        #expect(redacted.contains("bearer [REDACTED]"))
+        #expect(redacted.contains("[REDACTED_PATH]"))
+        #expect(!redacted.contains("activity-error-secret"))
+        #expect(!redacted.contains("/Users/canary"))
+        #expect(!redacted.contains("\u{202E}"))
+    }
+
+    @Test func activityChangelogSQLDisplayRedactsCanariesAndPreservesStatement() {
+        let raw =
+            "UPDATE provider_config SET api_key = 'activity-sql-secret', "
+            + "source = '~/private/config.json\u{2066}' WHERE tokenizer = 'qwen' AND max_tokens = 128"
+        let redacted = ActivityRunDisplayText.redacted(raw)
+
+        #expect(redacted.contains("UPDATE provider_config SET"))
+        #expect(redacted.contains("api_key = '[REDACTED]'"))
+        #expect(redacted.contains("source = '[REDACTED_PATH]"))
+        #expect(redacted.contains("tokenizer = 'qwen'"))
+        #expect(redacted.contains("max_tokens = 128"))
+        #expect(!redacted.contains("activity-sql-secret"))
+        #expect(!redacted.contains("~/private"))
+        #expect(!redacted.contains("\u{2066}"))
+    }
+
+    @Test func refreshTaskIdentityIncludesAgentAndLiveRunIds() {
+        let liveRunIds: Set<UUID> = [UUID(), UUID()]
+        let first = ActivityRunRefreshKey(agentId: UUID(), liveRunIds: liveRunIds)
+        let same = ActivityRunRefreshKey(agentId: first.agentId, liveRunIds: liveRunIds)
+        let anotherAgent = ActivityRunRefreshKey(agentId: UUID(), liveRunIds: liveRunIds)
+
+        #expect(first == same)
+        #expect(first != anotherAgent)
+    }
+
     private static func run(
         status: AgentRunStatus,
         triggerKind: AgentRunTriggerKind = .user,
@@ -342,6 +528,11 @@ struct AgentRunContinuityTests {
         case unavailable
 
         var errorDescription: String? { "temporarily unavailable" }
+    }
+
+    private struct TerminalAttemptResult: Sendable {
+        let status: AgentRunStatus
+        let didWin: Bool
     }
 
     private static func seedVersionOneDatabase(
