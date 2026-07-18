@@ -34,11 +34,18 @@ public enum WhatsNewAction: Hashable, Sendable {
     case openSubagentSettings
     /// Open Settings → Search (native web search providers).
     case openSearchSettings
+    /// Open Management → Knowledge (collections list + curation inbox).
+    case openKnowledgeSettings
 }
 
 public struct WhatsNewPage: Identifiable, Hashable, Sendable {
     public let id: String
     public let title: String
+    /// Muted lead-in rendered before `title` in the headline (e.g.
+    /// "Introducing" ahead of "Knowledge Base"). Nil for a plain title.
+    public let titlePrefix: String?
+    /// Overrides the uppercase "What's New" eyebrow above the headline.
+    public let eyebrow: String?
     public let description: String
     /// If nil, the page shows a sparkling stars background instead of an image.
     public let imageURL: URL?
@@ -55,6 +62,8 @@ public struct WhatsNewPage: Identifiable, Hashable, Sendable {
     public init(
         id: String,
         title: String,
+        titlePrefix: String? = nil,
+        eyebrow: String? = nil,
         description: String,
         imageURL: URL? = nil,
         systemImage: String? = nil,
@@ -63,6 +72,8 @@ public struct WhatsNewPage: Identifiable, Hashable, Sendable {
     ) {
         self.id = id
         self.title = title
+        self.titlePrefix = titlePrefix
+        self.eyebrow = eyebrow
         self.description = description
         self.imageURL = imageURL
         self.systemImage = systemImage
@@ -93,6 +104,7 @@ public enum WhatsNewContent {
         computerUse_0_20_7,
         imageAndSpawn_0_21_0,
         nativeSearch_0_21_11,
+        knowledge_0_22_7,
     ]
 
     /// First-launch announcement for the Privacy Filter feature.
@@ -260,6 +272,43 @@ public enum WhatsNewContent {
                 systemImage: "antenna.radiowaves.left.and.right",
                 actionLabel: "Open Search settings",
                 action: .openSearchSettings
+            ),
+        ]
+    )
+
+    /// First-launch announcement for knowledge collections in 0.22.7.
+    /// Three pages: what a collection is and the formats it indexes,
+    /// the per-agent grant model in the Abilities tab, and the curator
+    /// propose/approve loop. The final CTA deep-links to
+    /// Management → Knowledge via `openKnowledgeSettings`.
+    private static let knowledge_0_22_7 = WhatsNewRelease(
+        version: "0.22.7",
+        pages: [
+            WhatsNewPage(
+                id: "knowledge-0.22.7:summary",
+                title: "Knowledge Base",
+                titlePrefix: "Introducing",
+                description:
+                    "Point Osaurus at folders of reference material like team guides, standards, specs, and spreadsheets, and your agents can search and read them on demand. Markdown, plain text, code, PDF, Word, Excel, PowerPoint, and CSV files are all indexed, entirely on your Mac.",
+                systemImage: "books.vertical.fill"
+            ),
+            WhatsNewPage(
+                id: "knowledge-0.22.7:grants",
+                title: "Granted per agent",
+                eyebrow: "Introducing Knowledge Base",
+                description:
+                    "Each agent only sees the knowledge bases you check in its Abilities tab. Everything else stays invisible to it. Edit a file in the folder and the index updates live, no restart needed.",
+                systemImage: "checklist"
+            ),
+            WhatsNewPage(
+                id: "knowledge-0.22.7:curation",
+                title: "Agents propose, you approve",
+                eyebrow: "Introducing Knowledge Base",
+                description:
+                    "Turn on the Curator ability and an agent can flag stale documents and draft updates, but nothing is ever written until you review the diff and approve it in the Knowledge tab.",
+                systemImage: "checkmark.seal.fill",
+                actionLabel: "Open Knowledge",
+                action: .openKnowledgeSettings
             ),
         ]
     )
