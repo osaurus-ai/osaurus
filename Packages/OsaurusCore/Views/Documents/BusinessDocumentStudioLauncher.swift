@@ -11,7 +11,7 @@ import UniformTypeIdentifiers
 
 @MainActor
 public enum BusinessDocumentStudioLauncher {
-    private static var windows: [URL: NSWindow] = [:]
+    private static let windowCache = BusinessDocumentStudioWindowCache<NSWindow>()
     private static var delegates: [ObjectIdentifier: BusinessDocumentStudioWindowDelegate] = [:]
 
     public static func openDocumentPicker() {
@@ -33,16 +33,10 @@ public enum BusinessDocumentStudioLauncher {
     }
 
     public static func open(url: URL) {
-        let sourceURL = url.standardizedFileURL
-        if let existing = windows[sourceURL] {
+        let sourceURL = BusinessDocumentStudioSourceIdentity.standardized(url)
+        if let existing = windowCache.window(for: sourceURL) {
             show(existing)
             return
-        }
-
-        let root = BusinessDocumentStudioView(sourceURL: sourceURL)
-        let hostingController = NSHostingController(rootView: root)
-        if #available(macOS 13.0, *) {
-            hostingController.sizingOptions = []
         }
 
         let window = NSWindow(
@@ -51,9 +45,22 @@ public enum BusinessDocumentStudioLauncher {
             backing: .buffered,
             defer: false
         )
-        window.title = sourceURL.lastPathComponent.isEmpty
-            ? L("Business Document Workbench")
-            : sourceURL.lastPathComponent
+        let root = BusinessDocumentStudioView(
+            sourceURL: sourceURL,
+            claimSourceURL: { [weak window] selectedURL in
+                guard let window else { return false }
+                return claim(selectedURL, for: window)
+            }
+        )
+        let hostingController = NSHostingController(rootView: root)
+        if #available(macOS 13.0, *) {
+            hostingController.sizingOptions = []
+        }
+
+        window.title = BusinessDocumentStudioSourceIdentity.windowTitle(
+            for: sourceURL,
+            fallback: L("Business Document Workbench")
+        )
         window.titlebarAppearsTransparent = true
         window.isReleasedWhenClosed = false
         window.isRestorable = false
@@ -61,15 +68,31 @@ public enum BusinessDocumentStudioLauncher {
         window.center()
 
         let identifier = ObjectIdentifier(window)
-        let delegate = BusinessDocumentStudioWindowDelegate {
-            windows[sourceURL] = nil
-            delegates[identifier] = nil
+        let delegate = BusinessDocumentStudioWindowDelegate { closingWindow in
+            windowCache.remove(closingWindow)
+            delegates[ObjectIdentifier(closingWindow)] = nil
         }
         delegates[identifier] = delegate
         window.delegate = delegate
-        windows[sourceURL] = window
+        _ = windowCache.claim(sourceURL, for: window)
 
         show(window)
+    }
+
+    private static func claim(_ sourceURL: URL, for window: NSWindow) -> Bool {
+        switch windowCache.claim(sourceURL, for: window) {
+        case .claimed:
+            window.title = BusinessDocumentStudioSourceIdentity.windowTitle(
+                for: sourceURL,
+                fallback: L("Business Document Workbench")
+            )
+            return true
+
+        case .occupied(let existing):
+            show(existing)
+            window.close()
+            return false
+        }
     }
 
     private static func show(_ window: NSWindow) {
@@ -77,6 +100,71 @@ public enum BusinessDocumentStudioLauncher {
         NSApp.activate()
         window.makeKeyAndOrderFront(nil)
         window.orderFrontRegardless()
+    }
+}
+
+enum BusinessDocumentStudioSourceIdentity {
+    static func standardized(_ url: URL) -> URL {
+        url.standardizedFileURL
+    }
+
+    static func acceptedSourceURL(
+        _ url: URL,
+        claim: ((URL) -> Bool)?
+    ) -> URL? {
+        let sourceURL = standardized(url)
+        guard claim?(sourceURL) ?? true else { return nil }
+        return sourceURL
+    }
+
+    static func windowTitle(for url: URL, fallback: String) -> String {
+        let filename = standardized(url).lastPathComponent
+        return filename.isEmpty ? fallback : filename
+    }
+}
+
+@MainActor
+final class BusinessDocumentStudioWindowCache<Window: AnyObject> {
+    enum ClaimResult {
+        case claimed
+        case occupied(Window)
+    }
+
+    private var windowsBySourceURL: [URL: Window] = [:]
+    private var sourceURLsByWindow: [ObjectIdentifier: URL] = [:]
+
+    func window(for sourceURL: URL) -> Window? {
+        windowsBySourceURL[BusinessDocumentStudioSourceIdentity.standardized(sourceURL)]
+    }
+
+    func sourceURL(for window: Window) -> URL? {
+        sourceURLsByWindow[ObjectIdentifier(window)]
+    }
+
+    /// A failed claim leaves both windows under their existing identities.
+    /// This lets the caller focus the owner instead of corrupting either key.
+    func claim(_ sourceURL: URL, for window: Window) -> ClaimResult {
+        let sourceURL = BusinessDocumentStudioSourceIdentity.standardized(sourceURL)
+        if let existing = windowsBySourceURL[sourceURL], existing !== window {
+            return .occupied(existing)
+        }
+
+        let identifier = ObjectIdentifier(window)
+        if let previousSourceURL = sourceURLsByWindow[identifier],
+            windowsBySourceURL[previousSourceURL] === window {
+            windowsBySourceURL[previousSourceURL] = nil
+        }
+        windowsBySourceURL[sourceURL] = window
+        sourceURLsByWindow[identifier] = sourceURL
+        return .claimed
+    }
+
+    func remove(_ window: Window) {
+        let identifier = ObjectIdentifier(window)
+        guard let sourceURL = sourceURLsByWindow.removeValue(forKey: identifier) else { return }
+        if windowsBySourceURL[sourceURL] === window {
+            windowsBySourceURL[sourceURL] = nil
+        }
     }
 }
 
@@ -92,14 +180,15 @@ enum BusinessDocumentStudioDocumentTypes {
 
 @MainActor
 private final class BusinessDocumentStudioWindowDelegate: NSObject, NSWindowDelegate {
-    private let onClose: () -> Void
+    private let onClose: (NSWindow) -> Void
 
-    init(onClose: @escaping () -> Void) {
+    init(onClose: @escaping (NSWindow) -> Void) {
         self.onClose = onClose
         super.init()
     }
 
     func windowWillClose(_ notification: Notification) {
-        onClose()
+        guard let window = notification.object as? NSWindow else { return }
+        onClose(window)
     }
 }

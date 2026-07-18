@@ -467,6 +467,164 @@ struct BusinessDocumentStudioPresenterTests {
         #expect(message == "No overwrite is waiting for confirmation.")
     }
 
+    @Test func newerLoadGenerationWinsWhenEarlierParseCompletesLast() async throws {
+        let gate = BusinessDocumentStudioParseGate()
+        let registry = DocumentFormatRegistry()
+        registry.register(adapter: SuspendedBusinessDocumentAdapter(gate: gate))
+        let presenter = BusinessDocumentStudioPresenter(
+            service: BusinessDocumentStudioService(registry: registry)
+        )
+        let firstURL = URL(fileURLWithPath: "/tmp/\(UUID().uuidString)-first.gate")
+        let secondURL = URL(fileURLWithPath: "/tmp/\(UUID().uuidString)-second.gate")
+
+        let firstLoad = Task { await presenter.load(url: firstURL) }
+        await gate.waitUntilStarted(filename: firstURL.lastPathComponent)
+        let secondLoad = Task { await presenter.load(url: secondURL) }
+        await gate.waitUntilStarted(filename: secondURL.lastPathComponent)
+
+        await gate.complete(
+            filename: secondURL.lastPathComponent,
+            with: Self.plainTextDocument(
+                text: "newer",
+                filename: secondURL.lastPathComponent,
+                formatId: "fixture"
+            )
+        )
+        await secondLoad.value
+        #expect(try Self.loadedPresentation(from: presenter).title == secondURL.lastPathComponent)
+
+        await gate.complete(
+            filename: firstURL.lastPathComponent,
+            with: Self.plainTextDocument(
+                text: "older",
+                filename: firstURL.lastPathComponent,
+                formatId: "fixture"
+            )
+        )
+        await firstLoad.value
+
+        let presentation = try Self.loadedPresentation(from: presenter)
+        #expect(presentation.title == secondURL.lastPathComponent)
+        #expect(presentation.importRows.contains { $0.label == "Source" && $0.value == secondURL.path })
+    }
+
+    @Test func staleExportCompletionCannotPublishAfterDocumentSwitch() async throws {
+        let gate = BusinessDocumentStudioExportGate()
+        let registry = DocumentFormatRegistry()
+        registry.register(emitter: SuspendedPDFEmitter(gate: gate))
+        let presenter = BusinessDocumentStudioPresenter(
+            service: BusinessDocumentStudioService(registry: registry)
+        )
+        let outputDirectory = try Self.temporaryDirectory()
+        let target = outputDirectory.appendingPathComponent("stale.pdf")
+        defer { try? FileManager.default.removeItem(at: outputDirectory) }
+
+        try presenter.load(document: Self.pdfDocument())
+        let export = Task {
+            await presenter.export(optionID: "pdf", to: target, allowedDirectory: outputDirectory)
+        }
+        await gate.waitUntilStarted()
+        #expect(presenter.isExportInProgress)
+
+        try presenter.load(
+            document: Self.plainTextDocument(text: "replacement", filename: "replacement.txt")
+        )
+        #expect(!presenter.isExportInProgress)
+        #expect(presenter.exportState == .idle)
+        #expect(presenter.artifactStatuses.isEmpty)
+        #expect(try Self.loadedPresentation(from: presenter).title == "replacement.txt")
+
+        await gate.releaseAll()
+        #expect(await export.value)
+
+        #expect(!presenter.isExportInProgress)
+        #expect(presenter.exportState == .idle)
+        #expect(presenter.artifactStatuses.isEmpty)
+        #expect(try Self.loadedPresentation(from: presenter).title == "replacement.txt")
+    }
+
+    @Test func activeExportRejectsConcurrentExportAndOverwriteActions() async throws {
+        let gate = BusinessDocumentStudioExportGate()
+        let registry = DocumentFormatRegistry()
+        registry.register(emitter: SuspendedPDFEmitter(gate: gate))
+        let presenter = BusinessDocumentStudioPresenter(
+            service: BusinessDocumentStudioService(registry: registry)
+        )
+        let outputDirectory = try Self.temporaryDirectory()
+        let target = outputDirectory.appendingPathComponent("existing.pdf")
+        let otherTarget = outputDirectory.appendingPathComponent("other.pdf")
+        try Data("existing".utf8).write(to: target)
+        defer { try? FileManager.default.removeItem(at: outputDirectory) }
+
+        try presenter.load(document: Self.pdfDocument())
+        #expect(await presenter.export(optionID: "pdf", to: target, allowedDirectory: outputDirectory))
+        guard case .awaitingOverwriteConsent(let request) = presenter.exportState else {
+            Issue.record("Expected overwrite consent state, got \(presenter.exportState)")
+            return
+        }
+
+        let confirmedExport = Task {
+            await presenter.confirmPendingOverwrite(requestID: request.id)
+        }
+        await gate.waitUntilStarted()
+        #expect(presenter.isExportInProgress)
+
+        let concurrentExport = await presenter.export(
+            optionID: "pdf",
+            to: otherTarget,
+            allowedDirectory: outputDirectory
+        )
+        let duplicateConfirmation = await presenter.confirmPendingOverwrite(requestID: request.id)
+        let concurrentCancellation = presenter.cancelPendingOverwrite(requestID: request.id)
+
+        #expect(!concurrentExport)
+        #expect(!duplicateConfirmation)
+        #expect(!concurrentCancellation)
+        #expect(await gate.callCount() == 1)
+        guard case .exporting(optionID: "pdf") = presenter.exportState else {
+            Issue.record("Expected active PDF export state, got \(presenter.exportState)")
+            return
+        }
+        #expect(presenter.artifactStatuses.isEmpty)
+
+        await gate.releaseAll()
+        #expect(await confirmedExport.value)
+        #expect(!presenter.isExportInProgress)
+        #expect(await gate.callCount() == 1)
+        #expect(presenter.artifactStatuses.first?.state == .created)
+        #expect(!FileManager.default.fileExists(atPath: otherTarget.path))
+    }
+
+    @Test func oldOverwriteRequestCannotMutateReplacementDocument() async throws {
+        let presenter = BusinessDocumentStudioPresenter(
+            service: BusinessDocumentStudioService(registry: DocumentFormatRegistry())
+        )
+        let outputDirectory = try Self.temporaryDirectory()
+        let target = outputDirectory.appendingPathComponent("existing.txt")
+        try "existing".write(to: target, atomically: true, encoding: .utf8)
+        defer { try? FileManager.default.removeItem(at: outputDirectory) }
+
+        try presenter.load(document: Self.plainTextDocument())
+        #expect(await presenter.export(optionID: "txt", to: target, allowedDirectory: outputDirectory))
+        guard case .awaitingOverwriteConsent(let request) = presenter.exportState else {
+            Issue.record("Expected overwrite consent state, got \(presenter.exportState)")
+            return
+        }
+
+        try presenter.load(
+            document: Self.plainTextDocument(text: "replacement", filename: "replacement.txt")
+        )
+        let staleConfirmation = await presenter.confirmPendingOverwrite(requestID: request.id)
+        let staleCancellation = presenter.cancelPendingOverwrite(requestID: request.id)
+
+        #expect(!staleConfirmation)
+        #expect(!staleCancellation)
+        #expect(presenter.exportState == .idle)
+        #expect(presenter.artifactStatuses.isEmpty)
+        #expect(try Self.loadedPresentation(from: presenter).title == "replacement.txt")
+        #expect(try String(contentsOf: target, encoding: .utf8) == "existing")
+    }
+
     @Test func presentationRowsUseStableUniqueIdentifiers() throws {
         let registry = DocumentFormatRegistry()
         registry.register(emitter: XLSXEmitter())
@@ -526,18 +684,22 @@ struct BusinessDocumentStudioPresenterTests {
         return url
     }
 
-    private static func plainTextDocument(text: String = "hello world") -> StructuredDocument {
+    private static func plainTextDocument(
+        text: String = "hello world",
+        filename: String = "notes.txt",
+        formatId: String = "plaintext"
+    ) -> StructuredDocument {
         StructuredDocument(
-            formatId: "plaintext",
-            filename: "notes.txt",
+            formatId: formatId,
+            filename: filename,
             fileSize: Int64(text.utf8.count),
             representation: AnyStructuredRepresentation(
-                formatId: "plaintext",
+                formatId: formatId,
                 underlying: PlainTextRepresentation(text: text)
             ),
             security: .notInspected(
-                formatId: "plaintext",
-                fileExtension: "txt",
+                formatId: formatId,
+                fileExtension: URL(fileURLWithPath: filename).pathExtension,
                 sourceTrust: .generatedArtifact
             ),
             textFallback: text
@@ -824,5 +986,93 @@ struct BusinessDocumentStudioPresenterTests {
         height: Double = 10
     ) -> DocumentBoundingBox {
         DocumentBoundingBox(x: x, y: y, width: width, height: height, coordinateSpace: .page)
+    }
+}
+
+private actor BusinessDocumentStudioParseGate {
+    private var pending: [String: CheckedContinuation<StructuredDocument, any Error>] = [:]
+    private var startWaiters: [String: [CheckedContinuation<Void, Never>]] = [:]
+
+    func parse(url: URL) async throws -> StructuredDocument {
+        let filename = url.lastPathComponent
+        return try await withCheckedThrowingContinuation { continuation in
+            pending[filename] = continuation
+            let waiters = startWaiters.removeValue(forKey: filename) ?? []
+            waiters.forEach { $0.resume() }
+        }
+    }
+
+    func waitUntilStarted(filename: String) async {
+        guard pending[filename] == nil else { return }
+        await withCheckedContinuation { continuation in
+            startWaiters[filename, default: []].append(continuation)
+        }
+    }
+
+    func complete(filename: String, with document: StructuredDocument) {
+        pending.removeValue(forKey: filename)?.resume(returning: document)
+    }
+}
+
+private struct SuspendedBusinessDocumentAdapter: DocumentFormatAdapter {
+    let gate: BusinessDocumentStudioParseGate
+    let formatId = "fixture"
+
+    func canHandle(url: URL, uti: String?) -> Bool {
+        url.pathExtension == "gate"
+    }
+
+    func parse(url: URL, sizeLimit: Int64) async throws -> StructuredDocument {
+        try await gate.parse(url: url)
+    }
+}
+
+private actor BusinessDocumentStudioExportGate {
+    private var invocationCount = 0
+    private var isReleased = false
+    private var startWaiters: [CheckedContinuation<Void, Never>] = []
+    private var releaseWaiters: [CheckedContinuation<Void, Never>] = []
+
+    func suspend() async {
+        invocationCount += 1
+        let waiters = startWaiters
+        startWaiters.removeAll()
+        waiters.forEach { $0.resume() }
+        guard !isReleased else { return }
+        await withCheckedContinuation { continuation in
+            releaseWaiters.append(continuation)
+        }
+    }
+
+    func waitUntilStarted() async {
+        guard invocationCount == 0 else { return }
+        await withCheckedContinuation { continuation in
+            startWaiters.append(continuation)
+        }
+    }
+
+    func releaseAll() {
+        isReleased = true
+        let waiters = releaseWaiters
+        releaseWaiters.removeAll()
+        waiters.forEach { $0.resume() }
+    }
+
+    func callCount() -> Int {
+        invocationCount
+    }
+}
+
+private struct SuspendedPDFEmitter: DocumentFormatEmitter {
+    let gate: BusinessDocumentStudioExportGate
+    let formatId = "pdf"
+
+    func canEmit(_ document: StructuredDocument) -> Bool {
+        document.representation.underlying is PDFDocumentRepresentation
+    }
+
+    func emit(_ document: StructuredDocument, to url: URL) async throws {
+        await gate.suspend()
+        try Data("fixture-pdf".utf8).write(to: url, options: .atomic)
     }
 }

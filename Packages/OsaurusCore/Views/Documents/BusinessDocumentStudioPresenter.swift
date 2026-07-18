@@ -31,11 +31,14 @@ final class BusinessDocumentStudioPresenter: ObservableObject {
     @Published private(set) var loadState: LoadState = .idle
     @Published private(set) var exportState: ExportState = .idle
     @Published private(set) var artifactStatuses: [BusinessDocumentStudioArtifactStatus] = []
+    @Published private(set) var isExportInProgress = false
 
     private let service: BusinessDocumentStudioService
     private var document: StructuredDocument?
     private var inspection: BusinessDocumentStudioInspection?
     private var pendingOverwrite: PendingExport?
+    private var documentGeneration = UUID()
+    private var activeExportRequest: ExportRequest?
 
     init(service: BusinessDocumentStudioService = BusinessDocumentStudioService()) {
         self.service = service
@@ -45,19 +48,21 @@ final class BusinessDocumentStudioPresenter: ObservableObject {
         url: URL,
         policy: BusinessDocumentStudioPolicy = .standard
     ) async {
-        loadState = .loading(url)
-        exportState = .idle
-        artifactStatuses = []
-        clearPendingOverwriteStatus()
+        let generation = beginDocumentTransition(loadState: .loading(url))
 
         do {
             let document = try await service.parse(url: url)
-            guard !Task.isCancelled else { return }
-            try load(document: document, sourceURL: url, policy: policy)
+            guard !Task.isCancelled, generation == documentGeneration else { return }
+            let inspection = try service.inspect(document, policy: policy)
+            guard generation == documentGeneration else { return }
+            commit(
+                document: document,
+                inspection: inspection,
+                sourceURL: url,
+                generation: generation
+            )
         } catch {
-            guard !Task.isCancelled else { return }
-            self.document = nil
-            inspection = nil
+            guard !Task.isCancelled, generation == documentGeneration else { return }
             loadState = .failed(BusinessDocumentStudioLoadFailure(url: url, error: error))
         }
     }
@@ -68,30 +73,33 @@ final class BusinessDocumentStudioPresenter: ObservableObject {
         policy: BusinessDocumentStudioPolicy = .standard
     ) throws {
         let inspection = try service.inspect(document, policy: policy)
-        self.document = document
-        self.inspection = inspection
-        loadState = .loaded(BusinessDocumentStudioPresentation(inspection: inspection, sourceURL: sourceURL))
-        exportState = .idle
-        artifactStatuses = []
-        clearPendingOverwriteStatus()
+        let generation = beginDocumentTransition(loadState: .idle)
+        commit(
+            document: document,
+            inspection: inspection,
+            sourceURL: sourceURL,
+            generation: generation
+        )
     }
 
+    @discardableResult
     func export(
         optionID: String,
         to destination: URL,
         allowedDirectory: URL? = nil,
         allowOverwrite: Bool = false,
         maxTextExportUTF8Bytes: Int = BusinessDocumentStudioExportPolicy.standard.maxTextExportUTF8Bytes
-    ) async {
+    ) async -> Bool {
+        guard activeExportRequest == nil else { return false }
         guard let document, let inspection else {
             exportState = .failed("No document is loaded.")
-            return
+            return false
         }
         clearPendingOverwriteStatus()
 
         guard let option = inspection.exportOptions.first(where: { $0.targetFormatId == optionID }) else {
             exportState = .failed("Export option '\(optionID)' is not available for this document.")
-            return
+            return false
         }
 
         guard option.canExport else {
@@ -104,7 +112,7 @@ final class BusinessDocumentStudioPresenter: ObservableObject {
             )
             exportState = .blocked(block)
             appendArtifactStatus(BusinessDocumentStudioArtifactStatus(block: block))
-            return
+            return false
         }
 
         if !allowOverwrite,
@@ -117,12 +125,15 @@ final class BusinessDocumentStudioPresenter: ObservableObject {
                 allowedDirectory: allowedDirectory,
                 maxTextExportUTF8Bytes: maxTextExportUTF8Bytes
             )
-            pendingOverwrite = PendingExport(request: request)
+            pendingOverwrite = PendingExport(request: request, documentGeneration: documentGeneration)
             exportState = .awaitingOverwriteConsent(request)
             appendArtifactStatus(BusinessDocumentStudioArtifactStatus(overwriteRequest: request))
-            return
+            return true
         }
 
+        let exportRequest = ExportRequest(documentGeneration: documentGeneration)
+        activeExportRequest = exportRequest
+        isExportInProgress = true
         exportState = .exporting(optionID: option.targetFormatId)
 
         do {
@@ -136,10 +147,12 @@ final class BusinessDocumentStudioPresenter: ObservableObject {
                     maxTextExportUTF8Bytes: maxTextExportUTF8Bytes
                 )
             )
+            guard complete(exportRequest) else { return true }
             let receipt = BusinessDocumentStudioExportReceipt(result: result)
             exportState = .succeeded(receipt)
             appendArtifactStatus(BusinessDocumentStudioArtifactStatus(receipt: receipt))
         } catch let error as BusinessDocumentStudioError {
+            guard complete(exportRequest) else { return true }
             let mapped = mapServiceError(error, optionID: option.targetFormatId)
             exportState = mapped
             if case .failed(let message) = mapped {
@@ -148,18 +161,29 @@ final class BusinessDocumentStudioPresenter: ObservableObject {
                 appendArtifactStatus(BusinessDocumentStudioArtifactStatus(exportState: mapped, optionID: option.targetFormatId))
             }
         } catch {
+            guard complete(exportRequest) else { return true }
             let message = error.localizedDescription
             exportState = .failed(message)
             appendArtifactStatus(.failed(optionID: option.targetFormatId, message: message, path: destination.path))
         }
+        return true
     }
 
-    func confirmPendingOverwrite() async {
+    @discardableResult
+    func confirmPendingOverwrite(requestID: UUID? = nil) async -> Bool {
+        guard activeExportRequest == nil else { return false }
         guard let pendingOverwrite else {
-            exportState = .failed("No overwrite is waiting for confirmation.")
-            return
+            if requestID == nil {
+                exportState = .failed("No overwrite is waiting for confirmation.")
+            }
+            return false
         }
-        await export(
+        guard pendingOverwrite.documentGeneration == documentGeneration,
+            requestID.map({ $0 == pendingOverwrite.request.id }) ?? true
+        else {
+            return false
+        }
+        return await export(
             optionID: pendingOverwrite.request.optionID,
             to: pendingOverwrite.request.destination,
             allowedDirectory: pendingOverwrite.request.allowedDirectory,
@@ -168,10 +192,19 @@ final class BusinessDocumentStudioPresenter: ObservableObject {
         )
     }
 
-    func cancelPendingOverwrite() {
+    @discardableResult
+    func cancelPendingOverwrite(requestID: UUID? = nil) -> Bool {
+        guard activeExportRequest == nil else { return false }
         guard let pendingOverwrite else {
-            exportState = .idle
-            return
+            if requestID == nil {
+                exportState = .idle
+            }
+            return false
+        }
+        guard pendingOverwrite.documentGeneration == documentGeneration,
+            requestID.map({ $0 == pendingOverwrite.request.id }) ?? true
+        else {
+            return false
         }
         removeArtifactStatus(matching: pendingOverwrite.request)
         self.pendingOverwrite = nil
@@ -184,6 +217,7 @@ final class BusinessDocumentStudioPresenter: ObservableObject {
         )
         exportState = .blocked(block)
         appendArtifactStatus(BusinessDocumentStudioArtifactStatus(block: block))
+        return true
     }
 
     func makeWorkspaceAttachment() throws -> Attachment {
@@ -295,6 +329,47 @@ final class BusinessDocumentStudioPresenter: ObservableObject {
         }
     }
 
+    /// Starting a new document abandons prior async ownership. Late callbacks
+    /// can still finish their file work, but cannot publish into this generation.
+    private func beginDocumentTransition(loadState: LoadState) -> UUID {
+        let generation = UUID()
+        documentGeneration = generation
+        activeExportRequest = nil
+        isExportInProgress = false
+        document = nil
+        inspection = nil
+        pendingOverwrite = nil
+        exportState = .idle
+        artifactStatuses = []
+        self.loadState = loadState
+        return generation
+    }
+
+    private func commit(
+        document: StructuredDocument,
+        inspection: BusinessDocumentStudioInspection,
+        sourceURL: URL?,
+        generation: UUID
+    ) {
+        guard generation == documentGeneration else { return }
+        self.document = document
+        self.inspection = inspection
+        loadState = .loaded(BusinessDocumentStudioPresentation(inspection: inspection, sourceURL: sourceURL))
+    }
+
+    /// Only the request that still owns the current generation may publish a
+    /// completion. A newer export or document transition makes this a no-op.
+    private func complete(_ request: ExportRequest) -> Bool {
+        guard activeExportRequest == request,
+            request.documentGeneration == documentGeneration
+        else {
+            return false
+        }
+        activeExportRequest = nil
+        isExportInProgress = false
+        return true
+    }
+
     private func clearPendingOverwriteStatus() {
         guard let pendingOverwrite else { return }
         removeArtifactStatus(matching: pendingOverwrite.request)
@@ -316,6 +391,12 @@ final class BusinessDocumentStudioPresenter: ObservableObject {
 
     private struct PendingExport: Equatable {
         let request: BusinessDocumentStudioOverwriteRequest
+        let documentGeneration: UUID
+    }
+
+    private struct ExportRequest: Equatable {
+        let id = UUID()
+        let documentGeneration: UUID
     }
 }
 
@@ -1071,6 +1152,7 @@ struct BusinessDocumentStudioExportReceipt: Equatable {
 }
 
 struct BusinessDocumentStudioOverwriteRequest: Equatable {
+    let id = UUID()
     let optionID: String
     let label: String
     let destination: URL

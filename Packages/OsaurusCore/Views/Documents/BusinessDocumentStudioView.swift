@@ -13,15 +13,19 @@ import UniformTypeIdentifiers
 struct BusinessDocumentStudioView: View {
     @StateObject private var presenter: BusinessDocumentStudioPresenter
     private let sourceURL: URL?
+    private let claimSourceURL: ((URL) -> Bool)?
     @State private var currentSourceURL: URL?
     @State private var workspaceAttachmentStatus: WorkspaceAttachmentStatus?
 
     init(
         sourceURL: URL? = nil,
-        presenter: BusinessDocumentStudioPresenter = BusinessDocumentStudioPresenter()
+        presenter: BusinessDocumentStudioPresenter = BusinessDocumentStudioPresenter(),
+        claimSourceURL: ((URL) -> Bool)? = nil
     ) {
+        let sourceURL = sourceURL.map(BusinessDocumentStudioSourceIdentity.standardized)
         _presenter = StateObject(wrappedValue: presenter)
         self.sourceURL = sourceURL
+        self.claimSourceURL = claimSourceURL
         _currentSourceURL = State(initialValue: sourceURL)
     }
 
@@ -38,8 +42,18 @@ struct BusinessDocumentStudioView: View {
             await presenter.load(url: currentSourceURL)
         }
         .onChange(of: sourceURL) { _, newValue in
-            currentSourceURL = newValue
             workspaceAttachmentStatus = nil
+            guard let newValue else {
+                currentSourceURL = nil
+                return
+            }
+            guard let acceptedURL = BusinessDocumentStudioSourceIdentity.acceptedSourceURL(
+                newValue,
+                claim: claimSourceURL
+            ) else {
+                return
+            }
+            currentSourceURL = acceptedURL
         }
     }
 
@@ -333,21 +347,23 @@ struct BusinessDocumentStudioView: View {
                 Spacer(minLength: 12)
 
                 Button {
-                    presenter.cancelPendingOverwrite()
+                    presenter.cancelPendingOverwrite(requestID: request.id)
                 } label: {
                     Text(verbatim: "Cancel")
                 }
                 .controlSize(.small)
+                .disabled(presenter.isExportInProgress)
 
                 Button {
                     Task { @MainActor in
-                        await presenter.confirmPendingOverwrite()
+                        await presenter.confirmPendingOverwrite(requestID: request.id)
                     }
                 } label: {
                     Text(verbatim: "Replace")
                 }
                 .buttonStyle(.borderedProminent)
                 .controlSize(.small)
+                .disabled(presenter.isExportInProgress)
             }
             .help(request.destination.path)
 
@@ -512,7 +528,7 @@ struct BusinessDocumentStudioView: View {
             }
             .buttonStyle(.bordered)
             .controlSize(.small)
-            .disabled(!option.canExport)
+            .disabled(!option.canExport || presenter.isExportInProgress)
             .help(option.canExport ? "Export \(option.label)" : option.message)
         }
         .padding(10)
@@ -559,7 +575,13 @@ struct BusinessDocumentStudioView: View {
 
         Task { @MainActor in
             guard await panel.beginModal() == .OK, let url = panel.url else { return }
-            currentSourceURL = url.standardizedFileURL
+            guard let acceptedURL = BusinessDocumentStudioSourceIdentity.acceptedSourceURL(
+                url,
+                claim: claimSourceURL
+            ) else {
+                return
+            }
+            currentSourceURL = acceptedURL
         }
     }
 

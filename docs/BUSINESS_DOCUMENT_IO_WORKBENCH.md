@@ -26,9 +26,10 @@ in an extraction-failure state with the adapter error surfaced to the user.
 The workbench now derives a format-neutral business summary from the parsed
 representation:
 
-- Field summaries list CSV columns, workbook header cells, slide text sections,
-  and rich-text blocks with source labels, filled/empty counts, value kinds, and
-  bounded samples.
+- Field summaries list CSV columns, slide text sections, and rich-text blocks
+  with source labels, filled/empty counts, value kinds, and bounded samples.
+- Workbook extraction surfaces worksheet sample rows through table and preview
+  summaries; it does not infer worksheet headers as fields.
 - Table summaries list CSV files, worksheets, detected PDF tables, and slide
   tables with row/column/cell counts and a first sampled row where available.
 - PDF and slide preview sections include sampled table rows, not just table
