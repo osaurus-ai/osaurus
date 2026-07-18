@@ -773,33 +773,56 @@ public struct BusinessDocumentStudioService: Sendable {
         }
     }
 
-    /// Resolve only filesystem components that already exist. This keeps
-    /// firmlink aliases such as `/var` and `/private/var` symmetric for a new
-    /// leaf while still following an existing symlink leaf or parent to expose
-    /// an escape from the allowed root.
+    /// Resolve every symlink component while retaining a lexical tail that
+    /// does not exist yet. Unlike `resolvingSymlinksInPath`, this also follows
+    /// dangling links so an existing leaf cannot conceal an outside target.
     private static func isContainedDestination(_ destination: URL, in allowedDirectory: URL) -> Bool {
-        guard allowedDirectory.isFileURL else { return false }
-        let root = allowedDirectory.standardizedFileURL.resolvingSymlinksInPath().standardizedFileURL
-        let candidate = destination.standardizedFileURL
-        var existingAncestor = candidate
+        guard let root = canonicalURLAllowingMissing(allowedDirectory),
+            let candidate = canonicalURLAllowingMissing(destination)
+        else {
+            return false
+        }
+        let rootComponents = root.pathComponents
+        let candidateComponents = candidate.pathComponents
+        return candidateComponents.count > rootComponents.count
+            && candidateComponents.starts(with: rootComponents)
+    }
 
-        while !FileManager.default.fileExists(atPath: existingAncestor.path) {
-            let parent = existingAncestor.deletingLastPathComponent()
-            guard parent.path != existingAncestor.path else { break }
-            existingAncestor = parent
+    private static func canonicalURLAllowingMissing(_ url: URL) -> URL? {
+        guard url.isFileURL else { return nil }
+        let filesystemRoot = URL(fileURLWithPath: "/", isDirectory: true)
+        var current = filesystemRoot
+        var unresolvedComponents = url.path.split(separator: "/").map(String.init)
+        var resolvedSymlinkCount = 0
+
+        while !unresolvedComponents.isEmpty {
+            let component = unresolvedComponents.removeFirst()
+            switch component {
+            case ".":
+                continue
+            case "..":
+                current = current.deletingLastPathComponent()
+                continue
+            default:
+                break
+            }
+
+            let next = current.appendingPathComponent(component)
+            guard let linkTarget = try? FileManager.default.destinationOfSymbolicLink(atPath: next.path) else {
+                current = next
+                continue
+            }
+
+            guard resolvedSymlinkCount < 64 else { return nil }
+            resolvedSymlinkCount += 1
+            if linkTarget.hasPrefix("/") {
+                current = filesystemRoot
+            }
+            let targetComponents = linkTarget.split(separator: "/").map(String.init)
+            unresolvedComponents.insert(contentsOf: targetComponents, at: 0)
         }
 
-        let resolvedAncestor = existingAncestor.resolvingSymlinksInPath().standardizedFileURL
-        let existingComponentCount = existingAncestor.pathComponents.count
-        let unresolvedTail = candidate.pathComponents.dropFirst(existingComponentCount)
-        guard !unresolvedTail.contains("."), !unresolvedTail.contains("..") else { return false }
-        let resolvedCandidate = unresolvedTail.reduce(resolvedAncestor) { partialURL, component in
-            partialURL.appendingPathComponent(component)
-        }.standardizedFileURL
-        let rootPath = root.path
-        return rootPath == "/"
-            ? resolvedCandidate.path != rootPath
-            : resolvedCandidate.path.hasPrefix(rootPath + "/")
+        return current
     }
 
     private func rejectTextExportPackageTarget(_ url: URL) throws {

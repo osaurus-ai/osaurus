@@ -338,6 +338,39 @@ struct BusinessDocumentStudioServiceTests {
         #expect(try symlink.resourceValues(forKeys: [.isSymbolicLinkKey]).isSymbolicLink == true)
     }
 
+    @Test func exportRejectsDanglingSymlinkLeafEscapingAllowedDirectory() async throws {
+        let service = BusinessDocumentStudioService(registry: DocumentFormatRegistry())
+        let outputDirectory = try Self.temporaryDirectory()
+        let outsideDirectory = try Self.temporaryDirectory()
+        let missingOutsideTarget = outsideDirectory.appendingPathComponent("missing.txt")
+        let symlink = outputDirectory.appendingPathComponent("report.txt")
+        try FileManager.default.createSymbolicLink(at: symlink, withDestinationURL: missingOutsideTarget)
+        defer {
+            try? FileManager.default.removeItem(at: outputDirectory)
+            try? FileManager.default.removeItem(at: outsideDirectory)
+        }
+
+        do {
+            _ = try await service.export(
+                Self.plainTextDocument(text: "replacement"),
+                as: "txt",
+                to: symlink,
+                policy: BusinessDocumentStudioExportPolicy(
+                    allowedDirectory: outputDirectory,
+                    allowOverwrite: true
+                )
+            )
+            Issue.record("Expected a dangling escaping symlink leaf to be rejected")
+        } catch BusinessDocumentStudioError.destinationOutsideAllowedDirectory(let url) {
+            #expect(url == symlink)
+        } catch {
+            Issue.record("Expected destinationOutsideAllowedDirectory, got \(error)")
+        }
+
+        #expect(!FileManager.default.fileExists(atPath: missingOutsideTarget.path))
+        #expect(try FileManager.default.destinationOfSymbolicLink(atPath: symlink.path) == missingOutsideTarget.path)
+    }
+
     @Test func exportAllowsExistingSymlinkLeafResolvingWithinAllowedDirectory() async throws {
         let service = BusinessDocumentStudioService(registry: DocumentFormatRegistry())
         let outputDirectory = try Self.temporaryDirectory()
