@@ -4,6 +4,243 @@
     "" : {
       "shouldTranslate" : false
     },
+    "+1 more finding in copied report" : {
+
+    },
+    "1 artifact" : {
+
+    },
+    "1 blocking finding must be fixed before provisioning." : {
+
+    },
+    "1 character" : {
+
+    },
+    "1 earlier step" : {
+
+    },
+    "1 external candidate skipped" : {
+
+    },
+    "1 external model found" : {
+
+    },
+    "1 file" : {
+
+    },
+    "1 item installed" : {
+
+    },
+    "1 item would be redacted" : {
+
+    },
+    "1 manual-model provider" : {
+
+    },
+    "1 model" : {
+
+    },
+    "1 model currently available." : {
+
+    },
+    "1 model found" : {
+
+    },
+    "1 model • %@" : {
+
+    },
+    "1 plugin available" : {
+
+    },
+    "1 redaction" : {
+
+    },
+    "1 request" : {
+
+    },
+    "1 result" : {
+
+    },
+    "1 session" : {
+
+    },
+    "1 setting matches \"%@\"" : {
+
+    },
+    "1 setup finding needs attention before tools are fully ready." : {
+
+    },
+    "1 skill" : {
+
+    },
+    "1 skill available" : {
+
+    },
+    "1 stdio provider" : {
+
+    },
+    "1 store couldn't be converted because the encryption key is unavailable." : {
+
+    },
+    "1 store failed to convert." : {
+
+    },
+    "1 tool" : {
+
+    },
+    "1 tool assigned" : {
+
+    },
+    "1 tool discovered via %@." : {
+
+    },
+    "1 tool discovered." : {
+
+    },
+    "1 transaction" : {
+
+    },
+    "1 turn" : {
+
+    },
+    "Connected! (1 tool)" : {
+
+    },
+    "Decrypted 1 store; now plaintext at rest." : {
+
+    },
+    "Decrypted %lld stores; now plaintext at rest." : {
+
+    },
+    "Delete 1 Row" : {
+
+    },
+    "Delete 1 row?" : {
+
+    },
+    "Encrypted 1 store at rest." : {
+
+    },
+    "Encrypted %lld stores at rest." : {
+
+    },
+    "Exported 1 row to %@." : {
+
+    },
+    "Exported %lld rows to %@." : {
+
+    },
+    "Imported 1 item" : {
+
+    },
+    "Installed 1 item" : {
+
+    },
+    "MCP server" : {
+
+    },
+    "Preview shows the first row." : {
+
+    },
+    "Probe completed initialize/listTools and found 1 tool." : {
+
+    },
+    "Probe completed initialize/listTools and found %lld tools." : {
+
+    },
+    "SUCCESS: Authorized (Found 1 calendar)" : {
+
+    },
+    "SUCCESS: Authorized (Found 1 list)" : {
+
+    },
+    "This plugin declared an option you can configure (1 field)." : {
+
+    },
+    "This plugin declared options you can configure (%lld fields)." : {
+
+    },
+    "Use Mock Data (1 model)" : {
+
+    },
+    "Use Mock Data (%lld models)" : {
+
+    },
+    "Warming up — prefilling context %lld%% (%lld/1 token)" : {
+
+    },
+    "%lld results" : {
+
+    },
+    "%lld blocking findings must be fixed before provisioning." : {
+
+    },
+    "%lld external candidates skipped" : {
+
+    },
+    "%lld items would be redacted" : {
+
+    },
+    "%lld models currently available." : {
+
+    },
+    "%lld models found" : {
+
+    },
+    "%lld redactions" : {
+
+    },
+    "%lld setup findings need attention before tools are fully ready." : {
+
+    },
+    "%lld stores couldn't be converted because the encryption key is unavailable." : {
+
+    },
+    "%lld stores failed to convert." : {
+
+    },
+    "%lld tools discovered." : {
+
+    },
+    "%lld of 1 ability on" : {
+
+    },
+    "%lld of 1 fact" : {
+
+    },
+    "%lld sessions" : {
+
+    },
+    "%lld manual-model providers" : {
+
+    },
+    "%lld artifacts" : {
+
+    },
+    "%lld tools discovered via %@." : {
+
+    },
+    "%@ · 1 line" : {
+
+    },
+    "%lld transactions" : {
+
+    },
+    "%lld stdio providers" : {
+
+    },
+    "%lld tools assigned" : {
+
+    },
+    "%lld of 1 theme" : {
+
+    },
+    "session" : {
+
+    },
+    "Warming up — prefilling context %lld% (%lld/1 token)" : {
+
+    },
     " — %@" : {
       "localizations" : {
         "de" : {
