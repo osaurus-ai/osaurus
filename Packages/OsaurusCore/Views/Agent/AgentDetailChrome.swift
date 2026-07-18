@@ -15,9 +15,12 @@
 //      Insights").
 //    - `AgentDetailMetadataRow` / `AgentDetailStatusRow` are the fixed-width
 //      label/value rows used inside those cards.
-//    - `AgentDetailTabStrip` is the horizontally-scrollable tab strip (with
-//      overflow fades + chevrons) that drives the local tab navigation and the
-//      remote Overview/Activity shell.
+//    - `AgentDetailGroupedTabStrip` is the local detail's two-level
+//      navigation: folder-style group tabs whose selected tab opens into a
+//      tinted drawer bar of sub-tab pills.
+//    - `AgentDetailTabStrip` is the flat, horizontally-scrollable tab strip
+//      (with overflow fades + chevrons) used by the remote Overview/Activity
+//      shell; both strips share `AgentDetailOverflowScroller`.
 //
 //  Sheet-specific chrome (headers, footers, button styles, text fields) lives
 //  in `AgentSheetChrome.swift`; this file is for the persistent detail panes.
@@ -557,31 +560,116 @@ struct AgentDetailTabItem<Tab: Hashable>: Identifiable {
     /// Renders the tab in the system warning color regardless of selection —
     /// used for failed-plugin tabs so they're spottable in a long strip.
     var isWarning: Bool = false
+    /// Already-localized tooltip shown via `.help()` on hover, so users can
+    /// learn what a destination holds before committing to a click.
+    var help: String? = nil
 
     init(
         id: Tab,
         label: String,
         icon: String,
         badgeCount: Int? = nil,
-        isWarning: Bool = false
+        isWarning: Bool = false,
+        help: String? = nil
     ) {
         self.id = id
         self.label = label
         self.icon = icon
         self.badgeCount = badgeCount
         self.isWarning = isWarning
+        self.help = help
     }
 }
 
-/// Horizontally-scrollable tab strip with edge fades + "more" chevrons that
-/// appear only when the strip overflows its viewport. Shared by the local agent
-/// detail (built-in + plugin + failed-plugin tabs) and the remote agent detail
-/// (Overview / Activity).
+/// Flat, horizontally-scrollable tab strip with edge fades + "more" chevrons
+/// that appear only when the strip overflows its viewport. Used by the remote
+/// agent detail (Overview / Activity); the local detail uses
+/// `AgentDetailGroupedTabStrip` instead.
 struct AgentDetailTabStrip<Tab: Hashable>: View {
     @Environment(\.theme) private var theme
 
     let items: [AgentDetailTabItem<Tab>]
     @Binding var selection: Tab
+
+    var body: some View {
+        AgentDetailOverflowScroller(selection: selection) {
+            HStack(spacing: 0) {
+                ForEach(items) { item in
+                    tabButton(item)
+                        .id(item.id)
+                }
+            }
+            .padding(.horizontal, 4)
+        }
+    }
+
+    private func tabButton(_ item: AgentDetailTabItem<Tab>) -> some View {
+        let isSelected = selection == item.id
+        // Warning tabs use the system warning color regardless of selection so
+        // the user can spot them at a glance even in a long tab strip; the
+        // accent color is reserved for the happy-path "selected" signal.
+        let foreground: Color
+        if item.isWarning {
+            foreground = .orange
+        } else if isSelected {
+            foreground = theme.accentColor
+        } else {
+            foreground = theme.tertiaryText
+        }
+        return Button {
+            selection = item.id
+        } label: {
+            VStack(spacing: 0) {
+                HStack(spacing: 5) {
+                    Image(systemName: item.icon)
+                        .font(.system(size: 11, weight: isSelected ? .semibold : .regular))
+
+                    Text(item.label)
+                        .font(.system(size: 12, weight: isSelected ? .semibold : .regular))
+
+                    if let count = item.badgeCount {
+                        Text("\(count)", bundle: .module)
+                            .font(.system(size: 9, weight: .bold, design: .rounded))
+                            .foregroundColor(isSelected ? theme.accentColor : theme.tertiaryText)
+                            .padding(.horizontal, 5)
+                            .padding(.vertical, 1)
+                            .background(
+                                Capsule()
+                                    .fill(
+                                        isSelected
+                                            ? theme.accentColor.opacity(0.12) : theme.inputBackground
+                                    )
+                            )
+                    }
+                }
+                .foregroundColor(foreground)
+                .padding(.horizontal, 12)
+                .padding(.top, 10)
+                .padding(.bottom, 8)
+
+                Rectangle()
+                    .fill(isSelected ? (item.isWarning ? Color.orange : theme.accentColor) : Color.clear)
+                    .frame(height: 2)
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(PlainButtonStyle())
+    }
+}
+
+// MARK: - Overflow Scroller
+
+/// Shared horizontal-overflow chrome for the detail tab rows: edge fades +
+/// floating "more" chevrons that appear only when the content overflows its
+/// viewport, plus auto-scrolling the active selection into view. Extracted
+/// from `AgentDetailTabStrip` so the grouped strip's segmented row keeps the
+/// exact same overflow behavior on narrow windows.
+private struct AgentDetailOverflowScroller<Selection: Hashable, Content: View>: View {
+    @Environment(\.theme) private var theme
+
+    /// Current selection; changes auto-scroll the matching `.id()` into view.
+    let selection: Selection
+    @ViewBuilder let content: () -> Content
 
     // Captured via GeometryReaders so the "scrollable" affordance (edge fade +
     // chevron) only renders when the content overflows the viewport AND the
@@ -602,21 +690,15 @@ struct AgentDetailTabStrip<Tab: Hashable>: View {
     var body: some View {
         ScrollViewReader { proxy in
             ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 0) {
-                    ForEach(items) { item in
-                        tabButton(item)
-                            .id(item.id)
-                    }
-                }
-                .padding(.horizontal, 4)
-                .background(
-                    GeometryReader { inner in
-                        Color.clear.preference(
-                            key: AgentDetailTabContentWidthKey.self,
-                            value: inner.size.width
-                        )
-                    }
-                )
+                content()
+                    .background(
+                        GeometryReader { inner in
+                            Color.clear.preference(
+                                key: AgentDetailTabContentWidthKey.self,
+                                value: inner.size.width
+                            )
+                        }
+                    )
             }
             .background(
                 GeometryReader { outer in
@@ -697,59 +779,6 @@ struct AgentDetailTabStrip<Tab: Hashable>: View {
             .allowsHitTesting(false)
             .transition(.opacity.combined(with: .scale(scale: 0.7)))
     }
-
-    private func tabButton(_ item: AgentDetailTabItem<Tab>) -> some View {
-        let isSelected = selection == item.id
-        // Warning tabs use the system warning color regardless of selection so
-        // the user can spot them at a glance even in a long tab strip; the
-        // accent color is reserved for the happy-path "selected" signal.
-        let foreground: Color
-        if item.isWarning {
-            foreground = .orange
-        } else if isSelected {
-            foreground = theme.accentColor
-        } else {
-            foreground = theme.tertiaryText
-        }
-        return Button {
-            selection = item.id
-        } label: {
-            VStack(spacing: 0) {
-                HStack(spacing: 5) {
-                    Image(systemName: item.icon)
-                        .font(.system(size: 11, weight: isSelected ? .semibold : .regular))
-
-                    Text(item.label)
-                        .font(.system(size: 12, weight: isSelected ? .semibold : .regular))
-
-                    if let count = item.badgeCount {
-                        Text("\(count)", bundle: .module)
-                            .font(.system(size: 9, weight: .bold, design: .rounded))
-                            .foregroundColor(isSelected ? theme.accentColor : theme.tertiaryText)
-                            .padding(.horizontal, 5)
-                            .padding(.vertical, 1)
-                            .background(
-                                Capsule()
-                                    .fill(
-                                        isSelected
-                                            ? theme.accentColor.opacity(0.12) : theme.inputBackground
-                                    )
-                            )
-                    }
-                }
-                .foregroundColor(foreground)
-                .padding(.horizontal, 12)
-                .padding(.top, 10)
-                .padding(.bottom, 8)
-
-                Rectangle()
-                    .fill(isSelected ? (item.isWarning ? Color.orange : theme.accentColor) : Color.clear)
-                    .frame(height: 2)
-            }
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(PlainButtonStyle())
-    }
 }
 
 // MARK: - Grouped Tab Strip
@@ -788,15 +817,21 @@ struct AgentDetailTabGroup<Tab: Hashable>: Identifiable {
 }
 
 /// Two-level navigation for the agent detail view: a top row of five-ish
-/// stable groups (reusing `AgentDetailTabStrip`'s underline chrome) and a
-/// second row of pills for the tabs inside the active group. Replaces the
-/// old single strip of 14+ peers, which made every destination equally
+/// stable groups rendered as folder-style tabs (rounded top corners, square
+/// bottoms), and a tinted full-width drawer bar holding the active group's
+/// tabs as pills. The selected tab and the drawer share the same fill, so
+/// the tab visually opens INTO the bar — the second row reads as the
+/// contents of the selected tab rather than an unrelated toolbar. Replaces
+/// the old single strip of 14+ peers, which made every destination equally
 /// (in)visible.
 ///
 /// Selection stays a single `Tab` binding so deep links and programmatic
 /// navigation keep working unchanged — the strip derives the active group
 /// from the selected tab. Tapping a group restores the last tab the user
 /// visited inside it (first tab on first visit).
+///
+/// Owns its own padding + the drawer's full-bleed background so the two
+/// rows read as one navigation component; hosts should not pad it.
 struct AgentDetailGroupedTabStrip<Tab: Hashable>: View {
     @Environment(\.theme) private var theme
 
@@ -811,9 +846,19 @@ struct AgentDetailGroupedTabStrip<Tab: Hashable>: View {
         groups.first { group in group.items.contains { $0.id == selection } } ?? groups.first
     }
 
+    /// Shared fill for the selected tab AND the drawer bar — matching them
+    /// exactly is what produces the "tab folds open into the bar" effect.
+    private var drawerFill: Color {
+        theme.secondaryBackground.opacity(0.6)
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            AgentDetailTabStrip(items: groupItems, selection: groupSelectionBinding)
+            AgentDetailOverflowScroller(selection: activeGroup?.id ?? "") {
+                groupTabRow
+            }
+            .padding(.horizontal, 20)
+            .padding(.top, 8)
             if let group = activeGroup, group.items.count > 1 {
                 subTabRow(group)
             }
@@ -821,6 +866,23 @@ struct AgentDetailGroupedTabStrip<Tab: Hashable>: View {
         .onChange(of: selection) { _, newValue in
             if let group = groups.first(where: { $0.items.contains { $0.id == newValue } }) {
                 lastSelectionByGroup[group.id] = newValue
+            }
+        }
+    }
+
+    /// Folder-style tab row: the selected tab's fill runs flush into the
+    /// drawer bar directly below (no gap, no divider between them).
+    private var groupTabRow: some View {
+        HStack(spacing: 2) {
+            ForEach(groupItems) { item in
+                AgentDetailGroupSegment(
+                    item: item,
+                    isSelected: (activeGroup?.id ?? groups.first?.id) == item.id,
+                    selectedFill: drawerFill
+                ) {
+                    selectGroup(item.id)
+                }
+                .id(item.id)
             }
         }
     }
@@ -837,47 +899,165 @@ struct AgentDetailGroupedTabStrip<Tab: Hashable>: View {
         }
     }
 
-    private var groupSelectionBinding: Binding<String> {
-        Binding(
-            get: { activeGroup?.id ?? groups.first?.id ?? "" },
-            set: { groupId in
-                guard let group = groups.first(where: { $0.id == groupId }) else { return }
-                if let remembered = lastSelectionByGroup[groupId],
-                    group.items.contains(where: { $0.id == remembered })
-                {
-                    selection = remembered
-                } else if let first = group.items.first {
-                    selection = first.id
-                }
-            }
-        )
+    private func selectGroup(_ groupId: String) {
+        guard let group = groups.first(where: { $0.id == groupId }) else { return }
+        if let remembered = lastSelectionByGroup[groupId],
+            group.items.contains(where: { $0.id == remembered })
+        {
+            selection = remembered
+        } else if let first = group.items.first {
+            selection = first.id
+        }
     }
 
+    /// Full-width drawer bar: a distinctly tinted surface (same fill as the
+    /// selected tab, so the two merge) holding the active group's tabs as
+    /// pills.
     @ViewBuilder
     private func subTabRow(_ group: AgentDetailTabGroup<Tab>) -> some View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 4) {
                 ForEach(group.items) { item in
-                    subTabPill(item)
+                    AgentDetailSubTabPill(item: item, isSelected: selection == item.id) {
+                        selection = item.id
+                    }
                 }
             }
-            .padding(.horizontal, 8)
-            .padding(.vertical, 6)
+            .padding(.horizontal, 20)
+            .padding(.vertical, 7)
         }
+        .background(drawerFill)
+    }
+}
+
+/// One folder-style tab of the grouped strip's top row: rounded top
+/// corners, square bottom, and — when selected — the same fill as the
+/// drawer bar below so the tab reads as folding open into it. Unselected
+/// tabs get a soft hover wash in the same shape.
+private struct AgentDetailGroupSegment: View {
+    @Environment(\.theme) private var theme
+
+    let item: AgentDetailTabItem<String>
+    let isSelected: Bool
+    /// Fill of the drawer bar the selected tab merges into.
+    let selectedFill: Color
+    let action: () -> Void
+
+    @State private var isHovering = false
+
+    private var tabShape: UnevenRoundedRectangle {
+        UnevenRoundedRectangle(
+            topLeadingRadius: 8,
+            bottomLeadingRadius: 0,
+            bottomTrailingRadius: 0,
+            topTrailingRadius: 8,
+            style: .continuous
+        )
     }
 
-    private func subTabPill(_ item: AgentDetailTabItem<Tab>) -> some View {
-        let isSelected = selection == item.id
-        let foreground: Color =
+    var body: some View {
+        // Warning groups keep the system warning color regardless of
+        // selection so a failed plugin is spottable before its group is
+        // opened; the icon-only accent marks the happy-path selection.
+        let labelColor: Color =
+            item.isWarning ? .orange : (isSelected ? theme.primaryText : theme.secondaryText)
+        let iconColor: Color =
             item.isWarning ? .orange : (isSelected ? theme.accentColor : theme.secondaryText)
-        return Button {
-            selection = item.id
-        } label: {
+        Button(action: action) {
             HStack(spacing: 5) {
                 Image(systemName: item.icon)
-                    .font(.system(size: 10, weight: isSelected ? .semibold : .regular))
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundColor(iconColor)
+
+                // Constant weight so tabs don't change width (and shift
+                // their neighbors) when the selection moves; the tab fill
+                // carries the selected state.
                 Text(item.label)
-                    .font(.system(size: 11, weight: isSelected ? .semibold : .regular))
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundColor(labelColor)
+
+                if let count = item.badgeCount {
+                    Text("\(count)", bundle: .module)
+                        .font(.system(size: 9, weight: .bold, design: .rounded))
+                        .foregroundColor(isSelected ? theme.accentColor : theme.tertiaryText)
+                        .padding(.horizontal, 5)
+                        .padding(.vertical, 1)
+                        .background(
+                            Capsule()
+                                .fill(
+                                    isSelected
+                                        ? theme.accentColor.opacity(0.12) : theme.inputBackground
+                                )
+                        )
+                }
+            }
+            .fixedSize()
+            .padding(.horizontal, 13)
+            .padding(.vertical, 8)
+            .background(
+                tabShape
+                    .fill(
+                        isSelected
+                            ? selectedFill
+                            : (isHovering ? theme.secondaryBackground.opacity(0.3) : Color.clear)
+                    )
+                    .animation(.easeOut(duration: 0.15), value: isSelected)
+                    .animation(.easeOut(duration: 0.15), value: isHovering)
+            )
+            .contentShape(tabShape)
+        }
+        .buttonStyle(.plain)
+        .onHover { hovering in
+            withAnimation(.easeOut(duration: 0.15)) {
+                isHovering = hovering
+            }
+        }
+        .optionalHelp(item.help)
+        .accessibilityLabel(item.label)
+        .accessibilityAddTraits(isSelected ? [.isSelected] : [])
+    }
+}
+
+/// One pill of the grouped strip's secondary row. Selected pills get the
+/// accent fill + hairline stroke (matching the Database workspace's section
+/// pills); unselected ones get a soft hover wash.
+private struct AgentDetailSubTabPill<Tab: Hashable>: View {
+    @Environment(\.theme) private var theme
+
+    let item: AgentDetailTabItem<Tab>
+    let isSelected: Bool
+    let action: () -> Void
+
+    @State private var isHovering = false
+
+    var body: some View {
+        let foreground: Color =
+            item.isWarning ? .orange : (isSelected ? theme.accentColor : theme.secondaryText)
+        let strokeColor: Color = {
+            if isSelected {
+                return item.isWarning
+                    ? Color.orange.opacity(0.3) : theme.accentColor.opacity(0.25)
+            }
+            return Color.clear
+        }()
+        let fill: Color = {
+            if isSelected {
+                return item.isWarning
+                    ? Color.orange.opacity(0.12) : theme.accentColor.opacity(0.14)
+            }
+            if item.isWarning { return Color.orange.opacity(0.08) }
+            // Contrast against the tinted drawer bar in both light and dark
+            // themes (secondary-on-secondary would be invisible).
+            return isHovering ? theme.primaryBackground.opacity(0.5) : Color.clear
+        }()
+        Button(action: action) {
+            HStack(spacing: 5) {
+                Image(systemName: item.icon)
+                    .font(.system(size: 10, weight: .medium))
+                // Constant weight so pills don't change width (and shift
+                // their neighbors) when the selection moves.
+                Text(item.label)
+                    .font(.system(size: 11, weight: .medium))
                 if let count = item.badgeCount {
                     Text("\(count)", bundle: .module)
                         .font(.system(size: 9, weight: .bold, design: .rounded))
@@ -894,21 +1074,41 @@ struct AgentDetailGroupedTabStrip<Tab: Hashable>: View {
                 }
             }
             .foregroundColor(foreground)
-            .padding(.horizontal, 10)
-            .padding(.vertical, 5)
+            .padding(.horizontal, 11)
+            .padding(.vertical, 6)
             .background(
                 Capsule(style: .continuous)
-                    .fill(
-                        isSelected
-                            ? theme.accentColor.opacity(0.12)
-                            : (item.isWarning ? Color.orange.opacity(0.08) : Color.clear)
-                    )
+                    .fill(fill)
+                    .animation(.easeOut(duration: 0.15), value: isHovering)
+            )
+            .overlay(
+                Capsule(style: .continuous)
+                    .strokeBorder(strokeColor, lineWidth: 1)
             )
             .contentShape(Capsule(style: .continuous))
         }
         .buttonStyle(.plain)
+        .onHover { hovering in
+            withAnimation(.easeOut(duration: 0.15)) {
+                isHovering = hovering
+            }
+        }
+        .optionalHelp(item.help)
         .accessibilityLabel(item.label)
         .accessibilityAddTraits(isSelected ? [.isSelected] : [])
+    }
+}
+
+extension View {
+    /// `.help()` only when a tooltip string exists — avoids registering
+    /// empty tooltips for tabs (e.g. plugins) that don't provide one.
+    @ViewBuilder
+    fileprivate func optionalHelp(_ text: String?) -> some View {
+        if let text {
+            self.help(text)
+        } else {
+            self
+        }
     }
 }
 
@@ -929,3 +1129,107 @@ private struct AgentDetailTabViewportWidthKey: PreferenceKey {
         value = max(value, nextValue())
     }
 }
+
+// MARK: - Preview
+
+#if DEBUG && canImport(PreviewsMacros)
+    #Preview("Grouped Tab Strip") {
+        struct PreviewWrapper: View {
+            @State private var selection: String = "general.configure"
+
+            private var groups: [AgentDetailTabGroup<String>] {
+                [
+                    AgentDetailTabGroup(
+                        id: "general",
+                        label: "General",
+                        icon: "gear",
+                        items: [
+                            .init(
+                                id: "general.configure", label: "Configure", icon: "gear",
+                                help: "Identity, model, and behavior overrides."),
+                            .init(
+                                id: "general.appearance", label: "Appearance",
+                                icon: "paintpalette.fill",
+                                help: "Avatar, empty state, and visual theme."),
+                        ]
+                    ),
+                    AgentDetailTabGroup(
+                        id: "abilities",
+                        label: "Abilities",
+                        icon: "wrench.and.screwdriver",
+                        items: [
+                            .init(id: "abilities.overview", label: "Overview", icon: "switch.2"),
+                            .init(
+                                id: "abilities.tools", label: "Tools",
+                                icon: "wrench.and.screwdriver"),
+                            .init(
+                                id: "abilities.subagents", label: "Subagents",
+                                icon: "person.2.wave.2"),
+                            .init(
+                                id: "abilities.broken", label: "Broken Plugin",
+                                icon: "exclamationmark.triangle.fill", isWarning: true),
+                        ],
+                        isWarning: true
+                    ),
+                    AgentDetailTabGroup(
+                        id: "connections",
+                        label: "Connections",
+                        icon: "network",
+                        items: [
+                            .init(id: "connections.network", label: "Network", icon: "network"),
+                            .init(
+                                id: "connections.remote", label: "Remote Connections",
+                                icon: "person.2.badge.key"),
+                        ]
+                    ),
+                    AgentDetailTabGroup(
+                        id: "automation",
+                        label: "Automation",
+                        icon: "clock.badge.checkmark",
+                        items: [
+                            .init(
+                                id: "automation.automation", label: "Automation",
+                                icon: "clock.badge.checkmark")
+                        ],
+                        badgeCount: 3
+                    ),
+                    AgentDetailTabGroup(
+                        id: "memory",
+                        label: "Memory",
+                        icon: "brain.head.profile",
+                        items: [
+                            .init(
+                                id: "memory.memory", label: "Memory", icon: "brain.head.profile",
+                                badgeCount: 359),
+                            .init(
+                                id: "memory.database", label: "Database",
+                                icon: "cylinder.split.1x2"),
+                        ],
+                        badgeCount: 359
+                    ),
+                ]
+            }
+
+            var body: some View {
+                VStack(alignment: .leading, spacing: 32) {
+                    // Full width: two-row state (General has sub-tabs).
+                    strip
+
+                    // Narrow width: exercises the overflow fades + chevrons.
+                    strip.frame(width: 380)
+                }
+                .padding(32)
+                .frame(width: 760)
+            }
+
+            private var strip: some View {
+                VStack(spacing: 0) {
+                    AgentDetailGroupedTabStrip(groups: groups, selection: $selection)
+                    Divider()
+                }
+            }
+        }
+
+        return PreviewWrapper()
+    }
+#endif

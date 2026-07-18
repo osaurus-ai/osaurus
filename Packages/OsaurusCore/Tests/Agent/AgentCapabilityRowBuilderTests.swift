@@ -17,10 +17,15 @@
 //
 
 import Foundation
+import MCP
 import Testing
 
 @testable import OsaurusCore
 
+// Serialized: the count-semantics test registers tools in the shared
+// `ToolRegistry` under a redirected `ToolConfigurationStore` directory,
+// which is process-global state.
+@Suite(.serialized)
 @MainActor
 struct AgentCapabilityRowBuilderTests {
 
@@ -81,7 +86,7 @@ struct AgentCapabilityRowBuilderTests {
 
         for row in rows {
             switch row {
-            case .groupHeader(let id, _, _, _, _, _, _):
+            case .groupHeader(let id, _, _, _, _, _):
                 #expect(id != "src:builtin", "Informational built-in group leaked into rows")
             case .tool(let id, _, _, _, _, _, _, _):
                 #expect(
@@ -92,7 +97,103 @@ struct AgentCapabilityRowBuilderTests {
         }
     }
 
+    // MARK: - Count semantics
+
+    /// Group header counts must reflect the FULL group, not the
+    /// search/filter-reduced subset — the master checkbox acts on the whole
+    /// group via `childrenOf` (registry-based), so a badge computed from the
+    /// rendered subset would disagree with what the checkbox toggles.
+    @Test func groupCountsIgnoreSearchAndAssignedFilter() {
+        withTempToolConfig {
+            let registry = ToolRegistry.shared
+            let suffix = UUID().uuidString.prefix(8)
+            let provider = MCPProvider(
+                name: "count_probe_\(suffix)",
+                url: "https://example.invalid/mcp"
+            )
+            let mcpTools = [
+                MCP.Tool(name: "alpha_\(suffix)", description: "test", inputSchema: ["type": "object"]),
+                MCP.Tool(name: "beta_\(suffix)", description: "test", inputSchema: ["type": "object"]),
+            ]
+            let registered = MCPProviderManager.shared.registerDiscoveredTools(
+                mcpTools,
+                for: provider.id,
+                provider: provider
+            )
+            let alpha = registered[0].name
+            let beta = registered[1].name
+            defer { registry.unregister(names: [alpha, beta]) }
+
+            let visibleTools = [makeToolEntry(name: alpha), makeToolEntry(name: beta)]
+
+            // Search matches only `alpha`; only `beta` is assigned. The
+            // header must still report 1 of 2 — the full group.
+            let input = CapabilityRowBuilder.Input(
+                visibleTools: visibleTools,
+                plugins: [],
+                enabledToolNames: [beta],
+                toolMode: .auto,
+                searchQuery: "alpha",
+                filter: .all,
+                expandedGroups: []
+            )
+            let rows = CapabilityRowBuilder.build(input)
+
+            let header = rows.compactMap { row -> (enabled: Int, total: Int)? in
+                guard case .groupHeader(_, _, _, let enabledCount, let totalCount, _) = row else {
+                    return nil
+                }
+                return (enabledCount, totalCount)
+            }.first
+            #expect(header?.enabled == 1, "Enabled count should cover the full group")
+            #expect(header?.total == 2, "Total count should cover the full group")
+
+            // Only the matching tool row is emitted, though.
+            let toolRowIds = rows.compactMap { row -> String? in
+                guard case .tool(let id, _, _, _, _, _, _, _) = row else { return nil }
+                return id
+            }
+            #expect(toolRowIds.count == 1)
+            #expect(toolRowIds.first?.hasSuffix("::tool::\(alpha)") == true)
+
+            // Assigned filter: same full-group counts, only `beta` emitted.
+            let assignedInput = CapabilityRowBuilder.Input(
+                visibleTools: visibleTools,
+                plugins: [],
+                enabledToolNames: [beta],
+                toolMode: .auto,
+                searchQuery: "",
+                filter: .assigned,
+                expandedGroups: []
+            )
+            let assignedRows = CapabilityRowBuilder.build(assignedInput)
+            for row in assignedRows {
+                if case .groupHeader(_, _, _, let enabledCount, let totalCount, _) = row {
+                    #expect(enabledCount == 1)
+                    #expect(totalCount == 2)
+                }
+            }
+        }
+    }
+
     // MARK: - Fixtures
+
+    /// Redirect tool-config persistence to a throwaway directory so tool
+    /// registration in tests never touches the user's real `tools.json`.
+    private func withTempToolConfig<T>(_ body: () throws -> T) rethrows -> T {
+        let tmp = FileManager.default.temporaryDirectory.appendingPathComponent(
+            "osaurus-capability-rowbuilder-\(UUID().uuidString)",
+            isDirectory: true
+        )
+        try? FileManager.default.createDirectory(at: tmp, withIntermediateDirectories: true)
+        let previous = ToolConfigurationStore.overrideDirectory
+        ToolConfigurationStore.overrideDirectory = tmp
+        defer {
+            ToolConfigurationStore.overrideDirectory = previous
+            try? FileManager.default.removeItem(at: tmp)
+        }
+        return try body()
+    }
 
     private func makeToolEntry(name: String) -> ToolRegistry.ToolEntry {
         ToolRegistry.ToolEntry(

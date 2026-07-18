@@ -1467,9 +1467,9 @@ struct AgentDetailView: View {
             }
 
             VStack(alignment: .leading, spacing: 0) {
+                // The grouped strip owns its padding + the sub-row's
+                // full-bleed background, so it sits flush here.
                 tabBar
-                    .padding(.horizontal, 20)
-                    .padding(.top, 8)
 
                 Divider()
                     .foregroundColor(theme.primaryBorder)
@@ -1903,7 +1903,8 @@ struct AgentDetailView: View {
             id: .builtIn(tab),
             label: tab.label,
             icon: tab.icon,
-            badgeCount: tabBadgeCount(for: .builtIn(tab))
+            badgeCount: tabBadgeCount(for: .builtIn(tab)),
+            help: tab.helperText
         )
     }
 
