@@ -104,12 +104,21 @@ public enum ProviderNetworkDiagnostics {
         ) {
             rows.append(oauthContext)
         }
+        if let failure = remoteFailureClassificationRow(
+            provider: provider,
+            state: state,
+            proxy: proxy,
+            apiKeyPresent: apiKeyPresent,
+            oauthTokensPresent: oauthTokensPresent
+        ) {
+            rows.append(failure)
+        }
         if let replay = remoteReplayDiagnosticsRow(state: state) {
             rows.append(replay)
         }
         rows.append(
             contentsOf: [
-                remoteModelDiscoveryRow(provider: provider),
+                remoteModelDiscoveryRow(provider: provider, state: state),
                 remoteRequestFormatRow(provider: provider),
                 proxyRow(proxy, appliesTo: "Remote provider requests"),
             ]
@@ -316,7 +325,10 @@ public enum ProviderNetworkDiagnostics {
         return detail
     }
 
-    private static func remoteModelDiscoveryRow(provider: RemoteProvider) -> ProviderDiagnosticRow {
+    private static func remoteModelDiscoveryRow(
+        provider: RemoteProvider,
+        state: RemoteProviderState?
+    ) -> ProviderDiagnosticRow {
         guard let modelsURL = provider.url(for: provider.providerType.modelsEndpoint) else {
             return ProviderDiagnosticRow(
                 id: "models",
@@ -338,6 +350,15 @@ public enum ProviderNetworkDiagnostics {
                 detail: codexModelDiscoveryDetail()
             )
         case .azureOpenAI:
+            if state?.isConnected == true {
+                return ProviderDiagnosticRow(
+                    id: "models",
+                    title: L("Model discovery"),
+                    value: L("Connected"),
+                    severity: .ok,
+                    detail: L("\(state?.modelCount ?? 0) deployment/model ID(s) are available.")
+                )
+            }
             let hasManual = !provider.mergedModelIds(discovered: []).isEmpty
             return ProviderDiagnosticRow(
                 id: "models",
@@ -429,13 +450,41 @@ public enum ProviderNetworkDiagnostics {
 
     private static func remoteReplayDiagnosticsRow(state: RemoteProviderState?) -> ProviderDiagnosticRow? {
         guard let diagnostics = state?.lastReplayDiagnostics else { return nil }
+        let hasActiveFailure = state?.isConnected != true && state?.lastError?.isEmpty == false
         return ProviderDiagnosticRow(
             id: "request-evidence",
             title: L("Request evidence"),
             value: diagnostics.summary,
-            severity: .warning,
+            severity: hasActiveFailure ? .warning : .info,
             detail: diagnostics.pasteboardText,
             action: L("Copy diagnostics and include this redacted request/response evidence with the report.")
+        )
+    }
+
+    private static func remoteFailureClassificationRow(
+        provider: RemoteProvider,
+        state: RemoteProviderState?,
+        proxy: GlobalProxyDiagnosticState,
+        apiKeyPresent: Bool,
+        oauthTokensPresent: Bool
+    ) -> ProviderDiagnosticRow? {
+        guard let classification = ProviderFailureClassifier.classify(
+            provider: provider,
+            state: state,
+            proxy: proxy,
+            apiKeyPresent: apiKeyPresent,
+            oauthTokensPresent: oauthTokensPresent,
+            manualModelRecovery: provider.providerType == .azureOpenAI ? .azureDeploymentIDs : .unavailable
+        ) else {
+            return nil
+        }
+        return ProviderDiagnosticRow(
+            id: classification.rowID,
+            title: L("Likely failure"),
+            value: classification.title,
+            severity: classification.severity,
+            detail: classification.detail,
+            action: classification.action
         )
     }
 

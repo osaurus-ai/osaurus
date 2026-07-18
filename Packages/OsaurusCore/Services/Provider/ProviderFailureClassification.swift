@@ -1,0 +1,681 @@
+//
+//  ProviderFailureClassification.swift
+//  OsaurusCore
+//
+//  Pure, post-hoc classification for remote provider failures. This uses only
+//  existing state, replay evidence, and proxy diagnostics.
+//
+
+import Foundation
+
+enum ProviderFailureBucket: String, Sendable, Equatable, CaseIterable {
+    case missingCredential = "missing-credential"
+    case oauthTokenMissing = "oauth-token-missing"
+    case authRejected = "auth-rejected"
+    case endpointUnreachable = "endpoint-unreachable"
+    case tlsFailure = "tls-failure"
+    case timeout
+    case proxyConnectFailed = "proxy-connect-failed"
+    case modelsEndpointUnavailable = "models-endpoint-unavailable"
+    case modelsSchemaMismatch = "models-schema-mismatch"
+    case requestRejected = "request-rejected"
+    case unsupportedModel = "unsupported-model"
+    case badResponse = "bad-response"
+    case unknown
+}
+
+struct ProviderFailureClassification: Sendable, Equatable {
+    let bucket: ProviderFailureBucket
+    let title: String
+    let detail: String
+    let action: String
+    let severity: ProviderDiagnosticSeverity
+
+    var rowID: String {
+        switch bucket {
+        case .missingCredential, .authRejected:
+            return "failure-auth"
+        case .oauthTokenMissing:
+            return "failure-oauth"
+        case .endpointUnreachable:
+            return "failure-connection"
+        case .tlsFailure:
+            return "failure-tls"
+        case .timeout:
+            return "failure-timeout"
+        case .proxyConnectFailed:
+            return "failure-proxy"
+        case .modelsEndpointUnavailable, .modelsSchemaMismatch, .unsupportedModel:
+            return "failure-models"
+        case .requestRejected:
+            return "failure-format"
+        case .badResponse:
+            return "failure-response"
+        case .unknown:
+            return "failure-unknown"
+        }
+    }
+}
+
+struct ProviderSetupFailure: Sendable, Equatable {
+    let classification: ProviderFailureClassification
+    let recoveryDetail: String?
+    let pasteboardDetail: String
+    let providerType: RemoteProviderType
+    let authType: RemoteProviderAuthType
+    let providerProtocol: RemoteProviderProtocol
+    let usesCustomPort: Bool
+    let hasBasePath: Bool
+    let apiKeyPresent: Bool
+    let oauthTokensPresent: Bool
+    let manualModelCount: Int
+    let proxyState: String
+
+    var userMessage: String {
+        [classification.title, recoveryDetail, classification.action]
+            .compactMap { $0 }
+            .joined(separator: ". ")
+    }
+
+    var detailForDisplay: String {
+        guard let recoveryDetail, !recoveryDetail.isEmpty else { return classification.detail }
+        return recoveryDetail
+    }
+
+    var pasteboardText: String {
+        [
+            "provider-setup-diagnostics",
+            "failure=\(classification.bucket.rawValue)",
+            "provider-type=\(providerType.rawValue)",
+            "auth-type=\(authType.rawValue)",
+            "scheme=\(providerProtocol.rawValue)",
+            "custom-port=\(usesCustomPort)",
+            "base-path-present=\(hasBasePath)",
+            "api-key-present=\(apiKeyPresent)",
+            "oauth-tokens-present=\(oauthTokensPresent)",
+            "manual-model-count=\(manualModelCount)",
+            "proxy=\(proxyState)",
+            "summary=\(classification.title)",
+            "detail=\(pasteboardDetail)",
+            "action=\(classification.action)",
+        ].joined(separator: "\n")
+    }
+}
+
+/// Manual model recovery must describe a control the current surface actually
+/// exposes. Provider type is checked separately so native APIs never inherit an
+/// OpenAI-compatible workaround from an overly broad caller.
+enum ProviderManualModelRecovery: Sendable, Equatable {
+    case unavailable
+    case openAICompatibleModelIDs
+    case azureDeploymentIDs
+}
+
+enum ProviderFailureClassifier {
+    static func classifySetupFailure(
+        provider: RemoteProvider,
+        error: Error,
+        proxy: GlobalProxyDiagnosticState,
+        apiKeyPresent: Bool,
+        oauthTokensPresent: Bool,
+        diagnosticMessage: String? = nil,
+        manualModelRecovery: ProviderManualModelRecovery = .unavailable
+    ) -> ProviderSetupFailure {
+        let safeDiagnosticMessage = diagnosticMessage.map {
+            ProviderDiagnosticRedactor.safe($0, maxLength: 360)
+        }
+        let oauthContext = usesOAuthTokens(provider.authType)
+        let credentialPresent =
+            apiKeyPresent || oauthTokensPresent || hasCredentialHeader(provider)
+        let missingOAuthTokens = oauthContext && !oauthTokensPresent
+        let replay = (error as? RemoteProviderServiceError)?.replayDiagnostics
+        let result: ProviderFailureClassification
+        if let replay,
+            let replayClassification = classifyReplay(
+                replay,
+                proxy: proxy,
+                credentialPresent: credentialPresent,
+                oauthContext: oauthContext
+            ) {
+            result = replayClassification
+        } else if missingOAuthTokens {
+            result = classification(
+                .oauthTokenMissing,
+                detail: safeDiagnosticMessage ?? error.localizedDescription
+            )
+        } else {
+            result = classifyMessage(
+                safeDiagnosticMessage ?? error.localizedDescription,
+                proxy: proxy,
+                credentialPresent: credentialPresent,
+                oauthContext: oauthContext
+            )
+        }
+        let contextualizedResult = applyingRecoveryContext(
+            to: result,
+            providerType: provider.providerType,
+            manualModelRecovery: manualModelRecovery
+        )
+
+        return ProviderSetupFailure(
+            classification: contextualizedResult,
+            recoveryDetail: safeDiagnosticMessage,
+            pasteboardDetail: setupPasteboardDetail(classification: contextualizedResult, replay: replay),
+            providerType: provider.providerType,
+            authType: provider.authType,
+            providerProtocol: provider.providerProtocol,
+            usesCustomPort: provider.port != nil,
+            hasBasePath: !provider.basePath.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+            apiKeyPresent: apiKeyPresent,
+            oauthTokensPresent: oauthTokensPresent,
+            manualModelCount: provider.manualModelIds.count,
+            proxyState: setupProxyState(proxy)
+        )
+    }
+
+    static func classify(
+        provider: RemoteProvider,
+        state: RemoteProviderState?,
+        proxy: GlobalProxyDiagnosticState,
+        apiKeyPresent: Bool,
+        oauthTokensPresent: Bool,
+        manualModelRecovery: ProviderManualModelRecovery = .unavailable
+    ) -> ProviderFailureClassification? {
+        guard provider.enabled else { return nil }
+        if state?.isConnected == true {
+            return nil
+        }
+
+        guard hasActiveFailure(state) else { return nil }
+
+        switch provider.authType {
+        case .apiKey:
+            if !apiKeyPresent && !hasCredentialHeader(provider) {
+                return applyingRecoveryContext(
+                    to: classification(
+                        .missingCredential,
+                        detail: L("No API key or secret credential header is available for this provider.")
+                    ),
+                    providerType: provider.providerType,
+                    manualModelRecovery: manualModelRecovery
+                )
+            }
+        case .openAICodexOAuth, .xaiOAuth:
+            if !oauthTokensPresent {
+                return applyingRecoveryContext(
+                    to: classification(
+                        .oauthTokenMissing,
+                        detail: L("No OAuth tokens are available for this provider.")
+                    ),
+                    providerType: provider.providerType,
+                    manualModelRecovery: manualModelRecovery
+                )
+            }
+        case .none:
+            break
+        }
+
+        if let replay = state?.lastReplayDiagnostics {
+            let credentialPresent = apiKeyPresent || oauthTokensPresent || hasCredentialHeader(provider)
+            if let replayClassification = classifyReplay(
+                replay,
+                proxy: proxy,
+                credentialPresent: credentialPresent,
+                oauthContext: usesOAuthTokens(provider.authType)
+            ) {
+                return applyingRecoveryContext(
+                    to: replayClassification,
+                    providerType: provider.providerType,
+                    manualModelRecovery: manualModelRecovery
+                )
+            }
+        }
+
+        if let error = state?.lastError, !error.isEmpty {
+            let credentialPresent = apiKeyPresent || oauthTokensPresent || hasCredentialHeader(provider)
+            return applyingRecoveryContext(
+                to: classifyMessage(
+                    error,
+                    proxy: proxy,
+                    credentialPresent: credentialPresent,
+                    oauthContext: usesOAuthTokens(provider.authType)
+                ),
+                providerType: provider.providerType,
+                manualModelRecovery: manualModelRecovery
+            )
+        }
+
+        return nil
+    }
+
+    static func connectivityIssueKind(forFailureRowID rowID: String) -> ProviderConnectivityIssueKind? {
+        switch rowID {
+        case "failure-auth":
+            return .authentication
+        case "failure-oauth":
+            return .oauthContext
+        case "failure-models":
+            return .models
+        case "failure-format":
+            return .format
+        case "failure-proxy":
+            return .proxy
+        case "failure-unknown":
+            return .uncategorized
+        case "failure-connection", "failure-tls", "failure-timeout", "failure-response":
+            return .connection
+        default:
+            return nil
+        }
+    }
+
+    private static func classifyReplay(
+        _ replay: ProviderReplayDiagnosticBundle,
+        proxy: GlobalProxyDiagnosticState,
+        credentialPresent: Bool,
+        oauthContext: Bool
+    ) -> ProviderFailureClassification? {
+        if case .active = proxy,
+           let transportError = replay.transportError?.lowercased(),
+           transportError.contains("proxy") {
+            return classification(
+                .proxyConnectFailed,
+                detail: L("The request failed while the global proxy was active. Evidence: \(replay.summary)")
+            )
+        }
+
+        if let code = replay.transportErrorCode,
+           let transportClassification = classifyTransportErrorCode(code, summary: replay.summary) {
+            return transportClassification
+        }
+
+        if let transportError = replay.transportError, !transportError.isEmpty {
+            return classifyMessage(
+                transportError,
+                proxy: proxy,
+                credentialPresent: credentialPresent,
+                oauthContext: oauthContext,
+                evidence: replay.summary
+            )
+        }
+
+        guard let response = replay.response else { return nil }
+        let body = response.body?.lowercased() ?? ""
+        let phase = replay.phase.lowercased()
+        let status = response.statusCode
+
+        if oauthContext && messageLooksLikeOAuthTokenFailure(body) {
+            return classification(.oauthTokenMissing, detail: L("HTTP \(status) authentication rejection. Evidence: \(replay.summary)"))
+        }
+
+        if status == 401 {
+            return classification(.authRejected, detail: L("HTTP \(status) from provider. Evidence: \(replay.summary)"))
+        }
+
+        if bodyLooksLikeAuthRejection(body) {
+            return classification(.authRejected, detail: L("HTTP \(status) authentication rejection. Evidence: \(replay.summary)"))
+        }
+
+        if phase.contains("model") {
+            if status == 404 || status == 405 || status == 501 {
+                return classification(.modelsEndpointUnavailable, detail: L("HTTP \(status) from the models endpoint. Evidence: \(replay.summary)"))
+            }
+            if status >= 500 {
+                return classification(.badResponse, detail: L("HTTP \(status) from the models endpoint. Evidence: \(replay.summary)"))
+            }
+            if status == 200 && bodyLooksLikeSchemaMismatch(body) {
+                return classification(.modelsSchemaMismatch, detail: L("The models endpoint responded with an unexpected schema. Evidence: \(replay.summary)"))
+            }
+        }
+
+        if body.contains("model_not_found")
+            || body.contains("model not found")
+            || body.contains("unsupported model") {
+            return classification(.unsupportedModel, detail: L("The provider rejected the selected model. Evidence: \(replay.summary)"))
+        }
+
+        if bodyLooksLikeRequestShapeRejection(body) {
+            return classification(.requestRejected, detail: L("HTTP \(status) suggests the provider rejected the request shape. Evidence: \(replay.summary)"))
+        }
+
+        if bodyLooksLikeSchemaMismatch(body) {
+            if phase.contains("model") {
+                return classification(.modelsSchemaMismatch, detail: L("The models endpoint responded with an unexpected schema. Evidence: \(replay.summary)"))
+            }
+            return classification(.badResponse, detail: L("The provider response did not match the expected schema. Evidence: \(replay.summary)"))
+        }
+
+        if status < 200 || status >= 300 {
+            return classification(.badResponse, detail: L("HTTP \(status) from provider. Evidence: \(replay.summary)"))
+        }
+
+        return nil
+    }
+
+    private static func classifyMessage(
+        _ message: String,
+        proxy: GlobalProxyDiagnosticState,
+        credentialPresent: Bool = false,
+        oauthContext: Bool = false,
+        evidence: String? = nil
+    ) -> ProviderFailureClassification {
+        let safeMessage = ProviderDiagnosticRedactor.safe(message, maxLength: 240)
+        let lower = safeMessage.lowercased()
+        let detail = evidence.map { L("\(safeMessage) Evidence: \($0)") } ?? safeMessage
+
+        if case .active = proxy, lower.contains("proxy") {
+            return classification(.proxyConnectFailed, detail: detail)
+        }
+        if oauthContext && messageLooksLikeOAuthTokenFailure(lower) {
+            return classification(.oauthTokenMissing, detail: detail)
+        }
+        if lower.contains("http 401") {
+            return classification(.authRejected, detail: detail)
+        }
+        if bodyLooksLikeAuthRejection(lower) {
+            return classification(.authRejected, detail: detail)
+        }
+        if lower.contains("api key") || lower.contains("apikey") {
+            if credentialPresent {
+                return classification(.authRejected, detail: detail)
+            }
+            return classification(.missingCredential, detail: detail)
+        }
+        if lower.contains("timed out") || lower.contains("timeout") {
+            return classification(.timeout, detail: detail)
+        }
+        if lower.contains("tls") || lower.contains("ssl") || lower.contains("certificate") {
+            return classification(.tlsFailure, detail: detail)
+        }
+        if lower.contains("could not find host")
+            || lower.contains("cannot find host")
+            || lower.contains("could not connect")
+            || lower.contains("cannot connect")
+            || lower.contains("dns")
+            || lower.contains("offline")
+            || lower.contains("not connected to the internet") {
+            return classification(.endpointUnreachable, detail: detail)
+        }
+        if lower.contains("no models available") {
+            return classification(.modelsSchemaMismatch, detail: detail)
+        }
+        if lower.contains("invalid /models response") {
+            return classification(.modelsSchemaMismatch, detail: detail)
+        }
+        if lower.contains("http 404") || lower.contains("http 405") || lower.contains("http 501") {
+            let bucket: ProviderFailureBucket = messageHasModelDiscoveryContext(lower)
+                ? .modelsEndpointUnavailable
+                : .badResponse
+            return classification(bucket, detail: detail)
+        }
+        if bodyLooksLikeRequestShapeRejection(lower) {
+            return classification(.requestRejected, detail: detail)
+        }
+        if lower.contains("invalid response") {
+            return classification(.badResponse, detail: detail)
+        }
+
+        return classification(.unknown, detail: detail)
+    }
+
+    private static func classifyTransportErrorCode(
+        _ code: String,
+        summary: String
+    ) -> ProviderFailureClassification? {
+        switch code {
+        case "NSURLErrorDomain:-1001", "URLError:-1001":
+            return classification(.timeout, detail: L("The provider request timed out. Evidence: \(summary)"))
+        case "NSURLErrorDomain:-1003", "URLError:-1003",
+             "NSURLErrorDomain:-1004", "URLError:-1004",
+             "NSURLErrorDomain:-1005", "URLError:-1005",
+             "NSURLErrorDomain:-1009", "URLError:-1009":
+            return classification(.endpointUnreachable, detail: L("The provider endpoint could not be reached. Evidence: \(summary)"))
+        case "NSURLErrorDomain:-1200", "URLError:-1200",
+             "NSURLErrorDomain:-1202", "URLError:-1202",
+             "NSURLErrorDomain:-1203", "URLError:-1203",
+             "NSURLErrorDomain:-1204", "URLError:-1204",
+             "NSURLErrorDomain:-1205", "URLError:-1205",
+             "NSURLErrorDomain:-1206", "URLError:-1206":
+            return classification(.tlsFailure, detail: L("TLS or certificate validation failed. Evidence: \(summary)"))
+        default:
+            return nil
+        }
+    }
+
+    private static func classification(
+        _ bucket: ProviderFailureBucket,
+        detail: String
+    ) -> ProviderFailureClassification {
+        ProviderFailureClassification(
+            bucket: bucket,
+            title: title(for: bucket),
+            detail: ProviderDiagnosticRedactor.safe(detail, maxLength: 360),
+            action: action(for: bucket),
+            severity: bucket == .unknown ? .warning : .blocked
+        )
+    }
+
+    private static func applyingRecoveryContext(
+        to classification: ProviderFailureClassification,
+        providerType: RemoteProviderType,
+        manualModelRecovery: ProviderManualModelRecovery
+    ) -> ProviderFailureClassification {
+        ProviderFailureClassification(
+            bucket: classification.bucket,
+            title: classification.title,
+            detail: classification.detail,
+            action: action(
+                for: classification.bucket,
+                providerType: providerType,
+                manualModelRecovery: manualModelRecovery
+            ),
+            severity: classification.severity
+        )
+    }
+
+    private static func setupPasteboardDetail(
+        classification: ProviderFailureClassification,
+        replay: ProviderReplayDiagnosticBundle?
+    ) -> String {
+        let detail: String
+        if let replay {
+            var evidence = [
+                classification.title,
+                "method=\(replay.request.method)",
+                "endpoint=[redacted-endpoint]",
+            ]
+            if let statusCode = replay.response?.statusCode {
+                evidence.append("status=\(statusCode)")
+            } else if let transportErrorCode = replay.transportErrorCode {
+                evidence.append("transport-error-code=\(transportErrorCode)")
+            }
+            detail = evidence.joined(separator: "; ")
+        } else {
+            detail = classification.detail
+        }
+        return ProviderDiagnosticRedactor.safeForSetupCopy(detail, maxLength: 360)
+    }
+
+    private static func title(for bucket: ProviderFailureBucket) -> String {
+        switch bucket {
+        case .missingCredential:
+            return L("Missing credential")
+        case .oauthTokenMissing:
+            return L("OAuth token missing")
+        case .authRejected:
+            return L("Authentication rejected")
+        case .endpointUnreachable:
+            return L("Endpoint unreachable")
+        case .tlsFailure:
+            return L("TLS failure")
+        case .timeout:
+            return L("Request timed out")
+        case .proxyConnectFailed:
+            return L("Proxy connection failed")
+        case .modelsEndpointUnavailable:
+            return L("Models endpoint unavailable")
+        case .modelsSchemaMismatch:
+            return L("Models response mismatch")
+        case .requestRejected:
+            return L("Request format rejected")
+        case .unsupportedModel:
+            return L("Model unavailable")
+        case .badResponse:
+            return L("Bad provider response")
+        case .unknown:
+            return L("Unclassified failure")
+        }
+    }
+
+    private static func action(
+        for bucket: ProviderFailureBucket,
+        providerType: RemoteProviderType? = nil,
+        manualModelRecovery: ProviderManualModelRecovery = .unavailable
+    ) -> String {
+        switch bucket {
+        case .missingCredential:
+            return L("Save an API key or secret credential header, then test again.")
+        case .oauthTokenMissing:
+            return L("Sign in again and test after OAuth tokens are saved.")
+        case .authRejected:
+            return L("Verify the credential, account access, and provider-specific auth header.")
+        case .endpointUnreachable:
+            return L("Check the host, port, base path, DNS, VPN, and whether a local server is running.")
+        case .tlsFailure:
+            return L("Check the endpoint certificate, HTTPS setting, and any TLS-intercepting proxy.")
+        case .timeout:
+            return L("Retry after confirming the endpoint is reachable and not blocked by a firewall or proxy.")
+        case .proxyConnectFailed:
+            return L("Test with the proxy disabled or verify the proxy host, port, and authentication.")
+        case .modelsEndpointUnavailable:
+            if providerSupportsOpenAIManualModels(providerType, recovery: manualModelRecovery) {
+                return L("Add manual model IDs if this OpenAI-compatible provider does not expose /models.")
+            }
+            if providerType == .azureOpenAI, manualModelRecovery == .azureDeploymentIDs {
+                return L("Add at least one deployment/model ID in Advanced.")
+            }
+            return L("Check this provider's model catalog support and try again.")
+        case .modelsSchemaMismatch:
+            if providerSupportsOpenAIManualModels(providerType, recovery: manualModelRecovery) {
+                return L("Confirm the endpoint returns an OpenAI-shaped model list or add manual model IDs.")
+            }
+            if providerType == .azureOpenAI, manualModelRecovery == .azureDeploymentIDs {
+                return L("Add at least one deployment/model ID in Advanced.")
+            }
+            return L("Check this provider's model catalog format and try again.")
+        case .requestRejected:
+            return L("Review provider compatibility for unsupported request fields, tools, or response formats.")
+        case .unsupportedModel:
+            if providerSupportsOpenAIManualModels(providerType, recovery: manualModelRecovery) {
+                return L("Select a model exposed by this provider or add the correct manual model ID.")
+            }
+            if providerType == .azureOpenAI, manualModelRecovery == .azureDeploymentIDs {
+                return L("Add at least one deployment/model ID in Advanced.")
+            }
+            return L("Select a model exposed by this provider and try again.")
+        case .badResponse:
+            return L("Copy diagnostics with the redacted response and check provider status or compatibility.")
+        case .unknown:
+            return L("Copy diagnostics and include the redacted request evidence when reporting this issue.")
+        }
+    }
+
+    private static func providerSupportsOpenAIManualModels(
+        _ providerType: RemoteProviderType?,
+        recovery: ProviderManualModelRecovery
+    ) -> Bool {
+        guard recovery == .openAICompatibleModelIDs else { return false }
+        return providerType == .openaiLegacy || providerType == .openResponses
+    }
+
+    private static func bodyLooksLikeRequestShapeRejection(_ body: String) -> Bool {
+        body.contains("invalid request")
+            || body.contains("invalid_request")
+            || body.contains("unknown parameter")
+            || body.contains("unsupported parameter")
+            || body.contains("unsupported field")
+            || body.contains("tool_choice")
+            || body.contains("response_format")
+            || body.contains("json_schema")
+    }
+
+    private static func bodyLooksLikeSchemaMismatch(_ body: String) -> Bool {
+        body.contains("schema")
+            || body.contains("decode")
+            || body.contains("not valid json")
+            || body.contains("invalid json")
+    }
+
+    private static func bodyLooksLikeAuthRejection(_ body: String) -> Bool {
+        body.contains("invalid_api_key")
+            || body.contains("invalid api key")
+            || body.contains("incorrect api key")
+            || body.contains("invalid authorization")
+            || body.contains("authentication failed")
+            || body.contains("auth failed")
+            || body.contains("bad api key")
+            || body.contains("bad token")
+            || body.contains("invalid token")
+            || body.contains("expired token")
+            || body.contains("token expired")
+    }
+
+    private static func messageLooksLikeOAuthTokenFailure(_ message: String) -> Bool {
+        let explicitOAuthFailure = message.contains("oauth")
+            && (message.contains("token")
+                || message.contains("sign-in")
+                || message.contains("sign in")
+                || message.contains("reauthorize")
+                || message.contains("re-authorize"))
+        return explicitOAuthFailure
+            || message.contains("expired token")
+            || message.contains("token expired")
+            || message.contains("invalid token")
+            || message.contains("token invalid")
+            || message.contains("revoked token")
+            || message.contains("token revoked")
+            || message.contains("session expired")
+            || message.contains("expired session")
+            || message.contains("invalid_grant")
+            || message.contains("invalid grant")
+            || message.contains("unauthorized_client")
+    }
+
+    private static func messageHasModelDiscoveryContext(_ message: String) -> Bool {
+        message.contains("/models")
+            || message.contains("models endpoint")
+            || message.contains("model discovery")
+            || message.contains("model list")
+            || message.contains("list models")
+    }
+
+    private static func usesOAuthTokens(_ authType: RemoteProviderAuthType) -> Bool {
+        authType == .openAICodexOAuth || authType == .xaiOAuth
+    }
+
+    private static func hasActiveFailure(_ state: RemoteProviderState?) -> Bool {
+        guard let state else { return false }
+        return state.lastError?.isEmpty == false || state.lastReplayDiagnostics != nil
+    }
+
+    private static func hasCredentialHeader(_ provider: RemoteProvider) -> Bool {
+        let names = Array(provider.customHeaders.keys) + provider.secretHeaderKeys
+        return names.contains {
+            RemoteProviderHeaderRedactor.isSensitiveHeader(
+                $0,
+                configuredSecretHeaderKeys: provider.secretHeaderKeys
+            )
+        }
+    }
+
+    private static func setupProxyState(_ proxy: GlobalProxyDiagnosticState) -> String {
+        switch proxy {
+        case .disabled:
+            return "disabled"
+        case .active:
+            return "active"
+        case .invalid:
+            return "invalid"
+        }
+    }
+}

@@ -32,6 +32,7 @@ public struct ProviderReplayDiagnosticBundle: Sendable, Equatable {
     public let request: ProviderReplayDiagnosticRequest
     public let response: ProviderReplayDiagnosticResponse?
     public let transportError: String?
+    public let transportErrorCode: String?
 
     public init(
         phase: String,
@@ -69,6 +70,7 @@ public struct ProviderReplayDiagnosticBundle: Sendable, Equatable {
         self.transportError = transportError.map {
             ProviderDiagnosticRedactor.safe($0.localizedDescription, maxLength: 500)
         }
+        self.transportErrorCode = ProviderReplayDiagnosticBundle.transportErrorCode(transportError)
     }
 
     public var summary: String {
@@ -102,7 +104,19 @@ public struct ProviderReplayDiagnosticBundle: Sendable, Equatable {
         if let transportError {
             lines.append("transport_error: \(transportError)")
         }
+        if let transportErrorCode {
+            lines.append("transport_error_code: \(transportErrorCode)")
+        }
         return lines.joined(separator: "\n")
+    }
+
+    private static func transportErrorCode(_ error: Error?) -> String? {
+        guard let error else { return nil }
+        if let urlError = error as? URLError {
+            return "URLError:\(urlError.errorCode)"
+        }
+        let nsError = error as NSError
+        return "\(ProviderDiagnosticRedactor.safe(nsError.domain, maxLength: 120)):\(nsError.code)"
     }
 
     private func formatSeconds(_ value: TimeInterval) -> String {
@@ -214,6 +228,19 @@ enum ProviderDiagnosticRedactor {
             (#"\beyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\b"#, "jwt=***"),
             (#"\bsk-[A-Za-z0-9._-]{8,}\b"#, "sk-***"),
             (#"\bosk-[A-Za-z0-9._-]{8,}\b"#, "osk-***"),
+            (#"(?i)file://(?:localhost)?/(Users|private/var|var/folders|private/tmp|tmp|var/root)[^,;:(){}\[\]<>"'\r\n]*"#, "file://[redacted-local-path]"),
+            (
+                #"(?i)(^|[\s"'\(\)\[\]\{\}\;,:=\r\n\t=<])/(Users|private/var|var/folders|private/tmp|tmp|var/root)/[^,;:(){}\[\]<>\"'\r\n]*"#,
+                "$1/[redacted-local-path]"
+            ),
+            (
+                #"(?i)(^|[\s"'\(\)\[\]\{\}\;,:=\r\n\t=<])([A-Za-z_][A-Za-z0-9_-]*)=/(Users|private/var|var/folders|private/tmp|tmp|var/root)/[^,;:(){}\[\]<>\"'\r\n]*"#,
+                "$1/[redacted-local-path]"
+            ),
+            (
+                #"(?i)(^|[\s"'\(\)\[\]\{\}\;,:=\r\n\t=<])(at|path|home|file|dir|folder|location|log)/(Users|private/var|var/folders|private/tmp|tmp|var/root)/[^,;:(){}\[\]<>\"'\r\n]*"#,
+                "$1/[redacted-local-path]"
+            ),
         ]
 
         for replacement in replacements {
@@ -236,6 +263,23 @@ enum ProviderDiagnosticRedactor {
         guard !value.isEmpty else { return "No details returned" }
         guard value.count > maxLength else { return value }
         return String(value.prefix(maxLength)) + "..."
+    }
+
+    /// Setup diagnostics are a minimal shareable payload, so endpoint identity
+    /// is removed after the standard secret/path pass. Keeping this order also
+    /// strips endpoint fragments when `safe` truncates in the middle of a URL.
+    static func safeForSetupCopy(_ raw: String, maxLength: Int = 360) -> String {
+        var value = safe(raw, maxLength: maxLength)
+        let endpointPatterns = [
+            #"(?i)\bhttps?://[^\s,;(){}\[\]<>\"'\r\n]*"#,
+            #"(?i)\b(?:(?:[a-z0-9-]+\.)+[a-z]{2,}|(?:\d{1,3}\.){3}\d{1,3}|localhost)(?::\d{1,5})?(?:/[^\s,;:(){}\[\]<>\"'\r\n]*)?"#,
+            #"(?i)\b[a-z0-9-]+:\d{1,5}(?:/[^\s,;:(){}\[\]<>\"'\r\n]*)?"#,
+            #"\[[0-9A-Fa-f:]+\](?::\d{1,5})?(?:/[^\s,;:(){}\[\]<>\"'\r\n]*)?"#,
+        ]
+        for pattern in endpointPatterns {
+            value = replaceMatches(in: value, pattern: pattern, template: "[redacted-endpoint]")
+        }
+        return value
     }
 
     private static func isSensitiveFieldName(_ name: String) -> Bool {

@@ -98,7 +98,10 @@ public struct ProviderConnectivityIssueKind: Sendable, Equatable, Hashable, Iden
     }
 
     public static func kind(forDiagnosticRowID rowID: String) -> ProviderConnectivityIssueKind {
-        knownByRowID[rowID] ?? ProviderConnectivityIssueKind(id: "\(unknownPrefix)\(rowID)")
+        if let failureKind = ProviderFailureClassifier.connectivityIssueKind(forFailureRowID: rowID) {
+            return failureKind
+        }
+        return knownByRowID[rowID] ?? ProviderConnectivityIssueKind(id: "\(unknownPrefix)\(rowID)")
     }
 
     private static let unknownPrefix = "unknown:"
@@ -335,7 +338,8 @@ public enum ProviderConnectivityCenter {
         let severity = diagnostics.rows.map(\.severity).max(by: severityLessThan) ?? .info
         let status = status(for: provider, state: state, highestSeverity: severity)
         let firstActionableRow =
-            diagnostics.rows.first { $0.severity == .blocked }
+            diagnostics.rows.first { $0.id.hasPrefix("failure-") }
+            ?? diagnostics.rows.first { $0.severity == .blocked }
             ?? diagnostics.rows.first { $0.severity == .warning }
         let summaryRow = firstActionableRow ?? diagnostics.rows.first { $0.id == "connection" }
         let issueKinds = actionableIssueKinds(from: diagnostics.rows)

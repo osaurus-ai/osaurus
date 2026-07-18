@@ -129,6 +129,330 @@ struct ProviderNetworkDiagnosticsTests {
         #expect(!report.pasteboardText.contains("secret-token"))
     }
 
+    @Test func guidedFailureClassificationUsesStableBuckets() throws {
+        let provider = RemoteProvider(
+            name: "OpenAI Compatible",
+            host: "api.example.test",
+            authType: .none,
+            providerType: .openaiLegacy
+        )
+        let keyedProvider = RemoteProvider(
+            name: "Keyed",
+            host: "api.example.test",
+            authType: .apiKey,
+            providerType: .openaiLegacy
+        )
+        let oauthProvider = XAIOAuthService.makeProvider(id: UUID())
+        let url = try #require(URL(string: "https://api.example.test/v1/models"))
+
+        let fixtures: [(String, RemoteProvider, RemoteProviderState?, GlobalProxyDiagnosticState, Bool, Bool, ProviderFailureBucket)] = [
+            (
+                "missing-key",
+                keyedProvider,
+                errorState(keyedProvider, message: "API key missing"),
+                .disabled,
+                false,
+                false,
+                .missingCredential
+            ),
+            (
+                "oauth-missing",
+                oauthProvider,
+                errorState(oauthProvider, message: "OAuth token missing"),
+                .disabled,
+                false,
+                false,
+                .oauthTokenMissing
+            ),
+            (
+                "dns",
+                provider,
+                replayState(provider, url: url, transportError: URLError(.cannotFindHost)),
+                .disabled,
+                false,
+                false,
+                .endpointUnreachable
+            ),
+            (
+                "timeout",
+                provider,
+                replayState(provider, url: url, transportError: URLError(.timedOut)),
+                .disabled,
+                false,
+                false,
+                .timeout
+            ),
+            (
+                "origin-timeout-with-invalid-proxy",
+                provider,
+                replayState(provider, url: url, transportError: URLError(.timedOut)),
+                .invalid("bad proxy"),
+                false,
+                false,
+                .timeout
+            ),
+            (
+                "tls",
+                provider,
+                replayState(provider, url: url, transportError: URLError(.secureConnectionFailed)),
+                .disabled,
+                false,
+                false,
+                .tlsFailure
+            ),
+            (
+                "proxy-connect",
+                provider,
+                replayState(
+                    provider,
+                    url: url,
+                    transportError: NSError(
+                        domain: "ProxyError",
+                        code: 1,
+                        userInfo: [NSLocalizedDescriptionKey: "Proxy CONNECT tunnel failed"]
+                    )
+                ),
+                .active("https://proxy.example.com:8443"),
+                false,
+                false,
+                .proxyConnectFailed
+            ),
+            (
+                "origin-timeout-with-active-proxy",
+                provider,
+                replayState(provider, url: url, transportError: URLError(.timedOut)),
+                .active("https://proxy.example.com:8443"),
+                false,
+                false,
+                .timeout
+            ),
+            (
+                "provider-tunnel-word-with-active-proxy",
+                provider,
+                replayState(
+                    provider,
+                    url: url,
+                    transportError: NSError(
+                        domain: "ProviderError",
+                        code: 2,
+                        userInfo: [NSLocalizedDescriptionKey: "Cloudflare Tunnel timed out"]
+                    )
+                ),
+                .active("https://proxy.example.com:8443"),
+                false,
+                false,
+                .timeout
+            ),
+            (
+                "auth-rejected",
+                provider,
+                replayState(provider, url: url, statusCode: 401, body: #"{"error":"unauthorized"}"#),
+                .disabled,
+                false,
+                false,
+                .authRejected
+            ),
+            (
+                "models-missing",
+                provider,
+                replayState(provider, url: url, statusCode: 404, body: #"{"error":"not found"}"#),
+                .disabled,
+                false,
+                false,
+                .modelsEndpointUnavailable
+            ),
+            (
+                "models-does-not-exist",
+                provider,
+                replayState(provider, url: url, statusCode: 404, body: #"{"error":"resource does not exist"}"#),
+                .disabled,
+                false,
+                false,
+                .modelsEndpointUnavailable
+            ),
+            (
+                "models-schema",
+                provider,
+                replayState(provider, url: url, statusCode: 200, body: #"{"schema":"expected data array"}"#),
+                .disabled,
+                false,
+                false,
+                .modelsSchemaMismatch
+            ),
+            (
+                "models-upstream-failure",
+                provider,
+                replayState(provider, url: url, statusCode: 503, body: #"{"error":"upstream unavailable"}"#),
+                .disabled,
+                false,
+                false,
+                .badResponse
+            ),
+            (
+                "request-shape",
+                provider,
+                replayState(provider, url: url, statusCode: 400, body: #"{"error":"unknown parameter tool_choice"}"#),
+                .disabled,
+                false,
+                false,
+                .requestRejected
+            ),
+            (
+                "auth-rejected-on-400",
+                provider,
+                replayState(provider, url: url, statusCode: 400, body: #"{"error":"invalid_api_key"}"#),
+                .disabled,
+                false,
+                false,
+                .authRejected
+            ),
+            (
+                "unsupported-model",
+                provider,
+                replayState(provider, url: url, statusCode: 400, body: #"{"error":"model_not_found"}"#),
+                .disabled,
+                false,
+                false,
+                .unsupportedModel
+            ),
+            (
+                "unexpected-upstream-response",
+                provider,
+                replayState(provider, url: url, statusCode: 429, body: #"{"error":"unexpected upstream condition"}"#),
+                .disabled,
+                false,
+                false,
+                .badResponse
+            ),
+            (
+                "auth-word-with-credential-present",
+                provider,
+                errorState(provider, message: "authorization service unavailable"),
+                .disabled,
+                true,
+                false,
+                .unknown
+            ),
+            (
+                "model-permission-wording-is-not-auth",
+                provider,
+                errorState(provider, message: "unauthorized for this model or region"),
+                .disabled,
+                true,
+                false,
+                .unknown
+            ),
+            (
+                "forbidden-entitlement-is-not-auth",
+                provider,
+                replayState(provider, url: url, statusCode: 403, body: #"{"error":"plan entitlement required"}"#),
+                .disabled,
+                true,
+                false,
+                .badResponse
+            ),
+            (
+                "generic-400-is-not-request-shape",
+                provider,
+                replayState(provider, url: url, statusCode: 400, body: #"{"error":"billing account unavailable"}"#),
+                .disabled,
+                true,
+                false,
+                .badResponse
+            ),
+            (
+                "non-model-resource-does-not-exist",
+                provider,
+                replayState(
+                    provider,
+                    url: url,
+                    phase: "chat-completion",
+                    statusCode: 409,
+                    body: #"{"error":"resource does not exist"}"#
+                ),
+                .disabled,
+                true,
+                false,
+                .badResponse
+            ),
+            (
+                "json-schema-in-chat-phase",
+                provider,
+                replayState(
+                    provider,
+                    url: url,
+                    phase: "chat-completion",
+                    statusCode: 200,
+                    body: #"{"error":"schema mismatch"}"#
+                ),
+                .disabled,
+                false,
+                false,
+                .badResponse
+            ),
+            (
+                "invalid-response-format-message",
+                provider,
+                errorState(provider, message: "Invalid response_format for this endpoint"),
+                .disabled,
+                false,
+                false,
+                .requestRejected
+            ),
+            (
+                "generic-invalid-response-message",
+                provider,
+                errorState(provider, message: "Invalid response from provider"),
+                .disabled,
+                false,
+                false,
+                .badResponse
+            ),
+            (
+                "unknown",
+                provider,
+                errorState(provider, message: "Provider returned an unexpected upstream condition."),
+                .disabled,
+                false,
+                false,
+                .unknown
+            ),
+        ]
+
+        for (name, provider, state, proxy, apiKeyPresent, oauthTokensPresent, bucket) in fixtures {
+            let classification = try #require(
+                ProviderFailureClassifier.classify(
+                    provider: provider,
+                    state: state,
+                    proxy: proxy,
+                    apiKeyPresent: apiKeyPresent,
+                    oauthTokensPresent: oauthTokensPresent
+                ),
+                "Missing classification for \(name)"
+            )
+            #expect(classification.bucket == bucket, "Wrong bucket for \(name)")
+            #expect(!classification.action.isEmpty, "Missing action for \(name)")
+        }
+
+        let invalidProxyOnly = ProviderFailureClassifier.classify(
+            provider: provider,
+            state: nil,
+            proxy: .invalid("bad proxy"),
+            apiKeyPresent: false,
+            oauthTokensPresent: false
+        )
+        #expect(invalidProxyOnly == nil)
+
+        let missingKeyWithoutFailure = ProviderFailureClassifier.classify(
+            provider: keyedProvider,
+            state: nil,
+            proxy: .disabled,
+            apiKeyPresent: false,
+            oauthTokensPresent: false
+        )
+        #expect(missingKeyWithoutFailure == nil)
+    }
+
     @Test func openAICompatibleReportExplainsManualModelFallbackAndRequestValidation() {
         let provider = RemoteProvider(
             name: "Lemonade",
@@ -153,6 +477,43 @@ struct ProviderNetworkDiagnosticsTests {
         // "/models" appears in the detail text across all localizations.
         #expect(row("models", in: report).detail?.contains("/models") == true)
         #expect(row("format", in: report).detail?.contains("response_format=json_schema") == true)
+    }
+
+    @Test func remoteReportEmitsSpecificFailureRowForTransportAndHTTPFailures() throws {
+        let provider = RemoteProvider(
+            name: "OpenAI Compatible",
+            host: "api.example.test",
+            authType: .apiKey,
+            providerType: .openaiLegacy
+        )
+        let url = try #require(URL(string: "https://api.example.test/v1/models"))
+
+        let timeoutReport = ProviderNetworkDiagnostics.remoteProviderReport(
+            provider: provider,
+            state: replayState(provider, url: url, transportError: URLError(.timedOut)),
+            proxy: .disabled,
+            apiKeyPresent: true,
+            oauthTokensPresent: false
+        )
+        let timeout = row("failure-timeout", in: timeoutReport)
+        #expect(timeout.value == L("Request timed out"))
+        #expect(timeout.action?.contains("Retry") == true)
+
+        let authReport = ProviderNetworkDiagnostics.remoteProviderReport(
+            provider: provider,
+            state: replayState(
+                provider,
+                url: url,
+                statusCode: 400,
+                body: #"{"error":{"message":"Incorrect API key provided","code":"invalid_api_key"}}"#
+            ),
+            proxy: .disabled,
+            apiKeyPresent: true,
+            oauthTokensPresent: false
+        )
+        let auth = row("failure-auth", in: authReport)
+        #expect(auth.value == L("Authentication rejected"))
+        #expect(auth.action?.contains("Verify the credential") == true)
     }
 
     @Test func proxyDiagnosticDistinguishesInvalidConfiguredProxy() {
@@ -234,5 +595,41 @@ struct ProviderNetworkDiagnosticsTests {
             return ProviderDiagnosticRow(id: id, title: "missing", value: "missing", severity: .blocked)
         }
         return found
+    }
+
+    private func errorState(_ provider: RemoteProvider, message: String) -> RemoteProviderState {
+        var state = RemoteProviderState(providerId: provider.id)
+        state.lastError = message
+        return state
+    }
+
+    private func replayState(
+        _ provider: RemoteProvider,
+        url: URL,
+        phase: String = "test_model_discovery",
+        statusCode: Int? = nil,
+        body: String? = nil,
+        transportError: Error? = nil
+    ) -> RemoteProviderState {
+        var request = URLRequest(url: url)
+        request.httpMethod = "GET"
+        let response = statusCode.map {
+            HTTPURLResponse(
+                url: url,
+                statusCode: $0,
+                httpVersion: nil,
+                headerFields: ["Content-Type": "application/json"]
+            )!
+        }
+        var state = RemoteProviderState(providerId: provider.id)
+        state.lastError = transportError?.localizedDescription ?? "HTTP \(statusCode ?? 500)"
+        state.lastReplayDiagnostics = ProviderReplayDiagnosticBundle(
+            phase: phase,
+            request: request,
+            response: response,
+            responseData: body.map { Data($0.utf8) },
+            transportError: transportError
+        )
+        return state
     }
 }

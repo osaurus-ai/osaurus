@@ -164,6 +164,10 @@ private struct AddProviderFlow: View {
     @State private var oauthTokens: RemoteProviderOAuthTokens?
     @State private var isTesting = false
     @State private var testResult: ProviderTestResult?
+    @State private var testRequestID: UUID?
+    @State private var knownTestGate = KnownProviderSetupSuccessGate()
+    @State private var customTestGate = CustomProviderSetupSuccessGate()
+    @State private var draftProviderID = UUID()
     @State private var hasAppeared = false
     /// Guards against saving twice: a successful test auto-finalizes the add,
     /// but the footer button is also still tappable during the brief green
@@ -262,6 +266,10 @@ private struct AddProviderFlow: View {
                 showingAPIKeyPicker = true
             }
             withAnimation { hasAppeared = true }
+        }
+        .onDisappear {
+            testRequestID = nil
+            isTesting = false
         }
         .themedAlert(
             "Disable request timeout?",
@@ -510,9 +518,13 @@ private struct AddProviderFlow: View {
                 .padding(24)
             }
 
+            if case .failure(let failure) = testResult {
+                setupFailureBanner(failure)
+            }
+
             // Footer
             sheetFooter(canProceed: canTest) {
-                if testResult?.isSuccess == true || canSaveKnownProviderWithoutSuccessfulTest {
+                if knownProviderSaveAuthorization.allowsSave {
                     saveKnownProvider()
                 } else {
                     testKnownProvider()
@@ -586,9 +598,13 @@ private struct AddProviderFlow: View {
                 .padding(24)
             }
 
+            if case .failure(let failure) = testResult {
+                setupFailureBanner(failure)
+            }
+
             // Footer
             sheetFooter(canProceed: canTestCustom) {
-                if testResult?.isSuccess == true {
+                if hasCurrentSuccessfulTest {
                     saveCustomProvider()
                 } else {
                     testCustomProvider()
@@ -608,10 +624,14 @@ private struct AddProviderFlow: View {
                 // sub-list) before the reset below clears it.
                 showingAPIKeyPicker = !selectedAuthMethod.isOAuth && selectedPreset != nil
                 selectedPreset = nil
+                testRequestID = nil
+                isTesting = false
                 apiKey = ""
                 oauthTokens = nil
                 selectedAuthMethod = .apiKey
                 testResult = nil
+                knownTestGate.invalidate()
+                customTestGate.invalidate()
                 customName = ""
                 customHost = ""
                 customPort = ""
@@ -668,12 +688,15 @@ private struct AddProviderFlow: View {
 
     private func initializeKnownConnection(for preset: ProviderPreset) {
         let config = preset.configuration
+        testRequestID = nil
+        isTesting = false
         knownHost = config.host
         knownProtocol = config.providerProtocol
         knownPort = config.port.map(String.init) ?? ""
         knownBasePath = config.basePath
         manualModelIdsText = config.defaultManualModelIds.joined(separator: "\n")
         testResult = nil
+        knownTestGate.invalidate()
     }
 
     private var azureConnectionSection: some View {
@@ -1282,7 +1305,7 @@ private struct AddProviderFlow: View {
 
     @ViewBuilder
     private var testResultBadge: some View {
-        if let result = testResult {
+        if let result = testResultForDisplay {
             HStack(spacing: 6) {
                 switch result {
                 case .success(let models):
@@ -1296,10 +1319,9 @@ private struct AddProviderFlow: View {
                     Image(systemName: "xmark.circle.fill")
                         .font(.system(size: 12))
                         .foregroundColor(theme.errorColor)
-                    Text(error)
-                        .font(.system(size: 11))
+                    Text(error.classification.title)
+                        .font(.system(size: 11, weight: .semibold))
                         .foregroundColor(theme.errorColor)
-                        .lineLimit(2)
                 }
             }
             .padding(.horizontal, 10)
@@ -1311,10 +1333,41 @@ private struct AddProviderFlow: View {
         }
     }
 
+    private func setupFailureBanner(_ failure: ProviderSetupFailure) -> some View {
+        HStack(alignment: .top, spacing: 10) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .foregroundColor(theme.errorColor)
+            VStack(alignment: .leading, spacing: 3) {
+                Text(failure.classification.title)
+                    .font(.system(size: 11, weight: .semibold))
+                Text(failure.detailForDisplay)
+                    .font(.system(size: 10))
+                    .foregroundColor(theme.secondaryText)
+                    .lineLimit(2)
+                Text(failure.classification.action)
+                    .font(.system(size: 10))
+                    .foregroundColor(theme.secondaryText)
+                    .lineLimit(2)
+            }
+            Spacer(minLength: 8)
+            Button {
+                copySetupFailure(failure)
+            } label: {
+                Image(systemName: "doc.on.doc")
+            }
+            .buttonStyle(.plain)
+            .localizedHelp("Copy diagnostics")
+        }
+        .padding(.horizontal, 24)
+        .padding(.vertical, 10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(theme.errorColor.opacity(0.06))
+    }
+
     private var actionButtonTitle: String {
         let oauthKind = selectedOAuthKind
         if isTesting { return oauthKind != nil ? L("Signing in...") : L("Testing...") }
-        if testResult?.isSuccess == true || canSaveKnownProviderWithoutSuccessfulTest { return L("Add Provider") }
+        if hasCurrentSuccessfulTest || knownProviderSaveAuthorization.allowsSave { return L("Add Provider") }
         if case .failure = testResult { return L("Retry") }
         if let oauthKind {
             return NSLocalizedString(oauthKind.ctaTitle, bundle: .module, comment: "")
@@ -1323,9 +1376,32 @@ private struct AddProviderFlow: View {
     }
 
     private var actionButtonColor: Color {
-        if testResult?.isSuccess == true || canSaveKnownProviderWithoutSuccessfulTest { return theme.successColor }
+        if hasCurrentSuccessfulTest { return theme.successColor }
+        if knownProviderSaveAuthorization == .unverifiedAzureManualModels { return theme.accentColor }
         if case .failure = testResult { return theme.errorColor }
         return theme.accentColor
+    }
+
+    private var hasCurrentSuccessfulTest: Bool {
+        guard testResult?.isSuccess == true else { return false }
+        if selectedPreset == .custom {
+            return customTestGate.allowsAdd(current: currentCustomTestSnapshot())
+        }
+        return knownProviderSaveAuthorization == .verified
+    }
+
+    private var knownProviderSaveAuthorization: KnownProviderSetupSaveAuthorization {
+        guard let preset = selectedPreset, preset != .custom else { return .denied }
+        return knownTestGate.authorization(
+            current: currentKnownTestSnapshot(for: preset),
+            hasSuccessfulResult: testResult?.isSuccess == true,
+            allowsUnverifiedAzureSave: canSaveKnownProviderWithoutSuccessfulTest
+        )
+    }
+
+    private var testResultForDisplay: ProviderTestResult? {
+        guard testResult?.isSuccess == true else { return testResult }
+        return hasCurrentSuccessfulTest ? testResult : nil
     }
 
     private var canTestCustom: Bool {
@@ -1338,28 +1414,47 @@ private struct AddProviderFlow: View {
         guard let preset = selectedPreset else { return }
         let config = preset.configuration
         let connection = knownProviderConnection(for: preset)
+        let oauthKind = selectedOAuthKind
+        let testedSnapshot = currentKnownTestSnapshot(for: preset)
+        let testedProvider = testedSnapshot.provider
+        let testedAPIKeyInput = apiKey
+        let testedHeaders = testedSnapshot.headers
 
         isTesting = true
         testResult = nil
+        knownTestGate.invalidate()
+        let requestID = UUID()
+        testRequestID = requestID
 
         Task {
             do {
                 let models: [String]
-                if selectedOAuthKind == .openAICodex {
+                if oauthKind == .openAICodex {
                     let tokens = try await OpenAICodexOAuthService.signIn()
-                    await MainActor.run {
+                    let didApply = await MainActor.run {
+                        guard knownTestIsCurrent(
+                            requestID: requestID,
+                            snapshot: testedSnapshot
+                        ) else { return false }
                         oauthTokens = tokens
+                        return true
                     }
+                    guard didApply else { return }
                     models = await OpenAICodexOAuthService.availableModels(for: tokens)
-                } else if selectedOAuthKind == .openRouter {
+                } else if oauthKind == .openRouter {
                     // The browser sign-in mints a regular OpenRouter API key.
-                    // Stash it in `apiKey` so `saveKnownProvider` persists it
-                    // via the same path as a pasted key, then verify by
-                    // running the usual /models probe with the new key.
+                    // Keep it local until this is still the form that launched
+                    // sign-in; only then expose it for the save path.
                     let key = try await OpenRouterOAuthService.signIn()
-                    await MainActor.run {
+                    let didApply = await MainActor.run {
+                        guard knownTestIsCurrent(
+                            requestID: requestID,
+                            snapshot: testedSnapshot
+                        ) else { return false }
                         apiKey = key
+                        return true
                     }
+                    guard didApply else { return }
                     models = try await RemoteProviderManager.shared.testConnection(
                         host: connection.host,
                         providerProtocol: connection.providerProtocol,
@@ -1368,19 +1463,25 @@ private struct AddProviderFlow: View {
                         authType: .apiKey,
                         providerType: config.providerType,
                         apiKey: key,
-                        headers: HeaderEntry.buildHeaders(from: customHeaders),
-                        manualModelIds: parseManualModelIds(manualModelIdsText)
+                        headers: HeaderEntry.buildHeaders(from: testedHeaders),
+                        manualModelIds: testedProvider.manualModelIds
                     )
-                } else if selectedOAuthKind == .xai {
+                } else if oauthKind == .xai {
                     // Grok sign-in returns access/refresh tokens; stash them so
                     // `saveKnownProvider` persists them as `.xaiOAuth`. The
                     // browser sign-in IS the test — xAI OAuth tokens cannot list
                     // models (HTTP 403), so we surface the built-in catalog
                     // rather than probing /models.
                     let tokens = try await XAIOAuthService.signIn()
-                    await MainActor.run {
+                    let didApply = await MainActor.run {
+                        guard knownTestIsCurrent(
+                            requestID: requestID,
+                            snapshot: testedSnapshot
+                        ) else { return false }
                         oauthTokens = tokens
+                        return true
                     }
+                    guard didApply else { return }
                     models = XAIOAuthService.supportedModels
                 } else {
                     models = try await RemoteProviderManager.shared.testConnection(
@@ -1390,31 +1491,57 @@ private struct AddProviderFlow: View {
                         basePath: connection.basePath,
                         authType: .apiKey,
                         providerType: config.providerType,
-                        apiKey: apiKey,
-                        headers: HeaderEntry.buildHeaders(from: customHeaders),
-                        manualModelIds: parseManualModelIds(manualModelIdsText)
+                        apiKey: testedAPIKeyInput,
+                        headers: HeaderEntry.buildHeaders(from: testedHeaders),
+                        manualModelIds: testedProvider.manualModelIds
                     )
                 }
                 await MainActor.run {
+                    guard knownTestIsCurrent(
+                        requestID: requestID,
+                        snapshot: testedSnapshot
+                    ) else { return }
                     withAnimation {
+                        knownTestGate.recordSuccess(testedSnapshot)
                         testResult = .success(models); isTesting = false
                     }
                 }
                 // Auto-complete on green: a successful test/sign-in is the
                 // confirmation, so finalize without a second "Add Provider"
                 // press. The brief pause lets the green success state register.
-                try? await Task.sleep(nanoseconds: 450_000_000)
-                await MainActor.run { saveKnownProvider() }
-            } catch {
-                let message: String
-                switch selectedOAuthKind {
-                case .openAICodex: message = OpenAICodexOAuthService.diagnosticMessage(for: error)
-                case .xai: message = XAIOAuthService.diagnosticMessage(for: error)
-                default: message = error.localizedDescription
-                }
+                try? await Task.sleep(nanoseconds: 800_000_000)
                 await MainActor.run {
+                    guard testResult?.isSuccess == true,
+                        knownTestIsCurrent(
+                            requestID: requestID,
+                            snapshot: testedSnapshot
+                        )
+                    else { return }
+                    saveKnownProvider()
+                }
+            } catch {
+                await MainActor.run {
+                    guard knownTestIsCurrent(
+                        requestID: requestID,
+                        snapshot: testedSnapshot
+                    ) else { return }
+                    let diagnosticMessage: String?
+                    switch oauthKind {
+                    case .openAICodex: diagnosticMessage = OpenAICodexOAuthService.diagnosticMessage(for: error)
+                    case .xai: diagnosticMessage = XAIOAuthService.diagnosticMessage(for: error)
+                    default: diagnosticMessage = nil
+                    }
+                    let failure = ProviderFailureClassifier.classifySetupFailure(
+                        provider: testedProvider,
+                        error: error,
+                        proxy: GlobalProxySettings.currentDiagnostic(),
+                        apiKeyPresent: !apiKey.isEmpty,
+                        oauthTokensPresent: oauthTokens != nil,
+                        diagnosticMessage: diagnosticMessage,
+                        manualModelRecovery: preset == .azureOpenAI ? .azureDeploymentIDs : .unavailable
+                    )
                     withAnimation {
-                        testResult = .failure(message); isTesting = false
+                        testResult = .failure(failure); isTesting = false
                     }
                 }
             }
@@ -1422,7 +1549,7 @@ private struct AddProviderFlow: View {
     }
 
     private func saveKnownProvider() {
-        guard !hasFinalized else { return }
+        guard !hasFinalized, knownProviderSaveAuthorization.allowsSave else { return }
         guard let preset = selectedPreset else { return }
         hasFinalized = true
         let config = preset.configuration
@@ -1467,39 +1594,68 @@ private struct AddProviderFlow: View {
     }
 
     func testCustomProvider() {
-        let trimmedHost = customHost.trimmingCharacters(in: .whitespaces)
-        let trimmedBasePath = customBasePath.trimmingCharacters(in: .whitespaces)
-        let port: Int? = customPort.trimmingCharacters(in: .whitespaces).isEmpty ? nil : Int(customPort)
-        let testApiKey = customAuthType == .apiKey && !apiKey.isEmpty ? apiKey : nil
+        let testedSnapshot = currentCustomTestSnapshot()
+        let testedProvider = testedSnapshot.provider
+        let testApiKey = testedProvider.authType == .apiKey && !testedSnapshot.apiKeyInput.isEmpty
+            ? testedSnapshot.apiKeyInput
+            : nil
 
         isTesting = true
         testResult = nil
+        customTestGate.invalidate()
+        let requestID = UUID()
+        testRequestID = requestID
 
         Task {
             do {
                 let models = try await RemoteProviderManager.shared.testConnection(
-                    host: trimmedHost,
-                    providerProtocol: customProtocol,
-                    port: port,
-                    basePath: trimmedBasePath.isEmpty ? "/v1" : trimmedBasePath,
-                    authType: customAuthType,
-                    providerType: .openaiLegacy,
+                    host: testedProvider.host,
+                    providerProtocol: testedProvider.providerProtocol,
+                    port: testedProvider.port,
+                    basePath: testedProvider.basePath,
+                    authType: testedProvider.authType,
+                    providerType: testedProvider.providerType,
                     apiKey: testApiKey,
-                    headers: HeaderEntry.buildHeaders(from: customHeaders),
-                    manualModelIds: parseManualModelIds(manualModelIdsText)
+                    headers: HeaderEntry.buildHeaders(from: testedSnapshot.headers),
+                    manualModelIds: testedProvider.manualModelIds
                 )
                 await MainActor.run {
+                    guard testRequestID == requestID else { return }
+                    guard currentCustomTestSnapshot() == testedSnapshot else {
+                        isTesting = false
+                        return
+                    }
                     withAnimation {
+                        customTestGate.recordSuccess(testedSnapshot)
                         testResult = .success(models); isTesting = false
                     }
                 }
                 // Auto-complete on green (see `testKnownProvider`).
-                try? await Task.sleep(nanoseconds: 450_000_000)
-                await MainActor.run { saveCustomProvider() }
-            } catch {
+                try? await Task.sleep(nanoseconds: 800_000_000)
                 await MainActor.run {
+                    guard testRequestID == requestID else { return }
+                    guard testResult?.isSuccess == true,
+                        customTestGate.allowsAdd(current: currentCustomTestSnapshot())
+                    else { return }
+                    saveCustomProvider()
+                }
+            } catch {
+                let failure = ProviderFailureClassifier.classifySetupFailure(
+                    provider: testedProvider,
+                    error: error,
+                    proxy: GlobalProxySettings.currentDiagnostic(),
+                    apiKeyPresent: testApiKey != nil,
+                    oauthTokensPresent: false,
+                    manualModelRecovery: .unavailable
+                )
+                await MainActor.run {
+                    guard testRequestID == requestID else { return }
+                    guard currentCustomTestSnapshot() == testedSnapshot else {
+                        isTesting = false
+                        return
+                    }
                     withAnimation {
-                        testResult = .failure(error.localizedDescription); isTesting = false
+                        testResult = .failure(failure); isTesting = false
                     }
                 }
             }
@@ -1507,28 +1663,9 @@ private struct AddProviderFlow: View {
     }
 
     private func saveCustomProvider() {
-        guard !hasFinalized else { return }
+        guard !hasFinalized, hasCurrentSuccessfulTest else { return }
         hasFinalized = true
-        let trimmedName = customName.trimmingCharacters(in: .whitespaces)
-        let trimmedHost = customHost.trimmingCharacters(in: .whitespaces)
-        let trimmedBasePath = customBasePath.trimmingCharacters(in: .whitespaces)
-        let (regularHeaders, secretKeys) = HeaderEntry.partition(customHeaders)
-
-        let remoteProvider = RemoteProvider(
-            name: trimmedName.isEmpty ? "Custom Provider" : trimmedName,
-            host: trimmedHost,
-            providerProtocol: customProtocol,
-            port: Int(customPort),
-            basePath: trimmedBasePath.isEmpty ? "/v1" : trimmedBasePath,
-            customHeaders: regularHeaders,
-            authType: customAuthType,
-            providerType: .openaiLegacy,
-            enabled: true,
-            autoConnect: true,
-            timeout: timeout,
-            disableTimeout: disableTimeout,
-            secretHeaderKeys: secretKeys
-        )
+        let remoteProvider = currentCustomTestSnapshot().provider
 
         saveSecretHeaders(for: remoteProvider.id)
         let savedApiKey = customAuthType == .apiKey && !apiKey.isEmpty ? apiKey : nil
@@ -1540,6 +1677,101 @@ private struct AddProviderFlow: View {
         for header in customHeaders where header.isSecret && !header.key.isEmpty && !header.value.isEmpty {
             RemoteProviderKeychain.saveHeaderSecret(header.value, key: header.key, for: providerId)
         }
+    }
+
+    private func draftKnownProvider(for preset: ProviderPreset) -> RemoteProvider {
+        let config = preset.configuration
+        let connection = knownProviderConnection(for: preset)
+        let (regularHeaders, secretKeys) = HeaderEntry.partition(customHeaders)
+        let authType: RemoteProviderAuthType
+        switch selectedOAuthKind {
+        case .openAICodex: authType = .openAICodexOAuth
+        case .xai: authType = .xaiOAuth
+        default: authType = config.authType
+        }
+        return RemoteProvider(
+            id: draftProviderID,
+            name: config.name,
+            host: connection.host,
+            providerProtocol: connection.providerProtocol,
+            port: connection.port,
+            basePath: connection.basePath,
+            customHeaders: regularHeaders,
+            authType: authType,
+            providerType: config.providerType,
+            timeout: timeout,
+            disableTimeout: disableTimeout,
+            manualModelIds: parseManualModelIds(manualModelIdsText),
+            secretHeaderKeys: secretKeys
+        )
+    }
+
+    @MainActor
+    private func knownTestIsCurrent(
+        requestID: UUID,
+        snapshot testedSnapshot: KnownProviderSetupTestSnapshot
+    ) -> Bool {
+        guard testRequestID == requestID else { return false }
+        guard selectedPreset == testedSnapshot.preset,
+            currentKnownTestSnapshot(for: testedSnapshot.preset) == testedSnapshot
+        else {
+            isTesting = false
+            return false
+        }
+        return true
+    }
+
+    private func currentKnownTestSnapshot(for preset: ProviderPreset) -> KnownProviderSetupTestSnapshot {
+        let credential: KnownProviderSetupCredentialIdentity = selectedOAuthKind.map {
+            .oauth($0)
+        } ?? .apiKey(apiKey)
+        return KnownProviderSetupTestSnapshot(
+            preset: preset,
+            provider: draftKnownProvider(for: preset),
+            credential: credential,
+            headers: customHeaders
+        )
+    }
+
+    private func draftCustomProvider() -> RemoteProvider {
+        let trimmedName = customName.trimmingCharacters(in: .whitespaces)
+        let trimmedPort = customPort.trimmingCharacters(in: .whitespaces)
+        let trimmedBasePath = customBasePath.trimmingCharacters(in: .whitespaces)
+        let (regularHeaders, secretKeys) = HeaderEntry.partition(customHeaders)
+        return RemoteProvider(
+            id: draftProviderID,
+            name: trimmedName.isEmpty ? "Custom Provider" : trimmedName,
+            host: customHost.trimmingCharacters(in: .whitespaces),
+            providerProtocol: customProtocol,
+            port: trimmedPort.isEmpty ? nil : Int(trimmedPort),
+            basePath: trimmedBasePath.isEmpty ? "/v1" : trimmedBasePath,
+            customHeaders: regularHeaders,
+            authType: customAuthType,
+            providerType: .openaiLegacy,
+            timeout: timeout,
+            disableTimeout: disableTimeout,
+            manualModelIds: parseManualModelIds(manualModelIdsText),
+            secretHeaderKeys: secretKeys
+        )
+    }
+
+    private func currentCustomTestSnapshot() -> CustomProviderSetupTestSnapshot {
+        CustomProviderSetupTestSnapshot(
+            provider: draftCustomProvider(),
+            nameInput: customName,
+            hostInput: customHost,
+            portInput: customPort,
+            basePathInput: customBasePath,
+            apiKeyInput: apiKey,
+            manualModelIdsInput: manualModelIdsText,
+            headers: customHeaders
+        )
+    }
+
+    private func copySetupFailure(_ failure: ProviderSetupFailure) {
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        pasteboard.setString(failure.pasteboardText, forType: .string)
     }
 
     /// Resolve the connection for a known preset, applying the user's endpoint
@@ -1566,6 +1798,81 @@ private struct AddProviderFlow: View {
 }
 
 // MARK: - Edit Provider Flow (simplified)
+
+struct OpenRouterReauthorizationSession: Sendable, Equatable {
+    enum Status: Sendable, Equatable {
+        case idle
+        case signingIn
+        case succeeded
+        case failed(String)
+
+        var isSigningIn: Bool {
+            if case .signingIn = self { return true }
+            return false
+        }
+    }
+
+    private(set) var status: Status = .idle
+    private(set) var requestID: UUID?
+    private var apiKeyInput: String?
+
+    @discardableResult
+    mutating func begin(requestID: UUID = UUID(), apiKeyInput: String) -> UUID {
+        self.requestID = requestID
+        self.apiKeyInput = apiKeyInput
+        status = .signingIn
+        return requestID
+    }
+
+    /// Manual field writes and OAuth completions use separate call sites. An
+    /// unchanged binding echo is not a user edit and must preserve feedback.
+    mutating func manualAPIKeyDidChange(from currentValue: String, to newValue: String) -> Bool {
+        guard newValue != currentValue else { return false }
+        cancel()
+        return true
+    }
+
+    mutating func acceptCompletion(requestID: UUID, currentAPIKeyInput: String) -> Bool {
+        guard consumeCurrentRequest(requestID: requestID, currentAPIKeyInput: currentAPIKeyInput) else {
+            return false
+        }
+        status = .succeeded
+        return true
+    }
+
+    mutating func acceptFailure(
+        requestID: UUID,
+        currentAPIKeyInput: String,
+        message: String
+    ) -> Bool {
+        guard consumeCurrentRequest(requestID: requestID, currentAPIKeyInput: currentAPIKeyInput) else {
+            return false
+        }
+        status = .failed(ProviderDiagnosticRedactor.safe(message, maxLength: 360))
+        return true
+    }
+
+    mutating func cancel(requestID: UUID? = nil) {
+        if let requestID, self.requestID != requestID { return }
+        self.requestID = nil
+        apiKeyInput = nil
+        status = .idle
+    }
+
+    private mutating func consumeCurrentRequest(
+        requestID: UUID,
+        currentAPIKeyInput: String
+    ) -> Bool {
+        guard self.requestID == requestID else { return false }
+        guard apiKeyInput == currentAPIKeyInput else {
+            cancel(requestID: requestID)
+            return false
+        }
+        self.requestID = nil
+        apiKeyInput = nil
+        return true
+    }
+}
 
 private struct EditProviderFlow: View {
     @ObservedObject private var themeManager = ThemeManager.shared
@@ -1614,27 +1921,16 @@ private struct EditProviderFlow: View {
     // UI state
     @State private var isTesting = false
     @State private var testResult: ProviderTestResult?
+    @State private var testRequestID: UUID?
     @State private var hasAppeared = false
 
     // Diagnostics credential presence (drives the diagnostics report)
     @State private var apiKeyPresent = false
     @State private var oauthTokensPresent = false
 
-    // OpenRouter re-authorization. Collapsed to a single state so we can't
-    // accidentally render both "succeeded" and "failed" feedback at once.
-    @State private var reauthorizeState: ReauthorizeState = .idle
-
-    enum ReauthorizeState: Equatable {
-        case idle
-        case signingIn
-        case succeeded
-        case failed(String)
-
-        var isSigningIn: Bool {
-            if case .signingIn = self { return true }
-            return false
-        }
-    }
+    // OpenRouter re-authorization keeps request identity and mutually exclusive
+    // feedback in one state value.
+    @State private var reauthorization = OpenRouterReauthorizationSession()
 
     var body: some View {
         VStack(spacing: 0) {
@@ -1646,6 +1942,10 @@ private struct EditProviderFlow: View {
                         knownProviderEditContent(preset: preset)
                     } else {
                         customProviderEditContent
+                    }
+
+                    if case .failure(let failure) = testResult {
+                        setupFailureCallout(failure)
                     }
 
                     // Cancel the surrounding 24pt inset so diagnostics rows span
@@ -1672,6 +1972,10 @@ private struct EditProviderFlow: View {
             loadProvider()
             Task { await refreshCredentialState() }
             withAnimation { hasAppeared = true }
+        }
+        .onDisappear {
+            testRequestID = nil
+            reauthorization.cancel()
         }
         .themedAlert(
             "Disable request timeout?",
@@ -1765,6 +2069,17 @@ private struct EditProviderFlow: View {
 
     // MARK: - Known Provider Edit
 
+    private var knownProviderAPIKeyBinding: Binding<String> {
+        Binding(
+            get: { apiKey },
+            set: { newValue in
+                guard reauthorization.manualAPIKeyDidChange(from: apiKey, to: newValue) else { return }
+                apiKey = newValue
+                testResult = nil
+            }
+        )
+    }
+
     private func knownProviderEditContent(preset: ProviderPreset) -> some View {
         VStack(alignment: .leading, spacing: 20) {
             if preset == .openrouter {
@@ -1788,15 +2103,10 @@ private struct EditProviderFlow: View {
                     .foregroundColor(theme.tertiaryText)
                 }
 
-                ProviderSecureField(placeholder: "Leave blank to keep current", text: $apiKey)
-                    .onChange(of: apiKey) { _, _ in
-                        // User edited the field manually — clear any prior
-                        // re-authorize confirmation/error so we don't show
-                        // stale feedback against a typed key.
-                        if reauthorizeState != .idle && !reauthorizeState.isSigningIn {
-                            reauthorizeState = .idle
-                        }
-                    }
+                ProviderSecureField(
+                    placeholder: "Leave blank to keep current",
+                    text: knownProviderAPIKeyBinding
+                )
             }
 
             if preset == .azureOpenAI {
@@ -1849,7 +2159,7 @@ private struct EditProviderFlow: View {
 
                 Spacer()
 
-                let signingIn = reauthorizeState.isSigningIn
+                let signingIn = reauthorization.status.isSigningIn
                 Button(action: reauthorizeOpenRouter) {
                     HStack(spacing: 6) {
                         if signingIn {
@@ -1885,7 +2195,7 @@ private struct EditProviderFlow: View {
 
     @ViewBuilder
     private var reauthorizeStatusLine: some View {
-        switch reauthorizeState {
+        switch reauthorization.status {
         case .succeeded:
             HStack(spacing: 6) {
                 Image(systemName: "checkmark.circle.fill")
@@ -1911,14 +2221,32 @@ private struct EditProviderFlow: View {
     }
 
     private func reauthorizeOpenRouter() {
-        reauthorizeState = .signingIn
+        let testedAPIKeyInput = apiKey
+        let testedAuthType = authType
+        let testedProviderType = providerType
+        let requestID = reauthorization.begin(apiKeyInput: testedAPIKeyInput)
         Task { @MainActor in
             do {
                 let key = try await OpenRouterOAuthService.signIn()
+                guard apiKey == testedAPIKeyInput,
+                    authType == testedAuthType,
+                    providerType == testedProviderType
+                else {
+                    reauthorization.cancel(requestID: requestID)
+                    return
+                }
+                guard reauthorization.acceptCompletion(
+                    requestID: requestID,
+                    currentAPIKeyInput: apiKey
+                ) else { return }
                 apiKey = key
-                reauthorizeState = .succeeded
+                testResult = nil
             } catch {
-                reauthorizeState = .failed(error.localizedDescription)
+                _ = reauthorization.acceptFailure(
+                    requestID: requestID,
+                    currentAPIKeyInput: apiKey,
+                    message: error.localizedDescription
+                )
             }
         }
     }
@@ -2386,6 +2714,38 @@ private struct EditProviderFlow: View {
         return L("Test")
     }
 
+    private func setupFailureCallout(_ failure: ProviderSetupFailure) -> some View {
+        HStack(alignment: .top, spacing: 10) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .foregroundColor(theme.errorColor)
+            VStack(alignment: .leading, spacing: 4) {
+                Text(failure.classification.title)
+                    .font(.system(size: 12, weight: .semibold))
+                Text(failure.detailForDisplay)
+                    .font(.system(size: 11))
+                    .foregroundColor(theme.secondaryText)
+                Text(failure.classification.action)
+                    .font(.system(size: 11))
+                    .foregroundColor(theme.secondaryText)
+            }
+            Spacer(minLength: 8)
+            Button {
+                let pasteboard = NSPasteboard.general
+                pasteboard.clearContents()
+                pasteboard.setString(failure.pasteboardText, forType: .string)
+            } label: {
+                Image(systemName: "doc.on.doc")
+            }
+            .buttonStyle(.plain)
+            .localizedHelp("Copy diagnostics")
+        }
+        .padding(12)
+        .background(
+            RoundedRectangle(cornerRadius: 8)
+                .fill(theme.errorColor.opacity(0.08))
+        )
+    }
+
     private var testButtonColor: Color {
         guard let result = testResult else { return theme.secondaryText }
         return result.isSuccess ? theme.successColor : theme.errorColor
@@ -2455,14 +2815,20 @@ private struct EditProviderFlow: View {
     }
 
     func testConnection() {
+        let requestID = UUID()
+        testRequestID = requestID
         isTesting = true
         testResult = nil
 
-        let trimmedHost = host.trimmingCharacters(in: .whitespaces)
-        let trimmedBasePath = basePath.trimmingCharacters(in: .whitespaces)
-        let port: Int? = portString.trimmingCharacters(in: .whitespaces).isEmpty ? nil : Int(portString)
         let testApiKey =
             authType == .apiKey ? (!apiKey.isEmpty ? apiKey : RemoteProviderKeychain.getAPIKey(for: provider.id)) : nil
+        let testedProvider = draftEditedProvider()
+        let testedAPIKeyInput = apiKey
+        let testedHeaders = customHeaders
+        let testedAPIKeyPresent = testApiKey != nil || apiKeyPresent
+        let testedOAuthTokensPresent = oauthTokensPresent
+        let testedManualModelRecovery: ProviderManualModelRecovery =
+            matchedPreset == .azureOpenAI ? .azureDeploymentIDs : .unavailable
 
         Task {
             do {
@@ -2471,36 +2837,94 @@ private struct EditProviderFlow: View {
                 // Passing the provider id lets ChatGPT/Codex use the stored
                 // OAuth tokens to query the live catalog when signed in.
                 let models = try await RemoteProviderManager.shared.testConnection(
-                    host: trimmedHost,
-                    providerProtocol: providerProtocol,
-                    port: port,
-                    basePath: trimmedBasePath,
-                    authType: authType,
-                    providerType: providerType,
+                    host: testedProvider.host,
+                    providerProtocol: testedProvider.providerProtocol,
+                    port: testedProvider.port,
+                    basePath: testedProvider.basePath,
+                    authType: testedProvider.authType,
+                    providerType: testedProvider.providerType,
                     apiKey: testApiKey,
-                    headers: HeaderEntry.buildHeaders(from: customHeaders),
-                    manualModelIds: parseManualModelIds(manualModelIdsText),
+                    headers: HeaderEntry.buildHeaders(from: testedHeaders),
+                    manualModelIds: testedProvider.manualModelIds,
                     providerId: provider.id
                 )
                 await MainActor.run {
+                    guard testRequestID == requestID else { return }
+                    guard matchesEditedTestInputs(
+                        provider: testedProvider,
+                        apiKeyInput: testedAPIKeyInput,
+                        headers: testedHeaders
+                    ) else {
+                        isTesting = false
+                        return
+                    }
                     testResult = .success(models)
                     isTesting = false
                 }
             } catch {
-                let message: String
-                if authType == .openAICodexOAuth || providerType == .openAICodex {
-                    message = OpenAICodexOAuthService.diagnosticMessage(for: error)
-                } else if authType == .xaiOAuth {
-                    message = XAIOAuthService.diagnosticMessage(for: error)
+                let diagnosticMessage: String?
+                if testedProvider.authType == .openAICodexOAuth
+                    || testedProvider.providerType == .openAICodex {
+                    diagnosticMessage = OpenAICodexOAuthService.diagnosticMessage(for: error)
+                } else if testedProvider.authType == .xaiOAuth {
+                    diagnosticMessage = XAIOAuthService.diagnosticMessage(for: error)
                 } else {
-                    message = error.localizedDescription
+                    diagnosticMessage = nil
                 }
+                let failure = ProviderFailureClassifier.classifySetupFailure(
+                    provider: testedProvider,
+                    error: error,
+                    proxy: GlobalProxySettings.currentDiagnostic(),
+                    apiKeyPresent: testedAPIKeyPresent,
+                    oauthTokensPresent: testedOAuthTokensPresent,
+                    diagnosticMessage: diagnosticMessage,
+                    manualModelRecovery: testedManualModelRecovery
+                )
                 await MainActor.run {
-                    testResult = .failure(message)
+                    guard testRequestID == requestID else { return }
+                    guard matchesEditedTestInputs(
+                        provider: testedProvider,
+                        apiKeyInput: testedAPIKeyInput,
+                        headers: testedHeaders
+                    ) else {
+                        isTesting = false
+                        return
+                    }
+                    testResult = .failure(failure)
                     isTesting = false
                 }
             }
         }
+    }
+
+    private func draftEditedProvider() -> RemoteProvider {
+        let (regularHeaders, secretKeys) = HeaderEntry.partition(customHeaders)
+        return RemoteProvider(
+            id: provider.id,
+            name: name.trimmingCharacters(in: .whitespaces),
+            host: host.trimmingCharacters(in: .whitespaces),
+            providerProtocol: providerProtocol,
+            port: Int(portString),
+            basePath: basePath.trimmingCharacters(in: .whitespaces),
+            customHeaders: regularHeaders,
+            authType: authType,
+            providerType: providerType,
+            enabled: provider.enabled,
+            timeout: timeout,
+            disableTimeout: disableTimeout,
+            manualModelIds: parseManualModelIds(manualModelIdsText),
+            secretHeaderKeys: secretKeys
+        )
+    }
+
+    private func matchesEditedTestInputs(
+        provider testedProvider: RemoteProvider,
+        apiKeyInput testedAPIKeyInput: String,
+        headers testedHeaders: [HeaderEntry]
+    ) -> Bool {
+        draftEditedProvider() == testedProvider
+            && apiKey == testedAPIKeyInput
+            && customHeaders == testedHeaders
     }
 
     private func save() {
@@ -2626,7 +3050,7 @@ private struct SegmentedToggleButton: View {
 
 private enum ProviderTestResult {
     case success([String])
-    case failure(String)
+    case failure(ProviderSetupFailure)
 
     var isSuccess: Bool {
         if case .success = self { return true }
@@ -2634,7 +3058,7 @@ private enum ProviderTestResult {
     }
 }
 
-struct HeaderEntry: Identifiable {
+struct HeaderEntry: Identifiable, Equatable {
     let id = UUID()
     var key: String
     var value: String
@@ -2671,6 +3095,90 @@ struct HeaderEntry: Identifiable {
             }
         }
         return (regular, secretKeys)
+    }
+}
+
+/// Credential identity used by a known-provider test. Browser OAuth is stable
+/// while sign-in populates a key or token; pasted-key flows bind the exact text.
+enum KnownProviderSetupCredentialIdentity: Equatable {
+    case apiKey(String)
+    case oauth(ProviderOAuthKind)
+}
+
+/// The same complete input identity used to reject stale async known-provider
+/// completions, retained after success so footer saves cannot bypass that check.
+struct KnownProviderSetupTestSnapshot: Equatable {
+    var preset: ProviderPreset
+    var provider: RemoteProvider
+    var credential: KnownProviderSetupCredentialIdentity
+    var headers: [HeaderEntry]
+}
+
+enum KnownProviderSetupSaveAuthorization: Equatable {
+    case denied
+    case verified
+    case unverifiedAzureManualModels
+
+    var allowsSave: Bool {
+        self != .denied
+    }
+}
+
+struct KnownProviderSetupSuccessGate: Equatable {
+    private(set) var successfulSnapshot: KnownProviderSetupTestSnapshot?
+
+    mutating func recordSuccess(_ snapshot: KnownProviderSetupTestSnapshot) {
+        successfulSnapshot = snapshot
+    }
+
+    mutating func invalidate() {
+        successfulSnapshot = nil
+    }
+
+    func authorization(
+        current snapshot: KnownProviderSetupTestSnapshot,
+        hasSuccessfulResult: Bool,
+        allowsUnverifiedAzureSave: Bool
+    ) -> KnownProviderSetupSaveAuthorization {
+        if hasSuccessfulResult, successfulSnapshot == snapshot {
+            return .verified
+        }
+        if allowsUnverifiedAzureSave {
+            return .unverifiedAzureManualModels
+        }
+        return .denied
+    }
+}
+
+/// Exact custom-provider inputs bound to a successful connection test. Raw text
+/// fields stay alongside the normalized provider so semantically equivalent
+/// edits (for example `443` to `0443`) still require a fresh test.
+struct CustomProviderSetupTestSnapshot: Equatable {
+    var provider: RemoteProvider
+    var nameInput: String
+    var hostInput: String
+    var portInput: String
+    var basePathInput: String
+    var apiKeyInput: String
+    var manualModelIdsInput: String
+    var headers: [HeaderEntry]
+}
+
+/// A green custom-provider result authorizes Add only while every current input
+/// still equals the snapshot used by that test.
+struct CustomProviderSetupSuccessGate: Equatable {
+    private(set) var successfulSnapshot: CustomProviderSetupTestSnapshot?
+
+    mutating func recordSuccess(_ snapshot: CustomProviderSetupTestSnapshot) {
+        successfulSnapshot = snapshot
+    }
+
+    mutating func invalidate() {
+        successfulSnapshot = nil
+    }
+
+    func allowsAdd(current snapshot: CustomProviderSetupTestSnapshot) -> Bool {
+        successfulSnapshot == snapshot
     }
 }
 
