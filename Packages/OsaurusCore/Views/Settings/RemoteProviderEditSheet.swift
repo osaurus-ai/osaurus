@@ -1335,12 +1335,10 @@ private struct AddProviderFlow: View {
             VStack(alignment: .leading, spacing: 3) {
                 Text(failure.classification.title)
                     .font(.system(size: 11, weight: .semibold))
-                if let detail = failure.recoveryDetail {
-                    Text(detail)
-                        .font(.system(size: 10))
-                        .foregroundColor(theme.secondaryText)
-                        .lineLimit(2)
-                }
+                Text(failure.detailForDisplay)
+                    .font(.system(size: 10))
+                    .foregroundColor(theme.secondaryText)
+                    .lineLimit(2)
                 Text(failure.classification.action)
                     .font(.system(size: 10))
                     .foregroundColor(theme.secondaryText)
@@ -1833,6 +1831,81 @@ private struct AddProviderFlow: View {
 
 // MARK: - Edit Provider Flow (simplified)
 
+struct OpenRouterReauthorizationSession: Sendable, Equatable {
+    enum Status: Sendable, Equatable {
+        case idle
+        case signingIn
+        case succeeded
+        case failed(String)
+
+        var isSigningIn: Bool {
+            if case .signingIn = self { return true }
+            return false
+        }
+    }
+
+    private(set) var status: Status = .idle
+    private(set) var requestID: UUID?
+    private var apiKeyInput: String?
+
+    @discardableResult
+    mutating func begin(requestID: UUID = UUID(), apiKeyInput: String) -> UUID {
+        self.requestID = requestID
+        self.apiKeyInput = apiKeyInput
+        status = .signingIn
+        return requestID
+    }
+
+    /// Manual field writes and OAuth completions use separate call sites. An
+    /// unchanged binding echo is not a user edit and must preserve feedback.
+    mutating func manualAPIKeyDidChange(from currentValue: String, to newValue: String) -> Bool {
+        guard newValue != currentValue else { return false }
+        cancel()
+        return true
+    }
+
+    mutating func acceptCompletion(requestID: UUID, currentAPIKeyInput: String) -> Bool {
+        guard consumeCurrentRequest(requestID: requestID, currentAPIKeyInput: currentAPIKeyInput) else {
+            return false
+        }
+        status = .succeeded
+        return true
+    }
+
+    mutating func acceptFailure(
+        requestID: UUID,
+        currentAPIKeyInput: String,
+        message: String
+    ) -> Bool {
+        guard consumeCurrentRequest(requestID: requestID, currentAPIKeyInput: currentAPIKeyInput) else {
+            return false
+        }
+        status = .failed(message)
+        return true
+    }
+
+    mutating func cancel(requestID: UUID? = nil) {
+        if let requestID, self.requestID != requestID { return }
+        self.requestID = nil
+        apiKeyInput = nil
+        status = .idle
+    }
+
+    private mutating func consumeCurrentRequest(
+        requestID: UUID,
+        currentAPIKeyInput: String
+    ) -> Bool {
+        guard self.requestID == requestID else { return false }
+        guard apiKeyInput == currentAPIKeyInput else {
+            cancel(requestID: requestID)
+            return false
+        }
+        self.requestID = nil
+        apiKeyInput = nil
+        return true
+    }
+}
+
 private struct EditProviderFlow: View {
     @ObservedObject private var themeManager = ThemeManager.shared
     @Environment(\.dismiss) private var dismiss
@@ -1887,22 +1960,9 @@ private struct EditProviderFlow: View {
     @State private var apiKeyPresent = false
     @State private var oauthTokensPresent = false
 
-    // OpenRouter re-authorization. Collapsed to a single state so we can't
-    // accidentally render both "succeeded" and "failed" feedback at once.
-    @State private var reauthorizeState: ReauthorizeState = .idle
-    @State private var reauthorizeRequestID: UUID?
-
-    enum ReauthorizeState: Equatable {
-        case idle
-        case signingIn
-        case succeeded
-        case failed(String)
-
-        var isSigningIn: Bool {
-            if case .signingIn = self { return true }
-            return false
-        }
-    }
+    // OpenRouter re-authorization keeps request identity and mutually exclusive
+    // feedback in one state value.
+    @State private var reauthorization = OpenRouterReauthorizationSession()
 
     var body: some View {
         VStack(spacing: 0) {
@@ -1947,7 +2007,7 @@ private struct EditProviderFlow: View {
         }
         .onDisappear {
             testRequestID = nil
-            reauthorizeRequestID = nil
+            reauthorization.cancel()
         }
         .themedAlert(
             "Disable request timeout?",
@@ -2041,6 +2101,17 @@ private struct EditProviderFlow: View {
 
     // MARK: - Known Provider Edit
 
+    private var knownProviderAPIKeyBinding: Binding<String> {
+        Binding(
+            get: { apiKey },
+            set: { newValue in
+                guard reauthorization.manualAPIKeyDidChange(from: apiKey, to: newValue) else { return }
+                apiKey = newValue
+                testResult = nil
+            }
+        )
+    }
+
     private func knownProviderEditContent(preset: ProviderPreset) -> some View {
         VStack(alignment: .leading, spacing: 20) {
             if preset == .openrouter {
@@ -2064,17 +2135,10 @@ private struct EditProviderFlow: View {
                     .foregroundColor(theme.tertiaryText)
                 }
 
-                    ProviderSecureField(placeholder: "Leave blank to keep current", text: $apiKey)
-                        .onChange(of: apiKey) { _, _ in
-                            testResult = nil
-                            // User edited the field manually — clear any prior
-                            // re-authorize attempt or feedback so a late OAuth
-                            // callback cannot overwrite a typed key.
-                            reauthorizeRequestID = nil
-                            if reauthorizeState != .idle {
-                                reauthorizeState = .idle
-                            }
-                        }
+                ProviderSecureField(
+                    placeholder: "Leave blank to keep current",
+                    text: knownProviderAPIKeyBinding
+                )
             }
 
             if preset == .azureOpenAI {
@@ -2127,7 +2191,7 @@ private struct EditProviderFlow: View {
 
                 Spacer()
 
-                let signingIn = reauthorizeState.isSigningIn
+                let signingIn = reauthorization.status.isSigningIn
                 Button(action: reauthorizeOpenRouter) {
                     HStack(spacing: 6) {
                         if signingIn {
@@ -2163,7 +2227,7 @@ private struct EditProviderFlow: View {
 
     @ViewBuilder
     private var reauthorizeStatusLine: some View {
-        switch reauthorizeState {
+        switch reauthorization.status {
         case .succeeded:
             HStack(spacing: 6) {
                 Image(systemName: "checkmark.circle.fill")
@@ -2189,31 +2253,33 @@ private struct EditProviderFlow: View {
     }
 
     private func reauthorizeOpenRouter() {
-        let requestID = UUID()
         let testedAPIKeyInput = apiKey
         let testedAuthType = authType
         let testedProviderType = providerType
-        reauthorizeRequestID = requestID
-        reauthorizeState = .signingIn
+        let requestID = reauthorization.begin(apiKeyInput: testedAPIKeyInput)
         Task { @MainActor in
             do {
                 let key = try await OpenRouterOAuthService.signIn()
-                guard reauthorizeRequestID == requestID else { return }
                 guard apiKey == testedAPIKeyInput,
                     authType == testedAuthType,
                     providerType == testedProviderType
                 else {
-                    reauthorizeRequestID = nil
-                    reauthorizeState = .idle
+                    reauthorization.cancel(requestID: requestID)
                     return
                 }
+                guard reauthorization.acceptCompletion(
+                    requestID: requestID,
+                    currentAPIKeyInput: apiKey
+                ) else { return }
                 apiKey = key
-                reauthorizeState = .succeeded
+                testResult = nil
             } catch {
-                guard reauthorizeRequestID == requestID else { return }
-                reauthorizeState = .failed(error.localizedDescription)
+                _ = reauthorization.acceptFailure(
+                    requestID: requestID,
+                    currentAPIKeyInput: apiKey,
+                    message: error.localizedDescription
+                )
             }
-            reauthorizeRequestID = nil
         }
     }
 
@@ -2687,11 +2753,9 @@ private struct EditProviderFlow: View {
             VStack(alignment: .leading, spacing: 4) {
                 Text(failure.classification.title)
                     .font(.system(size: 12, weight: .semibold))
-                if let detail = failure.recoveryDetail {
-                    Text(detail)
-                        .font(.system(size: 11))
-                        .foregroundColor(theme.secondaryText)
-                }
+                Text(failure.detailForDisplay)
+                    .font(.system(size: 11))
+                    .foregroundColor(theme.secondaryText)
                 Text(failure.classification.action)
                     .font(.system(size: 11))
                     .foregroundColor(theme.secondaryText)

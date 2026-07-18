@@ -60,6 +60,7 @@ struct ProviderFailureClassification: Sendable, Equatable {
 struct ProviderSetupFailure: Sendable, Equatable {
     let classification: ProviderFailureClassification
     let recoveryDetail: String?
+    let pasteboardDetail: String
     let providerType: RemoteProviderType
     let authType: RemoteProviderAuthType
     let providerProtocol: RemoteProviderProtocol
@@ -76,6 +77,11 @@ struct ProviderSetupFailure: Sendable, Equatable {
             .joined(separator: ". ")
     }
 
+    var detailForDisplay: String {
+        guard let recoveryDetail, !recoveryDetail.isEmpty else { return classification.detail }
+        return recoveryDetail
+    }
+
     var pasteboardText: String {
         [
             "provider-setup-diagnostics",
@@ -90,6 +96,7 @@ struct ProviderSetupFailure: Sendable, Equatable {
             "manual-model-count=\(manualModelCount)",
             "proxy=\(proxyState)",
             "summary=\(classification.title)",
+            "detail=\(pasteboardDetail)",
             "action=\(classification.action)",
         ].joined(separator: "\n")
     }
@@ -104,17 +111,18 @@ enum ProviderFailureClassifier {
         oauthTokensPresent: Bool,
         diagnosticMessage: String? = nil
     ) -> ProviderSetupFailure {
+        let oauthContext = usesOAuthTokens(provider.authType)
         let credentialPresent =
             apiKeyPresent || oauthTokensPresent || hasCredentialHeader(provider)
-        let missingOAuthTokens =
-            (provider.authType == .openAICodexOAuth || provider.authType == .xaiOAuth)
-            && !oauthTokensPresent
+        let missingOAuthTokens = oauthContext && !oauthTokensPresent
+        let replay = (error as? RemoteProviderServiceError)?.replayDiagnostics
         let result: ProviderFailureClassification
-        if let replay = (error as? RemoteProviderServiceError)?.replayDiagnostics,
+        if let replay,
             let replayClassification = classifyReplay(
                 replay,
                 proxy: proxy,
-                credentialPresent: credentialPresent
+                credentialPresent: credentialPresent,
+                oauthContext: oauthContext
             ) {
             result = replayClassification
         } else if missingOAuthTokens {
@@ -126,13 +134,15 @@ enum ProviderFailureClassifier {
             result = classifyMessage(
                 diagnosticMessage ?? error.localizedDescription,
                 proxy: proxy,
-                credentialPresent: credentialPresent
+                credentialPresent: credentialPresent,
+                oauthContext: oauthContext
             )
         }
 
         return ProviderSetupFailure(
             classification: result,
             recoveryDetail: diagnosticMessage,
+            pasteboardDetail: setupPasteboardDetail(classification: result, replay: replay),
             providerType: provider.providerType,
             authType: provider.authType,
             providerProtocol: provider.providerProtocol,
@@ -183,7 +193,8 @@ enum ProviderFailureClassifier {
             if let replayClassification = classifyReplay(
                 replay,
                 proxy: proxy,
-                credentialPresent: credentialPresent
+                credentialPresent: credentialPresent,
+                oauthContext: usesOAuthTokens(provider.authType)
             ) {
                 return replayClassification
             }
@@ -194,7 +205,8 @@ enum ProviderFailureClassifier {
             return classifyMessage(
                 error,
                 proxy: proxy,
-                credentialPresent: credentialPresent
+                credentialPresent: credentialPresent,
+                oauthContext: usesOAuthTokens(provider.authType)
             )
         }
 
@@ -225,7 +237,8 @@ enum ProviderFailureClassifier {
     private static func classifyReplay(
         _ replay: ProviderReplayDiagnosticBundle,
         proxy: GlobalProxyDiagnosticState,
-        credentialPresent: Bool
+        credentialPresent: Bool,
+        oauthContext: Bool
     ) -> ProviderFailureClassification? {
         if case .active = proxy,
            let transportError = replay.transportError?.lowercased(),
@@ -246,6 +259,7 @@ enum ProviderFailureClassifier {
                 transportError,
                 proxy: proxy,
                 credentialPresent: credentialPresent,
+                oauthContext: oauthContext,
                 evidence: replay.summary
             )
         }
@@ -254,6 +268,10 @@ enum ProviderFailureClassifier {
         let body = response.body?.lowercased() ?? ""
         let phase = replay.phase.lowercased()
         let status = response.statusCode
+
+        if oauthContext && messageLooksLikeOAuthTokenFailure(body) {
+            return classification(.oauthTokenMissing, detail: L("HTTP \(status) authentication rejection. Evidence: \(replay.summary)"))
+        }
 
         if status == 401 {
             return classification(.authRejected, detail: L("HTTP \(status) from provider. Evidence: \(replay.summary)"))
@@ -303,6 +321,7 @@ enum ProviderFailureClassifier {
         _ message: String,
         proxy: GlobalProxyDiagnosticState,
         credentialPresent: Bool = false,
+        oauthContext: Bool = false,
         evidence: String? = nil
     ) -> ProviderFailureClassification {
         let safeMessage = ProviderDiagnosticRedactor.safe(message, maxLength: 240)
@@ -312,14 +331,14 @@ enum ProviderFailureClassifier {
         if case .active = proxy, lower.contains("proxy") {
             return classification(.proxyConnectFailed, detail: detail)
         }
+        if oauthContext && messageLooksLikeOAuthTokenFailure(lower) {
+            return classification(.oauthTokenMissing, detail: detail)
+        }
         if lower.contains("http 401") {
             return classification(.authRejected, detail: detail)
         }
         if bodyLooksLikeAuthRejection(lower) {
             return classification(.authRejected, detail: detail)
-        }
-        if lower.contains("oauth") && (lower.contains("token") || lower.contains("sign-in")) {
-            return classification(.oauthTokenMissing, detail: detail)
         }
         if lower.contains("api key") || lower.contains("apikey") {
             if credentialPresent {
@@ -349,7 +368,10 @@ enum ProviderFailureClassifier {
             return classification(.modelsSchemaMismatch, detail: detail)
         }
         if lower.contains("http 404") || lower.contains("http 405") {
-            return classification(.modelsEndpointUnavailable, detail: detail)
+            let bucket: ProviderFailureBucket = messageHasModelDiscoveryContext(lower)
+                ? .modelsEndpointUnavailable
+                : .badResponse
+            return classification(bucket, detail: detail)
         }
         if bodyLooksLikeRequestShapeRejection(lower) {
             return classification(.requestRejected, detail: detail)
@@ -396,6 +418,29 @@ enum ProviderFailureClassifier {
             action: action(for: bucket),
             severity: bucket == .unknown ? .warning : .blocked
         )
+    }
+
+    private static func setupPasteboardDetail(
+        classification: ProviderFailureClassification,
+        replay: ProviderReplayDiagnosticBundle?
+    ) -> String {
+        let detail: String
+        if let replay {
+            var evidence = [
+                classification.title,
+                "method=\(replay.request.method)",
+                "endpoint=[redacted-endpoint]",
+            ]
+            if let statusCode = replay.response?.statusCode {
+                evidence.append("status=\(statusCode)")
+            } else if let transportErrorCode = replay.transportErrorCode {
+                evidence.append("transport-error-code=\(transportErrorCode)")
+            }
+            detail = evidence.joined(separator: "; ")
+        } else {
+            detail = classification.detail
+        }
+        return ProviderDiagnosticRedactor.safeForSetupCopy(detail, maxLength: 360)
     }
 
     private static func title(for bucket: ProviderFailureBucket) -> String {
@@ -490,6 +535,39 @@ enum ProviderFailureClassifier {
             || body.contains("invalid token")
             || body.contains("expired token")
             || body.contains("token expired")
+    }
+
+    private static func messageLooksLikeOAuthTokenFailure(_ message: String) -> Bool {
+        let explicitOAuthFailure = message.contains("oauth")
+            && (message.contains("token")
+                || message.contains("sign-in")
+                || message.contains("sign in")
+                || message.contains("reauthorize")
+                || message.contains("re-authorize"))
+        return explicitOAuthFailure
+            || message.contains("expired token")
+            || message.contains("token expired")
+            || message.contains("invalid token")
+            || message.contains("token invalid")
+            || message.contains("revoked token")
+            || message.contains("token revoked")
+            || message.contains("session expired")
+            || message.contains("expired session")
+            || message.contains("invalid_grant")
+            || message.contains("invalid grant")
+            || message.contains("unauthorized_client")
+    }
+
+    private static func messageHasModelDiscoveryContext(_ message: String) -> Bool {
+        message.contains("/models")
+            || message.contains("models endpoint")
+            || message.contains("model discovery")
+            || message.contains("model list")
+            || message.contains("list models")
+    }
+
+    private static func usesOAuthTokens(_ authType: RemoteProviderAuthType) -> Bool {
+        authType == .openAICodexOAuth || authType == .xaiOAuth
     }
 
     private static func hasActiveFailure(_ state: RemoteProviderState?) -> Bool {

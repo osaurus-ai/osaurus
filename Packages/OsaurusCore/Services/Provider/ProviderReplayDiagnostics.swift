@@ -265,6 +265,23 @@ enum ProviderDiagnosticRedactor {
         return String(value.prefix(maxLength)) + "..."
     }
 
+    /// Setup diagnostics are a minimal shareable payload, so endpoint identity
+    /// is removed after the standard secret/path pass. Keeping this order also
+    /// strips endpoint fragments when `safe` truncates in the middle of a URL.
+    static func safeForSetupCopy(_ raw: String, maxLength: Int = 360) -> String {
+        var value = safe(raw, maxLength: maxLength)
+        let endpointPatterns = [
+            #"(?i)\bhttps?://[^\s,;(){}\[\]<>\"'\r\n]*"#,
+            #"(?i)\b(?:(?:[a-z0-9-]+\.)+[a-z]{2,}|(?:\d{1,3}\.){3}\d{1,3}|localhost)(?::\d{1,5})?(?:/[^\s,;:(){}\[\]<>\"'\r\n]*)?"#,
+            #"(?i)\b[a-z0-9-]+:\d{1,5}(?:/[^\s,;:(){}\[\]<>\"'\r\n]*)?"#,
+            #"\[[0-9A-Fa-f:]+\](?::\d{1,5})?(?:/[^\s,;:(){}\[\]<>\"'\r\n]*)?"#,
+        ]
+        for pattern in endpointPatterns {
+            value = replaceMatches(in: value, pattern: pattern, template: "[redacted-endpoint]")
+        }
+        return value
+    }
+
     private static func isSensitiveFieldName(_ name: String) -> Bool {
         let normalized = name.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         guard !normalized.isEmpty else { return false }
