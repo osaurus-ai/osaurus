@@ -3283,26 +3283,14 @@ private struct ProviderEditSheet: View {
     }
 
     private func secretHeaderValues() -> [String: String] {
-        Dictionary(
-            customHeaders
-                .compactMap { entry -> (String, String)? in
-                    let key = entry.key.trimmingCharacters(in: .whitespacesAndNewlines)
-                    guard entry.isSecret, !key.isEmpty, !entry.value.isEmpty else { return nil }
-                    return (key, entry.value)
-                },
-            uniquingKeysWith: { _, latest in latest }
+        MCPProviderOperationsFieldNormalizer.secretOverrides(
+            customHeaders.map { (key: $0.key, value: $0.value, isSecret: $0.isSecret) }
         )
     }
 
     private func secretEnvironmentValues() -> [String: String] {
-        Dictionary(
-            envEntries
-                .compactMap { entry -> (String, String)? in
-                    let key = entry.key.trimmingCharacters(in: .whitespacesAndNewlines)
-                    guard entry.isSecret, !key.isEmpty, !entry.value.isEmpty else { return nil }
-                    return (key, entry.value)
-                },
-            uniquingKeysWith: { _, latest in latest }
+        MCPProviderOperationsFieldNormalizer.secretOverrides(
+            envEntries.map { (key: $0.key, value: $0.value, isSecret: $0.isSecret) }
         )
     }
 
@@ -3319,17 +3307,28 @@ private struct ProviderEditSheet: View {
             return
         }
         let updatedProvider = makeProvider()
+        let verifiedProbeResult: MCPProviderProbeResult?
+        switch currentTestResult {
+        case .success(let result), .failure(let result):
+            verifiedProbeResult = result
+        case nil:
+            verifiedProbeResult = nil
+        }
 
         // Blank values preserve existing Keychain entries. Explicit values
         // are committed atomically with bearer-token intent by the manager.
-        let secretWrites = envEntries.compactMap { entry -> MCPProviderSecretWrite? in
-            let key = entry.key.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard transport == .stdio, entry.isSecret, !key.isEmpty, !entry.value.isEmpty else { return nil }
-            return MCPProviderSecretWrite(storage: .environment, key: key, value: entry.value)
-        } + customHeaders.compactMap { header -> MCPProviderSecretWrite? in
-            let key = header.key.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard transport == .http, header.isSecret, !key.isEmpty, !header.value.isEmpty else { return nil }
-            return MCPProviderSecretWrite(storage: .header, key: key, value: header.value)
+        let secretWrites: [MCPProviderSecretWrite]
+        switch transport {
+        case .http:
+            secretWrites = MCPProviderOperationsFieldNormalizer.secretWrites(
+                customHeaders.map { (key: $0.key, value: $0.value, isSecret: $0.isSecret) },
+                storage: .header
+            )
+        case .stdio:
+            secretWrites = MCPProviderOperationsFieldNormalizer.secretWrites(
+                envEntries.map { (key: $0.key, value: $0.value, isSecret: $0.isSecret) },
+                storage: .environment
+            )
         }
         let tokenEdit = MCPProviderBearerTokenEdit.fromBearerField(
             token,
@@ -3342,6 +3341,9 @@ private struct ProviderEditSheet: View {
                 bundle: .module
             )
             return
+        }
+        if let verifiedProbeResult {
+            MCPProviderHealthSnapshotStore.record(verifiedProbeResult, for: updatedProvider)
         }
         dismiss()
     }

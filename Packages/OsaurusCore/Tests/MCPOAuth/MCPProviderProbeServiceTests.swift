@@ -111,6 +111,99 @@ struct MCPProviderProbeServiceTests {
         #expect(Set(snapshots.keys) == Set(providers.map(\.id)))
     }
 
+    @Test @MainActor func providerConfigurationMutationClearsPersistedSuccess() throws {
+        let root = try makeTemporaryRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        MCPProviderHealthSnapshotStore.overrideURL = root.appendingPathComponent("mcp-health.json")
+        defer { MCPProviderHealthSnapshotStore.overrideURL = nil }
+
+        var provider = MCPProvider(
+            id: UUID(),
+            name: "Mutable HTTP MCP",
+            url: "https://example.test/mcp",
+            authType: .none,
+            transport: .http
+        )
+        let success = MCPProviderProbeResult(
+            providerId: provider.id,
+            providerName: provider.name,
+            transportSummary: "https example.test/redacted-path",
+            startedAt: Date(),
+            finishedAt: Date(),
+            succeeded: true,
+            stage: .listTools,
+            reasonCode: .succeeded,
+            toolCount: 1,
+            toolNames: ["fixture_echo"],
+            message: "Probe passed.",
+            action: nil
+        )
+        #expect(MCPProviderHealthSnapshotStore.record(success, for: provider))
+
+        let manager = MCPProviderManager(
+            configuration: MCPProviderConfiguration(providers: [provider])
+        )
+        provider.url = "https://changed.example.test/mcp"
+
+        #expect(manager.updateProvider(provider))
+        #expect(MCPProviderHealthSnapshotStore.snapshot(providerId: provider.id) == nil)
+    }
+
+    @Test func credentialMutationClearsHealthOnlyAfterSuccessfulWrite() throws {
+        let root = try makeTemporaryRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        MCPProviderHealthSnapshotStore.overrideURL = root.appendingPathComponent("mcp-health.json")
+        defer { MCPProviderHealthSnapshotStore.overrideURL = nil }
+
+        let provider = MCPProvider(
+            id: UUID(),
+            name: "Credential MCP",
+            url: "https://example.test/mcp",
+            authType: .bearerToken,
+            transport: .http
+        )
+        let success = MCPProviderProbeResult(
+            providerId: provider.id,
+            providerName: provider.name,
+            transportSummary: "https example.test/redacted-path",
+            startedAt: Date(),
+            finishedAt: Date(),
+            succeeded: true,
+            stage: .listTools,
+            reasonCode: .succeeded,
+            toolCount: 0,
+            toolNames: [],
+            message: "Probe passed.",
+            action: nil
+        )
+        #expect(MCPProviderHealthSnapshotStore.record(success, for: provider))
+        #expect(
+            !MCPProviderKeychain.clearingHealthOnSuccess(providerId: provider.id) { false }
+        )
+        #expect(MCPProviderHealthSnapshotStore.snapshot(providerId: provider.id) != nil)
+
+        #expect(
+            MCPProviderKeychain.clearingHealthOnSuccess(providerId: provider.id) { true }
+        )
+        #expect(MCPProviderHealthSnapshotStore.snapshot(providerId: provider.id) == nil)
+    }
+
+    @Test func runtimeErrorsRedactSecretsURLsAndLocalPathsBeforeUIState() {
+        let raw =
+            "stderr /Users/alice/customer/server.js "
+            + "https://user:password@example.test/private?token=query-secret "
+            + "Authorization: Bearer sk-secret-canary"
+        let safe = MCPProviderRuntimeErrorSanitizer.sanitize(raw)
+
+        #expect(!safe.contains("/Users/alice"))
+        #expect(!safe.contains("customer"))
+        #expect(!safe.contains("password"))
+        #expect(!safe.contains("query-secret"))
+        #expect(!safe.contains("sk-secret-canary"))
+        #expect(safe.contains("<redacted-path>"))
+        #expect(safe.contains("credential=***"))
+    }
+
     @Test func healthSnapshotStoreKeepsNewestDuplicateFromCorruptedFile() throws {
         let root = try makeTemporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }

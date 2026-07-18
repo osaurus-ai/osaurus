@@ -13,6 +13,12 @@ extension Foundation.Notification.Name {
     static let mcpProviderStatusChanged = Foundation.Notification.Name("MCPProviderStatusChanged")
 }
 
+enum MCPProviderRuntimeErrorSanitizer {
+    static func sanitize(_ value: String) -> String {
+        MCPProviderProbeRedactor.safeDiagnosticFragment(value, maxLength: 280)
+    }
+}
+
 /// Explicit edit intent for the legacy/static bearer token stored in Keychain.
 public enum MCPProviderBearerTokenEdit: Sendable, Equatable {
     case preserve
@@ -174,7 +180,7 @@ public final class MCPProviderManager: ObservableObject {
         ) else { return false }
 
         configuration.add(provider)
-        MCPProviderHealthSnapshotStore.invalidateProbeAttempts(providerId: provider.id)
+        MCPProviderHealthSnapshotStore.clear(providerId: provider.id)
         MCPProviderConfigurationStore.save(configuration)
         // KPI: a user-configured MCP tool provider. Only the transport kind
         // is captured — never the command, URL, or args.
@@ -226,6 +232,10 @@ public final class MCPProviderManager: ObservableObject {
             previous?.authType == .bearerToken && provider.authType != .bearerToken
                 ? .clear
                 : tokenEdit
+        let setupChanged =
+            previous != provider
+            || effectiveTokenEdit != .preserve
+            || !credentialWrites.isEmpty
         guard MCPProviderCredentialPersistence.persist(
             providerId: provider.id,
             tokenEdit: effectiveTokenEdit,
@@ -238,7 +248,11 @@ public final class MCPProviderManager: ObservableObject {
         }
 
         configuration.update(provider)
-        MCPProviderHealthSnapshotStore.invalidateProbeAttempts(providerId: provider.id)
+        if setupChanged {
+            MCPProviderHealthSnapshotStore.clear(providerId: provider.id)
+        } else {
+            MCPProviderHealthSnapshotStore.invalidateProbeAttempts(providerId: provider.id)
+        }
         MCPProviderConfigurationStore.save(configuration)
 
         // If the user switched away from OAuth, drop any cached tokens for this provider.
@@ -295,7 +309,7 @@ public final class MCPProviderManager: ObservableObject {
     /// When enabled is false, disconnects from the provider
     public func setEnabled(_ enabled: Bool, for providerId: UUID) {
         configuration.setEnabled(enabled, for: providerId)
-        MCPProviderHealthSnapshotStore.invalidateProbeAttempts(providerId: providerId)
+        MCPProviderHealthSnapshotStore.clear(providerId: providerId)
         MCPProviderConfigurationStore.save(configuration)
 
         if enabled {
@@ -425,12 +439,16 @@ public final class MCPProviderManager: ObservableObject {
 
                 state.requiresAuth = true
                 state.resourceMetadataURL = authFailure.challenge?.resourceMetadataURL
-                state.lastError = MCPAuthFailureProbe.failureDescription(
-                    authType: provider.authType,
-                    probe: authFailure
+                state.lastError = MCPProviderRuntimeErrorSanitizer.sanitize(
+                    MCPAuthFailureProbe.failureDescription(
+                        authType: provider.authType,
+                        probe: authFailure
+                    )
                 )
             } else {
-                state.lastError = error.localizedDescription
+                state.lastError = MCPProviderRuntimeErrorSanitizer.sanitize(
+                    error.localizedDescription
+                )
             }
 
             state.isConnecting = false
@@ -885,7 +903,9 @@ public final class MCPProviderManager: ObservableObject {
             // explain what went wrong, instead of looking like a no-op. We keep
             // `requiresAuth` set so the Sign In button stays available for retry.
             if var state = providerStates[providerId] {
-                state.lastError = "Sign-in failed: \(error.localizedDescription)"
+                state.lastError = MCPProviderRuntimeErrorSanitizer.sanitize(
+                    "Sign-in failed: \(error.localizedDescription)"
+                )
                 providerStates[providerId] = state
             }
             notifyStatusChanged()
@@ -903,7 +923,7 @@ public final class MCPProviderManager: ObservableObject {
             provider.enabled = true
         }
         configuration.update(provider)
-        MCPProviderHealthSnapshotStore.invalidateProbeAttempts(providerId: provider.id)
+        MCPProviderHealthSnapshotStore.clear(providerId: provider.id)
         MCPProviderConfigurationStore.save(configuration)
 
         // Clear the "needs sign in" badge.
@@ -1127,12 +1147,13 @@ public final class MCPProviderManager: ObservableObject {
             state.isConnecting = false
             state.discoveredToolCount = 0
             state.discoveredToolNames = []
-            state.lastStderrTail = stderrTail.isEmpty ? nil : stderrTail
+            let safeStderrTail = MCPProviderRuntimeErrorSanitizer.sanitize(stderrTail)
+            state.lastStderrTail = safeStderrTail.isEmpty ? nil : safeStderrTail
             let codeSuffix = exitCode >= 0 ? " (exit \(exitCode))" : ""
-            if stderrTail.isEmpty {
+            if safeStderrTail.isEmpty {
                 state.lastError = "Stdio MCP subprocess exited unexpectedly\(codeSuffix)."
             } else {
-                state.lastError = "Stdio MCP subprocess exited\(codeSuffix): \(stderrTail)"
+                state.lastError = "Stdio MCP subprocess exited\(codeSuffix): \(safeStderrTail)"
             }
             providerStates[providerId] = state
         }
@@ -1160,7 +1181,9 @@ public final class MCPProviderManager: ObservableObject {
             try await discoverTools(for: providerId, client: client, provider: provider)
         } catch {
             if var state = providerStates[providerId] {
-                state.lastError = "Tool list refresh failed: \(error.localizedDescription)"
+                state.lastError = MCPProviderRuntimeErrorSanitizer.sanitize(
+                    "Tool list refresh failed: \(error.localizedDescription)"
+                )
                 providerStates[providerId] = state
             }
             notifyStatusChanged()

@@ -116,6 +116,26 @@ struct MCPOperationsHubTests {
         #expect(normalized.secretKeys == ["Authorization", "EMPTY"])
     }
 
+    @Test func secretOverridesUseLastRowAndIgnoreEmptyDraftValues() {
+        let entries = [
+            (key: " API_TOKEN ", value: "first", isSecret: true),
+            (key: "API_TOKEN", value: "", isSecret: true),
+            (key: "AUTH", value: "old", isSecret: true),
+            (key: "AUTH", value: "visible", isSecret: false),
+            (key: "PASSWORD", value: "new-secret", isSecret: true),
+            (key: " ", value: "ignored", isSecret: true),
+        ]
+        let values = MCPProviderOperationsFieldNormalizer.secretOverrides(entries)
+        let writes = MCPProviderOperationsFieldNormalizer.secretWrites(entries, storage: .header)
+
+        #expect(values == ["PASSWORD": "new-secret"])
+        #expect(
+            writes == [
+                MCPProviderSecretWrite(storage: .header, key: "PASSWORD", value: "new-secret")
+            ]
+        )
+    }
+
     @Test func launchPlanDeduplicatesSecretEnvironmentKeysBeforeKeychainChecks() {
         let provider = MCPProvider(
             id: UUID(),

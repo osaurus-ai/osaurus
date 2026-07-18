@@ -170,6 +170,31 @@ enum MCPProviderOperationsFieldNormalizer {
 
         return (regular, secretKeys)
     }
+
+    static func secretOverrides(
+        _ entries: [(key: String, value: String, isSecret: Bool)]
+    ) -> [String: String] {
+        var values: [String: String] = [:]
+        for entry in entries {
+            let key = entry.key.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !key.isEmpty else { continue }
+
+            values.removeValue(forKey: key)
+            if entry.isSecret, !entry.value.isEmpty {
+                values[key] = entry.value
+            }
+        }
+        return values
+    }
+
+    static func secretWrites(
+        _ entries: [(key: String, value: String, isSecret: Bool)],
+        storage: MCPProviderSecretWrite.Storage
+    ) -> [MCPProviderSecretWrite] {
+        secretOverrides(entries)
+            .sorted { $0.key < $1.key }
+            .map { MCPProviderSecretWrite(storage: storage, key: $0.key, value: $0.value) }
+    }
 }
 
 public enum MCPProviderOperationsHub {

@@ -808,6 +808,7 @@ private struct MCPOperationsProviderEditor: View {
     @State private var envEntries: [KeyValueEntry] = []
     @State private var isTesting = false
     @State private var probeResult: MCPProviderProbeResult?
+    @State private var probeResultFingerprint: String?
     @State private var probeGate = MCPProviderProbeGate()
     @State private var probeTask: Task<Void, Never>?
     @State private var activeProbeReservation: MCPProviderProbeReservation?
@@ -930,6 +931,7 @@ private struct MCPOperationsProviderEditor: View {
             cancelActiveProbeReservation()
             probeGate.invalidate()
             probeResult = nil
+            probeResultFingerprint = nil
             isTesting = false
         }
         .onDisappear {
@@ -1192,6 +1194,7 @@ private struct MCPOperationsProviderEditor: View {
     private func save() {
         credentialSaveError = nil
         let provider = makeProvider()
+        let verifiedProbeResult = currentProbeResult
         guard onSave(
             provider,
             MCPProviderBearerTokenEdit.fromBearerField(
@@ -1207,12 +1210,17 @@ private struct MCPOperationsProviderEditor: View {
             )
             return
         }
+        if let verifiedProbeResult {
+            MCPProviderHealthSnapshotStore.record(verifiedProbeResult, for: provider)
+        }
         dismiss()
     }
 
     private func testProvider() {
         guard canTest else { return }
         isTesting = true
+        probeResult = nil
+        probeResultFingerprint = nil
         let provider = makeProvider()
         let fingerprint = currentProbeFingerprint
         let localAttempt = probeGate.start(fingerprint: fingerprint)
@@ -1292,6 +1300,7 @@ private struct MCPOperationsProviderEditor: View {
                 }
                 guard accepted else { return }
                 probeResult = result
+                probeResultFingerprint = fingerprint
             }
         }
     }
@@ -1309,6 +1318,11 @@ private struct MCPOperationsProviderEditor: View {
             secretHeaderValues: secretValues(headerEntries),
             secretEnvironmentValues: secretValues(envEntries)
         )
+    }
+
+    private var currentProbeResult: MCPProviderProbeResult? {
+        guard probeResultFingerprint == currentProbeFingerprint else { return nil }
+        return probeResult
     }
 
     private func makeProvider() -> MCPProvider {
@@ -1348,27 +1362,24 @@ private struct MCPOperationsProviderEditor: View {
     }
 
     private func secretWrites(for provider: MCPProvider) -> [MCPProviderSecretWrite] {
-        let headerWrites = headerEntries.compactMap { entry -> MCPProviderSecretWrite? in
-            let key = entry.key.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard provider.transport == .http, entry.isSecret, !key.isEmpty, !entry.value.isEmpty else { return nil }
-            return MCPProviderSecretWrite(storage: .header, key: key, value: entry.value)
+        switch provider.transport {
+        case .http:
+            return MCPProviderOperationsFieldNormalizer.secretWrites(
+                headerEntries.map { (key: $0.key, value: $0.value, isSecret: $0.isSecret) },
+                storage: .header
+            )
+        case .stdio:
+            return MCPProviderOperationsFieldNormalizer.secretWrites(
+                envEntries.map { (key: $0.key, value: $0.value, isSecret: $0.isSecret) },
+                storage: .environment
+            )
         }
-        let environmentWrites = envEntries.compactMap { entry -> MCPProviderSecretWrite? in
-            let key = entry.key.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard provider.transport == .stdio, entry.isSecret, !key.isEmpty, !entry.value.isEmpty else { return nil }
-            return MCPProviderSecretWrite(storage: .environment, key: key, value: entry.value)
-        }
-        return headerWrites + environmentWrites
     }
 
     private func secretValues(_ entries: [KeyValueEntry]) -> [String: String] {
-        var values: [String: String] = [:]
-        for entry in entries where entry.isSecret {
-            let key = entry.key.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !key.isEmpty else { continue }
-            values[key] = entry.value
-        }
-        return values
+        MCPProviderOperationsFieldNormalizer.secretOverrides(
+            entries.map { (key: $0.key, value: $0.value, isSecret: $0.isSecret) }
+        )
     }
 
     private func cancelActiveProbeReservation() {
