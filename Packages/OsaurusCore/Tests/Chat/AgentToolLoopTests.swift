@@ -35,13 +35,14 @@ private final class ScriptedLoopSurface {
     var dedupedCalls: [(name: String, callId: String, held: String)] = []
     var willProcessCallIds: [String] = []
     var batchOutcomes: [[AgentLoopToolOutcome]] = []
+    var emittedFinalTexts: [String] = []
 
     init(steps: [AgentLoopModelStep]) {
         self.steps = steps
     }
 
-    func makeHooks() -> AgentLoopHooks {
-        AgentLoopHooks(
+    func makeHooks(includeFallbackText: Bool = true) -> AgentLoopHooks {
+        var hooks = AgentLoopHooks(
             isCancelled: { self.cancelled },
             buildMessages: { notices in
                 self.builtNotices.append(notices)
@@ -70,6 +71,12 @@ private final class ScriptedLoopSurface {
             },
             pendingTodoCount: pendingTodos.map { count in { count } }
         )
+        if includeFallbackText {
+            hooks.emitFallbackText = { text in
+                self.emittedFinalTexts.append(text)
+            }
+        }
+        return hooks
     }
 }
 
@@ -485,6 +492,148 @@ struct AgentToolLoopTests {
             #expect(result.exit == .finalResponse, "kind=\(kind.rawValue)")
             #expect(surface.builtNotices.count == 2, "kind=\(kind.rawValue)")
         }
+    }
+
+    @Test func malformedAppleScriptRepeatAfterSuccessFinishesFromRealSummary() async throws {
+        let malformed = #"{"_error":"invalid_tool_arguments","_tool":"applescript","_field":"task","_message":"missing required argument: task","_expected":"required parameter"}"#
+        let surface = ScriptedLoopSurface(steps: [
+            .toolCalls([inv("applescript", #"{"task":"Open TextEdit"}"#)]),
+            .toolCalls([inv("applescript", malformed)]),
+            .toolCalls([inv("never_runs")]),
+        ])
+        surface.toolResults["applescript"] = AgentLoopToolExecution(
+            result: ToolEnvelope.success(
+                tool: "applescript",
+                result: [
+                    "kind": "applescript",
+                    "status": "succeeded",
+                    "scripts_run": 1,
+                    "summary": "Ran 1 script(s) successfully.",
+                ]
+            )
+        )
+
+        let result = try await AgentToolLoop.run(
+            policy: chatPolicy(),
+            state: AgentTaskState(),
+            hooks: surface.makeHooks()
+        )
+
+        #expect(result == AgentToolLoop.RunResult(exit: .finalResponse, iterations: 2))
+        #expect(surface.executedCalls.map(\.name) == ["applescript"])
+        #expect(surface.willProcessCallIds.count == 1)
+        #expect(surface.emittedFinalTexts == ["Ran 1 script(s) successfully."])
+        #expect(surface.steps.count == 1)
+    }
+
+    @Test func malformedDesktopCallWithoutMatchingSuccessStillExecutes() async throws {
+        let malformed = #"{"_error":"invalid_tool_arguments","_tool":"applescript","_field":"task","_message":"missing required argument: task"}"#
+        let surface = ScriptedLoopSurface(steps: [
+            .toolCalls([inv("file_read", #"{"path":"notes.txt"}"#)]),
+            .toolCalls([inv("applescript", malformed)]),
+        ])
+        surface.toolResults["applescript"] = AgentLoopToolExecution(
+            result: ToolEnvelope.failure(
+                kind: .invalidArgs,
+                message: "missing required argument: task",
+                tool: "applescript"
+            )
+        )
+
+        _ = try await AgentToolLoop.run(
+            policy: chatPolicy(),
+            state: AgentTaskState(),
+            hooks: surface.makeHooks()
+        )
+
+        #expect(surface.executedCalls.map(\.name) == ["file_read", "applescript"])
+        #expect(surface.emittedFinalTexts.isEmpty)
+    }
+
+    @Test func malformedDesktopRepeatRecoveryRejectsNearMisses() {
+        let state = AgentTaskState()
+        state.record(
+            name: "applescript",
+            argsJSON: #"{"task":"Open TextEdit"}"#,
+            result: ToolEnvelope.success(
+                tool: "applescript",
+                result: ["summary": "Ran 1 script(s) successfully."]
+            )
+        )
+
+        let wrongField = inv(
+            "applescript",
+            #"{"_error":"invalid_tool_arguments","_tool":"applescript","_field":"content"}"#
+        )
+        let wrongToolEnvelope = inv(
+            "applescript",
+            #"{"_error":"invalid_tool_arguments","_tool":"computer_use","_field":"task"}"#
+        )
+        let unrelatedTool = inv(
+            "file_read",
+            #"{"_error":"invalid_tool_arguments","_tool":"file_read","_field":"path"}"#
+        )
+
+        #expect(
+            AgentToolLoop.completedDesktopSummaryBeforeMalformedRepeat(
+                invocation: wrongField,
+                state: state
+            ) == nil
+        )
+        #expect(
+            AgentToolLoop.completedDesktopSummaryBeforeMalformedRepeat(
+                invocation: wrongToolEnvelope,
+                state: state
+            ) == nil
+        )
+        #expect(
+            AgentToolLoop.completedDesktopSummaryBeforeMalformedRepeat(
+                invocation: unrelatedTool,
+                state: state
+            ) == nil
+        )
+
+        let emptySummaryState = AgentTaskState()
+        emptySummaryState.record(
+            name: "applescript",
+            argsJSON: #"{"task":"Open TextEdit"}"#,
+            result: ToolEnvelope.success(tool: "applescript", result: ["summary": "  "])
+        )
+        let exactMalformed = inv(
+            "applescript",
+            #"{"_error":"invalid_tool_arguments","_tool":"applescript","_field":"task"}"#
+        )
+        #expect(
+            AgentToolLoop.completedDesktopSummaryBeforeMalformedRepeat(
+                invocation: exactMalformed,
+                state: emptySummaryState
+            ) == nil
+        )
+    }
+
+    @Test func malformedAppleScriptRepeatStillExecutesOnHeadlessSurface() async throws {
+        let malformed = #"{"_error":"invalid_tool_arguments","_tool":"applescript","_field":"task"}"#
+        let surface = ScriptedLoopSurface(steps: [
+            .toolCalls([inv("applescript", #"{"task":"Open TextEdit"}"#)]),
+            .toolCalls([inv("applescript", malformed)]),
+            .finalResponse,
+        ])
+        surface.toolResults["applescript"] = AgentLoopToolExecution(
+            result: ToolEnvelope.success(
+                tool: "applescript",
+                result: ["summary": "Ran 1 script(s) successfully."]
+            )
+        )
+
+        let result = try await AgentToolLoop.run(
+            policy: headlessPolicy(),
+            state: AgentTaskState(),
+            hooks: surface.makeHooks(includeFallbackText: false)
+        )
+
+        #expect(result == AgentToolLoop.RunResult(exit: .finalResponse, iterations: 3))
+        #expect(surface.executedCalls.map(\.name) == ["applescript", "applescript"])
+        #expect(surface.emittedFinalTexts.isEmpty)
     }
 
     @Test func unrelatedNonretryableExecutionFailureKeepsExistingPivotBehavior() async throws {

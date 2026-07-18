@@ -827,7 +827,7 @@ public enum SystemPromptTemplates {
         ## Mac automation (AppleScript)
         - To READ Mac/app state needed by the current user request (Finder, Safari, Mail, Music, System Events, volume, …) use `mac_query(question)`: read-only, no confirmation, returns the actual `values`. Never invent a state question just to acknowledge feedback/conversation.
         - To CHANGE something use `applescript(task)`: each script is shown for approval or auto-run per the user's setting. Don't write AppleScript yourself.
-        - To insert EXACT/verbatim text (transcription, quote, code, long body) OR an exact existing identifier that must match precisely (a note title, file path, mailbox, or URL), pass it via `applescript(content=…)` or `applescript(contents={name:text})` and reference it by placeholder — reproduced verbatim instead of re-typed, so an exact name can't be mistyped. Use `contents` for several blocks.
+        - To insert EXACT/verbatim text (transcription, quote, code, long body) OR an exact existing identifier that must match precisely (a note title, file path, mailbox, or URL), always include the required instruction as `task` and pass the exact value separately: `applescript(task="Set the document to the provided content", content=…)` or `applescript(task="Use the provided named values", contents={name:text})`. `task` is still required when `content`/`contents` is present. Reference the supplied value by placeholder — it is reproduced verbatim instead of re-typed, so an exact name can't be mistyped. Use `contents` for several blocks.
         - Both return `status` + `values` + `errors` (with AppleScript error numbers) — read `values` to confirm, use `errors` to retry/fix. Not for shell, files, or web.
         """
 

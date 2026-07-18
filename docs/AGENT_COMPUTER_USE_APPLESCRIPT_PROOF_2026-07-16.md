@@ -2,18 +2,270 @@
 
 Last updated: 2026-07-17 (America/Los_Angeles)
 
-Overall verdict: **PARTIAL.** The focused source candidate and isolated Release
-app now prove the narrow parent-loop safeguards for the two Osaurus 0.22.5
-reports: exact feedback-only text produced three acknowledgements with no tool
-call; returned non-retryable `computer_use` and `mac_query` failures stopped
-without another action or fabricated answer; and the Computer Use loop's exact
-`OsaurusToolChoice`/422 miss is covered by the real Xcode test graph. The
-successful AppleScript-8B-as-Computer-Use action/finalization row is still
-**BLOCKED**: JANG_6M emitted an invalid `agent_action` verb and JANG_4M exhausted
-the bounded corrective re-ask with model-step timeouts before either performed
-the requested action. This branch therefore fixes and live-proves failure
-containment and feedback tool selection, but does not claim that AppleScript 8B
-is a compatible or reliable Computer Use model.
+## Reopened JANG_6M acceptance lane (2026-07-17)
+
+The earlier merge is not final acceptance for the two AppleScript 8B reports.
+It proved the bounded `agent_action` protocol re-ask, parent-chat failure
+containment, and feedback-only tool-selection guard, but it did not complete a
+successful AppleScript-8B-as-Computer-Use action. This lane is reopened on exact
+current `origin/main` with the following non-negotiable scope:
+
+- Do not download, load, compare, or draw conclusions from MXFP4. The primary
+  helper is the installed
+  `/Users/eric/models/OsaurusAI/Osaurus-AppleScript-8B-JANG_6M`; the byte-identical
+  `/Users/eric/models/JANGQ-AI/AppleScript-8B-JANG_6M` mirror is inventory only.
+- Configure the real development app through visible Settings and agent UI.
+  Source tests, evaluator runs, and API calls are supporting evidence only.
+- A reported-success row passes only when the requested macOS state is visibly
+  achieved, the helper emits the terminal completion contract, the parent does
+  not display `The model did not produce a valid required tool call`, and the
+  UI records token/s.
+- Reproduce both reports in sequence: complete two real actions, then send the
+  exact feedback sentence and require a plain acknowledgement with no tool row.
+- No prompt keyword classifier, forced sampler, synthetic closer, parser
+  masking, hidden model reroute, or output-cap workaround is allowed.
+
+### Required live matrix
+
+| Group | Scenarios | Pass condition |
+| --- | --- | --- |
+| Settings and persistence | Select JANG_6M for Computer Use and AppleScript; toggle each ability; Confirm Each; Fast Reads; Keep Warm; quit/relaunch | Visible selections persist and the runtime feed names the selected helper rather than a fallback |
+| Reported Computer Use successes | Open TextEdit; open Calculator; open Safari and navigate to a harmless local/Osaurus page | Each requested app/state is visibly correct and the same turn ends once with a grounded success, no required-tool failure |
+| Completion variants | App closed vs already open; one-step open; multi-step open+type/navigation; repeat action in same chat; helper plain-text-after-action; explicit `done` | No duplicate action, contradictory failure, blind retry, or post-success loop |
+| Exact feedback regression | After two successes, send the quoted feedback sentence; repeat in fresh chat and paraphrased acknowledgement-only turns | Plain acknowledgement only; no `mac_query`, AppleScript, Computer Use, date/time invention, or other tool |
+| Requested reads and failure grounding | Explicit current date/time request; front-app/title read; nonexistent app; compile/runtime failure; timeout; user denial/cancel | Requested reads use real state; failures report the returned error and never fabricate a value or launch an unrelated fallback |
+| Ability routing | Computer Use only; AppleScript only; both enabled; Fast Reads on/off | The selected tool matches the request and its configured model path; no stale tool choice crosses turns |
+| Multi-turn and recovery | Success -> feedback -> success; failure -> corrected request; cancel -> new request; stop during generation -> retry | History remains coherent, tools remain available, and no orphaned feed/model residency remains |
+| Spawn/delegation boundary | Spawn before/after AppleScript; target with subagent toggles; disabled target; missing/denied target; parent resumes AppleScript | Spawned children do not receive recursive Computer Use/AppleScript schemas; parent tools remain usable and no inherited scope/tool-choice leaks |
+| Resource behavior | Cold/warm helper load, unload/reload handoff, Keep Warm expiry, stop cleanup, visible Activity Monitor footprint | Model identity, token/s, residency transitions, and physical footprint are recorded; no concurrent double-residency or zombie load |
+
+### Initial current-main source trace
+
+- `ComputerUseKind` can run on a per-agent model override and forces the single
+  strict `agent_action` schema. AppleScript 8B is native-trained for
+  `run_applescript`, so its generalization to `agent_action` must be proven live
+  rather than inferred from the model name or catalog placement.
+- `ComputerUseLoop` now maps only exact `OsaurusToolChoice` code 422 into its
+  bounded corrective re-ask. That is source/test coverage for the reported
+  finalization miss, not live proof that JANG_6M emits a valid terminal `done`.
+- `AppleScriptLoop` uses `tool_choice: auto`, not required, and accepts a
+  no-tool plain-text terminal response. Therefore the reported exact required-
+  tool error points to the Computer Use `agent_action` path, not the native
+  `run_applescript` loop.
+- Spawned text children intentionally exclude every subagent capability
+  (`computer_use`, `applescript`, `mac_query`, image, and nested spawn) from the
+  child schema. The adjacent acceptance target is boundary correctness and
+  parent recovery, not recursive desktop automation from the child.
+
+### Current-main live setup evidence
+
+- Exact source is current `origin/main` `4b96ae0ab8b3bc0d9c08315a1f138c7802fc0d50`.
+  The first isolated Release build completed, was ad-hoc signed, and passed
+  `codesign --verify --deep --strict`; its initial executable SHA-256 was
+  `9c57bcc31f73579f486ddf68b4a5255fc687ae56c82bc70db14678a2bbdcf980`.
+- Through the fresh onboarding and real agent Settings UI, the parent was set
+  to `Ornith-1.0-9B-MXFP8`; Computer Use was enabled with
+  `AppleScript 8B JANG_6M`; screen context was turned off; and the separate
+  AppleScript ability was enabled with `Osaurus AppleScript 8B JANG_6M` plus
+  Confirm Each. A quit/relaunch visibly preserved all of those selections.
+  This proves persistence only, not that either runtime route used the model.
+- The new proof bundle identity remained `Accessibility: Not Granted` even
+  after it was added to the visible Accessibility list and relaunched. Adding
+  a newly named client then surfaced macOS's Touch ID/password authorization
+  sheet. No credential was requested, entered, or automated. Computer Use
+  action rows therefore remain blocked on that identity.
+- Current main is being rebuilt under the already-authorized proof-only
+  `com.dinoki.osaurus.bonsai2041proof` identity shown enabled as
+  `Osaurus Bonsai PR2041 Proof` in System Settings. Production Osaurus
+  permissions and preferences are not being removed or toggled. That rebuild
+  must still show `Accessibility: Granted` in the app before it can supply any
+  Computer Use pass evidence.
+
+### Native JANG_6M reproduction on current main (2026-07-17 20:53-21:01 PDT)
+
+The first native-AppleScript row used the exact current-main Release executable
+SHA-256 `61087eb8033b8aedc20aacf9dbe6b32d167be638e8d4ee23d48fc25691783ecb`,
+bundle id `com.dinoki.osaurus.bonsai2041proof`, app path
+`/private/tmp/Osaurus-AppleScript-JANG6M-Current-Main.app`, and isolated root
+`/tmp/osaurus-applescript-jang6m-authorized-root-20260717-204905`. Visible
+Settings selected parent `Ornith-1.0-9B-MXFP8`, enabled only the AppleScript
+subagent, selected `Osaurus AppleScript 8B JANG_6M`, and kept Confirm Each on;
+Computer Use and Spawn were off. A new chat visibly switched the parent from
+the onboarding Gemma session to Ornith MXFP8 before the prompt was sent.
+
+`Open TextEdit` produced a valid `run_applescript` call, but the script did more
+than requested: it activated TextEdit and created a new document containing the
+unrelated text `Beginning of text fit until margin`. After approval, live
+TextEdit visibly showed that exact untitled document, proving the script really
+executed. The AppleScript run did not finish. It presented the same mutating
+confirmation again and, after that repeat was declined, generated a third,
+different mutating TextEdit script that would create more unrelated content.
+Stopping the run produced a red `Failed: Applescript` row with the canonical
+`user_denied` result. The unsaved TextEdit window was then closed.
+
+The owning source is `AppleScriptLoop.swift`: after recording a successful
+execution, lines 977-992 short-circuited only `mac_query` with a non-empty
+return value; automate mode always fed the success back for another helper-model
+turn. That exactly explains a real action followed by repeat/failure. The local
+candidate now terminates a successful action-only automation from the real
+execution record; data-bearing tasks with no returned value retain the read-back
+path, and execution failures retain correction/retry. No parser repair, sampler
+override, prompt classifier, synthetic tool call, or model reroute was added.
+
+Focused source proof is **PASS**: the new repeating-JANG regression executes
+and confirms exactly once, and the complete `AppleScriptLoopTests` suite passes
+through the workspace Xcode scheme. The first focused result bundle is
+`/tmp/osaurus-applescript-jang6m-tests-dd/Logs/Test/Test-OsaurusCoreTests-2026.07.17_21-04-59--0700.xcresult`;
+the full-suite rerun completed at 21:09 PDT. This is not yet patched-app live
+proof; the Release candidate is still rebuilding.
+
+### Exact-text success followed by malformed parent repeat (2026-07-17 21:39 PDT)
+
+The isolated live app then reproduced a second, outer-loop failure with the
+installed JANG_6M helper. The real-user prompt was `Use the native AppleScript
+helper to create a new unsaved TextEdit document containing exactly JANG6M LIVE
+PROOF and nothing else.` The first parent call included the required `task`
+with the exact value in that instruction; JANG_6M updated a real unsaved
+TextEdit document to exactly `JANG6M LIVE PROOF`; and the first tool envelope
+was a grounded success with
+`status:succeeded`, `scripts_run:1`, and summary `Done. Result: TextEdit
+document updated with JANG6M LIVE PROOF.` The helper generated at 43.5 tok/s.
+
+Despite that success, the parent immediately emitted a second `applescript`
+call omitting required `task`. The model's persisted reasoning said it should
+use the `content` parameter, but vMLX's canonical invalid envelope replaces the
+malformed raw arguments, so the presence of a raw `content` field is not
+claimed. vMLX correctly returned `_error:invalid_tool_arguments`,
+`_tool:applescript`, and `_field:task`; the
+chat displayed that failure and the parent proposed a third redundant call.
+The run was stopped before the duplicate mutation executed. The durable trace
+is session `D089CA3C-1190-4C64-B02B-589A64784F08`, sequence 12-16, in
+`/tmp/osaurus-applescript-jang6m-authorized-root-20260717-204905/chat-history/history.sqlite`.
+The Insights response at 21:39:14 showed the same canonical invalid envelope.
+
+This is **not** content-delta assembly. `ModelRuntime.streamWithTools` consumes
+the committed vMLX `.toolInvocation(name,argsJSON)` and converts that complete
+argument JSON into `ServiceToolInvocation`; `ChatView` catches that committed
+invocation directly. Its incremental argument fields are only a preview. At
+pinned vMLX revision `a26c7ecec950f18e3d07c8402fbd8c80f40ac764`,
+`XMLFunctionParser.schemaValidationFailure` owns the exact missing-required-field
+envelope. The live compact system prompt and persisted model reasoning exposed
+the actual contract mismatch: compact guidance recommended `content` but did
+not repeat that `task` remains required, and the model reasoned that it should
+use the tool "with the `content` parameter."
+
+The current candidate fixes both owning boundaries without repairing arbitrary
+JSON or inventing output:
+
+- compact guidance now shows `applescript(task=..., content=...)` and states
+  that `task` remains required with `content` or `contents`;
+- if and only if the very next chat step repeats the same desktop tool with
+  vMLX's exact missing-primary-field envelope after a real successful envelope,
+  the UI finishes from that immediately preceding non-empty real summary and
+  does not execute or display the duplicate mutation;
+- mismatched prior tools, empty summaries, other required fields, unrelated
+  tools, API/headless surfaces, and other invalid arguments keep their existing
+  error behavior.
+
+Current source proof is **PASS**: after rebasing onto `origin/main`
+`39a764a52`, 66/66 focused tests passed at 23:08 PDT in
+`/tmp/osaurus-applescript-jang6m-tests-dd/Logs/Test/Test-OsaurusCoreTests-2026.07.17_23-08-12--0700.xcresult`.
+The selected suites cover the external-folder availability gate, action-only
+stop, exact-content readback, exact outer malformed repeat, mismatched-success
+negative control, and compact tool guidance. `git diff --check` is also clean.
+
+### Final patched Release live evidence (2026-07-17 22:18-22:58 PDT)
+
+The final candidate is the ad-hoc signed Release app
+`/private/tmp/Osaurus-AppleScript-JANG6M-Current-Main.app`, bundle id
+`com.dinoki.osaurus.bonsai2041proof`, isolated root
+`/tmp/osaurus-applescript-jang6m-authorized-root-20260717-204905`, exact vMLX
+revision `a26c7ecec950f18e3d07c8402fbd8c80f40ac764`, and executable SHA-256
+`b6cfa6807de1d388586e06d729c414a048b56a7493fb71178fa4552a7c338980`.
+Its CDHash is `825f5eec5b6e77acbc2f33eccbd558636b6f888b`; deep/strict ad-hoc signature
+verification passed. The app was operated through visible UI only for the
+rows below. No MXFP4 bundle was downloaded, loaded, or used.
+
+After the final rebase, the Release app was rebuilt from the rebased source,
+copied, ad-hoc sealed, and deep/strict verified again. Its executable SHA-256
+was exactly the same
+`b6cfa6807de1d388586e06d729c414a048b56a7493fb71178fa4552a7c338980`
+as the visually exercised candidate. This is byte identity, not an inference
+that the upstream appcast-only commit could not affect the binary.
+
+Visible Settings selected parent `Ornith-1.0-9B-MXFP8`, enabled Computer Use
+and Spawn, allowed only local Ornith for Spawn, enabled AppleScript, selected
+`Osaurus AppleScript 8B JANG_6M`, and selected Confirm Each. Toggling
+AppleScript off hid its controls; toggling it back on restored JANG_6M and
+Confirm Each. After quitting and relaunching the exact executable with the
+same isolated root, all of those selections persisted. Models visibly listed
+AppleScript JANG_6M and Bonsai 1-bit as downloaded from the custom model
+folder. The live helper feed named
+`OsaurusAI/Osaurus-AppleScript-8B-JANG_6M`, and the first load mapped all eight
+safetensor shards from `/Users/eric/models/OsaurusAI/Osaurus-AppleScript-8B-JANG_6M`.
+
+Live rows on this exact candidate:
+
+- **PASS -- TextEdit activation:** the approval sheet showed only
+  `tell application "TextEdit" to activate`; TextEdit visibly became frontmost.
+  The tool returned `ok:true`, `status:succeeded`, `scripts_run:1`, one
+  successful step, and `Ran 1 script(s) successfully.` JANG_6M generated at
+  47.3 tok/s; the parent completed at 54.2 tok/s. No duplicate, malformed call,
+  required-tool failure, or contradictory failure appeared.
+- **PASS -- already-open correction:** JANG_6M first proposed the semantically
+  wrong `System Events` activation. Confirm Each exposed it and the user
+  declined. The model then produced the correct TextEdit activation; it ran
+  once and returned `ok:true`, `status:succeeded`. JANG_6M generated at
+  44.2 tok/s and the parent at 52.0 tok/s. This is a model-proposal defect with
+  a working user-safety/correction path, not a parser repair.
+- **PASS -- exact reported feedback:** after successful actions, the exact
+  sentence `For your information, both TextEdit and Calculator did open
+  successfully, it seems AppleScript did not report back to you correctly.`
+  received a plain acknowledgement at 66.2 tok/s. No `mac_query`, AppleScript,
+  Computer Use, date invention, or other tool row appeared.
+- **PASS -- spawn boundary and parent recovery:** a bounded local Spawn request
+  returned exactly `DELEGATED` in 5.0 seconds; the same parent then called the
+  native AppleScript helper, ran one correct TextEdit activation, and completed
+  with `ok:true`/`status:succeeded`. JANG_6M generated at 43.6 tok/s and the
+  parent at 66.7 tok/s. Parent AppleScript remained available after delegation.
+- **PARTIAL -- explicit current-time request:** the builtin current-time tool
+  grounded the correct local date/time, but the parent redundantly called
+  `mac_query`. The Fast Reads Ornith helper then made one successful read
+  followed by seven bad/time-out proposals before its step limit. The parent
+  used the builtin result and did not fabricate a value. Correctness passed;
+  redundant tool selection and helper efficiency did not.
+- **MODEL FAIL, HOST SAFETY PASS -- exact content:** the first JANG_6M script
+  correctly wrote `JANG6M FINAL READBACK PROOF`, visibly confirmed in TextEdit.
+  Because a mutating script's own return is not independent verification, the
+  host required a readback. JANG_6M instead repeated the identical write, then
+  proposed a nonsensical System Events script after the duplicate was declined.
+  Confirm Each exposed both; neither was auto-run, and Stop ended the row. This
+  is reproducible semantic/repetition behavior from the selected model after a
+  correct schema call. It is not counted as a host success and is not hidden by
+  a synthetic closer, automatic read, parser coercion, or false completion.
+
+The content/schema attribution is source- and runtime-grounded. vMLX
+`XMLFunctionParser.schemaValidationFailure` creates the exact
+`invalid_tool_arguments` envelope for a missing required field. Osaurus then
+maps the committed `.toolCall` to a complete `.toolInvocation(name,argsJSON)`;
+`ModelRuntime.streamWithTools` constructs the executable invocation only from
+that committed JSON. Incremental `toolCallProgress` is explicitly a native UI
+preview and is not dispatched. Therefore the observed missing-`task` repeat
+was a model/schema contract miss after a real success, not content-delta
+assembly. The final exact-content model failure used a valid outer
+`applescript(task,content)` call and valid first inner script, further excluding
+either streaming layer as its cause.
+
+Overall verdict for this follow-up: **PARTIAL BY MODEL, MERGEABLE FOR THE
+NARROW HOST FIXES AFTER CI.** The external-folder gate, action-only success
+finalization, feedback-only behavior, post-success malformed-repeat containment,
+settings persistence, Spawn boundary, and TextEdit state changes have current
+source plus final Release UI evidence. JANG_6M is not claimed reliable for
+arbitrary multi-step or exact-content automation, and AppleScript 8B is not
+claimed compatible with Computer Use's distinct `agent_action` contract.
+Calculator/Safari Computer Use, proof-identity Accessibility, Activity Monitor
+peak physical footprint, and the broader RAM/cache/routing matrix remain
+unproven or blocked and are not claims of this urgent patch.
 
 ## Scope and proof rules
 

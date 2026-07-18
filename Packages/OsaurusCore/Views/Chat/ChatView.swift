@@ -5245,6 +5245,12 @@ final class ChatSession: ObservableObject {
                             // Empty-turn recovery exhausted: render a visible
                             // message into the assistant turn so the user never
                             // sees a silent "No visible text was produced".
+                            // The same hook finalises the narrowly recovered
+                            // post-success desktop-tool repeat. Clear any
+                            // committed pending preview first so a suppressed
+                            // malformed call cannot leave a tool card spinning.
+                            assistantTurn.pendingToolName = nil
+                            assistantTurn.clearPendingToolArgs()
                             assistantTurn.appendContentAndNotify(text)
                             self.rebuildVisibleBlocks()
                         }

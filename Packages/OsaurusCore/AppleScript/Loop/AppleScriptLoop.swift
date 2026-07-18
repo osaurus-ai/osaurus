@@ -419,6 +419,9 @@ public enum AppleScriptLoop {
         // token count by contract, so counter division would understate).
         var decodeRates: [Double] = []
         var lastOutput: String? = nil
+        // A raw return from a mutating script remains part of the public run
+        // result, but only a read step can verify requested state.
+        var lastReadOutput: String? = nil
         var consecutiveInvalid = 0
         var consecutiveBlocked = 0
         // Consecutive confirm-gate dry-compile failures. Bounded separately so
@@ -546,7 +549,7 @@ public enum AppleScriptLoop {
             // value, so the parent gets a REAL result instead of "completed".
             guard let call = stepResult.call else {
                 let text = stepResult.text?.trimmingCharacters(in: .whitespacesAndNewlines)
-                let haveValue = !(lastOutput?.isEmpty ?? true)
+                let haveValue = !(lastReadOutput?.isEmpty ?? true)
                 if harness.verifyReadBack, !verifyAttempted, !haveValue, scriptsExecuted > 0,
                     shouldVerify(mode: mode, task: task)
                 {
@@ -571,7 +574,8 @@ public enum AppleScriptLoop {
                 }
                 let summary = completionSummary(
                     modelText: text,
-                    lastOutput: lastOutput,
+                    lastOutput: shouldVerify(mode: mode, task: task)
+                        ? lastReadOutput : lastOutput,
                     scriptsExecuted: scriptsExecuted,
                     succeeded: succeeded,
                     failed: failed
@@ -961,7 +965,16 @@ public enum AppleScriptLoop {
             let trimmedOutput = execution.output?.trimmingCharacters(in: .whitespacesAndNewlines)
             if execution.isSuccess {
                 succeeded += 1
-                if let trimmedOutput, !trimmedOutput.isEmpty { lastOutput = trimmedOutput }
+                // Only a read result is evidence for a requested value or
+                // post-action state. A mutating script can `return` any string
+                // without having applied it (the JANG_6M TextEdit reproduction
+                // returned the requested text from a local variable while the
+                // document remained unchanged). Keep that output in the step
+                // transcript, but require a later read for verification.
+                if let trimmedOutput, !trimmedOutput.isEmpty {
+                    lastOutput = trimmedOutput
+                    if effect == .read { lastReadOutput = trimmedOutput }
+                }
             } else {
                 failed += 1
             }
@@ -974,16 +987,22 @@ public enum AppleScriptLoop {
                 script: script
             )
 
-            // `mac_query` is complete as soon as a read succeeds with a real
-            // return value. Continuing to ask the model after that point lets
-            // small dedicated models repeat the identical successful script
-            // until the step cap, wasting an entire generation per repeat.
-            // Empty successful reads still continue into the existing
-            // verification path so the runtime can obtain the requested value.
-            if mode == .query, execution.isSuccess, let trimmedOutput, !trimmedOutput.isEmpty {
+            // A successful action-only automation is complete even when the
+            // script naturally returns no value (for example `activate`). Asking
+            // the small dedicated model for another turn after that point lets
+            // it repeat or expand the already-successful mutation until the user
+            // declines or the step cap fires. Data-bearing automation tasks keep
+            // the existing follow-up and read-back path. A returned value
+            // completes a read query, but is not by itself proof that a
+            // mutating automation changed state.
+            let hasOutput = !(trimmedOutput?.isEmpty ?? true)
+            let queryWithValue = mode == .query && hasOutput
+            let actionOnlyAutomation =
+                mode == .automate && !shouldVerify(mode: mode, task: task)
+            if execution.isSuccess, queryWithValue || actionOnlyAutomation {
                 let summary = completionSummary(
                     modelText: nil,
-                    lastOutput: trimmedOutput,
+                    lastOutput: queryWithValue ? trimmedOutput : nil,
                     scriptsExecuted: scriptsExecuted,
                     succeeded: succeeded,
                     failed: failed
@@ -1129,6 +1148,10 @@ public enum AppleScriptLoop {
             "state", "current", "name", "title", "url", "value", "count", "how many",
             "tell me", "show me", "check", "contents", "selected", "version", "summary",
             "is ", "are ", "does ",
+            // Exact/verbatim mutations need a post-action read. Do not
+            // classify them as fire-and-forget only because they are phrased
+            // as commands rather than questions.
+            "exactly", "contain", "insert ", "write ", "type ",
         ]
         return dataIntent.contains { t.contains($0) }
     }

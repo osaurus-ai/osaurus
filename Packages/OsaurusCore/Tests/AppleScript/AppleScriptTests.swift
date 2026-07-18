@@ -789,6 +789,75 @@ struct AppleScriptLoopTests {
         #expect(await confirm.count == 1)
     }
 
+    @Test("a successful action-only automation stops before a repeating model can run it again")
+    func successfulActionStopsRepeatingModel() async {
+        let feed = SubagentFeed(toolCallId: "t-action-done", kindId: "applescript", title: "task")
+        let exec = ExecRecorder(result: successResult(nil))
+        let confirm = ConfirmCounter(approve: true)
+        // Reproduce the AppleScript 8B JANG_6M behavior seen for "Open
+        // TextEdit": after a successful no-output `activate`, it proposes
+        // another mutating script instead of emitting the terminal prose turn.
+        let seq = ScriptSequencer(repeating: call(#"tell application "TextEdit" to activate"#))
+
+        let result = await AppleScriptLoop.run(
+            task: "Open TextEdit",
+            modelId: "applescript-test",
+            feed: feed,
+            interrupt: InterruptToken(),
+            executionMode: .confirmEach,
+            confirm: { _ in await confirm.confirm() },
+            limits: RunLimits(maxSteps: 8),
+            sessionId: "s",
+            mode: .automate,
+            execute: { script, _ in await exec.run(script) },
+            nextScript: { _ in await seq.next() }
+        )
+
+        guard case .done(let summary) = result.outcome else {
+            Issue.record("expected .done, got \(result.outcome)")
+            return
+        }
+        #expect(summary == "Ran 1 script(s) successfully.")
+        #expect(result.scriptsExecuted == 1)
+        #expect(result.succeeded == 1)
+        #expect(result.failed == 0)
+        #expect(await exec.count == 1)
+        #expect(await confirm.count == 1)
+    }
+
+    @Test("a mutating script return is not accepted as exact-content verification")
+    func mutatingReturnNeedsReadBackForExactContent() async {
+        let feed = SubagentFeed(toolCallId: "t-exact-readback", kindId: "applescript", title: "task")
+        let exec = ExecRecorder(result: successResult("JANG6M LIVE PROOF"))
+        let confirm = ConfirmCounter(approve: true)
+        let write = call(
+            #"tell application "TextEdit" to set text of document 1 to "JANG6M LIVE PROOF""#,
+            id: "write"
+        )
+        let read = call(#"tell application "TextEdit" to get text of document 1"#, id: "read")
+        let seq = ScriptSequencer([write, read, nil])
+
+        let result = await AppleScriptLoop.run(
+            task: "Create a TextEdit document containing exactly JANG6M LIVE PROOF",
+            modelId: "applescript-test",
+            feed: feed,
+            interrupt: InterruptToken(),
+            executionMode: .confirmEach,
+            confirm: { _ in await confirm.confirm() },
+            sessionId: "s",
+            mode: .automate,
+            execute: { script, _ in await exec.run(script) },
+            nextScript: { _ in await seq.next() }
+        )
+
+        #expect(result.outcome.isSuccess)
+        #expect(result.scriptsExecuted == 2)
+        #expect(result.lastOutput == "JANG6M LIVE PROOF")
+        #expect(await exec.count == 2)
+        // The mutating write is confirmed; the read-back is auto-run.
+        #expect(await confirm.count == 1)
+    }
+
     private static let uiScriptingScript =
         #"tell application "System Events" to tell process "Safari" to click menu item "Save" of menu "File" of menu bar 1"#
 
@@ -1106,13 +1175,16 @@ struct AppleScriptLoopTests {
     @Test("the step cap terminates a model that keeps proposing scripts")
     func stepCapReached() async {
         let feed = SubagentFeed(toolCallId: "t-cap", kindId: "applescript", title: "task")
-        let exec = ExecRecorder(result: successResult())
+        // A data-bearing task still needs a returned value. Keep returning a
+        // successful empty result so a model that never supplies that value
+        // remains bounded by the step cap.
+        let exec = ExecRecorder(result: successResult(nil))
         let confirm = ConfirmCounter(approve: true)
         // Always proposes a valid script (never signals completion).
         let seq = ScriptSequencer(repeating: validCall())
 
         let result = await AppleScriptLoop.run(
-            task: "do it",
+            task: "report the resulting volume",
             modelId: "applescript-test",
             feed: feed,
             interrupt: InterruptToken(),
@@ -1865,6 +1937,73 @@ struct AppleScriptToolSelectionGuidanceTests {
         #expect(SystemPromptTemplates.appleScriptGuidance.contains("Do not invent a Mac-state question"))
         #expect(SystemPromptTemplates.appleScriptGuidanceCompact.contains("current user request"))
         #expect(SystemPromptTemplates.appleScriptGuidanceCompact.contains("Never invent a state question"))
+    }
+
+    @Test("compact exact-text guidance keeps task required alongside content")
+    func compactExactTextGuidanceKeepsRequiredTask() {
+        let prompt = SystemPromptTemplates.appleScriptGuidanceCompact
+        #expect(prompt.contains("always include the required instruction as `task`"))
+        #expect(prompt.contains("`task` is still required when `content`/`contents` is present"))
+        #expect(prompt.contains("applescript(task="))
+    }
+}
+
+@Suite("AppleScript external model availability")
+struct AppleScriptExternalModelAvailabilityTests {
+    @Test("a Settings-selected model folder satisfies the AppleScript availability gate")
+    func externalJANG6MIsInstalledAndResolves() async {
+        await OsaurusTestGlobals.withPathsLock {
+            let fm = FileManager.default
+            let manifestRoot = fm.temporaryDirectory.appendingPathComponent(
+                "osaurus-applescript-manifest-\(UUID().uuidString)",
+                isDirectory: true
+            )
+            let modelsRoot = fm.temporaryDirectory.appendingPathComponent(
+                "osaurus-applescript-models-\(UUID().uuidString)",
+                isDirectory: true
+            )
+            let bundle = modelsRoot.appendingPathComponent(
+                AppleScriptModelCatalog.model8BId,
+                isDirectory: true
+            )
+            let previousRoot = OsaurusPaths.overrideRoot
+            let previousOverride = ExternalModelLocator.testRootsOverride
+            OsaurusPaths.overrideRoot = manifestRoot
+            ExternalModelLocator.invalidateInMemory()
+            defer {
+                OsaurusPaths.overrideRoot = previousRoot
+                ExternalModelLocator.testRootsOverride = previousOverride
+                ExternalModelLocator.invalidateInMemory()
+                try? fm.removeItem(at: manifestRoot)
+                try? fm.removeItem(at: modelsRoot)
+            }
+
+            try? fm.createDirectory(at: bundle, withIntermediateDirectories: true)
+            try? Data("{}".utf8).write(to: bundle.appendingPathComponent("config.json"))
+            try? Data("{}".utf8).write(to: bundle.appendingPathComponent("tokenizer.json"))
+            try? Data("w".utf8).write(to: bundle.appendingPathComponent("model.safetensors"))
+
+            ExternalModelLocator.testRootsOverride = [
+                (root: modelsRoot, source: .customModelFolder)
+            ]
+            ExternalModelLocator.rescan()
+
+            #expect(
+                ExternalModelLocator.path(forId: AppleScriptModelCatalog.model8BId)?
+                    .standardizedFileURL.path == bundle.standardizedFileURL.path
+            )
+            #expect(
+                AppleScriptModelCatalog.installedModels().map(\.id).contains(
+                    AppleScriptModelCatalog.model8BId
+                )
+            )
+            #expect(AppleScriptModelCatalog.hasInstalledModel)
+            #expect(
+                AppleScriptModelCatalog.resolveInstalledModelId(
+                    preferred: AppleScriptModelCatalog.model8BId
+                ) == AppleScriptModelCatalog.model8BId
+            )
+        }
     }
 }
 

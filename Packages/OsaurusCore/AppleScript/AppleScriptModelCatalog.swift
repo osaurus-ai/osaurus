@@ -118,17 +118,39 @@ enum AppleScriptModelCatalog {
         id.range(of: repoIdPrefix, options: [.caseInsensitive, .anchored]) != nil
     }
 
-    /// The catalog entries that are installed on disk (cheap, cache-backed
-    /// `isDownloaded`).
+    /// Whether a catalog/ad-hoc AppleScript bundle is available either in the
+    /// Osaurus models directory or through the user's external-model registry.
+    /// Runtime loading already resolves external bundles in place; the
+    /// availability gate must use the same source of truth or a valid model in
+    /// a Settings-selected folder is shown as installed but rejected at call
+    /// time.
+    private static func isInstalled(_ model: MLXModel) -> Bool {
+        if model.isDownloaded { return true }
+        guard let externalDirectory = ExternalModelLocator.path(forId: model.id) else {
+            return false
+        }
+        let external = MLXModel(
+            id: model.id,
+            name: model.name,
+            description: model.description,
+            downloadURL: model.downloadURL,
+            bundleDirectory: externalDirectory,
+            externalSource: ExternalModelLocator.Source.customModelFolder.rawValue
+        )
+        return external.isDownloaded
+    }
+
+    /// The catalog entries that are installed on disk, including bundles the
+    /// user registered in Settings -> Storage -> External Models.
     static func installedModels() -> [MLXModel] {
-        models.filter { $0.isDownloaded }
+        models.filter(isInstalled)
     }
 
     /// Whether ANY curated AppleScript model is installed. Cheap enough for the
     /// system-prompt compose hot path (each `isDownloaded` reads the warmed
     /// `MLXModelDownloadCache`, invalidated on `.localModelsChanged`).
     static var hasInstalledModel: Bool {
-        models.contains { $0.isDownloaded }
+        models.contains(where: isInstalled)
     }
 
     /// Resolve the model id the AppleScript subagent should load: the
@@ -141,7 +163,7 @@ enum AppleScriptModelCatalog {
     static func resolveInstalledModelId(preferred: String?) -> String? {
         let trimmed = preferred?.trimmingCharacters(in: .whitespacesAndNewlines)
         if let trimmed, !trimmed.isEmpty {
-            if let match = models.first(where: { $0.id == trimmed }), match.isDownloaded {
+            if let match = models.first(where: { $0.id == trimmed }), isInstalled(match) {
                 return match.id
             }
             // A non-catalog AppleScript bundle (matching the curated repo-id
@@ -154,7 +176,7 @@ enum AppleScriptModelCatalog {
                     description: "",
                     downloadURL: "https://huggingface.co/\(trimmed)"
                 )
-                if adHoc.isDownloaded { return trimmed }
+                if isInstalled(adHoc) { return trimmed }
             }
         }
         return installedModels().first?.id

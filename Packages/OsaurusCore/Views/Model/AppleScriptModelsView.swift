@@ -379,7 +379,7 @@ struct AppleScriptModelsView: View {
     }
 
     private func refreshInstalled() {
-        installedIds = Set(catalog.filter { $0.isDownloaded }.map(\.id))
+        installedIds = Set(AppleScriptModelCatalog.installedModels().map(\.id))
     }
 
     private func normalized(_ value: String) -> String? {

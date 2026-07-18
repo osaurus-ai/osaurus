@@ -737,6 +737,52 @@ enum AgentToolLoop {
         }
     }
 
+    /// Recover one narrow post-success failure mode without executing a
+    /// second desktop mutation. Small local parent models can correctly run a
+    /// desktop subagent, receive its successful structured result, then emit
+    /// the same tool again with its primary required field omitted. The vMLX
+    /// parser truthfully turns that malformed call into an
+    /// `invalid_tool_arguments` envelope; feeding it back invites a blind
+    /// retry even though the requested desktop work already succeeded.
+    ///
+    /// This is intentionally NOT a general invalid-arguments repair. It only
+    /// returns the real summary from the immediately preceding successful
+    /// result when all of these are true: one of the three desktop subagent
+    /// tools is repeated, the parser reports that tool's primary required
+    /// field missing, and the prior success envelope belongs to that same
+    /// tool. Any other malformed call still executes normally and reaches the
+    /// parent for correction.
+    static func completedDesktopSummaryBeforeMalformedRepeat(
+        invocation: ServiceToolInvocation,
+        state: AgentTaskState
+    ) -> String? {
+        let requiredField: String
+        switch invocation.toolName {
+        case "computer_use": requiredField = "goal"
+        case "applescript": requiredField = "task"
+        case "mac_query": requiredField = "question"
+        default: return nil
+        }
+
+        guard
+            let argsData = invocation.jsonArguments.data(using: .utf8),
+            let args = try? JSONSerialization.jsonObject(with: argsData) as? [String: Any],
+            args["_error"] as? String == "invalid_tool_arguments",
+            args["_tool"] as? String == invocation.toolName,
+            args["_field"] as? String == requiredField,
+            let priorEnvelope = state.lastResultEnvelope,
+            ToolEnvelope.isSuccess(priorEnvelope),
+            let priorData = priorEnvelope.data(using: .utf8),
+            let prior = try? JSONSerialization.jsonObject(with: priorData) as? [String: Any],
+            prior["tool"] as? String == invocation.toolName,
+            let result = prior["result"] as? [String: Any],
+            let rawSummary = result["summary"] as? String
+        else { return nil }
+
+        let summary = rawSummary.trimmingCharacters(in: .whitespacesAndNewlines)
+        return summary.isEmpty ? nil : summary
+    }
+
     /// Shared user-facing text for the `.overBudget` exit: the request
     /// cannot fit the model's context window even after every compaction
     /// lever was exhausted. Each surface wraps this in its own envelope
@@ -1138,6 +1184,26 @@ enum AgentToolLoop {
                 // A productive turn — reset the empty-turn recovery budget so
                 // a later unrelated empty turn gets its own fresh allowance.
                 consecutiveEmptyTurns = 0
+
+                // A desktop subagent already completed successfully, and the
+                // very next model step emitted only a malformed repeat of that
+                // same tool. Do not materialise or execute the duplicate call:
+                // finish with the prior tool's real summary. Requiring the
+                // surface text hook keeps this recovery on user-facing chat;
+                // headless/API surfaces retain their existing invalid-args
+                // contract instead of silently manufacturing a response.
+                if invocations.count == 1,
+                    let invocation = invocations.first,
+                    let summary = Self.completedDesktopSummaryBeforeMalformedRepeat(
+                        invocation: invocation,
+                        state: state
+                    ),
+                    let emitFinalText = hooks.emitFallbackText
+                {
+                    await emitFinalText(summary)
+                    return RunResult(exit: .finalResponse, iterations: iteration)
+                }
+
                 var outcomes: [AgentLoopToolOutcome] = []
                 outcomes.reserveCapacity(invocations.count)
 
