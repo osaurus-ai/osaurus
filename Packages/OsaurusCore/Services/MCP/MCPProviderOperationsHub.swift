@@ -413,7 +413,7 @@ public enum MCPProviderOperationsHub {
 
         let cwd = normalizedWorkingDirectory(provider.workingDirectory)
         if let cwd, provider.executionHost == .host, !directoryExists(cwd) {
-            warnings.append(L("Working directory does not exist: \(cwd)."))
+            warnings.append(L("Working directory does not exist."))
         }
 
         switch provider.executionHost {
@@ -448,7 +448,7 @@ public enum MCPProviderOperationsHub {
             if expandedCommand.contains("/") {
                 resolvedExecutablePath = expandedCommand
                 if !isExecutable(expandedCommand) {
-                    warnings.append(L("Executable path is not executable: \(expandedCommand)."))
+                    warnings.append(L("Executable path is not executable."))
                 }
             } else if let found = resolveOnPath(expandedCommand, searchPath: searchPath, isExecutable: isExecutable) {
                 resolvedExecutablePath = found

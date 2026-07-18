@@ -109,7 +109,7 @@
     "Empty result" : {
       "shouldTranslate" : false
     },
-    "Executable path is not executable: \\(expandedCommand)." : {
+    "Executable path is not executable." : {
       "shouldTranslate" : false
     },
     "HTTP endpoint invalid" : {
@@ -166,6 +166,9 @@
     "Run Sign In before connecting." : {
       "shouldTranslate" : false
     },
+    "Resolved" : {
+      "shouldTranslate" : false
+    },
     "Sandbox stdio" : {
       "shouldTranslate" : false
     },
@@ -190,7 +193,7 @@
     "The token or secret header is stored outside the provider JSON." : {
       "shouldTranslate" : false
     },
-    "Working directory does not exist: \\(cwd)." : {
+    "Working directory does not exist." : {
       "shouldTranslate" : false
     },
     "\\(result.count) character(s): \\(redacted)" : {

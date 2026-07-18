@@ -229,6 +229,8 @@ struct MCPConfigurationImportServiceTests {
         var gate = MCPProviderProbeGate()
         let first = gate.start(fingerprint: "first")
         let second = gate.start(fingerprint: "second")
+        #expect(!gate.isCurrent(first))
+        #expect(gate.isCurrent(second))
 
         let acceptedFirst = gate.accept(first, currentFingerprint: "second", succeeded: true)
         #expect(!acceptedFirst)
@@ -251,6 +253,7 @@ struct MCPConfigurationImportServiceTests {
 
         let invalidated = gate.start(fingerprint: "second")
         gate.invalidate()
+        #expect(!gate.isCurrent(invalidated))
         let acceptedInvalidated = gate.accept(
             invalidated,
             currentFingerprint: "second",

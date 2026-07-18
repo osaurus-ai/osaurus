@@ -54,7 +54,12 @@ public enum MCPProviderHealthSnapshotStore {
         let url = fileURL()
         guard let data = try? Data(contentsOf: url) else { return [:] }
         guard let envelope = try? JSONDecoder().decode(Envelope.self, from: data) else { return [:] }
-        return Dictionary(uniqueKeysWithValues: envelope.snapshots.map { ($0.providerId, $0) })
+        return envelope.snapshots.reduce(into: [:]) { snapshots, snapshot in
+            if let existing = snapshots[snapshot.providerId], existing.updatedAt > snapshot.updatedAt {
+                return
+            }
+            snapshots[snapshot.providerId] = snapshot
+        }
     }
 
     public static func snapshot(providerId: UUID) -> MCPProviderHealthSnapshot? {

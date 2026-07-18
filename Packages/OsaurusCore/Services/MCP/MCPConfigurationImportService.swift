@@ -515,6 +515,10 @@ struct MCPProviderProbeGate: Sendable, Equatable {
         successfulFingerprint == fingerprint
     }
 
+    func isCurrent(_ attempt: MCPProviderProbeAttempt) -> Bool {
+        attempt.generation == generation
+    }
+
     mutating func resetSuccess() {
         successfulFingerprint = nil
     }

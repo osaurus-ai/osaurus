@@ -111,6 +111,50 @@ struct MCPProviderProbeServiceTests {
         #expect(Set(snapshots.keys) == Set(providers.map(\.id)))
     }
 
+    @Test func healthSnapshotStoreKeepsNewestDuplicateFromCorruptedFile() throws {
+        let root = try makeTemporaryRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let snapshotFile = root.appendingPathComponent("mcp-health.json")
+        MCPProviderHealthSnapshotStore.overrideURL = snapshotFile
+        defer { MCPProviderHealthSnapshotStore.overrideURL = nil }
+
+        let providerId = UUID()
+        let result = MCPProviderProbeResult(
+            providerId: providerId,
+            providerName: "Duplicate fixture",
+            transportSummary: "HTTP https://example.test/redacted-path",
+            startedAt: Date(timeIntervalSince1970: 1),
+            finishedAt: Date(timeIntervalSince1970: 2),
+            succeeded: true,
+            stage: .listTools,
+            reasonCode: .succeeded,
+            toolCount: 1,
+            toolNames: ["fixture"],
+            message: "Connected",
+            action: nil
+        )
+        let older = MCPProviderHealthSnapshot(
+            providerId: providerId,
+            providerName: "Older",
+            transportSummary: result.transportSummary,
+            lastProbe: result,
+            updatedAt: Date(timeIntervalSince1970: 10)
+        )
+        let newer = MCPProviderHealthSnapshot(
+            providerId: providerId,
+            providerName: "Newer",
+            transportSummary: result.transportSummary,
+            lastProbe: result,
+            updatedAt: Date(timeIntervalSince1970: 20)
+        )
+        let data = try JSONEncoder().encode(HealthSnapshotEnvelope(snapshots: [older, newer]))
+        try data.write(to: snapshotFile, options: .atomic)
+
+        let snapshots = MCPProviderHealthSnapshotStore.load()
+        #expect(snapshots.count == 1)
+        #expect(snapshots[providerId]?.providerName == "Newer")
+    }
+
     #if os(macOS)
     @Test func hostStdioProbeRejectsProcessControlEnvironmentWithoutLeakingValue() async {
         let provider = MCPProvider(
@@ -473,6 +517,10 @@ struct MCPProviderProbeServiceTests {
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         return root
     }
+}
+
+private struct HealthSnapshotEnvelope: Codable {
+    let snapshots: [MCPProviderHealthSnapshot]
 }
 
 private actor FakeMCPTransport: MCP.Transport {

@@ -12,6 +12,29 @@ import Testing
 
 @Suite("MCP Operations Hub", .serialized)
 struct MCPOperationsHubTests {
+    @Test func operationsDisplayNeverExposesEndpointOrLocalPaths() {
+        let endpoint = MCPOperationsDisplaySanitizer.endpoint(
+            "https://user:password@example.test/private/mcp?token=secret-canary#fragment"
+        )
+        #expect(endpoint == "https://example.test/redacted-path")
+        #expect(!endpoint.contains("secret-canary"))
+        #expect(!endpoint.contains("password"))
+
+        let executable = MCPOperationsDisplaySanitizer.resolvedExecutable(
+            "/Users/alice/private/bin/customer-mcp"
+        )
+        let workingDirectory = MCPOperationsDisplaySanitizer.workingDirectory(
+            "/Users/alice/customer-data"
+        )
+        let warning = MCPOperationsDisplaySanitizer.warning(
+            "Working directory does not exist: /Users/alice/customer-data"
+        )
+        #expect(executable == "Resolved")
+        #expect(workingDirectory == "Configured")
+        #expect(!warning.contains("/Users/alice"))
+        #expect(!warning.contains("customer-data"))
+    }
+
     @Test func declaredSecretAuthorizationHeaderRequiresStoredValueForHealthyAuth() {
         let provider = MCPProvider(
             id: UUID(),

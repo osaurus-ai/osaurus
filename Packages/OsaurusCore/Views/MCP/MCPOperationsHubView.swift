@@ -8,6 +8,24 @@
 import AppKit
 import SwiftUI
 
+enum MCPOperationsDisplaySanitizer {
+    static func endpoint(_ raw: String) -> String {
+        MCPProviderProbeRedactor.safeHTTPURLForDiagnostics(raw)
+    }
+
+    static func resolvedExecutable(_ path: String?) -> String? {
+        path == nil ? nil : L("Resolved")
+    }
+
+    static func workingDirectory(_ path: String?) -> String? {
+        path == nil ? nil : L("Configured")
+    }
+
+    static func warning(_ raw: String) -> String {
+        MCPProviderProbeRedactor.safeDiagnosticFragment(raw)
+    }
+}
+
 struct MCPOperationsHubView: View {
     @Environment(\.theme) private var theme
     @ObservedObject private var manager = MCPProviderManager.shared
@@ -336,10 +354,10 @@ struct MCPOperationsHubView: View {
                 if let command = plan.redactedCommandLine {
                     keyValueRow("Command", command, monospaced: true)
                 }
-                if let resolved = plan.resolvedExecutablePath {
+                if let resolved = MCPOperationsDisplaySanitizer.resolvedExecutable(plan.resolvedExecutablePath) {
                     keyValueRow("Executable", resolved, monospaced: true)
                 }
-                if let cwd = plan.workingDirectory {
+                if let cwd = MCPOperationsDisplaySanitizer.workingDirectory(plan.workingDirectory) {
                     keyValueRow("Working directory", cwd, monospaced: true)
                 }
                 if !plan.configuredEnvironmentKeys.isEmpty {
@@ -348,8 +366,8 @@ struct MCPOperationsHubView: View {
                 if !plan.missingSecretEnvironmentKeys.isEmpty {
                     keyValueRow("Missing secrets", plan.missingSecretEnvironmentKeys.joined(separator: ", "))
                 }
-                ForEach(plan.warnings, id: \.self) { warning in
-                    warningRow(warning)
+                ForEach(Array(plan.warnings.enumerated()), id: \.offset) { _, warning in
+                    warningRow(MCPOperationsDisplaySanitizer.warning(warning))
                 }
             }
         }
@@ -608,7 +626,7 @@ struct MCPOperationsHubView: View {
     private func rowSubtitle(_ report: MCPProviderOperationsReport) -> String {
         switch report.provider.transport {
         case .http:
-            return report.provider.url
+            return MCPOperationsDisplaySanitizer.endpoint(report.provider.url)
         case .stdio:
             return report.launchPlan.redactedCommandLine ?? L("stdio command not set")
         }
@@ -1215,15 +1233,18 @@ private struct MCPOperationsProviderEditor: View {
                 )
             }
             await MainActor.run {
-                guard probeGate.accept(
+                let isCurrentAttempt = probeGate.isCurrent(attempt)
+                let accepted = probeGate.accept(
                     attempt,
                     currentFingerprint: currentProbeFingerprint,
                     succeeded: result.succeeded
-                ) else { return }
-                MCPProviderHealthSnapshotStore.record(result, for: provider)
-                probeResult = result
+                )
+                guard isCurrentAttempt else { return }
                 isTesting = false
                 probeTask = nil
+                guard accepted else { return }
+                MCPProviderHealthSnapshotStore.record(result, for: provider)
+                probeResult = result
             }
         }
     }
