@@ -164,7 +164,11 @@ struct DatabaseSavedViewsView: View {
                     } else {
                         previewGrid(preview)
                         if preview.truncated {
-                            Text("Preview shows the first \(preview.rows.count) rows.", bundle: .module)
+                            Text(
+                                preview.rows.count == 1
+                                    ? L("Preview shows the first row.")
+                                    : L("Preview shows the first \(preview.rows.count) rows.")
+                            )
                                 .font(.system(size: 10))
                                 .foregroundColor(theme.tertiaryText)
                                 .padding(.horizontal, 12)

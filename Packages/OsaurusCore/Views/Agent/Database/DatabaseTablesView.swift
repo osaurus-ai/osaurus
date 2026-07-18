@@ -146,12 +146,20 @@ struct DatabaseTablesView: View {
             )
         }
         .confirmationDialog(
-            "Delete \(selectedRowKeys.count) rows?",
+            selectedRowKeys.count == 1
+                ? L("Delete 1 row?")
+                : L("Delete \(selectedRowKeys.count) rows?"),
             isPresented: $showBulkDeleteConfirm,
             titleVisibility: .visible
         ) {
-            Button(localized: "Delete \(selectedRowKeys.count) Rows", role: .destructive) {
+            Button(role: .destructive) {
                 Task { await bulkSoftDelete() }
+            } label: {
+                Text(
+                    selectedRowKeys.count == 1
+                        ? L("Delete 1 Row")
+                        : L("Delete \(selectedRowKeys.count) Rows")
+                )
             }
             Button(localized: "Cancel", role: .cancel) {}
         } message: {

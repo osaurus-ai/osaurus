@@ -353,7 +353,7 @@ final class NativeThinkingView: NSView {
     @objc private func headerTapped() { onToggle?() }
 
     private func formatCharCount(_ count: Int) -> String {
-        if count < 1000 { return "\(count) chars" }
+        if count < 1000 { return count == 1 ? "1 char" : "\(count) chars" }
         if count < 10_000 { return String(format: "%.1fk chars", Double(count) / 1000) }
         return "\(count / 1000)k chars"
     }

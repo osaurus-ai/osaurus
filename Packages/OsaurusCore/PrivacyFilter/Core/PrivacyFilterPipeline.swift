@@ -112,13 +112,15 @@ enum PrivacyFilterPipelineError: Error, Equatable, LocalizedError {
             return
                 "Privacy Filter is enabled but the on-device model isn't available: \(detail). Open Settings → Privacy to re-download, or disable the filter to send without redaction."
         case .scrubNoOp(let count):
-            return
-                "Privacy Filter: \(count) approved redaction(s) didn't apply (substitution mismatch). The message was not sent. This is a bug — please report."
+            return count == 1
+                ? "Privacy Filter: 1 approved redaction didn't apply (substitution mismatch). The message was not sent. This is a bug — please report."
+                : "Privacy Filter: \(count) approved redactions didn't apply (substitution mismatch). The message was not sent. This is a bug — please report."
         case .scrubLeaked(let counts):
             return Self.formatScrubLeaked(categoryCounts: counts)
         case .reviewRequiresInteractive(let count):
-            return
-                "Privacy Filter detected \(count) item(s) of PII in this request. Non-interactive requests (HTTP API, plugins) cannot show the review sheet, so the send was blocked. Approve redactions in the Osaurus chat first, disable 'Require review for non-interactive requests' in Settings → Privacy, or disable the filter for this provider."
+            return count == 1
+                ? "Privacy Filter detected 1 item of PII in this request. Non-interactive requests (HTTP API, plugins) cannot show the review sheet, so the send was blocked. Approve redactions in the Osaurus chat first, disable 'Require review for non-interactive requests' in Settings → Privacy, or disable the filter for this provider."
+                : "Privacy Filter detected \(count) items of PII in this request. Non-interactive requests (HTTP API, plugins) cannot show the review sheet, so the send was blocked. Approve redactions in the Osaurus chat first, disable 'Require review for non-interactive requests' in Settings → Privacy, or disable the filter for this provider."
         }
     }
 

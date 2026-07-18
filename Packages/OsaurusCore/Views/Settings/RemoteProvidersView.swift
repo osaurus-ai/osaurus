@@ -532,8 +532,9 @@ private struct ProviderConnectivityCenterPanel: View {
     }
 
     private var summaryText: String {
-        L(
-            "\(snapshot.connectedCount)/\(snapshot.totalCount) connected - \(snapshot.attentionCount) attention - \(snapshot.modelCount) models"
+        let modelLabel = snapshot.modelCount == 1 ? L("1 model") : L("\(snapshot.modelCount) models")
+        return L(
+            "\(snapshot.connectedCount)/\(snapshot.totalCount) connected - \(snapshot.attentionCount) attention - \(modelLabel)"
         )
     }
 

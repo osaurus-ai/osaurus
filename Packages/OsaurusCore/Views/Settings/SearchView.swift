@@ -484,7 +484,7 @@ struct SearchView: View {
                     Text(
                         "\(index + 1). \(providerDisplayName(attempt.provider)) — "
                             + (attempt.ok
-                                ? "\(attempt.count) result(s)"
+                                ? (attempt.count == 1 ? L("1 result") : L("\(attempt.count) results"))
                                 : (attempt.error ?? "failed"))
                     )
                     .font(.system(size: 10, design: .monospaced))

@@ -111,8 +111,12 @@ struct KnowledgeView: View {
                                                     showSuccess(L("Every document has a category (type)"))
                                                 } else {
                                                     let sample = failing.prefix(3).joined(separator: ", ")
+                                                    let summary =
+                                                        failing.count == 1
+                                                        ? "1 document needs a category"
+                                                        : "\(failing.count) documents need a category"
                                                     showSuccess(
-                                                        "\(failing.count) document(s) need a category — add a `type:` line to: \(sample)\(failing.count > 3 ? "…" : "")"
+                                                        "\(summary) — add a `type:` line to: \(sample)\(failing.count > 3 ? "…" : "")"
                                                     )
                                                 }
                                             }
@@ -503,8 +507,9 @@ private struct KnowledgeCollectionCard: View {
             return
                 "Every document has a category, so agents can filter the library by it. Following the Open Knowledge Format (OKF)."
         case .nonconforming(let count):
-            return
-                "\(count) document(s) have no category. Add a `type:` line (e.g. `type: policy`) to the top of each file so agents can filter by it. Click for the list."
+            return count == 1
+                ? "1 document has no category. Add a `type:` line (e.g. `type: policy`) to the top of the file so agents can filter by it. Click for the list."
+                : "\(count) documents have no category. Add a `type:` line (e.g. `type: policy`) to the top of each file so agents can filter by it. Click for the list."
         case .unknown:
             return "Checking that every document declares a category (its `type`)…"
         }

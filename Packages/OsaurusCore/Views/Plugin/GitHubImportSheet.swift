@@ -173,15 +173,19 @@ struct GitHubImportSheet: View {
         case .urlInput: return L("Paste a repository URL to get started")
         case .loading: return L("Fetching repository information")
         case .skillSelection(let result):
-            return L("\(result.skills.count) skills available")
+            return result.skills.count == 1
+                ? L("1 skill available")
+                : L("\(result.skills.count) skills available")
         case .pluginSelection(let result):
-            return L("\(result.plugins.count) plugins available")
+            return result.plugins.count == 1
+                ? L("1 plugin available")
+                : L("\(result.plugins.count) plugins available")
         case .importing: return L("Installing selected plugins")
         case .installComplete(let report):
             let totals =
                 report.totalImportedSkills + report.totalImportedAgents
                 + report.totalImportedCommands + report.totalImportedMCPProviders
-            return L("\(totals) items installed")
+            return totals == 1 ? L("1 item installed") : L("\(totals) items installed")
         case .error(let error): return error.localizedDescription
         }
     }

@@ -175,12 +175,15 @@ public enum ProviderNetworkDiagnostics {
         }
 
         if state?.isConnected == true {
+            let count = state?.modelCount ?? 0
             return ProviderDiagnosticRow(
                 id: "connection",
                 title: L("Connection"),
                 value: L("Connected"),
                 severity: .ok,
-                detail: L("\(state?.modelCount ?? 0) model(s) currently available.")
+                detail: count == 1
+                    ? L("1 model currently available.")
+                    : L("\(count) models currently available.")
             )
         }
 
@@ -471,7 +474,8 @@ public enum ProviderNetworkDiagnostics {
             )
         }
         if state?.isConnected == true {
-            var detail = L("\(state?.discoveredToolCount ?? 0) tool(s) discovered.")
+            let count = state?.discoveredToolCount ?? 0
+            var detail = count == 1 ? L("1 tool discovered.") : L("\(count) tools discovered.")
             if let connectedAt = state?.lastConnectedAt {
                 let formatted = connectedAt.formatted(date: .abbreviated, time: .shortened)
                 detail += " " + L("Last connected \(formatted).")

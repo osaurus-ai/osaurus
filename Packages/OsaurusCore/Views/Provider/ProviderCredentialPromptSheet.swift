@@ -562,7 +562,7 @@ struct ProviderCredentialPromptSheet: View {
         if let count = testSucceededModelCount {
             badgePill(
                 icon: "checkmark.circle.fill",
-                text: String(format: L("%d model(s) found"), count),
+                text: count == 1 ? L("1 model found") : L("\(count) models found"),
                 tint: theme.successColor
             )
         } else if let error = testError {

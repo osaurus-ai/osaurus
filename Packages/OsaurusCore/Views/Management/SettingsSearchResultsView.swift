@@ -48,7 +48,11 @@ struct SettingsSearchResultsView: View {
             Text("Search Results", bundle: .module)
                 .font(.system(size: 22, weight: .bold))
                 .foregroundColor(theme.primaryText)
-            Text("\(results.count) settings match \"\(query)\"", bundle: .module)
+            Text(
+                results.count == 1
+                    ? L("1 setting matches \"\(query)\"")
+                    : L("\(results.count) settings match \"\(query)\"")
+            )
                 .font(.system(size: 13))
                 .foregroundColor(theme.secondaryText)
         }

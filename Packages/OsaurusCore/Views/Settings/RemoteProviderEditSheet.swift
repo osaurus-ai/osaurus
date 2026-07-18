@@ -2378,7 +2378,8 @@ private struct EditProviderFlow: View {
         if isTesting { return L("Testing...") }
         if let result = testResult {
             switch result {
-            case .success(let models): return L("\(models.count) models")
+            case .success(let models):
+                return models.count == 1 ? L("1 model") : L("\(models.count) models")
             case .failure: return L("Retry")
             }
         }

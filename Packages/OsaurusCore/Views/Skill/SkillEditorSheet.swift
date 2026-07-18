@@ -304,7 +304,7 @@ struct SkillEditorSheet: View {
 
                 Spacer()
 
-                Text("\(instructions.count) characters", bundle: .module)
+                Text(instructions.count == 1 ? L("1 character") : L("\(instructions.count) characters"))
                     .font(.system(size: 11))
                     .foregroundColor(themeManager.currentTheme.tertiaryText)
             }

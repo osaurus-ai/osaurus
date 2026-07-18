@@ -577,7 +577,11 @@ private struct SkillRow: View {
                         HStack(spacing: 4) {
                             Image(systemName: "doc.text")
                                 .font(.system(size: 10))
-                            Text("\(skill.instructions.count) chars", bundle: .module)
+                            Text(
+                                skill.instructions.count == 1
+                                    ? L("1 character")
+                                    : L("\(skill.instructions.count) characters")
+                            )
                                 .font(.system(size: 11, weight: .medium))
                         }
                         .foregroundColor(theme.secondaryText)
@@ -627,7 +631,11 @@ private struct SkillRow: View {
 
                             if skill.hasAssociatedFiles {
                                 Label {
-                                    Text("\(skill.totalFileCount) files", bundle: .module)
+                                    Text(
+                                        skill.totalFileCount == 1
+                                            ? L("1 file")
+                                            : L("\(skill.totalFileCount) files")
+                                    )
                                 } icon: {
                                     Image(systemName: "folder")
                                 }

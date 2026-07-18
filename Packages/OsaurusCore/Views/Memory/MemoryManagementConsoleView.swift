@@ -296,9 +296,9 @@ struct MemoryManagementConsoleView: View {
                         Spacer()
 
                         if contextPreview.redactedContext.redactionCount > 0 {
+                            let count = contextPreview.redactedContext.redactionCount
                             Text(
-                                "\(contextPreview.redactedContext.redactionCount) redaction(s)",
-                                bundle: .module
+                                count == 1 ? L("1 redaction") : L("\(count) redactions")
                             )
                             .font(.system(size: 11, weight: .medium))
                             .foregroundColor(theme.warningColor)

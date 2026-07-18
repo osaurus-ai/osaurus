@@ -1067,7 +1067,11 @@ struct ModelPickerView: View {
                     // toggle for mock data
                     HStack {
                         Toggle(isOn: $useMockData) {
-                            Text("Use Mock Data (\(mockModels.count) models)", bundle: .module)
+                            Text(
+                                mockModels.count == 1
+                                    ? L("Use Mock Data (1 model)")
+                                    : L("Use Mock Data (\(mockModels.count) models)")
+                            )
                         }
                         .padding()
                         Spacer()

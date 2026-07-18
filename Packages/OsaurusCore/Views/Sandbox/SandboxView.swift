@@ -471,7 +471,11 @@ private extension SandboxView {
                     preflightFindingRow(finding)
                 }
                 if hiddenCount > 0 {
-                    Text("+\(hiddenCount) more findings in copied report", bundle: .module)
+                    Text(
+                        hiddenCount == 1
+                            ? L("+1 more finding in copied report")
+                            : L("+\(hiddenCount) more findings in copied report")
+                    )
                         .font(.system(size: 10))
                         .foregroundColor(theme.tertiaryText)
                 }
@@ -523,9 +527,15 @@ private extension SandboxView {
         case .ready:
             return L("Host paths and permissions are ready for sandbox tooling.")
         case .needsSetup:
-            return L("\(report.warningFindings.count) setup finding(s) need attention before tools are fully ready.")
+            let count = report.warningFindings.count
+            return count == 1
+                ? L("1 setup finding needs attention before tools are fully ready.")
+                : L("\(count) setup findings need attention before tools are fully ready.")
         case .blocked:
-            return L("\(report.blockingFindings.count) blocking finding(s) must be fixed before provisioning.")
+            let count = report.blockingFindings.count
+            return count == 1
+                ? L("1 blocking finding must be fixed before provisioning.")
+                : L("\(count) blocking findings must be fixed before provisioning.")
         case .unproven:
             return L("One or more checks could not be proven; copy the report for support or CI proof.")
         }

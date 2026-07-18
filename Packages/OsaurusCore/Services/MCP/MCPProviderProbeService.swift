@@ -116,7 +116,11 @@ public struct MCPProviderProbeResult: Codable, Identifiable, Sendable, Equatable
         startedAt: Date,
         tools: [MCP.Tool]
     ) -> MCPProviderProbeResult {
-        MCPProviderProbeResult(
+        let toolCountMessage =
+            tools.count == 1
+            ? L("Probe completed initialize/listTools and found 1 tool.")
+            : L("Probe completed initialize/listTools and found \(tools.count) tools.")
+        return MCPProviderProbeResult(
             providerId: provider.id,
             providerName: provider.name,
             transportSummary: MCPProviderProbeService.transportSummary(for: provider),
@@ -128,7 +132,7 @@ public struct MCPProviderProbeResult: Codable, Identifiable, Sendable, Equatable
             toolCount: tools.count,
             // Server order, which for a paginated tools/list is page order.
             toolNames: tools.map(\.name),
-            message: L("Probe completed initialize/listTools and found \(tools.count) tool(s)."),
+            message: toolCountMessage,
             action: nil
         )
     }

@@ -2847,11 +2847,11 @@ extension FloatingInputCard {
                     return String(localized: "Warming up — prefilling context…", bundle: .module)
                 }
                 let percent = Int(state.percentCompleted.rounded())
-                return String(
-                    localized:
-                        "Warming up — prefilling context \(percent)% (\(state.completedUnitCount)/\(state.totalUnitCount) tokens)",
-                    bundle: .module
-                )
+                return state.totalUnitCount == 1
+                    ? L("Warming up — prefilling context \(percent)% (\(state.completedUnitCount)/1 token)")
+                    : L(
+                        "Warming up — prefilling context \(percent)% (\(state.completedUnitCount)/\(state.totalUnitCount) tokens)"
+                    )
             }
         }
     }

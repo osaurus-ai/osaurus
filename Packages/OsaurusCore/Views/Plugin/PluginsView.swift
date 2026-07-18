@@ -285,7 +285,9 @@ struct PluginsView: View {
                         _ = await claudeSkillManager.importSkillsFromMarkdown(skills)
                         showGitHubImport = false
                         claudeAggregator.refresh()
-                        showSuccess(L("Imported \(skills.count) items"))
+                        showSuccess(
+                            skills.count == 1 ? L("Imported 1 item") : L("Imported \(skills.count) items")
+                        )
                     }
                 },
                 onCancel: { showGitHubImport = false },
@@ -298,7 +300,7 @@ struct PluginsView: View {
                             report.totalImportedSkills + report.totalImportedAgents
                             + report.totalImportedCommands + report.totalImportedMCPProviders
                         if total > 0 {
-                            showSuccess(L("Installed \(total) items"))
+                            showSuccess(total == 1 ? L("Installed 1 item") : L("Installed \(total) items"))
                         }
                     }
                 }
@@ -1762,10 +1764,18 @@ private struct PluginDetailView: View {
                         let toolCount = caps.tools?.count ?? 0
                         let skillCount = caps.skills?.count ?? 0
                         if toolCount > 0 {
-                            heroStatBadge(icon: "wrench.and.screwdriver", text: L("\(toolCount) tools"), color: .orange)
+                            heroStatBadge(
+                                icon: "wrench.and.screwdriver",
+                                text: toolCount == 1 ? L("1 tool") : L("\(toolCount) tools"),
+                                color: .orange
+                            )
                         }
                         if skillCount > 0 {
-                            heroStatBadge(icon: "lightbulb", text: L("\(skillCount) skills"), color: .cyan)
+                            heroStatBadge(
+                                icon: "lightbulb",
+                                text: skillCount == 1 ? L("1 skill") : L("\(skillCount) skills"),
+                                color: .cyan
+                            )
                         }
                     }
                     if loadedPlugin?.webConfig != nil {

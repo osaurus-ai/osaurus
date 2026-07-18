@@ -235,7 +235,9 @@ struct ClaudePluginDetailView: View {
                     if plugin.totalCount > 0 {
                         heroStatBadge(
                             icon: "shippingbox.fill",
-                            text: "\(plugin.totalCount) artifacts",
+                            text: plugin.totalCount == 1
+                                ? L("1 artifact")
+                                : L("\(plugin.totalCount) artifacts"),
                             color: theme.accentColor
                         )
                     }
@@ -300,9 +302,11 @@ struct ClaudePluginDetailView: View {
                 Text("Configuration available", bundle: .module)
                     .font(.system(size: 13, weight: .semibold))
                     .foregroundColor(theme.primaryText)
+                let fieldCount = snapshot?.userConfigSpec.count ?? 0
                 Text(
-                    "This plugin declared options you can configure (\(snapshot?.userConfigSpec.count ?? 0) field(s)).",
-                    bundle: .module
+                    fieldCount == 1
+                        ? L("This plugin declared an option you can configure (1 field).")
+                        : L("This plugin declared options you can configure (\(fieldCount) fields).")
                 )
                 .font(.system(size: 12))
                 .foregroundColor(theme.secondaryText)

@@ -107,7 +107,11 @@ struct AgentAbilitiesHeroCard: View {
         VStack(alignment: .leading, spacing: 12) {
             HStack(alignment: .top, spacing: 12) {
                 VStack(alignment: .leading, spacing: 3) {
-                    Text("\(enabledCount) of \(totalCount) abilities on", bundle: .module)
+                    Text(
+                        totalCount == 1
+                            ? L("\(enabledCount) of 1 ability on")
+                            : L("\(enabledCount) of \(totalCount) abilities on")
+                    )
                         .font(.system(size: 14, weight: .semibold))
                         .foregroundColor(theme.primaryText)
                         .contentTransition(.numericText())

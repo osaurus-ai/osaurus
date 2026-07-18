@@ -171,9 +171,16 @@ struct IdentityView: View {
     private var repairConfirmMessage: LocalizedStringKey {
         let agents = drift?.mismatchedAgents.count ?? 0
         let keys = drift?.staleAccessKeys.count ?? 0
-        return LocalizedStringKey(
-            "Repair will derive fresh addresses for \(agents) agent(s) and revoke \(keys) stale access key(s) under the current master. Existing pairings and clients holding those keys will stop working until they're re-issued."
-        )
+        switch (agents == 1, keys == 1) {
+        case (true, true):
+            return "Repair will derive a fresh address for 1 agent and revoke 1 stale access key under the current master. Existing pairings and clients holding that key will stop working until it's re-issued."
+        case (true, false):
+            return "Repair will derive a fresh address for 1 agent and revoke \(keys) stale access keys under the current master. Existing pairings and clients holding those keys will stop working until they're re-issued."
+        case (false, true):
+            return "Repair will derive fresh addresses for \(agents) agents and revoke 1 stale access key under the current master. Existing pairings and clients holding that key will stop working until it's re-issued."
+        case (false, false):
+            return "Repair will derive fresh addresses for \(agents) agents and revoke \(keys) stale access keys under the current master. Existing pairings and clients holding those keys will stop working until they're re-issued."
+        }
     }
 
     private func actionResultBanner(_ result: ActionResult) -> some View {
@@ -516,10 +523,18 @@ private struct IdentityDriftBanner: View {
         let keys = drift.staleAccessKeys.count
         switch (agents, keys) {
         case (0, 0): return "Drift detected"
-        case (let a, 0): return "\(a) agent address(es) no longer derive from this master."
-        case (0, let k): return "\(k) access key(s) signed by a previous master."
+        case (1, 0): return "1 agent address no longer derives from this master."
+        case (let a, 0): return "\(a) agent addresses no longer derive from this master."
+        case (0, 1): return "1 access key signed by a previous master."
+        case (0, let k): return "\(k) access keys signed by a previous master."
+        case (1, 1):
+            return "1 agent address and 1 access key reference a previous master."
+        case (1, let k):
+            return "1 agent address and \(k) access keys reference a previous master."
+        case (let a, 1):
+            return "\(a) agent addresses and 1 access key reference a previous master."
         case (let a, let k):
-            return "\(a) agent address(es) and \(k) access key(s) reference a previous master."
+            return "\(a) agent addresses and \(k) access keys reference a previous master."
         }
     }
 }

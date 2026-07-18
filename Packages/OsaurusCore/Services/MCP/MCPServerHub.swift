@@ -123,10 +123,13 @@ public struct MCPServerHubSnapshot: Sendable {
     }
 
     public var pasteboardText: String {
+        let toolLabel = toolCount == 1 ? L("1 tool") : L("\(toolCount) tools")
+        let providerLabel =
+            stdioCount == 1 ? L("1 stdio provider") : L("\(stdioCount) stdio providers")
         var lines = [
             L("MCP Server Hub diagnostics"),
             L(
-                "\(connectedCount)/\(totalCount) connected, \(attentionCount) attention, \(toolCount) tools, \(stdioCount) stdio provider(s)"
+                "\(connectedCount)/\(totalCount) connected, \(attentionCount) attention, \(toolLabel), \(providerLabel)"
             ),
             L("Global proxy: \(proxy.summaryText)"),
         ]

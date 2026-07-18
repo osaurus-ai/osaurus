@@ -1201,10 +1201,10 @@ struct CreditsView: View {
         do {
             let data = try encoder.encode(diagnostics)
             try data.write(to: url, options: .atomic)
-            diagnosticsMessage = String(
-                localized: "Exported \(diagnostics.entries.count) row(s) to \(url.lastPathComponent).",
-                bundle: .module
-            )
+            let count = diagnostics.entries.count
+            diagnosticsMessage = count == 1
+                ? L("Exported 1 row to \(url.lastPathComponent).")
+                : L("Exported \(count) rows to \(url.lastPathComponent).")
         } catch {
             diagnosticsMessage = error.localizedDescription
         }

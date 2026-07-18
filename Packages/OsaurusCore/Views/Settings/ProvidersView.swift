@@ -501,8 +501,9 @@ private struct MCPServerHubPanel: View {
     }
 
     private var summaryText: String {
-        L(
-            "\(snapshot.connectedCount)/\(snapshot.totalCount) connected - \(snapshot.attentionCount) attention - \(snapshot.toolCount) tools"
+        let toolLabel = snapshot.toolCount == 1 ? L("1 tool") : L("\(snapshot.toolCount) tools")
+        return L(
+            "\(snapshot.connectedCount)/\(snapshot.totalCount) connected - \(snapshot.attentionCount) attention - \(toolLabel)"
         )
     }
 }
@@ -648,7 +649,7 @@ private struct ProviderCard: View {
                             HStack(spacing: 4) {
                                 Image(systemName: "wrench.and.screwdriver")
                                     .font(.system(size: 10))
-                                Text("\(toolCount) tools", bundle: .module)
+                                Text(toolCount == 1 ? L("1 tool") : L("\(toolCount) tools"))
                                     .font(.system(size: 11, weight: .medium))
                             }
                             .foregroundColor(theme.secondaryText)
@@ -1547,7 +1548,11 @@ private struct ProviderEditSheet: View {
                 if let result = testResult {
                     switch result {
                     case .success(let probe):
-                        Text("Connected! (\(probe.toolCount) tools)", bundle: .module)
+                        Text(
+                            probe.toolCount == 1
+                                ? L("Connected! (1 tool)")
+                                : L("Connected! (\(probe.toolCount) tools)")
+                        )
                             .font(.system(size: 12, weight: .medium))
                     case .failure(let probe):
                         Text("Failed - \(probe.reasonCode.rawValue)", bundle: .module)

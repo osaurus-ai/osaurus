@@ -21,7 +21,7 @@ func agentSQLDisplayString(_ value: AgentSQLValue) -> String {
     case .integer(let v): return String(v)
     case .double(let v): return String(v)
     case .text(let v): return v
-    case .blob(let v): return "<\(v.count) bytes>"
+    case .blob(let v): return v.count == 1 ? "<1 byte>" : "<\(v.count) bytes>"
     case .bool(let v): return v ? "true" : "false"
     }
 }

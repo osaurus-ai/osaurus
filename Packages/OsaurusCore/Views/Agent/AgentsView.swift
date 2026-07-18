@@ -6331,7 +6331,7 @@ struct AgentDetailView: View {
                                         let turnCount =
                                             sessionTurnCounts[session.id]
                                             ?? session.turns.count
-                                        Text("\(turnCount) turns", bundle: .module)
+                                        Text(turnCount == 1 ? L("1 turn") : L("\(turnCount) turns"))
                                             .font(.system(size: 10))
                                             .foregroundColor(theme.tertiaryText)
                                         Image(systemName: "arrow.up.right")
@@ -7338,7 +7338,11 @@ private struct AgentConnectionsSection: View {
         HStack(spacing: 6) {
             Image(systemName: "chart.bar.fill")
                 .font(.system(size: 8))
-            Text("\(activity.requestCount) requests", bundle: .module)
+            Text(
+                activity.requestCount == 1
+                    ? L("1 request")
+                    : L("\(activity.requestCount) requests")
+            )
             if let last = activity.lastUsed {
                 Text(verbatim: "·")
                 Text(
@@ -7829,7 +7833,8 @@ private struct AgentEditorSheet: View {
             draftMode == .auto
             ? L("Loaded on demand from your assigned set.")
             : L("All assigned tools are sent every turn.")
-        return L("\(toolCount) tools assigned · \(modeBlurb)")
+        let countLabel = toolCount == 1 ? L("1 tool assigned") : L("\(toolCount) tools assigned")
+        return "\(countLabel) · \(modeBlurb)"
     }
 
     private var promptField: some View {

@@ -952,7 +952,9 @@ final class SystemPermissionService: NSObject, ObservableObject, CLLocationManag
             // Try to fetch calendars to verify
             let calendars = store.calendars(for: .event)
             if !calendars.isEmpty {
-                return L("SUCCESS: Authorized (Found \(calendars.count) calendars)")
+                return calendars.count == 1
+                    ? L("SUCCESS: Authorized (Found 1 calendar)")
+                    : L("SUCCESS: Authorized (Found \(calendars.count) calendars)")
             } else {
                 return L("SUCCESS: Authorized (No calendars found)")
             }
@@ -977,7 +979,9 @@ final class SystemPermissionService: NSObject, ObservableObject, CLLocationManag
             let store = EKEventStore()
             let calendars = store.calendars(for: .reminder)
             if !calendars.isEmpty {
-                return L("SUCCESS: Authorized (Found \(calendars.count) lists)")
+                return calendars.count == 1
+                    ? L("SUCCESS: Authorized (Found 1 list)")
+                    : L("SUCCESS: Authorized (Found \(calendars.count) lists)")
             } else {
                 return L("SUCCESS: Authorized (No lists found)")
             }
