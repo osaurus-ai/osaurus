@@ -199,6 +199,36 @@ final class BenchKVMatrixTests: XCTestCase {
         XCTAssertEqual(try Data(contentsOf: backup), existing)
     }
 
+    func testBackupCleanupRequiresByteIdenticalOriginalConfig() throws {
+        let dir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("kv-matrix-backup-cleanup-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let configURL = dir.appendingPathComponent("server-runtime.json")
+        let backup = BenchCommand.kvMatrixBackupURL(for: configURL)
+        try sampleConfig.write(to: configURL, options: .atomic)
+        try sampleConfig.write(to: backup, options: .atomic)
+
+        XCTAssertTrue(
+            try BenchCommand.removeKVMatrixBackupIfOriginalIsIntact(
+                configURL: configURL,
+                originalData: sampleConfig,
+                backupURL: backup))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: backup.path))
+
+        let concurrent = Data(#"{"cache":{"liveKVCodec":"engine_selected"},"writer":"settings"}"#.utf8)
+        try concurrent.write(to: configURL, options: .atomic)
+        try sampleConfig.write(to: backup, options: .atomic)
+
+        XCTAssertFalse(
+            try BenchCommand.removeKVMatrixBackupIfOriginalIsIntact(
+                configURL: configURL,
+                originalData: sampleConfig,
+                backupURL: backup))
+        XCTAssertEqual(try Data(contentsOf: configURL), concurrent)
+        XCTAssertEqual(try Data(contentsOf: backup), sampleConfig)
+    }
+
     func testAbortRestoreRestoresOriginalBytesAndRemovesBackup() throws {
         let dir = FileManager.default.temporaryDirectory
             .appendingPathComponent("kv-matrix-abort-\(UUID().uuidString)", isDirectory: true)

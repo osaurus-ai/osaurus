@@ -459,7 +459,8 @@ public struct BenchCommand: Command {
         installKVMatrixSignalHandlers()
 
         fputs(
-            "KV matrix for \(model): codecs \(kvMatrixCodecs), prompt sizes \(options.promptTokens), \(options.runs) run(s) each.\nEach codec needs a full app restart; your original config is restored afterwards (backup: \(backup.path)).\n",
+            "KV matrix for \(model): codecs \(kvMatrixCodecs), prompt sizes \(options.promptTokens), \(options.runs) run(s) each.\n"
+                + "Each codec needs a full app restart; the original config is restored on clean completion. Concurrent edits are preserved and keep the pre-run backup at \(backup.path).\n",
             stderr)
 
         var codecBlocks: [[String: Any]] = []
@@ -635,10 +636,28 @@ public struct BenchCommand: Command {
                 _ = await AppControl.terminateAppAndWait()
             }
         } else {
-            // Nothing was mutated: just disarm the safety net.
+            // A rejected or failed first write may still have raced after its
+            // pre-write check. Remove the recovery copy only when the config
+            // is provably still the byte-identical original.
             clearKVMatrixRestore()
             disarmKVMatrixSignalHandlers()
-            try? FileManager.default.removeItem(at: backup)
+            do {
+                if try removeKVMatrixBackupIfOriginalIsIntact(
+                    configURL: configURL,
+                    originalData: originalData,
+                    backupURL: backup
+                ) == false {
+                    let recoveryFailure =
+                        "server-runtime.json is not the pre-run original; the current file was preserved and the original bytes remain in \(backup.path)"
+                    if fatal == nil { fatal = recoveryFailure }
+                    fputs("KV matrix retained recovery backup: \(recoveryFailure).\n", stderr)
+                }
+            } catch {
+                let recoveryFailure =
+                    "could not verify cleanup of server-runtime.json (\(error.localizedDescription)); the pre-run backup remains in \(backup.path)"
+                fatal = fatal.map { "\($0); \(recoveryFailure)" } ?? recoveryFailure
+                fputs("KV matrix retained recovery backup: \(recoveryFailure).\n", stderr)
+            }
         }
 
         if let fatal {
@@ -713,6 +732,18 @@ public struct BenchCommand: Command {
         // path already exists; unlike Data's writing options, it supports
         // both guarantees together.
         try FileManager.default.linkItem(at: temporaryURL, to: backupURL)
+    }
+
+    /// Removes the recovery copy only when no write, including a raced or
+    /// partially observed first probe write, changed the original config.
+    static func removeKVMatrixBackupIfOriginalIsIntact(
+        configURL: URL,
+        originalData: Data,
+        backupURL: URL
+    ) throws -> Bool {
+        guard try Data(contentsOf: configURL) == originalData else { return false }
+        try FileManager.default.removeItem(at: backupURL)
+        return true
     }
 
     struct KVMatrixRestoreState {
@@ -1224,8 +1255,9 @@ public struct BenchCommand: Command {
             --kv-matrix measures engine-selected vs TurboQuant live-KV
             per prompt size: uncached/cached TTFT and decode tok/s. It edits
             cache.liveKVCodec in server-runtime.json and restarts the app per
-            codec (the file is only read at launch); the original config is
-            always restored. Measurement only — it changes no defaults.
+            codec (the file is only read at launch). The original is restored
+            on clean completion; concurrent edits are preserved with a pre-run
+            recovery backup. Measurement only — it changes no defaults.
 
             """, stderr)
     }
