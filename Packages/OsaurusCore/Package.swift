@@ -69,10 +69,12 @@ let package = Package(
         // before/after each real TurboQuant transition. The ZAYA cache proof
         // revision adds real-attention-only TQ ownership, native CCA companion
         // restore, atomic typed L2 records, and a proven four-bit floor for
-        // TQ-native ZAYA disk boundaries.
+        // TQ-native ZAYA disk boundaries. The Nemotron Omni revision also
+        // aligns the RADIO/projector contract, bounds media prefill, and
+        // enables safe image/audio hybrid-prefix restore.
         .package(
             url: "https://github.com/osaurus-ai/vmlx-swift",
-            revision: "6fb106582a3681ed33e6e186165327a0069ff785"
+            revision: "4634af5151ffd71262d180e32962939dd8b2263f"
         ),
         // FluidAudio 0.14.3 added a breaking `language:` parameter to TTS
         // calls that osaurus's `TTSService` doesn't pass. Pinning to the
