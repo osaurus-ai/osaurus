@@ -3538,6 +3538,11 @@ private struct MCPPrimaryButtonStyle: ButtonStyle {
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
             .font(.system(size: 13, weight: .semibold))
+            // Never wrap the label: in a crowded footer the flexible spacer
+            // should compress, not the button text (keeps the CTA the same
+            // height as its neighbors).
+            .lineLimit(1)
+            .fixedSize(horizontal: true, vertical: false)
             .foregroundColor(.white)
             .padding(.horizontal, 16)
             .padding(.vertical, 10)
@@ -3555,6 +3560,8 @@ private struct MCPSecondaryButtonStyle: ButtonStyle {
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
             .font(.system(size: 13, weight: .medium))
+            .lineLimit(1)
+            .fixedSize(horizontal: true, vertical: false)
             .foregroundColor(themeManager.currentTheme.primaryText)
             .padding(.horizontal, 14)
             .padding(.vertical, 10)
