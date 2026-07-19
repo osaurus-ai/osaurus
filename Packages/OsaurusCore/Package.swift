@@ -72,7 +72,7 @@ let package = Package(
         // TQ-native ZAYA disk boundaries.
         .package(
             url: "https://github.com/osaurus-ai/vmlx-swift",
-            revision: "41434e8bab2d30c0c9c2eb746104621caf40fdcc"
+            revision: "6fb106582a3681ed33e6e186165327a0069ff785"
         ),
         // FluidAudio 0.14.3 added a breaking `language:` parameter to TTS
         // calls that osaurus's `TTSService` doesn't pass. Pinning to the
