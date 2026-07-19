@@ -286,6 +286,9 @@ private struct AddProviderFlow: View {
                 .cancel(L("Cancel")),
                 .primary(L("Add as MCP Connection")) { redirectToMCPConnections() },
             ],
+            // Wide enough that the CTA label stays on one line and both
+            // buttons keep the same height.
+            width: 420,
             presentationStyle: .contained
         )
     }
