@@ -122,6 +122,12 @@ struct CapabilityLoadBufferTests {
 @Suite(.serialized)
 struct CapabilitiesDiscoverToolTests {
 
+    @Test func modelFacingSchemaDoesNotSeedNonexistentCapabilityIds() {
+        let description = CapabilitiesDiscoverTool().description
+        #expect(!description.contains("tool/sandbox_exec"))
+        #expect(!description.contains("skill/plot-data"))
+    }
+
     @Test func rejectsEmptyQueries() async throws {
         let tool = CapabilitiesDiscoverTool()
         let result = try await tool.execute(argumentsJSON: "{\"queries\": []}")
@@ -360,6 +366,19 @@ struct CapabilitiesDiscoverToolTests {
 
 @Suite(.serialized)
 struct CapabilitiesLoadToolTests {
+
+    @Test func modelFacingSchemaDoesNotSeedNonexistentCapabilityIds() throws {
+        let tool = CapabilitiesLoadTool()
+        let spec = tool.asOpenAITool().toTokenizerToolSpec()
+        let serialized = String(describing: spec)
+
+        #expect(!tool.description.contains("plugin/calendar"))
+        #expect(!tool.description.contains("tool/sandbox_exec"))
+        #expect(!tool.description.contains("skill/plot-data"))
+        #expect(!serialized.contains("plugin/calendar"))
+        #expect(!serialized.contains("tool/sandbox_exec"))
+        #expect(!serialized.contains("skill/plot-data"))
+    }
 
     @Test func rejectsEmptyIds() async throws {
         let tool = CapabilitiesLoadTool()
@@ -707,6 +726,32 @@ struct CapabilitiesLoadToolTests {
                 _ = await AgentManager.shared.delete(id: agent.id)
             }
         }
+    }
+
+    /// The built-in Data Visualizer skill is not plugin-backed, but its
+    /// instructions require the gated `render_chart` tool for raw tabular
+    /// data. Loading the skill must therefore make that exact tool callable in
+    /// the same session; instructions without the schema strand small models
+    /// in a deterministic `tool_not_found` loop.
+    @Test @MainActor
+    func dataVisualizerSkillLoadAutoLoadsRenderChart() async throws {
+        await SkillManager.shared.refresh()
+        _ = await CapabilityLoadBuffer.shared.drain()
+
+        let tool = CapabilitiesLoadTool()
+        let result = try await ChatExecutionContext.$currentAgentId.withValue(UUID()) {
+            try await tool.execute(
+                argumentsJSON: #"{"ids":["skill/Data Visualizer"]}"#
+            )
+        }
+
+        #expect(!ToolEnvelope.isError(result))
+        #expect(result.contains("## Skill: Data Visualizer"))
+        #expect(result.contains("Auto-loaded tools (callable NOW by name): render_chart"))
+        #expect(result.contains("Schema for `render_chart`"))
+
+        let buffered = await CapabilityLoadBuffer.shared.drain()
+        #expect(buffered.map(\.function.name) == ["render_chart"])
     }
 
     @Test @MainActor

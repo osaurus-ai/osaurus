@@ -26,6 +26,8 @@ the flow is reachable end-to-end from existing tools.
 | `export-csv` | A full result set lands on disk in **one** host-mediated call | `db_export` (streamed file write) | CSV header + last row on disk, `file_write` **not** called, source table untouched |
 | `execute-sql-script` | A `.sql` script runs from disk, its SQL never entering tokens | `db_execute` path mode | args contain `transform.sql` but **no** `select`, `file_read` **not** called, derived table shape + busiest-day row |
 | `sandbox-import` | A file generated **inside the sandbox** bulk-loads (the original gap) | dual-root path resolution (`DatabaseFilePathResolver`) | rowCount 6, `SUM(additions)=105`, `db_insert`/`db_upsert` **not** called; SKIPs on hosts without a sandbox |
+| `import-mode-canonical` | "Append" phrasing still yields a canonical import mode on the **first** call | `db_import` `mode` contract (`insert`\|`upsert` only; `insert` IS the append) | `db_import` args never contain `append`, zero `db_import` error envelopes, rowCount 4 |
+| `run-saved-view-directly` | Saved views execute via `db_run_view`, never `db_query FROM <view>` | saved views are stored definitions in `_views`, not SQL tables | define → run ordering, `db_query` args never mention the view name, zero `db_run_view` errors, answer `Zara` |
 
 Fixtures live in [`../../Fixtures/AgentDB`](../../Fixtures/AgentDB):
 `commits-500.csv` (500 deterministic commit rows) and `stars-today.csv`

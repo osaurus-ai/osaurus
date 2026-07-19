@@ -6,6 +6,7 @@
 //  persisted skill directory.
 //
 
+import Darwin
 import Foundation
 import Testing
 
@@ -129,6 +130,81 @@ struct SkillImportPolicyTests {
             }) {
                 try SkillImportPolicy(maxArchiveBytes: 32, maxEntryBytes: 1_000_000, maxEntryCount: 20, maxPathDepth: 8)
                     .validateArchiveBeforeExtraction(zipURL)
+            }
+        }
+    }
+
+    @Test func archiveEntryLimitRejectsHighEntryListingWithoutStalling() async throws {
+        try await Self.withTempRoot { root in
+            let source = try Self.makeSkillBundle(
+                in: root,
+                directoryName: "many-entry-bundle",
+                skillName: "Many Entry Skill"
+            )
+            let references = source.appendingPathComponent("references", isDirectory: true)
+            try FileManager.default.createDirectory(at: references, withIntermediateDirectories: true)
+
+            for index in 0..<2_000 {
+                _ = FileManager.default.createFile(
+                    atPath: references.appendingPathComponent("entry-\(index).txt").path,
+                    contents: Data(),
+                    attributes: nil
+                )
+            }
+
+            let zipURL = try Self.makeZip(from: source, in: root)
+            let startedAt = Date()
+
+            try Self.expectSkillFileError(matching: { error in
+                if case .archiveEntryLimitExceeded(40) = error { return true }
+                return false
+            }) {
+                try SkillImportPolicy.test.validateArchiveBeforeExtraction(zipURL)
+            }
+
+            #expect(Date().timeIntervalSince(startedAt) < 10)
+        }
+    }
+
+    @Test func archiveListingFailsClosedWhenOutputIsTruncated() async throws {
+        try await Self.withTempRoot { root in
+            let source = try Self.makeSkillBundle(
+                in: root,
+                directoryName: "long-listing-bundle",
+                skillName: "Long Listing Skill"
+            )
+            var longDirectory = source.appendingPathComponent("references", isDirectory: true)
+            for segment in 0..<4 {
+                longDirectory = longDirectory.appendingPathComponent(
+                    "segment-\(segment)-" + String(repeating: "x", count: 120),
+                    isDirectory: true
+                )
+            }
+            try FileManager.default.createDirectory(at: longDirectory, withIntermediateDirectories: true)
+
+            for index in 0..<700 {
+                _ = FileManager.default.createFile(
+                    atPath: longDirectory.appendingPathComponent("entry-\(index).txt").path,
+                    contents: Data(),
+                    attributes: nil
+                )
+            }
+
+            let zipURL = try Self.makeZip(from: source, in: root)
+            let policy = SkillImportPolicy(
+                maxArchiveBytes: 10_000_000,
+                maxEntryBytes: 1_000_000,
+                maxEntryCount: 512,
+                maxPathDepth: 8
+            )
+
+            try Self.expectSkillFileError(matching: { error in
+                if case .archiveListingFailed(let details) = error {
+                    return details.contains("exceeded the supported limit")
+                }
+                return false
+            }) {
+                try policy.validateArchiveBeforeExtraction(zipURL)
             }
         }
     }
@@ -295,6 +371,105 @@ struct SkillImportPolicyTests {
         }
     }
 
+    @Test func importCancellationReachesBlockedArchiveInspection() async throws {
+        try await Self.withTempRoot { root in
+            let fifoURL = root.appendingPathComponent("blocked-archive.zip")
+            try #require(mkfifo(fifoURL.path, 0o600) == 0)
+
+            let task = Task {
+                try await SkillManager.shared.importSkillFromZip(
+                    fifoURL,
+                    overwriteExisting: false,
+                    policy: .test
+                )
+            }
+            guard let writerDescriptor = await Self.waitForFIFOReader(at: fifoURL) else {
+                task.cancel()
+                _ = try? await task.value
+                Issue.record("Archive inspection did not open the FIFO")
+                return
+            }
+
+            task.cancel()
+            try? await Task.sleep(nanoseconds: 50_000_000)
+            _ = Darwin.close(writerDescriptor)
+
+            do {
+                _ = try await task.value
+                Issue.record("Expected CancellationError")
+            } catch is CancellationError {
+                // Cancellation must survive policy wrapping and reach the archive subprocess.
+            } catch {
+                Issue.record("Unexpected error: \(error)")
+            }
+        }
+    }
+
+    @Test func exportCancellationReachesZipProcessAndRemovesPartialArchive() async throws {
+        try await Self.withTempRoot { _ in
+            let identifier = UUID().uuidString
+            let skill = Skill(
+                name: "Cancellation Export \(identifier)",
+                directoryName: "cancellation-export-\(identifier)"
+            )
+            let skillDirectory = SkillStore.skillDirectory(for: skill)
+            try FileManager.default.createDirectory(at: skillDirectory, withIntermediateDirectories: true)
+            try "# Cancellation Export".write(
+                to: skillDirectory.appendingPathComponent("SKILL.md"),
+                atomically: true,
+                encoding: .utf8
+            )
+
+            let sparsePayload = skillDirectory.appendingPathComponent("payload.bin")
+            _ = FileManager.default.createFile(atPath: sparsePayload.path, contents: nil)
+            let payloadHandle = try FileHandle(forWritingTo: sparsePayload)
+            try payloadHandle.truncate(atOffset: 512 * 1024 * 1024)
+            try payloadHandle.close()
+
+            let archiveURL = FileManager.default.temporaryDirectory.appendingPathComponent(
+                "\(skill.xplaceholder_agentSkillsNamex).zip"
+            )
+            defer { try? FileManager.default.removeItem(at: archiveURL) }
+
+            let task = Task {
+                try await SkillManager.shared.exportSkillAsZip(skill)
+            }
+            try await Task.sleep(nanoseconds: 50_000_000)
+            task.cancel()
+
+            do {
+                _ = try await task.value
+                Issue.record("Expected CancellationError")
+            } catch is CancellationError {
+                #expect(!FileManager.default.fileExists(atPath: archiveURL.path))
+            } catch {
+                Issue.record("Unexpected error: \(error)")
+            }
+        }
+    }
+
+    @Test func archiveUtilitiesTreatLeadingDashSourceAsPath() async throws {
+        try await Self.withTempRoot { root in
+            let source = try Self.makeSkillBundle(
+                in: root,
+                directoryName: "-leading-dash-bundle",
+                skillName: "Leading Dash"
+            )
+            let archiveURL = root.appendingPathComponent("leading-dash.zip")
+            let extractionURL = root.appendingPathComponent("leading-dash-extracted", isDirectory: true)
+
+            try await FileManager.default.zipItem(at: source, to: archiveURL)
+            try SkillImportPolicy.test.validateArchiveBeforeExtraction(archiveURL)
+            try await FileManager.default.unzipItem(at: archiveURL, to: extractionURL)
+
+            #expect(
+                FileManager.default.fileExists(
+                    atPath: extractionURL.appendingPathComponent("-leading-dash-bundle/SKILL.md").path
+                )
+            )
+        }
+    }
+
     private static func withTempRoot<T: Sendable>(
         _ body: @Sendable (URL) async throws -> T
     ) async throws -> T {
@@ -313,6 +488,16 @@ struct SkillImportPolicyTests {
             }
             return try await body(root)
         }
+    }
+
+    private static func waitForFIFOReader(at url: URL) async -> Int32? {
+        for _ in 0..<200 {
+            let descriptor = Darwin.open(url.path, O_WRONLY | O_NONBLOCK)
+            if descriptor >= 0 { return descriptor }
+            guard errno == ENXIO else { return nil }
+            try? await Task.sleep(nanoseconds: 10_000_000)
+        }
+        return nil
     }
 
     private static func makeSkillBundle(
@@ -376,7 +561,7 @@ struct SkillImportPolicyTests {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/zip")
         process.currentDirectoryURL = source.deletingLastPathComponent()
-        process.arguments = ["-r", "-q", zipURL.path, source.lastPathComponent]
+        process.arguments = ["-r", "-q", "-nw", zipURL.path, "--", source.lastPathComponent]
 
         let pipe = Pipe()
         process.standardOutput = pipe

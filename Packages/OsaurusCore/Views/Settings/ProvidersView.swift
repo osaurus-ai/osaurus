@@ -14,6 +14,9 @@ struct ProvidersView: View {
     @ObservedObject private var managementState = ManagementStateManager.shared
     @State private var showAddSheet = false
     @State private var editingProvider: MCPProvider?
+    /// Prefill for the add sheet when opened via a `pendingMCPProviderDraft`
+    /// hand-off; cleared on dismiss so a manual "Add" starts blank.
+    @State private var addSheetPrefill: MCPProviderDraft?
     @State private var hasAppeared = false
     @State private var providerFilter: MCPServerHubFilter = .all
     @State private var credentialPresence: [UUID: MCPProviderCredentialPresence] = [:]
@@ -105,9 +108,13 @@ struct ProvidersView: View {
             refreshCredentialPresence()
             refreshHealthSnapshots()
             applyPendingEditRequest()
+            applyPendingDraftRequest()
         }
         .onChange(of: managementState.pendingMCPProviderEditId) { _, _ in
             applyPendingEditRequest()
+        }
+        .onChange(of: managementState.pendingMCPProviderDraft) { _, _ in
+            applyPendingDraftRequest()
         }
         .onReceive(
             NotificationCenter.default.publisher(
@@ -116,8 +123,8 @@ struct ProvidersView: View {
         ) { _ in
             refreshHealthSnapshots()
         }
-        .sheet(isPresented: $showAddSheet) {
-            ProviderEditSheet(provider: nil) { provider, token in
+        .sheet(isPresented: $showAddSheet, onDismiss: { addSheetPrefill = nil }) {
+            ProviderEditSheet(provider: nil, prefill: addSheetPrefill) { provider, token in
                 manager.addProvider(provider, token: token)
                 refreshCredentialPresence()
             }
@@ -140,6 +147,16 @@ struct ProvidersView: View {
             editingProvider = provider
         }
         managementState.pendingMCPProviderEditId = nil
+    }
+
+    /// Honour a one-shot `pendingMCPProviderDraft` hand-off (the API provider
+    /// form detected an MCP server URL): open the add sheet straight in the
+    /// custom editor with the URL and token carried over.
+    private func applyPendingDraftRequest() {
+        guard let draft = managementState.pendingMCPProviderDraft else { return }
+        addSheetPrefill = draft
+        showAddSheet = true
+        managementState.pendingMCPProviderDraft = nil
     }
 
     private var hubSnapshot: MCPServerHubSnapshot {
@@ -1209,6 +1226,10 @@ private struct ProviderEditSheet: View {
     @Environment(\.dismiss) private var dismiss
 
     let provider: MCPProvider?
+    /// Add-mode prefill from a hand-off (e.g. the API provider form detected
+    /// an MCP server URL). Skips the catalog and lands on the custom editor
+    /// with URL/token filled in. Ignored in edit mode.
+    var prefill: MCPProviderDraft? = nil
     let onSave: (MCPProvider, String?) -> Void
 
     /// Stable identity for "draft" providers (sheet not yet saved). Reused so OAuth
@@ -2843,6 +2864,16 @@ private struct ProviderEditSheet: View {
 
     private func loadProvider() {
         guard let provider = provider else {
+            if let prefill {
+                // Hand-off from the API provider form: skip the catalog and
+                // land on the custom editor with the detected MCP endpoint.
+                phase = .configureCustom
+                name = prefill.name
+                url = prefill.url
+                token = prefill.bearerToken ?? ""
+                authType = .bearerToken
+                return
+            }
             // Add-mode: stay on the catalog grid. The draftId is preserved so
             // anything OAuth-saved mid-flow ends up on this id and persists
             // through save().
@@ -3507,6 +3538,11 @@ private struct MCPPrimaryButtonStyle: ButtonStyle {
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
             .font(.system(size: 13, weight: .semibold))
+            // Never wrap the label: in a crowded footer the flexible spacer
+            // should compress, not the button text (keeps the CTA the same
+            // height as its neighbors).
+            .lineLimit(1)
+            .fixedSize(horizontal: true, vertical: false)
             .foregroundColor(.white)
             .padding(.horizontal, 16)
             .padding(.vertical, 10)
@@ -3524,6 +3560,8 @@ private struct MCPSecondaryButtonStyle: ButtonStyle {
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
             .font(.system(size: 13, weight: .medium))
+            .lineLimit(1)
+            .fixedSize(horizontal: true, vertical: false)
             .foregroundColor(themeManager.currentTheme.primaryText)
             .padding(.horizontal, 14)
             .padding(.vertical, 10)

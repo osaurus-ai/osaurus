@@ -146,6 +146,27 @@ struct AgentDatabaseTests {
     }
 
     @Test
+    func snapshotLabelsSavedViewsWithRunViewRoute() {
+        // The views section the model sees must state that saved views are
+        // stored definitions executed via db_run_view, not queryable tables —
+        // regression for the `db_query ... FROM <view>` "no such table" loop.
+        let view = AgentSavedView(
+            name: "weekly_total",
+            sql: "SELECT 1",
+            renderHint: "table",
+            refresh: "manual",
+            description: nil,
+            createdAt: Date(),
+            updatedAt: Date()
+        )
+        let schema = AgentDatabaseSchema(tables: [], views: [view])
+        let rendered = SchemaSnapshot.render(schema)
+        #expect(rendered.contains("weekly_total"))
+        #expect(rendered.contains("db_run_view"))
+        #expect(rendered.contains("not queryable as tables"))
+    }
+
+    @Test
     func snapshotTruncatesViewSQLFirst() {
         // Big SQL bodies should disappear before column lists do.
         let columns = (0 ..< 3).map { i in
@@ -228,7 +249,7 @@ struct AgentDatabaseTests {
 
     @Test
     func onboardingPromptVersionIsPositive() {
-        #expect(OnboardingPrompt.version >= 1)
+        #expect(OnboardingPrompt.version >= 4)
         // Block stays anchored to the documented tool names so the
         // prompt and the registered tool ids never drift apart.
         #expect(OnboardingPrompt.block.contains("db_create_table"))
@@ -239,6 +260,13 @@ struct AgentDatabaseTests {
         // for db_import instead of looping single-row writes.
         #expect(OnboardingPrompt.block.contains("db_import"))
         #expect(OnboardingPrompt.block.contains("db_export"))
+        // Import mode contract: `insert` is the append; there is no
+        // `append` mode for the model to invent.
+        #expect(OnboardingPrompt.block.contains("no `append` mode"))
+        // Saved-view routing: run stored definitions with db_run_view,
+        // never by referencing the view name in db_query SQL.
+        #expect(OnboardingPrompt.block.contains("db_run_view"))
+        #expect(OnboardingPrompt.block.contains("db_define_view"))
         // Soft-delete guidance: typed tools hide tombstones; raw SQL does not.
         #expect(
             OnboardingPrompt.block.lowercased().contains("soft delete")

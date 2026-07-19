@@ -4614,8 +4614,13 @@ extension FloatingInputCard {
         )
     }
 
-    private static let audioExtensions: Set<String> = [
-        "wav", "mp3", "m4a", "flac", "ogg", "opus", "aac", "wma",
+    /// Extensions accepted by the generic `UTType.audio` picker must also be
+    /// routed here. Otherwise AppKit lets the user select a valid audio file
+    /// and the composer silently falls through to the unsupported-document
+    /// branch. Keep this internal so the picker/router parity is unit tested.
+    static let audioExtensions: Set<String> = [
+        "wav", "wave", "mp3", "mpeg", "m4a", "x-m4a", "flac", "ogg", "opus", "aac", "wma",
+        "aif", "aiff", "aifc", "caf",
     ]
 
     private static let videoExtensions: Set<String> = [

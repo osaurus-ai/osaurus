@@ -62,10 +62,22 @@ let package = Package(
         // carries #149: native schema-2 affine1 JANG loading and Metal kernels,
         // Qwen3-VL tool-schema preservation, and bounded media-cache cleanup.
         // Also carries #153: fail-closed support for historical schema-1 JANG
-        // affine manifests.
+        // affine manifests. Also carries #93: Gemma4 model registrations no
+        // longer inject the stale `<end_of_turn>` token into extraEOSTokens;
+        // bundle generation_config.json remains the stop-token authority. The
+        // PR #154 proof revision also reports the exact cache-layer topology
+        // before/after each real TurboQuant transition. The ZAYA cache proof
+        // revision adds real-attention-only TQ ownership, native CCA companion
+        // restore, atomic typed L2 records, and a proven four-bit floor for
+        // TQ-native ZAYA disk boundaries. The Nemotron Omni revision also
+        // aligns the RADIO/projector contract, bounds media prefill, and
+        // enables safe image/audio hybrid-prefix restore. The paged-cache
+        // follow-up separates typed-disk persistence from paged compatibility,
+        // restores recurrent companions at the exact matched boundary, and
+        // keeps every unproven cache topology fail-closed.
         .package(
             url: "https://github.com/osaurus-ai/vmlx-swift",
-            revision: "a26c7ecec950f18e3d07c8402fbd8c80f40ac764"
+            revision: "0975201e745a1774fda1e78d1bc99b5bd1c668c6"
         ),
         // FluidAudio 0.14.3 added a breaking `language:` parameter to TTS
         // calls that osaurus's `TTSService` doesn't pass. Pinning to the

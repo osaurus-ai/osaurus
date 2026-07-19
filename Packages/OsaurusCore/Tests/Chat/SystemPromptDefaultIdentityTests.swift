@@ -130,6 +130,8 @@ struct SystemPromptDefaultIdentityTests {
         #expect(block.contains("capabilities_load"))
         #expect(block.contains(#"capabilities_discover({"query": "<what you need>"})"#))
         #expect(!block.contains(#"capabilities_discover({"queries": "#))
+        #expect(!block.contains("tool/sandbox_exec"))
+        #expect(!block.contains("skill/plot-data"))
     }
 }
 

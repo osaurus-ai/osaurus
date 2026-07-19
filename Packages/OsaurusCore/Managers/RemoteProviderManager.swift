@@ -667,7 +667,7 @@ public final class RemoteProviderManager: ObservableObject {
             case .invalidResponse, .rateLimited:
                 return true
             case .invalidURL, .notConnected, .requestFailed, .requestFailedWithDiagnostics,
-                .streamingError, .noModelsAvailable, .unsupportedParameter:
+                .streamingError, .noModelsAvailable, .unsupportedParameter, .mcpEndpointDetected:
                 return false
             }
         }
@@ -1231,6 +1231,14 @@ public final class RemoteProviderManager: ObservableObject {
                         provider: tempProvider
                     )
                 } catch let error as RemoteProviderServiceError {
+                    if httpResponse.statusCode >= 400,
+                        let refined = await RemoteProviderService.refineMCPServerMisconfiguration(
+                            for: tempProvider,
+                            headers: testHeaders
+                        )
+                    {
+                        throw refined
+                    }
                     throw error.attachingReplayDiagnostics(diagnostics)
                 } catch {
                     throw RemoteProviderServiceError.requestFailedWithDiagnostics(

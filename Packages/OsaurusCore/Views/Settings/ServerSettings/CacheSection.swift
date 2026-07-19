@@ -57,7 +57,7 @@ struct CacheSection: View {
 
             SettingsDivider()
 
-            SettingsSubsection(label: "Disk Spillover") {
+            SettingsSubsection(label: "SSD Cache (L2)") {
                 diskCacheControls
             }
 
@@ -109,49 +109,27 @@ struct CacheSection: View {
 
     // MARK: - Subviews
 
-    @ViewBuilder
     private var diskCacheControls: some View {
         VStack(alignment: .leading, spacing: 12) {
-            if draft.cache.pagedKV.enabled {
-                SettingsToggle(
-                    title: L("Disk Cache"),
-                    description:
-                        "Spill paged blocks to disk so cache survives restarts and shares across processes.",
-                    isOn: $draft.cache.blockDisk.enabled
-                )
-                OptionalDoubleField(
-                    label: "Disk Cache Size (GB)",
-                    placeholder: "Blank = engine default (10 GB)",
-                    help: "Soft cap before older entries are evicted.",
-                    value: $draft.cache.blockDisk.maxSizeGB,
-                    format: "%.1f"
-                )
-                OptionalStringField(
-                    label: "Disk Cache Directory",
-                    placeholder: "Blank = Osaurus default cache directory",
-                    help: "Absolute path or ~/... path for persisted block-cache entries.",
-                    value: $draft.cache.blockDisk.directory
-                )
-            } else {
-                SettingsToggle(
-                    title: L("Legacy Disk Cache"),
-                    description: "Used when the GPU paged cache is off.",
-                    isOn: $draft.cache.legacyDisk.enabled
-                )
-                OptionalDoubleField(
-                    label: "Disk Cache Size (GB)",
-                    placeholder: "Blank = engine default (10 GB)",
-                    help: "Soft cap before older entries are evicted.",
-                    value: $draft.cache.legacyDisk.maxSizeGB,
-                    format: "%.1f"
-                )
-                OptionalStringField(
-                    label: "Legacy Disk Cache Directory",
-                    placeholder: "Blank = Osaurus default cache directory",
-                    help: "Absolute path or ~/... path for legacy disk-cache entries.",
-                    value: $draft.cache.legacyDisk.directory
-                )
-            }
+            SettingsToggle(
+                title: L("Disk Cache"),
+                description:
+                    "Persist reusable cache blocks on SSD. Works with paged RAM cache off and restores the longest matching prefix after restart; turn off to disable disk reuse.",
+                isOn: $draft.cache.blockDisk.enabled
+            )
+            OptionalDoubleField(
+                label: "Disk Cache Size (GB)",
+                placeholder: "Blank = engine default (10 GB)",
+                help: "Soft cap before older entries are evicted.",
+                value: $draft.cache.blockDisk.maxSizeGB,
+                format: "%.1f"
+            )
+            OptionalStringField(
+                label: "Disk Cache Directory",
+                placeholder: "Blank = Osaurus default cache directory",
+                help: "Absolute path or ~/... path for persisted block-cache entries.",
+                value: $draft.cache.blockDisk.directory
+            )
         }
     }
 

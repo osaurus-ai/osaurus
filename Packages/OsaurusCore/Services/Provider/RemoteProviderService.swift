@@ -30,6 +30,11 @@ public enum RemoteProviderServiceError: LocalizedError {
     /// express (e.g. audio/video parts on an Anthropic/Gemini route).
     /// Rejecting loudly beats silently dropping the user's attachment.
     case unsupportedParameter(String)
+    /// The configured base URL answered an MCP `initialize` handshake like an
+    /// MCP server — the user pasted an MCP endpoint (e.g. runalyze.com/mcp)
+    /// into the API provider form. Typed so the edit sheet can offer a
+    /// redirect to Tools > Connections instead of a dead-end failure badge.
+    case mcpEndpointDetected
 
     public var errorDescription: String? {
         switch self {
@@ -64,6 +69,8 @@ public enum RemoteProviderServiceError: LocalizedError {
             return condition + " " + L("Retry shortly.")
         case .unsupportedParameter(let message):
             return L("\(message)")
+        case .mcpEndpointDetected:
+            return RemoteProviderMCPDetection.guidance()
         }
     }
 
@@ -90,7 +97,7 @@ public enum RemoteProviderServiceError: LocalizedError {
         case .requestFailedWithDiagnostics:
             return self
         case .invalidURL, .notConnected, .streamingError, .noModelsAvailable, .rateLimited,
-            .unsupportedParameter:
+            .unsupportedParameter, .mcpEndpointDetected:
             return self
         }
     }
@@ -5194,6 +5201,11 @@ extension RemoteProviderService {
                 provider: provider
             )
         } catch let error as RemoteProviderServiceError {
+            if httpResponse.statusCode >= 400,
+                let refined = await refineMCPServerMisconfiguration(for: provider)
+            {
+                throw refined.attachingReplayDiagnostics(diagnostics)
+            }
             throw error.attachingReplayDiagnostics(diagnostics)
         } catch {
             throw RemoteProviderServiceError.requestFailedWithDiagnostics(
@@ -5227,6 +5239,48 @@ extension RemoteProviderService {
             }
             throw error
         }
+    }
+
+    /// After model discovery fails with an HTTP error on an OpenAI-compatible
+    /// provider, probe the base URL with an MCP `initialize` handshake. Users
+    /// sometimes paste an MCP endpoint (e.g. https://runalyze.com/mcp) into
+    /// the API provider form; `<base>/models` then 404s with an unhelpful
+    /// "Not Found". When the base URL answers like an MCP server, replace the
+    /// generic failure with guidance pointing at Tools > Connections. Returns
+    /// nil (keep the original error) for other provider types, on any
+    /// transport failure, or when the response doesn't look like MCP.
+    static func refineMCPServerMisconfiguration(
+        for provider: RemoteProvider,
+        headers: [String: String]? = nil
+    ) async -> RemoteProviderServiceError? {
+        guard provider.providerType == .openaiLegacy || provider.providerType == .openResponses,
+            let url = provider.baseURL
+        else { return nil }
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        // Bounded tighter than discovery: a streamable HTTP server may hold
+        // the SSE response open, and this probe only refines an error message.
+        request.timeoutInterval = min(modelDiscoveryTimeout(provider.timeout), 10)
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue("application/json, text/event-stream", forHTTPHeaderField: "Accept")
+        // `headers` lets the connect-test path pass its already-resolved
+        // header set (the test API key never reaches the Keychain).
+        let resolved: [String: String]
+        if let headers {
+            resolved = headers
+        } else {
+            resolved = await provider.resolvedHeadersOffMainActor()
+        }
+        for (key, value) in resolved where isSafeHeader(name: key, value: value) {
+            request.setValue(value, forHTTPHeaderField: key)
+        }
+        request.httpBody = MCPAuthFailureProbe.handshakeBody()
+        guard
+            let (data, response) = try? await GlobalProxySettings.sharedSession().data(for: request),
+            let http = response as? HTTPURLResponse,
+            RemoteProviderMCPDetection.looksLikeMCPServer(response: http, body: data)
+        else { return nil }
+        return .mcpEndpointDetected
     }
 
     /// Builds a bounded `/models` request so provider connect tests do not hang

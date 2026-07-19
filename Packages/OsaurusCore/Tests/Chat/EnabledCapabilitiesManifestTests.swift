@@ -233,8 +233,9 @@ struct EnabledCapabilitiesManifestTests {
         #expect(!rendered.contains("image — Make or edit an image"))
         // The group has no loadable id, so it must NOT be collapsed into a
         // `plugin/<id> — Built-in tools` tier line. (The intro itself
-        // references `plugin/<id>`/`plugin/calendar`, so a blanket
+        // references `plugin/<id>`, so a blanket
         // `!contains("plugin/")` would be wrong — assert on the display name.)
+        #expect(!rendered.contains("plugin/calendar"))
         #expect(!rendered.contains("— Built-in tools"))
     }
 

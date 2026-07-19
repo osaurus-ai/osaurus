@@ -402,12 +402,21 @@ public final class SkillManager {
     // MARK: - ZIP Export/Import
 
     public func exportSkillAsZip(_ skill: Skill) async throws -> URL {
+        try Task.checkCancellation()
         let skillDir = SkillStore.skillDirectory(for: skill)
         let zipURL = FileManager.default.temporaryDirectory.appendingPathComponent(
             "\(skill.xplaceholder_agentSkillsNamex).zip"
         )
         try? FileManager.default.removeItem(at: zipURL)
-        try await FileManager.default.zipItem(at: skillDir, to: zipURL)
+        do {
+            try await FileManager.default.zipItem(at: skillDir, to: zipURL)
+            try Task.checkCancellation()
+        } catch {
+            if (error as? SkillArchiveProcessRunnerError) != .processTerminationIncomplete {
+                try? FileManager.default.removeItem(at: zipURL)
+            }
+            throw error
+        }
         guard FileManager.default.fileExists(atPath: zipURL.path) else {
             throw SkillFileError.exportFailed
         }
@@ -426,57 +435,81 @@ public final class SkillManager {
         overwriteExisting: Bool,
         policy: SkillImportPolicy = .default
     ) async throws -> SkillImportResult {
-        // All filesystem work (unzip, SKILL.md read, nested file copies) runs
-        // off the main actor — a large bundle would otherwise block the UI and
-        // trip an app-hang. Only the trailing `refresh()` (which mutates
-        // observed state) hops back to the main actor.
-        let result = try await Task.detached(priority: .userInitiated) {
-            let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent(
-                UUID().uuidString
-            )
-            defer { try? FileManager.default.removeItem(at: tempDir) }
-
-            try policy.validateArchiveBeforeExtraction(zipURL)
-            try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
-            try await FileManager.default.unzipItem(at: zipURL, to: tempDir)
-
-            let importPlan = try policy.scanExtractedTree(at: tempDir)
-            let content = try String(contentsOf: importPlan.skillMarkdownURL, encoding: .utf8)
-            let parsed = try Skill.parseAnyFormat(from: content)
-
-            let skill = Skill(
-                name: parsed.name,
-                description: parsed.description,
-                version: parsed.version,
-                author: parsed.author,
-                category: parsed.category,
-                instructions: parsed.instructions,
-                directoryName: parsed.xplaceholder_agentSkillsNamex
-            )
-
-            try Self.installImportedSkill(
-                skill,
-                from: importPlan.skillRootURL,
-                overwriteExisting: overwriteExisting,
-                stagingBase: tempDir
-            )
-
-            let notes: [String]
-            if importPlan.ignoredSkillMarkdownPaths.isEmpty {
-                notes = []
-            } else {
-                let ignored = importPlan.ignoredSkillMarkdownPaths.joined(separator: ", ")
-                notes = [
-                    L("Imported \(importPlan.selectedSkillMarkdownPath); ignored additional SKILL.md files: \(ignored)")
-                ]
-            }
-            return SkillImportResult(skill: skill, notes: notes)
-        }.value
+        let result = try await Self.performZipImport(
+            zipURL,
+            overwriteExisting: overwriteExisting,
+            policy: policy
+        )
 
         await refresh()
 
         Task { await SkillSearchService.shared.indexSkill(result.skill) }
         return result
+    }
+
+    /// Nonisolated async work runs off the main actor while preserving the
+    /// caller task's cancellation state through validation and extraction.
+    nonisolated private static func performZipImport(
+        _ zipURL: URL,
+        overwriteExisting: Bool,
+        policy: SkillImportPolicy
+    ) async throws -> SkillImportResult {
+        try Task.checkCancellation()
+        let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent(
+            UUID().uuidString
+        )
+        var cleanupTransferredToReaper = false
+        defer {
+            if !cleanupTransferredToReaper {
+                try? FileManager.default.removeItem(at: tempDir)
+            }
+        }
+
+        try policy.validateArchiveBeforeExtraction(zipURL)
+        try Task.checkCancellation()
+        try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+        do {
+            try await FileManager.default.unzipItem(at: zipURL, to: tempDir)
+        } catch {
+            if (error as? SkillArchiveProcessRunnerError) == .processTerminationIncomplete {
+                cleanupTransferredToReaper = true
+            }
+            throw error
+        }
+
+        try Task.checkCancellation()
+        let importPlan = try policy.scanExtractedTree(at: tempDir)
+        let content = try String(contentsOf: importPlan.skillMarkdownURL, encoding: .utf8)
+        let parsed = try Skill.parseAnyFormat(from: content)
+        try Task.checkCancellation()
+
+        let skill = Skill(
+            name: parsed.name,
+            description: parsed.description,
+            version: parsed.version,
+            author: parsed.author,
+            category: parsed.category,
+            instructions: parsed.instructions,
+            directoryName: parsed.xplaceholder_agentSkillsNamex
+        )
+
+        try Self.installImportedSkill(
+            skill,
+            from: importPlan.skillRootURL,
+            overwriteExisting: overwriteExisting,
+            stagingBase: tempDir
+        )
+
+        let notes: [String]
+        if importPlan.ignoredSkillMarkdownPaths.isEmpty {
+            notes = []
+        } else {
+            let ignored = importPlan.ignoredSkillMarkdownPaths.joined(separator: ", ")
+            notes = [
+                L("Imported \(importPlan.selectedSkillMarkdownPath); ignored additional SKILL.md files: \(ignored)")
+            ]
+        }
+        return SkillImportResult(skill: skill, notes: notes)
     }
 
     nonisolated private static func installImportedSkill(
@@ -759,52 +792,66 @@ public final class SkillManager {
 // MARK: - FileManager ZIP Extension
 
 extension FileManager {
-    func unzipItem(at sourceURL: URL, to destinationURL: URL) async throws {
-        try await Task.detached(priority: .userInitiated) {
-            let process = Process()
-            process.executableURL = URL(fileURLWithPath: "/usr/bin/unzip")
-            process.arguments = ["-o", "-q", sourceURL.path, "-d", destinationURL.path]
+    func unzipItem(
+        at sourceURL: URL,
+        to destinationURL: URL,
+        configuration: SkillArchiveProcessConfiguration = .default
+    ) async throws {
+        try Task.checkCancellation()
+        let result = try SkillArchiveProcessRunner.run(
+            executablePath: "/usr/bin/unzip",
+            arguments: ["-o", "-q", "-d", destinationURL.path, "--", sourceURL.path],
+            timeoutSeconds: 60,
+            configuration: configuration.withDeferredCleanupURL(destinationURL)
+        )
+        try Task.checkCancellation()
 
-            let pipe = Pipe()
-            process.standardOutput = pipe
-            process.standardError = pipe
+        if result.timedOut {
+            throw NSError(
+                domain: "FileManager",
+                code: -1,
+                userInfo: [NSLocalizedDescriptionKey: "Unzip timed out after 60 seconds"]
+            )
+        }
 
-            try process.run()
-            process.waitUntilExit()
-
-            if process.terminationStatus != 0 {
-                let output = String(data: pipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
-                throw NSError(
-                    domain: "FileManager",
-                    code: Int(process.terminationStatus),
-                    userInfo: [NSLocalizedDescriptionKey: "Unzip failed: \(output)"]
-                )
-            }
-        }.value
+        if result.terminationStatus != 0 {
+            throw NSError(
+                domain: "FileManager",
+                code: Int(result.terminationStatus),
+                userInfo: [NSLocalizedDescriptionKey: "Unzip failed: \(result.output)"]
+            )
+        }
     }
 
-    func zipItem(at sourceURL: URL, to destinationURL: URL) async throws {
-        try await Task.detached(priority: .userInitiated) {
-            let process = Process()
-            process.executableURL = URL(fileURLWithPath: "/usr/bin/zip")
-            process.currentDirectoryURL = sourceURL.deletingLastPathComponent()
-            process.arguments = ["-r", "-q", destinationURL.path, sourceURL.lastPathComponent]
+    func zipItem(
+        at sourceURL: URL,
+        to destinationURL: URL,
+        configuration: SkillArchiveProcessConfiguration = .default
+    ) async throws {
+        try Task.checkCancellation()
+        let result = try SkillArchiveProcessRunner.run(
+            executablePath: "/usr/bin/zip",
+            arguments: ["-r", "-q", "-nw", destinationURL.path, "--", sourceURL.lastPathComponent],
+            currentDirectoryURL: sourceURL.deletingLastPathComponent(),
+            timeoutSeconds: 120,
+            configuration: configuration.withDeferredCleanupURL(destinationURL)
+        )
+        try Task.checkCancellation()
 
-            let pipe = Pipe()
-            process.standardOutput = pipe
-            process.standardError = pipe
+        if result.timedOut {
+            throw NSError(
+                domain: "FileManager",
+                code: -1,
+                userInfo: [NSLocalizedDescriptionKey: "Zip timed out after 120 seconds"]
+            )
+        }
 
-            try process.run()
-            process.waitUntilExit()
-
-            if process.terminationStatus != 0 {
-                let output = String(data: pipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
-                throw NSError(
-                    domain: "FileManager",
-                    code: Int(process.terminationStatus),
-                    userInfo: [NSLocalizedDescriptionKey: "Zip failed: \(output)"]
-                )
-            }
-        }.value
+        if result.terminationStatus != 0 {
+            throw NSError(
+                domain: "FileManager",
+                code: Int(result.terminationStatus),
+                userInfo: [NSLocalizedDescriptionKey: "Zip failed: \(result.output)"]
+            )
+        }
     }
 }

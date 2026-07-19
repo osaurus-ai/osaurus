@@ -164,6 +164,9 @@ private struct AddProviderFlow: View {
     @State private var oauthTokens: RemoteProviderOAuthTokens?
     @State private var isTesting = false
     @State private var testResult: ProviderTestResult?
+    /// The connect test found an MCP server at the entered URL; offer to move
+    /// the setup to Tools > Connections instead of leaving a dead-end error.
+    @State private var showMCPRedirectPrompt = false
     @State private var hasAppeared = false
     /// Guards against saving twice: a successful test auto-finalizes the add,
     /// but the footer button is also still tappable during the brief green
@@ -271,6 +274,21 @@ private struct AddProviderFlow: View {
                 .cancel("Cancel"),
                 .destructive("Disable Timeout") { disableTimeout = true },
             ],
+            presentationStyle: .contained
+        )
+        .themedAlert(
+            L("This looks like an MCP server"),
+            isPresented: $showMCPRedirectPrompt,
+            message: L(
+                "This URL answers like an MCP server, not a chat completions API. Osaurus can add it as an MCP connection instead — the URL and token you entered will be carried over."
+            ),
+            buttons: [
+                .cancel(L("Cancel")),
+                .primary(L("Add as MCP Connection")) { redirectToMCPConnections() },
+            ],
+            // Wide enough that the CTA label stays on one line and both
+            // buttons keep the same height.
+            width: 420,
             presentationStyle: .contained
         )
     }
@@ -1497,13 +1515,62 @@ private struct AddProviderFlow: View {
                 try? await Task.sleep(nanoseconds: 450_000_000)
                 await MainActor.run { saveCustomProvider() }
             } catch {
+                let isMCPEndpoint: Bool
+                if let serviceError = error as? RemoteProviderServiceError,
+                    case .mcpEndpointDetected = serviceError
+                {
+                    isMCPEndpoint = true
+                } else {
+                    isMCPEndpoint = false
+                }
                 await MainActor.run {
                     withAnimation {
                         testResult = .failure(error.localizedDescription); isTesting = false
                     }
+                    if isMCPEndpoint {
+                        showMCPRedirectPrompt = true
+                    }
                 }
             }
         }
+    }
+
+    /// Hand the entered endpoint off to the MCP connections flow: navigate to
+    /// Tools > Connections and open the add sheet prefilled with the URL and
+    /// (when present) the API key as a bearer token.
+    private func redirectToMCPConnections() {
+        let trimmedName = customName.trimmingCharacters(in: .whitespaces)
+        let trimmedHost = customHost.trimmingCharacters(in: .whitespaces)
+        let trimmedBasePath = customBasePath.trimmingCharacters(in: .whitespaces)
+        // Reuse RemoteProvider's URL normalization (host-with-path splitting,
+        // port handling) rather than re-deriving the string here.
+        let endpoint = RemoteProvider(
+            name: "Draft",
+            host: trimmedHost,
+            providerProtocol: customProtocol,
+            port: Int(customPort),
+            // Mirror the fallback the failed test used, so the hand-off
+            // carries the exact URL that answered like an MCP server.
+            basePath: trimmedBasePath.isEmpty ? "/v1" : trimmedBasePath,
+            authType: customAuthType,
+            providerType: .openaiLegacy
+        )
+        guard let url = endpoint.baseURL?.absoluteString else { return }
+        // Match the test's auth gating: only carry the key when the user
+        // actually selected API-key auth, not stale text behind "No Auth".
+        let trimmedKey =
+            customAuthType == .apiKey
+            ? apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
+            : ""
+        let management = ManagementStateManager.shared
+        management.pendingMCPProviderDraft = MCPProviderDraft(
+            name: trimmedName,
+            url: url,
+            bearerToken: trimmedKey.isEmpty ? nil : trimmedKey
+        )
+        management.pendingToolsSubTab = ToolsTab.connections.rawValue
+        management.selectedTab = .tools
+        dismiss()
     }
 
     private func saveCustomProvider() {

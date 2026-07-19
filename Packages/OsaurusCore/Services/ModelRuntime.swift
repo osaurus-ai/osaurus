@@ -2644,9 +2644,8 @@ public actor ModelRuntime {
         // shipped default) therefore resolves to native fp16 KV for every
         // model.
         //
-        // vMLX's settings resolve `.engineSelected -> .turboQuant()`, so this
-        // runtime gate is the single point that decides whether engine-
-        // selected actually turns TurboQuant on. Previously it returned true
+        // This host gate and the pinned vMLX settings default both resolve
+        // engine-selected to native KV. Previously this gate returned true
         // for full-KV families (MiniMax) and for any topology with KV layers
         // and no rotating/hybrid layers — which silently force-enabled
         // TurboQuant on multiple families. TurboQuant's per-step

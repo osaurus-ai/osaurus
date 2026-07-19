@@ -148,7 +148,7 @@ final class CapabilitiesDiscoverTool: OsaurusTool, @unchecked Sendable {
         "Find additional tools or skills the current schema does not include. "
         + "Use this to discover or confirm any capability, including whether a named tool exists in the enabled set. "
         + "Your current tool list is a fixed subset, not the full set. "
-        + "Returns ranked IDs (e.g. `tool/sandbox_exec`, `skill/plot-data`) you then pass to `capabilities_load`. "
+        + "Returns ranked IDs copied from the live capability index; pass only those exact returned IDs to `capabilities_load`. "
         + "Example: `{\"query\": \"convert csv to json\"}`."
 
     let agentId: UUID?
@@ -606,13 +606,24 @@ final class CapabilitiesLoadTool: OsaurusTool, @unchecked Sendable {
     /// injects for a single message only.
     static let skillReferenceBudget = 32_000
 
+    /// Built-in skills are not plugin-backed, so they have no dynamic tool
+    /// group for `loadSkill` to cascade automatically. Keep their concrete
+    /// tool dependencies explicit here instead of parsing tool names out of
+    /// prose. Data Visualizer otherwise teaches a small model to call
+    /// `render_chart` while leaving that gated built-in outside the live
+    /// execution scope.
+    private static let builtInSkillToolDependencies: [UUID: [String]] = [
+        UUID(uuidString: "00000001-0000-0000-0000-000000000007")!: ["render_chart"]
+    ]
+
     let name = "capabilities_load"
     let description =
         "Load capabilities into the current session by ID. IDs come from the Enabled capabilities list "
         + "or from `capabilities_discover` results — do not invent IDs. After loading, the named tools are "
         + "callable for the rest of the session; a named skill's instructions are returned in this tool's "
         + "result for you to follow. A `plugin/<id>` id loads that plugin's whole tool group (and any "
-        + "governing skill) in one call. Example: `{\"ids\": [\"plugin/calendar\", \"tool/sandbox_exec\", \"skill/plot-data\"]}`."
+        + "governing skill) in one call. Do not call this tool unless the user request needs a capability "
+        + "whose exact ID was present in the live list or returned by discovery."
 
     let parameters: JSONValue? = .object([
         "type": .string("object"),
@@ -622,7 +633,7 @@ final class CapabilitiesLoadTool: OsaurusTool, @unchecked Sendable {
                 "type": .string("array"),
                 "items": .object(["type": .string("string")]),
                 "description": .string(
-                    "IDs from the Enabled capabilities list or capabilities_discover results (e.g. 'plugin/calendar', 'method/abc', 'tool/sandbox_exec', 'skill/swift-best-practices')"
+                    "Exact IDs copied from the Enabled capabilities list or capabilities_discover results"
                 ),
             ])
         ]),
@@ -652,7 +663,7 @@ final class CapabilitiesLoadTool: OsaurusTool, @unchecked Sendable {
                         kind: .invalidArgs,
                         message:
                             "Invalid ID format '\(id)' — expected `<type>/<id>` "
-                            + "(e.g. `tool/sandbox_exec`, `skill/plot-data`). Use IDs from the Enabled capabilities list or `capabilities_discover`.",
+                            + "copied exactly from the Enabled capabilities list or `capabilities_discover`.",
                         field: "ids"
                     )
                 )
@@ -1069,6 +1080,12 @@ final class CapabilitiesLoadTool: OsaurusTool, @unchecked Sendable {
                 + (skill.isFromPlugin
                     ? "the plugin skill." : skill.isBuiltIn ? "the built-in." : "the user skill.")
             output += "\n\n"
+        }
+
+        if skill.isBuiltIn,
+            let requiredTools = Self.builtInSkillToolDependencies[skill.id]
+        {
+            output += await bufferToolSpecs(named: requiredTools)
         }
 
         // A plugin skill governs its sibling tools, so auto-load the plugin's

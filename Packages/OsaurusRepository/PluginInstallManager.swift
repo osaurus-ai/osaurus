@@ -7,6 +7,11 @@
 
 import Foundation
 import CryptoKit
+#if canImport(Darwin)
+import Darwin
+#elseif canImport(Glibc)
+import Glibc
+#endif
 
 public enum PluginInstallError: Error, CustomStringConvertible, LocalizedError {
     case specNotFound(String)
@@ -387,20 +392,42 @@ public final class PluginInstallManager: @unchecked Sendable {
     }
 
     public static func updateCurrentSymlink(pluginId: String, version: SemanticVersion) throws {
+        try replaceCurrentSymlink(pluginId: pluginId, version: version) { stagedPath, currentPath in
+            if rename(stagedPath, currentPath) != 0 {
+                let code = errno
+                throw POSIXError(POSIXErrorCode(rawValue: code) ?? .EIO)
+            }
+        }
+    }
+
+    /// Publishes a prepared version pointer without exposing a missing `current` entry.
+    /// The injected commit operation keeps failure-at-the-swap-point behavior testable.
+    static func replaceCurrentSymlink(
+        pluginId: String,
+        version: SemanticVersion,
+        commit: (_ stagedPath: String, _ currentPath: String) throws -> Void
+    ) throws {
         let fm = FileManager.default
         let link = currentSymlinkURL(pluginId: pluginId)
         let dir = toolsPluginDirectory(pluginId: pluginId)
         if !fm.fileExists(atPath: dir.path) {
             try fm.createDirectory(at: dir, withIntermediateDirectories: true)
         }
-        // Remove any existing entry (regular file, live symlink, or dangling
-        // symlink). `fileExists` follows symlinks and reports a dangling link
-        // as missing, but `createSymbolicLink` would still fail with EEXIST.
-        // `try?` is intentional: nothing-to-remove is fine; if the entry truly
-        // cannot be replaced, `createSymbolicLink` will surface the error.
-        try? fm.removeItem(at: link)
+
+        // Staging beside `current` keeps the rename on one filesystem. POSIX
+        // rename then swaps the pointer atomically, so a failed commit leaves
+        // the previously active version visible to readers.
+        let stagedLink = dir.appendingPathComponent(
+            ".current.\(UUID().uuidString).tmp",
+            isDirectory: false
+        )
+        defer { try? fm.removeItem(at: stagedLink) }
         do {
-            try fm.createSymbolicLink(atPath: link.path, withDestinationPath: version.description)
+            try fm.createSymbolicLink(
+                atPath: stagedLink.path,
+                withDestinationPath: version.description
+            )
+            try commit(stagedLink.path, link.path)
         } catch {
             throw PluginInstallError.layoutInvalid(
                 "Could not refresh 'current' symlink for \(pluginId) → \(version.description): \(error). Try reinstalling the plugin."
