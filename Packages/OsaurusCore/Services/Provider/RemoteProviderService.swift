@@ -5265,7 +5265,12 @@ extension RemoteProviderService {
         request.setValue("application/json, text/event-stream", forHTTPHeaderField: "Accept")
         // `headers` lets the connect-test path pass its already-resolved
         // header set (the test API key never reaches the Keychain).
-        let resolved = headers ?? (await provider.resolvedHeadersOffMainActor())
+        let resolved: [String: String]
+        if let headers {
+            resolved = headers
+        } else {
+            resolved = await provider.resolvedHeadersOffMainActor()
+        }
         for (key, value) in resolved where isSafeHeader(name: key, value: value) {
             request.setValue(value, forHTTPHeaderField: key)
         }
