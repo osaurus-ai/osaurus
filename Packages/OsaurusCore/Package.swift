@@ -71,10 +71,13 @@ let package = Package(
         // restore, atomic typed L2 records, and a proven four-bit floor for
         // TQ-native ZAYA disk boundaries. The Nemotron Omni revision also
         // aligns the RADIO/projector contract, bounds media prefill, and
-        // enables safe image/audio hybrid-prefix restore.
+        // enables safe image/audio hybrid-prefix restore. The paged-cache
+        // follow-up separates typed-disk persistence from paged compatibility,
+        // restores recurrent companions at the exact matched boundary, and
+        // keeps every unproven cache topology fail-closed.
         .package(
             url: "https://github.com/osaurus-ai/vmlx-swift",
-            revision: "4634af5151ffd71262d180e32962939dd8b2263f"
+            revision: "0975201e745a1774fda1e78d1bc99b5bd1c668c6"
         ),
         // FluidAudio 0.14.3 added a breaking `language:` parameter to TTS
         // calls that osaurus's `TTSService` doesn't pass. Pinning to the
