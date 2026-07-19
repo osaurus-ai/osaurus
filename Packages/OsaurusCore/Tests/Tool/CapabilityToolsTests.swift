@@ -122,6 +122,12 @@ struct CapabilityLoadBufferTests {
 @Suite(.serialized)
 struct CapabilitiesDiscoverToolTests {
 
+    @Test func modelFacingSchemaDoesNotSeedNonexistentCapabilityIds() {
+        let description = CapabilitiesDiscoverTool().description
+        #expect(!description.contains("tool/sandbox_exec"))
+        #expect(!description.contains("skill/plot-data"))
+    }
+
     @Test func rejectsEmptyQueries() async throws {
         let tool = CapabilitiesDiscoverTool()
         let result = try await tool.execute(argumentsJSON: "{\"queries\": []}")
@@ -360,6 +366,19 @@ struct CapabilitiesDiscoverToolTests {
 
 @Suite(.serialized)
 struct CapabilitiesLoadToolTests {
+
+    @Test func modelFacingSchemaDoesNotSeedNonexistentCapabilityIds() throws {
+        let tool = CapabilitiesLoadTool()
+        let spec = tool.asOpenAITool().toTokenizerToolSpec()
+        let serialized = String(describing: spec)
+
+        #expect(!tool.description.contains("plugin/calendar"))
+        #expect(!tool.description.contains("tool/sandbox_exec"))
+        #expect(!tool.description.contains("skill/plot-data"))
+        #expect(!serialized.contains("plugin/calendar"))
+        #expect(!serialized.contains("tool/sandbox_exec"))
+        #expect(!serialized.contains("skill/plot-data"))
+    }
 
     @Test func rejectsEmptyIds() async throws {
         let tool = CapabilitiesLoadTool()

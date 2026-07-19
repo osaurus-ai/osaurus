@@ -161,8 +161,7 @@ public enum SystemPromptTemplates {
         pulled in on demand with capabilities_load. When no list appears, or \
         when a capability seems missing and is NOT named there, \
         `capabilities_discover({"query": "<what you need>"})` searches beyond \
-        the listed set and returns IDs like `tool/sandbox_exec` or \
-        `skill/plot-data` that you load the same way.
+        the listed set and returns exact IDs that you can load the same way.
 
         Do not invent tool names — use IDs from the list or from discovery. \
         Only after a `capabilities_discover` call comes back empty may you \
@@ -225,8 +224,8 @@ public enum SystemPromptTemplates {
             on demand and shows exactly how to load by id with \
             capabilities_load. When a capability seems missing and is NOT named \
             there, `capabilities_discover({"query": "<what you need>"})` \
-            searches beyond the listed set and returns IDs like \
-            `tool/sandbox_exec` or `skill/plot-data` that you load the same way.
+            searches beyond the listed set and returns exact IDs that you load \
+            the same way.
 
             Do not invent tool names — use IDs from the list or from discovery.
             """
@@ -532,10 +531,10 @@ public enum SystemPromptTemplates {
                 ## Enabled capabilities
 
                 Enabled for this session. Load a plugin with capabilities_load \
-                using its `plugin/<id>` (e.g. \
-                `capabilities_load({"ids": ["plugin/calendar"]})`); `tool/` and \
-                `skill/` ids load individually. List frozen at session start — \
-                capabilities_discover also finds anything installed since.
+                using the exact `plugin/<id>` printed below; `tool/` and \
+                `skill/` ids load individually. Never copy an example or invent \
+                an id. List frozen at session start — capabilities_discover also \
+                finds anything installed since.
                 """
         } else {
             intro = """
