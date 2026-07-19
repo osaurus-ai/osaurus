@@ -85,6 +85,7 @@ struct MLXBatchAdapter {
         modelDefaults: LocalGenerationDefaults.Defaults,
         draftStrategy: MLXLMCommon.DraftStrategy? = nil,
         nativeMTPExplicitSamplingFallback: Bool = false,
+        cacheTopology: ModelCacheTopologySnapshot? = nil,
         stage: String = "resolved"
     ) -> EffectiveGenerationSettings {
         let defaultTemperature: Float? = {
@@ -128,7 +129,8 @@ struct MLXBatchAdapter {
                 ? false
                 : shouldEnableCompiledBatchDecode(
                     modelName: modelName,
-                    maxBatchSize: maxBatchSize
+                    maxBatchSize: maxBatchSize,
+                    cacheTopology: cacheTopology
                 )
         )
     }
@@ -1012,8 +1014,26 @@ struct MLXBatchAdapter {
         }
     }
 
-    static func shouldEnableCompiledBatchDecode(modelName: String, maxBatchSize: Int) -> Bool {
-        maxBatchSize == 1
+    /// Compiled B=1 decode eligibility. Architecture-driven when the REAL
+    /// cache topology is known (the loaded container's per-layer cache list):
+    /// any SSM/Arrays/ZayaCCA companion or composite `CacheList` layer means
+    /// vmlx's compile stages can't trace the slot (`CacheFamily` `.mamba` /
+    /// `.zayaCCA` / `.heterogeneous` are not compile-eligible), so requesting
+    /// it only buys a per-iterator `eval(cache)` + failed promotion. The
+    /// name matcher remains the fallback for call sites that run before the
+    /// container is loaded (`pending_preload` stage) and as a belt for
+    /// families with known non-topology denials.
+    static func shouldEnableCompiledBatchDecode(
+        modelName: String,
+        maxBatchSize: Int,
+        cacheTopology: ModelCacheTopologySnapshot? = nil
+    ) -> Bool {
+        if let cacheTopology,
+            cacheTopology.requiresSSMCompanionState || cacheTopology.cacheListLayerCount > 0
+        {
+            return false
+        }
+        return maxBatchSize == 1
             && !Hy3ReasoningProfile.matches(modelId: modelName)
             && !ModelFamilyNames.isMiniMaxFamily(modelName)
             && !ModelFamilyNames.isStepFamily(modelName)
@@ -1170,6 +1190,11 @@ struct MLXBatchAdapter {
         )
         let nativeMTPExplicitSamplingFallback =
             draftStrategy?.usesNativeMTP == true && effectiveDraftStrategy == nil
+        // Fetched BEFORE the effective settings so compiled-decode
+        // eligibility can key off the container's REAL per-layer cache
+        // shape (hybrid companion slots deny compile) rather than only the
+        // name matcher; also reused for the KV-mode resolution below.
+        let cacheTopology = await container.cacheTopologySnapshot()
         let effective = Self.effectiveGenerationSettings(
             modelName: modelName,
             generation: generation,
@@ -1178,6 +1203,7 @@ struct MLXBatchAdapter {
             modelDefaults: modelDefaults,
             draftStrategy: effectiveDraftStrategy,
             nativeMTPExplicitSamplingFallback: nativeMTPExplicitSamplingFallback,
+            cacheTopology: cacheTopology,
             stage: "submitted_to_batch_engine"
         )
         await Registry.shared.recordEffectiveGenerationSettings(
@@ -1212,7 +1238,6 @@ struct MLXBatchAdapter {
         // autoregressive models.
         mlxParams.diffusionMaxDenoisingSteps =
             runtime.generation.diffusionMaxDenoisingSteps
-        let cacheTopology = await container.cacheTopologySnapshot()
         let effectiveKVMode = ModelRuntime.defaultKVMode(
             for: ServerRuntimeSettingsStore.snapshot().cache,
             modelName: modelName,

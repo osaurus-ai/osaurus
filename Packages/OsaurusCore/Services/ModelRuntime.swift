@@ -2853,6 +2853,15 @@ public actor ModelRuntime {
         if lower.contains("ornith") {
             return true
         }
+        // Bonsai (prism-ml, OsaurusAI re-bakes) — qwen3_5 model_type dense
+        // VL backbone (48 linear_attention + 16 full_attention layers →
+        // `MambaCache` companion slots), but the bundle ids carry no "qwen"
+        // substring — same situation as Ornith above. Without this entry the
+        // family silently missed the eager hybrid flip, the compiled-decode
+        // opt-out, and the `layers=hybrid-ssm` cache-key tag.
+        if lower.contains("bonsai") {
+            return true
+        }
         // Qwen3-Next (qwen3_next model_type) — newer hybrid MoE that vmlx
         // dispatches via `Qwen3Next.swift`. Same `ArraysCache` companion
         // pattern as the 3.5 / 3.6 family.

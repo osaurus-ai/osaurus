@@ -72,6 +72,18 @@ set -uo pipefail
 #                  dir is git-ignored, so nothing sensitive can land in a
 #                  commit; RECORD=1 snapshots never copy sidecars. "0" turns
 #                  it off.
+#   OSAURUS_EVALS_SIM_RAM_GB  simulate a smaller target machine's memory
+#                  policy (e.g. 16 for the 16 GB Mac profile). The eval CLI
+#                  scales memorySafety.customPhysicalMemoryFraction through
+#                  the production resolver so the resolved ABSOLUTE load
+#                  budget equals the target machine's, and defaults the
+#                  disk-L2 cap to a safe 2 GB (an explicit
+#                  OSAURUS_EVALS_DISK_L2_CAP_GB still wins). Artifacts carry
+#                  BOTH the real host RAM and the simulated value, labelled
+#                  SIMULATED — this proves the policy budget and footprint
+#                  ceiling only, never real paging/thermal/memory-pressure
+#                  behavior on the target machine. Values ≥ host RAM are
+#                  ignored (label stays provenance-only).
 #   PARALLEL_REMOTE "1" (default) → when MODELS mixes local and remote-provider
 #                  ids, run the remote models' LLM pass in a background lane
 #                  concurrent with the local lane (remote decode is
@@ -193,6 +205,14 @@ STAMP="$(date +%Y%m%d-%H%M%S)"
 OUT="${LOOP_OUT_ROOT}/${STAMP}"
 mkdir -p "${OUT}"
 log "Run dir: ${OUT}"
+
+# Surface the simulated target-RAM profile loudly at the top of the run so a
+# reader of the log can never mistake a policy-budget simulation for a real
+# constrained-hardware run. The eval CLI applies (and re-logs) the actual
+# runtime override per process; values ≥ host RAM are ignored there.
+if [[ -n "${OSAURUS_EVALS_SIM_RAM_GB:-}" ]]; then
+  log "SIMULATED target-RAM profile: ${OSAURUS_EVALS_SIM_RAM_GB} GB (policy budget only — NOT real hardware proof)"
+fi
 
 filter_args=()
 [[ -n "${FILTER}" ]] && filter_args=(--filter "${FILTER}")

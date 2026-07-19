@@ -758,6 +758,31 @@ public struct EvalCase: Sendable, Codable, Identifiable {
         /// Default true: hybrid-SSM models must show companion hits for the
         /// case to pass, regardless of which floors the case declares.
         public let requireCompanionOnHybrid: Bool?
+        /// Per-turn `enable_thinking` values (index-aligned with the turn
+        /// order; missing indices keep the model default). The hybrid-SSM
+        /// boundary stressor: toggling Thinking mid-conversation re-derives
+        /// companion states — the path the bounded companion LRU must keep
+        /// from re-growing to the model's full on-disk size.
+        public let thinkingPerTurn: [Bool]?
+        /// When true and the topology is hybrid-SSM, the case additionally
+        /// requires disk-L2 evidence (stores or hits) alongside companion
+        /// movement — per the AGENTS.md hybrid cache rule that a KV or
+        /// companion hit alone is not full reuse proof for a Qwen 3.5-class
+        /// hybrid whose older boundaries must spill to disk-L2. Skipped
+        /// (with a note) on non-hybrid topologies.
+        public let requireDiskL2EvidenceOnHybrid: Bool?
+        /// When true, the case's peak physical footprint is gated against
+        /// the PRODUCTION-resolved memory-safety load budget (the same
+        /// resolver the runtime loads under, including a simulated-RAM
+        /// profile when `OSAURUS_EVALS_SIM_RAM_GB` is in force). Fails when
+        /// the budget resolves and the peak exceeds it; notes when no
+        /// budget resolves (unlimited/diagnostic mode).
+        public let gatePeakFootprintToResolvedBudget: Bool?
+        /// Ceiling (MB) on footprint growth across the conversation:
+        /// last-turn footprint − first-turn footprint. The multi-turn
+        /// memory-growth gate — monotonic growth back toward the model's
+        /// on-disk size fails here even when every reuse floor passes.
+        public let maxFootprintGrowthMb: Double?
 
         public init(
             followUpTurns: [String]? = nil,
@@ -767,7 +792,11 @@ public struct EvalCase: Sendable, Codable, Identifiable {
             minDiskL2HitsDelta: Int? = nil,
             minDiskL2StoresDelta: Int? = nil,
             maxPeakPhysFootprintMb: Double? = nil,
-            requireCompanionOnHybrid: Bool? = nil
+            requireCompanionOnHybrid: Bool? = nil,
+            thinkingPerTurn: [Bool]? = nil,
+            requireDiskL2EvidenceOnHybrid: Bool? = nil,
+            gatePeakFootprintToResolvedBudget: Bool? = nil,
+            maxFootprintGrowthMb: Double? = nil
         ) {
             self.followUpTurns = followUpTurns
             self.maxTokens = maxTokens
@@ -777,6 +806,10 @@ public struct EvalCase: Sendable, Codable, Identifiable {
             self.minDiskL2StoresDelta = minDiskL2StoresDelta
             self.maxPeakPhysFootprintMb = maxPeakPhysFootprintMb
             self.requireCompanionOnHybrid = requireCompanionOnHybrid
+            self.thinkingPerTurn = thinkingPerTurn
+            self.requireDiskL2EvidenceOnHybrid = requireDiskL2EvidenceOnHybrid
+            self.gatePeakFootprintToResolvedBudget = gatePeakFootprintToResolvedBudget
+            self.maxFootprintGrowthMb = maxFootprintGrowthMb
         }
     }
 
@@ -1011,13 +1044,31 @@ public struct EvalCase: Sendable, Codable, Identifiable {
         public let minDecodeTokensPerSecond: Double?
         /// Optional ceiling on the MEDIAN time-to-first-token (ms).
         public let maxTtftMs: Double?
-        /// Model-lifecycle mode: `"cold_load"` measures a full unload →
-        /// reload → first-token cycle per rep (the cold-start row), then a
-        /// warm first-token reading for the swap-latency contrast. nil →
-        /// the standard fixed-decode generation benchmark. Lifecycle rows
-        /// are trend telemetry — no hard floors — and SKIP on hosts whose
-        /// run model is not a local MLX model (nothing to unload).
+        /// Model-lifecycle mode:
+        ///   - `"cold_load"` measures a full unload → reload → first-token
+        ///     cycle per rep (the cold-start row), then a warm first-token
+        ///     reading for the swap-latency contrast. Trend telemetry —
+        ///     no hard floors.
+        ///   - `"cold_load_cancel"` dispatches a generation against a fully
+        ///     evicted model, cancels it `cancelAfterMs` after dispatch (i.e.
+        ///     inside the cold load), and requires prompt stream
+        ///     termination plus a successful full recovery generation — the
+        ///     zombie-load / startup-cancellation reliability row.
+        ///   - `"midgen_cancel"` warms the model, cancels `cancelAfterMs`
+        ///     after the FIRST streamed delta, and requires the same
+        ///     termination + recovery proof mid-decode.
+        /// nil → the standard fixed-decode generation benchmark. Lifecycle
+        /// rows SKIP on hosts whose run model is not a local MLX model
+        /// (nothing to unload / cancel).
         public let lifecycle: String?
+        /// Cancellation lanes: ms from the anchor point (dispatch for
+        /// `cold_load_cancel`, first delta for `midgen_cancel`) to the
+        /// cancel signal. nil → 750.
+        public let cancelAfterMs: Double?
+        /// Cancellation lanes: ceiling (ms) on cancel-signal → stream
+        /// termination. nil → 15000. A cancel that outlives this is a
+        /// wedged cancel and fails the row.
+        public let maxCancelLatencyMs: Double?
 
         public init(
             reps: Int,
@@ -1025,7 +1076,9 @@ public struct EvalCase: Sendable, Codable, Identifiable {
             promptRepeat: Int? = nil,
             minDecodeTokensPerSecond: Double? = nil,
             maxTtftMs: Double? = nil,
-            lifecycle: String? = nil
+            lifecycle: String? = nil,
+            cancelAfterMs: Double? = nil,
+            maxCancelLatencyMs: Double? = nil
         ) {
             self.reps = reps
             self.maxTokens = maxTokens
@@ -1033,6 +1086,8 @@ public struct EvalCase: Sendable, Codable, Identifiable {
             self.minDecodeTokensPerSecond = minDecodeTokensPerSecond
             self.maxTtftMs = maxTtftMs
             self.lifecycle = lifecycle
+            self.cancelAfterMs = cancelAfterMs
+            self.maxCancelLatencyMs = maxCancelLatencyMs
         }
     }
 

@@ -8,6 +8,7 @@
 import CryptoKit
 import Darwin
 import Foundation
+@preconcurrency import MLXLMCommon
 import OsaurusCore
 
 /// Path of this process's isolated root, published for the `atexit` hook.
@@ -160,6 +161,8 @@ public enum EvalBootstrap {
     ///   - a COPY of `config/sandbox.json` so sandbox suites still detect a
     ///     provisioned host (`setupComplete`) — provisioning stamps written
     ///     during the run land in the throwaway copy;
+    ///   - a COPY of `config/prefill-tuning.json` so hermetic runs apply the
+    ///     same measured prefill step sizes the production runtime uses;
     ///   - a `container/` symlink: the sandbox VM (kernel, rootfs, workspace)
     ///     is host-global BY DESIGN — boot costs minutes and the container is
     ///     shared with the host app — so it is the one deliberate exception
@@ -284,11 +287,16 @@ public enum EvalBootstrap {
         //   - sandbox.json: sandbox suites gate on `setupComplete`; without
         //     the snapshot every SandboxFrontier case silently skips with
         //     "sandbox setup incomplete on this host".
+        //   - prefill-tuning.json: per-(model, machine) prefill step sizes
+        //     measured by `osaurus bench --tune-prefill`. The production
+        //     runtime applies these on every generation, so a hermetic run
+        //     that drops them measures an untuned configuration the user
+        //     never sees.
         // A copy keeps the real files pristine when a run (or an executed
         // configure tool) writes them back — the write lands in the copy.
         let realConfig = realRoot.appendingPathComponent("config", isDirectory: true)
         let isolatedConfig = isolatedRoot.appendingPathComponent("config", isDirectory: true)
-        for fileName in ["chat.json", "sandbox.json"] {
+        for fileName in ["chat.json", "sandbox.json", "prefill-tuning.json"] {
             let source = realConfig.appendingPathComponent(fileName)
             guard fm.fileExists(atPath: source.path) else { continue }
             try? fm.createDirectory(at: isolatedConfig, withIntermediateDirectories: true)
@@ -376,6 +384,12 @@ public enum EvalBootstrap {
     }
 
     public static func run(_ plan: EvalBootstrapPlan) async {
+        // Make the self-declared simulated-RAM target profile real before any
+        // model loads. Must run BEFORE the KV-regime override so an explicit
+        // OSAURUS_EVALS_DISK_L2_CAP_GB still wins over the profile's safe
+        // default cap. Process-local; never persisted.
+        applySimulatedMemoryProfileIfRequested()
+
         // Make the self-declared KV-cache regime real before any model loads
         // (so a "memory-only" run truly disables the disk-L2 lane instead of
         // inheriting the disk-L2 default). Process-local; never persisted.
@@ -394,6 +408,134 @@ public enum EvalBootstrap {
         if !plan.searchIndexScope.isEmpty {
             await initializeSearchIndices(plan.searchIndexScope)
         }
+    }
+
+    /// Safe default for the disk-L2 cap under a simulated constrained-RAM
+    /// profile, when neither the user's settings nor
+    /// `OSAURUS_EVALS_DISK_L2_CAP_GB` chose one. A 16 GB-class target machine
+    /// is usually storage-constrained too, and `DiskCache` enforces the cap
+    /// synchronously after every store, so 2 GB bounds cache growth without
+    /// disabling the reuse lane the profile is supposed to measure.
+    nonisolated static let simulatedProfileDefaultDiskL2CapGB: Double = 2
+
+    /// Wire the self-declared `OSAURUS_EVALS_SIM_RAM_GB` target profile to the
+    /// ACTUAL runtime memory-safety plan so a "simulated 16 GiB" run really
+    /// enforces the load budget a 16 GiB machine would resolve, rather than
+    /// recording a provenance label while the 48 GiB host math stays in force.
+    ///
+    /// HOW (production math only, no hidden gates): the resolved plan computes
+    /// its load budget as `fraction × physicalMemory`, where `fraction` is the
+    /// mode profile's default unless `memorySafety.customPhysicalMemoryFraction`
+    /// (a documented user setting) overrides it. This override reads the base
+    /// fraction back out of the production resolver, then sets
+    /// `customPhysicalMemoryFraction = base × simulatedRAM / actualRAM`, so
+    /// the resolved ABSOLUTE budget on this host equals the target machine's
+    /// (e.g. Safe Auto 0.70 × 16 GiB = 11.2 GiB → 0.2333 × 48 GiB). Every
+    /// consumer downstream (allocator limit, KV/prefix caps, refusal messages)
+    /// sees it through the same resolver production uses.
+    ///
+    /// HONESTY BOUNDARIES (also why artifacts carry BOTH RAM values — see
+    /// `RunEnvironment.simulatedRamMb`):
+    ///   - proves the 16 GiB POLICY budget and lets footprint gates check
+    ///     against it; does NOT prove real paging, compression, thermal, or
+    ///     memory-pressure behavior — physical RAM is still the host's.
+    ///   - Osaurus's advisory RAM feasibility signals (`checkRAMFeasibility`,
+    ///     GPU-working-set banner) intentionally keep using real host memory:
+    ///     they are advisory UI, and faking them would hide real-host errors.
+    ///   - refuses to "simulate" MORE RAM than the host has: that would raise
+    ///     the budget above physical memory and invite allocation failures
+    ///     that say nothing about the target machine.
+    /// Applied process-locally via `overrideSnapshotInMemory`; never persisted.
+    static func applySimulatedMemoryProfileIfRequested() {
+        let env = ProcessInfo.processInfo.environment
+        guard let simMb = RunEnvironment.simulatedRamMb(environment: env) else { return }
+        let simBytes = UInt64(simMb) << 20
+        let actualBytes = ProcessInfo.processInfo.physicalMemory
+        guard actualBytes > 0 else { return }
+
+        func warn(_ message: String) {
+            FileHandle.standardError.write(Data("[evals] sim-RAM profile: \(message)\n".utf8))
+        }
+
+        switch simulatedMemoryProfileSettings(
+            base: ServerRuntimeSettingsStore.snapshot(),
+            simulatedBytes: simBytes,
+            actualBytes: actualBytes
+        ) {
+        case .applied(let settings, let notes):
+            ServerRuntimeSettingsStore.overrideSnapshotInMemory(settings)
+            let line =
+                "[evals] sim-RAM profile → \(simMb / 1024)GB (SIMULATED on \(actualBytes >> 30)GB host): "
+                + "\(notes.joined(separator: "; ")) (process-local)\n"
+            FileHandle.standardError.write(Data(line.utf8))
+        case .rejected(let reason):
+            warn(reason)
+        }
+    }
+
+    /// Outcome of resolving a simulated target-RAM profile against the
+    /// current settings — either the settings to pin (with human-readable
+    /// notes for the log) or the reason the simulation is refused.
+    enum SimulatedMemoryProfileResolution: Equatable {
+        case applied(VMLXServerRuntimeSettings, notes: [String])
+        case rejected(reason: String)
+    }
+
+    /// Pure profile math for `applySimulatedMemoryProfileIfRequested`,
+    /// separated so the boundary conditions (larger-than-host refusal,
+    /// non-fraction budget, explicit-cap precedence) are unit-testable
+    /// without touching process environment or the settings store.
+    nonisolated static func simulatedMemoryProfileSettings(
+        base: VMLXServerRuntimeSettings,
+        simulatedBytes: UInt64,
+        actualBytes: UInt64
+    ) -> SimulatedMemoryProfileResolution {
+        guard simulatedBytes < actualBytes else {
+            return .rejected(
+                reason:
+                    "simulated RAM \(simulatedBytes >> 30)GB ≥ host RAM \(actualBytes >> 30)GB "
+                    + "— ignored (cannot simulate a larger machine; label stays provenance-only)"
+            )
+        }
+
+        let plan = ServerRuntimeSettingsStore.resolvedMemorySafetyPlan(for: base)
+        guard case .fraction(let baseFraction) = plan.loadConfiguration.memoryLimit,
+            baseFraction > 0
+        else {
+            return .rejected(
+                reason:
+                    "resolved load budget is not a physical-memory fraction "
+                    + "(mode=\(base.memorySafety.mode.rawValue)) — cannot scale; "
+                    + "label stays provenance-only"
+            )
+        }
+
+        var settings = base
+        let scaledFraction = baseFraction * Double(simulatedBytes) / Double(actualBytes)
+        settings.memorySafety.customPhysicalMemoryFraction = scaledFraction
+
+        var notes = [
+            String(
+                format: "customPhysicalMemoryFraction=%.4f (base %.2f × %dGB / %dGB → budget %.1fGB)",
+                scaledFraction,
+                baseFraction,
+                Int(simulatedBytes >> 30),
+                Int(actualBytes >> 30),
+                baseFraction * Double(simulatedBytes) / Double(1 << 30)
+            )
+        ]
+
+        // Safe disk-L2 default for the constrained profile; an explicit
+        // OSAURUS_EVALS_DISK_L2_CAP_GB (applied after this, in
+        // applyKVRegimeOverrideIfRequested) or a user-configured cap wins.
+        if settings.cache.blockDisk.maxSizeGB == nil {
+            settings.cache.blockDisk.maxSizeGB = simulatedProfileDefaultDiskL2CapGB
+            notes.append(
+                "blockDisk.maxSizeGB=\(simulatedProfileDefaultDiskL2CapGB) (profile default)"
+            )
+        }
+
+        return .applied(settings, notes: notes)
     }
 
     /// Sentinel disk-KV directory that can never be a writable directory

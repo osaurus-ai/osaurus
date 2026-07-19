@@ -130,6 +130,16 @@ struct IsKnownHybridModelMCDCTests {
         #expect(ModelRuntime.isKnownHybridModel(name: "ornith-1.0-35b-mxfp4"))  // picker form
     }
 
+    @Test("B2.bonsai family (qwen3_5 dense-VL model_type, no qwen substring) flips")
+    func b2_bonsai() {
+        // Bonsai (prism-ml) is a qwen3_5 dense VL backbone — 48
+        // linear_attention (MambaCache) + 16 full_attention layers — whose
+        // bundle ids carry no "qwen" substring, like Ornith.
+        #expect(ModelRuntime.isKnownHybridModel(name: "OsaurusAI/Bonsai-27b-1bit-JANG"))
+        #expect(ModelRuntime.isKnownHybridModel(name: "OsaurusAI/Bonsai-27b-Ternary-JANG"))
+        #expect(ModelRuntime.isKnownHybridModel(name: "bonsai-27b-1bit-jang"))  // picker form
+    }
+
     @Test("B2 all-false: qwen3 / qwen3-coder / qwen2 / qwen3.7 do NOT flip Block 2")
     func b2_allFalse() {
         #expect(!ModelRuntime.isKnownHybridModel(name: "qwen3-coder-plus"))

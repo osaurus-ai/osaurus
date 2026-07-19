@@ -1,0 +1,22 @@
+{
+  "id": "cache_proof.thinking-toggle-boundary",
+  "domain": "cache_proof",
+  "label": "cache proof • thinking off→on→off toggles must not leak footprint across hybrid boundaries",
+  "query": "What is 17 multiplied by 23? Answer with just the number.",
+  "notes": "The hybrid boundary stressor: toggling enable_thinking mid-conversation invalidates/re-derives SSM companion states — the exact path where Bonsai/Qwen 3.5 retained several hundred MiB per boundary under the old unbounded companion LRU (see ModelRuntime.ssmCompanionEntryLimit). Four turns toggle thinking off→on→off→on while the growth gate holds footprint flat and the resolved-budget gate keeps the peak inside the production memory-safety plan (the simulated 16 GiB budget when OSAURUS_EVALS_SIM_RAM_GB=16). requireCompanionOnHybrid stays off: the toggle deliberately breaks prefix continuity, so companion hits are not guaranteed — the footprint behavior is what is scored. Off-CI (needs a local model).",
+  "fixtures": {},
+  "expect": {
+    "cacheProof": {
+      "followUpTurns": [
+        "Now explain step by step how you would compute 34 times 29 without a calculator.",
+        "Give just the final answer for 34 times 29.",
+        "Explain step by step: is 391 divisible by 17?"
+      ],
+      "maxTokens": 256,
+      "thinkingPerTurn": [false, true, false, true],
+      "maxFootprintGrowthMb": 1280,
+      "gatePeakFootprintToResolvedBudget": true,
+      "requireCompanionOnHybrid": false
+    }
+  }
+}
