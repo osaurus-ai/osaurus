@@ -1,14 +1,58 @@
 # Nemotron Omni Multimodal Checkpoint — 2026-07-19
 
-Status: **PARTIAL — the rebuilt isolated Release app now passes the default
-image, audio, video, mixed-media, restart/L2, and multi-turn transport rows.
-Video with Thinking enabled and 4/4 TurboQuant-KV video accuracy remain open.**
+Status: **PARTIAL — the current isolated Release app passes image, AIFF audio,
+video, persisted mixed media, paged/L2 hybrid restore, selective 4/4
+TurboQuant-KV, and default restoration. Automatic tool choice, one-shot mixed
+instruction compliance, detailed TQ-video accuracy, low-RAM override, and
+delegation remain open.**
 
 Exact proof model:
 
 `/Users/eric/models/dealign.ai/Nemotron-Omni-Nano-JANGTQ4-CRACK`
 
 This checkpoint does not use or make claims about MXFP4.
+
+## Current follow-up source and app
+
+The current cache/media follow-up uses:
+
+- Osaurus `1244a8a94ff8b5b3b00a375fe138964f5589a809`;
+- vMLX Swift `0975201e745a1774fda1e78d1bc99b5bd1c668c6`;
+- Release app
+  `/tmp/osaurus-nemotron-cache157-dd-9662b79/Build/Products/Release/osaurus.app`;
+- isolated bundle id `com.dinoki.osaurus.nemotroncache157proof`;
+- isolated storage root
+  `/tmp/osaurus-nemotron-cache157-runtime-ae910a19-clean2`.
+
+The app was built from the exact source above, ad-hoc signed, and operated
+through its real SwiftUI Settings, agent editor, attachment picker, and chat
+composer. The model remained the non-MXFP4 JANGTQ4 bundle named above.
+
+## Follow-up app-side root causes
+
+The generic attachment picker accepts `UTType.audio`, but
+`FloatingInputCard.audioExtensions` did not include AIFF/AIFF-C, CAF, or the
+common alternate WAV/MPEG/M4A extensions. A selectable AIFF file could
+therefore fall through the router instead of reaching `attachAudio`. The
+follow-up adds `wave`, `mpeg`, `x-m4a`, `aif`, `aiff`, `aifc`, and `caf` to the
+same tested routing set. `ChatAttachmentSecurityTests` now checks all accepted
+audio extensions; 10/10 focused tests passed in
+`/tmp/osaurus-nemotron-aiff-attachment-xcode-tests-1244a8a94.log`.
+
+The tools-enabled assistant also reproduced a separate prompt/schema defect:
+model-facing capability guidance contained example IDs that were not live
+capabilities. The follow-up removes those fictitious IDs and requires exact IDs
+from the live list or discovery results. This does not claim that general
+automatic tool selection is solved: the AIFF tools-enabled row still selected
+irrelevant web search after first transcribing the phrase correctly.
+
+Source trace found no image/audio overwrite in the mixed-media path.
+`ModelRuntime.mapOpenAIChatToMLX` extracts images, videos, and audio separately
+into the same message; `MLXBatchAdapter` preserves those fields while
+pre-encoding audio; `NemotronHOmniProcessor.prepare` and
+`NemotronHOmni.prepare` process and splice visual and audio placeholders
+independently. The current mixed row below therefore remains an honest
+instruction-following partial, not a transport fix invented without evidence.
 
 ## App-side root cause
 
@@ -121,6 +165,27 @@ PARTIAL, not a quality pass. The UI was restored to `Engine Selected`, saved,
 and a fresh restart confirmed `fp16`, zero TurboQuant-KV layers, and paged cache
 off.
 
+## Current `0975201e` / `1244a8a94` live matrix
+
+A real custom agent named `Media No Tools` was created through the UI. Its
+Tools and Memory abilities were both visibly switched off so media transport
+could be separated from tool choice and legacy-memory contamination.
+
+| Row | Current visible result |
+|---|---|
+| AIFF, controlled agent | The picker showed `nemotron-audio.aiff`; the answer was `AmberLighthouse7`, TTFT 0.39 s, 103.4 tok/s, 5 tokens. The database persisted `type=audio`, `format=aiff`. Missing spaces/number normalization remain a model ASR/instruction caveat. |
+| AIFF, default tools-enabled assistant | The response initially streamed `Amber Lighthouse 7`, then made irrelevant web searches and fabricated retrieval guidance; TTFT 1.15 s, 101.4 tok/s, 152 tokens. This reproduces a tool-routing defect, not attachment loss. |
+| Video, default FP16 cache | `red-green-blue.mp4` returned `Red, Green, Blue`; TTFT 7.74 s, 103.8 tok/s, 6 tokens. |
+| Image + AIFF, first turn | The first answer returned only `The verification code is Amber Lighthouse 7.`; TTFT 1.25 s, 107.1 tok/s. This is not counted as a one-shot mixed-instruction pass. |
+| Image follow-up, no reattachment | `The background color is red and the center-square color is blue.`; TTFT 0.57 s, 104.5 tok/s. This proves the image remained in the persisted mixed turn. |
+| Mixed follow-up after cache-setting reload | Correctly combined the code, red background, and blue center square in one sentence; TTFT 2.16 s, 108.6 tok/s, 24 tokens. |
+| Paged cache, 64 blocks | Cold `CACHE PRIME`: 2.06 s, 105.6 tok/s. Warm `CACHE PAGED`: 0.53 s, 101.1 tok/s. Telemetry reported 97 paged/prefix hits and zero evictions. |
+| Paged eviction to disk | With block size 64 and max blocks 2 selected in Settings, the coherent mixed follow-up produced 152 evictions, two disk-L2 hits, and two exact SSM-companion hits with no companion miss/rederive. |
+| TQ 4/4, cold then warm | Cold conversion returned `TQ HYBRID OK` at 4.26 s and 4.9 tok/s. The warm turn returned `TQ WARM OK` at 0.58 s and 73.0 tok/s. Telemetry converted exactly six KV layers while leaving all 23 Mamba layers native. |
+| TQ 4/4 video | The simple fixture returned `Red, Green, Blue`; TTFT 6.99 s, 60.3 tok/s. The prior fine-detail quantitative-video failure is still open. |
+| Activity Monitor | Osaurus visibly measured 17.84 GB after paged/TQ/video use. The cumulative isolated cache root measured 6.78 GiB; that is not a clean per-turn compression delta. |
+| Defaults restored | The real UI showed paged OFF and `Engine Selected`; the saved live-server state reported `paged_kv_enabled=false`, `live_kv_codec=engine_selected`, prefix/disk/SSM rederive on, and no model loaded. |
+
 ## Remaining limits
 
 - Video with Thinking enabled still length-stops in the deterministic direct
@@ -129,7 +194,12 @@ off.
   from transition/cache state.
 - The automatic `share_artifact` selection on one transcript-only request is
   a tool-choice issue, not a multimodal decoder/transport failure.
+- The current tools-enabled AIFF row also selected irrelevant web search after
+  a correct initial transcript. The Tools-OFF A/B proves media transport; the
+  broader automatic-tool policy still needs its own fix and regression matrix.
 - 4/4 TurboQuant-KV works structurally for this hybrid topology, including
   disk and SSM companion reuse, but its video-detail accuracy is not accepted.
 - Low-RAM warning override behavior remains unverified because this external
   model had no size estimate and the warning did not appear.
+- Spawn/delegation RAM preflight and repeated model-swap isolation remain
+  unverified on this exact app source.
