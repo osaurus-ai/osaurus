@@ -1213,7 +1213,7 @@ public enum SystemPromptTemplates {
         let copyBullet =
             hostWritable
             ? "- Move a file between the two areas: `file_copy(source, destination)` — raw byte copy, binary-safe (PDFs, images, archives). Same path rule: relative = workspace, `/workspace/...` = sandbox."
-            : "- Stage a workspace file into the sandbox: `file_copy(source, destination)` — raw byte copy, binary-safe (PDFs, images, archives). The destination must be a `/workspace/...` path (the workspace is read-only)."
+            : "- Stage a workspace file into the sandbox: `file_copy(source, destination)` — raw byte copy, binary-safe (PDFs, images, archives); the destination must be a `/workspace/...` path."
         return """
             Tool dispatch:
             - Read files / list dirs / search: `file_read` (reads a file or lists a directory — the path decides), `file_search` (they reach both your workspace and `/workspace/...` sandbox paths — see `## Files`).
@@ -1526,7 +1526,7 @@ public enum SystemPromptTemplates {
             - **Workspace** (your read-only host folder) — the default. For "what's in my workspace / on my Desktop", use `file_read` (it reads a file or lists a directory) and `file_search`. Relative paths and `/Users/...` paths are the workspace.
             - **Sandbox** scratch area — pass a `/workspace/...` path to the SAME `file_read` / `file_search`.
 
-            The workspace is read-only — you cannot create, edit, or delete files in it, so never offer to; say so if asked (the user can enable folder writes in the agent's sandbox settings). Create or change files with `sandbox_write_file` (pass `content` to write the whole file, or `old_string`+`new_string` to edit one match — it writes the sandbox), and run commands with `sandbox_exec` (it runs in the sandbox, which has no copy of the workspace). To process a workspace file with a command, first copy it into the sandbox with `file_copy(source, destination)` — a raw byte copy that also works for binaries (PDFs, images, archives) that `file_read` cannot open; the destination must be a `/workspace/...` path while the workspace is read-only. Surface results with `share_artifact`. \(secretLine)
+            The workspace is read-only — you cannot create, edit, or delete files in it, so never offer to; say so if asked (the user can enable folder writes in the agent's sandbox settings). Create or change files with `sandbox_write_file` (pass `content` to write the whole file, or `old_string`+`new_string` to edit one match — it writes the sandbox), and run commands with `sandbox_exec` (it runs in the sandbox, which has no copy of the workspace — to process a workspace file with a command, first stage it into a `/workspace/...` path with `file_copy`, a byte copy that also carries binaries `file_read` cannot open). Surface results with `share_artifact`. \(secretLine)
             """
     }
 
