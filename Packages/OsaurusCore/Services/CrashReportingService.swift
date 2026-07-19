@@ -144,11 +144,18 @@ public final class CrashReportingService {
     /// `static` and `nonisolated` so hot, off-main paths (such as plugin tool invocation) can
     /// annotate without hopping to the main actor, which can deadlock when the main thread is
     /// busy. A no-op when crash reporting isn't running (Sentry drops breadcrumbs with no SDK).
+    ///
+    /// Each breadcrumb is also mirrored as a structured Sentry Log row. Breadcrumbs only
+    /// travel attached to a captured event, so a release with few events has almost no
+    /// queryable timeline — the 0.22.6 triage had zero Logs rows to correlate hangs against.
+    /// The mirror gives release triage a searchable stream (same category/message contract:
+    /// identifiers only) without instrumenting every call site twice.
     public nonisolated static func recordBreadcrumb(category: String, message: String) {
         guard SentrySDK.isEnabled else { return }
         let crumb = Breadcrumb(level: .info, category: category)
         crumb.message = message
         SentrySDK.addBreadcrumb(crumb)
+        SentrySDK.logger.info(message, attributes: ["category": category])
     }
 
     // MARK: - DSN resolution
@@ -221,6 +228,17 @@ public final class CrashReportingService {
             options.enableAutoPerformanceTracing = false
             options.tracesSampleRate = 0.0
 
+            // Release health: sessions are what turn raw event counts into
+            // "N of M users affected" and crash-free rates per release. On by
+            // default in the SDK, but pinned explicitly because triage depends
+            // on it — 0.22.6 had to be triaged from bare event counts.
+            options.enableAutoSessionTracking = true
+
+            // Structured logs (mirrored from `recordBreadcrumb`): gives each
+            // release a queryable operation timeline in Sentry → Logs. Same
+            // privacy contract as breadcrumbs — identifiers only, no content.
+            options.enableLogs = true
+
             // Don't turn transient network failures into issues, and don't log
             // outgoing request URLs as breadcrumbs — both are on by default,
             // both are out of scope (a failed HTTP response isn't a crash), and
@@ -234,10 +252,17 @@ public final class CrashReportingService {
             // and don't exist on the macOS SDK, so there's nothing to disable.)
             options.sendDefaultPii = false
             options.beforeSend = { event in
-                // Defense-in-depth on top of `sendDefaultPii = false`: drop the
-                // user object and the device hostname (often "<Name>'s MacBook")
-                // from every event before it leaves the machine.
-                event.user = nil
+                // Defense-in-depth on top of `sendDefaultPii = false`: strip
+                // the device hostname (often "<Name>'s MacBook") and every
+                // identifying user field from the event before it leaves the
+                // machine. Keep ONLY the SDK's anonymous installation id — a
+                // random UUID stored locally, attached by the SDK as `user.id`
+                // when no user is set. Blanking the whole user (as 0.22.6 did)
+                // made Sentry report "Users Impacted: 0" on every issue, so
+                // release triage couldn't tell one broken machine from a fleet.
+                let anonymous = User()
+                anonymous.userId = event.user?.userId
+                event.user = anonymous
                 event.serverName = nil
                 return event
             }

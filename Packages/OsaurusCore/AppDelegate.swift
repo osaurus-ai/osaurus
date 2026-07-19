@@ -2301,7 +2301,29 @@ extension AppDelegate {
                 if hasDeeplink {
                     // Deeplink targets are baked into the view at creation, so the
                     // hosting controller has to be rebuilt to deliver them.
-                    existingWindow.contentViewController = NSHostingController(rootView: root)
+                    //
+                    // End any attached sheets FIRST: swapping the hosting
+                    // controller tears down the old SwiftUI graph, but a
+                    // SwiftUI `.sheet`'s presentation window stays attached to
+                    // this NSWindow and keeps observing parent frame changes.
+                    // The swap itself resizes the window (the new hosting
+                    // view's constraint pass updates the content-size extrema),
+                    // and the orphaned sheet's size callback then re-enters the
+                    // torn-down graph and traps inside SwiftUI
+                    // (Sentry APPLE-MACOS-EF).
+                    while let sheet = existingWindow.attachedSheet {
+                        existingWindow.endSheet(sheet)
+                    }
+                    let replacement = NSHostingController(rootView: root)
+                    // Match `WindowManager.createWindow`: AppKit owns this
+                    // window's size (defaultSize + frame autosave). Leaving the
+                    // default sizingOptions on lets the swapped-in hosting view
+                    // push its measured size back onto the window every layout
+                    // pass — the frame change seen in the EF crash stack.
+                    if #available(macOS 13.0, *) {
+                        replacement.sizingOptions = []
+                    }
+                    existingWindow.contentViewController = replacement
                 } else if let initialTab {
                     // No deeplink: drive navigation through the shared state the
                     // existing view already observes. Recreating the hosting

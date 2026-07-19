@@ -2529,6 +2529,46 @@ struct RuntimePolicySourceTests {
         )
     }
 
+    /// Management-window deeplink reuse swaps the hosting controller of a
+    /// live NSWindow. A SwiftUI `.sheet`'s presentation window stays attached
+    /// through that swap and keeps observing parent frame changes; when the
+    /// new hosting view resizes the window, the orphaned sheet re-enters its
+    /// torn-down graph and traps inside SwiftUI (Sentry APPLE-MACOS-EF).
+    /// Pin the two mitigations: end attached sheets before the swap, and
+    /// clear `sizingOptions` on the replacement controller so it can't push
+    /// content-size extrema frame changes onto the reused window.
+    @Test("Management window deeplink reuse detaches sheets before swapping the hosting controller")
+    func managementDeeplinkReuseDetachesSheetsBeforeControllerSwap() throws {
+        let appDelegate = try Self.source("AppDelegate.swift")
+
+        let reuseStart = try #require(
+            appDelegate.range(of: "if let existingWindow = windowManager.window(for: .management)")
+        )
+        let reuseWindow = String(
+            appDelegate[
+                reuseStart.lowerBound
+                    ..< appDelegate.index(
+                        reuseStart.lowerBound,
+                        offsetBy: 2400,
+                        limitedBy: appDelegate.endIndex
+                    )!
+            ]
+        )
+
+        let endSheets = try #require(
+            reuseWindow.range(of: "while let sheet = existingWindow.attachedSheet")
+        )
+        let swap = try #require(
+            reuseWindow.range(of: "existingWindow.contentViewController = replacement")
+        )
+        #expect(
+            endSheets.lowerBound < swap.lowerBound,
+            "attached sheets must be ended before the hosting controller swap"
+        )
+        #expect(reuseWindow.contains("existingWindow.endSheet(sheet)"))
+        #expect(reuseWindow.contains("replacement.sizingOptions = []"))
+    }
+
     @Test("Local bundle config readers preserve discovered bundle paths")
     func localBundleConfigReadersPreserveDiscoveredBundlePaths() throws {
         let defaults = try Self.source("Services/LocalGenerationDefaults.swift")
@@ -3107,5 +3147,30 @@ struct RuntimePolicySourceTests {
             "Sentry scrubs breadcrumbs containing prompt-like fields as content; token counts must remain visible for OOM/context-growth triage"
         )
         #expect(adapter.contains("submit model=\\(modelName) batch=\\(maxBatchSize)"))
+    }
+
+    /// Pins the release-observability wiring added after the 0.22.6 triage,
+    /// which had no structured Logs rows, no usable users-affected counts, and
+    /// no commit/deploy association to attribute regressions against.
+    @Test("Sentry release telemetry keeps sessions, logs, and the anonymous install id")
+    func sentryReleaseTelemetryWiring() throws {
+        let crashReporting = try Self.source("Services/CrashReportingService.swift")
+
+        // Release health sessions and structured logs must stay enabled.
+        #expect(crashReporting.contains("options.enableAutoSessionTracking = true"))
+        #expect(crashReporting.contains("options.enableLogs = true"))
+
+        // Breadcrumbs mirror into Sentry Logs so releases have a queryable
+        // timeline even when few events are captured.
+        #expect(crashReporting.contains("SentrySDK.logger.info(message, attributes: [\"category\": category])"))
+
+        // beforeSend must keep ONLY the SDK's anonymous installation id —
+        // blanking the whole user (`event.user = nil`, as 0.22.6 shipped)
+        // makes every issue report "Users Impacted: 0"; attaching anything
+        // more would break the "nothing is tied to you" consent promise.
+        #expect(crashReporting.contains("anonymous.userId = event.user?.userId"))
+        #expect(!crashReporting.contains("event.user = nil"))
+        #expect(crashReporting.contains("event.serverName = nil"))
+        #expect(crashReporting.contains("options.sendDefaultPii = false"))
     }
 }
