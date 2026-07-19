@@ -66,10 +66,13 @@ let package = Package(
         // longer inject the stale `<end_of_turn>` token into extraEOSTokens;
         // bundle generation_config.json remains the stop-token authority. The
         // PR #154 proof revision also reports the exact cache-layer topology
-        // before/after each real TurboQuant transition.
+        // before/after each real TurboQuant transition. The ZAYA cache proof
+        // revision adds real-attention-only TQ ownership, native CCA companion
+        // restore, atomic typed L2 records, and a proven four-bit floor for
+        // TQ-native ZAYA disk boundaries.
         .package(
             url: "https://github.com/osaurus-ai/vmlx-swift",
-            revision: "bbc0b20d7dd46445c9ff3d76be7caf329310a338"
+            revision: "41434e8bab2d30c0c9c2eb746104621caf40fdcc"
         ),
         // FluidAudio 0.14.3 added a breaking `language:` parameter to TTS
         // calls that osaurus's `TTSService` doesn't pass. Pinning to the
