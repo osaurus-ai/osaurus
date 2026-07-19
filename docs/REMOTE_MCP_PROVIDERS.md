@@ -415,6 +415,19 @@ The vendor's MCP server doesn't publish [RFC 9728 protected-resource metadata](h
 - Check the server's tool configuration.
 - For scoped OAuth providers, check that you approved all the requested scopes.
 
+### Connected, but the agent doesn't call the tools
+
+A green **Connected** badge means discovery succeeded — it does not mean every agent can call every tool. Work through these in order:
+
+1. **Agent capability grant.** Each custom agent has its own tool allowlist (agent editor → Capabilities). A remote tool left unchecked there is invisible to that agent: it won't appear in the agent's capability manifest, `capabilities_discover` won't return it, and loading it is refused with `not enabled for this agent`.
+2. **Auto vs Manual tool mode.** In **Auto** mode (the default) remote MCP tools are deliberately NOT in the model's first-turn tool schema — the agent sees them listed in its "Enabled capabilities" manifest and pulls one in with `capabilities_load` when a task needs it. This keeps the prompt small and the KV cache stable. In **Manual** mode only your explicitly picked tools are exposed and the manifest is omitted, so pick the remote tools you want the agent to use.
+3. **Namespaced tool names.** The callable name is provider-prefixed (`linear_search_issues`, not `search_issues`). A model that invents the bare vendor name gets `tool_not_found`. The Tools settings view (Available tab) shows every registered tool's exact exposed name and state.
+4. **Permission prompts.** Remote MCP tools default to **Ask** permission. A pending or denied approval stops the run — check for an approval prompt before concluding the tool "wasn't called". You can relax the per-tool policy in Tools settings.
+5. **New chat after changes.** The capability manifest is frozen when a chat session starts. Providers or tools added mid-conversation are reachable via `capabilities_discover`, but start a new chat to get them listed up front.
+6. **Model capability.** Small local models skip the discover → load step more often, especially on long, multi-step tasks. If tool calling degrades as the task grows, try a stronger model or reduce the number of connected providers so the manifest stays short.
+
+The **Export** button in Tools settings produces a reporter-safe snapshot of every tool's source, exposure state, and reason code — attach it when filing an issue.
+
 ### Debug Mode
 
 Use the **Insights** tab to monitor MCP provider activity:

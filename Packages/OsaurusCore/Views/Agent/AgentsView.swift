@@ -962,7 +962,8 @@ private enum DetailTab: String, CaseIterable {
             return L(
                 "Everything this agent can do — flip an ability and watch the startup context respond."
             )
-        case .capabilities: return L("Pick which tools and skills this agent can use.")
+        case .capabilities:
+            return L("Pick which tools this agent can use. Skills come from the shared library and are always available.")
         case .subagents:
             return L(
                 "Let this agent delegate work — control your Mac, hand tasks to other agents, or generate images."

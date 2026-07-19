@@ -119,6 +119,7 @@ Create your own skills with the built-in editor:
    - **Name** — A clear, descriptive name
    - **Description** — Brief summary (shown in the skill list)
    - **Category** — Optional grouping (e.g., "Development", "Writing")
+   - **Keywords** — Comma-separated discovery terms (see below)
    - **Instructions** — Detailed guidance for the AI (Markdown supported)
 3. Click **Save**
 
@@ -128,6 +129,8 @@ Create your own skills with the built-in editor:
 - Include examples of expected behavior
 - Define any frameworks or methodologies to follow
 - Specify output formats when relevant
+
+**Keywords are how the AI finds your skill.** The capability search indexes the skill's name, keywords, and description — not its instructions. Add the words a user would actually say when they need the skill ("summarize, tldr, key points" rather than "text processing"). Every built-in skill ships a rich keyword list for exactly this reason; a custom skill without keywords is only found through its name and description.
 
 ---
 
@@ -249,9 +252,11 @@ No per-agent skill configuration is needed — agent configuration only scopes *
 ### Skills not appearing in chat
 
 - Verify the skill appears in the Skills library (Management window → Skills)
-- Check that the skill's description clearly describes its purpose (the RAG search uses this)
-- Start a new chat session
-- Try setting a wider search mode in chat configuration
+- Add **keywords** to the skill (edit it in the library): the capability search indexes name + keywords + description, and keywords carry the most weight
+- Check that the skill's description clearly describes its purpose (the search uses this too)
+- Start a new chat session — the capabilities manifest is frozen when a chat starts, so skills added mid-conversation aren't listed until the next chat (they remain reachable via `capabilities_discover`)
+- Type `/skill-name` to invoke the skill explicitly for one message — this injects the full instructions deterministically and doesn't depend on search at all
+- Skills require **Auto** tool mode with tools enabled; Manual tool mode and the built-in Osaurus configuration agent don't use the skill library
 
 ### GitHub import fails
 

@@ -171,6 +171,7 @@ struct SkillsView: View {
                             version: skill.version,
                             author: skill.author,
                             category: skill.category,
+                            keywords: skill.keywords,
                             instructions: skill.instructions
                         )
                         isCreating = false

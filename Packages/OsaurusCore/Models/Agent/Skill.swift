@@ -869,14 +869,23 @@ extension Skill {
 extension Skill {
     /// Convert name to Agent Skills format (lowercase, hyphens)
     public var xplaceholder_agentSkillsNamex: String {
-        let sanitized = name.lowercased()
+        let sanitized = Self.agentSkillsSlug(for: name)
+        return sanitized.isEmpty ? "skill-\(id.uuidString.prefix(8).lowercased())" : sanitized
+    }
+
+    /// The Agent Skills slug for an arbitrary name (lowercase, hyphens; may
+    /// be empty). Shared by the display-name property above and by slug-based
+    /// lookups: slash commands and on-disk directories surface this form
+    /// (`code-reviewer`), and models copy it into `capabilities_load` ids, so
+    /// both sides of a name comparison must slugify identically.
+    public static func agentSkillsSlug(for name: String) -> String {
+        name.lowercased()
             .replacingOccurrences(of: " ", with: "-")
             .replacingOccurrences(of: "_", with: "-")
             .components(separatedBy: CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "-")).inverted)
             .joined()
             .replacingOccurrences(of: "--", with: "-")
             .trimmingCharacters(in: CharacterSet(charactersIn: "-"))
-        return sanitized.isEmpty ? "skill-\(id.uuidString.prefix(8).lowercased())" : sanitized
     }
 
     /// Export to Agent Skills SKILL.md format
@@ -959,6 +968,15 @@ extension Skill {
             // Legacy `osaurus-enabled` metadata is intentionally ignored:
             // installed skills are always available.
             pluginId = metadata["osaurus-plugin-id"] as? String
+        }
+
+        // Top-level `keywords:` fallback. Osaurus exports keywords under
+        // `metadata:`, but skill files in the wild commonly put them at the
+        // top level of the frontmatter (the Osaurus legacy format does too).
+        // Keywords are the discovery signal `SkillSearchService` indexes, so
+        // dropping them on import silently degrades capabilities_discover.
+        if keywords.isEmpty, let raw = frontmatter["keywords"] as? String, !raw.isEmpty {
+            keywords = raw.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }
         }
 
         // Convert Agent Skills name (lowercase-hyphen) to display name (Title Case)

@@ -120,6 +120,7 @@ public final class SkillManager {
         version: String = "1.0.0",
         author: String? = nil,
         category: String? = nil,
+        keywords: [String] = [],
         instructions: String = ""
     ) async -> Skill {
         let skill = Skill(
@@ -128,6 +129,7 @@ public final class SkillManager {
             version: version,
             author: author,
             category: category,
+            keywords: keywords,
             instructions: instructions
         )
         await SkillStore.save(skill)
@@ -229,8 +231,25 @@ public final class SkillManager {
     /// All skills sharing a (case-insensitive) name. More than one element
     /// means `skill(named:)` had to break a tie; callers that surface skills
     /// to the model can use this to disclose the ambiguity.
+    ///
+    /// Falls back to slug matching when no display name matches: the
+    /// manifest advertises `skill/<Display Name>` but slash commands and
+    /// on-disk directories surface the Agent Skills slug (`code-reviewer`),
+    /// and models routinely copy that slug into `capabilities_load`. Both
+    /// forms name the same skill, so resolve them to it instead of failing
+    /// with `not found`. Exact display-name matches always win so a skill
+    /// literally named "code-reviewer" is never shadowed by a slug.
     public func skills(named name: String) -> [Skill] {
-        skills.filter { $0.name.lowercased() == name.lowercased() }
+        let lowered = name.lowercased()
+        let exact = skills.filter { $0.name.lowercased() == lowered }
+        if !exact.isEmpty { return exact }
+
+        let slug = Skill.agentSkillsSlug(for: name)
+        guard !slug.isEmpty else { return [] }
+        return skills.filter { candidate in
+            if Skill.agentSkillsSlug(for: candidate.name) == slug { return true }
+            return candidate.directoryName?.lowercased() == slug
+        }
     }
 
     // MARK: - Import/Export
@@ -238,12 +257,17 @@ public final class SkillManager {
     @discardableResult
     public func importSkill(from data: Data) async throws -> Skill {
         var skill = try Skill.importFromJSON(data)
+        // Fresh id / non-built-in flags on import, but KEEP the author's
+        // `keywords` — they are the discovery signal `SkillSearchService`
+        // indexes, and dropping them here silently degraded
+        // `capabilities_discover` recall for every imported skill.
         skill = Skill(
             name: skill.name,
             description: skill.description,
             version: skill.version,
             author: skill.author,
             category: skill.category,
+            keywords: skill.keywords,
             instructions: skill.instructions
         )
         await SkillStore.save(skill)
@@ -261,12 +285,14 @@ public final class SkillManager {
     @discardableResult
     public func importSkillFromMarkdown(_ content: String, overwriteExisting: Bool) async throws -> Skill {
         var skill = try Skill.parseAnyFormat(from: content)
+        // Keep frontmatter `keywords` — see `importSkill(from:)`.
         skill = Skill(
             name: skill.name,
             description: skill.description,
             version: skill.version,
             author: skill.author,
             category: skill.category,
+            keywords: skill.keywords,
             instructions: skill.instructions
         )
         try Self.installImportedSkill(skill, from: nil, overwriteExisting: overwriteExisting)
@@ -281,12 +307,14 @@ public final class SkillManager {
     public func importSkillsFromMarkdown(_ skills: [Skill]) async -> [Skill] {
         var imported: [Skill] = []
         for parsedSkill in skills {
+            // Keep frontmatter `keywords` — see `importSkill(from:)`.
             let skill = Skill(
                 name: parsedSkill.name,
                 description: parsedSkill.description,
                 version: parsedSkill.version,
                 author: parsedSkill.author,
                 category: parsedSkill.category,
+                keywords: parsedSkill.keywords,
                 instructions: parsedSkill.instructions
             )
             await SkillStore.save(skill)

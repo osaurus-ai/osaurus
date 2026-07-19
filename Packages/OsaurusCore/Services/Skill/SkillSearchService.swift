@@ -60,6 +60,16 @@ public actor SkillSearchService {
     private var isInitialized = false
     private var reverseIdMap: [String: UUID] = [:]
 
+    /// Skills whose `indexSkill` arrived before VecturaKit finished
+    /// initializing (startup CRUD races the launch embedding task). They
+    /// used to be silently dropped — the skill then never surfaced from
+    /// vector search until a manual rebuild. Keyed by skill id so a
+    /// create-then-edit burst indexes the final state once. Bounded as a
+    /// safety valve for the init-permanently-failed case; the library is
+    /// far smaller than the cap in practice.
+    private var pendingIndexSkills: [UUID: Skill] = [:]
+    private static let pendingIndexCap = 256
+
     private init() {}
 
     // MARK: - Initialization
@@ -91,6 +101,7 @@ public actor SkillSearchService {
                 isInitialized = true
                 await rehydrateReverseIdMap()
                 SkillSearchLogger.search.info("VecturaKit initialized successfully for skills")
+                await drainPendingIndexSkills()
                 break
             } catch {
                 if attempt == 1 {
@@ -120,7 +131,12 @@ public actor SkillSearchService {
     // MARK: - Indexing
 
     public func indexSkill(_ skill: Skill) async {
-        guard let db = vectorDB else { return }
+        guard let db = vectorDB else {
+            if pendingIndexSkills.count < Self.pendingIndexCap {
+                pendingIndexSkills[skill.id] = skill
+            }
+            return
+        }
         do {
             let id = deterministicUUID(for: skill.id)
             let text = buildIndexText(for: skill)
@@ -131,6 +147,7 @@ public actor SkillSearchService {
     }
 
     public func removeSkill(id: UUID) async {
+        pendingIndexSkills.removeValue(forKey: id)
         guard let db = vectorDB else { return }
         do {
             let uuid = deterministicUUID(for: id)
@@ -139,6 +156,17 @@ public actor SkillSearchService {
         } catch {
             SkillSearchLogger.search.error("Failed to remove skill \(id) from index: \(error)")
         }
+    }
+
+    /// Index the skills that were created/updated before VecturaKit came up.
+    private func drainPendingIndexSkills() async {
+        guard !pendingIndexSkills.isEmpty else { return }
+        let queued = Array(pendingIndexSkills.values)
+        pendingIndexSkills.removeAll()
+        for skill in queued {
+            await indexSkill(skill)
+        }
+        SkillSearchLogger.search.info("Indexed \(queued.count) skill(s) queued before initialization")
     }
 
     // MARK: - Search
@@ -240,11 +268,21 @@ public actor SkillSearchService {
 
     // MARK: - Helpers
 
+    /// Index name + keywords + description together. This used to be
+    /// keywords XOR description: any skill with even one keyword lost its
+    /// description signal entirely, so paraphrased queries that matched the
+    /// description but not the keyword list missed. Instructions stay out of
+    /// the index on purpose — they are workflow prose, not intent vocabulary,
+    /// and they drown the short high-signal fields.
     private func buildIndexText(for skill: Skill) -> String {
+        var parts = [skill.name]
         if !skill.keywords.isEmpty {
-            return "\(skill.name) \(skill.keywords.joined(separator: " "))"
+            parts.append(skill.keywords.joined(separator: " "))
         }
-        return "\(skill.name) \(skill.description)"
+        if !skill.description.isEmpty {
+            parts.append(skill.description)
+        }
+        return parts.joined(separator: " ")
     }
 
     private func searchLiveSkillsLexically(

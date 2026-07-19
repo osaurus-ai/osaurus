@@ -3,7 +3,7 @@
   "domain": "capability_search",
   "label": "capability search • skill • keyword-array path",
   "query": "help me track my expenses",
-  "notes": "Exercises the keywords-vs-description branch in `SkillSearchService.buildIndexText`: the 'Data Keeper' skill's keywords array carries 'track' and 'expenses' as literal tokens but the description text uses softer phrasing ('Keep structured records across chats'). When `keywords` is non-empty, the index text is `name + keywords.joined(' ')` — description is dropped. Verifies the keyword path is actually contributing signal end-to-end.",
+  "notes": "Exercises the keyword path in `SkillSearchService.buildIndexText`: the 'Data Keeper' skill's keywords array carries 'track' and 'expenses' as literal tokens but the description text uses softer phrasing ('Keep structured records across chats'). Index text is `name + keywords + description` (keywords and description used to be mutually exclusive — any skill with one keyword lost its whole description signal), so this case verifies keywords still contribute signal end-to-end now that the description rides along.",
   "fixtures": {},
   "expect": {
     "capabilitySearch": {

@@ -27,6 +27,7 @@ struct SkillEditorSheet: View {
     @State private var version: String = "1.0.0"
     @State private var author: String = ""
     @State private var category: String = ""
+    @State private var keywords: String = ""
     @State private var instructions: String = ""
 
     @State private var hasAppeared = false
@@ -73,7 +74,16 @@ struct SkillEditorSheet: View {
                 != original.author
             || (category.isEmpty ? nil : category.trimmingCharacters(in: .whitespacesAndNewlines))
                 != original.category
+            || Self.parseKeywords(keywords) != original.keywords
             || instructions.trimmingCharacters(in: .whitespacesAndNewlines) != original.instructions
+    }
+
+    /// Comma-separated keywords field → keyword list, dropping empties.
+    /// Nonisolated: pure string work, callable (and testable) off the main actor.
+    nonisolated static func parseKeywords(_ raw: String) -> [String] {
+        raw.split(separator: ",")
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
     }
 
     var body: some View {
@@ -278,6 +288,30 @@ struct SkillEditorSheet: View {
                             )
                             .disabled(isBuiltIn)
                         }
+
+                        // Keywords — the discovery signal capabilities_discover
+                        // searches. Built-in skills ship rich keyword lists;
+                        // custom skills without them are only found by name +
+                        // description.
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text("Keywords", bundle: .module)
+                                .font(.system(size: 11, weight: .medium))
+                                .foregroundColor(themeManager.currentTheme.secondaryText)
+
+                            SkillStyledTextField(
+                                placeholder: L("Comma-separated, e.g. research, web, citations"),
+                                text: $keywords,
+                                icon: nil
+                            )
+                            .disabled(isBuiltIn)
+
+                            Text(
+                                "Help the AI find this skill: add words users would say when they need it.",
+                                bundle: .module
+                            )
+                            .font(.system(size: 10))
+                            .foregroundColor(themeManager.currentTheme.tertiaryText)
+                        }
                     }
                 }
 
@@ -424,6 +458,7 @@ struct SkillEditorSheet: View {
         version = skill.version
         author = skill.author ?? ""
         category = skill.category ?? ""
+        keywords = skill.keywords.joined(separator: ", ")
         instructions = skill.instructions
     }
 
@@ -432,6 +467,10 @@ struct SkillEditorSheet: View {
         let trimmedInstructions = instructions.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedName.isEmpty, !trimmedInstructions.isEmpty else { return }
 
+        // Fields the editor does not expose (references, assets, directory,
+        // plugin association) pass through from the edited skill unchanged.
+        // Rebuilding with defaults here erased imported keywords from
+        // SKILL.md on every edit — a permanent discovery regression.
         let skill = Skill(
             id: existingId ?? UUID(),
             name: trimmedName,
@@ -439,10 +478,15 @@ struct SkillEditorSheet: View {
             version: version.trimmingCharacters(in: .whitespacesAndNewlines),
             author: author.isEmpty ? nil : author.trimmingCharacters(in: .whitespacesAndNewlines),
             category: category.isEmpty ? nil : category.trimmingCharacters(in: .whitespacesAndNewlines),
+            keywords: Self.parseKeywords(keywords),
             instructions: trimmedInstructions,
             isBuiltIn: false,
             createdAt: existingCreatedAt ?? Date(),
-            updatedAt: Date()
+            updatedAt: Date(),
+            references: editingSkill?.references ?? [],
+            assets: editingSkill?.assets ?? [],
+            directoryName: editingSkill?.directoryName,
+            pluginId: editingSkill?.pluginId
         )
 
         onSave(skill)

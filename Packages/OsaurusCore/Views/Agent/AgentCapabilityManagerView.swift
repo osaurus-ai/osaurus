@@ -454,7 +454,10 @@ struct AgentCapabilityManagerView: View {
                     Image(systemName: "info.circle")
                         .font(.system(size: 10))
                         .foregroundColor(theme.tertiaryText)
-                    Text("Pick which tools and skills this agent can use.", bundle: .module)
+                    Text(
+                        "Pick which tools this agent can use. Skills come from the shared library and are always available.",
+                        bundle: .module
+                    )
                         .font(.system(size: 12))
                         .foregroundColor(theme.tertiaryText)
 
