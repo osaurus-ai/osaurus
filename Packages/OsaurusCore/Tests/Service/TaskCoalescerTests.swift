@@ -92,6 +92,21 @@ struct TaskCoalescerTests {
         #expect(v1 === v2 && v2 === v3)
     }
 
+    @Test("resolvedEntries preserves model keys for per-engine diagnostics")
+    func resolvedEntriesPreserveKeys() async {
+        let coalescer = TaskCoalescer<Sentinel>()
+        let factoryA = SlowFactory(sleepMs: 1)
+        let factoryB = SlowFactory(sleepMs: 1)
+        let a = await coalescer.value(for: "model-a") { await factoryA.make() }
+        let b = await coalescer.value(for: "model-b") { await factoryB.make() }
+
+        let entries = await coalescer.resolvedEntries()
+
+        #expect(entries.map(\.key) == ["model-a", "model-b"])
+        #expect(entries[0].value === a)
+        #expect(entries[1].value === b)
+    }
+
     @Test("remove() drains an in-flight creation and returns the resolved value")
     func remove_drainsInFlight() async {
         let coalescer = TaskCoalescer<Sentinel>()

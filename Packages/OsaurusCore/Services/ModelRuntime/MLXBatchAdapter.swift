@@ -44,6 +44,16 @@ struct MLXBatchAdapter {
         await Registry.shared.snapshotDiagnostics()
     }
 
+    /// Exact live cache-class transitions keyed by the model name used to
+    /// create each BatchEngine. Unlike the aggregate compression counter,
+    /// these snapshots prove how many layers converted and which mixed-cache
+    /// layers remained native.
+    static func turboQuantCacheTransitionsSnapshot() async
+        -> [String: TurboQuantCacheTransitionSnapshot]
+    {
+        await Registry.shared.turboQuantCacheTransitionsSnapshot()
+    }
+
     static func lastEffectiveGenerationSettingsSnapshot() async -> [String: EffectiveGenerationSettings] {
         await Registry.shared.lastEffectiveGenerationSettingsSnapshot()
     }
@@ -413,6 +423,19 @@ struct MLXBatchAdapter {
 
         func lastEffectiveGenerationSettingsSnapshot() -> [String: EffectiveGenerationSettings] {
             lastEffectiveGenerationSettings
+        }
+
+        func turboQuantCacheTransitionsSnapshot() async
+            -> [String: TurboQuantCacheTransitionSnapshot]
+        {
+            let entries = await coalescer.resolvedEntries()
+            var result: [String: TurboQuantCacheTransitionSnapshot] = [:]
+            for (modelName, engine) in entries {
+                if let transition = await engine.lastTurboQuantCacheTransitionForDiagnostics {
+                    result[modelName] = transition
+                }
+            }
+            return result
         }
 
         /// Aggregate live BatchEngine diagnostics across every resolved

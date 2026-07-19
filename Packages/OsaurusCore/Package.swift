@@ -62,10 +62,14 @@ let package = Package(
         // carries #149: native schema-2 affine1 JANG loading and Metal kernels,
         // Qwen3-VL tool-schema preservation, and bounded media-cache cleanup.
         // Also carries #153: fail-closed support for historical schema-1 JANG
-        // affine manifests.
+        // affine manifests. Also carries #93: Gemma4 model registrations no
+        // longer inject the stale `<end_of_turn>` token into extraEOSTokens;
+        // bundle generation_config.json remains the stop-token authority. The
+        // PR #154 proof revision also reports the exact cache-layer topology
+        // before/after each real TurboQuant transition.
         .package(
             url: "https://github.com/osaurus-ai/vmlx-swift",
-            revision: "a26c7ecec950f18e3d07c8402fbd8c80f40ac764"
+            revision: "86f8634d85fdbf228f2981645f1d3b0a7fb1dacd"
         ),
         // FluidAudio 0.14.3 added a breaking `language:` parameter to TTS
         // calls that osaurus's `TTSService` doesn't pass. Pinning to the

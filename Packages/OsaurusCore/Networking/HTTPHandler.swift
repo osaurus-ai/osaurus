@@ -858,6 +858,8 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             let lastMemorySafetyLoadDecision =
                 await ModelRuntime.shared.lastMemorySafetyLoadDecisionSnapshot()
             let batchDiagnostics = await MLXBatchAdapter.snapshotDiagnostics()
+            let turboQuantTransitions =
+                await MLXBatchAdapter.turboQuantCacheTransitionsSnapshot()
             let lastEffectiveGenerationSettings =
                 await MLXBatchAdapter.lastEffectiveGenerationSettingsSnapshot()
             var aggregate: [String: Int] = [
@@ -932,28 +934,13 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     cacheTopology: summary.cacheTopology
                 )
                 if let topology = summary.cacheTopology {
-                    row["cache_topology"] =
-                        [
-                            "layer_count": topology.layerCount,
-                            "kv_layer_count": topology.kvLayerCount,
-                            "chunked_kv_layer_count": topology.chunkedKVLayerCount,
-                            "quantized_kv_layer_count": topology.quantizedKVLayerCount,
-                            "turbo_quant_kv_layer_count": topology.turboQuantKVLayerCount,
-                            "compilable_kv_layer_count": topology.compilableKVLayerCount,
-                            "compilable_turbo_quant_kv_layer_count": topology.compilableTurboQuantKVLayerCount,
-                            "rotating_kv_layer_count": topology.rotatingKVLayerCount,
-                            "compilable_rotating_kv_layer_count": topology.compilableRotatingKVLayerCount,
-                            "rotating_wrapper_layer_count": topology.rotatingWrapperLayerCount,
-                            "hybrid_pool_layer_count": topology.hybridPoolLayerCount,
-                            "mamba_layer_count": topology.mambaLayerCount,
-                            "compilable_mamba_layer_count": topology.compilableMambaLayerCount,
-                            "arrays_layer_count": topology.arraysLayerCount,
-                            "zaya_cca_layer_count": topology.zayaCCALayerCount,
-                            "cache_list_layer_count": topology.cacheListLayerCount,
-                            "requires_ssm_companion_state": topology.requiresSSMCompanionState,
-                            "requires_disk_backed_restore": topology.requiresDiskBackedCoordinatorRestore,
-                            "tags": topology.topologyTags,
-                        ] as [String: Any]
+                    row["cache_topology"] = Self.cacheTopologyJSONObject(topology)
+                }
+                if let transition = turboQuantTransitions[summary.name] {
+                    row["last_turboquant_cache_transition"] =
+                        Self.turboQuantCacheTransitionJSONObject(transition)
+                } else {
+                    row["last_turboquant_cache_transition"] = NSNull()
                 }
 
                 var paged: [String: Any] = ["enabled": stats.pagedEnabled]
@@ -8986,6 +8973,43 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         // cancellation, but a merely-slow one stops doing work sooner.
         if first == nil { work.cancel() }
         return first
+    }
+
+    static func cacheTopologyJSONObject(
+        _ topology: ModelCacheTopologySnapshot
+    ) -> [String: Any] {
+        [
+            "layer_count": topology.layerCount,
+            "kv_layer_count": topology.kvLayerCount,
+            "chunked_kv_layer_count": topology.chunkedKVLayerCount,
+            "quantized_kv_layer_count": topology.quantizedKVLayerCount,
+            "turbo_quant_kv_layer_count": topology.turboQuantKVLayerCount,
+            "compilable_kv_layer_count": topology.compilableKVLayerCount,
+            "compilable_turbo_quant_kv_layer_count": topology.compilableTurboQuantKVLayerCount,
+            "rotating_kv_layer_count": topology.rotatingKVLayerCount,
+            "compilable_rotating_kv_layer_count": topology.compilableRotatingKVLayerCount,
+            "rotating_wrapper_layer_count": topology.rotatingWrapperLayerCount,
+            "hybrid_pool_layer_count": topology.hybridPoolLayerCount,
+            "mamba_layer_count": topology.mambaLayerCount,
+            "compilable_mamba_layer_count": topology.compilableMambaLayerCount,
+            "arrays_layer_count": topology.arraysLayerCount,
+            "zaya_cca_layer_count": topology.zayaCCALayerCount,
+            "cache_list_layer_count": topology.cacheListLayerCount,
+            "requires_ssm_companion_state": topology.requiresSSMCompanionState,
+            "requires_disk_backed_restore": topology.requiresDiskBackedCoordinatorRestore,
+            "tags": topology.topologyTags,
+        ] as [String: Any]
+    }
+
+    static func turboQuantCacheTransitionJSONObject(
+        _ transition: TurboQuantCacheTransitionSnapshot
+    ) -> [String: Any] {
+        [
+            "converted_turbo_quant_kv_layer_count":
+                transition.convertedTurboQuantKVLayerCount,
+            "before": cacheTopologyJSONObject(transition.before),
+            "after": cacheTopologyJSONObject(transition.after),
+        ] as [String: Any]
     }
 
     /// Shape the `/health` `batch_diagnostics` block from a snapshot.

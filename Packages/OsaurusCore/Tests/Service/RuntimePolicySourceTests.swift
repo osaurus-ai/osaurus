@@ -704,7 +704,7 @@ struct RuntimePolicySourceTests {
         // files -- Package.swift, Packages/OsaurusCore/Package.resolved, and both
         // xcworkspace Package.resolved files. Miss one and the app resolves a
         // revision nobody proved.
-        let expectedRuntimeHardenedRevision = "a26c7ecec950f18e3d07c8402fbd8c80f40ac764"
+        let expectedRuntimeHardenedRevision = "86f8634d85fdbf228f2981645f1d3b0a7fb1dacd"
         let manifestRevision = try Self.vmlxPinRevision(in: manifest)
         let workspaceRevision = try Self.vmlxPinRevision(in: workspaceResolved)
         let appRevision = try Self.vmlxPinRevision(in: appResolved)
@@ -989,7 +989,7 @@ struct RuntimePolicySourceTests {
         )
         #expect(
             store.contains("liveKVCodec: .engineSelected"),
-            "ServerRuntimeSettingsStore.migratedFromLegacy must use engine-selected live KV so proven full-KV rows default to TurboQuant"
+            "ServerRuntimeSettingsStore.migratedFromLegacy must preserve the engine-selected native-KV default"
         )
         #expect(
             store.contains("pagedKV: VMLXPagedKVCacheSettings(\n                enabled: false"),
@@ -1004,8 +1004,8 @@ struct RuntimePolicySourceTests {
             "Legacy cache migration must not overwrite explicit existing live-KV choices"
         )
         #expect(
-            store.contains("Engine-selected live KV is resolved by ModelRuntime per"),
-            "ServerRuntimeSettingsStore must document that engine-selected is topology-gated by ModelRuntime"
+            store.contains("Engine-selected live KV stays native/fp16 for every"),
+            "ServerRuntimeSettingsStore must document that engine-selected keeps TurboQuant off by default"
         )
         #expect(
             store.contains("shouldRepairLegacyCacheDefaults"),
@@ -1074,8 +1074,11 @@ struct RuntimePolicySourceTests {
         #expect(!adapter.contains("prefixMisses += diskStats.misses"))
 
         let cacheSection = try Self.source("Views/Settings/ServerSettings/CacheSection.swift")
+        #expect(cacheSection.contains(#"isOn: $draft.cache.blockDisk.enabled"#))
         #expect(cacheSection.contains(#"value: $draft.cache.blockDisk.directory"#))
-        #expect(cacheSection.contains(#"value: $draft.cache.legacyDisk.directory"#))
+        #expect(!cacheSection.contains(#"isOn: $draft.cache.legacyDisk.enabled"#))
+        #expect(!cacheSection.contains(#"value: $draft.cache.legacyDisk.directory"#))
+        #expect(cacheSection.contains("Works with paged RAM cache off"))
     }
 
     @Test("Server settings cache changes clear loaded model runtime")
