@@ -36,6 +36,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
     private var shouldLoadPluginsAfterFirstServerStart = false
     private var hasCompletedFirstServerStartWork = false
     private var launchEmbeddingInitTask: Task<Void, Never>?
+    private let selectionHotkeyIntent = SelectionHotkeyIntentController()
     private var keychainDisabledTestMode: Bool {
         StorageKeyManager.disablesKeychainForProcess
     }
@@ -1880,27 +1881,150 @@ extension AppDelegate {
     }
 }
 
+/// Coalesces hotkey intent for the complete selection-capture lifetime.
+///
+/// The overlay may open at the UI deadline while capture continues, but a
+/// second hotkey cannot toggle it closed until that transaction finishes.
+@MainActor
+final class SelectionHotkeyIntentController {
+    typealias Sleep = @MainActor (UInt64) async -> Void
+    typealias CaptureSelection = @MainActor (
+        _ onCopyAttempted: @escaping @MainActor () -> Void,
+        _ onNativeCaptureStarted: @escaping @MainActor () -> Void
+    ) async -> Void
+
+    private let openDelayNanos: UInt64
+    private let postCopyFocusDelayNanos: UInt64
+    private let sleep: Sleep
+    private var activeTask: Task<Void, Never>?
+    private var activeID: UUID?
+    private var didToggle = false
+
+    init(
+        openDelayNanos: UInt64 = 150_000_000,
+        postCopyFocusDelayNanos: UInt64 = 50_000_000,
+        sleep: @escaping Sleep = { nanoseconds in
+            try? await Task.sleep(nanoseconds: nanoseconds)
+        }
+    ) {
+        self.openDelayNanos = openDelayNanos
+        self.postCopyFocusDelayNanos = postCopyFocusDelayNanos
+        self.sleep = sleep
+    }
+
+    @discardableResult
+    func invoke(
+        captureSelection: CaptureSelection?,
+        toggleOverlay: @escaping @MainActor () -> Void
+    ) -> Bool {
+        guard activeTask == nil else { return false }
+
+        let intentID = UUID()
+        activeID = intentID
+        didToggle = false
+        activeTask = Task { [weak self] in
+            guard let self else { return }
+            guard let captureSelection else {
+                toggleOnce(intentID: intentID, toggleOverlay: toggleOverlay)
+                finish(intentID: intentID)
+                return
+            }
+
+            var deadlineElapsed = false
+            var copyAttempted = false
+            var nativeCaptureStarted = false
+            var postCopyFocusDelayElapsed = false
+            var postCopyFocusTask: Task<Void, Never>?
+            let deadlineTask = Task { @MainActor [weak self] in
+                guard let self else { return }
+                await sleep(openDelayNanos)
+                guard !Task.isCancelled else { return }
+                deadlineElapsed = true
+                // Native AX capture does not invoke the copy callback. Open at
+                // the UI deadline unless a synthetic copy is already waiting
+                // for its short focus-preservation grace period.
+                if nativeCaptureStarted || postCopyFocusDelayElapsed {
+                    toggleOnce(intentID: intentID, toggleOverlay: toggleOverlay)
+                }
+            }
+
+            await captureSelection(
+                {
+                    copyAttempted = true
+                    postCopyFocusTask = Task { @MainActor [weak self] in
+                        guard let self else { return }
+                        await sleep(postCopyFocusDelayNanos)
+                        guard !Task.isCancelled else { return }
+                        postCopyFocusDelayElapsed = true
+                        if deadlineElapsed {
+                            toggleOnce(intentID: intentID, toggleOverlay: toggleOverlay)
+                        }
+                    }
+                },
+                {
+                    nativeCaptureStarted = true
+                    if deadlineElapsed {
+                        self.toggleOnce(intentID: intentID, toggleOverlay: toggleOverlay)
+                    }
+                }
+            )
+            if copyAttempted {
+                await deadlineTask.value
+                await postCopyFocusTask?.value
+            } else {
+                deadlineTask.cancel()
+            }
+            toggleOnce(intentID: intentID, toggleOverlay: toggleOverlay)
+            finish(intentID: intentID)
+        }
+        return true
+    }
+
+    var isProcessing: Bool { activeTask != nil }
+
+    private func toggleOnce(intentID: UUID, toggleOverlay: @MainActor () -> Void) {
+        guard activeID == intentID, !didToggle else { return }
+        didToggle = true
+        toggleOverlay()
+    }
+
+    private func finish(intentID: UUID) {
+        guard activeID == intentID else { return }
+        activeTask = nil
+        activeID = nil
+        didToggle = false
+    }
+}
+
 // MARK: Deep Link Handling
 extension AppDelegate {
     func applyChatHotkey() {
         let cfg = ChatConfigurationStore.load()
         HotKeyManager.shared.register(hotkey: cfg.hotkey) { [weak self] in
-            Task { @MainActor in
-                // if opening (about to be shown), and clipboard monitoring is enabled, trigger a selection grab before showing Osaurus
-                // to capture content from the currently active application.
-                if !ChatWindowManager.shared.hasVisibleWindows && cfg.enableClipboardMonitoring {
-                    // start grabbing selection in the background before we take focus
-                    Task {
-                        _ = await ClipboardService.shared.grabSelection()
-                    }
-                    // small yield to allow Cmd+C to be posted before toggle takes focus
-                    // 50ms
-                    try? await Task.sleep(nanoseconds: 50_000_000)
-                }
-
-                self?.toggleChatOverlay()
+            Task { @MainActor [weak self] in
+                self?.handleChatHotkey()
             }
         }
+    }
+
+    private func handleChatHotkey() {
+        let clipboardMonitoringEnabled = ChatConfigurationStore.load().enableClipboardMonitoring
+        let captureSelection: SelectionHotkeyIntentController.CaptureSelection?
+        if !ChatWindowManager.shared.hasVisibleWindows && clipboardMonitoringEnabled {
+            captureSelection = { onCopyAttempted, onNativeCaptureStarted in
+                _ = await ClipboardService.shared.grabSelectionReport(
+                    onCopyAttempted: onCopyAttempted,
+                    onNativeCaptureStarted: onNativeCaptureStarted
+                )
+            }
+        } else {
+            captureSelection = nil
+        }
+
+        selectionHotkeyIntent.invoke(
+            captureSelection: captureSelection,
+            toggleOverlay: { [weak self] in self?.toggleChatOverlay() }
+        )
     }
     fileprivate func handleDeepLink(_ url: URL) {
         let scheme = url.scheme?.lowercased() ?? ""

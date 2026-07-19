@@ -614,7 +614,8 @@ struct FloatingInputCard: View {
             || (displayContextTokens > 0 && !isRemoteAgentRun)
             || isSandboxAvailable
             || isDefaultConfigAgent
-            || (appConfig.chatConfig.enableClipboardMonitoring && clipboardService.hasNewContent)
+            || (appConfig.chatConfig.enableClipboardMonitoring && (clipboardService.hasNewContent
+            || clipboardService.lastSelectionGrabReport?.needsUserAttention == true))
             || showCreditsChip
     }
 
@@ -700,6 +701,14 @@ struct FloatingInputCard: View {
 
                     // "@" file menu popup — appears above the input card
                     atFileMenuPopupView
+
+                    if AppConfiguration.shared.chatConfig.enableClipboardMonitoring,
+                        capturedSelectionText != nil
+                    {
+                        selectionAssistantBar
+                            .padding(.horizontal, 20)
+                            .transition(.opacity.combined(with: .move(edge: .bottom)))
+                    }
 
                     inputCard
                         .padding(.horizontal, 20)
@@ -2313,10 +2322,12 @@ extension FloatingInputCard {
         if autoSpeakAssistant { count += 1 }
         if !isRemoteAgentRun, !isDefaultConfigAgent, isSandboxAvailable { count += 1 }
         if !isRemoteAgentRun { count += 1 }  // folder or configuration chip
-        if AppConfiguration.shared.chatConfig.enableClipboardMonitoring
-            && clipboardService.hasNewContent
-        {
-            count += 1
+        if AppConfiguration.shared.chatConfig.enableClipboardMonitoring {
+            if clipboardService.lastSelectionGrabReport?.needsUserAttention == true
+                || (clipboardService.hasNewContent && capturedSelectionText == nil)
+            {
+                count += 1
+            }
         }
         return count
     }
@@ -2359,8 +2370,12 @@ extension FloatingInputCard {
             }
 
             // Clipboard / paste chip — last in the left cluster.
-            if AppConfiguration.shared.chatConfig.enableClipboardMonitoring && clipboardService.hasNewContent {
-                clipboardToggleChip(compact: compact)
+            if AppConfiguration.shared.chatConfig.enableClipboardMonitoring {
+                if clipboardService.lastSelectionGrabReport?.needsUserAttention == true {
+                    selectionGrabStatusChip
+                } else if clipboardService.hasNewContent && capturedSelectionText == nil {
+                    clipboardToggleChip(compact: compact)
+                }
             }
         }
     }
@@ -3620,6 +3635,104 @@ extension FloatingInputCard {
 
     // MARK: - Clipboard Chip
 
+    private var capturedSelectionText: String? {
+        guard clipboardService.hasNewContent,
+            case .capturedText = clipboardService.lastSelectionGrabReport?.outcome,
+            case .text(let text) = clipboardService.currentContent
+        else { return nil }
+        return text
+    }
+
+    private var selectionAssistantBar: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "text.cursor")
+                .font(.system(size: CGFloat(theme.captionSize), weight: .semibold))
+                .foregroundColor(theme.accentColor)
+
+            VStack(alignment: .leading, spacing: 1) {
+                Text("Selected text", bundle: .module)
+                    .font(theme.font(size: CGFloat(theme.captionSize), weight: .semibold))
+                    .foregroundColor(theme.primaryText)
+                    .lineLimit(1)
+                HStack(spacing: 4) {
+                    if let source = clipboardService.lastSourceApp {
+                        Text(source)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                    }
+                    if let text = capturedSelectionText {
+                        if clipboardService.lastSourceApp != nil { Text(verbatim: "·") }
+                        Text(String(format: L("%lld characters"), Int64(text.count)))
+                            .monospacedDigit()
+                    }
+                }
+                .font(theme.font(size: CGFloat(theme.captionSize) - 1, weight: .regular))
+                .foregroundColor(theme.secondaryText)
+            }
+            .frame(minWidth: 96, alignment: .leading)
+
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 5) {
+                    ForEach(SelectionAssistantAction.allCases) { action in
+                        Button {
+                            applySelectionAssistantAction(action)
+                        } label: {
+                            Label(action.title, systemImage: action.systemImage)
+                                .font(theme.font(size: CGFloat(theme.captionSize), weight: .medium))
+                                .lineLimit(1)
+                                .padding(.horizontal, 8)
+                                .padding(.vertical, 5)
+                                .background(
+                                    RoundedRectangle(cornerRadius: 6, style: .continuous)
+                                        .fill(theme.secondaryBackground.opacity(0.9))
+                                )
+                        }
+                        .buttonStyle(.plain)
+                        .pointingHandCursor()
+                        .help(action.title)
+                    }
+                }
+            }
+
+            Button {
+                clipboardService.markAsRead()
+            } label: {
+                Image(systemName: "xmark")
+                    .font(.system(size: CGFloat(theme.captionSize) - 1, weight: .semibold))
+                    .foregroundColor(theme.secondaryText)
+                    .frame(width: 24, height: 24)
+            }
+            .buttonStyle(.plain)
+            .pointingHandCursor()
+            .help(Text("Dismiss", bundle: .module))
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 7)
+        .background(theme.primaryBackground.opacity(0.72))
+        .overlay(alignment: .bottom) {
+            Rectangle()
+                .fill(theme.primaryBorder.opacity(0.35))
+                .frame(height: 1)
+        }
+    }
+
+    private func applySelectionAssistantAction(_ action: SelectionAssistantAction) {
+        guard let selection = capturedSelectionText else { return }
+        let instruction = action.instruction
+
+        withAnimation(theme.springAnimation()) {
+            pendingAttachments.append(.pastedContent(selection))
+            if localText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                localText = instruction
+            } else {
+                localText += localText.hasSuffix("\n") ? instruction : "\n\(instruction)"
+            }
+            text = localText
+            clipboardService.markAsRead()
+            isFocused = true
+        }
+    }
+
     /// SF Symbol representing the kind of content currently on the clipboard.
     /// The chip pairs this icon with a leading "Paste" label and the source app.
     private var clipboardChipIcon: String {
@@ -3784,6 +3897,74 @@ extension FloatingInputCard {
                 triggerPulse()
             }
         }
+    }
+
+    private var selectionGrabStatusChip: some View {
+        let report = clipboardService.lastSelectionGrabReport
+        return Button {
+            if let report {
+                ToastManager.shared.warning(L("Could not grab selection"), message: report.userFacingMessage)
+            }
+        } label: {
+            HStack(spacing: 5) {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .font(.system(size: CGFloat(theme.captionSize) - 2, weight: .semibold))
+                    .foregroundColor(.orange)
+
+                Text("Selection unavailable", bundle: .module)
+                    .font(theme.font(size: CGFloat(theme.captionSize), weight: .medium))
+                    .foregroundColor(theme.secondaryText)
+                    .lineLimit(1)
+
+                Image(systemName: "chevron.right")
+                    .font(theme.font(size: CGFloat(theme.captionSize) - 4, weight: .bold))
+                    .foregroundColor(theme.tertiaryText.opacity(0.7))
+                    .padding(.leading, 2)
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 5)
+            .background(
+                Capsule()
+                    .fill(theme.secondaryBackground.opacity(isClipboardHovered ? 0.95 : 0.8))
+            )
+            .clipShape(Capsule())
+            .overlay(
+                Capsule()
+                    .strokeBorder(
+                        LinearGradient(
+                            colors: [
+                                Color.orange.opacity(isClipboardHovered ? 0.45 : 0.25),
+                                theme.primaryBorder.opacity(isClipboardHovered ? 0.2 : 0.12),
+                            ],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        ),
+                        lineWidth: 1
+                    )
+            )
+            .shadow(
+                color: Color.orange.opacity(isClipboardHovered ? 0.24 : 0.08),
+                radius: isClipboardHovered ? 6 : 4,
+                x: 0,
+                y: 1
+            )
+        }
+        .buttonStyle(.plain)
+        .pointingHandCursor()
+        .onHover { hovering in
+            withAnimation(.easeOut(duration: 0.15)) {
+                isClipboardHovered = hovering
+            }
+        }
+        .help(Text(report?.userFacingMessage ?? L("Selection could not be captured")))
+        .contextMenu {
+            Button {
+                clipboardService.dismissSelectionGrabReport()
+            } label: {
+                Text("Dismiss", bundle: .module)
+            }
+        }
+        .transition(.scale(scale: 0.8).combined(with: .opacity))
     }
 
     private func triggerPulse() {
