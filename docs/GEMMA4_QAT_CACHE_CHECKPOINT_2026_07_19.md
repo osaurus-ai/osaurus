@@ -11,7 +11,7 @@ not part of this checkpoint.
 ## Scoped changes
 
 - Pin all four Osaurus SwiftPM resolution points to vMLX
-  `86f8634d85fdbf228f2981645f1d3b0a7fb1dacd`.
+  `bbc0b20d7dd46445c9ff3d76be7caf329310a338`.
 - Keep paged RAM cache off by default.
 - Keep engine-selected TurboQuant KV off by default. An explicit user
   TurboQuant selection with explicit bit widths remains available.
@@ -30,7 +30,7 @@ MLXPress, Bonsai, or automatic model-routing implementation is changed here.
 
 | Gate | Evidence | Status |
 |---|---|---|
-| Four-pin equality | Manifest, package resolution, app workspace resolution, and root workspace resolution all name `86f8634d...` | VERIFIED-SOURCE |
+| Four-pin equality | Manifest, package resolution, app workspace resolution, and root workspace resolution all name `bbc0b20d...` | VERIFIED-SOURCE |
 | Default cache policy | Focused persistence/default tests show prefix on, paged off, block-disk L2 on, legacy disk off, engine-selected codec retained; vMLX resolves that codec to native KV | VERIFIED-SOURCE |
 | Explicit Off | vMLX focused regression preserves block-disk Off with prefix on and paged off through memory-safety resolution | VERIFIED-SOURCE |
 | Explicit TurboQuant | Osaurus policy test resolves explicit bit widths to `turbo(k,v)` while engine-selected remains native | VERIFIED-SOURCE |

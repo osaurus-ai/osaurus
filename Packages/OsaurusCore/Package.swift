@@ -69,7 +69,7 @@ let package = Package(
         // before/after each real TurboQuant transition.
         .package(
             url: "https://github.com/osaurus-ai/vmlx-swift",
-            revision: "86f8634d85fdbf228f2981645f1d3b0a7fb1dacd"
+            revision: "bbc0b20d7dd46445c9ff3d76be7caf329310a338"
         ),
         // FluidAudio 0.14.3 added a breaking `language:` parameter to TTS
         // calls that osaurus's `TTSService` doesn't pass. Pinning to the
