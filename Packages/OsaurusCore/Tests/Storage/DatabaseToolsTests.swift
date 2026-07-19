@@ -200,6 +200,51 @@ struct DatabaseToolsTests {
         }
     }
 
+    // MARK: - Tool contract pins (import mode + saved-view routing)
+
+    @Test
+    func dbImportModeSchemaPinsEnum() {
+        // The published JSON schema must constrain `mode` so schema-strict
+        // models can't invent values like `append` in the first place.
+        let tool = DBImportTool()
+        guard case .object(let root)? = tool.parameters,
+            case .object(let props) = root["properties"],
+            case .object(let mode) = props["mode"],
+            case .array(let allowed) = mode["enum"]
+        else {
+            Issue.record("db_import.mode is missing an enum in its schema")
+            return
+        }
+        #expect(allowed == [.string("insert"), .string("upsert")])
+    }
+
+    @Test
+    func dbImportRejectsAppendModeAtRuntime() async throws {
+        // Regression for the transcript failure: `mode: "append"` must be
+        // rejected as invalid_args (with the canonical values named) before
+        // any file I/O happens. `insert` is the append.
+        let tool = DBImportTool()
+        let envelope = try await ChatExecutionContext.$currentAgentId.withValue(UUID()) {
+            try await tool.execute(
+                argumentsJSON: #"{"table": "t", "path": "data.csv", "mode": "append"}"#
+            )
+        }
+        #expect(envelope.contains("invalid_args"))
+        #expect(envelope.contains("insert | upsert"))
+    }
+
+    @Test
+    func savedViewRoutingIsPinnedInToolDescriptions() {
+        // Saved views are stored definitions, not SQL tables. The strict
+        // contract lives in the tool descriptions the model reads: db_query
+        // must point at db_run_view, and db_run_view must state it is the
+        // only execution path.
+        #expect(DBQueryTool().description.contains("db_run_view"))
+        let runView = DBRunViewTool().description
+        #expect(runView.contains("stored definitions"))
+        #expect(runView.contains("db_query"))
+    }
+
     @Test
     func exportOverwriteGuard() async throws {
         // Pin the resolver to a sandbox root via the TaskLocal (checked

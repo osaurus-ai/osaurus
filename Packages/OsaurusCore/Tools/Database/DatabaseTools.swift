@@ -945,7 +945,10 @@ final class DBQueryTool: OsaurusTool, @unchecked Sendable {
         + "big tables, prefer aggregating in SQL (COUNT/SUM/GROUP BY) or "
         + "`db_export` over returning raw rows. On user tables, add "
         + "`_deleted_at IS NULL` to your WHERE when you want to hide "
-        + "soft-deleted rows — `db_query` runs your SQL as written."
+        + "soft-deleted rows — `db_query` runs your SQL as written. Saved "
+        + "views are stored definitions, not SQL tables: referencing a saved "
+        + "view name in FROM fails with `no such table` — run it with "
+        + "`db_run_view(name)` instead."
 
     let parameters: JSONValue? = .object([
         "type": .string("object"),
@@ -1174,8 +1177,11 @@ final class DBImportTool: OsaurusTool, @unchecked Sendable {
             ]),
             "mode": .object([
                 "type": .string("string"),
+                "enum": .array([.string("insert"), .string("upsert")]),
                 "description": .string(
-                    "`insert` (default) or `upsert`. Upsert requires `key_columns`."
+                    "`insert` (default, appends rows) or `upsert` (dedupes on "
+                        + "`key_columns`). There is no `append` mode — `insert` "
+                        + "is the append. Upsert requires `key_columns`."
                 ),
             ]),
             "key_columns": .object([
@@ -1421,10 +1427,12 @@ final class DBExportTool: OsaurusTool, @unchecked Sendable {
         )
         guard case .value(let path) = pathReq else { return pathReq.failureEnvelope ?? "" }
 
-        guard let format = DatabaseExport.Format.detect(
-            path: path,
-            explicit: args["format"] as? String
-        ) else {
+        guard
+            let format = DatabaseExport.Format.detect(
+                path: path,
+                explicit: args["format"] as? String
+            )
+        else {
             return ToolEnvelope.failure(
                 kind: .invalidArgs,
                 message:
@@ -1593,9 +1601,11 @@ final class DBDefineViewTool: OsaurusTool, @unchecked Sendable {
 final class DBRunViewTool: OsaurusTool, @unchecked Sendable {
     let name = "db_run_view"
     let description =
-        "Run a previously saved view by name. Returns the same shape as "
-        + "`db_query`: `{columns, rows, truncated}`. Use `db_list_views` "
-        + "to see what's defined."
+        "Run a previously saved view by name. This is the only way to "
+        + "execute a saved view — they are stored definitions, not SQL "
+        + "tables, so `db_query` cannot reference them in FROM. Returns "
+        + "the same shape as `db_query`: `{columns, rows, truncated}`. "
+        + "Use `db_list_views` to see what's defined."
 
     let parameters: JSONValue? = .object([
         "type": .string("object"),
