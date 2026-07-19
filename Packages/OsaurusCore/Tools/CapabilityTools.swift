@@ -606,6 +606,16 @@ final class CapabilitiesLoadTool: OsaurusTool, @unchecked Sendable {
     /// injects for a single message only.
     static let skillReferenceBudget = 32_000
 
+    /// Built-in skills are not plugin-backed, so they have no dynamic tool
+    /// group for `loadSkill` to cascade automatically. Keep their concrete
+    /// tool dependencies explicit here instead of parsing tool names out of
+    /// prose. Data Visualizer otherwise teaches a small model to call
+    /// `render_chart` while leaving that gated built-in outside the live
+    /// execution scope.
+    private static let builtInSkillToolDependencies: [UUID: [String]] = [
+        UUID(uuidString: "00000001-0000-0000-0000-000000000007")!: ["render_chart"]
+    ]
+
     let name = "capabilities_load"
     let description =
         "Load capabilities into the current session by ID. IDs come from the Enabled capabilities list "
@@ -1069,6 +1079,12 @@ final class CapabilitiesLoadTool: OsaurusTool, @unchecked Sendable {
                 + (skill.isFromPlugin
                     ? "the plugin skill." : skill.isBuiltIn ? "the built-in." : "the user skill.")
             output += "\n\n"
+        }
+
+        if skill.isBuiltIn,
+            let requiredTools = Self.builtInSkillToolDependencies[skill.id]
+        {
+            output += await bufferToolSpecs(named: requiredTools)
         }
 
         // A plugin skill governs its sibling tools, so auto-load the plugin's
