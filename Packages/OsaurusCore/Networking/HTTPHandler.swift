@@ -928,15 +928,20 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 row["cache_enabled"] = true
                 row["is_hybrid"] = stats.isHybrid
                 row["is_paged_incompatible"] = stats.isPagedIncompatible
+                let turboQuantTransition = turboQuantTransitions[summary.name]
+                let effectiveCacheTopology = Self.effectiveCacheTopology(
+                    baseline: summary.cacheTopology,
+                    turboQuantTransition: turboQuantTransition
+                )
                 row["effective_kv_mode"] = ModelRuntime.cacheKVModeTag(
                     for: ServerRuntimeSettingsStore.snapshot().cache,
                     modelName: summary.name,
-                    cacheTopology: summary.cacheTopology
+                    cacheTopology: effectiveCacheTopology
                 )
-                if let topology = summary.cacheTopology {
+                if let topology = effectiveCacheTopology {
                     row["cache_topology"] = Self.cacheTopologyJSONObject(topology)
                 }
-                if let transition = turboQuantTransitions[summary.name] {
+                if let transition = turboQuantTransition {
                     row["last_turboquant_cache_transition"] =
                         Self.turboQuantCacheTransitionJSONObject(transition)
                 } else {
@@ -972,12 +977,12 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
 
                 let ssm = stats.ssmStats
                 let companionKinds =
-                    summary.cacheTopology?.topologyTags.filter {
+                    effectiveCacheTopology?.topologyTags.filter {
                         $0.hasPrefix("companion=")
                     } ?? []
                 let hasSSMCompanion = companionKinds.contains("companion=ssm")
                 let hasZayaCCACompanion =
-                    (summary.cacheTopology?.zayaCCALayerCount ?? 0) > 0
+                    (effectiveCacheTopology?.zayaCCALayerCount ?? 0) > 0
                 if hasZayaCCACompanion, let diskStats = stats.diskStats {
                     row["zaya_cca_disk_payload_restore"] =
                         [
@@ -8999,6 +9004,17 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             "requires_disk_backed_restore": topology.requiresDiskBackedCoordinatorRestore,
             "tags": topology.topologyTags,
         ] as [String: Any]
+    }
+
+    /// The container snapshot describes the model's baseline cache shape.
+    /// Request-local TurboQuant conversion happens inside BatchEngine, so the
+    /// admin surface must prefer the transition's post-conversion snapshot or
+    /// it reports FP16 KV layers while the live cache is actually quantized.
+    static func effectiveCacheTopology(
+        baseline: ModelCacheTopologySnapshot?,
+        turboQuantTransition: TurboQuantCacheTransitionSnapshot?
+    ) -> ModelCacheTopologySnapshot? {
+        turboQuantTransition?.after ?? baseline
     }
 
     static func turboQuantCacheTransitionJSONObject(

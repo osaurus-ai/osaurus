@@ -203,11 +203,15 @@ struct RenderChartTool: OsaurusTool {
             )
         }
 
-        let format =
+        let declaredFormat =
             (args["format"] as? String)?.lowercased()
             ?? (args["dataFormat"] as? String)?.lowercased()
             ?? referencedEntry?.format
             ?? "csv"
+        let format = Self.reconciledDelimitedFormat(
+            suppliedRaw,
+            declaredFormat: declaredFormat
+        )
         let raw = Self.unwrapQuotedDelimitedPayload(suppliedRaw, format: format)
         let title = args["title"] as? String
         let tipSuffix = args["tooltipSuffix"] as? String
@@ -826,6 +830,46 @@ struct RenderChartTool: OsaurusTool {
             return raw
         }
         return candidate
+    }
+
+    /// Reconcile an explicit CSV/TSV label with the payload's unambiguous
+    /// delimiter shape. Local models can preserve every byte of an attached
+    /// table while changing commas to tabs without changing `format` from
+    /// `csv` (or vice versa). Treat that as transport metadata drift only
+    /// when the declared delimiter produces one column and the alternate
+    /// delimiter produces a stable multi-column table across every sampled
+    /// row. Ambiguous, mixed, JSON, and ordinary one-column data remain on
+    /// the declared path and keep the strict column validation below.
+    private static func reconciledDelimitedFormat(
+        _ raw: String,
+        declaredFormat: String
+    ) -> String {
+        guard declaredFormat == "csv" || declaredFormat == "tsv" else {
+            return declaredFormat
+        }
+
+        let declaredSeparator = declaredFormat == "csv" ? "," : "\t"
+        let alternateSeparator = declaredFormat == "csv" ? "\t" : ","
+        let lines = raw.components(separatedBy: .newlines)
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+            .prefix(16)
+        guard !lines.isEmpty else { return declaredFormat }
+
+        let declaredCounts = lines.map {
+            $0.components(separatedBy: declaredSeparator).count
+        }
+        guard declaredCounts.allSatisfy({ $0 == 1 }) else { return declaredFormat }
+
+        let alternateCounts = lines.map {
+            $0.components(separatedBy: alternateSeparator).count
+        }
+        guard let columnCount = alternateCounts.first,
+            columnCount > 1,
+            alternateCounts.allSatisfy({ $0 == columnCount })
+        else { return declaredFormat }
+
+        return declaredFormat == "csv" ? "tsv" : "csv"
     }
 
     private static func chartSpec(from result: String) -> ChartSpec? {

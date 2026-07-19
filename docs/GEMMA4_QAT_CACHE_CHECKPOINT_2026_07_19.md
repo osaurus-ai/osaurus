@@ -1,6 +1,86 @@
 # Gemma 4 QAT cache checkpoint — 2026-07-19
 
-Status: **PARTIAL — the exact current Osaurus branch and vMLX
+## Current-main Gemma/Bonsai follow-up
+
+Status: **PARTIAL overall; VERIFIED-LIVE for the narrow Gemma effective-cache
+telemetry and Bonsai first-call chart rows described here.** The wider model,
+RAM, cache-family, multimodal, AppleScript, Sentry, and protocol matrix remains
+open and is not made release-ready by this follow-up.
+
+Current source base is Osaurus `12396f7309e533f572098ddd8810c6229e3ebcb5`
+with vMLX `0975201e745a1774fda1e78d1bc99b5bd1c668c6`. The isolated
+Release artifact is
+`/private/tmp/osaurus-main-gemma-bonsai-derived-20260719/Build/Products/Release/osaurus.app`,
+bundle id `com.dinoki.osaurus.gemmabonsaimainproof`, executable SHA-256
+`a341c6cd58e60f1cda3b675f0b764a287be976284f811cc69587d6f5726fd600`,
+and runtime root
+`/private/tmp/osaurus-main-gemma-bonsai-runtime-20260719-d`. The live process
+environment was read back and matched that root with test keychain access
+disabled. No MXFP4 bundle was loaded or used as evidence.
+
+### Narrow source trace
+
+- `HTTPHandler` now derives the admin `cache_topology`, effective KV-mode tag,
+  and companion-cache checks from `last_turboquant_cache_transition.after`
+  when present, with the container topology as the fallback. The container
+  snapshot is the load-time shape; Gemma's request-local BatchEngine
+  conversion is the live shape. Reporting the former after conversion produced
+  the contradictory 8-FP16-KV/40-rotating top-level topology beside an
+  8-TurboQuant-KV/40-rotating transition.
+- `RenderChartTool` reconciles only an explicit CSV/TSV label whose declared
+  delimiter yields one column for every sampled nonempty row while the other
+  delimiter yields a stable multi-column table for every row. Ambiguous,
+  mixed-delimiter, JSON, and ordinary strict-column failures retain the
+  declared parsing path. This changes data-format metadata handling, not model
+  output, prompts, templates, sampling, content-delta streaming, or tool-call
+  JSON assembly.
+
+### Current Release UI evidence
+
+| Row | Exact live evidence | Status |
+|---|---|---|
+| Real-user model discovery | Settings -> Storage changed the external model folder through the macOS picker from `~/.cache/huggingface/hub` to `/Users/eric/models`; the visible count changed from 5 to 68 and the exact local targets became selectable without copying them | VERIFIED-LIVE |
+| Cache defaults | Server -> Settings -> Cache visibly showed Prefix on, GPU/Paged KV off, SSD Disk Cache on, Codec `Engine Selected`, Stored KV Codec `Auto`, and SSM re-derive on | VERIFIED-LIVE |
+| Gemma explicit TQ topology | Exact `/Users/eric/models/OsaurusAI/OsaurusAI--gemma-4-12B-it-qat-JANG_4M`; UI-selected TQ4/4 produced five coherent sentinel bullets at 59.3 tok/s, a coherent two-sentence follow-up at 64.8 tok/s, and a same-root restart answer at 63.3 tok/s | VERIFIED-LIVE |
+| Gemma telemetry | Top-level admin topology and transition-after both reported 48 layers = 8 TurboQuant KV + 40 rotating KV, zero plain KV; `effective_kv_mode=turbo(4,4)`, paged false, disk enabled, MLXPress disabled | VERIFIED-LIVE |
+| Gemma SSD restart | Before restart the row recorded disk hits 3, misses 10, stores 5; after relaunch, the identical prompt had TTFT 0.72s and fresh-process counters hits 2, misses 7, stores 3 with paged still false | VERIFIED-LIVE |
+| Bonsai ordinary attached CSV | Exact `/Users/eric/models/dealign.ai/Bonsai-27b-1bit-JANG-CRACK`, Charts on, `disableThinking:true`; the first and only `render_chart` call emitted tab-delimited `month/revenue` data while declaring `dataFormat:"csv"`. It returned `ok:true`, rendered four bars, and the model returned exact `chart-skill-done` at TTFT 0.71s and 36.1 tok/s | VERIFIED-LIVE |
+| Bonsai reasoning toggle | UI gray/off persisted `disableThinking:true`; a fresh exact-output turn returned `BONSAI-NOTHINK-907` at TTFT 1.01s and 37.3 tok/s. SQLite recorded zero reasoning characters. The final chart call and post-tool answer also recorded zero reasoning characters | VERIFIED-LIVE |
+| Bonsai adversarial no-retry | A separate real-UI prompt required literal TSV data labeled CSV and forbade retry. One call returned `ok:true`, three parsed points, an inline chart card, and exact `adversarial-chart-done` | VERIFIED-LIVE |
+| Bonsai current footprint | Activity Monitor visibly showed the exact proof process `Osaurus`, PID 87295, at 2.47 GB after the chart runs. A separate macOS `footprint` read reported 2,527 MB current and 5,587 MB peak; only the 2.47 GB current row is Activity Monitor visual evidence | VERIFIED-LIVE current; peak is direct telemetry |
+
+The current focused Xcode invocation exited zero for both
+`TurboQuantCacheTransitionShapingTests` cases and the complete
+`RenderChartToolTests` suite. That includes the observed CSV-label/TSV-data
+case, the reverse unambiguous case, and strict mixed-delimiter and misspelled-
+column failures.
+
+The pre-change captured Bonsai call was valid JSON and reached
+`render_chart`; its arguments contained TSV rows with `format:"csv"`, so the
+strict CSV parser exposed one header named `month\trevenue` and returned
+`Column(s) not found`. The model then retried with comma CSV successfully.
+That trace rules out content-delta truncation and malformed tool-call JSON for
+this chart failure.
+
+### Retained concerns and non-claims
+
+- The Gemma L2 directory grew from 2.7 GB to 3.9 GB across the tested sequence.
+  The in-memory TQ codec and Stored KV Codec `Auto` are separate controls; this
+  row does **not** prove that SSD blocks are TurboQuant-compressed. Disk growth
+  and eviction remain OPEN.
+- The first Gemma multi-turn run also created an unsolicited markdown artifact
+  before returning the requested answer. The requested answer was coherent,
+  but that semantic over-action is not fixed or hidden here.
+- Bonsai thinking-on runs were retained as diagnostics. The later verified-off
+  runs show the toggle contract works; no output-stripping or forced closer was
+  added.
+- No broad automatic routing, hardware guidance, RAM-safety, multimodal,
+  AppleScript, JANGTQ weight, DSV4/OpenPangu, or other model-family change is
+  included in this narrow diff.
+
+## Historical bbc0 checkpoint
+
+Historical status: **PARTIAL — the exact then-current Osaurus branch and vMLX
 `bbc0b20d7dd46445c9ff3d76be7caf329310a338` are live-proven in an isolated
 Release app for the core Gemma 4 12B JANG_4M/MXFP8 cache and settings rows.
 The 31B RAM-limit override control works, but its Activity Monitor Memory

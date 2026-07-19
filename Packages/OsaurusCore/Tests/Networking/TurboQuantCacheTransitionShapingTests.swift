@@ -34,4 +34,41 @@ struct TurboQuantCacheTransitionShapingTests {
         #expect(after["turbo_quant_kv_layer_count"] as? Int == 8)
         #expect(after["rotating_kv_layer_count"] as? Int == 40)
     }
+
+    @Test("admin effective topology prefers the live post-conversion cache")
+    func effectiveTopologyPrefersTransitionAfter() throws {
+        let baseline = ModelCacheTopologySnapshot(
+            layerCount: 48,
+            kvLayerCount: 8,
+            rotatingKVLayerCount: 40
+        )
+        let transition = TurboQuantCacheTransitionSnapshot(
+            before: baseline,
+            after: ModelCacheTopologySnapshot(
+                layerCount: 48,
+                turboQuantKVLayerCount: 8,
+                rotatingKVLayerCount: 40
+            )
+        )
+
+        let effective = try #require(
+            HTTPHandler.effectiveCacheTopology(
+                baseline: baseline,
+                turboQuantTransition: transition
+            )
+        )
+        #expect(effective.kvLayerCount == 0)
+        #expect(effective.turboQuantKVLayerCount == 8)
+        #expect(effective.rotatingKVLayerCount == 40)
+
+        let unchanged = try #require(
+            HTTPHandler.effectiveCacheTopology(
+                baseline: baseline,
+                turboQuantTransition: nil
+            )
+        )
+        #expect(unchanged.kvLayerCount == 8)
+        #expect(unchanged.turboQuantKVLayerCount == 0)
+        #expect(unchanged.rotatingKVLayerCount == 40)
+    }
 }

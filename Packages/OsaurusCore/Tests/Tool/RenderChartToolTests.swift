@@ -191,6 +191,65 @@ struct RenderChartToolTests {
         #expect(marker.contains("\"name\":\"Revenue\""))
     }
 
+    @Test func explicitCSVLabelRecoversObservedBonsaiTabDelimitedPayload() async throws {
+        let result = try await RenderChartTool().execute(
+            argumentsJSON: #"""
+                {
+                  "chartType": "bar",
+                  "data": "month\trevenue\nJanuary\t10\nFebruary\t18\nMarch\t13\nApril\t24",
+                  "format": "csv",
+                  "series": "revenue",
+                  "title": "Monthly Revenue",
+                  "xColumn": "month"
+                }
+                """#
+        )
+
+        #expect(ToolEnvelope.isSuccess(result))
+        let payload = try #require(ToolEnvelope.successPayload(result) as? [String: Any])
+        let marker = try #require(payload["text"] as? String)
+        #expect(marker.contains("\"categories\":[\"January\",\"February\",\"March\",\"April\"]"))
+        #expect(marker.contains("\"name\":\"revenue\""))
+        #expect(marker.contains("\"data\":[10,18,13,24]"))
+    }
+
+    @Test func explicitTSVLabelRecoversUnambiguousCommaDelimitedPayload() async throws {
+        let result = try await RenderChartTool().execute(
+            argumentsJSON: #"""
+                {
+                  "chartType": "line",
+                  "data": "month,revenue\nJanuary,10\nFebruary,18",
+                  "format": "tsv",
+                  "series": ["revenue"],
+                  "xColumn": "month"
+                }
+                """#
+        )
+
+        #expect(ToolEnvelope.isSuccess(result))
+        let payload = try #require(ToolEnvelope.successPayload(result) as? [String: Any])
+        let marker = try #require(payload["text"] as? String)
+        #expect(marker.contains("\"categories\":[\"January\",\"February\"]"))
+        #expect(marker.contains("\"data\":[10,18]"))
+    }
+
+    @Test func mixedDelimiterPayloadDoesNotBypassStrictColumnValidation() async throws {
+        let result = try await RenderChartTool().execute(
+            argumentsJSON: #"""
+                {
+                  "chartType": "bar",
+                  "data": "month\trevenue\nJanuary,10\nFebruary\t18",
+                  "format": "csv",
+                  "series": ["revenue"],
+                  "xColumn": "month"
+                }
+                """#
+        )
+
+        #expect(!ToolEnvelope.isSuccess(result))
+        #expect(result.contains("Column(s) not found"))
+    }
+
     @Test func textualHeaderWithMisspelledSeriesStillFails() async throws {
         let result = try await RenderChartTool().execute(
             argumentsJSON: #"""
