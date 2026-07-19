@@ -30,6 +30,11 @@ public enum RemoteProviderServiceError: LocalizedError {
     /// express (e.g. audio/video parts on an Anthropic/Gemini route).
     /// Rejecting loudly beats silently dropping the user's attachment.
     case unsupportedParameter(String)
+    /// The configured base URL answered an MCP `initialize` handshake like an
+    /// MCP server — the user pasted an MCP endpoint (e.g. runalyze.com/mcp)
+    /// into the API provider form. Typed so the edit sheet can offer a
+    /// redirect to Tools > Connections instead of a dead-end failure badge.
+    case mcpEndpointDetected
 
     public var errorDescription: String? {
         switch self {
@@ -64,6 +69,8 @@ public enum RemoteProviderServiceError: LocalizedError {
             return condition + " " + L("Retry shortly.")
         case .unsupportedParameter(let message):
             return L("\(message)")
+        case .mcpEndpointDetected:
+            return RemoteProviderMCPDetection.guidance()
         }
     }
 
@@ -90,7 +97,7 @@ public enum RemoteProviderServiceError: LocalizedError {
         case .requestFailedWithDiagnostics:
             return self
         case .invalidURL, .notConnected, .streamingError, .noModelsAvailable, .rateLimited,
-            .unsupportedParameter:
+            .unsupportedParameter, .mcpEndpointDetected:
             return self
         }
     }
@@ -5243,7 +5250,8 @@ extension RemoteProviderService {
     /// nil (keep the original error) for other provider types, on any
     /// transport failure, or when the response doesn't look like MCP.
     static func refineMCPServerMisconfiguration(
-        for provider: RemoteProvider
+        for provider: RemoteProvider,
+        headers: [String: String]? = nil
     ) async -> RemoteProviderServiceError? {
         guard provider.providerType == .openaiLegacy || provider.providerType == .openResponses,
             let url = provider.baseURL
@@ -5255,8 +5263,10 @@ extension RemoteProviderService {
         request.timeoutInterval = min(modelDiscoveryTimeout(provider.timeout), 10)
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue("application/json, text/event-stream", forHTTPHeaderField: "Accept")
-        for (key, value) in await provider.resolvedHeadersOffMainActor()
-        where isSafeHeader(name: key, value: value) {
+        // `headers` lets the connect-test path pass its already-resolved
+        // header set (the test API key never reaches the Keychain).
+        let resolved = headers ?? (await provider.resolvedHeadersOffMainActor())
+        for (key, value) in resolved where isSafeHeader(name: key, value: value) {
             request.setValue(value, forHTTPHeaderField: key)
         }
         request.httpBody = MCPAuthFailureProbe.handshakeBody()
@@ -5265,7 +5275,7 @@ extension RemoteProviderService {
             let http = response as? HTTPURLResponse,
             RemoteProviderMCPDetection.looksLikeMCPServer(response: http, body: data)
         else { return nil }
-        return .requestFailed(RemoteProviderMCPDetection.guidance())
+        return .mcpEndpointDetected
     }
 
     /// Builds a bounded `/models` request so provider connect tests do not hang

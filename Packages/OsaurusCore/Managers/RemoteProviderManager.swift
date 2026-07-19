@@ -1231,6 +1231,14 @@ public final class RemoteProviderManager: ObservableObject {
                         provider: tempProvider
                     )
                 } catch let error as RemoteProviderServiceError {
+                    if httpResponse.statusCode >= 400,
+                        let refined = await RemoteProviderService.refineMCPServerMisconfiguration(
+                            for: tempProvider,
+                            headers: testHeaders
+                        )
+                    {
+                        throw refined
+                    }
                     throw error.attachingReplayDiagnostics(diagnostics)
                 } catch {
                     throw RemoteProviderServiceError.requestFailedWithDiagnostics(
