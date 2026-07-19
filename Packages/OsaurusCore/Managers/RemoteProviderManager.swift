@@ -667,7 +667,7 @@ public final class RemoteProviderManager: ObservableObject {
             case .invalidResponse, .rateLimited:
                 return true
             case .invalidURL, .notConnected, .requestFailed, .requestFailedWithDiagnostics,
-                .streamingError, .noModelsAvailable, .unsupportedParameter:
+                .streamingError, .noModelsAvailable, .unsupportedParameter, .mcpEndpointDetected:
                 return false
             }
         }
