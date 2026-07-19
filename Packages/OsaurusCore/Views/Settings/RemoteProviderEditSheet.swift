@@ -1553,7 +1553,12 @@ private struct AddProviderFlow: View {
             providerType: .openaiLegacy
         )
         guard let url = endpoint.baseURL?.absoluteString else { return }
-        let trimmedKey = apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
+        // Match the test's auth gating: only carry the key when the user
+        // actually selected API-key auth, not stale text behind "No Auth".
+        let trimmedKey =
+            customAuthType == .apiKey
+            ? apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
+            : ""
         let management = ManagementStateManager.shared
         management.pendingMCPProviderDraft = MCPProviderDraft(
             name: trimmedName,
