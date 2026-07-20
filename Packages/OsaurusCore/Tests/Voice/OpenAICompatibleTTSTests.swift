@@ -207,6 +207,25 @@ struct OpenAICompatibleTTSClientTests {
         #expect(chunked == whole)
     }
 
+    // Regression: `Data.SubSequence == Data`, so draining frames used to leave
+    // `pending` with a non-zero `startIndex`; the end-of-stream tail decode
+    // then did index-based access on it and trapped. Replays that sequence:
+    // fill past one frame, drain, append the tail, decode the tail.
+    @Test("tail decode after frame drain does not trap and decodes correctly")
+    func tailDecodeAfterDrain() {
+        let frame = 1920
+        var pending = pcmData([Int16](repeating: 7, count: frame + 3))
+        let drained = OpenAICompatibleTTSClient.consumeFrames(&pending)
+        #expect(drained.count == frame)
+
+        pending.append(pcmData([21, -21]))
+        var remainder = Data()
+        let tail = OpenAICompatibleTTSClient.samples(from: pending, keepingRemainderIn: &remainder)
+        #expect(tail.count == 5)
+        #expect(tail == [7, 7, 7, 21, -21].map { Float($0) / 32768.0 })
+        #expect(remainder.isEmpty)
+    }
+
     // MARK: - Server error bodies
 
     @Test("extracts OpenAI-shaped error message")

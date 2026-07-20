@@ -123,20 +123,27 @@ struct OpenAICompatibleTTSClient: Sendable {
     }
 
     /// Drain all complete frames from `pending`, leaving the remainder.
+    ///
+    /// Index safety: `Data.SubSequence == Data`, so slicing operations
+    /// (`removeFirst`, `dropFirst`, subscripts) yield Data whose `startIndex`
+    /// is NOT 0. Everything here therefore works with counts and rebuilds
+    /// fresh `Data` for anything kept across calls — index-based access on a
+    /// carried-over slice is how this crashed at end-of-stream in the field.
     static func consumeFrames(_ pending: inout Data) -> [Float] {
         let frameBytes = frameSampleCount * 2
         let usable = (pending.count / frameBytes) * frameBytes
-        let chunk = pending.prefix(usable)
-        pending.removeFirst(usable)
+        guard usable > 0 else { return [] }
+        let chunk = Data(pending.prefix(usable))
+        pending = Data(pending.dropFirst(usable))
         var scratch = Data()
-        return samples(from: Data(chunk), keepingRemainderIn: &scratch)
+        return samples(from: chunk, keepingRemainderIn: &scratch)
     }
 
     /// Decode 16-bit little-endian PCM into normalized floats. Any trailing
     /// odd byte is left in `remainder` for the next chunk.
     static func samples(from data: Data, keepingRemainderIn remainder: inout Data) -> [Float] {
         let usable = data.count - (data.count % 2)
-        remainder = data.suffix(from: usable)
+        remainder = Data(data.suffix(data.count - usable))
         guard usable > 0 else { return [] }
         var out = [Float](repeating: 0, count: usable / 2)
         data.prefix(usable).withUnsafeBytes { (raw: UnsafeRawBufferPointer) in
