@@ -43,10 +43,15 @@ fi
 BUNDLE_ID="com.dinoki.osaurus"
 RELEASE="${BUNDLE_ID}@${VERSION}+${VERSION}"
 
-# Install a pinned sentry-cli (no sudo) if it isn't already on PATH — the
-# dSYM step usually ran first and left one installed.
+# Reuse the pinned sentry-cli the dSYM step installed, or install one (no
+# sudo). The dSYM step's `export PATH` does NOT survive into this workflow
+# step, so PATH alone can't find it — and re-running the installer against a
+# populated INSTALL_DIR hard-fails with "sentry-cli is already installed".
+INSTALL_DIR="${RUNNER_TEMP:-/tmp}/sentry-cli-bin"
+if [[ -x "${INSTALL_DIR}/sentry-cli" ]]; then
+  export PATH="${INSTALL_DIR}:${PATH}"
+fi
 if ! command -v sentry-cli >/dev/null 2>&1; then
-  INSTALL_DIR="${RUNNER_TEMP:-/tmp}/sentry-cli-bin"
   mkdir -p "${INSTALL_DIR}"
   echo "Installing sentry-cli ${SENTRY_CLI_VERSION} into ${INSTALL_DIR} ..."
   curl -sL https://sentry.io/get-cli/ | INSTALL_DIR="${INSTALL_DIR}" SENTRY_CLI_VERSION="${SENTRY_CLI_VERSION}" bash
