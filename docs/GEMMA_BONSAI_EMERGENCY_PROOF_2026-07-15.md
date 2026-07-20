@@ -233,7 +233,7 @@ Focused current-source vMLX evidence at that exact revision:
 - Embedded vMLX revision:
   `4b431c6a3f229e2150810b9dea9afe57790ca60b`
 - Executable SHA-256:
-  `5291afc8309f8a94b7642cbb7da04b326227fd23eafabd94a11047c66c1d7dde`
+  `6975d56bf873d1afe7d76cb039d5011a5b3aa69af4ab8f34775fd9436cfb9e4b`
 - Runtime root:
   `/private/tmp/osaurus-ornith-cachefix2-proof-root-v1`
 - Exact model:
@@ -307,6 +307,34 @@ steps, no stale call/final, and a post-tool disk partial-prefix hit at
 The separate Ornith semantic-completion defect remains separate. A faster
 direct rail does not prove multi-step task completion, success detection, tool
 selection, tool-error honesty, or final-answer correctness.
+
+The first `test-core` run on PR #2105 then caught a real four-surface repin
+inconsistency rather than a flaky runtime test: `Package.swift`, the core
+package resolver, and the top-level workspace resolver named vMLX
+`4b431c6a3f229e2150810b9dea9afe57790ca60b`, while the nested app resolver and
+the image/runtime repin tripwires still named its ancestor `24ce87c...`. The
+nested resolver and both tripwires now name the exact merged vMLX revision;
+the tripwire comment also records the two vMLX #163 cache invariants. Focused
+workspace testing in `PinContractTests2.xcresult` reports 94 passed, 0 failed,
+and 0 skipped across `ImageGenerationBridgeContractTests` and
+`RuntimePolicySourceTests`. The exact Release app above was rebuilt from that
+four-surface pin state, ad-hoc signed, and passed deep strict verification.
+
+The post-repin binary was then relaunched with the isolated root, keychain
+disabled, and `OSU_MODELS_DIR=/Users/eric/models`. Computer Use first exposed
+that reopening the old proof chat restored its old Gemma selection, so that
+chat was not counted as Ornith evidence. A new real-user chat visibly selected
+`Ornith-1.0-9B-JANG_4M`, the repository folder, and Thinking Off. It executed
+exactly one expanded `file_read` card with JSON
+`path=Packages/OsaurusCore/Package.swift`, `start_line=77`, and `end_line=82`;
+the visible result contained the exact vMLX pin, and the final response was
+exactly `FIX2-FINAL-ORNITH-OFF-DONE`. The UI reported TTFT 0.57s, 71.4 tok/s,
+11 tokens, and an 820 ms tool call, with no Thought row or protocol leakage.
+Activity Monitor visibly showed exact PID 99370 at 2.47 GB after generation.
+The proof app then exited cleanly. This is the final-binary current UI smoke;
+the broader explicit ON/OFF/restart matrix above remains the preceding
+functional-source proof, not a claim that all of it was repeated after the
+resolver-only correction.
 
 ### Deferred mixed-cache/runtime matrices
 
