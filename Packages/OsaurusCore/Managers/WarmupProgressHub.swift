@@ -57,7 +57,34 @@ final class WarmupProgressHub: ObservableObject, @unchecked Sendable {
     private nonisolated func setPhase(_ phase: WarmupProgressPhase, for model: String) {
         guard !model.isEmpty else { return }
         Task { @MainActor in
+            // Publish only when the displayed value changes. Prefill emits a
+            // progress event per batch; republishing each one re-evaluates
+            // every observing view body (FloatingInputCard observes this hub)
+            // for a tooltip that shows whole percents. Quantize to the visible
+            // granularity: stage transitions and 1% steps.
+            if let current = self.phases[model], !Self.displayedValueChanged(current, phase) {
+                return
+            }
             self.phases[model] = phase
         }
+    }
+
+    private static func displayedValueChanged(
+        _ old: WarmupProgressPhase, _ new: WarmupProgressPhase
+    ) -> Bool {
+        switch (old, new) {
+        case (.loadingModel, .loadingModel):
+            return false
+        case (.prefilling(let a), .prefilling(let b)):
+            if a.stage != b.stage || a.detail != b.detail { return true }
+            return percent(a) != percent(b)
+        default:
+            return true
+        }
+    }
+
+    private static func percent(_ state: PrefillProgressState) -> Int {
+        guard state.totalUnitCount > 0 else { return 0 }
+        return Int(Double(state.completedUnitCount) * 100 / Double(state.totalUnitCount))
     }
 }
