@@ -12,6 +12,7 @@ import Foundation
 public enum OpenAICompatibleTTSError: LocalizedError {
     case invalidEndpoint(String)
     case serverError(status: Int, message: String)
+    case noAudio
 
     public var errorDescription: String? {
         switch self {
@@ -21,6 +22,8 @@ public enum OpenAICompatibleTTSError: LocalizedError {
             return message.isEmpty
                 ? "TTS server returned HTTP \(status)"
                 : "TTS server returned HTTP \(status): \(message)"
+        case .noAudio:
+            return "Server responded but returned no audio"
         }
     }
 }
@@ -79,6 +82,18 @@ struct OpenAICompatibleTTSClient: Sendable {
             }
             continuation.onTermination = { _ in task.cancel() }
         }
+    }
+
+    /// Synthesize a one-word utterance and succeed on the first audio bytes.
+    /// Exercises the same endpoint, credentials, model, and voice as playback,
+    /// so a passing test means Preview will work too. The stream is torn down
+    /// (cancelling the request) as soon as any samples arrive.
+    func verifyConnection() async throws {
+        let stream = try synthesizeStreaming(text: "Hi")
+        for try await samples in stream where !samples.isEmpty {
+            return
+        }
+        throw OpenAICompatibleTTSError.noAudio
     }
 
     func makeRequest(text: String) throws -> URLRequest {

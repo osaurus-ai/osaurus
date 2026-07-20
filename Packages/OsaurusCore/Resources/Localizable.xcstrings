@@ -61944,6 +61944,9 @@
         }
       }
     },
+    "Engine" : {
+
+    },
     "Engine invariant whenever a cache reuse tier is enabled — keeps prompts with different media from sharing cache entries. Disabling fails validation." : {
       "localizations" : {
         "de" : {
@@ -110086,6 +110089,9 @@
         }
       }
     },
+    "On-Device (PocketTTS)" : {
+
+    },
     "On-device detection" : {
       "comment" : "Title for a privacy filter setting benefit.",
       "extractionState" : "stale",
@@ -152132,6 +152138,9 @@
           }
         }
       }
+    },
+    "Sends text to any server implementing the OpenAI /v1/audio/speech API, such as openai-edge-tts or Kokoro." : {
+
     },
     "Sensitivity Level" : {
       "localizations" : {

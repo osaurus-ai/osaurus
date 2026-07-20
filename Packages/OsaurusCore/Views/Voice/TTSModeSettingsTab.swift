@@ -15,6 +15,12 @@ struct TTSModeSettingsTab: View {
     @State private var config: TTSConfiguration = .default
     @State private var hasLoadedSettings = false
     @State private var remoteAPIKey: String = ""
+
+    private enum ConnectionTestState: Equatable {
+        case idle, testing, success
+        case failure(String)
+    }
+    @State private var connectionTest: ConnectionTestState = .idle
     @State private var previewText: String = "Hello from Osaurus. Text to speech is now ready."
     @State private var previewMessageId = UUID()
 
@@ -303,22 +309,32 @@ struct TTSModeSettingsTab: View {
             VStack(alignment: .leading, spacing: 16) {
                 labeledField(L("Endpoint")) {
                     TextField(TTSConfiguration.defaultRemoteEndpoint, text: $config.remoteEndpoint)
-                        .onChange(of: config.remoteEndpoint) { _, _ in saveSettings() }
+                        .onChange(of: config.remoteEndpoint) { _, _ in
+                            connectionTest = .idle
+                            saveSettings()
+                        }
                 }
 
                 labeledField(L("Model")) {
                     TextField(TTSConfiguration.defaultRemoteModel, text: $config.remoteModel)
-                        .onChange(of: config.remoteModel) { _, _ in saveSettings() }
+                        .onChange(of: config.remoteModel) { _, _ in
+                            connectionTest = .idle
+                            saveSettings()
+                        }
                 }
 
                 labeledField(L("Voice")) {
                     TextField(TTSConfiguration.defaultRemoteVoice, text: $config.remoteVoice)
-                        .onChange(of: config.remoteVoice) { _, _ in saveSettings() }
+                        .onChange(of: config.remoteVoice) { _, _ in
+                            connectionTest = .idle
+                            saveSettings()
+                        }
                 }
 
                 labeledField(L("API Key")) {
                     SecureField(L("Optional"), text: $remoteAPIKey)
                         .onChange(of: remoteAPIKey) { _, newValue in
+                            connectionTest = .idle
                             TTSRemoteAPIKeyStore.save(newValue)
                         }
                 }
@@ -338,6 +354,8 @@ struct TTSModeSettingsTab: View {
                     }
                 }
 
+                connectionTestRow
+
                 if let error = ttsService.lastRemoteError {
                     HStack(alignment: .top, spacing: 8) {
                         Image(systemName: "exclamationmark.triangle")
@@ -348,6 +366,76 @@ struct TTSModeSettingsTab: View {
                             .foregroundColor(theme.errorColor)
                     }
                 }
+            }
+        }
+    }
+
+    private var connectionTestRow: some View {
+        HStack(spacing: 10) {
+            Button(action: runConnectionTest) {
+                Text("Test Connection", bundle: .module)
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundColor(theme.isDark ? theme.primaryBackground : .white)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 6)
+                    .background(
+                        RoundedRectangle(cornerRadius: 8)
+                            .fill(
+                                connectionTest == .testing
+                                    ? theme.tertiaryBackground : theme.accentColor)
+                    )
+            }
+            .buttonStyle(PlainButtonStyle())
+            .disabled(connectionTest == .testing)
+
+            switch connectionTest {
+            case .idle:
+                EmptyView()
+            case .testing:
+                ProgressView()
+                    .controlSize(.small)
+            case .success:
+                HStack(spacing: 6) {
+                    Image(systemName: "checkmark.circle.fill")
+                        .font(.system(size: 12))
+                        .foregroundColor(theme.successColor)
+                    Text("Connected", bundle: .module)
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundColor(theme.successColor)
+                }
+            case .failure(let message):
+                HStack(alignment: .top, spacing: 6) {
+                    Image(systemName: "xmark.circle.fill")
+                        .font(.system(size: 12))
+                        .foregroundColor(theme.errorColor)
+                    Text(message)
+                        .font(.system(size: 12))
+                        .foregroundColor(theme.errorColor)
+                        .lineLimit(3)
+                }
+            }
+
+            Spacer()
+        }
+    }
+
+    private func runConnectionTest() {
+        guard connectionTest != .testing else { return }
+        connectionTest = .testing
+        let trimmedKey = remoteAPIKey.trimmingCharacters(in: .whitespacesAndNewlines)
+        let client = OpenAICompatibleTTSClient(
+            endpoint: config.remoteEndpoint,
+            model: config.remoteModel,
+            voice: config.remoteVoice,
+            speed: config.remoteSpeed,
+            apiKey: trimmedKey.isEmpty ? nil : trimmedKey
+        )
+        Task {
+            do {
+                try await client.verifyConnection()
+                connectionTest = .success
+            } catch {
+                connectionTest = .failure(error.localizedDescription)
             }
         }
     }
