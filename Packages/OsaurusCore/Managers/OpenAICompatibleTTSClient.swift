@@ -81,7 +81,7 @@ struct OpenAICompatibleTTSClient: Sendable {
         }
     }
 
-    private func makeRequest(text: String) throws -> URLRequest {
+    func makeRequest(text: String) throws -> URLRequest {
         let trimmed = endpoint.trimmingCharacters(in: .whitespacesAndNewlines)
         let base = trimmed.hasSuffix("/") ? String(trimmed.dropLast()) : trimmed
         // Accept either a bare host or a URL that already includes the path.
@@ -108,7 +108,7 @@ struct OpenAICompatibleTTSClient: Sendable {
     }
 
     /// Drain all complete frames from `pending`, leaving the remainder.
-    private static func consumeFrames(_ pending: inout Data) -> [Float] {
+    static func consumeFrames(_ pending: inout Data) -> [Float] {
         let frameBytes = frameSampleCount * 2
         let usable = (pending.count / frameBytes) * frameBytes
         let chunk = pending.prefix(usable)
@@ -119,7 +119,7 @@ struct OpenAICompatibleTTSClient: Sendable {
 
     /// Decode 16-bit little-endian PCM into normalized floats. Any trailing
     /// odd byte is left in `remainder` for the next chunk.
-    private static func samples(from data: Data, keepingRemainderIn remainder: inout Data) -> [Float] {
+    static func samples(from data: Data, keepingRemainderIn remainder: inout Data) -> [Float] {
         let usable = data.count - (data.count % 2)
         remainder = data.suffix(from: usable)
         guard usable > 0 else { return [] }
@@ -137,7 +137,7 @@ struct OpenAICompatibleTTSClient: Sendable {
 
     /// Servers return either `{"error": {"message": ...}}` (OpenAI shape),
     /// `{"detail": ...}` (FastAPI shape), or plain text.
-    private static func extractServerMessage(_ body: String) -> String {
+    static func extractServerMessage(_ body: String) -> String {
         guard let data = body.data(using: .utf8),
             let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
         else { return body.trimmingCharacters(in: .whitespacesAndNewlines) }
