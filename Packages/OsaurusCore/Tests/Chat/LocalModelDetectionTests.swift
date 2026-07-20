@@ -5,8 +5,9 @@
 //  Pins the contract for `ChatSession.selectedModelIsLocal` /
 //  `isStreamingLocalModel` — the detection that gates the "one local
 //  generation at a time, never interrupt an in-flight chat" behavior. A
-//  model counts as local iff it resolves in the installed-model catalog
-//  (`ModelManager.findInstalledModel`). That catalog merges osaurus-downloaded
+//  model counts as local iff it resolves in the installed-model catalog.
+//  Main-thread callers use the catalog snapshot rather than waiting for a cold
+//  scan. That catalog merges osaurus-downloaded
 //  models with externally-discovered ones (LM Studio, Hugging Face cache); the
 //  external discovery/merge itself is covered by `ModelManagerTests`, so here
 //  we drive the catalog through `scanLocalModelsOverrideForTests` and assert
@@ -102,6 +103,58 @@ struct LocalModelDetectionTests {
                 session.selectedModel = "Llama-3.2-3B-Instruct"
                 #expect(session.selectedModelIsLocal)
             }
+        }
+    }
+
+    @Test
+    func selectedModelIsLocal_neverWaitsForAColdCatalogScan() async throws {
+        try await ChatHistoryTestStorage.run {
+            let prevScan = ModelManager.scanLocalModelsOverrideForTests
+            let prevWait = ModelManager.localModelsScanWaitLimitOverrideForTests
+            let prevExternal = ExternalModelLocator.testRootsOverride
+            defer {
+                ModelManager.scanLocalModelsOverrideForTests = prevScan
+                ModelManager.localModelsScanWaitLimitOverrideForTests = prevWait
+                ExternalModelLocator.testRootsOverride = prevExternal
+                ExternalModelLocator.invalidateInMemory()
+                ModelManager.invalidateLocalModelsCache()
+            }
+
+            ExternalModelLocator.testRootsOverride = []
+            ModelManager.localModelsScanWaitLimitOverrideForTests = 2
+            let coldCatalog = [
+                MLXModel(
+                    id: "fixture/Cold-Scan-Only-Model",
+                    name: "Cold scan fixture",
+                    description: "not present in the picker cache",
+                    downloadURL: "https://example.invalid/cold"
+                )
+            ]
+            ModelManager.scanLocalModelsOverrideForTests = { _ in
+                Thread.sleep(forTimeInterval: 0.25)
+                return coldCatalog
+            }
+            ModelManager.invalidateLocalModelsCache()
+
+            let session = ChatSession()
+            session.selectedModel = "Cold-Scan-Only-Model"
+            let started = ContinuousClock.now
+            let initial = session.selectedModelIsLocal
+            let elapsed = started.duration(to: .now)
+
+            // A selection observer may already have started the background
+            // refresh, so either boolean is valid. The contract here is that
+            // reading it never waits for that refresh.
+            _ = initial
+            #expect(elapsed < .milliseconds(100))
+
+            // The UI getter is deliberately read-only. A normal background
+            // catalog refresh populates the snapshot without making the first
+            // main-thread lookup pay for the scan.
+            await Task.detached(priority: .utility) {
+                _ = ModelManager.discoverLocalModels()
+            }.value
+            #expect(session.selectedModelIsLocal)
         }
     }
 

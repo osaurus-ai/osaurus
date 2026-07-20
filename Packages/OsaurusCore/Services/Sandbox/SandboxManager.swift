@@ -3266,8 +3266,8 @@
         /// per-step durations into `SandboxConfiguration.lastBootDurations`
         /// for future ETA seeding, and clear the legacy provisioning flag.
         private func finishJourney(success: Bool) async {
-            await MainActor.run {
-                guard var journey = State.shared.journey else { return }
+            let completedJourney: ProvisioningJourney? = await MainActor.run {
+                guard var journey = State.shared.journey else { return nil }
                 let now = Date()
                 journey.finishedAt = now
                 journey.failed = !success
@@ -3288,10 +3288,14 @@
                 State.shared.journey = journey
                 Self.clearLegacyProvisioningScalars()
                 State.shared.currentActivity = nil
+                return success ? journey : nil
+            }
 
-                if success {
-                    Self.persistLearnedDurations(from: journey)
-                }
+            // SandboxConfigurationStore performs an atomic filesystem write.
+            // SandboxManager is already an actor, so persist after leaving the
+            // MainActor instead of stalling the progress UI at completion.
+            if let completedJourney {
+                Self.persistLearnedDurations(from: completedJourney)
             }
         }
 
@@ -3300,7 +3304,6 @@
         /// can seed ETAs from real history. Coalesces on the existing
         /// map so unrelated keys aren't blown away, and only re-saves
         /// when the map actually changed.
-        @MainActor
         private static func persistLearnedDurations(from journey: ProvisioningJourney) {
             var config = SandboxConfigurationStore.load()
             var durations = config.lastBootDurations ?? [:]

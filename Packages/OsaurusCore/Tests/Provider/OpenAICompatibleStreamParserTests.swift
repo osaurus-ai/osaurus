@@ -5,6 +5,42 @@ import Testing
 
 @Suite("OpenAI-compatible stream parser")
 struct OpenAICompatibleStreamParserTests {
+    @Test func malformedExtraClosingToolDelimiterDoesNotTrapOrDispatch() {
+        let accumulated: [Int: RemoteProviderService.StreamingState.ToolSlot] = [
+            0: (
+                id: "call_1",
+                name: "file_write",
+                args: #"{"path":"a"}}"#,
+                thoughtSignature: nil
+            )
+        ]
+
+        let result = OpenAICompatibleToolCallAccumulator.resolveAccumulatedToolCall(
+            from: accumulated,
+            finishMarker: "tool_calls"
+        )
+
+        guard case .truncated(let error) = result else {
+            Issue.record("Expected malformed extra closer to be quarantined, got \(result)")
+            return
+        }
+        #expect(error.localizedDescription.contains("file_write"))
+    }
+
+    @Test func malformedMismatchedToolDelimitersDoNotTrapOrDispatch() {
+        let validated = OpenAICompatibleToolCallAccumulator.validateToolCallJSON(#"{"x":[1}}"#)
+
+        #expect(validated.wasRepaired)
+        #expect(validated.json == #"{"x":[1}}"#)
+    }
+
+    @Test func truncatedNestedToolJSONClosesInNestingOrder() {
+        let validated = OpenAICompatibleToolCallAccumulator.validateToolCallJSON(#"{"x":[{"y":1}"#)
+
+        #expect(validated.wasRepaired)
+        #expect(validated.json == #"{"x":[{"y":1}]}"#)
+    }
+
     @Test func framer_joinsCRLFMultilineDataEvent() {
         let payload = "data: {\r\ndata:   \"x\":1\r\ndata: }\r\n\r\n"
         var parser = OpenAICompatibleStreamFramer.SSELineParser()

@@ -250,7 +250,7 @@ private struct ImageGenerationSettingsTab: View {
         // Gated on `hasLoaded` so only real user edits write back.
         .onChange(of: configuration) { _, newValue in
             guard hasLoaded else { return }
-            SubagentConfigurationStore.save(newValue)
+            SubagentConfigurationStore.saveAsync(newValue)
         }
         // Re-snapshot if another surface mutates the shared store.
         .onReceive(

@@ -87,6 +87,24 @@ struct SubagentConfigurationStoreTests {
         #expect(decoded.defaultImageGenerationModelId == "flux")
     }
 
+    @Test("async UI save publishes immediately and persists in order")
+    func asyncSavePublishesAndPersistsInOrder() async throws {
+        let lease = await acquireSubagentStoreSandbox("agent-delegation-store-async")
+        defer { lease.release() }
+
+        SubagentConfigurationStore.saveAsync(
+            SubagentConfiguration(defaultAppleScriptModelId: "first")
+        )
+        SubagentConfigurationStore.saveAsync(
+            SubagentConfiguration(defaultAppleScriptModelId: "second")
+        )
+
+        #expect(SubagentConfigurationStore.snapshot().defaultAppleScriptModelId == "second")
+        SubagentConfigurationStore.flushPendingWritesForTests()
+        SubagentConfigurationStore.invalidateSnapshot()
+        #expect(SubagentConfigurationStore.snapshot().defaultAppleScriptModelId == "second")
+    }
+
     @Test("override directory swaps between sandboxes")
     func overrideDirectorySwapsBetweenSandboxes() async throws {
         // `lease.sandbox` is the first override; `lease.release()` resets

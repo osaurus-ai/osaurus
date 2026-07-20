@@ -6513,16 +6513,31 @@ struct AgentDetailView: View {
     }
 
     private func loadMemoryData() {
-        let db = MemoryDatabase.shared
-        if !db.isOpen { try? db.open() }
-        pinnedFacts = (try? db.loadPinnedFacts(agentId: agent.id.uuidString, limit: 200)) ?? []
-        episodes = (try? db.loadEpisodes(agentId: agent.id.uuidString, limit: 100)) ?? []
-        // Counts come from `sessions.turn_count` directly so the row's
-        // "N turns" label is accurate without hydrating each session's
-        // turn array (which only happens on click — the prior root cause
-        // of the persistent "0 turns" display).
-        let agentFilter: UUID? = (agent.id == Agent.defaultId) ? nil : agent.id
-        sessionTurnCounts = ChatHistoryDatabase.shared.turnCounts(forAgent: agentFilter)
+        let agentId = agent.id
+        let agentFilter: UUID? = (agentId == Agent.defaultId) ? nil : agentId
+
+        Task {
+            let result = await Task.detached(priority: .userInitiated) {
+                let db = MemoryDatabase.shared
+                if !db.isOpen { try? db.open() }
+                let facts =
+                    (try? db.loadPinnedFacts(agentId: agentId.uuidString, limit: 200)) ?? []
+                let episodes =
+                    (try? db.loadEpisodes(agentId: agentId.uuidString, limit: 100)) ?? []
+                // Counts come from `sessions.turn_count` directly so the row's
+                // "N turns" label is accurate without hydrating each session's
+                // turn array (which only happens on click).
+                let counts = ChatHistoryDatabase.shared.turnCounts(forAgent: agentFilter)
+                return (facts, episodes, counts)
+            }.value
+
+            // AgentDetailView can be reused while the detached query is live;
+            // never publish another agent's rows into the current editor.
+            guard agent.id == agentId else { return }
+            pinnedFacts = result.0
+            episodes = result.1
+            sessionTurnCounts = result.2
+        }
     }
 
     // MARK: - Agent Secrets

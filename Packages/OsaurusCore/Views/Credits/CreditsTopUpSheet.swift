@@ -275,11 +275,25 @@ struct CreditsTopUpSheet: View {
     /// Parse the amount field as a dollar amount into micro-USD. Tolerates a
     /// leading "$". Returns nil when empty or not a positive number.
     private var currentMicro: Int? {
-        let trimmed = amountTrimmed
+        Self.parseMicroUSD(amountTrimmed)
+    }
+
+    /// Parse user-entered dollars without ever invoking a trapping
+    /// floating-point-to-Int conversion. The checkout API accepts `Int`
+    /// micro-USD, so values above that representable range are invalid input,
+    /// not a reason to terminate the app (Sentry APPLE-MACOS-11A).
+    static func parseMicroUSD(_ amount: String) -> Int? {
+        let trimmed = amount.trimmingCharacters(in: .whitespaces)
         guard !trimmed.isEmpty else { return nil }
         let cleaned = trimmed.hasPrefix("$") ? String(trimmed.dropFirst()) : trimmed
         guard let dollars = Double(cleaned), dollars.isFinite, dollars > 0 else { return nil }
-        return Int((dollars * 1_000_000).rounded())
+        let micro = (dollars * 1_000_000).rounded()
+        guard micro.isFinite else { return nil }
+        // `Double(Int.max)` rounds up to 2^63 on 64-bit platforms, so a
+        // comparison against that value can still admit one trapping input.
+        // The failable exact initializer owns both the integral and range
+        // checks without ever invoking a trapping conversion.
+        return Int(exactly: micro)
     }
 
     private var isValid: Bool {

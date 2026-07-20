@@ -768,6 +768,7 @@ final class ChatSession: ObservableObject {
             voidNotification(.agentUpdated),
             voidNotification(.activeAgentChanged),
             voidNotification(.toolsListChanged),
+            voidNotification(.agentDatabaseSchemaSnapshotChanged),
             FolderContextService.shared.objectWillChange
                 .map { _ in () }.eraseToAnyPublisher(),
             $selectedModel.map { _ in () }.eraseToAnyPublisher(),
@@ -1222,11 +1223,19 @@ final class ChatSession: ObservableObject {
     /// models and externally-discovered ones (LM Studio, Hugging Face cache),
     /// since `findInstalledModel` resolves the merged local catalog. Foundation
     /// (Apple on-device) and remote provider models run on separate engines and
-    /// don't contend. Resolved against the catalog so it doesn't depend on
-    /// `pickerItems` being populated.
+    /// don't contend. The picker source is authoritative when available;
+    /// the fallback reads only the non-blocking installed-model snapshot.
+    /// Never run a cold disk scan here: this getter participates in warm-up
+    /// policy during SwiftUI/Combine callbacks, and the old blocking catalog
+    /// lookup parked the main thread for up to ten seconds (Sentry
+    /// APPLE-MACOS-158).
     var selectedModelIsLocal: Bool {
         guard let model = selectedModel else { return false }
-        return ModelManager.findInstalledModel(named: model) != nil
+        if let item = selectedPickerItem {
+            if case .local = item.source { return true }
+            return false
+        }
+        return ModelManager.findInstalledMLXModelFromCache(named: model) != nil
     }
 
     /// True while this session is streaming a reply from a local model.

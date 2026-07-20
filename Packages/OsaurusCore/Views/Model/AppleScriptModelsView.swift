@@ -73,7 +73,7 @@ struct AppleScriptModelsView: View {
         }
         .onChange(of: configuration) { _, newValue in
             guard hasLoaded else { return }
-            SubagentConfigurationStore.save(newValue)
+            SubagentConfigurationStore.saveAsync(newValue)
         }
         .onReceive(
             NotificationCenter.default.publisher(for: .subagentConfigurationChanged)

@@ -33,6 +33,13 @@ public final class LocalAgentBridge: @unchecked Sendable, AgentRuntimeBridge {
 
     private let lock = NSLock()
     private var actorQueues: [UUID: DispatchQueue] = [:]
+    private var schemaSnapshotCache: [UUID: String] = [:]
+    private var schemaSnapshotRefreshes: Set<UUID> = []
+
+    #if DEBUG
+        nonisolated(unsafe) static var schemaSnapshotOverrideForTests:
+            ((UUID) throws -> String)?
+    #endif
 
     init() {}
 
@@ -52,6 +59,8 @@ public final class LocalAgentBridge: @unchecked Sendable, AgentRuntimeBridge {
     public func forget(agentId: UUID) {
         lock.lock()
         actorQueues.removeValue(forKey: agentId)
+        schemaSnapshotCache.removeValue(forKey: agentId)
+        schemaSnapshotRefreshes.remove(agentId)
         lock.unlock()
     }
 
@@ -84,8 +93,41 @@ public final class LocalAgentBridge: @unchecked Sendable, AgentRuntimeBridge {
     }
 
     public func schemaSnapshot(agentId: UUID) throws -> String {
+        #if DEBUG
+            if let override = Self.schemaSnapshotOverrideForTests {
+                let rendered = try override(agentId)
+                cacheSchemaSnapshot(rendered, agentId: agentId)
+                return rendered
+            }
+        #endif
         let schema = try AgentDatabaseStore.shared.database(for: agentId).schema()
-        return SchemaSnapshot.render(schema)
+        let rendered = SchemaSnapshot.render(schema)
+        cacheSchemaSnapshot(rendered, agentId: agentId)
+        return rendered
+    }
+
+    /// Return the last rendered schema without opening or querying SQLite.
+    /// A miss starts one utility-queue refresh and returns immediately. This
+    /// is the preview/UI contract: the real send path still calls
+    /// `schemaSnapshot(agentId:)` for a live snapshot, while SwiftUI body
+    /// evaluation never waits on database open/WAL locks (Sentry
+    /// APPLE-MACOS-13D and APPLE-MACOS-152).
+    public func cachedSchemaSnapshot(agentId: UUID) -> String? {
+        lock.lock()
+        let cached = schemaSnapshotCache[agentId]
+        let shouldRefresh = cached == nil && schemaSnapshotRefreshes.insert(agentId).inserted
+        lock.unlock()
+
+        if shouldRefresh {
+            DispatchQueue.global(qos: .utility).async { [weak self] in
+                guard let self else { return }
+                _ = try? self.schemaSnapshot(agentId: agentId)
+                self.lock.lock()
+                self.schemaSnapshotRefreshes.remove(agentId)
+                self.lock.unlock()
+            }
+        }
+        return cached
     }
 
     // MARK: - AgentRuntimeBridge (writes)
@@ -760,7 +802,23 @@ public final class LocalAgentBridge: @unchecked Sendable, AgentRuntimeBridge {
     /// schema change too.
     private func refreshSchemaArtifacts(agentId: UUID, database: AgentDatabase) {
         guard let schema = try? database.schema() else { return }
+        cacheSchemaSnapshot(SchemaSnapshot.render(schema), agentId: agentId)
         SchemaDumper.dump(schema, for: agentId)
+    }
+
+    private func cacheSchemaSnapshot(_ rendered: String, agentId: UUID) {
+        lock.lock()
+        let changed = schemaSnapshotCache[agentId] != rendered
+        schemaSnapshotCache[agentId] = rendered
+        schemaSnapshotRefreshes.remove(agentId)
+        lock.unlock()
+        guard changed else { return }
+        DispatchQueue.main.async {
+            NotificationCenter.default.post(
+                name: .agentDatabaseSchemaSnapshotChanged,
+                object: agentId
+            )
+        }
     }
 
     /// If `date` falls inside the quiet-hours window, push it forward to
@@ -831,4 +889,10 @@ public final class LocalAgentBridge: @unchecked Sendable, AgentRuntimeBridge {
         }
         return probe
     }
+}
+
+extension Notification.Name {
+    static let agentDatabaseSchemaSnapshotChanged = Notification.Name(
+        "agentDatabaseSchemaSnapshotChanged"
+    )
 }

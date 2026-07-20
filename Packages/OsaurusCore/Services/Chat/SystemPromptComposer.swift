@@ -258,6 +258,7 @@ public struct SystemPromptComposer: Sendable {
             agentId: agentId,
             executionMode: executionMode,
             soulSection: soulSection,
+            useCachedAgentDBSchema: false,
             trace: trace
         )
         let manifest = comp.manifest()
@@ -726,6 +727,7 @@ public struct SystemPromptComposer: Sendable {
         agentId: UUID,
         executionMode: ExecutionMode,
         soulSection: String? = nil,
+        useCachedAgentDBSchema: Bool,
         trace: TTFTTrace? = nil
     ) {
         let tools = toolset.tools
@@ -801,7 +803,10 @@ public struct SystemPromptComposer: Sendable {
                     content: OnboardingPrompt.block
                 )
             )
-            let snapshotText = Self.renderSchemaSnapshot(agentId: agentId)
+            let snapshotText = Self.renderSchemaSnapshot(
+                agentId: agentId,
+                cachedOnly: useCachedAgentDBSchema
+            )
             if !snapshotText.isEmpty {
                 agentDBSchemaSection = snapshotText
             }
@@ -1687,7 +1692,11 @@ public struct SystemPromptComposer: Sendable {
     /// open hasn't run yet) falls back to the empty-state block so the
     /// agent never sees a half-rendered prompt. Sync because the
     /// underlying `LocalAgentBridge.schemaSnapshot` is sync.
-    static func renderSchemaSnapshot(agentId: UUID) -> String {
+    static func renderSchemaSnapshot(agentId: UUID, cachedOnly: Bool = false) -> String {
+        if cachedOnly {
+            return LocalAgentBridge.shared.cachedSchemaSnapshot(agentId: agentId)
+                ?? SchemaSnapshot.emptyStateBlock
+        }
         do {
             return try LocalAgentBridge.shared.schemaSnapshot(agentId: agentId)
         } catch {
@@ -1808,7 +1817,8 @@ public struct SystemPromptComposer: Sendable {
             toolset: toolset,
             agentId: agentId,
             executionMode: executionMode,
-            soulSection: soulSection
+            soulSection: soulSection,
+            useCachedAgentDBSchema: true
         )
 
         let manifest = composer.manifest()

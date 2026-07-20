@@ -322,8 +322,16 @@ struct OpenAICompatibleToolCallAccumulator {
         var repaired = ""
         var inString = false
         var isEscaped = false
-        var braceCount = 0
-        var bracketCount = 0
+        // Track the exact expected closing-delimiter order instead of two
+        // independent counters. A streamed provider can emit a malformed
+        // suffix with an extra or mismatched `}` / `]`; the old counters then
+        // went negative and `0 ..< bracketCount` trapped in Swift's
+        // `Range` initializer (Sentry APPLE-MACOS-12S). Such a suffix is not
+        // safely repairable. Preserve it as a typed truncated-tool failure;
+        // only append delimiters that are genuinely missing from an otherwise
+        // well-nested prefix.
+        var expectedClosers: [Character] = []
+        var hasMismatchedClosingDelimiter = false
 
         for ch in trimmed {
             if inString {
@@ -349,13 +357,15 @@ struct OpenAICompatibleToolCallAccumulator {
                 if ch == "\"" {
                     inString = true
                 } else if ch == "{" {
-                    braceCount += 1
-                } else if ch == "}" {
-                    braceCount -= 1
+                    expectedClosers.append("}")
                 } else if ch == "[" {
-                    bracketCount += 1
-                } else if ch == "]" {
-                    bracketCount -= 1
+                    expectedClosers.append("]")
+                } else if ch == "}" || ch == "]" {
+                    if expectedClosers.last == ch {
+                        expectedClosers.removeLast()
+                    } else {
+                        hasMismatchedClosingDelimiter = true
+                    }
                 }
                 repaired.append(ch)
             }
@@ -373,11 +383,15 @@ struct OpenAICompatibleToolCallAccumulator {
             repaired = String(trimmedForComma.dropLast())
         }
 
-        for _ in 0 ..< bracketCount {
-            repaired.append("]")
+        if hasMismatchedClosingDelimiter {
+            print(
+                "[Osaurus] Warning: Tool call JSON has an unmatched closing delimiter and cannot be repaired: \(json.prefix(200))"
+            )
+            return ValidatedToolCallJSON(json: json, wasRepaired: true)
         }
-        for _ in 0 ..< braceCount {
-            repaired.append("}")
+
+        for closer in expectedClosers.reversed() {
+            repaired.append(closer)
         }
 
         if let data = repaired.data(using: .utf8),

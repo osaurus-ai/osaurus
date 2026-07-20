@@ -1318,7 +1318,10 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
         PluginRepositoryService.shared.stopBackgroundRefresh()
         ToastWindowController.shared.teardown()
         NotchWindowController.shared.teardown()
-        SharedConfigurationService.shared.remove()
+        // Server-state publications run on an ordered utility queue so the UI
+        // never blocks on runtime discovery I/O. Drain that queue before the
+        // hard process exit below, then remove the final instance directory.
+        SharedConfigurationService.shared.removeSynchronously()
         // `applicationWillTerminate` is sync and the process exits as
         // soon as it returns. Bridge to the actor synchronously so
         // any debounced greeting-pool entries land on disk — without
@@ -1333,6 +1336,11 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
 
         // Same for the Computer Use autonomy policy (its own coalescing writer).
         ComputerUsePolicyStore.flushPendingWrites()
+
+        // Agent-delegation, AppleScript, and image-generation settings use an
+        // ordered utility writer as well. Preserve a last-second toggle before
+        // the hard exit just like the other UI-facing configuration stores.
+        SubagentConfigurationStore.flushPendingWrites()
 
         // Aptabase batches analytics in an in-memory queue and normally drains
         // it from its own `willTerminate` observer — but that flush is async and

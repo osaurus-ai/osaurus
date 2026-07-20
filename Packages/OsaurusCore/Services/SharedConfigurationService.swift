@@ -7,15 +7,35 @@
 
 import Foundation
 
-@MainActor
-final class SharedConfigurationService {
+final class SharedConfigurationService: @unchecked Sendable {
     static let shared = SharedConfigurationService()
-    private let instanceId = UUID().uuidString
+    private let instanceId: String
+    private let baseDirectoryOverride: URL?
+    private let ioQueue = DispatchQueue(
+        label: "com.osaurus.shared-configuration",
+        qos: .utility
+    )
 
-    private init() {}
+    private enum Publication: Sendable {
+        case running(port: Int, address: String, exposeToNetwork: Bool)
+        case status(String)
+        case remove
+    }
+
+    init(
+        instanceId: String = UUID().uuidString,
+        baseDirectoryOverride: URL? = nil
+    ) {
+        self.instanceId = instanceId
+        self.baseDirectoryOverride = baseDirectoryOverride
+    }
 
     private func baseDirectoryURL() -> URL {
-        OsaurusPaths.resolvePath(new: OsaurusPaths.runtime(), legacy: "SharedConfiguration")
+        if let baseDirectoryOverride { return baseDirectoryOverride }
+        return OsaurusPaths.resolvePath(
+            new: OsaurusPaths.runtime(),
+            legacy: "SharedConfiguration"
+        )
     }
 
     private func instanceDirectoryURL() -> URL {
@@ -36,79 +56,97 @@ final class SharedConfigurationService {
 
     /// Update or remove the shared configuration based on server health
     func update(health: ServerHealth, configuration: ServerConfiguration, localAddress: String) {
-        guard let instanceDir = ensureDirectories() else { return }
-
-        let fileURL = instanceDir.appendingPathComponent("configuration.json")
-
-        switch health {
+        let publication: Publication = switch health {
         case .running:
-            let values: [String: Any] = [
+            .running(
+                port: configuration.port,
+                address: localAddress,
+                exposeToNetwork: configuration.exposeToNetwork
+            )
+        case .starting:
+            .status("starting")
+        case .restarting:
+            .status("restarting")
+        case .stopped, .stopping, .error:
+            .remove
+        }
+
+        // Server state is published by a main-thread Combine sink. Keep the
+        // filesystem work ordered, but never make that sink wait on mkdir,
+        // atomic rename, or recursive removal.
+        ioQueue.async { [self] in
+            perform(publication)
+        }
+    }
+
+    private func perform(_ publication: Publication) {
+        if case .remove = publication {
+            performRemove()
+            return
+        }
+
+        guard let instanceDir = ensureDirectories() else { return }
+        let fileURL = instanceDir.appendingPathComponent("configuration.json")
+        let values: [String: Any]
+
+        switch publication {
+        case .running(let port, let address, let exposeToNetwork):
+            values = [
                 "instanceId": instanceId,
                 "updatedAt": ISO8601DateFormatter().string(from: Date()),
-                "port": configuration.port,
-                "address": localAddress,
-                "url": "http://\(localAddress):\(configuration.port)",
-                "exposeToNetwork": configuration.exposeToNetwork,
+                "port": port,
+                "address": address,
+                "url": "http://\(address):\(port)",
+                "exposeToNetwork": exposeToNetwork,
                 "health": "running",
             ]
-            do {
-                let jsonData = try JSONSerialization.data(
-                    withJSONObject: values,
-                    options: [.prettyPrinted, .sortedKeys]
-                )
-                try jsonData.write(to: fileURL, options: [.atomic])
-                // Touch base directory mtime for discoverability of latest instance
-                _ = try? FileManager.default.setAttributes(
-                    [.modificationDate: Date()],
-                    ofItemAtPath: instanceDir.path
-                )
-            } catch {
-                print("[Osaurus] SharedConfigurationService: failed to write configuration: \(error)")
-            }
-        case .starting:
-            // Publish minimal metadata while starting
-            let values: [String: Any] = [
+        case .status(let status):
+            values = [
                 "instanceId": instanceId,
                 "updatedAt": ISO8601DateFormatter().string(from: Date()),
-                "health": "starting",
+                "health": status,
             ]
-            do {
-                let jsonData = try JSONSerialization.data(
-                    withJSONObject: values,
-                    options: [.prettyPrinted, .sortedKeys]
-                )
-                try jsonData.write(to: fileURL, options: [.atomic])
-            } catch {
-                print(
-                    "[Osaurus] SharedConfigurationService: failed to write starting configuration: \(error)"
-                )
-            }
-        case .restarting:
-            // Publish minimal metadata while restarting
-            let values: [String: Any] = [
-                "instanceId": instanceId,
-                "updatedAt": ISO8601DateFormatter().string(from: Date()),
-                "health": "restarting",
-            ]
-            do {
-                let jsonData = try JSONSerialization.data(
-                    withJSONObject: values,
-                    options: [.prettyPrinted, .sortedKeys]
-                )
-                try jsonData.write(to: fileURL, options: [.atomic])
-            } catch {
-                print(
-                    "[Osaurus] SharedConfigurationService: failed to write restarting configuration: \(error)"
-                )
-            }
-        case .stopped, .stopping, .error:
-            // Remove the file to indicate this instance is not serving
-            remove()
+        case .remove:
+            return
+        }
+
+        do {
+            let jsonData = try JSONSerialization.data(
+                withJSONObject: values,
+                options: [.prettyPrinted, .sortedKeys]
+            )
+            try jsonData.write(to: fileURL, options: [.atomic])
+            // Touch the instance directory mtime for discovery ordering.
+            _ = try? FileManager.default.setAttributes(
+                [.modificationDate: Date()],
+                ofItemAtPath: instanceDir.path
+            )
+        } catch {
+            print("[Osaurus] SharedConfigurationService: failed to write configuration: \(error)")
         }
     }
 
     /// Remove this instance's shared files
     func remove() {
+        ioQueue.async { [self] in
+            performRemove()
+        }
+    }
+
+    /// Drain preceding publications and remove synchronously before `_exit`.
+    func removeSynchronously() {
+        ioQueue.sync { [self] in
+            performRemove()
+        }
+    }
+
+    #if DEBUG
+        func flushPendingIOForTests() {
+            ioQueue.sync {}
+        }
+    #endif
+
+    private func performRemove() {
         let instance = instanceDirectoryURL()
         do {
             if FileManager.default.fileExists(atPath: instance.path) {

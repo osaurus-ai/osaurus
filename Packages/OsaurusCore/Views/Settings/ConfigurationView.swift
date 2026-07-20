@@ -521,7 +521,7 @@ struct ConfigurationView: View {
         // `saveConfiguration`). The re-snapshot on the change notification keeps
         // this in sync if an agent's Subagents tab edits the shared store.
         .onChange(of: subagentConfiguration) { _, newValue in
-            SubagentConfigurationStore.save(newValue)
+            SubagentConfigurationStore.saveAsync(newValue)
         }
         .onReceive(
             NotificationCenter.default.publisher(for: .subagentConfigurationChanged)
