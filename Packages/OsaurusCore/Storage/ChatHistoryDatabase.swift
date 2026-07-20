@@ -141,7 +141,9 @@ public final class ChatHistoryDatabase: @unchecked Sendable {
 
     /// Highest schema version this build knows how to produce. Opening a DB
     /// stamped newer than this is refused (forward-version fail-fast).
-    private static let latestSchemaVersion = 10
+    /// Internal (not private) so migration-repair tests assert "reconciled
+    /// to the latest" against the real constant instead of a stale literal.
+    static let latestSchemaVersion = 10
 
     private func runMigrations() throws {
         let current = try getSchemaVersion()

@@ -118,7 +118,7 @@ struct ChatHistoryMigrationRepairTests {
             try db.open()  // must not throw on the duplicate-column ALTER
             defer { db.close() }
 
-            #expect(self.diskUserVersion() == 9)
+            #expect(self.diskUserVersion() == ChatHistoryDatabase.latestSchemaVersion)
             #expect(self.diskColumns(table: "turns").contains("router_billing"))
 
             let loaded = db.loadSession(id: sid)
@@ -172,7 +172,7 @@ struct ChatHistoryMigrationRepairTests {
             try db.open()
             defer { db.close() }
 
-            #expect(self.diskUserVersion() == 9)
+            #expect(self.diskUserVersion() == ChatHistoryDatabase.latestSchemaVersion)
             let loaded = db.loadSession(id: sid)
             #expect(loaded?.turns.count == 1)
             #expect(loaded?.turns.first?.content == "already fully columned")
@@ -220,7 +220,7 @@ struct ChatHistoryMigrationRepairTests {
             try db.open()
             defer { db.close() }
 
-            #expect(self.diskUserVersion() == 9)
+            #expect(self.diskUserVersion() == ChatHistoryDatabase.latestSchemaVersion)
             #expect(self.diskColumns(table: "sessions").contains("archived"))
             #expect(self.diskColumns(table: "sessions").contains("capabilities"))
 
@@ -248,7 +248,7 @@ struct ChatHistoryMigrationRepairTests {
             try db.open()
             defer { db.close() }
 
-            #expect(self.diskUserVersion() == 9)
+            #expect(self.diskUserVersion() == ChatHistoryDatabase.latestSchemaVersion)
 
             let id = UUID()
             try db.saveSession(
