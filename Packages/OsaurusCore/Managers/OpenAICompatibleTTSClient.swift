@@ -13,6 +13,7 @@ public enum OpenAICompatibleTTSError: LocalizedError {
     case invalidEndpoint(String)
     case serverError(status: Int, message: String)
     case noAudio
+    case unexpectedFormat(String)
 
     public var errorDescription: String? {
         switch self {
@@ -24,6 +25,9 @@ public enum OpenAICompatibleTTSError: LocalizedError {
                 : "TTS server returned HTTP \(status): \(message)"
         case .noAudio:
             return "Server responded but returned no audio"
+        case .unexpectedFormat(let format):
+            return "Server sent \(format) audio instead of raw PCM. "
+                + "It may not support response_format \"pcm\"."
         }
     }
 }
@@ -46,19 +50,54 @@ struct OpenAICompatibleTTSClient: Sendable {
     /// the whole utterance downloads.
     private static let frameSampleCount = 1920
 
+    /// What the response body's magic bytes say the audio actually is.
+    enum SniffedFormat: Equatable {
+        case pcm
+        /// WAV container; `headerBytes` to skip before the PCM data starts.
+        case wav(headerBytes: Int)
+        case compressed(String)
+    }
+
+    /// Classify the first bytes of the body. Raw PCM has no magic number, so
+    /// anything that isn't a recognized container is assumed to be PCM.
+    static func sniffFormat(_ header: Data) -> SniffedFormat {
+        let bytes = [UInt8](header.prefix(16))
+        guard bytes.count >= 4 else { return .pcm }
+        func matches(_ ascii: String) -> Bool { [UInt8](ascii.utf8) == Array(bytes.prefix(ascii.count)) }
+        if matches("RIFF") {
+            // Canonical 44-byte header; servers that add chunks are rare and
+            // will still mostly work (a click, then speech).
+            return .wav(headerBytes: 44)
+        }
+        if matches("ID3") || (bytes[0] == 0xFF && bytes[1] & 0xE0 == 0xE0) {
+            return .compressed("MP3")
+        }
+        if matches("OggS") { return .compressed("Ogg") }
+        if matches("fLaC") { return .compressed("FLAC") }
+        return .pcm
+    }
+
     /// Synthesize `text`, yielding Float32 sample frames as bytes arrive.
     func synthesizeStreaming(text: String) throws -> AsyncThrowingStream<[Float], Error> {
         let request = try makeRequest(text: text)
+        TTSDebugLog.log(
+            "request POST \(request.url?.absoluteString ?? "?") model=\(model) voice=\(voice) "
+                + "speed=\(speed) auth=\(apiKey?.isEmpty == false)")
         return AsyncThrowingStream { continuation in
             let task = Task {
                 do {
                     let (bytes, response) = try await URLSession.shared.bytes(for: request)
-                    if let http = response as? HTTPURLResponse, !(200...299).contains(http.statusCode) {
+                    let http = response as? HTTPURLResponse
+                    let contentType = http?.value(forHTTPHeaderField: "Content-Type") ?? "?"
+                    TTSDebugLog.log(
+                        "response status=\(http?.statusCode ?? -1) contentType=\(contentType)")
+                    if let http, !(200...299).contains(http.statusCode) {
                         var body = ""
                         for try await line in bytes.lines {
                             body += line
                             if body.count > 500 { break }
                         }
+                        TTSDebugLog.log("error body: \(body.prefix(500))")
                         throw OpenAICompatibleTTSError.serverError(
                             status: http.statusCode, message: Self.extractServerMessage(body))
                     }
@@ -67,16 +106,59 @@ struct OpenAICompatibleTTSClient: Sendable {
                     // between chunks; PCM samples are 2 bytes and frames are
                     // fixed-size, but HTTP chunk boundaries are arbitrary.
                     var pending = Data()
+                    var totalBytes = 0
+                    var totalSamples = 0
+                    var peak: Float = 0
+                    var headerChecked = false
+                    var skipBytes = 0
+
+                    func emit(_ frame: [Float]) {
+                        guard !frame.isEmpty else { return }
+                        totalSamples += frame.count
+                        for s in frame { peak = max(peak, abs(s)) }
+                        continuation.yield(frame)
+                    }
+
                     for try await byte in bytes {
+                        totalBytes += 1
+                        if skipBytes > 0 {
+                            skipBytes -= 1
+                            continue
+                        }
                         pending.append(byte)
-                        if pending.count >= Self.frameSampleCount * 2 {
-                            continuation.yield(Self.consumeFrames(&pending))
+                        if !headerChecked, pending.count >= 16 {
+                            headerChecked = true
+                            switch Self.sniffFormat(pending) {
+                            case .pcm:
+                                TTSDebugLog.log(
+                                    "body sniffed as raw PCM, first bytes: "
+                                        + TTSDebugLog.hexPreview(pending))
+                            case .wav(let headerBytes):
+                                TTSDebugLog.log(
+                                    "body is a WAV container, skipping \(headerBytes)-byte header")
+                                skipBytes = headerBytes - pending.count
+                                pending = Data()
+                            case .compressed(let name):
+                                TTSDebugLog.log(
+                                    "body is \(name), first bytes: "
+                                        + TTSDebugLog.hexPreview(pending))
+                                throw OpenAICompatibleTTSError.unexpectedFormat(name)
+                            }
+                        }
+                        if headerChecked, pending.count >= Self.frameSampleCount * 2 {
+                            emit(Self.consumeFrames(&pending))
                         }
                     }
-                    let tail = Self.samples(from: pending, keepingRemainderIn: &pending)
-                    if !tail.isEmpty { continuation.yield(tail) }
+                    var remainder = Data()
+                    emit(Self.samples(from: pending, keepingRemainderIn: &remainder))
+                    TTSDebugLog.log(
+                        "stream finished: \(totalBytes) bytes, \(totalSamples) samples "
+                            + String(
+                                format: "(%.2fs at 24kHz), peak amplitude %.3f",
+                                Double(totalSamples) / 24_000.0, peak))
                     continuation.finish()
                 } catch {
+                    TTSDebugLog.log("stream failed: \(error.localizedDescription)")
                     continuation.finish(throwing: error)
                 }
             }

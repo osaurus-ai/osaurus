@@ -226,6 +226,31 @@ struct OpenAICompatibleTTSClientTests {
         #expect(remainder.isEmpty)
     }
 
+    // MARK: - Format sniffing
+
+    @Test("recognizes container magic bytes and assumes pcm otherwise")
+    func formatSniffing() {
+        typealias F = OpenAICompatibleTTSClient.SniffedFormat
+        var wav = Data("RIFF".utf8)
+        wav.append(Data(repeating: 0, count: 12))
+        #expect(OpenAICompatibleTTSClient.sniffFormat(wav) == F.wav(headerBytes: 44))
+
+        #expect(
+            OpenAICompatibleTTSClient.sniffFormat(Data([0x49, 0x44, 0x33, 0x04, 0, 0]))
+                == F.compressed("MP3"))  // "ID3"
+        #expect(
+            OpenAICompatibleTTSClient.sniffFormat(Data([0xFF, 0xFB, 0x90, 0x00]))
+                == F.compressed("MP3"))  // frame sync
+        #expect(OpenAICompatibleTTSClient.sniffFormat(Data("OggS\0\0\0\0".utf8)) == F.compressed("Ogg"))
+        #expect(OpenAICompatibleTTSClient.sniffFormat(Data("fLaC\0\0\0\0".utf8)) == F.compressed("FLAC"))
+
+        // Plausible PCM openings: silence, and a sample that begins 0xFF but
+        // fails the MP3 sync check (0xFF 0x7F is +32767 little-endian).
+        #expect(OpenAICompatibleTTSClient.sniffFormat(Data([0, 0, 0, 0, 1, 0])) == F.pcm)
+        #expect(OpenAICompatibleTTSClient.sniffFormat(Data([0xFF, 0x7F, 0, 0])) == F.pcm)
+        #expect(OpenAICompatibleTTSClient.sniffFormat(Data([0x01])) == F.pcm)  // too short to judge
+    }
+
     // MARK: - Server error bodies
 
     @Test("extracts OpenAI-shaped error message")
