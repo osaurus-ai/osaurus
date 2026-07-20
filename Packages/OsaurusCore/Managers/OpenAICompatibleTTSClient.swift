@@ -59,6 +59,7 @@ public enum OpenAICompatibleTTSError: LocalizedError {
     case serverError(status: Int, message: String)
     case noAudio
     case unexpectedFormat(String)
+    case unsupportedWav(String)
 
     public var errorDescription: String? {
         switch self {
@@ -71,8 +72,11 @@ public enum OpenAICompatibleTTSError: LocalizedError {
         case .noAudio:
             return "Server responded but returned no audio"
         case .unexpectedFormat(let format):
-            return "Server sent \(format) audio instead of raw PCM. "
-                + "It may not support response_format \"pcm\"."
+            return "Server sent \(format) instead of WAV or raw PCM audio. "
+                + "It may not support response_format \"wav\"."
+        case .unsupportedWav(let details):
+            return "Server sent WAV audio in an unsupported format (\(details)); "
+                + "expected 16-bit mono at 24000 Hz."
         }
     }
 }
@@ -95,11 +99,14 @@ struct OpenAICompatibleTTSClient: Sendable {
     /// the whole utterance downloads.
     private static let frameSampleCount = 1920
 
+    /// Give up on finding the `data` chunk in a WAV body past this point;
+    /// real headers (ffmpeg's canonical or LIST-prefixed) fit in well under 1 KB.
+    private static let maxWavHeaderBytes = 8192
+
     /// What the response body's magic bytes say the audio actually is.
     enum SniffedFormat: Equatable {
         case pcm
-        /// WAV container; `headerBytes` to skip before the PCM data starts.
-        case wav(headerBytes: Int)
+        case wav
         case compressed(String)
     }
 
@@ -109,17 +116,62 @@ struct OpenAICompatibleTTSClient: Sendable {
         let bytes = [UInt8](header.prefix(16))
         guard bytes.count >= 4 else { return .pcm }
         func matches(_ ascii: String) -> Bool { [UInt8](ascii.utf8) == Array(bytes.prefix(ascii.count)) }
-        if matches("RIFF") {
-            // Canonical 44-byte header; servers that add chunks are rare and
-            // will still mostly work (a click, then speech).
-            return .wav(headerBytes: 44)
-        }
+        if matches("RIFF") { return .wav }
         if matches("ID3") || (bytes[0] == 0xFF && bytes[1] & 0xE0 == 0xE0) {
             return .compressed("MP3")
         }
         if matches("OggS") { return .compressed("Ogg") }
         if matches("fLaC") { return .compressed("FLAC") }
         return .pcm
+    }
+
+    struct WavInfo: Equatable {
+        /// Offset of the first audio byte (start of the `data` chunk body).
+        let dataOffset: Int
+        let sampleRate: Int
+        let channels: Int
+        let bitsPerSample: Int
+    }
+
+    /// Parse a RIFF/WAVE header by walking chunks to `fmt ` and `data`.
+    /// Returns nil if `header` doesn't yet contain both (caller should buffer
+    /// more bytes and retry). Chunk-walking rather than assuming the canonical
+    /// 44-byte layout, because ffmpeg emits a LIST chunk before `data`.
+    static func parseWavHeader(_ header: Data) -> WavInfo? {
+        let bytes = [UInt8](header)
+        guard bytes.count >= 12 else { return nil }
+        func u16(_ at: Int) -> Int { Int(bytes[at]) | Int(bytes[at + 1]) << 8 }
+        func u32(_ at: Int) -> Int {
+            u16(at) | Int(bytes[at + 2]) << 16 | Int(bytes[at + 3]) << 24
+        }
+        func tag(_ at: Int) -> String {
+            String(bytes: bytes[at..<at + 4], encoding: .ascii) ?? ""
+        }
+        guard tag(0) == "RIFF", tag(8) == "WAVE" else { return nil }
+
+        var offset = 12
+        var sampleRate: Int?
+        var channels: Int?
+        var bits: Int?
+        while offset + 8 <= bytes.count {
+            let id = tag(offset)
+            let size = u32(offset + 4)
+            let body = offset + 8
+            if id == "fmt " {
+                guard body + 16 <= bytes.count else { return nil }
+                channels = u16(body + 2)
+                sampleRate = u32(body + 4)
+                bits = u16(body + 14)
+            } else if id == "data" {
+                guard let sampleRate, let channels, let bits else { return nil }
+                return WavInfo(
+                    dataOffset: body, sampleRate: sampleRate, channels: channels,
+                    bitsPerSample: bits)
+            }
+            // Chunks are word-aligned; odd sizes are padded with one byte.
+            offset = body + size + (size % 2)
+        }
+        return nil
     }
 
     /// Synthesize `text`, yielding Float32 sample frames as bytes arrive.
@@ -154,8 +206,8 @@ struct OpenAICompatibleTTSClient: Sendable {
                     var totalBytes = 0
                     var totalSamples = 0
                     var peak: Float = 0
-                    var headerChecked = false
-                    var skipBytes = 0
+                    var sniffed: SniffedFormat?
+                    var awaitingWavHeader = false
 
                     func emit(_ frame: [Float]) {
                         guard !frame.isEmpty else { return }
@@ -166,23 +218,16 @@ struct OpenAICompatibleTTSClient: Sendable {
 
                     for try await byte in bytes {
                         totalBytes += 1
-                        if skipBytes > 0 {
-                            skipBytes -= 1
-                            continue
-                        }
                         pending.append(byte)
-                        if !headerChecked, pending.count >= 16 {
-                            headerChecked = true
-                            switch Self.sniffFormat(pending) {
+                        if sniffed == nil, pending.count >= 16 {
+                            sniffed = Self.sniffFormat(pending)
+                            switch sniffed! {
                             case .pcm:
                                 TTSDebugLog.log(
                                     "body sniffed as raw PCM, first bytes: "
                                         + TTSDebugLog.hexPreview(pending))
-                            case .wav(let headerBytes):
-                                TTSDebugLog.log(
-                                    "body is a WAV container, skipping \(headerBytes)-byte header")
-                                skipBytes = headerBytes - pending.count
-                                pending = Data()
+                            case .wav:
+                                awaitingWavHeader = true
                             case .compressed(let name):
                                 TTSDebugLog.log(
                                     "body is \(name), first bytes: "
@@ -190,7 +235,29 @@ struct OpenAICompatibleTTSClient: Sendable {
                                 throw OpenAICompatibleTTSError.unexpectedFormat(name)
                             }
                         }
-                        if headerChecked, pending.count >= Self.frameSampleCount * 2 {
+                        if awaitingWavHeader {
+                            if let info = Self.parseWavHeader(pending) {
+                                awaitingWavHeader = false
+                                TTSDebugLog.log(
+                                    "body is WAV: \(info.sampleRate) Hz, \(info.channels) ch, "
+                                        + "\(info.bitsPerSample)-bit, data at byte \(info.dataOffset)")
+                                guard
+                                    info.sampleRate == 24_000, info.channels == 1,
+                                    info.bitsPerSample == 16
+                                else {
+                                    throw OpenAICompatibleTTSError.unsupportedWav(
+                                        "\(info.sampleRate) Hz, \(info.channels) ch, "
+                                            + "\(info.bitsPerSample)-bit")
+                                }
+                                pending = Data(pending.dropFirst(info.dataOffset))
+                            } else if pending.count > Self.maxWavHeaderBytes {
+                                throw OpenAICompatibleTTSError.unexpectedFormat(
+                                    "an unparseable WAV header")
+                            } else {
+                                continue
+                            }
+                        }
+                        if sniffed != nil, pending.count >= Self.frameSampleCount * 2 {
                             emit(Self.consumeFrames(&pending))
                         }
                     }
@@ -238,11 +305,15 @@ struct OpenAICompatibleTTSClient: Sendable {
         if let apiKey, !apiKey.isEmpty {
             request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
         }
+        // "wav" rather than "pcm": both are 24 kHz mono s16le from compliant
+        // servers, but openai-edge-tts's pcm conversion is broken (it feeds
+        // AAC into a PCM muxer) while its wav path works. The WAV header is
+        // parsed and stripped on receipt, so the difference costs ~44 bytes.
         let payload: [String: Any] = [
             "model": model,
             "input": text,
             "voice": voice,
-            "response_format": "pcm",
+            "response_format": "wav",
             "speed": speed,
         ]
         request.httpBody = try JSONSerialization.data(withJSONObject: payload)

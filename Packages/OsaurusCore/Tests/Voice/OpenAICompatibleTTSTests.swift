@@ -100,7 +100,7 @@ struct OpenAICompatibleTTSClientTests {
         #expect(json["model"] as? String == "tts-1")
         #expect(json["input"] as? String == "hello world")
         #expect(json["voice"] as? String == "alloy")
-        #expect(json["response_format"] as? String == "pcm")
+        #expect(json["response_format"] as? String == "wav")
         #expect(json["speed"] as? Double == 1.0)
         #expect(request.httpMethod == "POST")
         #expect(request.value(forHTTPHeaderField: "Content-Type") == "application/json")
@@ -233,7 +233,7 @@ struct OpenAICompatibleTTSClientTests {
         typealias F = OpenAICompatibleTTSClient.SniffedFormat
         var wav = Data("RIFF".utf8)
         wav.append(Data(repeating: 0, count: 12))
-        #expect(OpenAICompatibleTTSClient.sniffFormat(wav) == F.wav(headerBytes: 44))
+        #expect(OpenAICompatibleTTSClient.sniffFormat(wav) == F.wav)
 
         #expect(
             OpenAICompatibleTTSClient.sniffFormat(Data([0x49, 0x44, 0x33, 0x04, 0, 0]))
@@ -249,6 +249,71 @@ struct OpenAICompatibleTTSClientTests {
         #expect(OpenAICompatibleTTSClient.sniffFormat(Data([0, 0, 0, 0, 1, 0])) == F.pcm)
         #expect(OpenAICompatibleTTSClient.sniffFormat(Data([0xFF, 0x7F, 0, 0])) == F.pcm)
         #expect(OpenAICompatibleTTSClient.sniffFormat(Data([0x01])) == F.pcm)  // too short to judge
+    }
+
+    // MARK: - WAV header parsing
+
+    /// Build a WAV header: RIFF/WAVE, optional pre-`data` extra chunk,
+    /// canonical 16-byte fmt chunk, then a `data` chunk with `dataBytes`.
+    private func wavHeader(
+        sampleRate: Int = 24_000, channels: Int = 1, bits: Int = 16,
+        extraChunk: (id: String, size: Int)? = nil, dataBytes: Int = 4
+    ) -> Data {
+        func u16(_ v: Int) -> [UInt8] { [UInt8(v & 0xFF), UInt8((v >> 8) & 0xFF)] }
+        func u32(_ v: Int) -> [UInt8] { u16(v & 0xFFFF) + u16((v >> 16) & 0xFFFF) }
+        var d = Data("RIFF".utf8)
+        d.append(contentsOf: u32(0))  // RIFF size, ignored by the parser
+        d.append(Data("WAVE".utf8))
+        d.append(Data("fmt ".utf8))
+        d.append(contentsOf: u32(16))
+        d.append(contentsOf: u16(1))  // PCM
+        d.append(contentsOf: u16(channels))
+        d.append(contentsOf: u32(sampleRate))
+        d.append(contentsOf: u32(sampleRate * channels * bits / 8))
+        d.append(contentsOf: u16(channels * bits / 8))
+        d.append(contentsOf: u16(bits))
+        if let extra = extraChunk {
+            d.append(Data(extra.id.utf8))
+            d.append(contentsOf: u32(extra.size))
+            d.append(Data(repeating: 0, count: extra.size + extra.size % 2))
+        }
+        d.append(Data("data".utf8))
+        d.append(contentsOf: u32(dataBytes))
+        d.append(Data(repeating: 0, count: dataBytes))
+        return d
+    }
+
+    @Test("parses canonical 44-byte wav header")
+    func canonicalWavHeader() throws {
+        let info = try #require(OpenAICompatibleTTSClient.parseWavHeader(wavHeader()))
+        #expect(info.dataOffset == 44)
+        #expect(info.sampleRate == 24_000)
+        #expect(info.channels == 1)
+        #expect(info.bitsPerSample == 16)
+    }
+
+    @Test("walks past a LIST chunk before data (ffmpeg layout)")
+    func listChunkWavHeader() throws {
+        let header = wavHeader(extraChunk: (id: "LIST", size: 26))
+        let info = try #require(OpenAICompatibleTTSClient.parseWavHeader(header))
+        #expect(info.dataOffset == 44 + 8 + 26)
+        #expect(info.sampleRate == 24_000)
+    }
+
+    @Test("returns nil on truncated header so the caller buffers more")
+    func truncatedWavHeader() {
+        let full = wavHeader()
+        for cut in [4, 12, 20, 43] {
+            #expect(OpenAICompatibleTTSClient.parseWavHeader(full.prefix(cut)) == nil)
+        }
+    }
+
+    @Test("reports non-default rate and channels for the caller to reject")
+    func nonDefaultWavParameters() throws {
+        let header = wavHeader(sampleRate: 44_100, channels: 2)
+        let info = try #require(OpenAICompatibleTTSClient.parseWavHeader(header))
+        #expect(info.sampleRate == 44_100)
+        #expect(info.channels == 2)
     }
 
     // MARK: - Server error bodies
