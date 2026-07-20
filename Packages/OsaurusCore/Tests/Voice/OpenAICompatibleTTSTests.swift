@@ -316,6 +316,17 @@ struct OpenAICompatibleTTSClientTests {
         #expect(info.channels == 2)
     }
 
+    // MARK: - Compressed fallback
+
+    @Test("garbage bytes with an mp3 magic throw unexpectedFormat, not crash")
+    func compressedDecodeRejectsGarbage() {
+        var garbage = Data([0xFF, 0xFB, 0x90, 0x00])
+        garbage.append(Data((0..<512).map { UInt8($0 % 251) }))
+        #expect(throws: OpenAICompatibleTTSError.self) {
+            _ = try OpenAICompatibleTTSClient.decodeCompressedAudio(garbage, formatHint: "MP3")
+        }
+    }
+
     // MARK: - Server error bodies
 
     @Test("extracts OpenAI-shaped error message")

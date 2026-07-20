@@ -7,6 +7,7 @@
 //  PCM and converts it to the Float32 frames `TTSAudioPipeline` plays.
 //
 
+import AVFoundation
 import Foundation
 
 /// Append-only diagnostic log for remote TTS at `~/.osaurus/tmp/tts.log`.
@@ -72,8 +73,7 @@ public enum OpenAICompatibleTTSError: LocalizedError {
         case .noAudio:
             return "Server responded but returned no audio"
         case .unexpectedFormat(let format):
-            return "Server sent \(format) instead of WAV or raw PCM audio. "
-                + "It may not support response_format \"wav\"."
+            return "Server sent \(format) audio that could not be decoded."
         case .unsupportedWav(let details):
             return "Server sent WAV audio in an unsupported format (\(details)); "
                 + "expected 16-bit mono at 24000 Hz."
@@ -102,6 +102,10 @@ struct OpenAICompatibleTTSClient: Sendable {
     /// Give up on finding the `data` chunk in a WAV body past this point;
     /// real headers (ffmpeg's canonical or LIST-prefixed) fit in well under 1 KB.
     private static let maxWavHeaderBytes = 8192
+
+    /// Ceiling for buffering a compressed (MP3/FLAC) body before decoding.
+    /// 32 MB of MP3 is over an hour of speech; anything bigger is not TTS.
+    private static let maxCompressedBytes = 32 * 1024 * 1024
 
     /// What the response body's magic bytes say the audio actually is.
     enum SniffedFormat: Equatable {
@@ -174,6 +178,77 @@ struct OpenAICompatibleTTSClient: Sendable {
         return nil
     }
 
+    /// Decode a complete compressed body (MP3, FLAC, AAC — whatever CoreAudio
+    /// reads) into 24 kHz mono Float32 samples. Fallback for servers that
+    /// can't produce WAV/PCM, like the stock ffmpeg-less openai-edge-tts
+    /// image: playback starts only after the whole body has downloaded, but
+    /// it plays instead of failing. Throws `unexpectedFormat` when CoreAudio
+    /// can't read the data either.
+    static func decodeCompressedAudio(_ data: Data, formatHint: String) throws -> [Float] {
+        let tempURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("osaurus-tts-\(UUID().uuidString).\(formatHint.lowercased())")
+        try data.write(to: tempURL)
+        defer { try? FileManager.default.removeItem(at: tempURL) }
+
+        let file: AVAudioFile
+        do {
+            file = try AVAudioFile(forReading: tempURL)
+        } catch {
+            throw OpenAICompatibleTTSError.unexpectedFormat(formatHint)
+        }
+        let inFormat = file.processingFormat
+        guard
+            let outFormat = AVAudioFormat(
+                commonFormat: .pcmFormatFloat32, sampleRate: 24_000, channels: 1,
+                interleaved: false),
+            let converter = AVAudioConverter(from: inFormat, to: outFormat),
+            let inBuffer = AVAudioPCMBuffer(pcmFormat: inFormat, frameCapacity: 8192),
+            let outBuffer = AVAudioPCMBuffer(pcmFormat: outFormat, frameCapacity: 8192)
+        else {
+            throw OpenAICompatibleTTSError.unexpectedFormat(formatHint)
+        }
+
+        var samples: [Float] = []
+        var reachedEnd = false
+        let inputBlock: AVAudioConverterInputBlock = { _, outStatus in
+            if reachedEnd {
+                outStatus.pointee = .endOfStream
+                return nil
+            }
+            inBuffer.frameLength = 0
+            do {
+                try file.read(into: inBuffer)
+            } catch {
+                reachedEnd = true
+                outStatus.pointee = .endOfStream
+                return nil
+            }
+            if inBuffer.frameLength == 0 {
+                reachedEnd = true
+                outStatus.pointee = .endOfStream
+                return nil
+            }
+            outStatus.pointee = .haveData
+            return inBuffer
+        }
+
+        while true {
+            outBuffer.frameLength = 0
+            var conversionError: NSError?
+            let status = converter.convert(
+                to: outBuffer, error: &conversionError, withInputFrom: inputBlock)
+            if conversionError != nil {
+                throw OpenAICompatibleTTSError.unexpectedFormat(formatHint)
+            }
+            if outBuffer.frameLength > 0, let channel = outBuffer.floatChannelData?[0] {
+                samples.append(
+                    contentsOf: UnsafeBufferPointer(start: channel, count: Int(outBuffer.frameLength)))
+            }
+            if status == .endOfStream || (status == .inputRanDry && reachedEnd) { break }
+        }
+        return samples
+    }
+
     /// Synthesize `text`, yielding Float32 sample frames as bytes arrive.
     func synthesizeStreaming(text: String) throws -> AsyncThrowingStream<[Float], Error> {
         let request = try makeRequest(text: text)
@@ -208,6 +283,7 @@ struct OpenAICompatibleTTSClient: Sendable {
                     var peak: Float = 0
                     var sniffed: SniffedFormat?
                     var awaitingWavHeader = false
+                    var compressedFormat: String?
 
                     func emit(_ frame: [Float]) {
                         guard !frame.isEmpty else { return }
@@ -231,9 +307,17 @@ struct OpenAICompatibleTTSClient: Sendable {
                             case .compressed(let name):
                                 TTSDebugLog.log(
                                     "body is \(name), first bytes: "
-                                        + TTSDebugLog.hexPreview(pending))
-                                throw OpenAICompatibleTTSError.unexpectedFormat(name)
+                                        + TTSDebugLog.hexPreview(pending)
+                                        + " — buffering for CoreAudio decode after download")
+                                compressedFormat = name
                             }
+                        }
+                        if compressedFormat != nil {
+                            if pending.count > Self.maxCompressedBytes {
+                                throw OpenAICompatibleTTSError.unexpectedFormat(
+                                    "\(compressedFormat!) larger than 32 MB")
+                            }
+                            continue
                         }
                         if awaitingWavHeader {
                             if let info = Self.parseWavHeader(pending) {
@@ -260,6 +344,20 @@ struct OpenAICompatibleTTSClient: Sendable {
                         if sniffed != nil, pending.count >= Self.frameSampleCount * 2 {
                             emit(Self.consumeFrames(&pending))
                         }
+                    }
+                    if let compressedFormat {
+                        let decoded = try Self.decodeCompressedAudio(
+                            pending, formatHint: compressedFormat)
+                        TTSDebugLog.log(
+                            "decoded \(compressedFormat) body: \(pending.count) bytes -> "
+                                + "\(decoded.count) samples")
+                        var offset = 0
+                        while offset < decoded.count {
+                            let end = min(offset + Self.frameSampleCount, decoded.count)
+                            emit(Array(decoded[offset..<end]))
+                            offset = end
+                        }
+                        pending = Data()
                     }
                     var remainder = Data()
                     emit(Self.samples(from: pending, keepingRemainderIn: &remainder))
