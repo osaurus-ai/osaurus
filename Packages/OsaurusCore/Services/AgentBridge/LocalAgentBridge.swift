@@ -88,6 +88,17 @@ public final class LocalAgentBridge: @unchecked Sendable, AgentRuntimeBridge {
         return SchemaSnapshot.render(schema)
     }
 
+    /// Non-opening variant of `schemaSnapshot`: reads only an
+    /// already-open cached connection and returns nil otherwise.
+    /// Safe to call from the main thread.
+    public func schemaSnapshotIfOpen(agentId: UUID) -> String? {
+        guard let database = AgentDatabaseStore.shared.cachedOpenDatabase(for: agentId) else {
+            return nil
+        }
+        guard let schema = try? database.schema() else { return nil }
+        return SchemaSnapshot.render(schema)
+    }
+
     // MARK: - AgentRuntimeBridge (writes)
 
     @discardableResult

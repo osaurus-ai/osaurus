@@ -726,7 +726,8 @@ public struct SystemPromptComposer: Sendable {
         agentId: UUID,
         executionMode: ExecutionMode,
         soulSection: String? = nil,
-        trace: TTFTTrace? = nil
+        trace: TTFTTrace? = nil,
+        allowBlockingDBOpen: Bool = true
     ) {
         let tools = toolset.tools
         let effectiveToolsOff = toolset.effectiveToolsOff
@@ -801,7 +802,8 @@ public struct SystemPromptComposer: Sendable {
                     content: OnboardingPrompt.block
                 )
             )
-            let snapshotText = Self.renderSchemaSnapshot(agentId: agentId)
+            let snapshotText = Self.renderSchemaSnapshot(
+                agentId: agentId, allowOpen: allowBlockingDBOpen)
             if !snapshotText.isEmpty {
                 agentDBSchemaSection = snapshotText
             }
@@ -1687,7 +1689,15 @@ public struct SystemPromptComposer: Sendable {
     /// open hasn't run yet) falls back to the empty-state block so the
     /// agent never sees a half-rendered prompt. Sync because the
     /// underlying `LocalAgentBridge.schemaSnapshot` is sync.
-    static func renderSchemaSnapshot(agentId: UUID) -> String {
+    /// `allowOpen: false` (the preview/budget path, which runs during
+    /// SwiftUI body evaluation) reads only an already-open cached
+    /// connection — a first open does file I/O plus SQLCipher key
+    /// derivation and has hung the main thread for 3+ seconds.
+    static func renderSchemaSnapshot(agentId: UUID, allowOpen: Bool = true) -> String {
+        guard allowOpen else {
+            return LocalAgentBridge.shared.schemaSnapshotIfOpen(agentId: agentId)
+                ?? SchemaSnapshot.emptyStateBlock
+        }
         do {
             return try LocalAgentBridge.shared.schemaSnapshot(agentId: agentId)
         } catch {
@@ -1808,7 +1818,8 @@ public struct SystemPromptComposer: Sendable {
             toolset: toolset,
             agentId: agentId,
             executionMode: executionMode,
-            soulSection: soulSection
+            soulSection: soulSection,
+            allowBlockingDBOpen: false
         )
 
         let manifest = composer.manifest()
