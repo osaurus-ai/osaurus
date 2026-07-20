@@ -106,6 +106,39 @@ Prefix on, Paged on, two maximum blocks, SSD L2 on, TurboQuant 4/4, and SSM
 rederive on; persisted JSON matched those values and did not materialize the
 untouched effective-one concurrent-session default.
 
+Final rebased-head recheck after the pin-tripwire correction:
+
+- Osaurus source: `1bbac6d38` (rebased onto `1cbeeb044`)
+- Embedded vMLX source: `24ce87c5ef812f816a242459aec50e544fd228f4`
+- Isolated bundle id: `com.dinoki.osaurus.cachecampaignpatchedproof`
+- Release executable SHA-256:
+  `aee9c802642fbf3c8e7ccfce44565c1defd4824e38edc488af900fd57a343b8e`
+- Xcode Release build: `BUILD SUCCEEDED`; the app passed strict deep ad-hoc
+  code-sign verification.
+- Focused current-source Osaurus suites passed 94 tests with zero failures or
+  skips: `RuntimePolicySourceTests` and
+  `ImageGenerationBridgeContractTests`.
+- In the real Settings UI, opening Cache left the footer at
+  `All changes saved`. Visible effective settings were Prefix on, Paged off,
+  SSD L2 on, Engine Selected/TurboQuant off, and SSM rederive on.
+- The exact Bonsai model remained selected with Thinking visibly off. Its
+  first smoke answer was streamed without a loop, tool call, reasoning, or
+  protocol leakage at TTFT 1.06 seconds and 54.0 tok/s, but it failed the
+  requested two-sentence constraint and gave an imprecise explanation. This
+  row is a semantic failure, not a pass.
+- A visible correction turn produced two numbered sentences at TTFT 1.10
+  seconds and 52.5 tok/s, again without a loop, tool call, reasoning, or
+  protocol leakage. The admin snapshot recorded five SSD L2 hits and five SSM
+  companion hits, paged disabled, effective FP16, 16 ordinary KV layers plus
+  48 native Mamba layers, and zero TurboQuant layers. Activity Monitor showed
+  the exact proof process at 2.30 GB.
+
+The final-head recheck therefore confirms the source pin, default-off paged and
+TurboQuant policy, settings persistence, disk/SSM partial reuse, streaming,
+multi-turn correction, speed, and low physical footprint. It does not promote
+the failed first-answer instruction/semantic row, and no prompt, parser,
+sampler, hidden continuation, or forced-output guard was added for it.
+
 ### Paged on plus explicit TurboQuant 4/4
 
 Thinking was explicitly turned off in the real model picker. The first visible
