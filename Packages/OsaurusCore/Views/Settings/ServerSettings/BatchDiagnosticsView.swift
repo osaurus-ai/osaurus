@@ -43,6 +43,7 @@ struct BatchDiagnosticsView: View {
                     "Prefix hits / misses",
                     value: "\(snapshot.prefixHits) / \(snapshot.prefixMisses)"
                 )
+                stat("Paged evictions", value: "\(snapshot.pagedEvictions)")
                 stat(
                     "Disk L2 hits / misses / stores",
                     value: "\(snapshot.diskL2Hits) / \(snapshot.diskL2Misses) / \(snapshot.diskL2Stores)"

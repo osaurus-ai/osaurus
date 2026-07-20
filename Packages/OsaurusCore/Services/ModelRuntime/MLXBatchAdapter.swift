@@ -473,6 +473,7 @@ struct MLXBatchAdapter {
             var pagedIncompatible = 0
             var prefixHits = 0
             var prefixMisses = 0
+            var pagedEvictions = 0
             var diskL2Hits = 0
             var diskL2Misses = 0
             var diskL2Stores = 0
@@ -490,6 +491,7 @@ struct MLXBatchAdapter {
                 if let pagedStats = stats.pagedStats {
                     prefixHits += pagedStats.cacheHits
                     prefixMisses += pagedStats.cacheMisses
+                    pagedEvictions += pagedStats.evictions
                 }
                 if let diskStats = stats.diskStats {
                     diskL2Hits += diskStats.hits
@@ -526,6 +528,7 @@ struct MLXBatchAdapter {
                 pagedIncompatibleModelCount: pagedIncompatible,
                 prefixHits: prefixHits,
                 prefixMisses: prefixMisses,
+                pagedEvictions: pagedEvictions,
                 diskL2Hits: diskL2Hits,
                 diskL2Misses: diskL2Misses,
                 diskL2Stores: diskL2Stores,

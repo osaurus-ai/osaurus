@@ -2303,11 +2303,13 @@ struct RuntimePolicySourceTests {
         let diagnosticsSnapshot = try Self.source("Services/ModelRuntime/BatchDiagnosticsSnapshot.swift")
         #expect(diagnosticsSnapshot.contains("nativeMTPDepthSummary"))
         #expect(diagnosticsSnapshot.contains("prefixHits"))
+        #expect(diagnosticsSnapshot.contains("pagedEvictions"))
         #expect(diagnosticsSnapshot.contains("ssmCompanionReDerives"))
 
         let diagnosticsView = try Self.source("Views/Settings/ServerSettings/BatchDiagnosticsView.swift")
         #expect(diagnosticsView.contains("\"Native MTP\""))
         #expect(diagnosticsView.contains("\"Prefix hits / misses\""))
+        #expect(diagnosticsView.contains("\"Paged evictions\""))
         #expect(diagnosticsView.contains("\"SSM hits / misses / re-derives\""))
 
         let httpHandler = try Self.source("Networking/HTTPHandler.swift")

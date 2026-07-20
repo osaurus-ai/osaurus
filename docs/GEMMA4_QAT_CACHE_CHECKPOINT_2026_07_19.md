@@ -293,3 +293,99 @@ Gemma answer. Activity Monitor showed the 2.74 GB Ornith process, and the same
 Ornith bundle answered a fresh chat coherently at TTFT 0.50 s and 70.1 tok/s
 with unchanged cache settings and Thinking Off. This is not evidence of a
 global cross-model KV collision, and this Gemma-only PR adds no guard for it.
+
+## 2026-07-20 SSD partial-prefix, paged-eviction, and final-default proof
+
+This proof used the same local Gemma 4 12B JANG_4M bundle and did not load,
+download, infer from, or substitute an MXFP4 artifact. The exact isolated
+Release app was
+`/private/tmp/osaurus-gemma4-alignment-release-derived-20260720/Build/Products/Release/osaurus.app`,
+bundle id `com.dinoki.osaurus.gemma4alignmentproof20260720`, executable
+SHA-256 `d0f36260693d7d9c3b3a7691ebbf2c6667c4449467a405a9b9cd7ce03fce60b2`,
+PID `75043`, and keychain-free root
+`/private/tmp/osaurus-gemma4-alignment-proof-root-20260720-1414`.
+
+The cache ownership trace at pinned vMLX `f2b18484` is explicit:
+
+- `CacheCoordinator.fetch` tries paged RAM first, accepts a Gemma mixed-cache
+  boundary only with its typed companion, then probes indexed SSD boundaries
+  from longest to shortest before returning a cold miss
+  (`CacheCoordinator.swift:398-403,456-562`).
+- `PagedCacheManager` removes the prior hash and increments `evictions` when a
+  fixed-pool block is reused, while `fetchPrefix` walks block hashes only until
+  the first miss (`PagedCacheManager.swift:116-126,312-363`).
+- `DiskCache` converts the visible GiB cap to bytes, stores and immediately
+  applies the quota, obtains candidate token counts in descending order, and
+  deletes the oldest indexed payloads until total bytes are under the cap
+  (`DiskCache.swift:116-119,228-229,287-318,492-539`).
+- Focused vMLX regressions prove an evicted paged prefix falls through to its
+  persisted SSD record and that a fresh paged-off coordinator restores a
+  partial hybrid prefix plus companion state
+  (`CacheCoordinatorTopologyFocusedTests.swift:831-923`).
+- Osaurus saves the entire cache settings value and clears loaded models when
+  it changes (`ServerController.swift:326-379`); the next load builds the live
+  coordinator from the resolved settings, including the user-selected disk
+  directory/cap and host-aware ceiling (`ModelRuntime.swift:2380-2464,2491-2541`).
+
+The Release UI was operated as a user. With paged RAM off and SSD L2 on,
+`SSD-ENABLED-SEED-3303` returned exactly at 6.88 s TTFT and 35.8 tok/s. After
+quitting and relaunching the isolated app, a changed continuation,
+`SSD-RESTART-PARTIAL-3304`, returned exactly at 1.49 s TTFT and 35.8 tok/s;
+Live Activity showed paged prefix `0 / 0` and SSD L2 `3 / 8 / 5`. This is the
+paged-off, fresh-process, partial SSD-prefix row.
+
+The UI was then changed to paged RAM On, block size 64, max blocks 100, SSD L2
+On, and a 2.0 GB disk cap. An original ledger returned
+`PAGED-OBS-SEED-5501` exactly at 1.54 s TTFT and 35.0 tok/s. A distinct long
+ledger returned `PAGED-OBS-EVICTOR-5502` exactly at 1.47 s TTFT and 50.4 tok/s.
+At that boundary Live Activity visibly showed prefix `442 / 6`, paged
+evictions `53`, SSD L2 `5 / 9 / 8`, and TurboQuant compressions `0`. Returning
+to the original ledger then produced the exact changed continuation
+`PAGED-OBS-DISK-FALLBACK-5503` at 1.51 s TTFT and 35.8 tok/s. Live Activity
+advanced to prefix `686 / 9`, paged evictions `106`, and SSD L2 `7 / 12 / 12`:
+the request added 53 real paged evictions and two SSD hits before repopulating
+the hot tier.
+
+Immediately after that fallback row, while the 2.0 GB cap was still active and
+before restoring defaults, the bounded SSD directory contained exactly three
+current safetensors payloads of 569,918,297, 584,663,859, and 711,934,779 bytes
+(about 1.738 GiB total), with matching SQLite rows at 7,106, 7,151, and 7,152
+tokens. Older payloads from the same isolated root were absent. This is direct
+file/index evidence that the visible 2.0 GB setting governed
+eviction/replacement; counters alone are not used as that claim.
+
+To make this behavior inspectable without a debugger, the current Osaurus
+change carries vMLX `pagedStats.evictions` through `MLXBatchAdapter` into
+`BatchDiagnosticsSnapshot` and displays `Paged evictions` in Server Settings
+Live Activity. The focused current-source `RuntimePolicySourceTests` run under
+the Xcode toolchain passed 92/92, and the exact Release app above built and
+passed deep ad-hoc signature verification.
+
+Finally, the same UI restored Prefix On, paged RAM Off, blank engine defaults
+(64/1000), SSD L2 On with the blank 10 GB default, Codec Engine Selected,
+SSM rederive On, and Thinking Off. The settings panel visibly reported
+`Settings saved successfully` and unloaded the model. The resulting cold
+default launch returned exactly:
+
+```text
+GEMMA4-DEFAULT-RESTORED-6601
+PAGED=OFF TQ=OFF SSD=ON
+```
+
+at 1.29 s TTFT and 36.6 tok/s (31 tokens). Live Activity then showed
+TurboQuant compressions `0`, prefix `0 / 0`, paged evictions `0`, and SSD L2
+`2 / 3 / 4`, proving that the restored default launch kept paged RAM and
+TurboQuant off while still using SSD L2. Activity Monitor visibly showed the
+exact PID at 6.85 GB after generation, below the 9.439 GiB bundle.
+
+After rebasing onto Osaurus `76c1f6ae` (the independently merged remote-tool
+argument fix), the same arm64-only Release app was rebuilt, ad-hoc sealed, and
+deep-signature verified. The new executable hash is the `d0f36260...` value
+above and its embedded vMLX checkout remains exactly `f2b18484`. The Cache UI
+again visibly showed the restored defaults, and a fresh chat with Thinking Off
+returned exactly `GEMMA4-REBASED-DEFAULT-7701` and
+`PAGED=OFF TQ=OFF SSD=ON` at 1.23 s TTFT and 36.9 tok/s (31 tokens). Live
+Activity showed TurboQuant `0`, prefix `0 / 0`, paged evictions `0`, and SSD L2
+`2 / 3 / 4`. Activity Monitor visibly identified rebuilt PID `85362` at
+394.4 MB after that response. The rebase introduced no additional PR paths;
+the remote-tool changes are part of the new main base, not this diff.
