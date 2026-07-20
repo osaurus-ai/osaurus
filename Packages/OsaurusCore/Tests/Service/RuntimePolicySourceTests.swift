@@ -2678,6 +2678,18 @@ struct RuntimePolicySourceTests {
             chatView.contains("finalReq.samplingParametersAreImplicit = true"),
             "Tool-budget wrap-up calls use the same implicit-sampling contract as normal UI turns."
         )
+        #expect(
+            chatView.contains("let turnGenerationControls = ChatTurnGenerationControls.capture("),
+            "Chat UI must freeze prompt-affecting model controls once at send time instead of rereading mutable UI state between tool iterations."
+        )
+        #expect(
+            chatView.contains("turnGenerationControls.apply(to: &req)"),
+            "Every normal agent-loop reconstruction must carry the turn's explicit Thinking choice."
+        )
+        #expect(
+            chatView.contains("turnGenerationControls.apply(to: &finalReq)"),
+            "The post-budget finalizer must carry the same explicit Thinking choice as the tool loop it closes."
+        )
     }
 
     @Test("Tools settings renders runtime-managed folder and sandbox tools")

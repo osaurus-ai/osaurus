@@ -4058,6 +4058,14 @@ final class ChatSession: ObservableObject {
         // detached task) couldn't tell what agent they belonged to.
         let turnAgentId = agentId ?? Agent.defaultId
         let imageSettings = imageComposerSettings
+        // Freeze prompt-affecting model controls at send time. Every model
+        // step in the agent loop reconstructs its request; reading the live UI
+        // dictionary inside that loop can change the prompt halfway through a
+        // run, and carrying only local-only `modelOptions` drops the explicit
+        // Thinking choice on any wire-encoded continuation.
+        let turnGenerationControls = ChatTurnGenerationControls.capture(
+            activeModelOptions: activeModelOptions
+        )
 
         currentTask = Task { @MainActor [weak self] in
             guard let self else { return }
@@ -5097,8 +5105,7 @@ final class ChatSession: ObservableObject {
                             req.remoteAgentLogModel =
                                 self.isRemoteAgentTarget
                                 ? self.windowState?.pinnedRemoteAgentEffectiveModel : nil
-                            req.modelOptions =
-                                self.activeModelOptions.isEmpty ? nil : self.activeModelOptions
+                            turnGenerationControls.apply(to: &req)
                             req.backgroundModelLoad = (self.loadIntent == .background)
                             req.ttftTrace = ttftTrace
                             // Correlate the Insights log this send produces back to the
@@ -5379,7 +5386,7 @@ final class ChatSession: ObservableObject {
                             finalReq.remoteAgentLogModel =
                                 isRemoteAgentTarget
                                 ? windowState?.pinnedRemoteAgentEffectiveModel : nil
-                            finalReq.modelOptions = activeModelOptions.isEmpty ? nil : activeModelOptions
+                            turnGenerationControls.apply(to: &finalReq)
                             finalReq.backgroundModelLoad = (loadIntent == .background)
                             finalReq.turnId = assistantTurn.id
                             // Distinct logical step (the post-cap summarizing
