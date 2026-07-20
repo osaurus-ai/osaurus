@@ -39,7 +39,13 @@ struct TTSModeSettingsTab: View {
 
     private func loadSettings() {
         config = TTSConfigurationStore.load()
-        remoteAPIKey = TTSRemoteAPIKeyStore.load() ?? ""
+        // Keychain reads are blocking XPC; fetch off-main and fill the field
+        // when it lands. Skip the update when unchanged so the `.onChange`
+        // save/reset handlers don't fire from our own load.
+        TTSRemoteAPIKeyStore.load { key in
+            let value = key ?? ""
+            if value != remoteAPIKey { remoteAPIKey = value }
+        }
     }
 
     private func saveSettings() {

@@ -94,11 +94,19 @@ public struct TTSConfiguration: Codable, Equatable, Sendable {
 
 /// API key for the OpenAI-compatible TTS server. Kept in the keychain, never
 /// in the JSON config file. Empty/whitespace writes clear the stored key.
+///
+/// Every SecItem call goes through `queue`: keychain reads and writes are
+/// synchronous XPC to securityd that can block for seconds under contention,
+/// which on the main thread shows up as Sentry app-hang events. The serial
+/// queue also orders a save against a following load.
 public enum TTSRemoteAPIKeyStore {
     private static let service = "ai.osaurus.tts.remote"
     private static let account = "apiKey"
+    private static let queue = DispatchQueue(label: "ai.osaurus.tts.keychain", qos: .utility)
 
-    public static func load() -> String? {
+    /// Synchronous read. Never call on the main thread; use `load(completion:)`
+    /// or call from an already-background context.
+    public static func loadSync() -> String? {
         guard let data = Keychain.read(service: service, account: account),
             let key = String(data: data, encoding: .utf8),
             !key.isEmpty
@@ -106,13 +114,24 @@ public enum TTSRemoteAPIKeyStore {
         return key
     }
 
+    /// Read off the main thread and deliver on the main actor.
+    public static func load(completion: @escaping @MainActor (String?) -> Void) {
+        queue.async {
+            let key = loadSync()
+            Task { @MainActor in completion(key) }
+        }
+    }
+
+    /// Fire-and-forget upsert/delete off the caller's thread.
     public static func save(_ key: String) {
         let trimmed = key.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else {
-            Keychain.delete(service: service, account: account)
-            return
+        queue.async {
+            if trimmed.isEmpty {
+                Keychain.delete(service: service, account: account)
+            } else {
+                Keychain.write(service: service, account: account, data: Data(trimmed.utf8))
+            }
         }
-        Keychain.writeInBackground(service: service, account: account, data: Data(trimmed.utf8))
     }
 }
 
@@ -120,6 +139,12 @@ public enum TTSRemoteAPIKeyStore {
 @MainActor
 public enum TTSConfigurationStore {
     private static var cachedConfig: TTSConfiguration?
+
+    /// Serializes disk writes off the main actor. The cache is authoritative
+    /// for readers, so the file write is fire-and-forget; the settings UI
+    /// saves on every keystroke, which must never mean per-keystroke disk
+    /// I/O on the main thread.
+    private static let diskQueue = DispatchQueue(label: "ai.osaurus.tts.config", qos: .utility)
 
     public static func load() -> TTSConfiguration {
         if let cached = cachedConfig { return cached }
@@ -130,7 +155,7 @@ public enum TTSConfigurationStore {
 
     public static func save(_ configuration: TTSConfiguration) {
         cachedConfig = configuration
-        saveToDisk(configuration)
+        diskQueue.async { saveToDisk(configuration) }
         NotificationCenter.default.post(name: .ttsConfigurationChanged, object: nil)
     }
 
@@ -147,7 +172,7 @@ public enum TTSConfigurationStore {
         }
     }
 
-    private static func saveToDisk(_ configuration: TTSConfiguration) {
+    nonisolated private static func saveToDisk(_ configuration: TTSConfiguration) {
         let url = OsaurusPaths.ttsConfigFile()
         OsaurusPaths.ensureExistsSilent(url.deletingLastPathComponent())
         do {

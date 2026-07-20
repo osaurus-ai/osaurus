@@ -491,15 +491,21 @@ public final class TTSService: ObservableObject {
 
         let trimmedOverride = voiceOverride?.trimmingCharacters(in: .whitespacesAndNewlines)
         let voice = (trimmedOverride?.isEmpty == false ? trimmedOverride! : config.remoteVoice)
-        let client = OpenAICompatibleTTSClient(
-            endpoint: config.remoteEndpoint,
-            model: config.remoteModel,
-            voice: voice,
-            speed: config.remoteSpeed,
-            apiKey: TTSRemoteAPIKeyStore.load()
-        )
 
         playbackTask = Task { [weak self] in
+            // Keychain read is blocking XPC; a detached task keeps it off the
+            // main actor (a plain `Task {}` here would inherit it).
+            let apiKey = await Task.detached(priority: .userInitiated) {
+                TTSRemoteAPIKeyStore.loadSync()
+            }.value
+            guard !Task.isCancelled else { return }
+            let client = OpenAICompatibleTTSClient(
+                endpoint: config.remoteEndpoint,
+                model: config.remoteModel,
+                voice: voice,
+                speed: config.remoteSpeed,
+                apiKey: apiKey
+            )
             do {
                 try await self?.pipeline.prepareAndPlay()
             } catch {
